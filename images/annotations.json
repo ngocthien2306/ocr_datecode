@@ -1,0 +1,26 @@
+{
+  "_template_image": "/Users/ngocthien.ai/Source/Projects/ocr_datecode/images/3.jpg",
+  "/Users/ngocthien.ai/Source/Projects/ocr_datecode/images/3.jpg": [
+    {
+      "x": 1205,
+      "y": 1018,
+      "width": 88,
+      "height": 90,
+      "type": "template"
+    },
+    {
+      "x": 1175,
+      "y": 1268,
+      "width": 338,
+      "height": 64,
+      "type": "datecode"
+    },
+    {
+      "x": 1037,
+      "y": 1321,
+      "width": 397,
+      "height": 62,
+      "type": "text"
+    }
+  ]
+}
