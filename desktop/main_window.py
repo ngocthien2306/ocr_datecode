@@ -5,7 +5,7 @@ Cửa sổ chính của ứng dụng với UI được cải tiến
 import os
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                               QListWidget, QPushButton, QFileDialog, QLabel,
-                              QMessageBox, QListWidgetItem, QSplitter)
+                              QMessageBox, QListWidgetItem, QSplitter, QComboBox)
 from PyQt5.QtCore import Qt, QDir
 from PyQt5.QtGui import QFont
 from image_viewer import ImageViewer
@@ -132,6 +132,20 @@ class MainWindow(QMainWindow):
 
         toolbar_layout.addSpacing(8)
 
+        # Shape selection (Rectangle/Polygon)
+        shape_label = QLabel("Shape:")
+        toolbar_layout.addWidget(shape_label)
+
+        self.shape_combo = QComboBox()
+        self.shape_combo.addItem("Rectangle")
+        self.shape_combo.addItem("Polygon (4 pts)")
+        self.shape_combo.setEnabled(False)
+        self.shape_combo.currentIndexChanged.connect(self.on_shape_changed)
+        self.shape_combo.setMinimumWidth(120)
+        toolbar_layout.addWidget(self.shape_combo)
+
+        toolbar_layout.addSpacing(8)
+
         self.clear_btn = QPushButton("Clear")
         self.clear_btn.setObjectName("dangerButton")
         self.clear_btn.clicked.connect(self.clear_bboxes)
@@ -145,35 +159,6 @@ class MainWindow(QMainWindow):
         self.save_btn.setEnabled(False)
         self.save_btn.setMinimumWidth(60)
         toolbar_layout.addWidget(self.save_btn)
-
-        toolbar_layout.addSpacing(8)
-
-        # Zoom controls
-        self.zoom_out_btn = QPushButton("-")
-        self.zoom_out_btn.setFixedWidth(30)
-        self.zoom_out_btn.clicked.connect(self.zoom_out)
-        self.zoom_out_btn.setEnabled(False)
-        self.zoom_out_btn.setToolTip("Zoom Out (Ctrl + -)")
-        toolbar_layout.addWidget(self.zoom_out_btn)
-
-        self.zoom_label = QLabel("100%")
-        self.zoom_label.setFixedWidth(45)
-        self.zoom_label.setAlignment(Qt.AlignCenter)
-        toolbar_layout.addWidget(self.zoom_label)
-
-        self.zoom_in_btn = QPushButton("+")
-        self.zoom_in_btn.setFixedWidth(30)
-        self.zoom_in_btn.clicked.connect(self.zoom_in)
-        self.zoom_in_btn.setEnabled(False)
-        self.zoom_in_btn.setToolTip("Zoom In (Ctrl + +)")
-        toolbar_layout.addWidget(self.zoom_in_btn)
-
-        self.zoom_reset_btn = QPushButton("1:1")
-        self.zoom_reset_btn.setFixedWidth(40)
-        self.zoom_reset_btn.clicked.connect(self.reset_zoom)
-        self.zoom_reset_btn.setEnabled(False)
-        self.zoom_reset_btn.setToolTip("Reset Zoom (Ctrl + 0)")
-        toolbar_layout.addWidget(self.zoom_reset_btn)
 
         toolbar_layout.addSpacing(8)
 
@@ -201,13 +186,45 @@ class MainWindow(QMainWindow):
         self.image_viewer.bboxesChanged.connect(self.on_bboxes_changed)
         center_layout.addWidget(self.image_viewer, stretch=1)
 
-        # Instructions (compact)
-        instructions = QLabel(
-            "Shortcuts: Ctrl+Scroll to zoom | Delete key to remove | Click & drag to draw/move"
-        )
-        instructions.setObjectName("infoLabel")
-        instructions.setWordWrap(True)
-        center_layout.addWidget(instructions)
+        # Zoom controls bar (bottom)
+        zoom_bar = QWidget()
+        zoom_bar.setObjectName("toolbar")
+        zoom_bar_layout = QHBoxLayout(zoom_bar)
+        zoom_bar_layout.setContentsMargins(12, 6, 12, 6)
+
+        zoom_bar_layout.addStretch()
+
+        zoom_bar_layout.addWidget(QLabel("Zoom:"))
+
+        self.zoom_out_btn = QPushButton("-")
+        self.zoom_out_btn.setFixedWidth(30)
+        self.zoom_out_btn.clicked.connect(self.zoom_out)
+        self.zoom_out_btn.setEnabled(False)
+        self.zoom_out_btn.setToolTip("Zoom Out (Ctrl + -)")
+        zoom_bar_layout.addWidget(self.zoom_out_btn)
+
+        self.zoom_label = QLabel("100%")
+        self.zoom_label.setFixedWidth(45)
+        self.zoom_label.setAlignment(Qt.AlignCenter)
+        zoom_bar_layout.addWidget(self.zoom_label)
+
+        self.zoom_in_btn = QPushButton("+")
+        self.zoom_in_btn.setFixedWidth(30)
+        self.zoom_in_btn.clicked.connect(self.zoom_in)
+        self.zoom_in_btn.setEnabled(False)
+        self.zoom_in_btn.setToolTip("Zoom In (Ctrl + +)")
+        zoom_bar_layout.addWidget(self.zoom_in_btn)
+
+        self.zoom_reset_btn = QPushButton("1:1")
+        self.zoom_reset_btn.setFixedWidth(40)
+        self.zoom_reset_btn.clicked.connect(self.reset_zoom)
+        self.zoom_reset_btn.setEnabled(False)
+        self.zoom_reset_btn.setToolTip("Reset Zoom (Ctrl + 0)")
+        zoom_bar_layout.addWidget(self.zoom_reset_btn)
+
+        zoom_bar_layout.addStretch()
+
+        center_layout.addWidget(zoom_bar)
 
         center_right_splitter.addWidget(center_panel)
 
@@ -287,6 +304,7 @@ class MainWindow(QMainWindow):
             # Enable buttons
             self.select_mode_btn.setEnabled(True)
             self.draw_mode_btn.setEnabled(True)
+            self.shape_combo.setEnabled(True)
             self.clear_btn.setEnabled(True)
             self.save_btn.setEnabled(True)
             self.zoom_in_btn.setEnabled(True)
@@ -364,6 +382,13 @@ class MainWindow(QMainWindow):
         self.bbox_list_widget.update_bboxes(self.image_viewer.get_bboxes())
         # Auto save
         self.save_current_annotations()
+
+    def on_shape_changed(self, index):
+        """Xử lý khi đổi shape mode (Rectangle/Polygon)"""
+        if index == 0:  # Rectangle
+            self.image_viewer.set_draw_shape('rectangle')
+        else:  # Polygon (4 pts)
+            self.image_viewer.set_draw_shape('polygon')
 
     def update_bbox_count(self):
         """Cập nhật số lượng bbox"""

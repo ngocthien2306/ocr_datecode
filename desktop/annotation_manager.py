@@ -4,7 +4,7 @@ Quản lý lưu và load annotations
 """
 import json
 import os
-from image_viewer import BoundingBox
+from template_matcher import BoundingBox
 
 
 class AnnotationManager:

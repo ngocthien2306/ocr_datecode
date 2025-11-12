@@ -2,25 +2,88 @@ import cv2
 import numpy as np
 from PyQt5.QtCore import QRect
 
+# Try import SuperPoint + LightGlue (optional)
+try:
+    import torch
+    from lightglue import LightGlue, SuperPoint
+    from lightglue.utils import rbd
+    SUPERPOINT_AVAILABLE = True
+except ImportError:
+    SUPERPOINT_AVAILABLE = False
+    print("Warning: SuperPoint/LightGlue not available. Install with: pip install kornia git+https://github.com/cvg/LightGlue.git")
+
 
 class BoundingBox:
-    def __init__(self, rect, bbox_type):
-        self.rect = rect
+    def __init__(self, rect=None, bbox_type="text", shape="rectangle", points=None, bbox_id=None):
+        """
+        Args:
+            rect: QRect for rectangle shape (backward compatibility)
+            bbox_type: str - type of bbox (template, text, datecode, barcode)
+            shape: str - "rectangle" or "polygon"
+            points: list of [x,y] for polygon shape (4 points)
+            bbox_id: unique ID (for UI tracking)
+        """
         self.bbox_type = bbox_type
+        self.shape = shape  # "rectangle" or "polygon"
+        self.bbox_id = bbox_id or id(self)  # Unique ID for UI
+
+        if shape == "polygon" and points is not None:
+            self.points = points  # [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+            # Calculate bounding rect from polygon for compatibility
+            xs = [p[0] for p in points]
+            ys = [p[1] for p in points]
+            self.rect = QRect(int(min(xs)), int(min(ys)),
+                            int(max(xs) - min(xs)), int(max(ys) - min(ys)))
+        else:
+            self.points = None
+            self.rect = rect if rect else QRect()
+
+    # Backward compatibility
+    @property
+    def polygon(self):
+        """Alias for points (backward compatibility)"""
+        return self.points
 
     @staticmethod
     def from_dict(data):
-        rect = QRect(data['x'], data['y'], data['width'], data['height'])
-        return BoundingBox(rect, data['type'])
+        """Load from JSON format"""
+        shape = data.get('shape', 'rectangle')  # Default to rectangle for old data
+        bbox_type = data['type']
+
+        if shape == 'polygon':
+            points = data.get('points', None)
+            return BoundingBox(rect=None, bbox_type=bbox_type, shape='polygon', points=points)
+        else:
+            # Rectangle mode (old format or explicit rectangle)
+            rect = QRect(data['x'], data['y'], data['width'], data['height'])
+            return BoundingBox(rect=rect, bbox_type=bbox_type, shape='rectangle')
 
     def to_dict(self):
-        return {
-            'x': self.rect.x(),
-            'y': self.rect.y(),
-            'width': self.rect.width(),
-            'height': self.rect.height(),
-            'type': self.bbox_type
+        """Save to JSON format"""
+        result = {
+            'type': self.bbox_type,
+            'shape': self.shape
         }
+
+        if self.shape == 'polygon' and self.points is not None:
+            result['points'] = self.points
+        else:
+            # Save rectangle data
+            result['x'] = self.rect.x()
+            result['y'] = self.rect.y()
+            result['width'] = self.rect.width()
+            result['height'] = self.rect.height()
+
+        return result
+
+    def get_polygon_points(self):
+        """Get polygon points as numpy array (for drawing)"""
+        if self.shape == 'polygon' and self.points is not None:
+            return np.array(self.points, dtype=np.int32)
+        else:
+            # Convert rectangle to polygon
+            x, y, w, h = self.rect.x(), self.rect.y(), self.rect.width(), self.rect.height()
+            return np.array([[x, y], [x+w, y], [x+w, y+h], [x, y+h]], dtype=np.int32)
 
 
 class TemplateMatcher:
@@ -125,6 +188,68 @@ class TemplateMatcher:
 
         return (x, y), confidence, H
 
+    def match_superpoint_lightglue(self, target_gray):
+        """Match using SuperPoint + LightGlue (deep learning approach)"""
+        if not SUPERPOINT_AVAILABLE:
+            print("SuperPoint not available, falling back to SIFT")
+            return self.match_feature_based(target_gray)
+
+        try:
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+            # Initialize SuperPoint + LightGlue
+            extractor = SuperPoint(max_num_keypoints=2048).eval().to(device)
+            matcher = LightGlue(features='superpoint').eval().to(device)
+
+            # Convert to torch tensors (grayscale, normalized to [0, 1])
+            template_tensor = torch.from_numpy(self.template_region).float()[None, None] / 255.0
+            target_tensor = torch.from_numpy(target_gray).float()[None, None] / 255.0
+
+            template_tensor = template_tensor.to(device)
+            target_tensor = target_tensor.to(device)
+
+            # Extract features
+            feats0 = extractor.extract(template_tensor)
+            feats1 = extractor.extract(target_tensor)
+
+            # Match features
+            matches01 = matcher({'image0': feats0, 'image1': feats1})
+            feats0, feats1, matches01 = [rbd(x) for x in [feats0, feats1, matches01]]
+
+            # Get matched keypoints
+            kpts0, kpts1, matches = feats0['keypoints'], feats1['keypoints'], matches01['matches']
+            m_kpts0, m_kpts1 = kpts0[matches[..., 0]], kpts1[matches[..., 1]]
+
+            # Convert to numpy
+            src_pts = m_kpts0.cpu().numpy().reshape(-1, 1, 2)
+            dst_pts = m_kpts1.cpu().numpy().reshape(-1, 1, 2)
+
+            if len(src_pts) < 10:
+                return None, 0.0, None
+
+            # Compute homography
+            H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+
+            if H is None:
+                return None, 0.0, None
+
+            h, w = self.template_region.shape
+            corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
+            transformed = cv2.perspectiveTransform(corners, H)
+
+            x_coords = transformed[:, 0, 0]
+            y_coords = transformed[:, 0, 1]
+            x, y = int(x_coords.min()), int(y_coords.min())
+
+            confidence = np.sum(mask) / len(mask) if mask is not None else 0.0
+
+            return (x, y), confidence, H
+
+        except Exception as e:
+            print(f"SuperPoint matching failed: {e}")
+            print("Falling back to SIFT")
+            return self.match_feature_based(target_gray)
+
     def _transform_bbox_with_homography(self, bbox, H, template_offset_x, template_offset_y):
         x = bbox.rect.x() - template_offset_x
         y = bbox.rect.y() - template_offset_y
@@ -139,16 +264,10 @@ class TemplateMatcher:
         ]).reshape(-1, 1, 2)
 
         transformed = cv2.perspectiveTransform(corners, H)
+        polygon_points = transformed.reshape(-1, 2).tolist()
 
-        x_coords = transformed[:, 0, 0]
-        y_coords = transformed[:, 0, 1]
-
-        new_x = int(x_coords.min())
-        new_y = int(y_coords.min())
-        new_w = int(x_coords.max() - x_coords.min())
-        new_h = int(y_coords.max() - y_coords.min())
-
-        return QRect(new_x, new_y, new_w, new_h)
+        # Return as polygon shape
+        return BoundingBox(rect=None, bbox_type=bbox.bbox_type, shape='polygon', points=polygon_points)
 
     def match(self, target_image_path, method='auto', threshold=0.7):
         target_image = cv2.imread(target_image_path)
@@ -163,6 +282,8 @@ class TemplateMatcher:
             max_loc, confidence, _, scale = self.match_multi_scale(target_gray)
         elif method == 'feature':
             max_loc, confidence, homography_matrix = self.match_feature_based(target_gray)
+        elif method == 'superpoint':
+            max_loc, confidence, homography_matrix = self.match_superpoint_lightglue(target_gray)
         else:
             results = []
 
@@ -175,6 +296,12 @@ class TemplateMatcher:
             loc3, conf3, H3 = self.match_feature_based(target_gray)
             if loc3 is not None:
                 results.append(('feature', loc3, conf3, H3, 1.0))
+
+            # Try SuperPoint if available
+            if SUPERPOINT_AVAILABLE:
+                loc4, conf4, H4 = self.match_superpoint_lightglue(target_gray)
+                if loc4 is not None:
+                    results.append(('superpoint', loc4, conf4, H4, 1.0))
 
             results.sort(key=lambda x: x[2], reverse=True)
             method_name, max_loc, confidence, homography_matrix, scale = results[0]
@@ -190,24 +317,23 @@ class TemplateMatcher:
             template_y_orig = self.template_bbox.rect.y()
 
             for bbox in self.other_bboxes:
-                new_rect = self._transform_bbox_with_homography(
+                transformed_bbox = self._transform_bbox_with_homography(
                     bbox, homography_matrix, template_x_orig, template_y_orig
                 )
-                transformed_bboxes.append(BoundingBox(new_rect, bbox.bbox_type))
+                transformed_bboxes.append(transformed_bbox)
 
             h, w = self.template_region.shape
             template_corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
             template_transformed = cv2.perspectiveTransform(template_corners, homography_matrix)
+            template_polygon = template_transformed.reshape(-1, 2).tolist()
 
-            x_coords = template_transformed[:, 0, 0]
-            y_coords = template_transformed[:, 0, 1]
-            matched_template_rect = QRect(
-                int(x_coords.min()),
-                int(y_coords.min()),
-                int(x_coords.max() - x_coords.min()),
-                int(y_coords.max() - y_coords.min())
+            matched_template_bbox = BoundingBox(
+                rect=None,
+                bbox_type='template',
+                shape='polygon',
+                points=template_polygon
             )
-            transformed_bboxes.append(BoundingBox(matched_template_rect, 'template'))
+            transformed_bboxes.append(matched_template_bbox)
 
         else:
             template_x_orig = self.template_bbox.rect.x()
@@ -239,7 +365,7 @@ class TemplateMatcher:
         return transformed_bboxes, confidence, target_image
 
     @staticmethod
-    def draw_bboxes(image, bboxes):
+    def draw_bboxes(image, bboxes, draw_polygon=True):
         colors = {
             'template': (255, 80, 80),
             'text': (80, 255, 120),
@@ -251,16 +377,64 @@ class TemplateMatcher:
 
         for bbox in bboxes:
             color = colors.get(bbox.bbox_type, (255, 255, 255))
-            x = bbox.rect.x()
-            y = bbox.rect.y()
-            w = bbox.rect.width()
-            h = bbox.rect.height()
 
-            cv2.rectangle(result, (x, y), (x+w, y+h), color, 2)
-            cv2.putText(result, bbox.bbox_type, (x+5, y+20),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            if bbox.shape == 'polygon' and bbox.points is not None and draw_polygon:
+                points = np.array(bbox.points, dtype=np.int32)
+                cv2.polylines(result, [points], True, color, 2)
+
+                # Draw corner keypoints with different colors
+                cv2.circle(result, tuple(points[0]), 5, (0, 255, 0), -1)  # Green
+                cv2.circle(result, tuple(points[1]), 5, (255, 0, 0), -1)  # Blue
+                cv2.circle(result, tuple(points[2]), 5, (0, 0, 255), -1)  # Red
+                cv2.circle(result, tuple(points[3]), 5, (255, 255, 0), -1)  # Yellow
+
+                center_x = int(np.mean(points[:, 0]))
+                center_y = int(np.mean(points[:, 1]))
+                cv2.putText(result, bbox.bbox_type, (center_x - 30, center_y),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            else:
+                # Draw rectangle
+                x = bbox.rect.x()
+                y = bbox.rect.y()
+                w = bbox.rect.width()
+                h = bbox.rect.height()
+
+                cv2.rectangle(result, (x, y), (x+w, y+h), color, 2)
+                cv2.putText(result, bbox.bbox_type, (x+5, y+20),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
         return result
+
+    @staticmethod
+    def crop_region_with_perspective(image, bbox):
+        if bbox.shape == 'rectangle' or bbox.points is None:
+            # Simple rectangular crop
+            x, y, w, h = bbox.rect.x(), bbox.rect.y(), bbox.rect.width(), bbox.rect.height()
+            return image[y:y+h, x:x+w]
+
+        # Polygon crop with perspective correction
+        src_points = np.array(bbox.points, dtype=np.float32)
+
+        width = int(max(
+            np.linalg.norm(src_points[0] - src_points[1]),
+            np.linalg.norm(src_points[2] - src_points[3])
+        ))
+        height = int(max(
+            np.linalg.norm(src_points[1] - src_points[2]),
+            np.linalg.norm(src_points[3] - src_points[0])
+        ))
+
+        dst_points = np.array([
+            [0, 0],
+            [width - 1, 0],
+            [width - 1, height - 1],
+            [0, height - 1]
+        ], dtype=np.float32)
+
+        M = cv2.getPerspectiveTransform(src_points, dst_points)
+        warped = cv2.warpPerspective(image, M, (width, height))
+
+        return warped
 
     def visualize_matching(self, target_image_path):
         target_image = cv2.imread(target_image_path)

@@ -4,32 +4,9 @@ Widget để hiển thị ảnh và vẽ bounding boxes với khả năng di chu
 """
 from PyQt5.QtWidgets import QLabel, QMessageBox
 from PyQt5.QtCore import Qt, QRect, QPoint, pyqtSignal
-from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QFont
+from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QFont, QPolygon
 from type_dialog import TypeDialog
-
-
-class BoundingBox:
-    """Class đại diện cho một bounding box"""
-    def __init__(self, rect, bbox_type="template", bbox_id=None):
-        self.rect = rect  # QRect
-        self.bbox_type = bbox_type  # template, text, datecode, barcode
-        self.bbox_id = bbox_id or id(self)  # Unique ID
-
-    def to_dict(self):
-        """Chuyển đổi sang dictionary để lưu"""
-        return {
-            'x': self.rect.x(),
-            'y': self.rect.y(),
-            'width': self.rect.width(),
-            'height': self.rect.height(),
-            'type': self.bbox_type
-        }
-
-    @staticmethod
-    def from_dict(data):
-        """Tạo BoundingBox từ dictionary"""
-        rect = QRect(data['x'], data['y'], data['width'], data['height'])
-        return BoundingBox(rect, data['type'])
+from template_matcher import BoundingBox
 
 
 class ImageViewer(QLabel):
@@ -80,10 +57,18 @@ class ImageViewer(QLabel):
         self.drag_start_pos = None
         self.drag_start_rect = None
 
+        # Polygon editing state
+        self.editing_polygon_point = False
+        self.polygon_point_index = None  # Index của điểm đang kéo (0-3)
+
         # Zoom state
         self.zoom_factor = 1.0
         self.min_zoom = 0.1
         self.max_zoom = 5.0
+
+        # Drawing shape
+        self.draw_shape = 'rectangle'  # 'rectangle' or 'polygon'
+        self.polygon_points = []  # For polygon drawing (4 points)
 
     def set_image(self, image_path):
         """Load và hiển thị ảnh"""
@@ -139,73 +124,143 @@ class ImageViewer(QLabel):
             painter.setPen(pen)
             painter.drawRect(self.current_rect)
 
+        # Vẽ polygon points đang được vẽ
+        if len(self.polygon_points) > 0:
+            # Convert original coords to scaled coords
+            scaled_polygon_points = []
+            for pt in self.polygon_points:
+                scaled_x = int(pt[0] * scale_x)
+                scaled_y = int(pt[1] * scale_y)
+                scaled_polygon_points.append(QPoint(scaled_x, scaled_y))
+
+            # Vẽ các điểm đã click
+            painter.setBrush(QBrush(QColor(0, 255, 0)))
+            painter.setPen(QPen(QColor(255, 255, 255), 2))
+            for i, pt in enumerate(scaled_polygon_points):
+                painter.drawEllipse(pt, 5, 5)
+                # Vẽ số thứ tự
+                painter.drawText(pt + QPoint(8, 5), str(i + 1))
+
+            # Vẽ đường nối giữa các điểm
+            if len(scaled_polygon_points) > 1:
+                pen = QPen(QColor(0, 255, 0), 2, Qt.DashLine)
+                painter.setPen(pen)
+                for i in range(len(scaled_polygon_points) - 1):
+                    painter.drawLine(scaled_polygon_points[i], scaled_polygon_points[i + 1])
+
+            # Vẽ đường nối điểm cuối với điểm đầu nếu đã có ít nhất 3 điểm
+            if len(scaled_polygon_points) >= 3:
+                pen = QPen(QColor(0, 255, 0), 2, Qt.DotLine)
+                painter.setPen(pen)
+                painter.drawLine(scaled_polygon_points[-1], scaled_polygon_points[0])
+
         painter.end()
         self.setPixmap(pixmap_with_boxes)
 
     def draw_bbox(self, painter, bbox, scale_x, scale_y, is_selected):
-        """Vẽ một bounding box"""
-        # Scale rectangle
-        scaled_rect = QRect(
-            int(bbox.rect.x() * scale_x),
-            int(bbox.rect.y() * scale_y),
-            int(bbox.rect.width() * scale_x),
-            int(bbox.rect.height() * scale_y)
-        )
-
-        # Giới hạn trong pixmap bounds
+        """Vẽ một bounding box (rectangle hoặc polygon)"""
         pixmap_rect = QRect(0, 0, self.scaled_pixmap.width(), self.scaled_pixmap.height())
-        scaled_rect = scaled_rect.intersected(pixmap_rect)
-
-        # Chọn màu theo type
         color = self.BBOX_COLORS.get(bbox.bbox_type, QColor(255, 255, 255))
 
-        if is_selected:
-            # Vẽ bbox được chọn với hiệu ứng nổi bật
-            pen = QPen(color, 3)
-            painter.setPen(pen)
-            painter.drawRect(scaled_rect)
+        if bbox.shape == 'polygon' and bbox.points is not None:
+            # Vẽ polygon
+            scaled_points = []
+            for pt in bbox.points:
+                scaled_x = int(pt[0] * scale_x)
+                scaled_y = int(pt[1] * scale_y)
+                scaled_points.append(QPoint(scaled_x, scaled_y))
 
-            # Vẽ các handle để resize
-            self.draw_handles(painter, scaled_rect, color)
+            polygon = QPolygon(scaled_points)
 
-            # Vẽ label với background
-            font = QFont()
-            font.setBold(True)
-            painter.setFont(font)
+            if is_selected:
+                pen = QPen(color, 3)
+                painter.setPen(pen)
+                painter.drawPolygon(polygon)
 
-            label_text = f"{bbox.bbox_type}"
-            metrics = painter.fontMetrics()
-            label_rect = metrics.boundingRect(label_text)
-            label_rect.moveTopLeft(scaled_rect.topLeft() + QPoint(0, -label_rect.height() - 2))
-            label_rect.adjust(-4, -2, 4, 2)
+                # Vẽ keypoints tại 4 góc với handles lớn hơn để dễ kéo
+                corner_colors = [
+                    QColor(0, 255, 0),    # Green
+                    QColor(255, 0, 0),    # Blue
+                    QColor(0, 0, 255),    # Red
+                    QColor(255, 255, 0)   # Yellow
+                ]
+                for i, pt in enumerate(scaled_points):
+                    painter.setBrush(QBrush(corner_colors[i]))
+                    painter.setPen(QPen(QColor(255, 255, 255), 2))
+                    painter.drawEllipse(pt, 7, 7)  # Lớn hơn để dễ click
+                    # Vẽ số thứ tự
+                    painter.setPen(QPen(QColor(255, 255, 255)))
+                    painter.drawText(pt + QPoint(10, 5), str(i + 1))
+            else:
+                pen = QPen(color, 2)
+                painter.setPen(pen)
+                painter.drawPolygon(polygon)
 
-            # Đảm bảo label nằm trong pixmap
-            if label_rect.top() < 0:
-                label_rect.moveTop(scaled_rect.top() + 2)
-            if label_rect.left() < 0:
-                label_rect.moveLeft(2)
-            if label_rect.right() > pixmap_rect.right():
-                label_rect.moveRight(pixmap_rect.right() - 2)
-
-            painter.fillRect(label_rect, color)
-            painter.setPen(QPen(QColor(0, 0, 0)))
-            painter.drawText(label_rect, Qt.AlignCenter, label_text)
-        else:
-            # Vẽ bbox thường
-            pen = QPen(color, 2)
-            painter.setPen(pen)
-            painter.drawRect(scaled_rect)
-
-            # Vẽ label nhỏ
-            label_pos = scaled_rect.topLeft() + QPoint(5, 15)
-            # Giới hạn label trong pixmap
-            if label_pos.x() + 50 > pixmap_rect.right():
-                label_pos.setX(pixmap_rect.right() - 50)
-            if label_pos.y() > pixmap_rect.bottom():
-                label_pos.setY(pixmap_rect.bottom() - 5)
-
+            # Vẽ label
+            center_x = sum(pt.x() for pt in scaled_points) // len(scaled_points)
+            center_y = sum(pt.y() for pt in scaled_points) // len(scaled_points)
             painter.setPen(QPen(QColor(255, 255, 255)))
-            painter.drawText(label_pos, bbox.bbox_type)
+            painter.drawText(QPoint(center_x - 30, center_y), bbox.bbox_type)
+
+        else:
+            # Vẽ rectangle (chế độ cũ)
+            scaled_rect = QRect(
+                int(bbox.rect.x() * scale_x),
+                int(bbox.rect.y() * scale_y),
+                int(bbox.rect.width() * scale_x),
+                int(bbox.rect.height() * scale_y)
+            )
+
+            # Giới hạn trong pixmap bounds
+            scaled_rect = scaled_rect.intersected(pixmap_rect)
+
+            if is_selected:
+                # Vẽ bbox được chọn với hiệu ứng nổi bật
+                pen = QPen(color, 3)
+                painter.setPen(pen)
+                painter.drawRect(scaled_rect)
+
+                # Vẽ các handle để resize
+                self.draw_handles(painter, scaled_rect, color)
+
+                # Vẽ label với background
+                font = QFont()
+                font.setBold(True)
+                painter.setFont(font)
+
+                label_text = f"{bbox.bbox_type}"
+                metrics = painter.fontMetrics()
+                label_rect = metrics.boundingRect(label_text)
+                label_rect.moveTopLeft(scaled_rect.topLeft() + QPoint(0, -label_rect.height() - 2))
+                label_rect.adjust(-4, -2, 4, 2)
+
+                # Đảm bảo label nằm trong pixmap
+                if label_rect.top() < 0:
+                    label_rect.moveTop(scaled_rect.top() + 2)
+                if label_rect.left() < 0:
+                    label_rect.moveLeft(2)
+                if label_rect.right() > pixmap_rect.right():
+                    label_rect.moveRight(pixmap_rect.right() - 2)
+
+                painter.fillRect(label_rect, color)
+                painter.setPen(QPen(QColor(0, 0, 0)))
+                painter.drawText(label_rect, Qt.AlignCenter, label_text)
+            else:
+                # Vẽ bbox thường
+                pen = QPen(color, 2)
+                painter.setPen(pen)
+                painter.drawRect(scaled_rect)
+
+                # Vẽ label nhỏ
+                label_pos = scaled_rect.topLeft() + QPoint(5, 15)
+                # Giới hạn label trong pixmap
+                if label_pos.x() + 50 > pixmap_rect.right():
+                    label_pos.setX(pixmap_rect.right() - 50)
+                if label_pos.y() > pixmap_rect.bottom():
+                    label_pos.setY(pixmap_rect.bottom() - 5)
+
+                painter.setPen(QPen(QColor(255, 255, 255)))
+                painter.drawText(label_pos, bbox.bbox_type)
 
     def draw_handles(self, painter, rect, color):
         """Vẽ các handle để resize"""
@@ -238,9 +293,16 @@ class ImageViewer(QLabel):
         if mode == self.MODE_DRAW:
             self.setCursor(Qt.CrossCursor)
             self.selected_bbox = None
+            self.polygon_points = []  # Reset polygon points
         else:
             self.setCursor(Qt.ArrowCursor)
+            self.polygon_points = []
         self.update_display()
+
+    def set_draw_shape(self, shape):
+        """Đặt shape để vẽ ('rectangle' or 'polygon')"""
+        self.draw_shape = shape
+        self.polygon_points = []  # Reset polygon points when changing shape
 
     def mousePressEvent(self, event):
         """Xử lý khi nhấn chuột"""
@@ -253,10 +315,40 @@ class ImageViewer(QLabel):
 
         if event.button() == Qt.LeftButton:
             if self.mode == self.MODE_DRAW:
-                # Chế độ vẽ bbox mới
-                self.drawing = True
-                self.start_point = pixmap_pos
-                self.current_rect = QRect(pixmap_pos, pixmap_pos)
+                if self.draw_shape == 'rectangle':
+                    # Chế độ vẽ rectangle
+                    self.drawing = True
+                    self.start_point = pixmap_pos
+                    self.current_rect = QRect(pixmap_pos, pixmap_pos)
+                elif self.draw_shape == 'polygon':
+                    # Chế độ vẽ polygon (4 điểm)
+                    # Convert pixmap coords to original image coords
+                    scale_x = self.original_pixmap.width() / self.scaled_pixmap.width()
+                    scale_y = self.original_pixmap.height() / self.scaled_pixmap.height()
+                    original_x = int(pixmap_pos.x() * scale_x)
+                    original_y = int(pixmap_pos.y() * scale_y)
+
+                    self.polygon_points.append([original_x, original_y])
+
+                    # Nếu đã đủ 4 điểm, hiển thị dialog để chọn type
+                    if len(self.polygon_points) == 4:
+                        dialog = TypeDialog(self)
+                        if dialog.exec_():
+                            bbox_type = dialog.get_selected_type()
+                            bbox = BoundingBox(
+                                rect=None,
+                                bbox_type=bbox_type,
+                                shape='polygon',
+                                points=self.polygon_points.copy()
+                            )
+                            self.bboxes.append(bbox)
+                            self.bboxCreated.emit()
+                            self.bboxesChanged.emit()
+
+                        # Reset polygon points
+                        self.polygon_points = []
+
+                    self.update_display()
 
             elif self.mode == self.MODE_SELECT:
                 # Chế độ select/move/resize
@@ -265,23 +357,42 @@ class ImageViewer(QLabel):
 
                 # Kiểm tra xem có click vào handle không (nếu có bbox được chọn)
                 if self.selected_bbox:
-                    scaled_rect = self.get_scaled_rect(self.selected_bbox.rect, scale_x, scale_y)
-                    handles = self.get_resize_handles(scaled_rect)
+                    if self.selected_bbox.shape == 'polygon' and self.selected_bbox.points is not None:
+                        # Polygon editing: check click vào keypoint
+                        scaled_points = []
+                        for pt in self.selected_bbox.points:
+                            scaled_x = int(pt[0] * scale_x)
+                            scaled_y = int(pt[1] * scale_y)
+                            scaled_points.append(QPoint(scaled_x, scaled_y))
 
-                    for handle_name, handle_rect in handles.items():
-                        if handle_rect.contains(pixmap_pos):
-                            self.resizing = True
-                            self.resize_handle = handle_name
+                        # Kiểm tra click vào điểm nào
+                        for i, pt in enumerate(scaled_points):
+                            distance = (pixmap_pos - pt).manhattanLength()
+                            if distance <= 10:  # Trong vòng 10px
+                                self.editing_polygon_point = True
+                                self.polygon_point_index = i
+                                self.drag_start_pos = pixmap_pos
+                                return
+
+                    elif self.selected_bbox.shape == 'rectangle':
+                        # Rectangle editing: resize/move
+                        scaled_rect = self.get_scaled_rect(self.selected_bbox.rect, scale_x, scale_y)
+                        handles = self.get_resize_handles(scaled_rect)
+
+                        for handle_name, handle_rect in handles.items():
+                            if handle_rect.contains(pixmap_pos):
+                                self.resizing = True
+                                self.resize_handle = handle_name
+                                self.drag_start_pos = pixmap_pos
+                                self.drag_start_rect = QRect(self.selected_bbox.rect)
+                                return
+
+                        # Kiểm tra click vào trong bbox để di chuyển
+                        if scaled_rect.contains(pixmap_pos):
+                            self.moving = True
                             self.drag_start_pos = pixmap_pos
                             self.drag_start_rect = QRect(self.selected_bbox.rect)
                             return
-
-                    # Kiểm tra click vào trong bbox để di chuyển
-                    if scaled_rect.contains(pixmap_pos):
-                        self.moving = True
-                        self.drag_start_pos = pixmap_pos
-                        self.drag_start_rect = QRect(self.selected_bbox.rect)
-                        return
 
                 # Kiểm tra click vào bbox nào
                 clicked_bbox = self.get_bbox_at_position(pixmap_pos, scale_x, scale_y)
@@ -303,6 +414,33 @@ class ImageViewer(QLabel):
         if self.drawing:
             # Vẽ bbox mới
             self.current_rect = QRect(self.start_point, pixmap_pos).normalized()
+            self.update_display()
+
+        elif self.editing_polygon_point and self.selected_bbox:
+            # Kéo polygon point
+            scale_x = self.original_pixmap.width() / self.scaled_pixmap.width()
+            scale_y = self.original_pixmap.height() / self.scaled_pixmap.height()
+
+            # Convert pixmap coords to original coords
+            original_x = int(pixmap_pos.x() * scale_x)
+            original_y = int(pixmap_pos.y() * scale_y)
+
+            # Giới hạn trong ảnh
+            original_x = max(0, min(original_x, self.original_pixmap.width()))
+            original_y = max(0, min(original_y, self.original_pixmap.height()))
+
+            # Cập nhật điểm
+            self.selected_bbox.points[self.polygon_point_index] = [original_x, original_y]
+
+            # Cập nhật bounding rect
+            xs = [p[0] for p in self.selected_bbox.points]
+            ys = [p[1] for p in self.selected_bbox.points]
+            from PyQt5.QtCore import QRect
+            self.selected_bbox.rect = QRect(
+                int(min(xs)), int(min(ys)),
+                int(max(xs) - min(xs)), int(max(ys) - min(ys))
+            )
+
             self.update_display()
 
         elif self.moving and self.selected_bbox:
@@ -420,8 +558,8 @@ class ImageViewer(QLabel):
                         int(self.current_rect.height() * scale_y)
                     )
 
-                    # Tạo bbox mới
-                    bbox = BoundingBox(original_rect, bbox_type)
+                    # Tạo bbox mới (rectangle mode)
+                    bbox = BoundingBox(rect=original_rect, bbox_type=bbox_type, shape='rectangle')
                     self.bboxes.append(bbox)
 
                     # Emit signals
@@ -431,10 +569,12 @@ class ImageViewer(QLabel):
             self.current_rect = None
             self.update_display()
 
-        elif self.moving or self.resizing:
+        elif self.moving or self.resizing or self.editing_polygon_point:
             self.moving = False
             self.resizing = False
+            self.editing_polygon_point = False
             self.resize_handle = None
+            self.polygon_point_index = None
             self.drag_start_pos = None
             self.drag_start_rect = None
             self.bboxesChanged.emit()
@@ -455,9 +595,21 @@ class ImageViewer(QLabel):
         """Lấy bbox tại vị trí cho trước (vị trí trong scaled pixmap)"""
         # Duyệt ngược để lấy bbox trên cùng
         for bbox in reversed(self.bboxes):
-            scaled_rect = self.get_scaled_rect(bbox.rect, scale_x, scale_y)
-            if scaled_rect.contains(pos):
-                return bbox
+            if bbox.shape == 'polygon' and bbox.points is not None:
+                # Kiểm tra point in polygon
+                scaled_points = []
+                for pt in bbox.points:
+                    scaled_x = int(pt[0] * scale_x)
+                    scaled_y = int(pt[1] * scale_y)
+                    scaled_points.append(QPoint(scaled_x, scaled_y))
+                polygon = QPolygon(scaled_points)
+                if polygon.containsPoint(pos, Qt.OddEvenFill):
+                    return bbox
+            else:
+                # Rectangle bbox
+                scaled_rect = self.get_scaled_rect(bbox.rect, scale_x, scale_y)
+                if scaled_rect.contains(pos):
+                    return bbox
         return None
 
     def get_pixmap_position(self, widget_pos):

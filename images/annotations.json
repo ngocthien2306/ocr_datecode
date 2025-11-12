@@ -2,25 +2,36 @@
   "_template_image": "/Users/ngocthien.ai/Source/Projects/ocr_datecode/images/3.jpg",
   "/Users/ngocthien.ai/Source/Projects/ocr_datecode/images/3.jpg": [
     {
-      "x": 1198,
-      "y": 1015,
-      "width": 104,
-      "height": 102,
-      "type": "template"
+      "type": "template",
+      "shape": "rectangle",
+      "x": 1209,
+      "y": 1016,
+      "width": 82,
+      "height": 95
     },
     {
-      "x": 1175,
-      "y": 1268,
-      "width": 338,
-      "height": 64,
-      "type": "datecode"
+      "type": "datecode",
+      "shape": "rectangle",
+      "x": 1179,
+      "y": 1270,
+      "width": 331,
+      "height": 60
     },
     {
-      "x": 1037,
-      "y": 1321,
-      "width": 397,
-      "height": 62,
-      "type": "text"
+      "type": "barcode",
+      "shape": "rectangle",
+      "x": 1010,
+      "y": 1108,
+      "width": 556,
+      "height": 137
+    },
+    {
+      "type": "text",
+      "shape": "rectangle",
+      "x": 1039,
+      "y": 1323,
+      "width": 396,
+      "height": 66
     }
   ]
 }
