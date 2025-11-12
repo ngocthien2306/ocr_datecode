@@ -44,10 +44,10 @@ def main():
             print(f"  Found {len(bboxes)} bboxes\n")
 
             result_image = matcher.draw_bboxes(target_image, bboxes)
-            cv2.imwrite(f'result_{method}.jpg', result_image)
+            cv2.imwrite(f'results/result_{method}.jpg', result_image)
 
     heatmap_vis = matcher.visualize_matching(target_image_path)
-    cv2.imwrite('heatmap_visualization.jpg', heatmap_vis)
+    cv2.imwrite('results/heatmap_visualization.jpg', heatmap_vis)
 
     cv2.imshow('Template Region', matcher.template_region)
     cv2.imshow('Heatmap Visualization', heatmap_vis)
