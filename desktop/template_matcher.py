@@ -250,7 +250,91 @@ class TemplateMatcher:
             print("Falling back to SIFT")
             return self.match_feature_based(target_gray)
 
-    def _transform_bbox_with_homography(self, bbox, H, template_offset_x, template_offset_y):
+    def _is_homography_near_similarity(self, H, threshold_angle=3, threshold_scale=0.1, debug=False):
+        """
+        Kiểm tra xem homography có gần với similarity transform không
+        (chỉ có rotation + scale + translation, không có perspective/shear)
+
+        Args:
+            H: 3x3 homography matrix
+            threshold_angle: Góc nghiêng tối đa (degrees) để coi là "thẳng"
+            threshold_scale: Scale difference tối đa để coi là "uniform"
+            debug: In ra thông tin debug
+
+        Returns:
+            bool: True nếu gần similarity (không cần polygon)
+        """
+        # Normalize H
+        H = H / H[2, 2]
+
+        a = H[0, 0]
+        b = H[0, 1]
+        c = H[1, 0]
+        d = H[1, 1]
+
+        # Check 1: Perspective components (should be near zero)
+        perspective_h20 = abs(H[2, 0])
+        perspective_h21 = abs(H[2, 1])
+
+        # Nới lỏng threshold - giá trị < 0.001 thường là noise/numerical error
+        if perspective_h20 > 0.001 or perspective_h21 > 0.001:
+            if debug:
+                print(f"  ✗ Perspective detected: h20={perspective_h20:.6f}, h21={perspective_h21:.6f}")
+            return False
+        elif debug:
+            print(f"  ✓ Perspective negligible: h20={perspective_h20:.6f}, h21={perspective_h21:.6f}")
+
+        # Check 2: Compute scales
+        scale_x = np.sqrt(a**2 + c**2)
+        scale_y = np.sqrt(b**2 + d**2)
+
+        scale_diff = abs(scale_x - scale_y) / max(scale_x, scale_y)
+        if scale_diff > threshold_scale:
+            if debug:
+                print(f"  ✗ Non-uniform scale: sx={scale_x:.3f}, sy={scale_y:.3f}, diff={scale_diff:.3f}")
+            return False
+        elif debug:
+            print(f"  ✓ Scale uniform: sx={scale_x:.3f}, sy={scale_y:.3f}, diff={scale_diff:.3f}")
+
+        # Check 3: Compute rotation angle
+        angle = np.arctan2(c, a) * 180 / np.pi
+
+        if abs(angle) > threshold_angle:
+            if debug:
+                print(f"  ✗ Rotation too large: {angle:.2f}°")
+            return False
+        elif debug:
+            print(f"  ✓ Rotation acceptable: {angle:.2f}°")
+
+        # Check 4: Check for shear/skew
+        # For similarity: a*d - b*c should equal scale_x * scale_y (no shear)
+        det = a * d - b * c
+        expected_det = scale_x * scale_y
+        det_diff = abs(det - expected_det) / expected_det if expected_det != 0 else 1
+
+        if det_diff > 0.1:
+            if debug:
+                print(f"  ✗ Shear/skew detected: det={det:.3f}, expected={expected_det:.3f}, diff={det_diff:.3f}")
+            return False
+        elif debug:
+            print(f"  ✓ No shear: det={det:.3f}, expected={expected_det:.3f}, diff={det_diff:.3f}")
+
+        # Check 5: Orthogonality check (for similarity, rotation matrix should be orthogonal)
+        # a*b + c*d should be near 0
+        dot_product = abs(a * b + c * d)
+        if dot_product > 0.01:
+            if debug:
+                print(f"  ✗ Non-orthogonal: dot={dot_product:.6f}")
+            return False
+        elif debug:
+            print(f"  ✓ Orthogonal: dot={dot_product:.6f}")
+
+        if debug:
+            print(f"  ✅ DECISION: Use RECTANGLE (near similarity transform)")
+
+        return True
+
+    def _transform_bbox_with_homography(self, bbox, H, template_offset_x, template_offset_y, debug=False):
         x = bbox.rect.x() - template_offset_x
         y = bbox.rect.y() - template_offset_y
         w = bbox.rect.width()
@@ -266,10 +350,29 @@ class TemplateMatcher:
         transformed = cv2.perspectiveTransform(corners, H)
         polygon_points = transformed.reshape(-1, 2).tolist()
 
-        # Return as polygon shape
-        return BoundingBox(rect=None, bbox_type=bbox.bbox_type, shape='polygon', points=polygon_points)
+        # Check if homography is near similarity (no significant perspective)
+        is_near_similarity = self._is_homography_near_similarity(H, debug=debug)
 
-    def match(self, target_image_path, method='auto', threshold=0.7):
+        if is_near_similarity:
+            # Use rectangle instead of polygon
+            x_coords = [p[0] for p in polygon_points]
+            y_coords = [p[1] for p in polygon_points]
+            new_rect = QRect(
+                int(min(x_coords)),
+                int(min(y_coords)),
+                int(max(x_coords) - min(x_coords)),
+                int(max(y_coords) - min(y_coords))
+            )
+            if debug:
+                print(f"  → Using RECTANGLE for {bbox.bbox_type}")
+            return BoundingBox(rect=new_rect, bbox_type=bbox.bbox_type, shape='rectangle')
+        else:
+            # Use polygon for perspective distortion
+            if debug:
+                print(f"  → Using POLYGON for {bbox.bbox_type}")
+            return BoundingBox(rect=None, bbox_type=bbox.bbox_type, shape='polygon', points=polygon_points)
+
+    def match(self, target_image_path, method='auto', threshold=0.7, debug=False):
         target_image = cv2.imread(target_image_path)
         target_gray = cv2.cvtColor(target_image, cv2.COLOR_BGR2GRAY)
 
@@ -316,9 +419,14 @@ class TemplateMatcher:
             template_x_orig = self.template_bbox.rect.x()
             template_y_orig = self.template_bbox.rect.y()
 
+            if debug:
+                print("\n🔍 Homography Transform Analysis:")
+
             for bbox in self.other_bboxes:
+                if debug:
+                    print(f"\nTransforming {bbox.bbox_type}:")
                 transformed_bbox = self._transform_bbox_with_homography(
-                    bbox, homography_matrix, template_x_orig, template_y_orig
+                    bbox, homography_matrix, template_x_orig, template_y_orig, debug=debug
                 )
                 transformed_bboxes.append(transformed_bbox)
 
@@ -327,12 +435,32 @@ class TemplateMatcher:
             template_transformed = cv2.perspectiveTransform(template_corners, homography_matrix)
             template_polygon = template_transformed.reshape(-1, 2).tolist()
 
-            matched_template_bbox = BoundingBox(
-                rect=None,
-                bbox_type='template',
-                shape='polygon',
-                points=template_polygon
-            )
+            # Check if homography is near similarity for template too
+            if debug:
+                print(f"\nTransforming template:")
+            if self._is_homography_near_similarity(homography_matrix, debug=debug):
+                # Use rectangle
+                x_coords = [p[0] for p in template_polygon]
+                y_coords = [p[1] for p in template_polygon]
+                matched_template_rect = QRect(
+                    int(min(x_coords)),
+                    int(min(y_coords)),
+                    int(max(x_coords) - min(x_coords)),
+                    int(max(y_coords) - min(y_coords))
+                )
+                matched_template_bbox = BoundingBox(
+                    rect=matched_template_rect,
+                    bbox_type='template',
+                    shape='rectangle'
+                )
+            else:
+                # Use polygon
+                matched_template_bbox = BoundingBox(
+                    rect=None,
+                    bbox_type='template',
+                    shape='polygon',
+                    points=template_polygon
+                )
             transformed_bboxes.append(matched_template_bbox)
 
         else:

@@ -14,7 +14,7 @@ def load_annotations(annotations_file):
 
 def main():
     annotations_file = '../images/annotations.json'
-    target_image_path = '../images/7.jpg'
+    target_image_path = '../images/1.jpg'
 
     template_image_path, template_bboxes = load_annotations(annotations_file)
     matcher = TemplateMatcher(template_image_path, template_bboxes)
@@ -22,7 +22,8 @@ def main():
     bboxes, confidence, target_image = matcher.match(
         target_image_path,
         method='feature',
-        threshold=0.3
+        threshold=0.3,
+        debug=True  # Enable debug mode
     )
 
     if bboxes is None:
