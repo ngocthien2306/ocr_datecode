@@ -186,6 +186,14 @@ class TemplateMatcher:
         target_gray = self._crop_target_if_needed(target_gray)
 
         sift = cv2.SIFT_create()
+        # sift = cv2.SIFT_create(
+        #     nfeatures=500,
+        #     nOctaveLayers=4,
+        #     contrastThreshold=0.03,
+        #     edgeThreshold=10,
+        #     sigma=1.4
+        # )
+
 
         kp1, des1 = sift.detectAndCompute(self.template_region, None)
         kp2, des2 = sift.detectAndCompute(target_gray, None)
@@ -201,6 +209,64 @@ class TemplateMatcher:
             if len(m_n) == 2:
                 m, n = m_n
                 if m.distance < 0.7 * n.distance:
+                    good_matches.append(m)
+
+        if len(good_matches) < 10:
+            return None, 0.0, None
+
+        src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+
+        H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+
+        if H is None:
+            return None, 0.0, None
+
+        h, w = self.template_region.shape
+        corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
+        transformed = cv2.perspectiveTransform(corners, H)
+
+        x_coords = transformed[:, 0, 0]
+        y_coords = transformed[:, 0, 1]
+        x, y = int(x_coords.min()), int(y_coords.min())
+
+        confidence = np.sum(mask) / len(mask) if mask is not None else 0.0
+
+        return (x, y), confidence, H
+
+    def match_orb(self, target_gray):
+        """Match using ORB (Oriented FAST and Rotated BRIEF) - fast and patent-free"""
+        target_gray = self._crop_target_if_needed(target_gray)
+
+        # Initialize ORB detector with optimized parameters
+        orb = cv2.ORB_create(
+            nfeatures=2000,  # Maximum number of features to detect
+            scaleFactor=1.2,  # Pyramid decimation ratio
+            nlevels=8,  # Number of pyramid levels
+            edgeThreshold=31,  # Size of border where features are not detected
+            firstLevel=0,  # Level of pyramid to put source image
+            WTA_K=2,  # Number of points that produce each element of oriented BRIEF descriptor
+            scoreType=cv2.ORB_HARRIS_SCORE,  # HARRIS_SCORE or FAST_SCORE
+            patchSize=31,  # Size of patch used by oriented BRIEF descriptor
+            fastThreshold=20  # Fast threshold
+        )
+
+        kp1, des1 = orb.detectAndCompute(self.template_region, None)
+        kp2, des2 = orb.detectAndCompute(target_gray, None)
+
+        if des1 is None or des2 is None or len(kp1) < 4 or len(kp2) < 4:
+            return None, 0.0, None
+
+        # Use BFMatcher with Hamming distance for ORB (binary descriptors)
+        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+        matches = bf.knnMatch(des1, des2, k=2)
+
+        # Apply Lowe's ratio test
+        good_matches = []
+        for m_n in matches:
+            if len(m_n) == 2:
+                m, n = m_n
+                if m.distance < 0.75 * n.distance:  # Slightly higher ratio for ORB
                     good_matches.append(m)
 
         if len(good_matches) < 10:
@@ -448,6 +514,8 @@ class TemplateMatcher:
             max_loc, confidence, _, scale = self.match_multi_scale(target_gray)
         elif method == 'feature':
             max_loc, confidence, homography_matrix = self.match_feature_based(target_gray)
+        elif method == 'orb':
+            max_loc, confidence, homography_matrix = self.match_orb(target_gray)
         elif method == 'superpoint':
             max_loc, confidence, homography_matrix = self.match_superpoint_lightglue(target_gray)
         else:
@@ -463,11 +531,16 @@ class TemplateMatcher:
             if loc3 is not None:
                 results.append(('feature', loc3, conf3, H3, 1.0))
 
+            # Try ORB (fast and patent-free)
+            loc4, conf4, H4 = self.match_orb(target_gray)
+            if loc4 is not None:
+                results.append(('orb', loc4, conf4, H4, 1.0))
+
             # Try SuperPoint if available
             if SUPERPOINT_AVAILABLE:
-                loc4, conf4, H4 = self.match_superpoint_lightglue(target_gray)
-                if loc4 is not None:
-                    results.append(('superpoint', loc4, conf4, H4, 1.0))
+                loc5, conf5, H5 = self.match_superpoint_lightglue(target_gray)
+                if loc5 is not None:
+                    results.append(('superpoint', loc5, conf5, H5, 1.0))
 
             results.sort(key=lambda x: x[2], reverse=True)
             method_name, max_loc, confidence, homography_matrix, scale = results[0]
