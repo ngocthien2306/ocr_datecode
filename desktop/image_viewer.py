@@ -435,7 +435,6 @@ class ImageViewer(QLabel):
             # Cập nhật bounding rect
             xs = [p[0] for p in self.selected_bbox.points]
             ys = [p[1] for p in self.selected_bbox.points]
-            from PyQt5.QtCore import QRect
             self.selected_bbox.rect = QRect(
                 int(min(xs)), int(min(ys)),
                 int(max(xs) - min(xs)), int(max(ys) - min(ys))

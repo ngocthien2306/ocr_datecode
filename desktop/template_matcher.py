@@ -335,17 +335,26 @@ class TemplateMatcher:
         return True
 
     def _transform_bbox_with_homography(self, bbox, H, template_offset_x, template_offset_y, debug=False):
-        x = bbox.rect.x() - template_offset_x
-        y = bbox.rect.y() - template_offset_y
-        w = bbox.rect.width()
-        h = bbox.rect.height()
+        # Get corners from either rectangle or polygon
+        if bbox.shape == 'polygon' and bbox.points is not None:
+            # Template có polygon → dùng polygon points
+            corners = np.float32([
+                [pt[0] - template_offset_x, pt[1] - template_offset_y]
+                for pt in bbox.points
+            ]).reshape(-1, 1, 2)
+        else:
+            # Template có rectangle → convert to corners
+            x = bbox.rect.x() - template_offset_x
+            y = bbox.rect.y() - template_offset_y
+            w = bbox.rect.width()
+            h = bbox.rect.height()
 
-        corners = np.float32([
-            [x, y],
-            [x + w, y],
-            [x + w, y + h],
-            [x, y + h]
-        ]).reshape(-1, 1, 2)
+            corners = np.float32([
+                [x, y],
+                [x + w, y],
+                [x + w, y + h],
+                [x, y + h]
+            ]).reshape(-1, 1, 2)
 
         transformed = cv2.perspectiveTransform(corners, H)
         polygon_points = transformed.reshape(-1, 2).tolist()

@@ -2,36 +2,114 @@
   "_template_image": "/Users/ngocthien.ai/Source/Projects/ocr_datecode/images/3.jpg",
   "/Users/ngocthien.ai/Source/Projects/ocr_datecode/images/3.jpg": [
     {
-      "type": "template",
-      "shape": "rectangle",
-      "x": 1209,
-      "y": 1016,
-      "width": 82,
-      "height": 95
-    },
-    {
-      "type": "datecode",
-      "shape": "rectangle",
-      "x": 1179,
-      "y": 1270,
-      "width": 331,
-      "height": 60
+      "type": "text",
+      "shape": "polygon",
+      "points": [
+        [
+          1093,
+          843
+        ],
+        [
+          1524,
+          858
+        ],
+        [
+          1521,
+          925
+        ],
+        [
+          1089,
+          912
+        ]
+      ]
     },
     {
       "type": "barcode",
-      "shape": "rectangle",
-      "x": 1010,
-      "y": 1108,
-      "width": 556,
-      "height": 137
+      "shape": "polygon",
+      "points": [
+        [
+          1009,
+          1104
+        ],
+        [
+          1578,
+          1117
+        ],
+        [
+          1569,
+          1256
+        ],
+        [
+          1006,
+          1243
+        ]
+      ]
     },
     {
       "type": "text",
-      "shape": "rectangle",
-      "x": 1039,
-      "y": 1323,
-      "width": 396,
-      "height": 66
+      "shape": "polygon",
+      "points": [
+        [
+          1185,
+          1268
+        ],
+        [
+          1508,
+          1276
+        ],
+        [
+          1502,
+          1333
+        ],
+        [
+          1178,
+          1324
+        ]
+      ]
+    },
+    {
+      "type": "text",
+      "shape": "polygon",
+      "points": [
+        [
+          1045,
+          1317
+        ],
+        [
+          1439,
+          1333
+        ],
+        [
+          1434,
+          1386
+        ],
+        [
+          1042,
+          1377
+        ]
+      ]
+    },
+    {
+      "type": "template",
+      "shape": "polygon",
+      "points": [
+        [
+          1214,
+          1022
+        ],
+        [
+          1291,
+          1025
+        ],
+        [
+          1287,
+          1108
+        ],
+        [
+          1208,
+          1106
+        ]
+      ]
     }
   ]
 }

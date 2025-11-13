@@ -23,7 +23,7 @@ def main():
         target_image_path,
         method='feature',
         threshold=0.3,
-        debug=True  # Enable debug mode
+        debug=True
     )
 
     if bboxes is None:
