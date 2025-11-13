@@ -19,7 +19,7 @@ except ImportError:
 def create_test_images(num_images=10):
     """Create test images with various widths"""
     images = []
-    widths = np.linspace(100, 600, num_images, dtype=int)
+    widths = np.linspace(320, 2000, num_images, dtype=int)
     
     for w in widths:
         # Create random grayscale image

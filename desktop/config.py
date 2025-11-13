@@ -14,6 +14,8 @@ MODEL_CONFIG = {
     'tensorrt': {
         'engine_path': '../languages/english/rec.engine',
         'dict_path': '../languages/english/dict.txt',
+        'min_width': 320,  # Must match minShapes in TensorRT engine
+        'max_width': 2000,  # Must match maxShapes in TensorRT engine
     },
     'onnx': {
         'model_path': '../languages/english/rec.onnx',

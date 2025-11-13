@@ -30,19 +30,23 @@ class HostDeviceMem:
 
 
 class TextRecognizerTensorRT:
-    def __init__(self, engine_path, dict_path):
+    def __init__(self, engine_path, dict_path, min_width=320, max_width=2000):
         """
         Initialize TensorRT-based text recognizer
         
         Args:
             engine_path: Path to rec.engine (TensorRT engine file)
             dict_path: Path to dict.txt (character dictionary)
+            min_width: Minimum width (must match minShapes in engine)
+            max_width: Maximum width (must match maxShapes in engine)
         """
         if not TENSORRT_AVAILABLE:
             raise ImportError("TensorRT is not available. Please install tensorrt and pycuda.")
         
         self.engine_path = engine_path
         self.dict_path = dict_path
+        self.min_width = min_width
+        self.max_width = max_width
         
         # Load character dictionary
         self.char_dict = self._load_dict(dict_path)
@@ -90,6 +94,7 @@ class TextRecognizerTensorRT:
         print(f"   Dictionary: {len(self.char_dict)} characters")
         print(f"   Input: {self.input_name} {self.input_shape}")
         print(f"   Output: {self.output_name} {self.output_shape}")
+        print(f"   Width range: {min_width} - {max_width}px")
     
     def _load_dict(self, dict_path):
         """Load character dictionary from file"""
@@ -151,11 +156,26 @@ class TextRecognizerTensorRT:
         ratio = target_height / h
         new_w = int(w * ratio)
         
-        # Ensure minimum width and within max bounds
-        new_w = max(new_w, 10)
-        new_w = min(new_w, 2000)  # Match maxShapes
+        # Clamp to min/max width bounds
+        # Pad if too small, resize if too large
+        original_w = new_w
+        new_w = max(new_w, self.min_width)
+        new_w = min(new_w, self.max_width)
         
-        resized = cv2.resize(gray, (new_w, target_height))
+        resized = cv2.resize(gray, (original_w, target_height))
+        
+        # Pad to min_width if necessary
+        if original_w < self.min_width:
+            pad_width = self.min_width - original_w
+            resized = cv2.copyMakeBorder(
+                resized, 
+                0, 0, 0, pad_width,  # top, bottom, left, right
+                cv2.BORDER_CONSTANT, 
+                value=0  # Pad with black
+            )
+        elif original_w > self.max_width:
+            # Resize to max_width if too large
+            resized = cv2.resize(resized, (self.max_width, target_height))
         
         # Normalize to [0, 1]
         normalized = resized.astype(np.float32) / 255.0
@@ -235,7 +255,18 @@ class TextRecognizerTensorRT:
         
         # Reshape output
         output_shape = self.context.get_binding_shape(1)
-        preds = outputs[0].host.reshape(output_shape)
+        
+        # Handle tuple output shape
+        if isinstance(output_shape, tuple):
+            output_shape = list(output_shape)
+        
+        # Validate output shape
+        try:
+            preds = outputs[0].host.reshape(output_shape)
+        except Exception as e:
+            print(f"Error reshaping output: {e}")
+            print(f"Output shape: {output_shape}, Host buffer size: {outputs[0].host.shape}")
+            raise
         
         # Decode
         text = self.decode_ctc(preds)
