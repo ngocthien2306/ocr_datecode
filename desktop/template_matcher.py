@@ -2,6 +2,17 @@ import cv2
 import numpy as np
 from PyQt5.QtCore import QRect
 
+# Check if OpenCV has CUDA support
+OPENCV_CUDA_AVAILABLE = False
+try:
+    if cv2.cuda.getCudaEnabledDeviceCount() > 0:
+        OPENCV_CUDA_AVAILABLE = True
+        print(f"✅ OpenCV CUDA available: {cv2.cuda.getCudaEnabledDeviceCount()} device(s)")
+    else:
+        print("⚠️  OpenCV CUDA not available. Using CPU for feature matching.")
+except:
+    print("⚠️  OpenCV CUDA not available. Using CPU for feature matching.")
+
 # Try import SuperPoint + LightGlue (optional)
 try:
     import torch
@@ -182,9 +193,24 @@ class TemplateMatcher:
 
         return best_match, best_score, None, best_scale
 
-    def match_feature_based(self, target_gray):
+    def match_feature_based(self, target_gray, use_cuda=True):
+        """
+        Match using SIFT features with optional CUDA acceleration
+        
+        Args:
+            target_gray: Target grayscale image
+            use_cuda: Use CUDA acceleration if available (default: True)
+        """
         target_gray = self._crop_target_if_needed(target_gray)
 
+        # Try CUDA-accelerated matching if available
+        if use_cuda and OPENCV_CUDA_AVAILABLE:
+            return self._match_feature_cuda(target_gray)
+        else:
+            return self._match_feature_cpu(target_gray)
+    
+    def _match_feature_cpu(self, target_gray):
+        """CPU-based SIFT matching (fallback)"""
         sift = cv2.SIFT_create()
         # sift = cv2.SIFT_create(
         #     nfeatures=500,
@@ -193,7 +219,6 @@ class TemplateMatcher:
         #     edgeThreshold=10,
         #     sigma=1.4
         # )
-
 
         kp1, des1 = sift.detectAndCompute(self.template_region, None)
         kp2, des2 = sift.detectAndCompute(target_gray, None)
@@ -233,11 +258,103 @@ class TemplateMatcher:
         confidence = np.sum(mask) / len(mask) if mask is not None else 0.0
 
         return (x, y), confidence, H
+    
+    def _match_feature_cuda(self, target_gray):
+        """CUDA-accelerated SIFT matching for Jetson AGX Orin"""
+        try:
+            # Upload images to GPU
+            gpu_template = cv2.cuda_GpuMat()
+            gpu_target = cv2.cuda_GpuMat()
+            gpu_template.upload(self.template_region)
+            gpu_target.upload(target_gray)
+            
+            # Create CUDA SIFT detector
+            # Note: SIFT is not available in CUDA, use ORB instead
+            # For SIFT, we'll use CPU detection but GPU matching
+            sift = cv2.SIFT_create(nfeatures=2000)
+            
+            # Detect keypoints on CPU (SIFT CUDA not available in standard OpenCV)
+            kp1, des1 = sift.detectAndCompute(self.template_region, None)
+            kp2, des2 = sift.detectAndCompute(target_gray, None)
+            
+            if des1 is None or des2 is None or len(kp1) < 4 or len(kp2) < 4:
+                return None, 0.0, None
+            
+            # Convert descriptors to float32 for CUDA matcher
+            des1 = des1.astype(np.float32)
+            des2 = des2.astype(np.float32)
+            
+            # Upload descriptors to GPU
+            gpu_des1 = cv2.cuda_GpuMat()
+            gpu_des2 = cv2.cuda_GpuMat()
+            gpu_des1.upload(des1)
+            gpu_des2.upload(des2)
+            
+            # Create CUDA BFMatcher
+            matcher = cv2.cuda.DescriptorMatcher_createBFMatcher(cv2.NORM_L2)
+            
+            # Match on GPU
+            matches = matcher.knnMatch(gpu_des1, gpu_des2, k=2)
+            
+            # Download matches to CPU
+            # matches is already in CPU format
+            
+            # Apply Lowe's ratio test
+            good_matches = []
+            for m_n in matches:
+                if len(m_n) == 2:
+                    m, n = m_n
+                    if m.distance < 0.7 * n.distance:
+                        good_matches.append(m)
+            
+            if len(good_matches) < 10:
+                return None, 0.0, None
+            
+            src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+            dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+            
+            # Homography computation on CPU (no CUDA version in standard OpenCV)
+            H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+            
+            if H is None:
+                return None, 0.0, None
+            
+            h, w = self.template_region.shape
+            corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
+            transformed = cv2.perspectiveTransform(corners, H)
+            
+            x_coords = transformed[:, 0, 0]
+            y_coords = transformed[:, 0, 1]
+            x, y = int(x_coords.min()), int(y_coords.min())
+            
+            confidence = np.sum(mask) / len(mask) if mask is not None else 0.0
+            
+            return (x, y), confidence, H
+            
+        except Exception as e:
+            # Fallback to CPU if CUDA fails
+            print(f"⚠️  CUDA matching failed: {e}")
+            print("   Falling back to CPU matching...")
+            return self._match_feature_cpu(target_gray)
 
-    def match_orb(self, target_gray):
-        """Match using ORB (Oriented FAST and Rotated BRIEF) - fast and patent-free"""
+    def match_orb(self, target_gray, use_cuda=True):
+        """
+        Match using ORB (Oriented FAST and Rotated BRIEF) with optional CUDA acceleration
+        
+        Args:
+            target_gray: Target grayscale image
+            use_cuda: Use CUDA acceleration if available (default: True)
+        """
         target_gray = self._crop_target_if_needed(target_gray)
 
+        # Try CUDA-accelerated matching if available
+        if use_cuda and OPENCV_CUDA_AVAILABLE:
+            return self._match_orb_cuda(target_gray)
+        else:
+            return self._match_orb_cpu(target_gray)
+    
+    def _match_orb_cpu(self, target_gray):
+        """CPU-based ORB matching (fallback)"""
         # Initialize ORB detector with optimized parameters
         orb = cv2.ORB_create(
             nfeatures=2000,  # Maximum number of features to detect
@@ -291,6 +408,94 @@ class TemplateMatcher:
         confidence = np.sum(mask) / len(mask) if mask is not None else 0.0
 
         return (x, y), confidence, H
+    
+    def _match_orb_cuda(self, target_gray):
+        """CUDA-accelerated ORB matching for Jetson AGX Orin (FASTEST)"""
+        try:
+            # Upload images to GPU
+            gpu_template = cv2.cuda_GpuMat()
+            gpu_target = cv2.cuda_GpuMat()
+            gpu_template.upload(self.template_region)
+            gpu_target.upload(target_gray)
+            
+            # Create CUDA ORB detector
+            orb = cv2.cuda.ORB_create(
+                nfeatures=2000,
+                scaleFactor=1.2,
+                nlevels=8,
+                edgeThreshold=31,
+                firstLevel=0,
+                WTA_K=2,
+                scoreType=cv2.ORB_HARRIS_SCORE,
+                patchSize=31,
+                fastThreshold=20,
+                blurForDescriptor=False  # Disable blur for speed
+            )
+            
+            # Detect and compute on GPU
+            gpu_kp1, gpu_des1 = orb.detectAndComputeAsync(gpu_template, None)
+            gpu_kp2, gpu_des2 = orb.detectAndComputeAsync(gpu_target, None)
+            
+            # Download keypoints
+            kp1 = orb.convert(gpu_kp1)
+            kp2 = orb.convert(gpu_kp2)
+            
+            # Download descriptors
+            des1 = gpu_des1.download()
+            des2 = gpu_des2.download()
+            
+            if des1 is None or des2 is None or len(kp1) < 4 or len(kp2) < 4:
+                return None, 0.0, None
+            
+            # Upload descriptors back to GPU for matching
+            gpu_des1 = cv2.cuda_GpuMat()
+            gpu_des2 = cv2.cuda_GpuMat()
+            gpu_des1.upload(des1)
+            gpu_des2.upload(des2)
+            
+            # Create CUDA BFMatcher with Hamming distance
+            matcher = cv2.cuda.DescriptorMatcher_createBFMatcher(cv2.NORM_HAMMING)
+            
+            # Match on GPU
+            matches = matcher.knnMatch(gpu_des1, gpu_des2, k=2)
+            
+            # Apply Lowe's ratio test
+            good_matches = []
+            for m_n in matches:
+                if len(m_n) == 2:
+                    m, n = m_n
+                    if m.distance < 0.75 * n.distance:
+                        good_matches.append(m)
+            
+            if len(good_matches) < 10:
+                return None, 0.0, None
+            
+            src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+            dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+            
+            # Homography computation on CPU
+            H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+            
+            if H is None:
+                return None, 0.0, None
+            
+            h, w = self.template_region.shape
+            corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
+            transformed = cv2.perspectiveTransform(corners, H)
+            
+            x_coords = transformed[:, 0, 0]
+            y_coords = transformed[:, 0, 1]
+            x, y = int(x_coords.min()), int(y_coords.min())
+            
+            confidence = np.sum(mask) / len(mask) if mask is not None else 0.0
+            
+            return (x, y), confidence, H
+            
+        except Exception as e:
+            # Fallback to CPU if CUDA fails
+            print(f"⚠️  CUDA ORB matching failed: {e}")
+            print("   Falling back to CPU ORB matching...")
+            return self._match_orb_cpu(target_gray)
 
     def match_superpoint_lightglue(self, target_gray):
         """Match using SuperPoint + LightGlue (deep learning approach)"""

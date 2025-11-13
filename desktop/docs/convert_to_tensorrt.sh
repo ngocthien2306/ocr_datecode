@@ -85,3 +85,6 @@ else
     echo "   Check the error messages above for details."
     exit 1
 fi
+
+
+# /usr/src/tensorrt/bin/trtexec --onnx=rec.onnx --saveEngine=rec_int8.engine --fp16 --workspace=4096 --minShapes=x:1x3x48x50 --optShapes=x:1x3x48x320 --maxShapes=x:1x3x48x2000 --verbose
