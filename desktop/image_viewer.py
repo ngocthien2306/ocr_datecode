@@ -22,7 +22,8 @@ class ImageViewer(QLabel):
         'template': QColor(255, 80, 80),      # Đỏ sáng
         'text': QColor(80, 255, 120),         # Xanh lá sáng
         'datecode': QColor(80, 150, 255),     # Xanh dương sáng
-        'barcode': QColor(255, 220, 80)       # Vàng sáng
+        'barcode': QColor(255, 220, 80),      # Vàng sáng
+        'crop_area': QColor(255, 100, 255)    # Tím/Magenta
     }
 
     # Kích thước handle để resize

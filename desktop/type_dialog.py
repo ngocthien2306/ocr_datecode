@@ -14,7 +14,8 @@ class TypeDialog(QDialog):
         ('template', 'Template', 'Template matching region'),
         ('text', 'Text', 'Text/OCR region'),
         ('datecode', 'Datecode', 'Date code region'),
-        ('barcode', 'Barcode', 'Barcode/QR code region')
+        ('barcode', 'Barcode', 'Barcode/QR code region'),
+        ('crop_area', 'Crop Area', 'ROI for faster matching (optional)')
     ]
 
     def __init__(self, parent=None):
@@ -81,9 +82,9 @@ class TypeDialog(QDialog):
 
     def keyPressEvent(self, event):
         """Xử lý phím tắt"""
-        # Phím 1-4 để chọn nhanh
+        # Phím 1-5 để chọn nhanh
         key = event.key()
-        if Qt.Key_1 <= key <= Qt.Key_4:
+        if Qt.Key_1 <= key <= Qt.Key_5:
             index = key - Qt.Key_1
             if index < len(self.BBOX_TYPES):
                 button = self.button_group.button(index)

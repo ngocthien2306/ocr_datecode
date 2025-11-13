@@ -34,7 +34,7 @@ def main():
     print(f"Found {len(bboxes)} bboxes\n")
 
     result_with_polygon = matcher.draw_bboxes(target_image, bboxes, draw_polygon=True)
-    cv2.imwrite('results/result_with_polygon.jpg', result_with_polygon)
+    cv2.imwrite('../results/result_with_polygon.jpg', result_with_polygon)
 
     for i, bbox in enumerate(bboxes):
         print(f"BBox {i+1}: {bbox.bbox_type}")

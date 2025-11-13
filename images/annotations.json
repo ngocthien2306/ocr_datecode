@@ -110,6 +110,14 @@
           1106
         ]
       ]
+    },
+    {
+      "type": "crop_area",
+      "shape": "rectangle",
+      "x": 571,
+      "y": 107,
+      "width": 1510,
+      "height": 1470
     }
   ]
 }

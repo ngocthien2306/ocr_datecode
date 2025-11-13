@@ -20,7 +20,8 @@ class BBoxListWidget(QWidget):
         'template': '#ff5050',
         'text': '#50ff78',
         'datecode': '#5096ff',
-        'barcode': '#ffdc50'
+        'barcode': '#ffdc50',
+        'crop_area': '#ff64ff'
     }
 
     # Icon cho từng loại

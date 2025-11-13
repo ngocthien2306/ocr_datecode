@@ -95,6 +95,11 @@ class TemplateMatcher:
         self.template_bbox = None
         self.template_region = None
         self.other_bboxes = []
+        self.crop_area_bbox = None  # NEW: crop_area for faster matching
+        self.crop_offset_x = 0  # NEW: offset after cropping
+        self.crop_offset_y = 0  # NEW: offset after cropping
+        self.template_x_in_cropped = 0  # Template x in cropped space
+        self.template_y_in_cropped = 0  # Template y in cropped space
 
         self._extract_template_data()
 
@@ -102,22 +107,53 @@ class TemplateMatcher:
         for bbox in self.template_bboxes:
             if bbox.bbox_type == 'template':
                 self.template_bbox = bbox
+            elif bbox.bbox_type == 'crop_area':
+                self.crop_area_bbox = bbox
             else:
                 self.other_bboxes.append(bbox)
 
+        # Apply crop_area if present
+        if self.crop_area_bbox:
+            x = self.crop_area_bbox.rect.x()
+            y = self.crop_area_bbox.rect.y()
+            w = self.crop_area_bbox.rect.width()
+            h = self.crop_area_bbox.rect.height()
+            self.template_gray = self.template_gray[y:y+h, x:x+w]
+            self.crop_offset_x = x
+            self.crop_offset_y = y
+
         if self.template_bbox:
-            x = self.template_bbox.rect.x()
-            y = self.template_bbox.rect.y()
+            # Adjust template bbox coordinates if cropped
+            x = self.template_bbox.rect.x() - self.crop_offset_x
+            y = self.template_bbox.rect.y() - self.crop_offset_y
             w = self.template_bbox.rect.width()
             h = self.template_bbox.rect.height()
             self.template_region = self.template_gray[y:y+h, x:x+w]
 
+            # Store template position in the potentially cropped space
+            # This is used for calculating relative positions of other bboxes
+            self.template_x_in_cropped = x
+            self.template_y_in_cropped = y
+
+    def _crop_target_if_needed(self, target_gray):
+        """Crop target image to crop_area if defined"""
+        if self.crop_area_bbox:
+            x = self.crop_area_bbox.rect.x()
+            y = self.crop_area_bbox.rect.y()
+            w = self.crop_area_bbox.rect.width()
+            h = self.crop_area_bbox.rect.height()
+            return target_gray[y:y+h, x:x+w]
+        return target_gray
+
     def match_simple(self, target_gray):
+        target_gray = self._crop_target_if_needed(target_gray)
         result = cv2.matchTemplate(target_gray, self.template_region, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(result)
         return max_loc, max_val, None
 
     def match_multi_scale(self, target_gray):
+        target_gray = self._crop_target_if_needed(target_gray)
+
         scales = np.linspace(0.5, 2.0, 20)
         best_match = None
         best_score = -1
@@ -147,6 +183,8 @@ class TemplateMatcher:
         return best_match, best_score, None, best_scale
 
     def match_feature_based(self, target_gray):
+        target_gray = self._crop_target_if_needed(target_gray)
+
         sift = cv2.SIFT_create()
 
         kp1, des1 = sift.detectAndCompute(self.template_region, None)
@@ -193,6 +231,8 @@ class TemplateMatcher:
         if not SUPERPOINT_AVAILABLE:
             print("SuperPoint not available, falling back to SIFT")
             return self.match_feature_based(target_gray)
+
+        target_gray = self._crop_target_if_needed(target_gray)
 
         try:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -336,16 +376,27 @@ class TemplateMatcher:
 
     def _transform_bbox_with_homography(self, bbox, H, template_offset_x, template_offset_y, debug=False):
         # Get corners from either rectangle or polygon
+        # Note: bbox coordinates are in original (full) image space
+        # template_offset_x/y are also in original space (from self.template_bbox.rect)
+        # We need to convert to template region space (relative to template bbox in cropped image)
+
+        # Use template position in cropped space
+        template_x_cropped = self.template_x_in_cropped
+        template_y_cropped = self.template_y_in_cropped
+
         if bbox.shape == 'polygon' and bbox.points is not None:
             # Template có polygon → dùng polygon points
+            # Convert from full image coordinates to cropped image coordinates, then relative to template
             corners = np.float32([
-                [pt[0] - template_offset_x, pt[1] - template_offset_y]
+                [pt[0] - self.crop_offset_x - template_x_cropped,
+                 pt[1] - self.crop_offset_y - template_y_cropped]
                 for pt in bbox.points
             ]).reshape(-1, 1, 2)
         else:
             # Template có rectangle → convert to corners
-            x = bbox.rect.x() - template_offset_x
-            y = bbox.rect.y() - template_offset_y
+            # Convert from full image coordinates to cropped image coordinates, then relative to template
+            x = bbox.rect.x() - self.crop_offset_x - template_x_cropped
+            y = bbox.rect.y() - self.crop_offset_y - template_y_cropped
             w = bbox.rect.width()
             h = bbox.rect.height()
 
@@ -357,7 +408,10 @@ class TemplateMatcher:
             ]).reshape(-1, 1, 2)
 
         transformed = cv2.perspectiveTransform(corners, H)
-        polygon_points = transformed.reshape(-1, 2).tolist()
+
+        # Add crop offset back to get coordinates in original image space
+        polygon_points = [[p[0] + self.crop_offset_x, p[1] + self.crop_offset_y]
+                         for p in transformed.reshape(-1, 2).tolist()]
 
         # Check if homography is near similarity (no significant perspective)
         is_near_similarity = self._is_homography_near_similarity(H, debug=debug)
@@ -442,7 +496,10 @@ class TemplateMatcher:
             h, w = self.template_region.shape
             template_corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
             template_transformed = cv2.perspectiveTransform(template_corners, homography_matrix)
-            template_polygon = template_transformed.reshape(-1, 2).tolist()
+
+            # Add crop offset back to get coordinates in original image space
+            template_polygon = [[p[0] + self.crop_offset_x, p[1] + self.crop_offset_y]
+                               for p in template_transformed.reshape(-1, 2).tolist()]
 
             # Check if homography is near similarity for template too
             if debug:
@@ -480,8 +537,9 @@ class TemplateMatcher:
                 relative_x = bbox.rect.x() - template_x_orig
                 relative_y = bbox.rect.y() - template_y_orig
 
-                new_x = max_loc[0] + int(relative_x * scale)
-                new_y = max_loc[1] + int(relative_y * scale)
+                # Add crop offset back to get coordinates in original image space
+                new_x = max_loc[0] + int(relative_x * scale) + self.crop_offset_x
+                new_y = max_loc[1] + int(relative_y * scale) + self.crop_offset_y
 
                 new_rect = QRect(
                     new_x,
@@ -491,9 +549,10 @@ class TemplateMatcher:
                 )
                 transformed_bboxes.append(BoundingBox(new_rect, bbox.bbox_type))
 
+            # Add crop offset back to get coordinates in original image space
             matched_template_rect = QRect(
-                max_loc[0],
-                max_loc[1],
+                max_loc[0] + self.crop_offset_x,
+                max_loc[1] + self.crop_offset_y,
                 int(self.template_bbox.rect.width() * scale),
                 int(self.template_bbox.rect.height() * scale)
             )

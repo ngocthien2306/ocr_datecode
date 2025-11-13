@@ -124,7 +124,7 @@ def main():
     matcher = TemplateMatcher(template_image_path, template_bboxes)
 
     # Test với ảnh target
-    target_image_path = '../images/2.jpg'
+    target_image_path = '../../images/2.jpg'
     print(f"\n🎯 Matching with target: {target_image_path}\n")
 
     bboxes, confidence, target_image = matcher.match(
@@ -169,7 +169,7 @@ def main():
 
     # Visualize
     result_image = matcher.draw_bboxes(target_image, bboxes, draw_polygon=True)
-    output_path = 'results/full_polygon_template.jpg'
+    output_path = '../results/full_polygon_template.jpg'
     cv2.imwrite(output_path, result_image)
     print(f"\n💾 Saved visualization: {output_path}")
 
@@ -178,7 +178,7 @@ def main():
     for i, bbox in enumerate(bboxes):
         if bbox.bbox_type != 'template':
             cropped = matcher.crop_region_with_perspective(target_image, bbox)
-            crop_path = f'results/crop_{bbox.bbox_type}_{i}.jpg'
+            crop_path = f'../results/crop_{bbox.bbox_type}_{i}.jpg'
             cv2.imwrite(crop_path, cropped)
             print(f"   - {crop_path}")
 
