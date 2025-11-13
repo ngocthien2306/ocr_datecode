@@ -1,15 +1,22 @@
 import json
 import cv2
 import time
+from pathlib import Path
 from template_matcher import TemplateMatcher, BoundingBox
-from text_recognizer import TextRecognizer
 
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
-SHOW_TIMING = True   # Set to False to hide timing details
-SHOW_DEBUG = False   # Set to True to show homography analysis
+# Import configuration
+from config import (
+    get_recognizer, 
+    MATCHING_METHOD, 
+    MATCHING_THRESHOLD, 
+    MATCHING_DEBUG,
+    SHOW_TIMING,
+    OUTPUT_DIR,
+    SAVE_CROPS,
+    SAVE_VISUALIZATION,
+    DRAW_POLYGONS,
+    print_config
+)
 
 
 def load_annotations(annotations_file):
@@ -23,6 +30,11 @@ def load_annotations(annotations_file):
 
 def main():
     import time
+    
+    # Print configuration
+    print_config()
+    print()
+    
     annotations_file = '../images/annotations.json'
     target_image_path = '../images/2.jpg'
 
@@ -32,15 +44,14 @@ def main():
 
     # ========== STEP 1: Initialize Recognizer ==========
     init_start = time.time()
-    print("Initializing Text Recognizer...")
-    recognizer = TextRecognizer(
-        model_path='../languages/english/rec.onnx',
-        dict_path='../languages/english/dict.txt',
-        use_gpu=False
-    )
+    print("🚀 Initializing Text Recognizer...")
+    
+    recognizer, recognizer_type = get_recognizer()
+    
     timing_log['1_recognizer_init'] = (time.time() - init_start) * 1000
     if SHOW_TIMING:
         print(f"   ⏱️  Init time: {timing_log['1_recognizer_init']:.2f}ms")
+        print(f"   Backend: {recognizer_type}")
     print()
 
     # ========== STEP 2: Load Annotations ==========
@@ -65,9 +76,9 @@ def main():
     match_start = time.time()
     bboxes, confidence, target_image = matcher.match(
         target_image_path,
-        method='feature',
-        threshold=0.3,
-        debug=SHOW_DEBUG
+        method=MATCHING_METHOD,
+        threshold=MATCHING_THRESHOLD,
+        debug=MATCHING_DEBUG
     )
     timing_log['4_template_matching'] = (time.time() - match_start) * 1000
     
@@ -83,8 +94,15 @@ def main():
 
     # ========== STEP 5: Draw Results ==========
     draw_start = time.time()
-    result_with_polygon = matcher.draw_bboxes(target_image, bboxes, draw_polygon=True)
-    cv2.imwrite('../results/result_with_polygon.jpg', result_with_polygon)
+    
+    # Create output directory if needed
+    Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+    
+    if SAVE_VISUALIZATION:
+        result_with_polygon = matcher.draw_bboxes(target_image, bboxes, draw_polygon=DRAW_POLYGONS)
+        output_path = f'{OUTPUT_DIR}/result_with_polygon.jpg'
+        cv2.imwrite(output_path, result_with_polygon)
+    
     timing_log['5_draw_save'] = (time.time() - draw_start) * 1000
     if SHOW_TIMING:
         print(f"   ⏱️  Draw & save: {timing_log['5_draw_save']:.2f}ms")
@@ -105,8 +123,11 @@ def main():
             print(f"  Polygon: {bbox.polygon}")
 
         cropped = matcher.crop_region_with_perspective(target_image, bbox)
-        cv2.imwrite(f'results/cropped_{bbox.bbox_type}_{i}.jpg', cropped)
-        print(f"  💾 Saved: cropped_{bbox.bbox_type}_{i}.jpg")
+        
+        if SAVE_CROPS:
+            crop_path = f'{OUTPUT_DIR}/cropped_{bbox.bbox_type}_{i}.jpg'
+            cv2.imwrite(crop_path, cropped)
+            print(f"  💾 Saved: {Path(crop_path).name}")
         
         if bbox.bbox_type in ["text", "datecode"]:
             text_regions.append(cropped)
@@ -126,24 +147,32 @@ def main():
     if text_regions:
         print(f"\n{'='*60}")
         print(f"🚀 BATCH OCR PROCESSING ({len(text_regions)} regions)")
+        print(f"   Backend: {recognizer_type}")
         print(f"{'='*60}")
         
         import time
+        
+        # Warm-up inference (especially important for TensorRT)
+        if len(text_regions) > 0:
+            _ = recognizer.recognize(text_regions[0])
+        
         start = time.time()
         results = recognizer.recognize_batch(text_regions)
         batch_time = (time.time() - start) * 1000
+        timing_log['7_batch_ocr'] = batch_time
         
         print(f"\n⏱️  Total batch time: {batch_time:.2f}ms")
         print(f"⚡ Average per region: {batch_time/len(text_regions):.2f}ms")
         
         for idx, (text, conf) in zip(text_indices, results):
             print(f"\nBBox {idx+1} ({bboxes[idx].bbox_type}):")
-            print(f"  � Text: '{text}'")
+            print(f"  📝 Text: '{text}'")
             print(f"  🎯 Confidence: {conf:.3f}")
 
     print("\n" + "="*60)
 
-    cv2.imshow('Result with Polygons', result_with_polygon)
+    if SAVE_VISUALIZATION:
+        cv2.imshow('Result with Polygons', result_with_polygon)
 
     for i, bbox in enumerate(bboxes):
         cropped = matcher.crop_region_with_perspective(target_image, bbox)
