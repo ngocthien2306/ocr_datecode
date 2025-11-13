@@ -147,5 +147,4 @@ cython_debug/
 
 # Project specific
 detection/
-languages/
 results/
