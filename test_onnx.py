@@ -1,27 +1,24 @@
 import cv2
 import numpy as np
 import json
-import tensorrt as trt
-import pycuda.driver as cuda
-import pycuda.autoinit
+import onnxruntime as ort
 from pathlib import Path
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional
 import matplotlib.pyplot as plt
 import time
 
 
-class SuperPointMatcherTRT:
-    def __init__(self, json_path: str, engine_path: str, scale: float = 1.0, verbose: bool = False):
+class SuperPointMatcherONNX:
+    def __init__(self, json_path: str, pipeline_path: str, scale: float = 1.0, verbose: bool = False):
         self.verbose = verbose
-        self.scale = scale
         t_start = time.time()
         
-        # Load template and annotations
         with open(json_path, 'r') as f:
             data = json.load(f)
         
         self.template_path = data['_template_image']
         self.annotations = data[self.template_path]
+        self.scale = scale
         
         t0 = time.time()
         template_img = cv2.imread(self.template_path)
@@ -30,10 +27,9 @@ class SuperPointMatcherTRT:
         
         self.template_img = template_img
         self.template_gray = cv2.cvtColor(template_img, cv2.COLOR_BGR2GRAY)
-        if verbose:
+        if self.verbose:
             print(f"⏱️  Load template: {(time.time()-t0)*1000:.1f}ms")
         
-        # Parse bboxes
         self.template_bbox = None
         self.other_bboxes = []
         for ann in self.annotations:
@@ -42,142 +38,32 @@ class SuperPointMatcherTRT:
             elif ann['type'] not in ['crop_area']:
                 self.other_bboxes.append(ann)
         
-        # Load TensorRT engine
         t0 = time.time()
-        self._load_engine(engine_path)
-        if verbose:
-            print(f"⏱️  Load engine: {(time.time()-t0)*1000:.1f}ms")
+        providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+        self.pipeline_sess = ort.InferenceSession(pipeline_path, providers=providers)
+        if self.verbose:
+            print(f"⏱️  Load pipeline: {(time.time()-t0)*1000:.1f}ms")
         
-        # Warm-up
-        if verbose:
-            print("🔥 Warming up engine...")
-            t0 = time.time()
-        
-        h, w = self.input_shape[2:]
-        dummy_input = np.random.rand(2, 1, h, w).astype(np.float32)
-        _ = self._infer(dummy_input)
-        
-        if verbose:
-            print(f"   Warm-up done: {(time.time()-t0)*1000:.1f}ms")
-        
-        print(f"✅ Initialized SuperPointMatcherTRT ({(time.time()-t_start)*1000:.1f}ms)")
-        print(f"   Engine: {Path(engine_path).name}")
-        print(f"   Input shape: {self.input_shape}")
+        print(f"✅ Initialized SuperPointMatcherONNX ({(time.time()-t_start)*1000:.1f}ms)")
+        print(f"   Provider: {self.pipeline_sess.get_providers()[0]}")
         print(f"   Scale: {scale}x")
-        print(f"   Template: {self.template_gray.shape[1]}x{self.template_gray.shape[0]}")
+        print(f"   Template: {Path(self.template_path).name} ({self.template_gray.shape[1]}x{self.template_gray.shape[0]})")
         print(f"   Bboxes: template + {len(self.other_bboxes)} regions")
     
-    def _load_engine(self, engine_path: str):
-        """Load TensorRT engine and allocate buffers"""
-        TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
-        
-        # Load engine
-        with open(engine_path, 'rb') as f:
-            engine_data = f.read()
-        
-        runtime = trt.Runtime(TRT_LOGGER)
-        self.engine = runtime.deserialize_cuda_engine(engine_data)
-        self.context = self.engine.create_execution_context()
-        
-        # Create stream
-        self.stream = cuda.Stream()
-        
-        # Allocate buffers
-        self.inputs = []
-        self.outputs = []
-        self.bindings = []
-        
-        for i in range(self.engine.num_io_tensors):
-            tensor_name = self.engine.get_tensor_name(i)
-            dtype = trt.nptype(self.engine.get_tensor_dtype(tensor_name))
-            shape = self.engine.get_tensor_shape(tensor_name)
-            
-            if self.engine.get_tensor_mode(tensor_name) == trt.TensorIOMode.INPUT:
-                # Input: allocate with actual shape
-                size = trt.volume(shape)
-                host_mem = np.empty(size, dtype=dtype)
-                device_mem = cuda.mem_alloc(host_mem.nbytes)
-                
-                self.bindings.append(int(device_mem))
-                self.inputs.append({
-                    'host': host_mem,
-                    'device': device_mem,
-                    'shape': shape,
-                    'name': tensor_name,
-                    'dtype': dtype
-                })
-                self.input_shape = shape
-            else:
-                # Output: allocate max possible size (will be resized later)
-                # Allocate 100MB per output for dynamic shapes
-                max_size = 100 * 1024 * 1024 // np.dtype(dtype).itemsize
-                device_mem = cuda.mem_alloc(max_size * np.dtype(dtype).itemsize)
-                
-                self.bindings.append(int(device_mem))
-                self.outputs.append({
-                    'host': None,  # Will allocate on demand
-                    'device': device_mem,
-                    'shape': shape,
-                    'name': tensor_name,
-                    'dtype': dtype,
-                    'max_size': max_size
-                })
-
-    def _infer(self, input_data: np.ndarray) -> List[np.ndarray]:
-        """Run TensorRT inference"""
-        # Copy input to device
-        cuda.memcpy_htod_async(
-            self.inputs[0]['device'],
-            input_data.ravel(),
-            self.stream
-        )
-        
-        # Set binding addresses
-        for i, binding in enumerate(self.bindings):
-            self.context.set_tensor_address(
-                self.engine.get_tensor_name(i), 
-                binding
-            )
-        
-        # Run inference
-        self.context.execute_async_v3(stream_handle=self.stream.handle)
-        
-        # Copy outputs to host
-        results = []
-        for output in self.outputs:
-            # Get actual output shape after inference
-            actual_shape = self.context.get_tensor_shape(output['name'])
-            actual_size = trt.volume(actual_shape)
-            
-            # Allocate host memory for this output
-            host_mem = np.empty(actual_size, dtype=output['dtype'])
-            
-            cuda.memcpy_dtoh_async(
-                host_mem,
-                output['device'],
-                self.stream
-            )
-            results.append(host_mem.reshape(actual_shape))
-        
-        self.stream.synchronize()
-        return results
-
-    def _resize_to_engine_size(self, img: np.ndarray) -> Tuple[np.ndarray, Tuple[float, float]]:
-        """Resize image to match engine input size"""
+    def _resize_to_32(self, img):
         h, w = img.shape
-        target_h, target_w = self.input_shape[2:]
-        
-        if h != target_h or w != target_w:
-            resized = cv2.resize(img, (target_w, target_h))
-            return resized, (w / target_w, h / target_h)
+        new_h = ((h + 31) // 32) * 32
+        new_w = ((w + 31) // 32) * 32
+        if new_h != h or new_w != w:
+            resized = cv2.resize(img, (new_w, new_h))
+            return resized, (w / new_w, h / new_h)
         return img, (1.0, 1.0)
     
-    def match(self, target_path: str, score_threshold: float = 0.3,
+    def match(self, target_path: str, score_threshold: float = 0.3, 
               ransac_threshold: float = 5.0) -> Dict:
         timings = {}
         t_total = time.time()
         
-        # Load target
         t0 = time.time()
         target_img_full = cv2.imread(target_path)
         
@@ -185,30 +71,26 @@ class SuperPointMatcherTRT:
             target_img = cv2.resize(target_img_full, None, fx=self.scale, fy=self.scale)
         else:
             target_img = target_img_full
-        
+            
         target_gray = cv2.cvtColor(target_img, cv2.COLOR_BGR2GRAY)
         timings['load_target'] = (time.time() - t0) * 1000
         
-        # Resize to engine size
         t0 = time.time()
-        template_resized, template_scale = self._resize_to_engine_size(self.template_gray)
-        target_resized, target_scale = self._resize_to_engine_size(target_gray)
-        timings['resize_to_engine'] = (time.time() - t0) * 1000
+        template_resized, template_scale = self._resize_to_32(self.template_gray)
+        target_resized, target_scale = self._resize_to_32(target_gray)
+        timings['resize_to_32'] = (time.time() - t0) * 1000
         
-        # Prepare batch input
         t0 = time.time()
         template_tensor = template_resized.astype(np.float32)[None, None] / 255.0
         target_tensor = target_resized.astype(np.float32)[None, None] / 255.0
         batch_input = np.concatenate([template_tensor, target_tensor], axis=0)
         timings['to_tensor'] = (time.time() - t0) * 1000
         
-        # TensorRT inference
         t0 = time.time()
-        outputs = self._infer(batch_input)
+        outputs = self.pipeline_sess.run(None, {'images': batch_input})
         kpts, matches, mscores = outputs
-        timings['trt_inference'] = (time.time() - t0) * 1000
+        timings['total_inference'] = (time.time() - t0) * 1000
         
-        # Post-process matches
         t0 = time.time()
         batch_mask = matches[:, 0] == 0
         batch_matches = matches[batch_mask]
@@ -220,11 +102,20 @@ class SuperPointMatcherTRT:
         valid_mask = batch_mscores > score_threshold
         valid_matches = batch_matches[valid_mask]
         
-        if len(valid_matches) < 10:
+        m_kpts0 = kpts0[valid_matches[:, 1]].copy()
+        m_kpts1 = kpts1[valid_matches[:, 2]].copy()
+        
+        m_kpts0[:, 0] *= template_scale[0]
+        m_kpts0[:, 1] *= template_scale[1]
+        m_kpts1[:, 0] *= target_scale[0]
+        m_kpts1[:, 1] *= target_scale[1]
+        timings['postprocess_matches'] = (time.time() - t0) * 1000
+        
+        if len(m_kpts0) < 10:
             timings['total'] = (time.time() - t_total) * 1000
             return {
                 'success': False,
-                'error': f'Too few matches: {len(valid_matches)}',
+                'error': f'Too few matches: {len(m_kpts0)}',
                 'homography': None,
                 'confidence': 0.0,
                 'transformed_bboxes': [],
@@ -232,17 +123,6 @@ class SuperPointMatcherTRT:
                 'timings': timings
             }
         
-        m_kpts0 = kpts0[valid_matches[:, 1]].copy()
-        m_kpts1 = kpts1[valid_matches[:, 2]].copy()
-        
-        # Scale keypoints back to original size
-        m_kpts0[:, 0] *= template_scale[0]
-        m_kpts0[:, 1] *= template_scale[1]
-        m_kpts1[:, 0] *= target_scale[0]
-        m_kpts1[:, 1] *= target_scale[1]
-        timings['postprocess_matches'] = (time.time() - t0) * 1000
-        
-        # RANSAC homography
         t0 = time.time()
         H, mask = cv2.findHomography(m_kpts0, m_kpts1, cv2.RANSAC, ransac_threshold)
         timings['ransac_homography'] = (time.time() - t0) * 1000
@@ -262,7 +142,6 @@ class SuperPointMatcherTRT:
         inliers = np.sum(mask)
         confidence = inliers / len(m_kpts0)
         
-        # Transform bboxes
         t0 = time.time()
         scale_matrix = np.array([
             [1/self.scale, 0, 0],
@@ -309,9 +188,9 @@ class SuperPointMatcherTRT:
     def _print_timings(self, timings: Dict):
         print(f"\n⏱️  Timing Breakdown:")
         print(f"   Load target:           {timings['load_target']:7.1f}ms")
-        print(f"   Resize to engine:      {timings['resize_to_engine']:7.1f}ms")
+        print(f"   Resize to 32x:         {timings['resize_to_32']:7.1f}ms")
         print(f"   To tensor:             {timings['to_tensor']:7.1f}ms")
-        print(f"   TRT inference:         {timings['trt_inference']:7.1f}ms")
+        print(f"   Total inference:       {timings['total_inference']:7.1f}ms")
         print(f"   Postprocess matches:   {timings['postprocess_matches']:7.1f}ms")
         print(f"   RANSAC homography:     {timings['ransac_homography']:7.1f}ms")
         print(f"   Transform bboxes:      {timings['transform_bboxes']:7.1f}ms")
@@ -384,7 +263,6 @@ class SuperPointMatcherTRT:
         
         fig, axes = plt.subplots(1, 2, figsize=(24, 12))
         
-        # Template
         ax = axes[0]
         vis_template = self.template_img.copy()
         for bbox in self.annotations:
@@ -397,14 +275,13 @@ class SuperPointMatcherTRT:
             color = colors.get(bbox['type'], (255, 255, 255))
             cv2.polylines(vis_template, [pts], True, color, 3)
             center = pts.mean(axis=0).astype(int)
-            cv2.putText(vis_template, bbox['type'], tuple(center),
+            cv2.putText(vis_template, bbox['type'], tuple(center), 
                        cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
         
         ax.imshow(cv2.cvtColor(vis_template, cv2.COLOR_BGR2RGB))
         ax.set_title(f'Template (scale={self.scale}x)', fontsize=16, fontweight='bold')
         ax.axis('off')
         
-        # Target
         ax = axes[1]
         vis_target = result['target_img'].copy()
         for bbox in result['transformed_bboxes']:
@@ -417,13 +294,12 @@ class SuperPointMatcherTRT:
                 cv2.circle(vis_target, tuple(pt), 8, corner_colors[j], -1)
             
             center = pts.mean(axis=0).astype(int)
-            cv2.putText(vis_target, bbox['type'], tuple(center),
+            cv2.putText(vis_target, bbox['type'], tuple(center), 
                        cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
         
         timings = result.get('timings', {})
         total_time = timings.get('total', 0)
-        trt_time = timings.get('trt_inference', 0)
-        confidence_text = f"Confidence: {result['confidence']:.1%}\nInliers: {result['inliers']}/{result['total_matches']}\nTotal: {total_time:.0f}ms\nTRT: {trt_time:.0f}ms"
+        confidence_text = f"Confidence: {result['confidence']:.1%}\nInliers: {result['inliers']}/{result['total_matches']}\nTime: {total_time:.0f}ms"
         ax.text(0.02, 0.98, confidence_text, transform=ax.transAxes,
                fontsize=14, verticalalignment='top', color='white',
                bbox=dict(boxstyle='round', facecolor='green', alpha=0.8))
@@ -443,35 +319,25 @@ class SuperPointMatcherTRT:
         else:
             plt.close()
         
-        if self.verbose:
+        if self.verbose:    
             print(f"⏱️  Visualize: {(time.time()-t_start)*1000:.1f}ms")
 
 
 if __name__ == '__main__':
-    # Test TensorRT matcher
-    matcher = SuperPointMatcherTRT(
+    matcher = SuperPointMatcherONNX(
         'images/annotations.json',
-        'weights/pipeline_fp16_small.engine',
-        scale=1,  # Adjust based on your engine's input size
+        'weights/superpoint_lightglue_pipeline.onnx',
+        scale=0.3,
         verbose=True
     )
-    
-    # Warm-up and benchmark
-    print("\n" + "="*60)
-    print("Benchmarking...")
-    print("="*60)
-    
-    for i in range(20):
+    for _ in range(20):
         result = matcher.match('images/2.jpg')
-        if i == 0:
-            print(f"Run {i+1}: {result['timings']['total']:.1f}ms (first run)")
-        elif i >= 10:
-            print(f"Run {i+1}: {result['timings']['total']:.1f}ms (TRT: {result['timings']['trt_inference']:.1f}ms)")
+
     
     if result['success']:
         print(f"\n✅ Success! Confidence: {result['confidence']:.1%}")
-        matcher.visualize(result, save_path='result_trt.png', show=False)
-        cropped = matcher.crop_regions(result, output_dir='results_trt/')
+        matcher.visualize(result, save_path='result.png')
+        cropped = matcher.crop_regions(result, output_dir='results/')
         print(f"✂️  Cropped {len(cropped)} regions")
     else:
         print(f"❌ Failed: {result['error']}")
