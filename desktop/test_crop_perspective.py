@@ -36,7 +36,7 @@ def main():
     print()
     
     annotations_file = '../images/annotations.json'
-    target_image_path = '../images/2.jpg'
+    target_image_path = '../images/5.jpg'
 
     # Timing dictionary
     timing_log = {}
@@ -80,6 +80,23 @@ def main():
         threshold=MATCHING_THRESHOLD,
         debug=MATCHING_DEBUG
     )
+
+    # print("supperpoint method: ")
+    # for box in bboxes:
+    #     print(box.bbox_type, box.polygon)
+
+    # bboxes, confidence, target_image = matcher.match(
+    #     target_image_path,
+    #     method="feature",
+    #     threshold=MATCHING_THRESHOLD,
+    #     debug=MATCHING_DEBUG
+    # )
+
+
+    # print("feature method: ")
+    # for box in bboxes:
+    #     print(box.bbox_type, box.polygon)
+
     timing_log['4_template_matching'] = (time.time() - match_start) * 1000
     
     if bboxes is None:

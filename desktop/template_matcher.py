@@ -129,17 +129,37 @@ class TemplateMatcher:
             y = self.crop_area_bbox.rect.y()
             w = self.crop_area_bbox.rect.width()
             h = self.crop_area_bbox.rect.height()
+            print(f"🔧 Applying crop_area: x={x}, y={y}, w={w}, h={h}")
             self.template_gray = self.template_gray[y:y+h, x:x+w]
             self.crop_offset_x = x
             self.crop_offset_y = y
+            print(f"   Template gray shape after crop: {self.template_gray.shape}")
 
         if self.template_bbox:
             # Adjust template bbox coordinates if cropped
-            x = self.template_bbox.rect.x() - self.crop_offset_x
-            y = self.template_bbox.rect.y() - self.crop_offset_y
+            x_orig = self.template_bbox.rect.x()
+            y_orig = self.template_bbox.rect.y()
+            x = x_orig - self.crop_offset_x
+            y = y_orig - self.crop_offset_y
             w = self.template_bbox.rect.width()
             h = self.template_bbox.rect.height()
+            
+            print(f"🔧 Template bbox:")
+            print(f"   Original position: ({x_orig}, {y_orig})")
+            print(f"   After crop offset: ({x}, {y})")
+            print(f"   Size: {w}x{h}")
+            
+            if self.template_bbox.shape == 'polygon' and self.template_bbox.points:
+                print(f"   ⚠️  Template is POLYGON - using bounding rect for extraction")
+                print(f"   Polygon points (original): {self.template_bbox.points}")
+                
+                # Check if polygon is rotated
+                points_in_cropped = [[pt[0] - self.crop_offset_x, pt[1] - self.crop_offset_y] 
+                                    for pt in self.template_bbox.points]
+                print(f"   Polygon points (cropped): {points_in_cropped}")
+            
             self.template_region = self.template_gray[y:y+h, x:x+w]
+            print(f"   Template region shape: {self.template_region.shape}")
 
             # Store template position in the potentially cropped space
             # This is used for calculating relative positions of other bboxes
@@ -497,53 +517,179 @@ class TemplateMatcher:
             print("   Falling back to CPU ORB matching...")
             return self._match_orb_cpu(target_gray)
 
-    def match_superpoint_lightglue(self, target_gray):
-        """Match using SuperPoint + LightGlue (deep learning approach)"""
+    def match_superpoint_lightglue(self, target_gray, debug=False):
         if not SUPERPOINT_AVAILABLE:
-            print("SuperPoint not available, falling back to SIFT")
+            print("⚠️  SuperPoint not available, falling back to SIFT")
             return self.match_feature_based(target_gray)
 
+        # Save original target before cropping (for fallback)
+        target_gray_original = target_gray
         target_gray = self._crop_target_if_needed(target_gray)
 
         try:
+            import torch
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            
+            if debug:
+                print(f"\n🔍 SuperPoint Debug:")
+                print(f"   Device: {device}")
+                print(f"   Crop offset: ({self.crop_offset_x}, {self.crop_offset_y})")
+                print(f"   Template shape: {self.template_region.shape}")
+                print(f"   Target shape (after crop): {target_gray.shape}")
+                print(f"   Template position in cropped space: ({self.template_x_in_cropped}, {self.template_y_in_cropped})")
 
-            # Initialize SuperPoint + LightGlue
-            extractor = SuperPoint(max_num_keypoints=2048).eval().to(device)
-            matcher = LightGlue(features='superpoint').eval().to(device)
+            # Check if template is too small (< 100 pixels in any dimension)
+            h_template, w_template = self.template_region.shape
+            if h_template < 100 or w_template < 100:
+                if debug:
+                    print(f"   ⚠️  Template too small ({h_template}x{w_template})")
+                    print(f"   SuperPoint works best with templates >= 200x200")
+                    print(f"   → Falling back to SIFT")
+                return self.match_feature_based(target_gray_original)
+
+            # Initialize SuperPoint + LightGlue (reuse if possible for speed)
+            if not hasattr(self, '_sp_extractor'):
+                self._sp_extractor = SuperPoint(max_num_keypoints=2048).eval().to(device)
+                self._sp_matcher = LightGlue(features='superpoint').eval().to(device)
+                if debug:
+                    print("   ✓ Initialized SuperPoint + LightGlue")
+
+            # Resize images to multiples of 32 (SuperPoint requirement)
+            # For small templates, scale up to at least 256 pixels
+            def resize_for_superpoint(img, min_size=256):
+                h, w = img.shape
+                
+                # Scale up if too small
+                scale_factor = 1.0
+                if h < min_size or w < min_size:
+                    scale_factor = min_size / min(h, w)
+                    h_scaled = int(h * scale_factor)
+                    w_scaled = int(w * scale_factor)
+                else:
+                    h_scaled, w_scaled = h, w
+                
+                # Round to multiples of 32
+                new_h = ((h_scaled + 31) // 32) * 32
+                new_w = ((w_scaled + 31) // 32) * 32
+                
+                if new_h != h or new_w != w:
+                    resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+                    return resized, (w / new_w, h / new_h)
+                return img, (1.0, 1.0)
+            
+            template_resized, template_scale = resize_for_superpoint(self.template_region, min_size=256)
+            target_resized, target_scale = resize_for_superpoint(target_gray, min_size=512)
+            
+            if debug:
+                print(f"   Template resized: {self.template_region.shape} → {template_resized.shape}")
+                print(f"   Target resized: {target_gray.shape} → {target_resized.shape}")
 
             # Convert to torch tensors (grayscale, normalized to [0, 1])
-            template_tensor = torch.from_numpy(self.template_region).float()[None, None] / 255.0
-            target_tensor = torch.from_numpy(target_gray).float()[None, None] / 255.0
+            # Shape: [1, 1, H, W]
+            template_tensor = torch.from_numpy(template_resized).float()[None, None] / 255.0
+            target_tensor = torch.from_numpy(target_resized).float()[None, None] / 255.0
 
             template_tensor = template_tensor.to(device)
             target_tensor = target_tensor.to(device)
 
             # Extract features
-            feats0 = extractor.extract(template_tensor)
-            feats1 = extractor.extract(target_tensor)
+            with torch.no_grad():
+                feats0 = self._sp_extractor.extract(template_tensor)
+                feats1 = self._sp_extractor.extract(target_tensor)
+                
+                if debug:
+                    print(f"   Template keypoints: {feats0['keypoints'].shape[1]}")
+                    print(f"   Target keypoints: {feats1['keypoints'].shape[1]}")
 
-            # Match features
-            matches01 = matcher({'image0': feats0, 'image1': feats1})
-            feats0, feats1, matches01 = [rbd(x) for x in [feats0, feats1, matches01]]
+                # Match features
+                matches01 = self._sp_matcher({'image0': feats0, 'image1': feats1})
+                
+                # Remove batch dimension
+                feats0, feats1, matches01 = [rbd(x) for x in [feats0, feats1, matches01]]
 
             # Get matched keypoints
-            kpts0, kpts1, matches = feats0['keypoints'], feats1['keypoints'], matches01['matches']
-            m_kpts0, m_kpts1 = kpts0[matches[..., 0]], kpts1[matches[..., 1]]
+            kpts0 = feats0['keypoints']  # [N, 2]
+            kpts1 = feats1['keypoints']  # [M, 2]
+            matches = matches01['matches']  # [K, 2] indices
+            match_scores = matches01['scores'] if 'scores' in matches01 else None  # [K] confidence scores
+            
+            if debug:
+                print(f"   Raw matches: {matches.shape[0]}")
+                if match_scores is not None:
+                    print(f"   Match scores: min={match_scores.min():.3f}, max={match_scores.max():.3f}, mean={match_scores.mean():.3f}")
 
-            # Convert to numpy
-            src_pts = m_kpts0.cpu().numpy().reshape(-1, 1, 2)
-            dst_pts = m_kpts1.cpu().numpy().reshape(-1, 1, 2)
+            # Filter low-quality matches (LightGlue score threshold)
+            if match_scores is not None:
+                # Keep only matches with score > 0.3 (adjustable threshold)
+                score_threshold = 0.3
+                good_match_mask = match_scores > score_threshold
+                matches = matches[good_match_mask]
+                match_scores = match_scores[good_match_mask]
+                
+                if debug:
+                    print(f"   Filtered matches (score > {score_threshold}): {matches.shape[0]}")
+                    if matches.shape[0] > 0:
+                        print(f"   Filtered scores: min={match_scores.min():.3f}, max={match_scores.max():.3f}, mean={match_scores.mean():.3f}")
 
-            if len(src_pts) < 10:
-                return None, 0.0, None
+            if matches.shape[0] < 10:
+                if debug:
+                    print(f"   ❌ Too few good matches ({matches.shape[0]} < 10)")
+                    print(f"   → Falling back to SIFT")
+                return self.match_feature_based(target_gray_original, use_cuda=False)
 
-            # Compute homography
-            H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+            # Get matched keypoint coordinates
+            m_kpts0 = kpts0[matches[..., 0]]  # [K, 2]
+            m_kpts1 = kpts1[matches[..., 1]]  # [K, 2]
+
+            # Scale keypoints back to original size
+            m_kpts0_scaled = m_kpts0.cpu().numpy()
+            m_kpts0_scaled[:, 0] *= template_scale[0]
+            m_kpts0_scaled[:, 1] *= template_scale[1]
+            
+            m_kpts1_scaled = m_kpts1.cpu().numpy()
+            m_kpts1_scaled[:, 0] *= target_scale[0]
+            m_kpts1_scaled[:, 1] *= target_scale[1]
+
+            # Convert to format for OpenCV
+            src_pts = m_kpts0_scaled.reshape(-1, 1, 2).astype(np.float32)
+            dst_pts = m_kpts1_scaled.reshape(-1, 1, 2).astype(np.float32)
+
+            # Compute homography with RANSAC (stricter threshold for better accuracy)
+            H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, ransacReprojThreshold=3.0)
 
             if H is None:
-                return None, 0.0, None
+                if debug:
+                    print("   ❌ Homography computation failed")
+                    print("   → Falling back to SIFT")
+                return self.match_feature_based(target_gray_original, use_cuda=False)
 
+            # Calculate confidence from RANSAC inliers
+            ransac_confidence = np.sum(mask) / len(mask) if mask is not None else 0.0
+            
+            # Check if we have enough inliers (at least 30%)
+            if ransac_confidence < 0.3:
+                if debug:
+                    print(f"   ❌ Too few RANSAC inliers: {np.sum(mask)}/{len(mask)} ({ransac_confidence:.3f})")
+                    print("   → Falling back to SIFT")
+                return self.match_feature_based(target_gray_original, use_cuda=False)
+            
+            # Use LightGlue match scores for additional confidence
+            if match_scores is not None:
+                inlier_indices = mask.flatten().astype(bool)
+                inlier_scores = match_scores.cpu().numpy()[inlier_indices]
+                lightglue_confidence = inlier_scores.mean() if len(inlier_scores) > 0 else 0.0
+                # Combined confidence (weighted average)
+                confidence = 0.6 * ransac_confidence + 0.4 * lightglue_confidence
+            else:
+                confidence = ransac_confidence
+
+            if debug:
+                print(f"   ✓ RANSAC inliers: {np.sum(mask)}/{len(mask)} ({ransac_confidence:.3f})")
+                if match_scores is not None:
+                    print(f"   ✓ LightGlue confidence: {lightglue_confidence:.3f}")
+                print(f"   ✓ Combined confidence: {confidence:.3f}")
+
+            # Transform template corners to find position in target
             h, w = self.template_region.shape
             corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
             transformed = cv2.perspectiveTransform(corners, H)
@@ -551,15 +697,31 @@ class TemplateMatcher:
             x_coords = transformed[:, 0, 0]
             y_coords = transformed[:, 0, 1]
             x, y = int(x_coords.min()), int(y_coords.min())
+            
+            if debug:
+                print(f"   Position in cropped space: ({x}, {y})")
+                print(f"   Position in original space: ({x + self.crop_offset_x}, {y + self.crop_offset_y})")
+            
+            
+            # Validate position is within cropped image bounds
+            if x < 0 or y < 0 or x >= target_gray.shape[1] or y >= target_gray.shape[0]:
+                if debug:
+                    print(f"   ❌ Invalid match position: ({x}, {y}) outside cropped image bounds {target_gray.shape}")
+                    print("   → Falling back to SIFT")
+                return self.match_feature_based(target_gray_original, use_cuda=False)
 
-            confidence = np.sum(mask) / len(mask) if mask is not None else 0.0
+            if debug:
+                print(f"   ✓ Match found in cropped space: ({x}, {y})")
 
             return (x, y), confidence, H
 
         except Exception as e:
-            print(f"SuperPoint matching failed: {e}")
-            print("Falling back to SIFT")
-            return self.match_feature_based(target_gray)
+            import traceback
+            print(f"❌ SuperPoint matching failed: {e}")
+            if debug:
+                print(traceback.format_exc())
+            print("   → Falling back to SIFT")
+            return self.match_feature_based(target_gray_original, use_cuda=False)
 
     def _is_homography_near_similarity(self, H, threshold_angle=3, threshold_scale=0.1, debug=False):
         """
@@ -646,11 +808,6 @@ class TemplateMatcher:
         return True
 
     def _transform_bbox_with_homography(self, bbox, H, template_offset_x, template_offset_y, debug=False):
-        # Get corners from either rectangle or polygon
-        # Note: bbox coordinates are in original (full) image space
-        # template_offset_x/y are also in original space (from self.template_bbox.rect)
-        # We need to convert to template region space (relative to template bbox in cropped image)
-
         # Use template position in cropped space
         template_x_cropped = self.template_x_in_cropped
         template_y_cropped = self.template_y_in_cropped
@@ -722,7 +879,7 @@ class TemplateMatcher:
         elif method == 'orb':
             max_loc, confidence, homography_matrix = self.match_orb(target_gray)
         elif method == 'superpoint':
-            max_loc, confidence, homography_matrix = self.match_superpoint_lightglue(target_gray)
+            max_loc, confidence, homography_matrix = self.match_superpoint_lightglue(target_gray, debug=debug)
         else:
             results = []
 
@@ -743,7 +900,7 @@ class TemplateMatcher:
 
             # Try SuperPoint if available
             if SUPERPOINT_AVAILABLE:
-                loc5, conf5, H5 = self.match_superpoint_lightglue(target_gray)
+                loc5, conf5, H5 = self.match_superpoint_lightglue(target_gray, debug=debug)
                 if loc5 is not None:
                     results.append(('superpoint', loc5, conf5, H5, 1.0))
 
@@ -755,14 +912,13 @@ class TemplateMatcher:
             return None, confidence, target_image
 
         transformed_bboxes = []
-
         if homography_matrix is not None:
             template_x_orig = self.template_bbox.rect.x()
             template_y_orig = self.template_bbox.rect.y()
 
             if debug:
                 print("\n🔍 Homography Transform Analysis:")
-
+            
             for bbox in self.other_bboxes:
                 if debug:
                     print(f"\nTransforming {bbox.bbox_type}:")

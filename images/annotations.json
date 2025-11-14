@@ -1,6 +1,6 @@
 {
-  "_template_image": "../images/3.jpg",
-  "../images/3.jpg": [
+  "_template_image": "/Users/ngocthien.ai/Source/Projects/ocr_datecode/images/3.jpg",
+  "/Users/ngocthien.ai/Source/Projects/ocr_datecode/images/3.jpg": [
     {
       "type": "text",
       "shape": "polygon",
@@ -94,20 +94,20 @@
       "shape": "polygon",
       "points": [
         [
-          1214,
-          1022
+          966,
+          165
         ],
         [
-          1291,
-          1025
+          1684,
+          198
         ],
         [
-          1287,
-          1108
+          1598,
+          1450
         ],
         [
-          1208,
-          1106
+          960,
+          1431
         ]
       ]
     },
