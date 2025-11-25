@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Camera Management Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <div class="logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <rect x="2" y="6" width="20" height="12" rx="2" stroke="currentColor" stroke-width="2"/>
+            <circle cx="12" cy="12" r="2.5" stroke="currentColor" stroke-width="2"/>
+            <path d="M17 6L19 3H5L7 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <span>Camera System</span>
+        </div>
+        <div class="search-bar">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/>
+            <path d="m21 21-4.35-4.35" stroke="currentColor" stroke-width="2"/>
+          </svg>
+          <input type="text" placeholder="Search cameras, receipts...">
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="connection-status">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="2" fill="#10b981"/>
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" stroke="currentColor" stroke-width="2"/>
+          </svg>
+          <span>All cameras online</span>
+        </div>
+        <div class="profile">
+          <img src="https://images.pexels.com/photos/30004493/pexels-photo-30004493.jpeg?auto=compress&cs=tinysrgb&h=350" alt="User" class="profile-avatar">
+          <span>Admin User</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="main-content">
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <h3>Menu</h3>
+        <nav class="nav-menu">
+          <a href="#dashboard" class="nav-item active" data-section="dashboard">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <rect x="3" y="3" width="7" height="7" stroke="currentColor" stroke-width="2"/>
+              <rect x="14" y="3" width="7" height="7" stroke="currentColor" stroke-width="2"/>
+              <rect x="14" y="14" width="7" height="7" stroke="currentColor" stroke-width="2"/>
+              <rect x="3" y="14" width="7" height="7" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            Dashboard
+          </a>
+          <a href="#users" class="nav-item" data-section="users">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M17 21V19C17 17.9391 16.5786 16.9217 15.8284 16.1716C15.0783 15.4214 14.0609 15 13 15H5C3.93913 15 2.92172 15.4214 2.17157 16.1716C1.42143 16.9217 1 17.9391 1 19V21" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="9" cy="7" r="4" stroke="currentColor" stroke-width="2"/>
+              <path d="M23 21V19C22.9993 18.1137 22.7044 17.2528 22.1614 16.5523C21.6184 15.8519 20.8581 15.3516 20 15.13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M16 3.13C16.8604 3.35031 17.623 3.85071 18.1676 4.55232C18.7122 5.25392 19.0078 6.11683 19.0078 7.005C19.0078 7.89318 18.7122 8.75608 18.1676 9.45769C17.623 10.1593 16.8604 10.6597 16 10.88" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            User Management
+          </a>
+          <a href="#receipts" class="nav-item" data-section="receipts">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <polyline points="14,2 14,8 20,8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <line x1="16" y1="13" x2="8" y2="13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <line x1="16" y1="17" x2="8" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <polyline points="10,9 9,9 8,9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Receipts
+          </a>
+          <a href="#historical" class="nav-item" data-section="historical">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+              <polyline points="12,6 12,12 16,14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Historical
+          </a>
+        </nav>
+
+        <h3>Appearance</h3>
+        <div class="appearance-controls">
+          <div class="dark-mode-toggle">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3A7 7 0 0 0 21 12.79Z" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            <span>Dark mode</span>
+            <label class="toggle">
+              <input type="checkbox">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <h3>Action</h3>
+        <nav class="action-menu">
+          <a href="#settings" class="nav-item" data-section="settings">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
+              <path d="M19.4 15A1.65 1.65 0 0 0 21 13.35A1.65 1.65 0 0 0 19.4 11.65L18.7 12.35A7.81 7.81 0 0 0 12 5.29V4A1 1 0 0 0 11 3A1 1 0 0 0 10 4V5.29A7.81 7.81 0 0 0 3.3 12.35L2.6 11.65A1.65 1.65 0 0 0 1 13.35A1.65 1.65 0 0 0 2.6 15L3.3 14.3A7.81 7.81 0 0 0 10 20.71V22A1 1 0 0 0 11 23A1 1 0 0 0 12 22V20.71A7.81 7.81 0 0 0 18.7 14.3L19.4 15Z" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            Settings
+          </a>
+          <a href="#logout" class="nav-item" id="logoutBtn">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M9 21H5A2 2 0 0 1 3 19V5A2 2 0 0 1 5 3H9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <polyline points="16,17 21,12 16,7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <line x1="21" y1="12" x2="9" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Logout
+          </a>
+        </nav>
+      </aside>
+
+      <!-- Main Dashboard -->
+      <main class="dashboard">
+        <!-- Dashboard Section -->
+        <section id="dashboard-section" class="content-section active">
+          <div class="dashboard-header">
+            <div class="welcome-section">
+              <h1>Camera Production Dashboard</h1>
+              <p>Monitor camera performance and product processing in real-time</p>
+            </div>
+            <div class="time-section">
+              <div class="time">9:28 AM</div>
+              <div class="date">Sunday, 20 February 2023</div>
+            </div>
+          </div>
+
+          <div class="dashboard-main-content">
+            <!-- Left Section -->
+            <div class="dashboard-left">
+              <!-- Summary Cards -->
+              <div class="summary-cards">
+                <div class="summary-card">
+                  <div class="card-icon camera">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                      <rect x="2" y="6" width="20" height="12" rx="2" stroke="currentColor" stroke-width="2"/>
+                      <circle cx="12" cy="12" r="2.5" stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                  </div>
+                  <div class="card-info">
+                    <h3>Total Cameras</h3>
+                    <div class="card-value">3</div>
+                    <span class="card-status online">All online</span>
+                  </div>
+                </div>
+
+                <div class="summary-card">
+                  <div class="card-icon products">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                      <path d="M21 16V8C20.9996 7.64927 20.9071 7.30481 20.7315 7.00116C20.556 6.69751 20.3037 6.44536 20 6.27L13 2.27C12.696 2.09446 12.3511 2.00205 12 2.00205C11.6489 2.00205 11.304 2.09446 11 2.27L4 6.27C3.69626 6.44536 3.44398 6.69751 3.26846 7.00116C3.09294 7.30481 3.00036 7.64927 3 8V16C3.00036 16.3507 3.09294 16.6952 3.26846 16.9988C3.44398 17.3025 3.69626 17.5546 4 17.73L11 21.73C11.304 21.9055 11.6489 21.998 12 21.998C12.3511 21.998 12.696 21.9055 13 21.73L20 17.73C20.3037 17.5546 20.556 17.3025 20.7315 16.9988C20.9071 16.6952 20.9996 16.3507 21 16Z" stroke="currentColor" stroke-width="2"/>
+                      <polyline points="3.27,6.96 12,12.01 20.73,6.96" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <line x1="12" y1="22.08" x2="12" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </div>
+                  <div class="card-info">
+                    <h3>Products Today</h3>
+                    <div class="card-value" id="totalProductsToday">1,247</div>
+                    <span class="card-status increase">+12% vs yesterday</span>
+                  </div>
+                </div>
+
+                <div class="summary-card">
+                  <div class="card-icon processing">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+                      <polyline points="12,6 12,12 16,14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </div>
+                  <div class="card-info">
+                    <h3>Avg Processing Time</h3>
+                    <div class="card-value">2.3s</div>
+                    <span class="card-status normal">Per product</span>
+                  </div>
+                </div>
+
+                <div class="summary-card">
+                  <div class="card-icon success">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                      <polyline points="20,6 9,17 4,12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </div>
+                  <div class="card-info">
+                    <h3>Success Rate</h3>
+                    <div class="card-value">98.5%</div>
+                    <span class="card-status success">Excellent</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Camera Previews -->
+              <div class="camera-previews">
+                <div class="camera-preview-card">
+                  <div class="camera-preview-header">
+                    <div class="camera-preview-title">
+                      <div class="camera-status active"></div>
+                      <span>Camera 1 - Line A</span>
+                    </div>
+                    <span class="live-badge">LIVE</span>
+                  </div>
+                  <div class="camera-preview-frame">
+                    <img src="https://images.pexels.com/photos/1267338/pexels-photo-1267338.jpeg?auto=compress&cs=tinysrgb&w=800" alt="Camera 1 Feed">
+                    <div class="camera-overlay-info">
+                      <div class="overlay-stat">
+                        <span class="overlay-label">FPS:</span>
+                        <span class="overlay-value">30</span>
+                      </div>
+                      <div class="overlay-stat">
+                        <span class="overlay-label">Products:</span>
+                        <span class="overlay-value">456</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="camera-preview-card">
+                  <div class="camera-preview-header">
+                    <div class="camera-preview-title">
+                      <div class="camera-status active"></div>
+                      <span>Camera 2 - Line B</span>
+                    </div>
+                    <span class="live-badge">LIVE</span>
+                  </div>
+                  <div class="camera-preview-frame">
+                    <img src="https://images.pexels.com/photos/3862130/pexels-photo-3862130.jpeg?auto=compress&cs=tinysrgb&w=800" alt="Camera 2 Feed">
+                    <div class="camera-overlay-info">
+                      <div class="overlay-stat">
+                        <span class="overlay-label">FPS:</span>
+                        <span class="overlay-value">30</span>
+                      </div>
+                      <div class="overlay-stat">
+                        <span class="overlay-label">Products:</span>
+                        <span class="overlay-value">423</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="camera-preview-card">
+                  <div class="camera-preview-header">
+                    <div class="camera-preview-title">
+                      <div class="camera-status active"></div>
+                      <span>Camera 3 - QC</span>
+                    </div>
+                    <span class="live-badge">LIVE</span>
+                  </div>
+                  <div class="camera-preview-frame">
+                    <img src="https://images.pexels.com/photos/5022849/pexels-photo-5022849.jpeg?auto=compress&cs=tinysrgb&w=800" alt="Camera 3 Feed">
+                    <div class="camera-overlay-info">
+                      <div class="overlay-stat">
+                        <span class="overlay-label">FPS:</span>
+                        <span class="overlay-value">30</span>
+                      </div>
+                      <div class="overlay-stat">
+                        <span class="overlay-label">Products:</span>
+                        <span class="overlay-value">368</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right Sidebar -->
+            <div class="dashboard-right">
+              <!-- Recent Members -->
+              <div class="right-card recent-members">
+                <h3>Recent Visited Members</h3>
+                <div class="member-list">
+                  <div class="member-item">
+                    <img src="https://images.pexels.com/photos/30004320/pexels-photo-30004320.jpeg?auto=compress&cs=tinysrgb&h=350" alt="User" class="member-avatar">
+                    <div class="member-info">
+                      <h4>Corey Rhiel Madsen</h4>
+                      <span>Today, 4:23 AM</span>
+                    </div>
+                  </div>
+                  <div class="member-item">
+                    <img src="https://images.pexels.com/photos/30004322/pexels-photo-30004322.jpeg?auto=compress&cs=tinysrgb&h=350" alt="User" class="member-avatar">
+                    <div class="member-info">
+                      <h4>Gretchen Calzoni</h4>
+                      <span>Today, 8:30 AM</span>
+                    </div>
+                  </div>
+                  <div class="member-item">
+                    <img src="https://images.pexels.com/photos/30004493/pexels-photo-30004493.jpeg?auto=compress&cs=tinysrgb&h=350" alt="User" class="member-avatar">
+                    <div class="member-info">
+                      <h4>Charlie George</h4>
+                      <span>Today, 2:56 PM</span>
+                    </div>
+                  </div>
+                </div>
+                <a href="#" class="view-all">View all Members</a>
+              </div>
+
+              <!-- Recent Products -->
+              <div class="right-card recent-products">
+                <h3>Recent Products</h3>
+                <div class="product-list">
+                  <div class="product-item">
+                    <div class="product-header">
+                      <div class="product-icon success">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                          <polyline points="20,6 9,17 4,12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                      </div>
+                      <div class="product-info">
+                        <h4>Product #A-1247</h4>
+                        <span class="product-line">Production Line A</span>
+                      </div>
+                    </div>
+                    <div class="product-details">
+                      <div class="detail-row">
+                        <span class="detail-label">Start:</span>
+                        <span class="detail-value">09:15:23</span>
+                      </div>
+                      <div class="detail-row">
+                        <span class="detail-label">End:</span>
+                        <span class="detail-value">09:15:25</span>
+                      </div>
+                      <div class="detail-row">
+                        <span class="detail-label">Duration:</span>
+                        <span class="detail-value">2.1s</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="product-item">
+                    <div class="product-header">
+                      <div class="product-icon success">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                          <polyline points="20,6 9,17 4,12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                      </div>
+                      <div class="product-info">
+                        <h4>Product #B-0423</h4>
+                        <span class="product-line">Production Line B</span>
+                      </div>
+                    </div>
+                    <div class="product-details">
+                      <div class="detail-row">
+                        <span class="detail-label">Start:</span>
+                        <span class="detail-value">09:14:18</span>
+                      </div>
+                      <div class="detail-row">
+                        <span class="detail-label">End:</span>
+                        <span class="detail-value">09:14:20</span>
+                      </div>
+                      <div class="detail-row">
+                        <span class="detail-label">Duration:</span>
+                        <span class="detail-value">2.3s</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="product-item">
+                    <div class="product-header">
+                      <div class="product-icon fail">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                          <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                          <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        </svg>
+                      </div>
+                      <div class="product-info">
+                        <h4>Product #Q-0368</h4>
+                        <span class="product-line">Quality Control</span>
+                      </div>
+                    </div>
+                    <div class="product-details">
+                      <div class="detail-row">
+                        <span class="detail-label">Start:</span>
+                        <span class="detail-value">09:13:45</span>
+                      </div>
+                      <div class="detail-row">
+                        <span class="detail-label">End:</span>
+                        <span class="detail-value">09:13:47</span>
+                      </div>
+                      <div class="detail-row">
+                        <span class="detail-label">Duration:</span>
+                        <span class="detail-value">2.6s</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="product-item">
+                    <div class="product-header">
+                      <div class="product-icon success">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                          <polyline points="20,6 9,17 4,12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                      </div>
+                      <div class="product-info">
+                        <h4>Product #A-1246</h4>
+                        <span class="product-line">Production Line A</span>
+                      </div>
+                    </div>
+                    <div class="product-details">
+                      <div class="detail-row">
+                        <span class="detail-label">Start:</span>
+                        <span class="detail-value">09:13:10</span>
+                      </div>
+                      <div class="detail-row">
+                        <span class="detail-label">End:</span>
+                        <span class="detail-value">09:13:12</span>
+                      </div>
+                      <div class="detail-row">
+                        <span class="detail-label">Duration:</span>
+                        <span class="detail-value">2.0s</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Camera Statistics -->
+          <div class="camera-stats">
+            <div class="camera-card">
+              <div class="camera-card-header">
+                <div class="camera-title">
+                  <div class="camera-status active"></div>
+                  <h3>Camera 1 - Production Line A</h3>
+                </div>
+                <select class="time-filter">
+                  <option>Today</option>
+                  <option>Last 7 days</option>
+                  <option>Last 30 days</option>
+                </select>
+              </div>
+              <div class="camera-card-body">
+                <div class="camera-metrics">
+                  <div class="metric">
+                    <span class="metric-label">Products Processed</span>
+                    <span class="metric-value">456</span>
+                  </div>
+                  <div class="metric success">
+                    <span class="metric-label">Success</span>
+                    <span class="metric-value">452</span>
+                  </div>
+                  <div class="metric fail">
+                    <span class="metric-label">Failed</span>
+                    <span class="metric-value">4</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Avg Time</span>
+                    <span class="metric-value">2.1s</span>
+                  </div>
+                </div>
+                <div class="camera-chart">
+                  <canvas id="camera1Chart" width="800" height="200"></canvas>
+                </div>
+              </div>
+            </div>
+
+            <div class="camera-card">
+              <div class="camera-card-header">
+                <div class="camera-title">
+                  <div class="camera-status active"></div>
+                  <h3>Camera 2 - Production Line B</h3>
+                </div>
+                <select class="time-filter">
+                  <option>Today</option>
+                  <option>Last 7 days</option>
+                  <option>Last 30 days</option>
+                </select>
+              </div>
+              <div class="camera-card-body">
+                <div class="camera-metrics">
+                  <div class="metric">
+                    <span class="metric-label">Products Processed</span>
+                    <span class="metric-value">423</span>
+                  </div>
+                  <div class="metric success">
+                    <span class="metric-label">Success</span>
+                    <span class="metric-value">417</span>
+                  </div>
+                  <div class="metric fail">
+                    <span class="metric-label">Failed</span>
+                    <span class="metric-value">6</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Avg Time</span>
+                    <span class="metric-value">2.3s</span>
+                  </div>
+                </div>
+                <div class="camera-chart">
+                  <canvas id="camera2Chart" width="800" height="200"></canvas>
+                </div>
+              </div>
+            </div>
+
+            <div class="camera-card">
+              <div class="camera-card-header">
+                <div class="camera-title">
+                  <div class="camera-status active"></div>
+                  <h3>Camera 3 - Quality Control</h3>
+                </div>
+                <select class="time-filter">
+                  <option>Today</option>
+                  <option>Last 7 days</option>
+                  <option>Last 30 days</option>
+                </select>
+              </div>
+              <div class="camera-card-body">
+                <div class="camera-metrics">
+                  <div class="metric">
+                    <span class="metric-label">Products Processed</span>
+                    <span class="metric-value">368</span>
+                  </div>
+                  <div class="metric success">
+                    <span class="metric-label">Success</span>
+                    <span class="metric-value">360</span>
+                  </div>
+                  <div class="metric fail">
+                    <span class="metric-label">Failed</span>
+                    <span class="metric-value">8</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Avg Time</span>
+                    <span class="metric-value">2.6s</span>
+                  </div>
+                </div>
+                <div class="camera-chart">
+                  <canvas id="camera3Chart" width="800" height="200"></canvas>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- User Management Section -->
+        <section id="users-section" class="content-section">
+          <div class="section-header">
+            <h1>User Management</h1>
+            <button class="btn-primary">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              Add User
+            </button>
+          </div>
+          <div class="placeholder-content">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
+              <path d="M17 21V19C17 17.9391 16.5786 16.9217 15.8284 16.1716C15.0783 15.4214 14.0609 15 13 15H5C3.93913 15 2.92172 15.4214 2.17157 16.1716C1.42143 16.9217 1 17.9391 1 19V21" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="9" cy="7" r="4" stroke="currentColor" stroke-width="2"/>
+              <path d="M23 21V19C22.9993 18.1137 22.7044 17.2528 22.1614 16.5523C21.6184 15.8519 20.8581 15.3516 20 15.13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <h2>User Management</h2>
+            <p>Manage system users, roles, and permissions</p>
+          </div>
+        </section>
+
+        <!-- Receipts Section -->
+        <section id="receipts-section" class="content-section">
+          <div class="section-header">
+            <h1>Receipts</h1>
+            <button class="btn-primary">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              Create Receipt
+            </button>
+          </div>
+          <div class="placeholder-content">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
+              <path d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z" stroke="currentColor" stroke-width="2"/>
+              <polyline points="14,2 14,8 20,8" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            <h2>Receipts Management</h2>
+            <p>Create, view, edit, and delete production receipts</p>
+          </div>
+        </section>
+
+        <!-- Historical Section -->
+        <section id="historical-section" class="content-section">
+          <div class="section-header">
+            <h1>Historical Data</h1>
+            <button class="btn-primary">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M21 15V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <polyline points="7,10 12,15 17,10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              Export Data
+            </button>
+          </div>
+          <div class="placeholder-content">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+              <polyline points="12,6 12,12 16,14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <h2>Historical Records</h2>
+            <p>View and analyze historical production data and trends</p>
+          </div>
+        </section>
+
+        <!-- Settings Section -->
+        <section id="settings-section" class="content-section">
+          <div class="section-header">
+            <h1>Settings</h1>
+          </div>
+          <div class="placeholder-content">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
+              <path d="M19.4 15A1.65 1.65 0 0 0 21 13.35A1.65 1.65 0 0 0 19.4 11.65L18.7 12.35A7.81 7.81 0 0 0 12 5.29V4A1 1 0 0 0 11 3A1 1 0 0 0 10 4V5.29A7.81 7.81 0 0 0 3.3 12.35L2.6 11.65A1.65 1.65 0 0 0 1 13.35A1.65 1.65 0 0 0 2.6 15L3.3 14.3A7.81 7.81 0 0 0 10 20.71V22A1 1 0 0 0 11 23A1 1 0 0 0 12 22V20.71A7.81 7.81 0 0 0 18.7 14.3L19.4 15Z" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            <h2>System Settings</h2>
+            <p>Configure system preferences and camera settings</p>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
