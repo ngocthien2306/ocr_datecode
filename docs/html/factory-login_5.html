@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Suntech Automation - Employee Access</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        ::-webkit-scrollbar { display: none; }
+        
+        body {
+            font-family: 'Rajdhani', sans-serif;
+            overflow: hidden;
+            zoom: 0.9;
+        }
+        
+        .orbitron { font-family: 'Orbitron', monospace; }
+        
+        /* Grid Pattern Background */
+        .grid-bg {
+            background-color: #0a0e1a;
+            background-image: 
+                linear-gradient(rgba(30, 58, 138, 0.15) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(30, 58, 138, 0.15) 1px, transparent 1px),
+                linear-gradient(rgba(30, 58, 138, 0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(30, 58, 138, 0.05) 1px, transparent 1px);
+            background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px;
+            background-position: -1px -1px, -1px -1px, -1px -1px, -1px -1px;
+        }
+        
+        /* Camera Animation - CCTV Style */
+        .camera-left {
+            animation: cameraTilt 3s ease-in-out infinite;
+        }
+
+        .camera-right {
+            animation: cameraTilt 3s ease-in-out infinite;
+            animation-delay: 1.5s;
+        }
+        
+        .camera-center {
+            animation: cameraMoveVertical 6s ease-in-out infinite;
+        }
+        
+        @keyframes cameraTilt {
+            0%, 100% { transform: rotate(0deg); }
+            50% { transform: rotate(-5deg); }
+        }
+        
+        @keyframes cameraMoveVertical {
+            0%, 100% { transform: translate(-50%, 0); }
+            50% { transform: translate(-50%, calc(50vh - 150px)); }
+        }
+        
+        /* Scanner Beam - Parallelogram Light */
+        .scanner-beam-left {
+            animation: beamPulse 3s ease-in-out infinite;
+        }
+
+        .scanner-beam-right {
+            animation: beamPulse 3s ease-in-out infinite;
+            animation-delay: 1.5s;
+        }
+        
+        .scanner-beam-center {
+            animation: scanBeamCenter 6s ease-in-out infinite;
+            transform-origin: top center;
+        }
+        
+        @keyframes beamPulse {
+            0%, 100% {
+                opacity: 0.4;
+            }
+            50% {
+                opacity: 0.7;
+            }
+        }
+        
+        @keyframes scanBeamCenter {
+            0%, 100% { 
+                opacity: 0.4;
+                height: 200px;
+            }
+            50% { 
+                opacity: 0.8;
+                height: calc(50vh - 50px);
+            }
+        }
+        
+        /* Conveyor Belt */
+        .conveyor {
+            background: linear-gradient(180deg, #1e293b 0%, #334155 50%, #1e293b 100%);
+            border-top: 3px solid #475569;
+            border-bottom: 3px solid #0f172a;
+            box-shadow: 
+                inset 0 10px 20px rgba(0, 0, 0, 0.5),
+                inset 0 -10px 20px rgba(0, 0, 0, 0.5);
+        }
+        
+        /* Products on Conveyor */
+        .product {
+            animation: conveyorMove 15s linear infinite;
+        }
+        
+        .product-1 { animation-delay: 0s; }
+        .product-2 { animation-delay: -5s; }
+        .product-3 { animation-delay: -10s; }
+        .product-4 { animation-delay: -3s; }
+        .product-5 { animation-delay: -8s; }
+        
+        @keyframes conveyorMove {
+            0% { transform: translateX(-150px); }
+            100% { transform: translateX(calc(100vw + 150px)); }
+        }
+        
+        /* Glow Effects */
+        .glow-blue {
+            box-shadow: 
+                0 0 20px rgba(59, 130, 246, 0.4),
+                0 0 40px rgba(59, 130, 246, 0.2),
+                inset 0 0 20px rgba(59, 130, 246, 0.1);
+        }
+        
+        .glow-cyan {
+            box-shadow: 
+                0 0 20px rgba(34, 211, 238, 0.5),
+                0 0 40px rgba(34, 211, 238, 0.3);
+        }
+        
+        /* Camera Lens Rotation */
+        .lens-rotate {
+            animation: lensRotation 8s linear infinite;
+        }
+        
+        @keyframes lensRotation {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Status Pulse */
+        .pulse-green {
+            animation: pulseGreen 2s ease-in-out infinite;
+        }
+        
+        @keyframes pulseGreen {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        
+        /* Input Focus Effects */
+        .input-field {
+            transition: all 0.3s ease;
+        }
+        
+        .input-field:focus {
+            box-shadow: 
+                0 0 0 3px rgba(59, 130, 246, 0.3),
+                0 0 20px rgba(59, 130, 246, 0.4);
+            border-color: #3b82f6;
+        }
+        
+        /* Button Hover */
+        .btn-primary {
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .btn-primary::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.2);
+            transform: translate(-50%, -50%);
+            transition: width 0.6s, height 0.6s;
+        }
+        
+        .btn-primary:hover::before {
+            width: 300px;
+            height: 300px;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 
+                0 10px 30px rgba(59, 130, 246, 0.5),
+                0 0 50px rgba(59, 130, 246, 0.3);
+        }
+        
+        /* Metal Panel */
+        .metal-panel {
+            background: linear-gradient(145deg, #1e293b, #334155);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+        }
+        
+        /* Status Bar Scan Line */
+        .scan-line {
+            animation: scanLine 3s linear infinite;
+        }
+        
+        @keyframes scanLine {
+            0% { transform: translateX(-100%); opacity: 0; }
+            50% { opacity: 1; }
+            100% { transform: translateX(100%); opacity: 0; }
+        }
+
+        /* Logo styling */
+        .company-logo {
+            filter: brightness(1.1) contrast(1.1);
+            background: transparent; /* rgba(255, 255, 255, 0.8); */
+            padding: 8px 16px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+    </style>
+</head>
+<body class="grid-bg">
+    <div class="relative w-full h-screen flex items-center justify-center overflow-hidden">
+        
+        <!-- Header -->
+        <div class="absolute top-0 left-0 right-0 z-50 px-8 py-6 flex justify-between items-center">
+            <div class="flex items-center gap-6">
+                <!-- Company Logo -->
+                <div class="company-logo">
+                    <img src="logo-removebg-preview.png" alt="Suntech Automation" class="h-16 w-auto">
+                </div>
+                
+                <div class="border-l-2 border-slate-600 pl-6">
+                    <h1 class="orbitron text-2xl font-black text-white tracking-wider">VISION SYSTEM</h1>
+                    <p class="text-cyan-400 text-sm tracking-widest font-medium">v1.0.0 PRODUCTION</p>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-6">
+                <div class="flex items-center gap-3 bg-slate-800/60 backdrop-blur-sm px-5 py-2.5 rounded-xl border border-slate-600/50">
+                    <div class="w-2.5 h-2.5 bg-green-400 rounded-full pulse-green"></div>
+                    <span class="text-green-400 font-semibold text-sm tracking-wide">SYSTEM ONLINE</span>
+                </div>
+                <div class="text-right">
+                    <p class="text-gray-400 text-xs font-medium tracking-wider">CURRENT SHIFT</p>
+                    <p class="orbitron text-cyan-400 text-lg font-bold">A-MORNING</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Left Machine Vision Camera -->
+        <div class="absolute left-20 top-1/2 -translate-y-1/2 z-30 camera-left" style="transform-origin: center right;">
+            <div class="relative">
+                <!-- Industrial Machine Vision Camera Body -->
+                <div class="relative flex items-center">
+                    <!-- Camera Housing - Box Style -->
+                    <div class="w-20 h-24 bg-gradient-to-b from-slate-700 via-slate-800 to-slate-900 rounded-lg border-2 border-slate-600 shadow-2xl relative">
+                        <!-- Front Panel -->
+                        <div class="absolute inset-1.5 bg-slate-900 rounded border border-slate-700"></div>
+
+                        <!-- Large Square Lens -->
+                        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-14 h-14 bg-gradient-to-br from-slate-900 to-black rounded border-3 border-cyan-500 flex items-center justify-center glow-cyan">
+                            <div class="w-10 h-10 bg-gradient-to-br from-cyan-600 to-blue-500 rounded-sm lens-rotate opacity-70 flex items-center justify-center">
+                                <div class="w-5 h-5 bg-cyan-400 rounded-sm opacity-60"></div>
+                            </div>
+                        </div>
+
+                        <!-- Status LEDs -->
+                        <div class="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
+                            <div class="w-1 h-1 bg-cyan-500 rounded-full pulse-green"></div>
+                            <div class="w-1 h-1 bg-cyan-500 rounded-full pulse-green" style="animation-delay: 0.2s;"></div>
+                            <div class="w-1 h-1 bg-cyan-500 rounded-full pulse-green" style="animation-delay: 0.4s;"></div>
+                        </div>
+
+                        <!-- Cooling Vents -->
+                        <div class="absolute right-0.5 top-3 flex flex-col gap-0.5">
+                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
+                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
+                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
+                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
+                        </div>
+                        <div class="absolute left-0.5 top-3 flex flex-col gap-0.5">
+                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
+                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
+                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
+                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
+                        </div>
+                    </div>
+
+                    <!-- Side Mount Bracket -->
+                    <div class="absolute -left-4 top-1/2 -translate-y-1/2 w-6 h-28 bg-slate-700 rounded-l-lg border-2 border-slate-600 flex flex-col justify-center items-center gap-2">
+                        <div class="w-2 h-2 bg-slate-800 rounded-full"></div>
+                        <div class="w-2 h-2 bg-slate-800 rounded-full"></div>
+                    </div>
+
+                    <!-- Connection Cable -->
+                    <div class="absolute -left-2 top-2 w-1 h-3 bg-slate-600 rounded"></div>
+                </div>
+
+                <!-- Parallelogram Light Beam to Conveyor -->
+                <div class="absolute left-full top-1/2 -translate-y-1/2 w-[200px] pointer-events-none scanner-beam-left" style="height: 224px;">
+                    <div class="w-full h-full bg-gradient-to-r from-cyan-500/40 via-blue-500/30 to-transparent" style="transform: skewY(-15deg); transform-origin: left center;"></div>
+                    <div class="absolute top-0 left-0 w-1 h-full bg-cyan-400/60 shadow-lg shadow-cyan-400/50" style="transform: skewY(-15deg); transform-origin: left top;"></div>
+                    <div class="absolute bottom-0 left-0 w-1 h-full bg-cyan-400/60 shadow-lg shadow-cyan-400/50" style="transform: skewY(-15deg); transform-origin: left bottom;"></div>
+                    <!-- Scan Lines -->
+                    <div class="absolute top-1/4 left-0 w-full h-px bg-cyan-400/40" style="transform: skewY(-15deg);"></div>
+                    <div class="absolute top-2/4 left-0 w-full h-px bg-cyan-400/30" style="transform: skewY(-15deg);"></div>
+                    <div class="absolute top-3/4 left-0 w-full h-px bg-cyan-400/20" style="transform: skewY(-15deg);"></div>
+                </div>
+
+                <!-- Camera Label -->
+                <div class="absolute -bottom-16 left-0 whitespace-nowrap bg-slate-800/80 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-cyan-400/50">
+                    <p class="orbitron text-cyan-400 text-xs font-bold tracking-wider">CAM-1 VISION</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Right Machine Vision Camera -->
+        <div class="absolute right-20 top-1/2 -translate-y-1/2 z-30 camera-right" style="transform-origin: center left;">
+            <div class="relative">
+                <!-- Industrial Machine Vision Camera Body -->
+                <div class="relative flex items-center">
+                    <!-- Camera Housing - Box Style -->
+                    <div class="w-20 h-24 bg-gradient-to-b from-slate-700 via-slate-800 to-slate-900 rounded-lg border-2 border-slate-600 shadow-2xl relative">
+                        <!-- Front Panel -->
+                        <div class="absolute inset-1.5 bg-slate-900 rounded border border-slate-700"></div>
+
+                        <!-- Large Square Lens -->
+                        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-14 h-14 bg-gradient-to-br from-slate-900 to-black rounded border-3 border-cyan-500 flex items-center justify-center glow-cyan">
+                            <div class="w-10 h-10 bg-gradient-to-br from-cyan-600 to-blue-500 rounded-sm lens-rotate opacity-70 flex items-center justify-center" style="animation-delay: -4s;">
+                                <div class="w-5 h-5 bg-cyan-400 rounded-sm opacity-60"></div>
+                            </div>
+                        </div>
+
+                        <!-- Status LEDs -->
+                        <div class="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
+                            <div class="w-1 h-1 bg-cyan-500 rounded-full pulse-green" style="animation-delay: 0.1s;"></div>
+                            <div class="w-1 h-1 bg-cyan-500 rounded-full pulse-green" style="animation-delay: 0.3s;"></div>
+                            <div class="w-1 h-1 bg-cyan-500 rounded-full pulse-green" style="animation-delay: 0.5s;"></div>
+                        </div>
+
+                        <!-- Cooling Vents -->
+                        <div class="absolute right-0.5 top-3 flex flex-col gap-0.5">
+                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
+                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
+                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
+                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
+                        </div>
+                        <div class="absolute left-0.5 top-3 flex flex-col gap-0.5">
+                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
+                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
+                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
+                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
+                        </div>
+                    </div>
+
+                    <!-- Side Mount Bracket -->
+                    <div class="absolute -right-4 top-1/2 -translate-y-1/2 w-6 h-28 bg-slate-700 rounded-r-lg border-2 border-slate-600 flex flex-col justify-center items-center gap-2">
+                        <div class="w-2 h-2 bg-slate-800 rounded-full"></div>
+                        <div class="w-2 h-2 bg-slate-800 rounded-full"></div>
+                    </div>
+
+                    <!-- Connection Cable -->
+                    <div class="absolute -right-2 top-2 w-1 h-3 bg-slate-600 rounded"></div>
+                </div>
+
+                <!-- Parallelogram Light Beam to Conveyor -->
+                <div class="absolute right-full top-1/2 -translate-y-1/2 w-[200px] pointer-events-none scanner-beam-right" style="height: 224px;">
+                    <div class="w-full h-full bg-gradient-to-l from-cyan-500/40 via-blue-500/30 to-transparent" style="transform: skewY(15deg); transform-origin: right center;"></div>
+                    <div class="absolute top-0 right-0 w-1 h-full bg-cyan-400/60 shadow-lg shadow-cyan-400/50" style="transform: skewY(15deg); transform-origin: right top;"></div>
+                    <div class="absolute bottom-0 right-0 w-1 h-full bg-cyan-400/60 shadow-lg shadow-cyan-400/50" style="transform: skewY(15deg); transform-origin: right bottom;"></div>
+                    <!-- Scan Lines -->
+                    <div class="absolute top-1/4 left-0 w-full h-px bg-cyan-400/40" style="transform: skewY(15deg);"></div>
+                    <div class="absolute top-2/4 left-0 w-full h-px bg-cyan-400/30" style="transform: skewY(15deg);"></div>
+                    <div class="absolute top-3/4 left-0 w-full h-px bg-cyan-400/20" style="transform: skewY(15deg);"></div>
+                </div>
+
+                <!-- Camera Label -->
+                <div class="absolute -bottom-16 right-0 whitespace-nowrap bg-slate-800/80 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-cyan-400/50">
+                    <p class="orbitron text-cyan-400 text-xs font-bold tracking-wider">CAM-2 VISION</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Center Machine Vision Camera (Vertical Movement) -->
+        <div class="absolute left-1/2 top-2 z-40 camera-center">
+            <div class="relative">
+                <!-- Industrial Machine Vision Camera -->
+                <div class="relative">
+                    <!-- Camera Body - Box Style -->
+                    <div class="w-28 h-32 bg-gradient-to-b from-slate-700 via-slate-800 to-slate-900 rounded-lg border-2 border-slate-600 shadow-2xl relative">
+                        <!-- Camera Front Panel -->
+                        <div class="absolute inset-2 bg-slate-900 rounded border border-slate-700"></div>
+
+                        <!-- Large Front Lens -->
+                        <div class="absolute top-6 left-1/2 -translate-x-1/2 w-16 h-16 bg-gradient-to-br from-slate-900 to-black rounded-lg border-3 border-emerald-500 flex items-center justify-center glow-cyan">
+                            <div class="w-12 h-12 bg-gradient-to-br from-emerald-600 to-emerald-400 rounded-full lens-rotate opacity-70 flex items-center justify-center" style="animation-delay: -2s;">
+                                <div class="w-6 h-6 bg-emerald-300 rounded-full opacity-60"></div>
+                            </div>
+                        </div>
+
+                        <!-- Status LEDs Strip -->
+                        <div class="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5">
+                            <div class="w-1.5 h-1.5 bg-emerald-500 rounded-full pulse-green"></div>
+                            <div class="w-1.5 h-1.5 bg-emerald-500 rounded-full pulse-green" style="animation-delay: 0.2s;"></div>
+                            <div class="w-1.5 h-1.5 bg-emerald-500 rounded-full pulse-green" style="animation-delay: 0.4s;"></div>
+                        </div>
+
+                        <!-- Side Vents -->
+                        <div class="absolute right-1 top-1/2 -translate-y-1/2 flex flex-col gap-1">
+                            <div class="w-1 h-0.5 bg-slate-600"></div>
+                            <div class="w-1 h-0.5 bg-slate-600"></div>
+                            <div class="w-1 h-0.5 bg-slate-600"></div>
+                        </div>
+                        <div class="absolute left-1 top-1/2 -translate-y-1/2 flex flex-col gap-1">
+                            <div class="w-1 h-0.5 bg-slate-600"></div>
+                            <div class="w-1 h-0.5 bg-slate-600"></div>
+                            <div class="w-1 h-0.5 bg-slate-600"></div>
+                        </div>
+                    </div>
+
+                    <!-- Top Mount Arm -->
+                    <div class="absolute -top-12 left-1/2 -translate-x-1/2 flex flex-col items-center">
+                        <div class="w-3 h-10 bg-slate-700 rounded-t-lg border-2 border-slate-600"></div>
+                        <div class="w-12 h-4 bg-slate-800 rounded-lg border-2 border-slate-600"></div>
+                    </div>
+
+                    <!-- Cable -->
+                    <div class="absolute -top-10 left-1/2 -translate-x-1/2 translate-x-4 w-1.5 h-8 bg-slate-600 rounded-full"></div>
+                </div>
+
+                <!-- Scanner Beam Center - Vertical Wide Area -->
+                <div class="absolute top-full left-1/2 -translate-x-1/2 w-[350px] pointer-events-none scanner-beam-center">
+                    <!-- Main Beam -->
+                    <div class="w-full h-full bg-gradient-to-b from-emerald-500/40 via-emerald-400/20 to-transparent"></div>
+
+                    <!-- Top Edge -->
+                    <div class="absolute top-0 left-0 right-0 h-1 bg-emerald-400/80 shadow-lg shadow-emerald-400/50 blur-sm"></div>
+
+                    <!-- Scan Lines -->
+                    <div class="absolute top-4 left-1/4 right-1/4 h-px bg-emerald-400/60"></div>
+                    <div class="absolute top-8 left-1/3 right-1/3 h-px bg-emerald-400/40"></div>
+                    <div class="absolute top-12 left-0 right-0 h-px bg-emerald-400/30"></div>
+
+                    <!-- Side Boundaries -->
+                    <div class="absolute top-0 left-0 w-px h-20 bg-emerald-400/50"></div>
+                    <div class="absolute top-0 right-0 w-px h-20 bg-emerald-400/50"></div>
+                </div>
+
+                <!-- Camera Label -->
+                <div class="absolute -right-36 top-1/2 -translate-y-1/2 whitespace-nowrap bg-slate-800/80 backdrop-blur-sm px-4 py-2 rounded-lg border border-emerald-400/50">
+                    <p class="orbitron text-emerald-400 text-xs font-bold tracking-wider">CAM-3 VISION</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Conveyor Belt -->
+        <div class="absolute top-1/2 -translate-y-1/2 left-0 w-full h-56 conveyor z-10">
+            <div class="relative w-full h-full overflow-hidden">
+                <!-- Belt Lines -->
+                <div class="absolute top-1/2 -translate-y-1/2 w-full h-1 bg-slate-600"></div>
+                <div class="absolute top-1/3 w-full h-px bg-slate-500/50"></div>
+                <div class="absolute top-2/3 w-full h-px bg-slate-500/50"></div>
+                
+                <!-- Products -->
+                <div class="product product-1 absolute top-1/2 -translate-y-1/2 w-24 h-24">
+                    <div class="w-full h-full bg-gradient-to-br from-orange-500 to-orange-700 rounded-lg shadow-2xl border-2 border-orange-900 flex items-center justify-center transform rotate-3">
+                        <svg class="w-12 h-12 text-orange-200" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"/>
+                        </svg>
+                    </div>
+                </div>
+                
+                <div class="product product-2 absolute top-1/2 -translate-y-1/2 w-20 h-32">
+                    <div class="w-full h-full bg-gradient-to-b from-blue-400 to-blue-700 rounded-full shadow-2xl border-2 border-blue-900 flex items-center justify-center">
+                        <svg class="w-8 h-16 text-blue-100" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z"/>
+                        </svg>
+                    </div>
+                </div>
+                
+                <div class="product product-3 absolute top-1/2 -translate-y-1/2 w-32 h-24">
+                    <div class="w-full h-full bg-gradient-to-br from-emerald-500 to-emerald-800 rounded shadow-2xl border-2 border-emerald-900 flex items-center justify-center transform -rotate-2">
+                        <svg class="w-14 h-14 text-emerald-200" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM14 11a1 1 0 011 1v1h1a1 1 0 110 2h-1v1a1 1 0 11-2 0v-1h-1a1 1 0 110-2h1v-1a1 1 0 011-1z"/>
+                        </svg>
+                    </div>
+                </div>
+                
+                <div class="product product-4 absolute top-1/2 -translate-y-1/2 w-28 h-28">
+                    <div class="w-full h-full bg-gradient-to-br from-purple-500 to-purple-800 rounded-xl shadow-2xl border-2 border-purple-900 flex items-center justify-center">
+                        <svg class="w-14 h-14 text-purple-200" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"/>
+                        </svg>
+                    </div>
+                </div>
+                
+                <div class="product product-5 absolute top-1/2 -translate-y-1/2 w-24 h-20">
+                    <div class="w-full h-full bg-gradient-to-br from-rose-500 to-rose-800 rounded-lg shadow-2xl border-2 border-rose-900 flex items-center justify-center transform rotate-6">
+                        <svg class="w-12 h-12 text-rose-200" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M10 3.5a1.5 1.5 0 013 0V4a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-.5a1.5 1.5 0 000 3h.5a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-.5a1.5 1.5 0 00-3 0v.5a1 1 0 01-1 1H6a1 1 0 01-1-1v-3a1 1 0 00-1-1h-.5a1.5 1.5 0 010-3H4a1 1 0 001-1V6a1 1 0 011-1h3a1 1 0 001-1v-.5z"/>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Belt Rollers -->
+            <div class="absolute -left-10 top-1/2 -translate-y-1/2 w-20 h-64 bg-gradient-to-r from-slate-600 to-slate-700 rounded-l-2xl border-2 border-slate-800 shadow-2xl"></div>
+            <div class="absolute -right-10 top-1/2 -translate-y-1/2 w-20 h-64 bg-gradient-to-l from-slate-600 to-slate-700 rounded-r-2xl border-2 border-slate-800 shadow-2xl"></div>
+        </div>
+        
+        <!-- Login Panel -->
+        <div class="relative z-40 w-[520px]">
+            <div class="metal-panel rounded-3xl p-10 backdrop-blur-xl shadow-2xl">
+                <!-- Header -->
+                <div class="text-center mb-8">
+                    <h2 class="orbitron text-4xl font-black text-white mb-3 tracking-wider">EMPLOYEE ACCESS</h2>
+                    <p class="text-cyan-400 text-sm tracking-[0.3em] font-medium">SECURE AUTHENTICATION REQUIRED</p>
+                </div>
+                
+                <!-- Form -->
+                <form class="space-y-6">
+                    <!-- Employee ID -->
+                    <div>
+                        <label class="flex items-center gap-2 text-gray-300 text-sm font-semibold mb-3 tracking-wide">
+                            <svg class="w-5 h-5 text-cyan-400" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"/>
+                            </svg>
+                            EMPLOYEE ID
+                        </label>
+                        <div class="relative">
+                            <input 
+                                type="text" 
+                                placeholder="Enter your employee ID" 
+                                class="input-field w-full bg-slate-900/80 border-2 border-slate-600 rounded-xl px-5 py-4 text-white placeholder-slate-500 focus:outline-none"
+                            >
+                            <div class="absolute right-4 top-1/2 -translate-y-1/2">
+                                <svg class="w-6 h-6 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4"/>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Security Code -->
+                    <div>
+                        <label class="flex items-center gap-2 text-gray-300 text-sm font-semibold mb-3 tracking-wide">
+                            <svg class="w-5 h-5 text-cyan-400" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                            </svg>
+                            SECURITY CODE
+                        </label>
+                        <div class="relative">
+                            <input 
+                                type="password" 
+                                placeholder="Enter your security code" 
+                                class="input-field w-full bg-slate-900/80 border-2 border-slate-600 rounded-xl px-5 py-4 text-white placeholder-slate-500 focus:outline-none"
+                            >
+                            <div class="absolute right-4 top-1/2 -translate-y-1/2">
+                                <svg class="w-6 h-6 text-cyan-400" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Options -->
+                    <div class="flex items-center justify-between text-sm">
+                        <label class="flex items-center gap-3 cursor-pointer group">
+                            <input type="checkbox" class="w-5 h-5 rounded border-2 border-slate-600 bg-slate-900 checked:bg-blue-500 checked:border-blue-500 cursor-pointer">
+                            <span class="text-gray-400 group-hover:text-gray-300 transition-colors">Remember Device</span>
+                        </label>
+                        <a href="#" class="text-cyan-400 hover:text-cyan-300 transition-colors font-medium">Reset Code</a>
+                    </div>
+                    
+                    <!-- Submit Button -->
+                    <button 
+                        type="submit" 
+                        class="btn-primary relative w-full bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-bold py-5 rounded-xl transition-all duration-300 shadow-lg orbitron tracking-widest text-lg"
+                    >
+                        <span class="relative z-10 flex items-center justify-center gap-3">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"/>
+                            </svg>
+                            ACCESS SYSTEM
+                        </span>
+                    </button>
+                </form>
+                
+                <!-- Security Info -->
+                <div class="mt-8 pt-6 border-t border-slate-700">
+                    <div class="grid grid-cols-3 gap-4 text-center">
+                        <div class="flex flex-col items-center gap-2">
+                            <svg class="w-6 h-6 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                            </svg>
+                            <span class="text-xs text-gray-500 font-medium">ENCRYPTED</span>
+                        </div>
+                        <div class="flex flex-col items-center gap-2">
+                            <svg class="w-6 h-6 text-cyan-400" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm3.293 1.293a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 01-1.414-1.414L7.586 10 5.293 7.707a1 1 0 010-1.414zM11 12a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"/>
+                            </svg>
+                            <span class="text-xs text-gray-500 font-medium">SECURE</span>
+                        </div>
+                        <div class="flex flex-col items-center gap-2">
+                            <svg class="w-6 h-6 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/>
+                            </svg>
+                            <span class="text-xs text-gray-500 font-medium">24/7</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Stats Footer -->
+        <div class="absolute bottom-10 left-1/2 -translate-x-1/2 z-50">
+            <div class="flex items-center gap-12">
+                <div class="text-center">
+                    <p class="orbitron text-3xl font-bold text-green-400">2,847</p>
+                    <p class="text-gray-500 text-xs tracking-widest font-medium">UNITS TODAY</p>
+                </div>
+                <div class="w-px h-16 bg-slate-700"></div>
+                <div class="text-center">
+                    <p class="orbitron text-3xl font-bold text-cyan-400">94.2%</p>
+                    <p class="text-gray-500 text-xs tracking-widest font-medium">EFFICIENCY</p>
+                </div>
+                <div class="w-px h-16 bg-slate-700"></div>
+                <div class="text-center">
+                    <p class="orbitron text-3xl font-bold text-blue-400">127</p>
+                    <p class="text-gray-500 text-xs tracking-widest font-medium">ACTIVE STAFF</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Bottom Fade -->
+        <div class="absolute bottom-0 left-0 w-full h-40 bg-gradient-to-t from-slate-950 to-transparent z-20"></div>
+        
+        <!-- Version Info -->
+        <div class="absolute bottom-4 right-8 text-right text-xs text-slate-700 z-30">
+            <p class="font-medium">Suntech Automation Co., Ltd © 2025</p>
+            <p class="text-slate-800">Build 20241125-1.0.0</p>
+        </div>
+    </div>
+</body>
+</html>
