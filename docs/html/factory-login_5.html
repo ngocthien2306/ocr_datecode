@@ -319,6 +319,112 @@
             animation: ocrPopup5 15s linear infinite;
             animation-delay: -8s;
         }
+
+        /* Pusher/Ejector Animation */
+        .pusher-arm {
+            animation: pusherExtend 15s linear infinite;
+            animation-delay: -11s;
+        }
+
+        @keyframes pusherExtend {
+            0%, 82% {
+                transform: translateX(0);
+            }
+            83% {
+                transform: translateX(-120px);
+            }
+            86% {
+                transform: translateX(-120px);
+            }
+            87%, 100% {
+                transform: translateX(0);
+            }
+        }
+
+        /* Failed Product Ejection - only affects Y axis and rotation */
+        .product-3 {
+            z-index: 1;
+        }
+
+        .product-3.ejecting {
+            z-index: 1000 !important;
+        }
+
+        .product-3-inner {
+            animation: ejectProduct 15s ease-in infinite;
+            animation-delay: -11s;
+        }
+
+        @keyframes rejectBeltMove {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(20px); }
+        }
+
+        @keyframes ejectProduct {
+            0%, 82% {
+                transform: translateY(0) rotate(0deg);
+                opacity: 1;
+            }
+            /* Pusher hits */
+            83% {
+                transform: translateY(0) rotate(0deg);
+                opacity: 1;
+            }
+            /* Falling down to reject conveyor - 350px below */
+            84.5% {
+                transform: translateY(350px) rotate(45deg);
+                opacity: 1;
+            }
+            85.5% {
+                transform: translateY(350px) rotate(90deg);
+                opacity: 1;
+            }
+            /* Hit belt and small bounce */
+            86.5% {
+                transform: translateY(340px) rotate(90deg);
+                opacity: 1;
+            }
+            /* Settle on reject belt - stop rotating, lay flat */
+            87% {
+                transform: translateY(350px) rotate(0deg);
+                opacity: 1;
+            }
+            /* Stay on belt and move slowly to the right */
+            88% {
+                transform: translateY(350px) rotate(0deg) translateX(0px);
+                opacity: 1;
+            }
+            89% {
+                transform: translateY(350px) rotate(0deg) translateX(30px);
+                opacity: 1;
+            }
+            90% {
+                transform: translateY(350px) rotate(0deg) translateX(60px);
+                opacity: 1;
+            }
+            91% {
+                transform: translateY(350px) rotate(0deg) translateX(90px);
+                opacity: 1;
+            }
+            92% {
+                transform: translateY(350px) rotate(0deg) translateX(120px);
+                opacity: 1;
+            }
+            /* Continue moving and start fading */
+            93% {
+                transform: translateY(350px) rotate(0deg) translateX(150px);
+                opacity: 0.7;
+            }
+            94% {
+                transform: translateY(350px) rotate(0deg) translateX(180px);
+                opacity: 0.4;
+            }
+            /* Exit screen */
+            95%, 100% {
+                transform: translateY(350px) rotate(0deg) translateX(220px);
+                opacity: 0;
+            }
+        }
         
         /* Glow Effects */
         .glow-blue {
@@ -426,18 +532,18 @@
     </style>
 </head>
 <body class="grid-bg">
-    <div class="relative w-full h-screen flex items-center justify-center overflow-hidden">
+    <div class="relative w-full flex items-center justify-center overflow-hidden" style="height: 1090px;">
         
         <!-- Header -->
         <div class="absolute top-0 left-0 right-0 z-50 px-8 py-6 flex justify-between items-center">
             <div class="flex items-center gap-6">
                 <!-- Company Logo -->
                 <div class="company-logo">
-                    <img src="logo-removebg-preview.png" alt="Suntech Automation" class="h-16 w-auto">
+                    <img src="logo.png" alt="Suntech Automation" class="h-16 w-auto">
                 </div>
                 
                 <div class="border-l-2 border-slate-600 pl-6">
-                    <h1 class="orbitron text-2xl font-black text-white tracking-wider">VISION SYSTEM</h1>
+                    <h1 class="orbitron text-2xl font-black text-white tracking-wider">SUNTECH AUTOMATION</h1>
                     <p class="text-cyan-400 text-sm tracking-widest font-medium">v1.0.0 PRODUCTION</p>
                 </div>
             </div>
@@ -521,69 +627,75 @@
             </div>
         </div>
         
-        <!-- Right Machine Vision Camera -->
+        <!-- Right Rejection System (Pusher) -->
         <div class="absolute right-20 top-1/2 -translate-y-1/2 z-30 camera-right" style="transform-origin: center left;">
             <div class="relative">
-                <!-- Industrial Machine Vision Camera Body -->
+                <!-- Pusher Base/Housing -->
                 <div class="relative flex items-center">
-                    <!-- Camera Housing - Box Style -->
-                    <div class="w-20 h-24 bg-gradient-to-b from-slate-700 via-slate-800 to-slate-900 rounded-lg border-2 border-slate-600 shadow-2xl relative">
+                    <!-- Main Housing -->
+                    <div class="w-24 h-32 bg-gradient-to-b from-slate-700 via-slate-800 to-slate-900 rounded-lg border-2 border-slate-600 shadow-2xl relative">
                         <!-- Front Panel -->
-                        <div class="absolute inset-1.5 bg-slate-900 rounded border border-slate-700"></div>
+                        <div class="absolute inset-2 bg-slate-900 rounded border border-slate-700"></div>
 
-                        <!-- Large Square Lens -->
-                        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-14 h-14 bg-gradient-to-br from-slate-900 to-black rounded border-3 border-cyan-500 flex items-center justify-center glow-cyan">
-                            <div class="w-10 h-10 bg-gradient-to-br from-cyan-600 to-blue-500 rounded-sm lens-rotate opacity-70 flex items-center justify-center" style="animation-delay: -4s;">
-                                <div class="w-5 h-5 bg-cyan-400 rounded-sm opacity-60"></div>
-                            </div>
-                        </div>
+                        <!-- Warning Stripes -->
+                        <div class="absolute top-3 left-2 right-2 h-1 bg-gradient-to-r from-transparent via-yellow-500 to-transparent opacity-70"></div>
+                        <div class="absolute bottom-3 left-2 right-2 h-1 bg-gradient-to-r from-transparent via-yellow-500 to-transparent opacity-70"></div>
+
+                        <!-- Pusher Opening -->
+                        <div class="absolute top-1/2 -translate-y-1/2 -left-2 w-3 h-16 bg-slate-950 rounded-l-lg border-2 border-slate-700"></div>
 
                         <!-- Status LEDs -->
-                        <div class="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
-                            <div class="w-1 h-1 bg-cyan-500 rounded-full pulse-green" style="animation-delay: 0.1s;"></div>
-                            <div class="w-1 h-1 bg-cyan-500 rounded-full pulse-green" style="animation-delay: 0.3s;"></div>
-                            <div class="w-1 h-1 bg-cyan-500 rounded-full pulse-green" style="animation-delay: 0.5s;"></div>
+                        <div class="absolute top-2 right-2 flex flex-col gap-1.5">
+                            <div class="w-2 h-2 bg-red-500 rounded-full pulse-green"></div>
+                            <div class="w-2 h-2 bg-yellow-500 rounded-full pulse-green" style="animation-delay: 0.3s;"></div>
+                            <div class="w-2 h-2 bg-green-500 rounded-full pulse-green" style="animation-delay: 0.6s;"></div>
                         </div>
 
-                        <!-- Cooling Vents -->
-                        <div class="absolute right-0.5 top-3 flex flex-col gap-0.5">
-                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
-                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
-                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
-                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
+                        <!-- Label -->
+                        <div class="absolute bottom-2 left-1/2 -translate-x-1/2 bg-yellow-500/20 px-2 py-0.5 rounded">
+                            <span class="text-yellow-400 text-[8px] font-bold">REJECT</span>
                         </div>
-                        <div class="absolute left-0.5 top-3 flex flex-col gap-0.5">
-                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
-                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
-                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
-                            <div class="w-0.5 h-0.5 bg-slate-600"></div>
+                    </div>
+
+                    <!-- Pusher Arm (extends left to push products) -->
+                    <div class="pusher-arm absolute left-0 top-1/2 -translate-y-1/2 w-[120px] h-8 pointer-events-none" style="transform-origin: right center;">
+                        <!-- Arm Body -->
+                        <div class="absolute right-0 top-0 bottom-0 w-full bg-gradient-to-l from-orange-600 via-orange-500 to-orange-600 border-2 border-orange-700 rounded-l-lg shadow-lg">
+                            <!-- Arm Details -->
+                            <div class="absolute left-1 top-1/2 -translate-y-1/2 w-2 h-2 bg-orange-800 rounded-full"></div>
+                            <div class="absolute left-1/3 top-1/2 -translate-y-1/2 w-1 h-1 bg-orange-800 rounded-full"></div>
+                            <div class="absolute left-2/3 top-1/2 -translate-y-1/2 w-1 h-1 bg-orange-800 rounded-full"></div>
+
+                            <!-- Push Plate -->
+                            <div class="absolute -left-1 top-1/2 -translate-y-1/2 w-3 h-10 bg-orange-700 border-2 border-orange-800 rounded-l"></div>
                         </div>
                     </div>
 
                     <!-- Side Mount Bracket -->
-                    <div class="absolute -right-4 top-1/2 -translate-y-1/2 w-6 h-28 bg-slate-700 rounded-r-lg border-2 border-slate-600 flex flex-col justify-center items-center gap-2">
+                    <div class="absolute -right-4 top-1/2 -translate-y-1/2 w-6 h-36 bg-slate-700 rounded-r-lg border-2 border-slate-600 flex flex-col justify-center items-center gap-2">
+                        <div class="w-2 h-2 bg-slate-800 rounded-full"></div>
                         <div class="w-2 h-2 bg-slate-800 rounded-full"></div>
                         <div class="w-2 h-2 bg-slate-800 rounded-full"></div>
                     </div>
 
                     <!-- Connection Cable -->
-                    <div class="absolute -right-2 top-2 w-1 h-3 bg-slate-600 rounded"></div>
+                    <div class="absolute -right-2 top-2 w-1 h-4 bg-slate-600 rounded"></div>
                 </div>
 
-                <!-- Parallelogram Light Beam to Conveyor -->
-                <div class="absolute right-full top-1/2 -translate-y-1/2 w-[200px] pointer-events-none scanner-beam-right" style="height: 224px;">
-                    <div class="w-full h-full bg-gradient-to-l from-cyan-500/40 via-blue-500/30 to-transparent" style="transform: skewY(15deg); transform-origin: right center;"></div>
-                    <div class="absolute top-0 right-0 w-1 h-full bg-cyan-400/60 shadow-lg shadow-cyan-400/50" style="transform: skewY(15deg); transform-origin: right top;"></div>
-                    <div class="absolute bottom-0 right-0 w-1 h-full bg-cyan-400/60 shadow-lg shadow-cyan-400/50" style="transform: skewY(15deg); transform-origin: right bottom;"></div>
-                    <!-- Scan Lines -->
-                    <div class="absolute top-1/4 left-0 w-full h-px bg-cyan-400/40" style="transform: skewY(15deg);"></div>
-                    <div class="absolute top-2/4 left-0 w-full h-px bg-cyan-400/30" style="transform: skewY(15deg);"></div>
-                    <div class="absolute top-3/4 left-0 w-full h-px bg-cyan-400/20" style="transform: skewY(15deg);"></div>
+                <!-- Detection Zone Indicator -->
+                <div class="absolute right-full top-1/2 -translate-y-1/2 w-[150px] pointer-events-none" style="height: 224px;">
+                    <div class="w-full h-full bg-gradient-to-l from-orange-500/20 via-red-500/15 to-transparent"></div>
+                    <div class="absolute top-0 right-0 w-1 h-full bg-red-400/40"></div>
+                    <div class="absolute bottom-0 right-0 w-1 h-full bg-red-400/40"></div>
+                    <!-- Warning Lines -->
+                    <div class="absolute top-1/4 left-0 w-full h-px bg-red-400/30"></div>
+                    <div class="absolute top-2/4 left-0 w-full h-px bg-red-400/40"></div>
+                    <div class="absolute top-3/4 left-0 w-full h-px bg-red-400/30"></div>
                 </div>
 
-                <!-- Camera Label -->
-                <div class="absolute -bottom-16 right-0 whitespace-nowrap bg-slate-800/80 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-cyan-400/50">
-                    <p class="orbitron text-cyan-400 text-xs font-bold tracking-wider">CAM-2 VISION</p>
+                <!-- System Label -->
+                <div class="absolute -bottom-20 right-0 whitespace-nowrap bg-slate-800/80 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-orange-400/50">
+                    <p class="orbitron text-orange-400 text-xs font-bold tracking-wider">REJECTION SYSTEM</p>
                 </div>
             </div>
         </div>
@@ -660,9 +772,54 @@
             </div>
         </div>
         
+        <!-- Rejection Conveyor Belt -->
+        <div class="absolute bottom-24 right-24 z-5">
+            <div class="relative w-64 h-24">
+                <!-- Conveyor Belt Base -->
+                <div class="absolute inset-0 bg-gradient-to-b from-slate-700 to-slate-900 rounded-lg border-2 border-orange-500 shadow-2xl">
+                    <!-- Belt Surface -->
+                    <div class="absolute inset-2 bg-gradient-to-b from-slate-800 via-slate-900 to-slate-800 rounded overflow-hidden">
+                        <!-- Belt Lines Animation -->
+                        <div class="absolute top-1/2 -translate-y-1/2 w-full h-1 bg-slate-600"></div>
+                        <div class="absolute top-1/3 w-full h-px bg-slate-500/50"></div>
+                        <div class="absolute top-2/3 w-full h-px bg-slate-500/50"></div>
+
+                        <!-- Moving Belt Pattern -->
+                        <div class="absolute inset-0 flex items-center justify-around" style="animation: rejectBeltMove 2s linear infinite;">
+                            <div class="w-1 h-full bg-slate-600/50"></div>
+                            <div class="w-1 h-full bg-slate-600/50"></div>
+                            <div class="w-1 h-full bg-slate-600/50"></div>
+                            <div class="w-1 h-full bg-slate-600/50"></div>
+                            <div class="w-1 h-full bg-slate-600/50"></div>
+                        </div>
+                    </div>
+
+                    <!-- Warning Stripe -->
+                    <div class="absolute -top-1 left-0 right-0 h-1 bg-gradient-to-r from-yellow-500 via-orange-500 to-yellow-500"></div>
+                    <div class="absolute -bottom-1 left-0 right-0 h-1 bg-gradient-to-r from-yellow-500 via-orange-500 to-yellow-500"></div>
+
+                    <!-- Direction Arrow -->
+                    <div class="absolute top-1/2 -translate-y-1/2 right-2">
+                        <svg class="w-6 h-6 text-orange-400" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                        </svg>
+                    </div>
+
+                    <!-- Rollers -->
+                    <div class="absolute -left-2 top-1/2 -translate-y-1/2 w-4 h-20 bg-slate-700 rounded-l border-2 border-slate-600"></div>
+                    <div class="absolute -right-2 top-1/2 -translate-y-1/2 w-4 h-20 bg-slate-700 rounded-r border-2 border-slate-600"></div>
+                </div>
+
+                <!-- Label -->
+                <div class="absolute -top-8 left-0 bg-slate-800/80 backdrop-blur-sm px-3 py-1 rounded-lg border border-orange-400/50">
+                    <p class="text-orange-400 text-xs font-bold">REJECT CONVEYOR</p>
+                </div>
+            </div>
+        </div>
+
         <!-- Conveyor Belt -->
         <div class="absolute top-1/2 -translate-y-1/2 left-0 w-full h-56 conveyor z-10">
-            <div class="relative w-full h-full overflow-hidden">
+            <div class="relative w-full h-full overflow-visible">
                 <!-- Belt Lines -->
                 <div class="absolute top-1/2 -translate-y-1/2 w-full h-1 bg-slate-600"></div>
                 <div class="absolute top-1/3 w-full h-px bg-slate-500/50"></div>
@@ -746,8 +903,10 @@
                     </div>
                 </div>
                 
-                <div class="product product-3 absolute top-1/2 -translate-y-1/2 w-32 h-24">
-                    <img src="product_3.png" alt="Product 3" class="w-full h-full object-cover rounded-lg">
+                <div class="product product-3 ejecting absolute top-1/2 -translate-y-1/2 w-32 h-24">
+                    <div class="product-3-inner w-full h-full">
+                        <img src="product_3.png" alt="Product 3" class="w-full h-full object-cover rounded-lg">
+                    </div>
                     <!-- OCR Popup - FAILED -->
                     <div class="ocr-popup ocr-popup-3">
                         <div class="relative bg-gradient-to-br from-red-500 via-rose-500 to-red-600 text-white px-5 py-3 rounded-xl border-2 border-red-300 backdrop-blur-sm overflow-hidden" style="animation: popupGlowFailed 2s ease-in-out infinite;">
@@ -865,7 +1024,7 @@
             <div class="metal-panel rounded-3xl p-10 backdrop-blur-xl shadow-2xl">
                 <!-- Header -->
                 <div class="text-center mb-8">
-                    <h2 class="orbitron text-4xl font-black text-white mb-3 tracking-wider">EMPLOYEE ACCESS</h2>
+                    <h2 class="orbitron text-xl font-black text-white mb-3 tracking-wider">EMPLOYEE ACCESS</h2>
                     <p class="text-cyan-400 text-sm tracking-[0.3em] font-medium">SECURE AUTHENTICATION REQUIRED</p>
                 </div>
                 
