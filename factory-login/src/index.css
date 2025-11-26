@@ -1,0 +1,537 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  display: none;
+}
+
+html, body, #root {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  font-family: 'Rajdhani', sans-serif;
+}
+
+.orbitron {
+  font-family: 'Orbitron', monospace;
+}
+
+/* Grid Pattern Background */
+.grid-bg {
+  background-color: #0a0e1a;
+  background-image:
+    linear-gradient(rgba(30, 58, 138, 0.15) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30, 58, 138, 0.15) 1px, transparent 1px),
+    linear-gradient(rgba(30, 58, 138, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30, 58, 138, 0.05) 1px, transparent 1px);
+  background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px;
+  background-position: -1px -1px, -1px -1px, -1px -1px, -1px -1px;
+}
+
+/* Camera Animation - CCTV Style */
+.camera-left {
+  animation: cameraTilt 3s ease-in-out infinite;
+}
+
+.camera-right {
+  animation: cameraTilt 3s ease-in-out infinite;
+  animation-delay: 1.5s;
+}
+
+.camera-center {
+  animation: cameraMoveVertical 6s ease-in-out infinite;
+}
+
+@keyframes cameraTilt {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-5deg); }
+}
+
+@keyframes cameraMoveVertical {
+  0%, 100% { transform: translate(-50%, 0); }
+  50% { transform: translate(-50%, calc(50vh - 150px)); }
+}
+
+/* Scanner Beam - Parallelogram Light */
+.scanner-beam-left {
+  animation: beamPulse 3s ease-in-out infinite;
+}
+
+.scanner-beam-right {
+  animation: beamPulse 3s ease-in-out infinite;
+  animation-delay: 1.5s;
+}
+
+.scanner-beam-center {
+  animation: scanBeamCenter 6s ease-in-out infinite;
+  transform-origin: top center;
+}
+
+@keyframes beamPulse {
+  0%, 100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes scanBeamCenter {
+  0%, 100% {
+    opacity: 0.4;
+    height: 200px;
+  }
+  50% {
+    opacity: 0.8;
+    height: calc(50vh - 50px);
+  }
+}
+
+/* Conveyor Belt */
+.conveyor {
+  background: linear-gradient(180deg, #1e293b 0%, #334155 50%, #1e293b 100%);
+  border-top: 3px solid #475569;
+  border-bottom: 3px solid #0f172a;
+  box-shadow:
+    inset 0 10px 20px rgba(0, 0, 0, 0.5),
+    inset 0 -10px 20px rgba(0, 0, 0, 0.5);
+}
+
+/* Products on Conveyor */
+.product {
+  animation: conveyorMove 15s linear infinite;
+}
+
+.product-1 { animation-delay: 0s; }
+.product-2 { animation-delay: -3s; }
+.product-3 { animation-delay: -6s; }
+.product-4 { animation-delay: -9s; }
+.product-5 { animation-delay: -12s; }
+
+@keyframes conveyorMove {
+  0% { transform: translateX(-150px); }
+  100% { transform: translateX(calc(100vw + 150px)); }
+}
+
+/* OCR Popup Animation */
+.ocr-popup {
+  position: absolute;
+  top: -80px;
+  left: 50%;
+  transform: translateX(-50%);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 100;
+  min-width: 200px;
+}
+
+/* Popup Glow Effect */
+@keyframes popupGlow {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(16, 185, 129, 0.4),
+               0 0 40px rgba(16, 185, 129, 0.2),
+               0 10px 30px rgba(0, 0, 0, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(16, 185, 129, 0.6),
+               0 0 60px rgba(16, 185, 129, 0.3),
+               0 10px 30px rgba(0, 0, 0, 0.3);
+  }
+}
+
+@keyframes popupGlowFailed {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.4),
+               0 0 40px rgba(239, 68, 68, 0.2),
+               0 10px 30px rgba(0, 0, 0, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(239, 68, 68, 0.6),
+               0 0 60px rgba(239, 68, 68, 0.3),
+               0 10px 30px rgba(0, 0, 0, 0.3);
+  }
+}
+
+/* Scan Line Effect */
+@keyframes scanLine {
+  0% { transform: translateY(-100%); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
+
+.scan-line-effect {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.8), transparent);
+  animation: scanLine 2s ease-in-out infinite;
+}
+
+/* OCR Popup Animations for each product */
+@keyframes ocrPopup1 {
+  0%, 9.5% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(15px) scale(0.7) rotateX(-20deg);
+    filter: blur(3px);
+  }
+  10.4% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1) rotateX(0deg);
+    filter: blur(0px);
+  }
+  19.4% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1) rotateX(0deg);
+    filter: blur(0px);
+  }
+  20.5%, 100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-15px) scale(0.7) rotateX(20deg);
+    filter: blur(3px);
+  }
+}
+
+@keyframes ocrPopup2 {
+  0%, 9.5% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(15px) scale(0.7) rotateX(-20deg);
+    filter: blur(3px);
+  }
+  10.4% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1) rotateX(0deg);
+    filter: blur(0px);
+  }
+  19.4% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1) rotateX(0deg);
+    filter: blur(0px);
+  }
+  20.5%, 100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-15px) scale(0.7) rotateX(20deg);
+    filter: blur(3px);
+  }
+}
+
+@keyframes ocrPopup3 {
+  0%, 9.5% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(15px) scale(0.7) rotateX(-20deg);
+    filter: blur(3px);
+  }
+  10.4% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1) rotateX(0deg);
+    filter: blur(0px);
+  }
+  19.4% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1) rotateX(0deg);
+    filter: blur(0px);
+  }
+  20.5%, 100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-15px) scale(0.7) rotateX(20deg);
+    filter: blur(3px);
+  }
+}
+
+@keyframes ocrPopup4 {
+  0%, 9.5% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(15px) scale(0.7) rotateX(-20deg);
+    filter: blur(3px);
+  }
+  10.4% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1) rotateX(0deg);
+    filter: blur(0px);
+  }
+  19.4% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1) rotateX(0deg);
+    filter: blur(0px);
+  }
+  20.5%, 100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-15px) scale(0.7) rotateX(20deg);
+    filter: blur(3px);
+  }
+}
+
+@keyframes ocrPopup5 {
+  0%, 9.5% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(15px) scale(0.7) rotateX(-20deg);
+    filter: blur(3px);
+  }
+  10.4% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1) rotateX(0deg);
+    filter: blur(0px);
+  }
+  19.4% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1) rotateX(0deg);
+    filter: blur(0px);
+  }
+  20.5%, 100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-15px) scale(0.7) rotateX(20deg);
+    filter: blur(3px);
+  }
+}
+
+.ocr-popup-1 {
+  animation: ocrPopup1 15s linear infinite;
+  animation-delay: 0s;
+}
+
+.ocr-popup-2 {
+  animation: ocrPopup2 15s linear infinite;
+  animation-delay: -3s;
+}
+
+.ocr-popup-3 {
+  animation: ocrPopup3 15s linear infinite;
+  animation-delay: -6s;
+}
+
+.ocr-popup-4 {
+  animation: ocrPopup4 15s linear infinite;
+  animation-delay: -9s;
+}
+
+.ocr-popup-5 {
+  animation: ocrPopup5 15s linear infinite;
+  animation-delay: -12s;
+}
+
+/* Pusher/Ejector Animation */
+.pusher-arm {
+  animation: pusherExtend 15s linear infinite;
+  animation-delay: 0s;
+}
+
+@keyframes pusherExtend {
+  0%, 82% {
+    transform: translateX(0);
+  }
+  /* Pusher extends and pushes */
+  83% {
+    transform: translateX(-120px);
+  }
+  /* Stay extended while product falls - total 1s from 83% to 90% */
+  89% {
+    transform: translateX(-120px);
+  }
+  /* Retract after eject - pusher returns */
+  90%, 100% {
+    transform: translateX(0);
+  }
+}
+
+/* Failed Product Ejection */
+.product-1 {
+  z-index: 1;
+}
+
+.product-1.ejecting {
+  z-index: 1000 !important;
+}
+
+.product-1-inner {
+  animation: ejectProduct 15s ease-in infinite;
+  animation-delay: 0s;
+}
+
+@keyframes rejectBeltMove {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(20px); }
+}
+
+@keyframes ejectProduct {
+  /* Product moving normally on conveyor */
+  0%, 82% {
+    transform: translateX(0) translateY(0) rotate(0deg);
+    opacity: 1;
+  }
+  /* Pusher touches product - starts pushing left */
+  83% {
+    transform: translateX(-30px) translateY(0) rotate(0deg);
+    opacity: 1;
+  }
+  /* Product pushed off conveyor edge - starts falling */
+  83.5% {
+    transform: translateX(-60px) translateY(50px) rotate(15deg);
+    opacity: 1;
+  }
+  /* Falling down with rotation */
+  84.5% {
+    transform: translateX(-80px) translateY(250px) rotate(45deg);
+    opacity: 1;
+  }
+  85.5% {
+    transform: translateX(-90px) translateY(350px) rotate(90deg);
+    opacity: 1;
+  }
+  /* Hits reject belt - small bounce */
+  86% {
+    transform: translateX(-90px) translateY(340px) rotate(90deg);
+    opacity: 1;
+  }
+  /* Settles on reject belt - stops rotating */
+  86.5% {
+    transform: translateX(-90px) translateY(350px) rotate(0deg);
+    opacity: 1;
+  }
+  /* Stay on belt until pusher retracts */
+  89% {
+    transform: translateX(-90px) translateY(350px) rotate(0deg);
+    opacity: 1;
+  }
+  /* Pusher retracted at 90%, product starts moving on reject belt */
+  90% {
+    transform: translateX(-60px) translateY(350px) rotate(0deg);
+    opacity: 1;
+  }
+  91% {
+    transform: translateX(-30px) translateY(350px) rotate(0deg);
+    opacity: 1;
+  }
+  92% {
+    transform: translateX(0px) translateY(350px) rotate(0deg);
+    opacity: 1;
+  }
+  93% {
+    transform: translateX(30px) translateY(350px) rotate(0deg);
+    opacity: 1;
+  }
+  94% {
+    transform: translateX(60px) translateY(350px) rotate(0deg);
+    opacity: 1;
+  }
+  95% {
+    transform: translateX(90px) translateY(350px) rotate(0deg);
+    opacity: 0.7;
+  }
+  96% {
+    transform: translateX(120px) translateY(350px) rotate(0deg);
+    opacity: 0.4;
+  }
+  97%, 100% {
+    transform: translateX(150px) translateY(350px) rotate(0deg);
+    opacity: 0;
+  }
+}
+
+/* Glow Effects */
+.glow-blue {
+  box-shadow:
+    0 0 20px rgba(59, 130, 246, 0.4),
+    0 0 40px rgba(59, 130, 246, 0.2),
+    inset 0 0 20px rgba(59, 130, 246, 0.1);
+}
+
+.glow-cyan {
+  box-shadow:
+    0 0 20px rgba(34, 211, 238, 0.5),
+    0 0 40px rgba(34, 211, 238, 0.3);
+}
+
+/* Camera Lens Rotation */
+.lens-rotate {
+  animation: lensRotation 8s linear infinite;
+}
+
+@keyframes lensRotation {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Status Pulse */
+.pulse-green {
+  animation: pulseGreen 2s ease-in-out infinite;
+}
+
+@keyframes pulseGreen {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Input Focus Effects */
+.input-field {
+  transition: all 0.3s ease;
+}
+
+.input-field:focus {
+  box-shadow:
+    0 0 0 3px rgba(59, 130, 246, 0.3),
+    0 0 20px rgba(59, 130, 246, 0.4);
+  border-color: #3b82f6;
+}
+
+/* Button Hover */
+.btn-primary {
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-primary::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  transform: translate(-50%, -50%);
+  transition: width 0.6s, height 0.6s;
+}
+
+.btn-primary:hover::before {
+  width: 300px;
+  height: 300px;
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 10px 30px rgba(59, 130, 246, 0.5),
+    0 0 50px rgba(59, 130, 246, 0.3);
+}
+
+/* Metal Panel */
+.metal-panel {
+  background: linear-gradient(145deg, #1e293b, #334155);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+/* Logo styling */
+.company-logo {
+  filter: brightness(1.1) contrast(1.1);
+  background: transparent;
+  padding: 8px 16px;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
