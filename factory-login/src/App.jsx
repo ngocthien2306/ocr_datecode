@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import Dashboard from './components/Dashboard';
 
 export default function SuntechAutomation() {
   const [currentSession, setCurrentSession] = useState(1);
   const [isLightMode, setIsLightMode] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const totalSessions = 3;
 
   useEffect(() => {
@@ -19,9 +21,21 @@ export default function SuntechAutomation() {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    // Handle login logic here
-    console.log('Login submitted');
+    // TODO: Call API authentication
+    // For now, directly login to dashboard
+    console.log('Login submitted - redirecting to dashboard');
+    setIsLoggedIn(true);
   };
+
+  const handleLogout = () => {
+    console.log('Logging out...');
+    setIsLoggedIn(false);
+  };
+
+  // Show Dashboard if logged in
+  if (isLoggedIn) {
+    return <Dashboard onLogout={handleLogout} />;
+  }
 
   return (
     <>
