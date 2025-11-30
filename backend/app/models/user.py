@@ -14,6 +14,8 @@ class UserBase(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     email: EmailStr
     full_name: str = Field(..., min_length=1, max_length=100)
+    phone_number: Optional[str] = Field(None, max_length=20)
+    avatar_url: Optional[str] = None
     role: UserRole = UserRole.OPERATOR
     is_active: bool = True
 
@@ -25,6 +27,8 @@ class UserCreate(UserBase):
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     full_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    phone_number: Optional[str] = Field(None, max_length=20)
+    avatar_url: Optional[str] = None
     role: Optional[UserRole] = None
     is_active: Optional[bool] = None
 

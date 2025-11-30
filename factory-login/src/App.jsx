@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Dashboard from './components/Dashboard';
+import { authAPI } from './services/api';
 
 export default function SuntechAutomation() {
   const [currentSession, setCurrentSession] = useState(1);
@@ -7,7 +8,14 @@ export default function SuntechAutomation() {
     const savedMode = localStorage.getItem('appThemeMode');
     return savedMode === 'light' ? true : false;
   });
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(() => {
+    // Check if user is already logged in
+    return !!localStorage.getItem('access_token');
+  });
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const totalSessions = 3;
 
   useEffect(() => {
@@ -22,19 +30,45 @@ export default function SuntechAutomation() {
     return `product${currentSession}/${productNumber}.png`;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    // TODO: Call API authentication
-    // For now, directly login to dashboard
-    console.log('Login submitted - redirecting to dashboard');
-    setIsLoggedIn(true);
+    setLoginError('');
+    setIsLoading(true);
+
+    try {
+      const response = await authAPI.login(username, password);
+
+      // Save token and user info
+      localStorage.setItem('access_token', response.access_token);
+      localStorage.setItem('user', JSON.stringify(response.user));
+
+      console.log('Login successful:', response.user);
+      setIsLoggedIn(true);
+    } catch (error) {
+      console.error('Login error:', error);
+      const errorMessage = error.response?.data?.detail || 'Login failed. Please check your credentials.';
+      setLoginError(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleLogout = () => {
     console.log('Logging out...');
+
+    // Clear auth data
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('user');
+
     // Reload theme from localStorage when logging out
     const savedMode = localStorage.getItem('appThemeMode');
     setIsLightMode(savedMode === 'light' ? true : false);
+
+    // Reset form
+    setUsername('');
+    setPassword('');
+    setLoginError('');
+
     setIsLoggedIn(false);
   };
 
@@ -508,6 +542,9 @@ export default function SuntechAutomation() {
                     <input
                       type="text"
                       placeholder="Enter your employee ID"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      required
                       className={`input-field w-full border-2 rounded-xl px-5 py-4 focus:outline-none ${
                         isLightMode
                           ? 'bg-gray-50 border-gray-300 text-gray-800 placeholder-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-200'
@@ -535,6 +572,9 @@ export default function SuntechAutomation() {
                     <input
                       type="password"
                       placeholder="Enter your security code"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
                       className={`input-field w-full border-2 rounded-xl px-5 py-4 focus:outline-none ${
                         isLightMode
                           ? 'bg-gray-50 border-gray-300 text-gray-800 placeholder-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-200'
@@ -568,16 +608,38 @@ export default function SuntechAutomation() {
                       : 'text-cyan-400 hover:text-cyan-300'
                   }`}>Reset Code</a>
                 </div>
-                
-                <button 
-                  type="submit" 
-                  className="btn-primary relative w-full bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-bold py-5 rounded-xl transition-all duration-300 shadow-lg orbitron tracking-widest text-lg"
+
+                {loginError && (
+                  <div className="bg-red-500/10 border border-red-500/50 rounded-xl px-4 py-3 flex items-center gap-3">
+                    <svg className="w-5 h-5 text-red-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                    </svg>
+                    <span className="text-red-500 text-sm font-medium">{loginError}</span>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="btn-primary relative w-full bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-bold py-5 rounded-xl transition-all duration-300 shadow-lg orbitron tracking-widest text-lg disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <span className="relative z-10 flex items-center justify-center gap-3">
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"/>
-                    </svg>
-                    ACCESS SYSTEM
+                    {isLoading ? (
+                      <>
+                        <svg className="animate-spin h-6 w-6" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        AUTHENTICATING...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"/>
+                        </svg>
+                        ACCESS SYSTEM
+                      </>
+                    )}
                   </span>
                 </button>
               </form>
