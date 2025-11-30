@@ -2,19 +2,35 @@
 
 FastAPI backend with Clean Architecture for OCR Datecode system.
 
-## Features
+## 🎯 Features
 
-- ✅ **Authentication & Authorization**: JWT-based authentication with 3 role levels
-  - **Operator**: Load recipes, validate datecode
-  - **Supervisor**: Create/edit recipes
-  - **Admin**: Full access + user management
+### ✅ **Recipe Management System** (NEW!)
+Complete receipt management with role-based permissions:
+- **New Receipt**: Create recipes for machine training
+- **Load Receipt**: Load recipe to verify datecode
+- **Save Receipt**: Update existing recipe configurations
+- **Delete Receipt**: Remove obsolete recipes (Admin only)
 
-- ✅ **Recipe Management**: CRUD operations for OCR recipes
-  - Camera settings (exposure time, delay trigger)
-  - AI model thresholds
-  - Datecode pattern validation
+Each recipe includes:
+- 📸 **Camera Settings**: Exposure time, delay trigger, gain, brightness, contrast
+- 🤖 **Model Thresholds**: Detection/recognition thresholds for AI models
+- 📐 **ROI Config**: Region of interest configuration
+- 🎯 **Template Config**: Template matching settings
 
-- ✅ **User Management**: User CRUD with role-based permissions
+### ✅ **Three-Tier Permission System**
+- **👤 Operator**: Load recipes, input datecode for verification
+- **👨‍💼 Supervisor**: Create/edit recipes + all Operator permissions  
+- **👑 Admin**: Full access + user management + delete recipes
+
+### ✅ **Authentication & Authorization**
+- JWT-based authentication
+- Role-based access control (RBAC)
+- Password reset functionality
+
+### ✅ **User Management**
+- User CRUD operations
+- Role assignment
+- Profile management
 
 ## Tech Stack
 
@@ -104,7 +120,15 @@ This creates:
 - Supervisor: `supervisor` / `supervisor123`
 - Operator: `operator` / `operator123`
 
-### 5. Run API Server
+### 5. Create Sample Recipes (Optional)
+
+```bash
+python create_sample_recipes.py
+```
+
+This creates 3 sample recipes for testing.
+
+### 6. Run API Server
 
 ```bash
 uvicorn app.main:app --reload
@@ -114,6 +138,12 @@ API will be available at: http://localhost:8000
 
 - **Swagger Docs**: http://localhost:8000/docs
 - **ReDoc**: http://localhost:8000/redoc
+
+## 📚 Documentation
+
+- **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** - Complete implementation overview
+- **[RECIPE_API_DOCS.md](RECIPE_API_DOCS.md)** - Comprehensive API documentation (English)
+- **[RECIPE_DOCS_VI.md](RECIPE_DOCS_VI.md)** - Hướng dẫn sử dụng (Tiếng Việt)
 
 ## API Endpoints
 
@@ -130,8 +160,14 @@ API will be available at: http://localhost:8000
 - `POST /api/users/change-password` - Change own password
 - `POST /api/users/{id}/reset-password` - Reset user password (Admin)
 
-### Recipes
+### Recipes (NEW!)
 - `POST /api/recipes/` - Create recipe (Supervisor+)
+- `GET /api/recipes/` - List all recipes (All users)
+- `GET /api/recipes/{id}` - Get recipe by ID (All users)
+- `PUT /api/recipes/{id}` - Update recipe (Supervisor+)
+- `DELETE /api/recipes/{id}` - Delete recipe (Admin only)
+- `GET /api/recipes/search` - Search recipes (All users)
+- `GET /api/recipes/stats/count` - Get recipe count (All users)
 - `GET /api/recipes/` - List all recipes (All)
 - `GET /api/recipes/{id}` - Get recipe by ID (All)
 - `GET /api/recipes/name/{name}` - Get recipe by name (All)

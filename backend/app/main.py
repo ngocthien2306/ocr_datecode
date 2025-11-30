@@ -4,8 +4,9 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.db.mongodb import connect_to_mongo, close_mongo_connection, get_database
 from app.repositories.user_repository import UserRepository
+from app.repositories.recipe_repository import RecipeRepository
 
-from app.api.endpoints import auth, users
+from app.api.endpoints import auth, users, recipes
 
 
 @asynccontextmanager
@@ -14,8 +15,10 @@ async def lifespan(app: FastAPI):
 
     db = get_database()
     user_repo = UserRepository(db)
+    recipe_repo = RecipeRepository(db)
 
     await user_repo.create_indexes()
+    await recipe_repo.create_indexes()
 
     print("✅ Database indexes created")
 
@@ -36,10 +39,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(users.router, prefix="/api/users", tags=["Users"])
+app.include_router(recipes.router, prefix="/api/recipes", tags=["Recipes"])
 
 
 @app.get("/")

@@ -113,9 +113,19 @@ export const usersAPI = {
 // Recipes API
 export const recipesAPI = {
   // Get all recipes
-  getAllRecipes: async (skip = 0, limit = 100, activeOnly = true) => {
-    const response = await api.get('/recipes/', {
-      params: { skip, limit, active_only: activeOnly },
+  getAllRecipes: async (skip = 0, limit = 100, isActive = null) => {
+    const params = { skip, limit };
+    if (isActive !== null) {
+      params.is_active = isActive;
+    }
+    const response = await api.get('/recipes/', { params });
+    return response.data;
+  },
+
+  // Search recipes
+  searchRecipes: async (query, skip = 0, limit = 100) => {
+    const response = await api.get('/recipes/search', {
+      params: { q: query, skip, limit },
     });
     return response.data;
   },
@@ -126,90 +136,93 @@ export const recipesAPI = {
     return response.data;
   },
 
-  // Get recipe by name
-  getRecipeByName: async (recipeName) => {
-    const response = await api.get(`/recipes/name/${recipeName}`);
+  // Get recipe count
+  getRecipeCount: async (isActive = null) => {
+    const params = {};
+    if (isActive !== null) {
+      params.is_active = isActive;
+    }
+    const response = await api.get('/recipes/stats/count', { params });
     return response.data;
   },
 
-  // Create recipe
+  // Create recipe (Supervisor+)
   createRecipe: async (recipeData) => {
     const response = await api.post('/recipes/', recipeData);
     return response.data;
   },
 
-  // Update recipe
+  // Update recipe (Supervisor+)
   updateRecipe: async (recipeId, recipeData) => {
     const response = await api.put(`/recipes/${recipeId}`, recipeData);
     return response.data;
   },
 
-  // Delete recipe
-  deleteRecipe: async (recipeId, hardDelete = false) => {
-    const response = await api.delete(`/recipes/${recipeId}`, {
-      params: { hard_delete: hardDelete },
-    });
-    return response.data;
-  },
-
-  // Validate datecode
-  validateDatecode: async (recipeId, datecodeInput) => {
-    const response = await api.post('/recipes/validate-datecode', {
-      recipe_id: recipeId,
-      datecode_input: datecodeInput,
-    });
+  // Delete recipe (Admin only)
+  deleteRecipe: async (recipeId) => {
+    const response = await api.delete(`/recipes/${recipeId}`);
     return response.data;
   },
 };
 
-// Receipts API
+// Production Receipts API (for UI mapping)
 export const receiptsAPI = {
-  // Get all receipts
-  getAllReceipts: async (params = {}) => {
-    const response = await api.get('/receipts/', { params });
-    return response.data;
+  // Note: Backend uses "recipes" but UI calls them "receipts"
+  // This is an alias for better UI mapping
+  
+  // Get all receipts (maps to recipes)
+  getAllReceipts: async (skip = 0, limit = 100, isActive = null) => {
+    return recipesAPI.getAllRecipes(skip, limit, isActive);
   },
 
-  // Get receipts count
-  getReceiptsCount: async (params = {}) => {
-    const response = await api.get('/receipts/count', { params });
-    return response.data;
+  // Search receipts
+  searchReceipts: async (query, skip = 0, limit = 100) => {
+    return recipesAPI.searchRecipes(query, skip, limit);
   },
 
   // Get receipt by ID
   getReceiptById: async (receiptId) => {
-    const response = await api.get(`/receipts/${receiptId}`);
-    return response.data;
+    return recipesAPI.getRecipeById(receiptId);
   },
 
-  // Create receipt
+  // Get receipts count
+  getReceiptsCount: async (isActive = null) => {
+    return recipesAPI.getRecipeCount(isActive);
+  },
+
+  // Create receipt (Supervisor+)
   createReceipt: async (receiptData) => {
-    const response = await api.post('/receipts/', receiptData);
-    return response.data;
+    return recipesAPI.createRecipe(receiptData);
   },
 
-  // Update receipt
+  // Update receipt (Supervisor+)
   updateReceipt: async (receiptId, receiptData) => {
-    const response = await api.put(`/receipts/${receiptId}`, receiptData);
-    return response.data;
+    return recipesAPI.updateRecipe(receiptId, receiptData);
   },
 
-  // Delete receipt
+  // Delete receipt (Admin only)
   deleteReceipt: async (receiptId) => {
-    const response = await api.delete(`/receipts/${receiptId}`);
-    return response.data;
+    return recipesAPI.deleteRecipe(receiptId);
   },
 
-  // Get user stats
-  getUserStats: async (userId) => {
-    const response = await api.get(`/receipts/stats/user/${userId}`);
-    return response.data;
-  },
-
-  // Get recipe stats
-  getRecipeStats: async (recipeId) => {
-    const response = await api.get(`/receipts/stats/recipe/${recipeId}`);
-    return response.data;
+  // Get statistics for dashboard
+  getStatistics: async () => {
+    try {
+      const [recipes, count] = await Promise.all([
+        recipesAPI.getAllRecipes(0, 100, true),
+        recipesAPI.getRecipeCount(true)
+      ]);
+      
+      return {
+        totalReceipts: count.count || recipes.length,
+        totalProducts: recipes.length, // Can be customized based on actual data
+        successRate: 98.2, // This should come from actual OCR processing stats
+        recipes: recipes
+      };
+    } catch (error) {
+      console.error('Error fetching statistics:', error);
+      throw error;
+    }
   },
 };
 

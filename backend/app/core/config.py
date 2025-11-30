@@ -13,7 +13,13 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
     # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
+    CORS_ORIGINS: List[str] = [
+        "http://localhost:3000", 
+        "http://localhost:5173",
+        "https://suntech-vision-api.ngrok.app",
+        "https://*.ngrok.app",
+        "*"  # Allow all origins in development
+    ]
 
     # Application
     APP_NAME: str = "OCR Datecode API"

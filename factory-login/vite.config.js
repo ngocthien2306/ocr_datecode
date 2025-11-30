@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    allowedHosts: ['vlm-agent.ngrok.dev', "factory.ngrok.app"], 
+    allowedHosts: ['vlm-agent.ngrok.dev', "factory.ngrok.app", "suntech-vision.ngrok.app"], 
     proxy: {
       '/api': {
         target: 'https://vlm-agent-api.ngrok.dev',
