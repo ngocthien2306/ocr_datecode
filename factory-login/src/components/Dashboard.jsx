@@ -1,10 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './Dashboard.css';
+import UserManagement from './UserManagement';
+import Receipts from './Receipts';
+import Historical from './Historical';
+import Settings from './Settings';
 
 export default function Dashboard({ onLogout }) {
   const [currentSection, setCurrentSection] = useState('dashboard');
   const [darkMode, setDarkMode] = useState(() => {
-    return localStorage.getItem('darkMode') === 'enabled';
+    const savedMode = localStorage.getItem('appThemeMode');
+    return savedMode === 'dark' ? true : false;
   });
   const [currentTime, setCurrentTime] = useState(new Date());
   const [totalProductsToday, setTotalProductsToday] = useState(1247);
@@ -23,10 +28,10 @@ export default function Dashboard({ onLogout }) {
   useEffect(() => {
     if (darkMode) {
       document.body.classList.add('dark-mode');
-      localStorage.setItem('darkMode', 'enabled');
+      localStorage.setItem('appThemeMode', 'dark');
     } else {
       document.body.classList.remove('dark-mode');
-      localStorage.setItem('darkMode', 'disabled');
+      localStorage.setItem('appThemeMode', 'light');
     }
   }, [darkMode]);
 
@@ -573,57 +578,10 @@ export default function Dashboard({ onLogout }) {
             </section>
           )}
 
-          {currentSection !== 'dashboard' && (
-            <section className="content-section active">
-              <div className="section-header">
-                <h1>
-                  {currentSection === 'users' && 'User Management'}
-                  {currentSection === 'receipts' && 'Receipts'}
-                  {currentSection === 'historical' && 'Historical Data'}
-                  {currentSection === 'settings' && 'Settings'}
-                </h1>
-                {currentSection !== 'settings' && (
-                  <button className="dashboard-btn">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                      <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                      <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                    </svg>
-                    {currentSection === 'users' && 'Add User'}
-                    {currentSection === 'receipts' && 'Create Receipt'}
-                    {currentSection === 'historical' && 'Export Data'}
-                  </button>
-                )}
-              </div>
-              <div className="placeholder-content">
-                <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
-                  {currentSection === 'users' && (
-                    <path d="M17 21V19C17 17.9391 16.5786 16.9217 15.8284 16.1716C15.0783 15.4214 14.0609 15 13 15H5C3.93913 15 2.92172 15.4214 2.17157 16.1716C1.42143 16.9217 1 17.9391 1 19V21" stroke="currentColor" strokeWidth="2"/>
-                  )}
-                  {currentSection === 'receipts' && (
-                    <path d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z" stroke="currentColor" strokeWidth="2"/>
-                  )}
-                  {currentSection === 'historical' && (
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
-                  )}
-                  {currentSection === 'settings' && (
-                    <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
-                  )}
-                </svg>
-                <h2>
-                  {currentSection === 'users' && 'User Management'}
-                  {currentSection === 'receipts' && 'Receipts Management'}
-                  {currentSection === 'historical' && 'Historical Records'}
-                  {currentSection === 'settings' && 'System Settings'}
-                </h2>
-                <p>
-                  {currentSection === 'users' && 'Manage system users, roles, and permissions'}
-                  {currentSection === 'receipts' && 'Create, view, edit, and delete production receipts'}
-                  {currentSection === 'historical' && 'View and analyze historical production data and trends'}
-                  {currentSection === 'settings' && 'Configure system preferences and camera settings'}
-                </p>
-              </div>
-            </section>
-          )}
+          {currentSection === 'users' && <UserManagement />}
+          {currentSection === 'receipts' && <Receipts />}
+          {currentSection === 'historical' && <Historical />}
+          {currentSection === 'settings' && <Settings />}
         </main>
       </div>
     </div>
