@@ -6,7 +6,7 @@ export default function SuntechAutomation() {
   const [currentSession, setCurrentSession] = useState(1);
   const [isLightMode, setIsLightMode] = useState(() => {
     const savedMode = localStorage.getItem('appThemeMode');
-    return savedMode === 'light' ? true : false;
+    return savedMode ? savedMode === 'light' : true;
   });
   const [isLoggedIn, setIsLoggedIn] = useState(() => {
     // Check if user is already logged in
@@ -62,7 +62,7 @@ export default function SuntechAutomation() {
 
     // Reload theme from localStorage when logging out
     const savedMode = localStorage.getItem('appThemeMode');
-    setIsLightMode(savedMode === 'light' ? true : false);
+    setIsLightMode(savedMode ? savedMode === 'light' : true);
 
     // Reset form
     setUsername('');
