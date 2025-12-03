@@ -150,3 +150,4 @@ detection/
 results/
 library/
 weights/
+pylon_env/
