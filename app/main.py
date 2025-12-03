@@ -115,14 +115,14 @@ class BaslerCameraTestApp(QMainWindow):
         # Image display label
         self.image_label = QLabel()
         self.image_label.setMinimumSize(800, 600)
-        self.image_label.setStyleSheet("border: 2px solid black; background-color: #2b2b2b;")
+        self.image_label.setStyleSheet("border: 2px solid #4A90E2; background-color: #F5F5F5;")
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setText("No Image")
         left_layout.addWidget(self.image_label)
         
         # Frame info
         self.frame_info_label = QLabel("Frame: 0 | Size: 0x0 | Timestamp: 0")
-        self.frame_info_label.setStyleSheet("background-color: #1e1e1e; color: white; padding: 5px;")
+        self.frame_info_label.setStyleSheet("background-color: #4A90E2; color: white; padding: 5px; font-weight: bold;")
         left_layout.addWidget(self.frame_info_label)
         
         main_layout.addLayout(left_layout, 2)
@@ -178,13 +178,13 @@ class BaslerCameraTestApp(QMainWindow):
         
         self.connect_btn = QPushButton("Connect Camera")
         self.connect_btn.clicked.connect(self.connect_camera)
-        self.connect_btn.setStyleSheet("background-color: #4CAF50; color: white; padding: 10px;")
+        self.connect_btn.setStyleSheet("background-color: #4A90E2; color: white; padding: 10px; font-weight: bold; border-radius: 5px;")
         connection_layout.addWidget(self.connect_btn)
-        
+
         self.disconnect_btn = QPushButton("Disconnect")
         self.disconnect_btn.clicked.connect(self.disconnect_camera)
         self.disconnect_btn.setEnabled(False)
-        self.disconnect_btn.setStyleSheet("background-color: #f44336; color: white; padding: 10px;")
+        self.disconnect_btn.setStyleSheet("background-color: #E74C3C; color: white; padding: 10px; font-weight: bold; border-radius: 5px;")
         connection_layout.addWidget(self.disconnect_btn)
         
         connection_group.setLayout(connection_layout)
@@ -392,7 +392,7 @@ class BaslerCameraTestApp(QMainWindow):
         line_status_layout = QVBoxLayout()
         
         self.line_status_label = QLabel("Line Status: N/A")
-        self.line_status_label.setStyleSheet("background-color: #1e1e1e; color: white; padding: 5px;")
+        self.line_status_label.setStyleSheet("background-color: #E8F4F8; color: #2C3E50; padding: 5px; border: 1px solid #4A90E2;")
         line_status_layout.addWidget(self.line_status_label)
         
         self.monitor_line_checkbox = QCheckBox("Monitor Line Status")
@@ -424,7 +424,7 @@ class BaslerCameraTestApp(QMainWindow):
         
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setStyleSheet("background-color: #1e1e1e; color: #00ff00; font-family: monospace;")
+        self.log_text.setStyleSheet("background-color: #F8FBFD; color: #2C3E50; font-family: monospace; border: 1px solid #4A90E2;")
         layout.addWidget(self.log_text)
         
         clear_log_btn = QPushButton("Clear Log")
@@ -884,10 +884,10 @@ class BaslerCameraTestApp(QMainWindow):
             line_status = self.camera.LineStatus.GetValue()
             
             status_text = "HIGH" if line_status else "LOW"
-            color = "#00ff00" if line_status else "#ff0000"
-            
+            color = "#27AE60" if line_status else "#E74C3C"
+
             self.line_status_label.setText(f"Line Status: {status_text}")
-            self.line_status_label.setStyleSheet(f"background-color: {color}; color: white; padding: 5px; font-weight: bold;")
+            self.line_status_label.setStyleSheet(f"background-color: {color}; color: white; padding: 5px; font-weight: bold; border: 2px solid #2C3E50;")
             
         except Exception as e:
             self.line_status_label.setText(f"Error: {str(e)}")
@@ -914,14 +914,110 @@ class BaslerCameraTestApp(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    
+
     # Set style
     app.setStyle('Fusion')
-    
+
+    # Set application-wide stylesheet with white and blue theme
+    app.setStyleSheet("""
+        QMainWindow {
+            background-color: white;
+        }
+        QWidget {
+            background-color: white;
+            color: #2C3E50;
+        }
+        QGroupBox {
+            font-weight: bold;
+            border: 2px solid #4A90E2;
+            border-radius: 5px;
+            margin-top: 10px;
+            padding-top: 10px;
+            background-color: #F8FBFD;
+        }
+        QGroupBox::title {
+            color: #4A90E2;
+            subcontrol-origin: margin;
+            left: 10px;
+            padding: 0 5px;
+        }
+        QPushButton {
+            background-color: #4A90E2;
+            color: white;
+            border: none;
+            padding: 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            min-width: 80px;
+        }
+        QPushButton:hover {
+            background-color: #357ABD;
+        }
+        QPushButton:pressed {
+            background-color: #2E6DA4;
+        }
+        QPushButton:disabled {
+            background-color: #BDC3C7;
+            color: #7F8C8D;
+        }
+        QLabel {
+            color: #2C3E50;
+        }
+        QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+            border: 1px solid #4A90E2;
+            border-radius: 3px;
+            padding: 5px;
+            background-color: white;
+            selection-background-color: #4A90E2;
+        }
+        QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
+            border: 2px solid #4A90E2;
+        }
+        QTabWidget::pane {
+            border: 2px solid #4A90E2;
+            border-radius: 5px;
+            background-color: white;
+        }
+        QTabBar::tab {
+            background-color: #E8F4F8;
+            color: #2C3E50;
+            border: 1px solid #4A90E2;
+            padding: 8px 16px;
+            margin-right: 2px;
+        }
+        QTabBar::tab:selected {
+            background-color: #4A90E2;
+            color: white;
+            font-weight: bold;
+        }
+        QTabBar::tab:hover {
+            background-color: #6FB3F5;
+            color: white;
+        }
+        QCheckBox {
+            color: #2C3E50;
+            spacing: 5px;
+        }
+        QCheckBox::indicator {
+            width: 18px;
+            height: 18px;
+            border: 2px solid #4A90E2;
+            border-radius: 3px;
+            background-color: white;
+        }
+        QCheckBox::indicator:checked {
+            background-color: #4A90E2;
+            image: url(none);
+        }
+        QCheckBox::indicator:hover {
+            border: 2px solid #357ABD;
+        }
+    """)
+
     # Create and show window
     window = BaslerCameraTestApp()
     window.show()
-    
+
     sys.exit(app.exec_())
 
 
