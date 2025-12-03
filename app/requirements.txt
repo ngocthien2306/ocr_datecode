@@ -2,3 +2,4 @@ PyQt5
 pypylon
 opencv-python
 numpy
+pyinstaller
