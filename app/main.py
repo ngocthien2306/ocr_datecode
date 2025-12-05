@@ -1,18 +1,7 @@
-"""
-Basler Camera Test Application with PyQt5
-Features:
-- Camera connection and disconnection
-- Live view (continuous grabbing)
-- Software trigger
-- Hardware trigger configuration
-- Camera parameter adjustment (Exposure, Gain, Width, Height)
-- Image saving
-- Trigger status monitoring
-"""
-
 import sys
 import cv2
 import numpy as np
+import traceback
 from datetime import datetime
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QLineEdit, 
@@ -22,7 +11,24 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt5.QtCore import QThread, pyqtSignal, Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
 from pypylon import pylon
-from pypylon import genicam
+
+
+class CameraEnumerateThread(QThread):
+    """Thread to scan for cameras without blocking UI"""
+    devices_found = pyqtSignal(list)
+    error_occurred = pyqtSignal(str)
+
+    def run(self):
+        try:
+            print("      [Thread] Getting TlFactory...")
+            tlFactory = pylon.TlFactory.GetInstance()
+            print("      [Thread] Enumerating devices...")
+            devices = tlFactory.EnumerateDevices()
+            print(f"      [Thread] Found {len(devices)} device(s)")
+            self.devices_found.emit(list(devices))
+        except Exception as e:
+            print(f"      [Thread] Error: {str(e)}")
+            self.error_occurred.emit(str(e))
 
 
 class CameraThread(QThread):
@@ -94,21 +100,28 @@ class CameraThread(QThread):
 class BaslerCameraTestApp(QMainWindow):
     def __init__(self):
         super().__init__()
+        print("Initializing BaslerCameraTestApp...")
         self.camera = None
         self.camera_thread = None
+        self.enumerate_thread = None
         self.current_image = None
+        print("Calling initUI...")
         self.initUI()
+        print("UI initialized successfully!")
         
     def initUI(self):
         """Initialize user interface"""
+        print("  Setting window title and geometry...")
         self.setWindowTitle('Basler Camera Test Application')
         self.setGeometry(100, 100, 1400, 900)
-        
+
+        print("  Creating main widget...")
         # Main widget
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
-        
+
+        print("  Creating left layout (image display)...")
         # Left side: Image display
         left_layout = QVBoxLayout()
         
@@ -126,29 +139,36 @@ class BaslerCameraTestApp(QMainWindow):
         left_layout.addWidget(self.frame_info_label)
         
         main_layout.addLayout(left_layout, 2)
-        
+
+        print("  Creating right layout (controls)...")
         # Right side: Controls
         right_layout = QVBoxLayout()
-        
+
+        print("  Creating tab widget...")
         # Tab widget for functions
         tab_widget = QTabWidget()
-        
+
+        print("  Creating log tab...")
         # IMPORTANT: Create log tab FIRST before other tabs that use log_message
         log_tab = self.create_log_tab()
         tab_widget.addTab(log_tab, "Log")
-        
+
+        print("  Creating connection tab...")
         # Tab 1: Camera Connection
         connection_tab = self.create_connection_tab()
         tab_widget.addTab(connection_tab, "Connection")
-        
+
+        print("  Creating settings tab...")
         # Tab 2: Camera Settings
         settings_tab = self.create_settings_tab()
         tab_widget.addTab(settings_tab, "Settings")
-        
+
+        print("  Creating trigger tab...")
         # Tab 3: Trigger
         trigger_tab = self.create_trigger_tab()
         tab_widget.addTab(trigger_tab, "Trigger")
-        
+
+        print("  Adding tabs to layout...")
         right_layout.addWidget(tab_widget)
         main_layout.addLayout(right_layout, 1)
         
@@ -218,10 +238,11 @@ class BaslerCameraTestApp(QMainWindow):
         layout.addWidget(grabbing_group)
         
         layout.addStretch()
-        
-        # Load camera list
+
+        print("    Auto-refreshing camera list in background...")
+        # Load camera list in background thread (non-blocking)
         self.refresh_camera_list()
-        
+
         return widget
         
     def create_settings_tab(self):
@@ -441,22 +462,38 @@ class BaslerCameraTestApp(QMainWindow):
         print(log_entry)
         
     def refresh_camera_list(self):
-        """Refresh camera list"""
-        try:
-            self.camera_combo.clear()
-            tlFactory = pylon.TlFactory.GetInstance()
-            devices = tlFactory.EnumerateDevices()
-            
-            if len(devices) == 0:
-                self.camera_combo.addItem("No camera found")
-                self.log_message("No camera found")
-            else:
-                for i, device in enumerate(devices):
-                    camera_name = f"{device.GetModelName()} ({device.GetSerialNumber()})"
-                    self.camera_combo.addItem(camera_name)
-                self.log_message(f"Found {len(devices)} camera(s)")
-        except Exception as e:
-            self.log_message(f"Error refreshing camera list: {str(e)}")
+        """Refresh camera list using background thread"""
+        print("      Starting camera enumeration in background thread...")
+        self.camera_combo.clear()
+        self.camera_combo.addItem("Scanning for cameras...")
+        self.log_message("Scanning for cameras...")
+
+        # Start enumeration in background thread
+        self.enumerate_thread = CameraEnumerateThread()
+        self.enumerate_thread.devices_found.connect(self.on_devices_found)
+        self.enumerate_thread.error_occurred.connect(self.on_enumerate_error)
+        self.enumerate_thread.start()
+
+    def on_devices_found(self, devices):
+        """Handle devices found by enumerate thread"""
+        print(f"      Devices found callback: {len(devices)} device(s)")
+        self.camera_combo.clear()
+
+        if len(devices) == 0:
+            self.camera_combo.addItem("No camera found")
+            self.log_message("No camera found")
+        else:
+            for device in devices:
+                camera_name = f"{device.GetModelName()} ({device.GetSerialNumber()})"
+                self.camera_combo.addItem(camera_name)
+            self.log_message(f"Found {len(devices)} camera(s)")
+
+    def on_enumerate_error(self, error_msg):
+        """Handle enumerate error"""
+        print(f"      Enumerate error callback: {error_msg}")
+        self.camera_combo.clear()
+        self.camera_combo.addItem(f"Error: {error_msg}")
+        self.log_message(f"Error scanning cameras: {error_msg}")
             
     def connect_camera(self):
         """Connect to camera"""
@@ -618,7 +655,7 @@ class BaslerCameraTestApp(QMainWindow):
             self.current_image = img_array.copy()
             
             # Convert to QImage for display
-            height, width, channel = img_array.shape
+            height, width, _ = img_array.shape
             bytes_per_line = 3 * width
             q_image = QImage(img_array.data, width, height, bytes_per_line, QImage.Format_BGR888)
             
@@ -671,13 +708,22 @@ class BaslerCameraTestApp(QMainWindow):
         try:
             if not self.camera or not self.camera.IsOpen():
                 return
-                
+
             exposure_value = self.exposure_spin.value()
-            self.camera.ExposureTime.SetValue(exposure_value)
-            
-            actual_value = self.camera.ExposureTime.GetValue()
-            self.log_message(f"Exposure time set: {actual_value} µs")
-            
+
+            # Thử các tên parameter khác nhau
+            try:
+                self.camera.ExposureTime.SetValue(exposure_value)
+                actual_value = self.camera.ExposureTime.GetValue()
+                self.log_message(f"Exposure time set: {actual_value} µs")
+            except:
+                try:
+                    self.camera.ExposureTimeAbs.SetValue(exposure_value)
+                    actual_value = self.camera.ExposureTimeAbs.GetValue()
+                    self.log_message(f"Exposure time set: {actual_value} µs")
+                except Exception as e:
+                    raise Exception(f"Camera không hỗ trợ ExposureTime/ExposureTimeAbs: {str(e)}")
+
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Cannot set exposure: {str(e)}")
             self.log_message(f"Exposure error: {str(e)}")
@@ -687,17 +733,22 @@ class BaslerCameraTestApp(QMainWindow):
         try:
             if not self.camera or not self.camera.IsOpen():
                 return
-                
+
             gain_value = self.gain_spin.value()
-            
-            # Check if camera supports Gain
-            if genicam.IsAvailable(self.camera.Gain):
+
+            # Thử các tên parameter khác nhau
+            try:
                 self.camera.Gain.SetValue(gain_value)
                 actual_value = self.camera.Gain.GetValue()
                 self.log_message(f"Gain set: {actual_value} dB")
-            else:
-                self.log_message("Camera does not support Gain parameter")
-                
+            except:
+                try:
+                    self.camera.GainRaw.SetValue(int(gain_value))
+                    actual_value = self.camera.GainRaw.GetValue()
+                    self.log_message(f"Gain set: {actual_value}")
+                except Exception as e:
+                    raise Exception(f"Camera không hỗ trợ Gain/GainRaw: {str(e)}")
+
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Cannot set gain: {str(e)}")
             self.log_message(f"Gain error: {str(e)}")
@@ -739,34 +790,59 @@ class BaslerCameraTestApp(QMainWindow):
         try:
             if not self.camera or not self.camera.IsOpen():
                 return
-                
-            # Read and update UI
-            if genicam.IsReadable(self.camera.ExposureTime):
+
+            # Read Exposure
+            try:
                 exposure = self.camera.ExposureTime.GetValue()
                 self.exposure_spin.setValue(exposure)
-                
-            if genicam.IsReadable(self.camera.Gain):
+            except:
+                try:
+                    exposure = self.camera.ExposureTimeAbs.GetValue()
+                    self.exposure_spin.setValue(exposure)
+                except:
+                    self.log_message("Không đọc được Exposure")
+
+            # Read Gain
+            try:
                 gain = self.camera.Gain.GetValue()
                 self.gain_spin.setValue(gain)
-                
-            if genicam.IsReadable(self.camera.Width):
+            except:
+                try:
+                    gain = self.camera.GainRaw.GetValue()
+                    self.gain_spin.setValue(gain)
+                except:
+                    self.log_message("Không đọc được Gain")
+
+            # Read Width
+            try:
                 width = self.camera.Width.GetValue()
                 self.width_spin.setValue(width)
-                
-            if genicam.IsReadable(self.camera.Height):
+            except:
+                self.log_message("Không đọc được Width")
+
+            # Read Height
+            try:
                 height = self.camera.Height.GetValue()
                 self.height_spin.setValue(height)
-                
-            if genicam.IsReadable(self.camera.OffsetX):
+            except:
+                self.log_message("Không đọc được Height")
+
+            # Read OffsetX
+            try:
                 offset_x = self.camera.OffsetX.GetValue()
                 self.offset_x_spin.setValue(offset_x)
-                
-            if genicam.IsReadable(self.camera.OffsetY):
+            except:
+                pass  # OffsetX có thể không có
+
+            # Read OffsetY
+            try:
                 offset_y = self.camera.OffsetY.GetValue()
                 self.offset_y_spin.setValue(offset_y)
-                
+            except:
+                pass  # OffsetY có thể không có
+
             self.log_message("Current settings read from camera")
-            
+
         except Exception as e:
             self.log_message(f"Error reading settings: {str(e)}")
             
@@ -913,8 +989,10 @@ class BaslerCameraTestApp(QMainWindow):
 
 
 def main():
+    print("Starting application...")
     app = QApplication(sys.argv)
 
+    print("Setting style...")
     # Set style
     app.setStyle('Fusion')
 
@@ -1015,9 +1093,13 @@ def main():
     """)
 
     # Create and show window
+    print("Creating main window...")
     window = BaslerCameraTestApp()
+
+    print("Showing window...")
     window.show()
 
+    print("Application ready! Starting event loop...")
     sys.exit(app.exec_())
 
 
