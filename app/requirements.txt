@@ -3,3 +3,4 @@ pypylon
 opencv-python
 numpy
 pyinstaller
+pymodbus
