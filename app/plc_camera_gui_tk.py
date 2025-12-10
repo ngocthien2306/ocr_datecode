@@ -100,14 +100,28 @@ class PLCCameraApp:
         tk.Radiobutton(edge_frame, text="1→0", variable=self.trigger_edge_var, value="falling").pack(side=tk.LEFT)
         tk.Radiobutton(edge_frame, text="Any", variable=self.trigger_edge_var, value="any").pack(side=tk.LEFT)
 
-        self.camera_connect_btn = tk.Button(camera_frame, text="Connect Camera", command=self.toggle_camera_connection, bg="#2196F3", fg="white", font=("Arial", 9, "bold"))
-        self.camera_connect_btn.grid(row=5, column=0, columnspan=2, sticky=tk.EW, pady=(8, 3))
+        tk.Label(camera_frame, text="Exposure (µs):").grid(row=5, column=0, sticky=tk.W, pady=3)
+        self.exposure_var = tk.IntVar(value=10000)
+        tk.Spinbox(camera_frame, from_=100, to=1000000, textvariable=self.exposure_var, width=13).grid(row=5, column=1, sticky=tk.EW, pady=3)
+
+        tk.Label(camera_frame, text="Gain:").grid(row=6, column=0, sticky=tk.W, pady=3)
+        self.gain_var = tk.DoubleVar(value=0.0)
+        tk.Spinbox(camera_frame, from_=0.0, to=24.0, increment=0.1, textvariable=self.gain_var, width=13).grid(row=6, column=1, sticky=tk.EW, pady=3)
+
+        btn_frame = tk.Frame(camera_frame)
+        btn_frame.grid(row=7, column=0, columnspan=2, sticky=tk.EW, pady=(8, 3))
+
+        self.camera_connect_btn = tk.Button(btn_frame, text="Connect Camera", command=self.toggle_camera_connection, bg="#2196F3", fg="white", font=("Arial", 9, "bold"))
+        self.camera_connect_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+
+        self.apply_settings_btn = tk.Button(btn_frame, text="Apply", command=self.apply_camera_settings, state=tk.DISABLED, font=("Arial", 9, "bold"))
+        self.apply_settings_btn.pack(side=tk.RIGHT, padx=(2, 0))
 
         self.camera_status_label = tk.Label(camera_frame, text="⚫ Disconnected", fg="red", font=("Arial", 8))
-        self.camera_status_label.grid(row=6, column=0, columnspan=2, pady=3)
+        self.camera_status_label.grid(row=8, column=0, columnspan=2, pady=3)
 
         self.test_capture_btn = tk.Button(camera_frame, text="Test Capture", command=self.test_capture, state=tk.DISABLED)
-        self.test_capture_btn.grid(row=7, column=0, columnspan=2, sticky=tk.EW, pady=3)
+        self.test_capture_btn.grid(row=9, column=0, columnspan=2, sticky=tk.EW, pady=3)
 
         monitor_frame = tk.LabelFrame(left_frame, text="Monitoring Control", padx=10, pady=10)
         monitor_frame.pack(fill=tk.X, pady=(0, 10))
@@ -199,13 +213,28 @@ class PLCCameraApp:
                 self.camera.TriggerMode.SetValue('On')
                 self.camera.TriggerSource.SetValue('Software')
 
+                exposure_value = self.exposure_var.get()
+                gain_value = self.gain_var.get()
+
                 try:
-                    self.camera.ExposureTime.SetValue(10000)
+                    self.camera.ExposureTime.SetValue(exposure_value)
+                    self.add_log(f"  Set Exposure: {exposure_value} µs")
                 except:
                     try:
-                        self.camera.ExposureTimeAbs.SetValue(10000)
-                    except:
-                        pass
+                        self.camera.ExposureTimeAbs.SetValue(exposure_value)
+                        self.add_log(f"  Set Exposure: {exposure_value} µs")
+                    except Exception as e:
+                        self.add_log(f"  ⚠ Could not set exposure: {e}")
+
+                try:
+                    self.camera.Gain.SetValue(gain_value)
+                    self.add_log(f"  Set Gain: {gain_value}")
+                except:
+                    try:
+                        self.camera.GainRaw.SetValue(int(gain_value))
+                        self.add_log(f"  Set Gain: {gain_value}")
+                    except Exception as e:
+                        self.add_log(f"  ⚠ Could not set gain: {e}")
 
                 self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
 
@@ -217,6 +246,7 @@ class PLCCameraApp:
                 self.camera_status_label.config(text="🟢 Connected", fg="green")
                 self.camera_connect_btn.config(text="Disconnect Camera", bg="#f44336")
                 self.test_capture_btn.config(state=tk.NORMAL)
+                self.apply_settings_btn.config(state=tk.NORMAL)
                 self.add_log(f"✓ Connected to {camera_name}")
                 self.update_monitor_button()
 
@@ -243,6 +273,7 @@ class PLCCameraApp:
             self.camera_status_label.config(text="⚫ Disconnected", fg="red")
             self.camera_connect_btn.config(text="Connect Camera", bg="#2196F3")
             self.test_capture_btn.config(state=tk.DISABLED)
+            self.apply_settings_btn.config(state=tk.DISABLED)
             self.add_log("✗ Camera disconnected")
             self.update_monitor_button()
 
@@ -251,6 +282,38 @@ class PLCCameraApp:
             self.start_monitor_btn.config(state=tk.NORMAL)
         else:
             self.start_monitor_btn.config(state=tk.DISABLED)
+
+    def apply_camera_settings(self):
+        if not self.camera_connected or not self.camera:
+            self.add_log("⚠ Camera not connected")
+            return
+
+        try:
+            exposure_value = self.exposure_var.get()
+            gain_value = self.gain_var.get()
+
+            try:
+                self.camera.ExposureTime.SetValue(exposure_value)
+                self.add_log(f"✓ Applied Exposure: {exposure_value} µs")
+            except:
+                try:
+                    self.camera.ExposureTimeAbs.SetValue(exposure_value)
+                    self.add_log(f"✓ Applied Exposure: {exposure_value} µs")
+                except Exception as e:
+                    self.add_log(f"✗ Could not apply exposure: {e}")
+
+            try:
+                self.camera.Gain.SetValue(gain_value)
+                self.add_log(f"✓ Applied Gain: {gain_value}")
+            except:
+                try:
+                    self.camera.GainRaw.SetValue(int(gain_value))
+                    self.add_log(f"✓ Applied Gain: {gain_value}")
+                except Exception as e:
+                    self.add_log(f"✗ Could not apply gain: {e}")
+
+        except Exception as e:
+            self.add_log(f"✗ Error applying settings: {e}")
 
     def test_capture(self):
         self.add_log("Testing manual capture...")
