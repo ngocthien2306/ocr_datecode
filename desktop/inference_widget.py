@@ -33,7 +33,15 @@ try:
     OCR_AVAILABLE = True
 except ImportError:
     OCR_AVAILABLE = False
-    print("Warning: TextRecognizer not available")
+    print("Warning: text_recognizer not available")
+
+# Import pyzbar for barcode decoding
+try:
+    from pyzbar import pyzbar
+    BARCODE_AVAILABLE = True
+except ImportError:
+    BARCODE_AVAILABLE = False
+    print("Warning: pyzbar not available. Install with: pip install pyzbar")
 
 
 def run_inference_process(json_path, pipeline_path, image_path, result_queue):
@@ -211,90 +219,99 @@ def run_inference_process(json_path, pipeline_path, image_path, result_queue):
                 # Crop regions for OCR (excluding template)
                 cropped_regions = []
                 for bbox in transformed_bboxes:
-                    if bbox['type'] in ['template', 'barcode']:
+                    if bbox['type'] in ['template']:
                         continue
                         
-                    # Get bounding box points
+                    # Get bounding box points (4 corners)
                     pts = np.array(bbox['points'], dtype=np.float32)
                     
-                    # Calculate crop rectangle (rotated bounding box)
-                    rect = cv2.minAreaRect(pts)
-                    box = cv2.boxPoints(rect)
-                    box = np.int0(box)
+                    # Get straight bounding rectangle (no rotation)
+                    x_coords = pts[:, 0]
+                    y_coords = pts[:, 1]
+                    x_min, x_max = int(np.min(x_coords)), int(np.max(x_coords))
+                    y_min, y_max = int(np.min(y_coords)), int(np.max(y_coords))
                     
-                    # Get width and height
-                    width = int(rect[1][0])
-                    height = int(rect[1][1])
-                    
-                    # Ensure width > height (text should be horizontal)
-                    if height > width:
-                        width, height = height, width
-                        # Rotate box points 90 degrees
-                        center = rect[0]
-                        angle = rect[2] + 90
-                        rect = (center, (width, height), angle)
-                        box = cv2.boxPoints(rect)
-                        box = np.int0(box)
+                    width = x_max - x_min
+                    height = y_max - y_min
                     
                     if width > 0 and height > 0:
-                        # Add padding for small height regions (min height 32px)
+                        # Crop the region directly (no rotation)
+                        cropped = target_img_full[y_min:y_max, x_min:x_max]
+                        
+                        # Add padding if height is too small
                         min_height = 48
                         if height < min_height:
                             pad_top = (min_height - height) // 2
                             pad_bottom = min_height - height - pad_top
-                        else:
-                            pad_top = 0
-                            pad_bottom = 0
-                        
-                        # Adjust height with padding
-                        padded_height = height + pad_top + pad_bottom
-                        
-                        # Define source points (the rotated bbox)
-                        src_pts = box.astype("float32")
-                        
-                        # Define destination points (upright rectangle with padding)
-                        dst_pts = np.array([
-                            [0, padded_height-1],
-                            [0, 0],
-                            [width-1, 0],
-                            [width-1, padded_height-1]
-                        ], dtype="float32")
-                        
-                        # Get perspective transform matrix
-                        M = cv2.getPerspectiveTransform(src_pts, dst_pts)
-                        
-                        # Warp the image
-                        warped = cv2.warpPerspective(target_img_full, M, (width, padded_height))
-                        
-                        # Add padding if needed (fill with white background)
-                        if pad_top > 0 or pad_bottom > 0:
-                            # Create white canvas
-                            padded = np.ones((padded_height, width, 3), dtype=np.uint8) * 255
-                            # Place warped image in center
-                            padded[pad_top:pad_top+height, :] = warped[0:height, :]
-                            warped = padded
+                            
+                            # Create white canvas with padding
+                            padded = np.ones((min_height, width, 3), dtype=np.uint8) * 255
+                            # Place cropped image in center
+                            padded[pad_top:pad_top+height, :] = cropped
+                            cropped = padded
                         
                         cropped_regions.append({
-                            'image': warped,
+                            'image': cropped,
                             'type': bbox['type'],
                             'bbox_idx': len(cropped_regions)
                         })
                 
-                # Run batch OCR
+                # Run batch OCR and Barcode decoding
                 if cropped_regions:
                     images = [r['image'] for r in cropped_regions]
 
                     for i, image in enumerate(images):
                         cv2.imwrite(f"debug_ocr_{i}.png", image)
-
-                    batch_results = recognizer.recognize_batch(images)
                     
-                    for i, (text, conf) in enumerate(batch_results):
-                        ocr_results.append({
-                            'type': cropped_regions[i]['type'],
-                            'text': text,
-                            'confidence': float(conf)
-                        })
+                    # Process each region based on type
+                    for i, region in enumerate(cropped_regions):
+                        image = region['image']
+                        region_type = region['type']
+                        
+                        # Decode barcode if type is 'barcode'
+                        if region_type == 'barcode' and BARCODE_AVAILABLE:
+                            try:
+                                # Decode barcode
+                                barcodes = pyzbar.decode(image)
+                                
+                                if barcodes:
+                                    # Use first detected barcode
+                                    barcode = barcodes[0]
+                                    text = barcode.data.decode('utf-8')
+                                    barcode_type = barcode.type
+                                    
+                                    ocr_results.append({
+                                        'type': 'barcode',
+                                        'text': text,
+                                        'barcode_type': barcode_type,
+                                        'confidence': 1.0  # pyzbar doesn't provide confidence
+                                    })
+                                else:
+                                    # No barcode detected, fallback to OCR
+                                    text, conf = recognizer.recognize(image)
+                                    ocr_results.append({
+                                        'type': region_type,
+                                        'text': text,
+                                        'confidence': float(conf),
+                                        'note': 'No barcode detected, used OCR'
+                                    })
+                            except Exception as e:
+                                print(f"Barcode decode error: {e}")
+                                # Fallback to OCR on error
+                                text, conf = recognizer.recognize(image)
+                                ocr_results.append({
+                                    'type': region_type,
+                                    'text': text,
+                                    'confidence': float(conf)
+                                })
+                        else:
+                            # Use OCR for text/datecode or when barcode lib not available
+                            text, conf = recognizer.recognize(image)
+                            ocr_results.append({
+                                'type': region_type,
+                                'text': text,
+                                'confidence': float(conf)
+                            })
                 
                 timings['ocr'] = (time.time() - ocr_start) * 1000
                 
@@ -604,12 +621,21 @@ class InferenceWidget(QWidget):
         self.status_label.setAlignment(Qt.AlignCenter)
         center_layout.addWidget(self.status_label)
         
-        # Run inference button
+        # Auto-run checkbox and Run button in horizontal layout
+        button_layout = QHBoxLayout()
+        
+        from PyQt5.QtWidgets import QCheckBox
+        self.auto_run_checkbox = QCheckBox("Auto-run on next/prev")
+        self.auto_run_checkbox.setChecked(True)  # Default enabled
+        button_layout.addWidget(self.auto_run_checkbox)
+        
         self.run_btn = QPushButton("Run Inference")
         self.run_btn.setObjectName("primaryButton")
         self.run_btn.clicked.connect(self.run_inference)
         self.run_btn.setEnabled(False)
-        center_layout.addWidget(self.run_btn)
+        button_layout.addWidget(self.run_btn)
+        
+        center_layout.addLayout(button_layout)
         
         splitter.addWidget(center_panel)
         
@@ -776,6 +802,10 @@ class InferenceWidget(QWidget):
             # Clear previous results
             self.results_text.clear()
             self.current_result = None
+            
+            # Auto-run inference if enabled and matcher is available
+            if self.auto_run_checkbox.isChecked() and self.matcher:
+                self.run_inference()
     
     def prev_image(self):
         """Go to previous image"""
@@ -849,19 +879,30 @@ Inliers: {result['inliers']}/{result['total_matches']}
         # Display OCR results
         if ocr_results:
             results_text += "\n" + "="*40 + "\n"
-            results_text += "📝 OCR RESULTS\n"
+            results_text += "📝 RECOGNITION RESULTS\n"
             results_text += "="*40 + "\n\n"
             
             for i, ocr in enumerate(ocr_results, 1):
-                results_text += f"Region {i} [{ocr['type'].upper()}]:\n"
-                results_text += f"  Text: {ocr['text']}\n"
-                # results_text += f"  Confidence: {ocr['confidence']:.1%}\n\n"
+                region_type = ocr['type'].upper()
+                
+                # Different display for barcode vs text
+                if ocr['type'] == 'barcode' and 'barcode_type' in ocr:
+                    results_text += f"Region {i} [BARCODE - {ocr['barcode_type']}]:\n"
+                    results_text += f"  📊 Data: {ocr['text']}\n"
+                    if 'note' in ocr:
+                        results_text += f"  ⚠️  {ocr['note']}\n"
+                else:
+                    results_text += f"Region {i} [{region_type}]:\n"
+                    results_text += f"  📝 Text: {ocr['text']}\n"
+                    # results_text += f"  🎯 Confidence: {ocr['confidence']:.1%}\n"
+                
+                results_text += "\n"
         else:
             results_text += "\n" + "="*40 + "\n"
-            results_text += "📝 OCR RESULTS\n"
+            results_text += "📝 RECOGNITION RESULTS\n"
             results_text += "="*40 + "\n"
             if OCR_AVAILABLE:
-                results_text += "\nNo text regions detected.\n"
+                results_text += "\nNo text/barcode regions detected.\n"
             else:
                 results_text += "\nOCR not available (text_recognizer.py not found)\n"
         
