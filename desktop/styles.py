@@ -204,4 +204,89 @@ QRadioButton::indicator:checked {
 QRadioButton::indicator:hover {
     border-color: #007acc;
 }
+
+/* Tab Widget */
+QTabWidget::pane {
+    border: 1px solid #3f3f46;
+    background-color: #1e1e1e;
+    border-radius: 4px;
+}
+
+QTabBar::tab {
+    background-color: #2d2d30;
+    color: #e0e0e0;
+    border: 1px solid #3f3f46;
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    padding: 10px 20px;
+    margin-right: 2px;
+    min-width: 100px;
+}
+
+QTabBar::tab:selected {
+    background-color: #1e1e1e;
+    color: #ffffff;
+    border-color: #007acc;
+    border-bottom: 2px solid #007acc;
+}
+
+QTabBar::tab:hover:!selected {
+    background-color: #3e3e42;
+}
+
+/* Text Edit */
+QTextEdit {
+    background-color: #1e1e1e;
+    border: 1px solid #3f3f46;
+    border-radius: 4px;
+    padding: 8px;
+    color: #e0e0e0;
+}
+
+/* Progress Bar */
+QProgressBar {
+    background-color: #2d2d30;
+    border: 1px solid #3f3f46;
+    border-radius: 4px;
+    text-align: center;
+    color: #e0e0e0;
+}
+
+QProgressBar::chunk {
+    background-color: #007acc;
+    border-radius: 3px;
+}
+
+/* Right Panel */
+QWidget#rightPanel {
+    background-color: #252526;
+    border-left: 1px solid #3f3f46;
+}
+
+/* ComboBox */
+QComboBox {
+    background-color: #2d2d30;
+    color: #e0e0e0;
+    border: 1px solid #3f3f46;
+    border-radius: 4px;
+    padding: 6px 10px;
+}
+
+QComboBox:hover {
+    border-color: #007acc;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 20px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #2d2d30;
+    color: #e0e0e0;
+    border: 1px solid #3f3f46;
+    selection-background-color: #094771;
+}
 """
+

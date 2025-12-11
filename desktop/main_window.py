@@ -1,16 +1,14 @@
-"""
-Main Window
-Cửa sổ chính của ứng dụng với UI được cải tiến
-"""
 import os
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                               QListWidget, QPushButton, QFileDialog, QLabel,
-                              QMessageBox, QListWidgetItem, QSplitter, QComboBox)
+                              QMessageBox, QListWidgetItem, QSplitter, QComboBox,
+                              QTabWidget)
 from PyQt5.QtCore import Qt, QDir
 from PyQt5.QtGui import QFont
 from image_viewer import ImageViewer
 from annotation_manager import AnnotationManager
 from bbox_list_widget import BBoxListWidget
+from inference_widget import InferenceWidget
 from styles import APP_STYLESHEET
 
 
@@ -51,9 +49,30 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
 
         # Main layout
-        main_layout = QHBoxLayout(central_widget)
+        main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
+
+        # Create tab widget
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setObjectName("mainTabs")
+        
+        # Tab 1: Annotation Tool
+        annotation_tab = self.create_annotation_tab()
+        self.tab_widget.addTab(annotation_tab, "Annotation")
+        
+        # Tab 2: Inference Tool
+        self.inference_tab = InferenceWidget()
+        self.tab_widget.addTab(self.inference_tab, "Inference")
+        
+        main_layout.addWidget(self.tab_widget)
+    
+    def create_annotation_tab(self):
+        """Create the annotation tab"""
+        tab_widget = QWidget()
+        tab_layout = QHBoxLayout(tab_widget)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        tab_layout.setSpacing(0)
 
         # === LEFT PANEL ===
         left_panel = QWidget()
@@ -98,7 +117,7 @@ class MainWindow(QMainWindow):
         self.info_label.setObjectName("infoLabel")
         left_layout.addWidget(self.info_label)
 
-        main_layout.addWidget(left_panel)
+        tab_layout.addWidget(left_panel)
 
         # === CENTER + RIGHT PANELS (Splitter) ===
         center_right_splitter = QSplitter(Qt.Horizontal)
@@ -242,7 +261,9 @@ class MainWindow(QMainWindow):
         center_right_splitter.setStretchFactor(0, 3)  # Image viewer có stretch factor lớn hơn
         center_right_splitter.setStretchFactor(1, 1)  # BBox list
 
-        main_layout.addWidget(center_right_splitter, stretch=1)
+        tab_layout.addWidget(center_right_splitter, stretch=1)
+        
+        return tab_widget
 
     def select_folder(self):
         """Chọn folder chứa ảnh"""
