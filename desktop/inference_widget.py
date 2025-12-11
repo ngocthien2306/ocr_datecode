@@ -9,107 +9,123 @@ from pathlib import Path
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                               QLabel, QFileDialog, QListWidget, QTextEdit,
                               QSplitter, QMessageBox, QListWidgetItem, QProgressBar)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QPixmap, QImage
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt5.QtGui import QPixmap, QImage, QFont
 import sys
+import multiprocessing as mp
+from multiprocessing import Process, Queue
+import pickle
 
 # Import the SuperPointMatcherONNX class
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 try:
     import onnxruntime as ort
-    from typing import Dict, Optional
+    from typing import Dict, Optional, List, Tuple
     import time
     ONNX_AVAILABLE = True
 except ImportError:
     ONNX_AVAILABLE = False
     print("Warning: onnxruntime not available")
 
+# Import TextRecognizer
+try:
+    from text_recognizer import TextRecognizer
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+    print("Warning: TextRecognizer not available")
 
-class SuperPointMatcherONNX:
-    """ONNX-based SuperPoint matcher for template matching"""
-    def __init__(self, json_path: str, pipeline_path: str, scale: float = 1.0, verbose: bool = False):
-        self.verbose = verbose
-        t_start = time.time()
+
+def run_inference_process(json_path, pipeline_path, image_path, result_queue):
+    """
+    Function to run in separate process - completely isolated from Qt
+    """
+    try:
+        import cv2
+        import numpy as np
+        import onnxruntime as ort
+        import time
+        import json
         
+        # Load template info
         with open(json_path, 'r') as f:
             data = json.load(f)
         
-        self.template_path = data['_template_image']
-        self.annotations = data[self.template_path]
-        self.scale = scale
+        template_path = data['_template_image']
+        annotations = data[template_path]
         
-        t0 = time.time()
-        template_img = cv2.imread(self.template_path)
+        # Parse annotations
+        template_bbox = None
+        other_bboxes = []
+        for ann in annotations:
+            if ann['type'] == 'template':
+                template_bbox = ann
+            elif ann['type'] not in ['crop_area']:
+                other_bboxes.append(ann)
+        
+        # Load template
+        scale = 0.5
+        template_img = cv2.imread(template_path)
         if scale != 1.0:
             template_img = cv2.resize(template_img, None, fx=scale, fy=scale)
         
-        self.template_img = template_img
-        self.template_gray = cv2.cvtColor(template_img, cv2.COLOR_BGR2GRAY)
-        if self.verbose:
-            print(f"⏱️  Load template: {(time.time()-t0)*1000:.1f}ms")
+        template_gray = cv2.cvtColor(template_img, cv2.COLOR_BGR2GRAY)
         
-        self.template_bbox = None
-        self.other_bboxes = []
-        for ann in self.annotations:
-            if ann['type'] == 'template':
-                self.template_bbox = ann
-            elif ann['type'] not in ['crop_area']:
-                self.other_bboxes.append(ann)
+        # Load ONNX model in this process
+        sess_options = ort.SessionOptions()
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        sess_options.intra_op_num_threads = 1
+        sess_options.inter_op_num_threads = 1
         
-        t0 = time.time()
-        providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
-        self.pipeline_sess = ort.InferenceSession(pipeline_path, providers=providers)
-        if self.verbose:
-            print(f"⏱️  Load pipeline: {(time.time()-t0)*1000:.1f}ms")
+        providers = ['CPUExecutionProvider']
+        pipeline_sess = ort.InferenceSession(
+            pipeline_path,
+            sess_options=sess_options,
+            providers=providers
+        )
         
-        print(f"✅ Initialized SuperPointMatcherONNX ({(time.time()-t_start)*1000:.1f}ms)")
-        print(f"   Provider: {self.pipeline_sess.get_providers()[0]}")
-        print(f"   Scale: {scale}x")
-        print(f"   Template: {Path(self.template_path).name} ({self.template_gray.shape[1]}x{self.template_gray.shape[0]})")
-        print(f"   Bboxes: template + {len(self.other_bboxes)} regions")
-    
-    def _resize_to_32(self, img):
-        h, w = img.shape
-        new_h = ((h + 31) // 32) * 32
-        new_w = ((w + 31) // 32) * 32
-        if new_h != h or new_w != w:
-            resized = cv2.resize(img, (new_w, new_h))
-            return resized, (w / new_w, h / new_h)
-        return img, (1.0, 1.0)
-    
-    def match(self, target_path: str, score_threshold: float = 0.3, 
-              ransac_threshold: float = 5.0) -> Dict:
+        # Helper function
+        def resize_to_32(img):
+            h, w = img.shape
+            new_h = ((h + 31) // 32) * 32
+            new_w = ((w + 31) // 32) * 32
+            if new_h != h or new_w != w:
+                resized = cv2.resize(img, (new_w, new_h))
+                return resized, (w / new_w, h / new_h)
+            return img, (1.0, 1.0)
+        
+        # Match process
         timings = {}
         t_total = time.time()
         
-        t0 = time.time()
-        target_img_full = cv2.imread(target_path)
-        
-        if self.scale != 1.0:
-            target_img = cv2.resize(target_img_full, None, fx=self.scale, fy=self.scale)
+        # Load target
+        target_img_full = cv2.imread(image_path)
+        if scale != 1.0:
+            target_img = cv2.resize(target_img_full, None, fx=scale, fy=scale)
         else:
             target_img = target_img_full
-            
         target_gray = cv2.cvtColor(target_img, cv2.COLOR_BGR2GRAY)
-        timings['load_target'] = (time.time() - t0) * 1000
         
-        t0 = time.time()
-        template_resized, template_scale = self._resize_to_32(self.template_gray)
-        target_resized, target_scale = self._resize_to_32(target_gray)
-        timings['resize_to_32'] = (time.time() - t0) * 1000
+        # Resize
+        template_resized, template_scale = resize_to_32(template_gray)
+        target_resized, target_scale = resize_to_32(target_gray)
         
-        t0 = time.time()
-        template_tensor = template_resized.astype(np.float32)[None, None] / 255.0
-        target_tensor = target_resized.astype(np.float32)[None, None] / 255.0
-        batch_input = np.concatenate([template_tensor, target_tensor], axis=0)
-        timings['to_tensor'] = (time.time() - t0) * 1000
+        # Prepare tensors
+        template_tensor = np.ascontiguousarray(
+            template_resized.astype(np.float32)[None, None] / 255.0
+        )
+        target_tensor = np.ascontiguousarray(
+            target_resized.astype(np.float32)[None, None] / 255.0
+        )
+        batch_input = np.ascontiguousarray(
+            np.concatenate([template_tensor, target_tensor], axis=0)
+        )
         
-        t0 = time.time()
-        outputs = self.pipeline_sess.run(None, {'images': batch_input})
+        # Run ONNX inference
+        outputs = pipeline_sess.run(None, {'images': batch_input})
         kpts, matches, mscores = outputs
-        timings['total_inference'] = (time.time() - t0) * 1000
         
-        t0 = time.time()
+        # Postprocess
         batch_mask = matches[:, 0] == 0
         batch_matches = matches[batch_mask]
         batch_mscores = mscores[batch_mask]
@@ -117,6 +133,7 @@ class SuperPointMatcherONNX:
         kpts0 = kpts[0].astype(np.float32)
         kpts1 = kpts[1].astype(np.float32)
         
+        score_threshold = 0.3
         valid_mask = batch_mscores > score_threshold
         valid_matches = batch_matches[valid_mask]
         
@@ -127,126 +144,284 @@ class SuperPointMatcherONNX:
         m_kpts0[:, 1] *= template_scale[1]
         m_kpts1[:, 0] *= target_scale[0]
         m_kpts1[:, 1] *= target_scale[1]
-        timings['postprocess_matches'] = (time.time() - t0) * 1000
         
         if len(m_kpts0) < 10:
-            timings['total'] = (time.time() - t_total) * 1000
-            return {
+            result_queue.put({
                 'success': False,
-                'error': f'Too few matches: {len(m_kpts0)}',
-                'homography': None,
-                'confidence': 0.0,
-                'transformed_bboxes': [],
-                'target_img': target_img_full,
-                'timings': timings
-            }
+                'error': f'Too few matches: {len(m_kpts0)}'
+            })
+            return
         
-        t0 = time.time()
-        H, mask = cv2.findHomography(m_kpts0, m_kpts1, cv2.RANSAC, ransac_threshold)
-        timings['ransac_homography'] = (time.time() - t0) * 1000
+        # Find homography
+        H, mask = cv2.findHomography(m_kpts0, m_kpts1, cv2.RANSAC, 5.0)
         
         if H is None:
-            timings['total'] = (time.time() - t_total) * 1000
-            return {
+            result_queue.put({
                 'success': False,
-                'error': 'Homography estimation failed',
-                'homography': None,
-                'confidence': 0.0,
-                'transformed_bboxes': [],
-                'target_img': target_img_full,
-                'timings': timings
-            }
+                'error': 'Homography estimation failed'
+            })
+            return
         
         inliers = np.sum(mask)
         confidence = inliers / len(m_kpts0)
         
-        t0 = time.time()
+        # Transform bboxes
         scale_matrix = np.array([
-            [1/self.scale, 0, 0],
-            [0, 1/self.scale, 0],
+            [1/scale, 0, 0],
+            [0, 1/scale, 0],
             [0, 0, 1]
         ])
-        
         H_full = scale_matrix @ H @ np.linalg.inv(scale_matrix)
         
         transformed_bboxes = []
         
-        template_pts = np.array(self.template_bbox['points'], dtype=np.float32).reshape(-1, 1, 2)
+        # Template bbox
+        template_pts = np.array(template_bbox['points'], dtype=np.float32).reshape(-1, 1, 2)
         template_transformed = cv2.perspectiveTransform(template_pts, H_full)
         transformed_bboxes.append({
             'type': 'template',
             'points': template_transformed.reshape(-1, 2).tolist()
         })
         
-        for bbox in self.other_bboxes:
+        # Other bboxes
+        for bbox in other_bboxes:
             pts = np.array(bbox['points'], dtype=np.float32).reshape(-1, 1, 2)
             pts_transformed = cv2.perspectiveTransform(pts, H_full)
             transformed_bboxes.append({
                 'type': bbox['type'],
                 'points': pts_transformed.reshape(-1, 2).tolist()
             })
-        timings['transform_bboxes'] = (time.time() - t0) * 1000
         
         timings['total'] = (time.time() - t_total) * 1000
         
-        return {
+        # Perform OCR on detected regions
+        ocr_results = []
+        if OCR_AVAILABLE:
+            try:
+                ocr_start = time.time()
+                from text_recognizer import TextRecognizer
+                
+                # Initialize OCR model
+                recognizer = TextRecognizer(
+                    model_path='../languages/english/rec.onnx',
+                    dict_path='../languages/english/dict.txt',
+                    use_gpu=False
+                )
+                
+                # Crop regions for OCR (excluding template)
+                cropped_regions = []
+                for bbox in transformed_bboxes:
+                    if bbox['type'] in ['template', 'barcode']:
+                        continue
+                        
+                    # Get bounding box points
+                    pts = np.array(bbox['points'], dtype=np.float32)
+                    
+                    # Calculate crop rectangle (rotated bounding box)
+                    rect = cv2.minAreaRect(pts)
+                    box = cv2.boxPoints(rect)
+                    box = np.int0(box)
+                    
+                    # Get width and height
+                    width = int(rect[1][0])
+                    height = int(rect[1][1])
+                    
+                    # Ensure width > height (text should be horizontal)
+                    if height > width:
+                        width, height = height, width
+                        # Rotate box points 90 degrees
+                        center = rect[0]
+                        angle = rect[2] + 90
+                        rect = (center, (width, height), angle)
+                        box = cv2.boxPoints(rect)
+                        box = np.int0(box)
+                    
+                    if width > 0 and height > 0:
+                        # Add padding for small height regions (min height 32px)
+                        min_height = 48
+                        if height < min_height:
+                            pad_top = (min_height - height) // 2
+                            pad_bottom = min_height - height - pad_top
+                        else:
+                            pad_top = 0
+                            pad_bottom = 0
+                        
+                        # Adjust height with padding
+                        padded_height = height + pad_top + pad_bottom
+                        
+                        # Define source points (the rotated bbox)
+                        src_pts = box.astype("float32")
+                        
+                        # Define destination points (upright rectangle with padding)
+                        dst_pts = np.array([
+                            [0, padded_height-1],
+                            [0, 0],
+                            [width-1, 0],
+                            [width-1, padded_height-1]
+                        ], dtype="float32")
+                        
+                        # Get perspective transform matrix
+                        M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+                        
+                        # Warp the image
+                        warped = cv2.warpPerspective(target_img_full, M, (width, padded_height))
+                        
+                        # Add padding if needed (fill with white background)
+                        if pad_top > 0 or pad_bottom > 0:
+                            # Create white canvas
+                            padded = np.ones((padded_height, width, 3), dtype=np.uint8) * 255
+                            # Place warped image in center
+                            padded[pad_top:pad_top+height, :] = warped[0:height, :]
+                            warped = padded
+                        
+                        cropped_regions.append({
+                            'image': warped,
+                            'type': bbox['type'],
+                            'bbox_idx': len(cropped_regions)
+                        })
+                
+                # Run batch OCR
+                if cropped_regions:
+                    images = [r['image'] for r in cropped_regions]
+
+                    for i, image in enumerate(images):
+                        cv2.imwrite(f"debug_ocr_{i}.png", image)
+
+                    batch_results = recognizer.recognize_batch(images)
+                    
+                    for i, (text, conf) in enumerate(batch_results):
+                        ocr_results.append({
+                            'type': cropped_regions[i]['type'],
+                            'text': text,
+                            'confidence': float(conf)
+                        })
+                
+                timings['ocr'] = (time.time() - ocr_start) * 1000
+                
+            except Exception as e:
+                print(f"OCR error: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        # Draw on image
+        annotated = target_img_full.copy()
+        colors = {
+            'template': (0, 255, 0),
+            'text': (255, 165, 0),
+            'barcode': (255, 0, 255),
+            'datecode': (0, 255, 255)
+        }
+        
+        for bbox in transformed_bboxes:
+            pts = np.array(bbox['points'], dtype=np.int32)
+            color = colors.get(bbox['type'], (255, 255, 255))
+            cv2.polylines(annotated, [pts], True, color, 3)
+            center = pts.mean(axis=0).astype(int)
+            cv2.putText(annotated, bbox['type'], tuple(center), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+        
+        # Return results via queue
+        result_queue.put({
             'success': True,
-            'homography': H_full,
             'confidence': confidence,
-            'inliers': inliers,
+            'inliers': int(inliers),
             'total_matches': len(m_kpts0),
             'transformed_bboxes': transformed_bboxes,
-            'target_img': target_img_full,
+            'annotated_image': annotated,
+            'ocr_results': ocr_results,
             'timings': timings
-        }
+        })
+        
+    except Exception as e:
+        import traceback
+        result_queue.put({
+            'success': False,
+            'error': f'{str(e)}\n{traceback.format_exc()}'
+        })
+
+
+class InferenceMonitor(QThread):
+    """Thread to monitor the inference process and get results"""
+    finished = pyqtSignal(dict)
+    error = pyqtSignal(str)
     
-    def crop_regions(self, result: Dict, output_dir: Optional[str] = None) -> Dict[str, np.ndarray]:
-        if not result['success']:
-            return {}
+    def __init__(self, result_queue, process):
+        super().__init__()
+        self.result_queue = result_queue
+        self.process = process
+        self.running = True
+    
+    def run(self):
+        try:
+            # Wait for result with timeout
+            timeout = 60  # 60 seconds max
+            start_time = time.time()
+            
+            while self.running and (time.time() - start_time) < timeout:
+                if not self.result_queue.empty():
+                    result = self.result_queue.get()
+                    
+                    if result['success']:
+                        self.finished.emit(result)
+                    else:
+                        self.error.emit(result.get('error', 'Unknown error'))
+                    return
+                
+                # Check if process is still alive
+                if not self.process.is_alive():
+                    if self.result_queue.empty():
+                        self.error.emit("Process terminated without result")
+                    return
+                
+                time.sleep(0.1)
+            
+            if time.time() - start_time >= timeout:
+                self.error.emit("Inference timeout (60s)")
+                
+        except Exception as e:
+            self.error.emit(f"Monitor error: {str(e)}")
+    
+    def stop(self):
+        self.running = False
+
+
+class SuperPointMatcherONNX:
+    """Simple wrapper that stores paths for multiprocessing inference"""
+    def __init__(self, json_path: str, pipeline_path: str, scale: float = 1.0, verbose: bool = False):
+        self.json_path = json_path
+        self.pipeline_path = pipeline_path
+        self.scale = scale
+        self.verbose = verbose
         
-        target_img = result['target_img']
-        cropped_regions = {}
+        # Just validate files exist
+        if not os.path.exists(json_path):
+            raise FileNotFoundError(f"JSON not found: {json_path}")
+        if not os.path.exists(pipeline_path):
+            raise FileNotFoundError(f"ONNX model not found: {pipeline_path}")
         
-        if output_dir:
-            Path(output_dir).mkdir(parents=True, exist_ok=True)
+        # Load basic info for display
+        with open(json_path, 'r') as f:
+            data = json.load(f)
         
-        for i, bbox in enumerate(result['transformed_bboxes']):
-            if bbox['type'] == 'template':
-                continue
-            
-            pts = np.array(bbox['points'], dtype=np.float32)
-            
-            width = int(max(
-                np.linalg.norm(pts[0] - pts[1]),
-                np.linalg.norm(pts[2] - pts[3])
-            ))
-            height = int(max(
-                np.linalg.norm(pts[1] - pts[2]),
-                np.linalg.norm(pts[3] - pts[0])
-            ))
-            
-            dst_pts = np.array([
-                [0, 0],
-                [width - 1, 0],
-                [width - 1, height - 1],
-                [0, height - 1]
-            ], dtype=np.float32)
-            
-            M = cv2.getPerspectiveTransform(pts, dst_pts)
-            cropped = cv2.warpPerspective(target_img, M, (width, height))
-            
-            key = f"{bbox['type']}_{i}"
-            cropped_regions[key] = cropped
-            
-            if output_dir:
-                output_path = Path(output_dir) / f"{key}.png"
-                cv2.imwrite(str(output_path), cropped)
+        self.template_path = data['_template_image']
+        self.annotations = data[self.template_path]
         
-        return cropped_regions
+        self.template_bbox = None
+        self.other_bboxes = []
+        for ann in self.annotations:
+            if ann['type'] == 'template':
+                self.template_bbox = ann
+            elif ann['type'] not in ['crop_area']:
+                self.other_bboxes.append(ann)
+        
+        print(f"✅ Initialized SuperPointMatcherONNX (multiprocessing mode)")
+        print(f"   Template: {Path(self.template_path).name}")
+        print(f"   Bboxes: template + {len(self.other_bboxes)} regions")
+        print(f"   ⚠️  Inference will run in separate process (no Qt conflicts)")
 
 
 class InferenceWorker(QThread):
-    """Worker thread for running inference"""
+    """Worker that manages the multiprocessing inference"""
     finished = pyqtSignal(dict, object)  # result, annotated_image
     error = pyqtSignal(str)
     
@@ -254,35 +429,58 @@ class InferenceWorker(QThread):
         super().__init__()
         self.matcher = matcher
         self.image_path = image_path
+        self.process = None
+        self.monitor = None
     
     def run(self):
         try:
-            result = self.matcher.match(self.image_path)
+            print(f"Starting inference on: {self.image_path}")
             
-            if result['success']:
-                # Draw bboxes on image
-                annotated = result['target_img'].copy()
-                colors = {
-                    'template': (0, 255, 0),
-                    'text': (255, 165, 0),
-                    'barcode': (255, 0, 255),
-                    'datecode': (0, 255, 255)
-                }
-                
-                for bbox in result['transformed_bboxes']:
-                    pts = np.array(bbox['points'], dtype=np.int32)
-                    color = colors.get(bbox['type'], (255, 255, 255))
-                    cv2.polylines(annotated, [pts], True, color, 3)
-                    
-                    center = pts.mean(axis=0).astype(int)
-                    cv2.putText(annotated, bbox['type'], tuple(center), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
-                
-                self.finished.emit(result, annotated)
-            else:
-                self.error.emit(result.get('error', 'Unknown error'))
+            # Create queue for results
+            result_queue = mp.Queue()
+            
+            # Start inference in separate process
+            self.process = mp.Process(
+                target=run_inference_process,
+                args=(
+                    self.matcher.json_path,
+                    self.matcher.pipeline_path,
+                    self.image_path,
+                    result_queue
+                )
+            )
+            self.process.start()
+            
+            # Monitor the process
+            self.monitor = InferenceMonitor(result_queue, self.process)
+            self.monitor.finished.connect(self._on_finished)
+            self.monitor.error.connect(self._on_error)
+            self.monitor.start()
+            
+            # Wait for monitor to finish
+            self.monitor.wait()
+            
+            # Clean up
+            if self.process.is_alive():
+                self.process.terminate()
+                self.process.join(timeout=1)
+            
         except Exception as e:
-            self.error.emit(str(e))
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"Exception in inference worker:\n{error_details}")
+            self.error.emit(f"{str(e)}\n\nSee console for details")
+    
+    def _on_finished(self, result):
+        """Handle successful inference"""
+        annotated = result['annotated_image']
+        print(f"Inference successful. Confidence: {result['confidence']:.1%}")
+        self.finished.emit(result, annotated)
+    
+    def _on_error(self, error_msg):
+        """Handle inference error"""
+        print(f"Inference failed: {error_msg}")
+        self.error.emit(error_msg)
 
 
 class InferenceWidget(QWidget):
@@ -463,22 +661,31 @@ class InferenceWidget(QWidget):
             return
         
         # Check for pipeline ONNX model
-        pipeline_path = os.path.join(
-            os.path.dirname(os.path.dirname(json_path)),
-            'weights',
-            'superpoint_lightglue_pipeline.onnx'
-        )
+        # Try multiple possible locations
+        pipeline_paths = [
+            os.path.join(os.path.dirname(os.path.dirname(json_path)), 'weights', 'superpoint_lightglue_pipeline.onnx'),
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), 'weights', 'superpoint_lightglue_pipeline.onnx'),
+            "../weights/superpoint_lightglue_pipeline.onnx",
+            "weights/superpoint_lightglue_pipeline.onnx"
+        ]
         
-        if not os.path.exists(pipeline_path):
+        pipeline_path = None
+        for path in pipeline_paths:
+            if os.path.exists(path):
+                pipeline_path = path
+                break
+        
+        if not pipeline_path:
             QMessageBox.critical(
                 self,
                 "Model Not Found",
-                f"ONNX model not found at:\n{pipeline_path}\n\n"
+                f"ONNX model not found. Tried:\n" + "\n".join(pipeline_paths[:2]) + "\n\n"
                 "Please ensure the model file exists."
             )
             return
         
         try:
+            self.status_label.setText("Loading template...")
             self.matcher = SuperPointMatcherONNX(
                 json_path,
                 pipeline_path,
@@ -488,12 +695,21 @@ class InferenceWidget(QWidget):
             
             self.json_path_label.setText(os.path.basename(json_path))
             self.info_label.setText(f"✅ Template loaded: {self.matcher.template_bbox['type']}")
+            self.status_label.setText("Ready")
             
             if self.image_folder:
                 self.run_btn.setEnabled(True)
                 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load matcher:\n{str(e)}")
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"Error loading matcher:\n{error_details}")
+            QMessageBox.critical(
+                self, 
+                "Error", 
+                f"Failed to load matcher:\n{str(e)}\n\nSee console for details."
+            )
+            self.status_label.setText("Error loading template")
     
     def load_image_folder(self):
         """Load folder containing test images"""
@@ -613,19 +829,41 @@ class InferenceWidget(QWidget):
         
         # Display results
         timings = result.get('timings', {})
+        ocr_results = result.get('ocr_results', [])
+        # Processing Time: {timings.get('total', 0):.0f}ms
         results_text = f"""✅ Inference Successful
 
 Confidence: {result['confidence']:.1%}
 Inliers: {result['inliers']}/{result['total_matches']}
-Processing Time: {timings.get('total', 0):.0f}ms
 
-Detected Regions:
 """
+        
+        if timings.get('ocr'):
+            results_text += f"OCR Time: {timings.get('ocr', 0):.0f}ms\n"
+        
+        results_text += "\nDetected Regions:\n"
         for bbox in result['transformed_bboxes']:
             if bbox['type'] != 'template':
                 results_text += f"  • {bbox['type']}\n"
         
-        results_text += "\n--- OCR Results ---\n(To be implemented)\n"
+        # Display OCR results
+        if ocr_results:
+            results_text += "\n" + "="*40 + "\n"
+            results_text += "📝 OCR RESULTS\n"
+            results_text += "="*40 + "\n\n"
+            
+            for i, ocr in enumerate(ocr_results, 1):
+                results_text += f"Region {i} [{ocr['type'].upper()}]:\n"
+                results_text += f"  Text: {ocr['text']}\n"
+                # results_text += f"  Confidence: {ocr['confidence']:.1%}\n\n"
+        else:
+            results_text += "\n" + "="*40 + "\n"
+            results_text += "📝 OCR RESULTS\n"
+            results_text += "="*40 + "\n"
+            if OCR_AVAILABLE:
+                results_text += "\nNo text regions detected.\n"
+            else:
+                results_text += "\nOCR not available (text_recognizer.py not found)\n"
         
         self.results_text.setText(results_text)
         self.status_label.setText(f"✅ Success - Confidence: {result['confidence']:.1%}")
@@ -637,3 +875,8 @@ Detected Regions:
         
         self.results_text.setText(f"❌ Inference Failed\n\n{error_msg}")
         self.status_label.setText(f"❌ Error: {error_msg}")
+
+
+# Multiprocessing setup for macOS/Windows compatibility
+if __name__ != '__main__':
+    mp.set_start_method('spawn', force=True)
