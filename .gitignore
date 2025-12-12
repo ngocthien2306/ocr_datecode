@@ -145,6 +145,10 @@ cython_debug/
 *~
 .DS_Store
 
+# Python cache files (cpython bytecode)
+*.cpython-*.pyc
+*.cpython-*.pyo
+
 # Project specific
 detection/
 results/

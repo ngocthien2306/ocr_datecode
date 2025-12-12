@@ -510,6 +510,7 @@ class InferenceWidget(QWidget):
         self.image_files = []
         self.current_index = -1
         self.current_result = None
+        self.results_cache = {}  # Store results: {filename: {result, annotated_image}}
         
         self.setup_ui()
     
@@ -756,6 +757,9 @@ class InferenceWidget(QWidget):
             if ext in supported_formats:
                 self.image_files.append(filename)
         
+        # Load saved results if exist
+        self._load_results_from_file()
+        
         # Update list
         self.image_list.clear()
         for filename in self.image_files:
@@ -799,13 +803,46 @@ class InferenceWidget(QWidget):
             # Update status
             self.status_label.setText(f"Image {self.current_index + 1}/{len(self.image_files)}: {filename}")
             
-            # Clear previous results
-            self.results_text.clear()
-            self.current_result = None
-            
-            # Auto-run inference if enabled and matcher is available
-            if self.auto_run_checkbox.isChecked() and self.matcher:
-                self.run_inference()
+            # Check if we have cached results for this image
+            if filename in self.results_cache:
+                # Load cached results
+                cached = self.results_cache[filename]
+                self.current_result = cached['result']
+                
+                # Check if we have annotated image in memory
+                if cached['annotated_image'] is not None:
+                    # Display cached annotated image
+                    annotated_image = cached['annotated_image']
+                else:
+                    # Generate annotated image from saved results
+                    annotated_image = self._generate_annotated_image(image_path, cached['result'])
+                    # Cache the generated image
+                    self.results_cache[filename]['annotated_image'] = annotated_image
+                
+                # Display annotated image
+                h, w, ch = annotated_image.shape
+                bytes_per_line = ch * w
+                qt_image = QImage(annotated_image.data, w, h, bytes_per_line, QImage.Format_RGB888).rgbSwapped()
+                pixmap = QPixmap.fromImage(qt_image)
+                
+                scaled_pixmap = pixmap.scaled(
+                    self.image_label.size(),
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation
+                )
+                self.image_label.setPixmap(scaled_pixmap)
+                
+                # Display cached results
+                self._display_results(cached['result'])
+                self.status_label.setText(f"📁 Cached - Image {self.current_index + 1}/{len(self.image_files)}: {filename}")
+            else:
+                # Clear previous results
+                self.results_text.clear()
+                self.current_result = None
+                
+                # Auto-run inference if enabled and matcher is available
+                if self.auto_run_checkbox.isChecked() and self.matcher:
+                    self.run_inference()
     
     def prev_image(self):
         """Go to previous image"""
@@ -844,6 +881,16 @@ class InferenceWidget(QWidget):
         self.run_btn.setEnabled(True)
         self.current_result = result
         
+        # Save to cache
+        if self.current_index >= 0 and self.current_index < len(self.image_files):
+            filename = self.image_files[self.current_index]
+            self.results_cache[filename] = {
+                'result': result,
+                'annotated_image': annotated_image.copy()
+            }
+            # Save to file
+            self._save_results_to_file()
+        
         # Display annotated image
         h, w, ch = annotated_image.shape
         bytes_per_line = ch * w
@@ -858,6 +905,11 @@ class InferenceWidget(QWidget):
         self.image_label.setPixmap(scaled_pixmap)
         
         # Display results
+        self._display_results(result)
+        self.status_label.setText(f"✅ Success - Confidence: {result['confidence']:.1%}")
+    
+    def _display_results(self, result):
+        """Display inference results in text panel"""
         timings = result.get('timings', {})
         ocr_results = result.get('ocr_results', [])
         # Processing Time: {timings.get('total', 0):.0f}ms
@@ -893,7 +945,10 @@ Inliers: {result['inliers']}/{result['total_matches']}
                         results_text += f"  ⚠️  {ocr['note']}\n"
                 else:
                     results_text += f"Region {i} [{region_type}]:\n"
-                    results_text += f"  📝 Text: {ocr['text']}\n"
+
+
+                    ocr_text = ocr['text'].replace(":", "")
+                    results_text += f"  📝 Text: {ocr_text}\n"
                     # results_text += f"  🎯 Confidence: {ocr['confidence']:.1%}\n"
                 
                 results_text += "\n"
@@ -907,7 +962,6 @@ Inliers: {result['inliers']}/{result['total_matches']}
                 results_text += "\nOCR not available (text_recognizer.py not found)\n"
         
         self.results_text.setText(results_text)
-        self.status_label.setText(f"✅ Success - Confidence: {result['confidence']:.1%}")
     
     def on_inference_error(self, error_msg):
         """Handle inference error"""
@@ -916,6 +970,95 @@ Inliers: {result['inliers']}/{result['total_matches']}
         
         self.results_text.setText(f"❌ Inference Failed\n\n{error_msg}")
         self.status_label.setText(f"❌ Error: {error_msg}")
+    
+    def _get_results_file_path(self):
+        """Get path to results JSON file"""
+        if not self.image_folder:
+            return None
+        return os.path.join(self.image_folder, 'inference_results.json')
+    
+    def _save_results_to_file(self):
+        """Save all cached results to JSON file"""
+        results_path = self._get_results_file_path()
+        if not results_path:
+            return
+        
+        try:
+            # Prepare data (exclude annotated images, save only results)
+            save_data = {}
+            for filename, cache in self.results_cache.items():
+                result = cache['result']
+                # Convert numpy types to native Python types for JSON serialization
+                save_data[filename] = {
+                    'confidence': float(result.get('confidence', 0)),
+                    'inliers': int(result.get('inliers', 0)),
+                    'total_matches': int(result.get('total_matches', 0)),
+                    'transformed_bboxes': result.get('transformed_bboxes', []),
+                    'ocr_results': result.get('ocr_results', []),
+                    'timings': {k: float(v) for k, v in result.get('timings', {}).items()}
+                }
+            
+            # Save to file
+            with open(results_path, 'w', encoding='utf-8') as f:
+                json.dump(save_data, f, indent=2, ensure_ascii=False)
+            
+            print(f"Results saved to: {results_path}")
+            
+        except Exception as e:
+            print(f"Error saving results: {e}")
+    
+    def _load_results_from_file(self):
+        """Load cached results from JSON file"""
+        results_path = self._get_results_file_path()
+        if not results_path or not os.path.exists(results_path):
+            self.results_cache = {}
+            return
+        
+        try:
+            with open(results_path, 'r', encoding='utf-8') as f:
+                save_data = json.load(f)
+            
+            # We only have result data, not annotated images
+            # Images will be regenerated on display if needed
+            self.results_cache = {}
+            for filename, result_data in save_data.items():
+                self.results_cache[filename] = {
+                    'result': result_data,
+                    'annotated_image': None  # Will be loaded/generated when needed
+                }
+            
+            print(f"Loaded {len(self.results_cache)} cached results from: {results_path}")
+            
+        except Exception as e:
+            print(f"Error loading results: {e}")
+            self.results_cache = {}
+    
+    def _generate_annotated_image(self, image_path, result):
+        """Generate annotated image from saved results"""
+        # Load original image
+        img = cv2.imread(image_path)
+        if img is None:
+            return np.zeros((100, 100, 3), dtype=np.uint8)
+        
+        # Draw bounding boxes
+        annotated = img.copy()
+        colors = {
+            'template': (0, 255, 0),
+            'text': (255, 165, 0),
+            'barcode': (255, 0, 255),
+            'datecode': (0, 255, 255)
+        }
+        
+        transformed_bboxes = result.get('transformed_bboxes', [])
+        for bbox in transformed_bboxes:
+            pts = np.array(bbox['points'], dtype=np.int32)
+            color = colors.get(bbox['type'], (255, 255, 255))
+            cv2.polylines(annotated, [pts], True, color, 3)
+            center = pts.mean(axis=0).astype(int)
+            cv2.putText(annotated, bbox['type'], tuple(center), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+        
+        return annotated
 
 
 # Multiprocessing setup for macOS/Windows compatibility
