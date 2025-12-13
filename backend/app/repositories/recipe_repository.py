@@ -95,7 +95,11 @@ class RecipeRepository:
     
     async def update(self, recipe_id: str, recipe_update: RecipeUpdate, user_id: str) -> Optional[RecipeInDB]:
         """Update a recipe"""
-        update_data = recipe_update.model_dump(exclude_unset=True)
+        # Use exclude_none instead of exclude_unset to allow empty arrays and default values
+        update_data = recipe_update.model_dump(exclude_none=True, exclude_unset=False)
+        
+        # Remove None values manually but keep empty arrays
+        update_data = {k: v for k, v in update_data.items() if v is not None}
         
         if not update_data:
             return await self.get_by_id(recipe_id)
@@ -113,7 +117,10 @@ class RecipeRepository:
             if result:
                 result["_id"] = str(result["_id"])
                 return RecipeInDB(**result)
-        except Exception:
+        except Exception as e:
+            print(f"Error updating recipe: {e}")
+            import traceback
+            traceback.print_exc()
             return None
         
         return None

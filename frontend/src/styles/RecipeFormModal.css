@@ -533,3 +533,163 @@ body.dark-mode .modal-content::-webkit-scrollbar-thumb {
 body.dark-mode .modal-content::-webkit-scrollbar-thumb:hover {
   background: #6b7280;
 }
+
+/* Camera Configuration Styles */
+.camera-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 15px;
+}
+
+.camera-add-section {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.camera-add-section select {
+  min-width: 300px;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.cameras-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.camera-card {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.camera-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+  padding-bottom: 15px;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.camera-card-header h4 {
+  margin: 0;
+  color: #1f2937;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.btn-remove {
+  background: #ef4444;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: all 0.2s;
+}
+
+.btn-remove:hover {
+  background: #dc2626;
+  transform: scale(1.05);
+}
+
+.camera-info {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+  padding: 15px;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+}
+
+.info-item {
+  font-size: 14px;
+  color: #4b5563;
+}
+
+.info-item strong {
+  color: #1f2937;
+  margin-right: 5px;
+}
+
+.camera-settings h5 {
+  margin: 20px 0 15px 0;
+  color: #374151;
+  font-size: 16px;
+  font-weight: 600;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: #6b7280;
+}
+
+.empty-state p {
+  margin: 8px 0;
+}
+
+.empty-state .hint {
+  font-size: 14px;
+  color: #9ca3af;
+}
+
+/* Dark mode camera styles */
+body.dark-mode .camera-card {
+  background: #1f2937;
+  border-color: #374151;
+}
+
+body.dark-mode .camera-card-header {
+  border-bottom-color: #374151;
+}
+
+body.dark-mode .camera-card-header h4 {
+  color: #f3f4f6;
+}
+
+body.dark-mode .camera-info {
+  background: #111827;
+  border-color: #374151;
+}
+
+body.dark-mode .info-item {
+  color: #9ca3af;
+}
+
+body.dark-mode .info-item strong {
+  color: #e5e7eb;
+}
+
+body.dark-mode .camera-settings h5 {
+  color: #e5e7eb;
+  border-bottom-color: #374151;
+}
+
+body.dark-mode .camera-add-section select {
+  background: #374151;
+  color: #f3f4f6;
+  border-color: #4b5563;
+}
+
+body.dark-mode .empty-state {
+  color: #9ca3af;
+}
+
+body.dark-mode .empty-state .hint {
+  color: #6b7280;
+}

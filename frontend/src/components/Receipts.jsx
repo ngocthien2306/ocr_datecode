@@ -133,11 +133,16 @@ export default function Receipts() {
 
   const handleModalSubmit = async (formData) => {
     try {
+      let response;
       if (modalMode === 'create') {
-        await receiptsAPI.createReceipt(formData);
+        response = await receiptsAPI.createReceipt(formData);
       } else {
-        await receiptsAPI.updateReceipt(selectedRecipe.id, formData);
+        response = await receiptsAPI.updateReceipt(selectedRecipe.id, formData);
       }
+      
+      console.log('Recipe saved successfully:', response);
+      console.log('Cameras in response:', response.cameras);
+      console.log('Delay reject in response:', response.delay_reject);
       
       // Reload receipts after create/update
       await loadReceipts();
@@ -146,6 +151,7 @@ export default function Receipts() {
       setIsFormModalOpen(false);
     } catch (error) {
       console.error('Error saving recipe:', error);
+      console.error('Error details:', error.response?.data);
       throw error; // Let the modal handle the error display
     }
   };

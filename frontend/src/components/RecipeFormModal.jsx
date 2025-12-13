@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import TemplateEditor from './TemplateEditor';
+import { camerasAPI } from '../services/api';
 import '../styles/RecipeFormModal.css';
 
 export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = null, mode = 'create' }) {
@@ -8,7 +9,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     name: '',
     product_code: '',
     description: '',
+    delay_reject: 100.0,
     is_active: true,
+    cameras: [],
     camera_settings: {
       exposure_time: 50.0,
       delay_trigger: 100.0,
@@ -30,6 +33,11 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   const [annotations, setAnnotations] = useState([]);
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
+  
+  // Camera management states
+  const [availableCameras, setAvailableCameras] = useState([]);
+  const [loadingCameras, setLoadingCameras] = useState(false);
+  const [selectedCameraForAdd, setSelectedCameraForAdd] = useState('');
 
   useEffect(() => {
     if (recipe && mode === 'edit') {
@@ -37,7 +45,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         name: recipe.name || '',
         product_code: recipe.productCode || recipe.product_code || '',
         description: recipe.description || '',
+        delay_reject: recipe.delay_reject || 100.0,
         is_active: recipe.is_active !== undefined ? recipe.is_active : (recipe.status === 'Active'),
+        cameras: recipe.cameras || [],
         camera_settings: recipe.cameraSettings || recipe.camera_settings || formData.camera_settings,
         model_thresholds: recipe.modelThresholds || recipe.model_thresholds || formData.model_thresholds,
         template_config: recipe.template_config || null,
@@ -52,6 +62,25 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       }
     }
   }, [recipe, mode]);
+
+  // Load available cameras
+  useEffect(() => {
+    if (isOpen) {
+      loadAvailableCameras();
+    }
+  }, [isOpen]);
+
+  const loadAvailableCameras = async () => {
+    setLoadingCameras(true);
+    try {
+      const data = await camerasAPI.getAllCameras(0, 100);
+      setAvailableCameras(data);
+    } catch (error) {
+      console.error('Failed to load cameras:', error);
+    } finally {
+      setLoadingCameras(false);
+    }
+  };
 
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -78,6 +107,78 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         ...prev.model_thresholds,
         [field]: field.includes('threshold') ? parseFloat(value) || 0 : parseInt(value) || 0
       }
+    }));
+  };
+
+  // Camera management functions
+  const handleAddCamera = () => {
+    if (!selectedCameraForAdd) return;
+    
+    const camera = availableCameras.find(c => c.camera_id === selectedCameraForAdd);
+    if (!camera) return;
+
+    // Check if camera already added
+    if (formData.cameras.some(c => c.camera_id === camera.camera_id)) {
+      alert('This camera is already added to the recipe');
+      return;
+    }
+
+    const newCamera = {
+      camera_id: camera.camera_id,
+      model_name: camera.model_name,
+      serial_number: camera.serial_number,
+      location: camera.location || '',
+      exposure_time: 50.0,
+      delay_trigger: 100.0,
+      gain: 1.0,
+      pixel_format: 'Mono8',
+      trigger_config: {
+        trigger_mode: true,
+        trigger_source: 'Software',
+        trigger_selector: 'FrameStart',
+        trigger_activation: 'RisingEdge'
+      }
+    };
+
+    setFormData(prev => ({
+      ...prev,
+      cameras: [...prev.cameras, newCamera]
+    }));
+    setSelectedCameraForAdd('');
+  };
+
+  const handleRemoveCamera = (cameraId) => {
+    setFormData(prev => ({
+      ...prev,
+      cameras: prev.cameras.filter(c => c.camera_id !== cameraId)
+    }));
+  };
+
+  const handleCameraConfigChange = (cameraId, field, value) => {
+    setFormData(prev => ({
+      ...prev,
+      cameras: prev.cameras.map(cam => 
+        cam.camera_id === cameraId 
+          ? { ...cam, [field]: parseFloat(value) || value }
+          : cam
+      )
+    }));
+  };
+
+  const handleCameraTriggerConfigChange = (cameraId, field, value) => {
+    setFormData(prev => ({
+      ...prev,
+      cameras: prev.cameras.map(cam => 
+        cam.camera_id === cameraId 
+          ? { 
+              ...cam, 
+              trigger_config: {
+                ...cam.trigger_config,
+                [field]: field === 'trigger_mode' ? value : value
+              }
+            }
+          : cam
+      )
     }));
   };
 
@@ -110,9 +211,16 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           annotations: annotations
         } : formData.template_config
       };
+      
+      // Debug: Log the data being submitted
+      console.log('Submitting recipe data:', submitData);
+      console.log('Cameras count:', submitData.cameras?.length || 0);
+      console.log('Delay reject:', submitData.delay_reject);
+      
       await onSubmit(submitData);
       handleClose();
     } catch (error) {
+      console.error('Submit error:', error);
       setErrors({ submit: error.response?.data?.detail || 'Failed to save recipe' });
     } finally {
       setLoading(false);
@@ -133,7 +241,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       name: '',
       product_code: '',
       description: '',
+      delay_reject: 100.0,
       is_active: true,
+      cameras: [],
       camera_settings: { exposure_time: 50.0, delay_trigger: 100.0, gain: 1.0, brightness: 0.5, contrast: 1.0 },
       model_thresholds: { detection_threshold: 0.5, recognition_threshold: 0.5, min_text_size: 10, max_text_size: 200 },
       template_config: null,
@@ -143,6 +253,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     setAnnotations([]);
     setErrors({});
     setActiveTab('basic');
+    setSelectedCameraForAdd('');
     onClose();
   };
 
@@ -192,10 +303,18 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                     {errors.product_code && <span className="error-message">{errors.product_code}</span>}
                   </div>
                 </div>
-                <div className="form-group">
-                  <label>Description</label>
-                  <textarea name="description" value={formData.description} onChange={handleInputChange}
-                           placeholder="Enter recipe description" rows="3" />
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Description</label>
+                    <textarea name="description" value={formData.description} onChange={handleInputChange}
+                             placeholder="Enter recipe description" rows="3" />
+                  </div>
+                  <div className="form-group">
+                    <label>Delay Reject (ms)</label>
+                    <input type="number" name="delay_reject" value={formData.delay_reject} 
+                           onChange={handleInputChange} step="0.1" min="0" 
+                           placeholder="Delay reject time in milliseconds" />
+                  </div>
                 </div>
                 <div className="form-group checkbox-group">
                   <label>
@@ -208,41 +327,174 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
             {activeTab === 'camera' && (
               <div className="form-section">
-                <h3>Camera Settings</h3>
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Exposure Time (ms) <span className="required">*</span></label>
-                    <input type="number" value={formData.camera_settings.exposure_time}
-                           onChange={(e) => handleCameraSettingChange('exposure_time', e.target.value)}
-                           step="0.1" min="0" className={errors.exposure_time ? 'error' : ''} />
-                    {errors.exposure_time && <span className="error-message">{errors.exposure_time}</span>}
-                  </div>
-                  <div className="form-group">
-                    <label>Delay Trigger (ms) <span className="required">*</span></label>
-                    <input type="number" value={formData.camera_settings.delay_trigger}
-                           onChange={(e) => handleCameraSettingChange('delay_trigger', e.target.value)}
-                           step="0.1" min="0" className={errors.delay_trigger ? 'error' : ''} />
-                    {errors.delay_trigger && <span className="error-message">{errors.delay_trigger}</span>}
-                  </div>
-                </div>
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Gain</label>
-                    <input type="number" value={formData.camera_settings.gain}
-                           onChange={(e) => handleCameraSettingChange('gain', e.target.value)} step="0.1" min="0" />
-                  </div>
-                  <div className="form-group">
-                    <label>Brightness</label>
-                    <input type="number" value={formData.camera_settings.brightness}
-                           onChange={(e) => handleCameraSettingChange('brightness', e.target.value)} 
-                           step="0.1" min="0" max="1" />
-                  </div>
-                  <div className="form-group">
-                    <label>Contrast</label>
-                    <input type="number" value={formData.camera_settings.contrast}
-                           onChange={(e) => handleCameraSettingChange('contrast', e.target.value)} step="0.1" min="0" />
+                <div className="camera-header">
+                  <h3>Camera Configuration</h3>
+                  <div className="camera-add-section">
+                    <select 
+                      value={selectedCameraForAdd} 
+                      onChange={(e) => setSelectedCameraForAdd(e.target.value)}
+                      disabled={loadingCameras}
+                    >
+                      <option value="">Select a camera...</option>
+                      {availableCameras
+                        .filter(cam => !formData.cameras.some(c => c.camera_id === cam.camera_id))
+                        .map(cam => (
+                          <option key={cam.camera_id} value={cam.camera_id}>
+                            {cam.camera_id} - {cam.model_name} ({cam.serial_number})
+                          </option>
+                        ))
+                      }
+                    </select>
+                    <button 
+                      type="button" 
+                      className="btn btn-secondary" 
+                      onClick={handleAddCamera}
+                      disabled={!selectedCameraForAdd || loadingCameras}
+                    >
+                      ➕ Add Camera
+                    </button>
                   </div>
                 </div>
+
+                {formData.cameras.length === 0 ? (
+                  <div className="empty-state">
+                    <p>No cameras configured for this recipe</p>
+                    <p className="hint">Add cameras using the dropdown above</p>
+                  </div>
+                ) : (
+                  <div className="cameras-list">
+                    {formData.cameras.map((camera, index) => (
+                      <div key={camera.camera_id} className="camera-card">
+                        <div className="camera-card-header">
+                          <h4>Camera {index + 1}: {camera.camera_id}</h4>
+                          <button 
+                            type="button" 
+                            className="btn-remove" 
+                            onClick={() => handleRemoveCamera(camera.camera_id)}
+                            title="Remove camera"
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                        
+                        <div className="camera-info">
+                          <div className="info-item">
+                            <strong>Model:</strong> {camera.model_name}
+                          </div>
+                          <div className="info-item">
+                            <strong>Serial:</strong> {camera.serial_number}
+                          </div>
+                          <div className="info-item">
+                            <strong>Location:</strong> {camera.location || 'N/A'}
+                          </div>
+                        </div>
+
+                        <div className="camera-settings">
+                          <h5>Camera Settings</h5>
+                          <div className="form-row">
+                            <div className="form-group">
+                              <label>Exposure Time (ms) <span className="required">*</span></label>
+                              <input 
+                                type="number" 
+                                value={camera.exposure_time}
+                                onChange={(e) => handleCameraConfigChange(camera.camera_id, 'exposure_time', e.target.value)}
+                                step="0.1" 
+                                min="0" 
+                              />
+                            </div>
+                            <div className="form-group">
+                              <label>Delay Trigger (ms) <span className="required">*</span></label>
+                              <input 
+                                type="number" 
+                                value={camera.delay_trigger}
+                                onChange={(e) => handleCameraConfigChange(camera.camera_id, 'delay_trigger', e.target.value)}
+                                step="0.1" 
+                                min="0" 
+                              />
+                            </div>
+                            <div className="form-group">
+                              <label>Gain <span className="required">*</span></label>
+                              <input 
+                                type="number" 
+                                value={camera.gain}
+                                onChange={(e) => handleCameraConfigChange(camera.camera_id, 'gain', e.target.value)}
+                                step="0.1" 
+                                min="0" 
+                              />
+                            </div>
+                          </div>
+
+                          <div className="form-row">
+                            <div className="form-group">
+                              <label>Pixel Format</label>
+                              <select 
+                                value={camera.pixel_format}
+                                onChange={(e) => handleCameraConfigChange(camera.camera_id, 'pixel_format', e.target.value)}
+                              >
+                                <option value="Mono8">Mono8</option>
+                                <option value="Mono12">Mono12</option>
+                                <option value="RGB8">RGB8</option>
+                                <option value="YUV422">YUV422</option>
+                                <option value="BayerRG8">BayerRG8</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <h5>Trigger Configuration</h5>
+                          <div className="form-row">
+                            <div className="form-group checkbox-group">
+                              <label>
+                                <input 
+                                  type="checkbox" 
+                                  checked={camera.trigger_config.trigger_mode}
+                                  onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'trigger_mode', e.target.checked)}
+                                />
+                                <span>Trigger Mode Enabled</span>
+                              </label>
+                            </div>
+                          </div>
+                          
+                          <div className="form-row">
+                            <div className="form-group">
+                              <label>Trigger Source</label>
+                              <select 
+                                value={camera.trigger_config.trigger_source}
+                                onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'trigger_source', e.target.value)}
+                              >
+                                <option value="Software">Software</option>
+                                <option value="Line1">Line1</option>
+                                <option value="Line2">Line2</option>
+                                <option value="Line3">Line3</option>
+                              </select>
+                            </div>
+                            <div className="form-group">
+                              <label>Trigger Selector</label>
+                              <select 
+                                value={camera.trigger_config.trigger_selector}
+                                onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'trigger_selector', e.target.value)}
+                              >
+                                <option value="FrameStart">FrameStart</option>
+                                <option value="ExposureStart">ExposureStart</option>
+                                <option value="FrameBurstStart">FrameBurstStart</option>
+                              </select>
+                            </div>
+                            <div className="form-group">
+                              <label>Trigger Activation</label>
+                              <select 
+                                value={camera.trigger_config.trigger_activation}
+                                onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'trigger_activation', e.target.value)}
+                              >
+                                <option value="RisingEdge">RisingEdge</option>
+                                <option value="FallingEdge">FallingEdge</option>
+                                <option value="AnyEdge">AnyEdge</option>
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

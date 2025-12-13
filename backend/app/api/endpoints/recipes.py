@@ -23,12 +23,25 @@ async def get_recipe_repository(db=Depends(get_database)) -> RecipeRepository:
 
 def recipe_to_response(recipe: RecipeInDB) -> RecipeResponse:
     """Convert RecipeInDB to RecipeResponse"""
+    # Convert cameras to dict if they are already CameraConfiguration objects
+    cameras_data = []
+    if hasattr(recipe, 'cameras') and recipe.cameras:
+        for cam in recipe.cameras:
+            if hasattr(cam, 'model_dump'):
+                cameras_data.append(cam.model_dump())
+            elif isinstance(cam, dict):
+                cameras_data.append(cam)
+            else:
+                cameras_data.append(cam)
+    
     return RecipeResponse(
         id=recipe.id,
         name=recipe.name,
         product_code=recipe.product_code,
         description=recipe.description,
-        camera_settings=recipe.camera_settings.model_dump() if hasattr(recipe.camera_settings, 'model_dump') else recipe.camera_settings,
+        delay_reject=recipe.delay_reject if hasattr(recipe, 'delay_reject') else 100.0,
+        cameras=cameras_data,
+        camera_settings=recipe.camera_settings.model_dump() if hasattr(recipe.camera_settings, 'model_dump') and recipe.camera_settings else recipe.camera_settings,
         model_thresholds=recipe.model_thresholds.model_dump() if hasattr(recipe.model_thresholds, 'model_dump') else recipe.model_thresholds,
         template_config=recipe.template_config,
         roi_config=recipe.roi_config,
