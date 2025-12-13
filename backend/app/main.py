@@ -6,7 +6,7 @@ from app.db.mongodb import connect_to_mongo, close_mongo_connection, get_databas
 from app.repositories.user_repository import UserRepository
 from app.repositories.recipe_repository import RecipeRepository
 
-from app.api.endpoints import auth, users, recipes
+from app.api.endpoints import auth, users, recipes, cameras
 
 
 @asynccontextmanager
@@ -45,6 +45,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(recipes.router, prefix="/api/recipes", tags=["Recipes"])
+app.include_router(cameras.router, prefix="/api", tags=["Cameras"])
 
 
 @app.get("/")
