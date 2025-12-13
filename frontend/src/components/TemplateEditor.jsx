@@ -20,6 +20,7 @@ export default function TemplateEditor({
   const [tempLines, setTempLines] = useState([]);
   const [showHints, setShowHints] = useState(true);
   const [objectBeforeTransform, setObjectBeforeTransform] = useState(null);
+  const [isSpacePressed, setIsSpacePressed] = useState(false);
 
   const ANNOTATION_TYPES = [
     { value: 'text', label: 'Text OCR', color: '#50fa7b', needsText: true },
@@ -41,14 +42,15 @@ export default function TemplateEditor({
 
     fabricCanvasRef.current = canvas;
 
-    // Enable panning with Alt + Drag
+    // Enable panning with Space + Drag or Middle Mouse Button
     canvas.on('mouse:down', function(opt) {
       const evt = opt.e;
-      if (evt.altKey === true) {
+      if (evt.button === 1 || (evt.button === 0 && (evt.shiftKey || isSpacePressed))) { // Middle click or Shift/Space + Left click
         this.isDragging = true;
         this.selection = false;
         this.lastPosX = evt.clientX;
         this.lastPosY = evt.clientY;
+        evt.preventDefault();
       }
     });
 
@@ -216,6 +218,17 @@ export default function TemplateEditor({
       // Ignore if typing in input
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
       
+      // Handle Space key for panning
+      if (e.code === 'Space' && !isSpacePressed) {
+        e.preventDefault();
+        setIsSpacePressed(true);
+        if (fabricCanvasRef.current) {
+          fabricCanvasRef.current.defaultCursor = 'grab';
+          fabricCanvasRef.current.renderAll();
+        }
+        return;
+      }
+      
       switch(e.key.toLowerCase()) {
         case 'v':
           setDrawMode('select');
@@ -263,9 +276,25 @@ export default function TemplateEditor({
       }
     };
 
+    const handleKeyUp = (e) => {
+      // Release Space key
+      if (e.code === 'Space' && isSpacePressed) {
+        e.preventDefault();
+        setIsSpacePressed(false);
+        if (fabricCanvasRef.current) {
+          fabricCanvasRef.current.defaultCursor = 'default';
+          fabricCanvasRef.current.renderAll();
+        }
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedAnnotation, drawMode]);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [selectedAnnotation, drawMode, isSpacePressed, objectBeforeTransform]);
 
   useEffect(() => {
     if (fabricCanvasRef.current) {
@@ -362,16 +391,16 @@ export default function TemplateEditor({
 
   const startDrawingRect = (canvas, e) => {
     const pointer = canvas.getPointer(e.e);
-    const color = '#666666'; // Neutral color while drawing
+    const color = '#00ffff'; // Bright cyan for visibility while drawing
     
     const rect = new fabric.Rect({
       left: pointer.x,
       top: pointer.y,
       width: 0,
       height: 0,
-      fill: color + '20',
+      fill: color + '30',
       stroke: color,
-      strokeWidth: 2,
+      strokeWidth: 3,
       selectable: false
     });
     
@@ -420,7 +449,7 @@ export default function TemplateEditor({
 
   const addPolygonPoint = (canvas, e) => {
     const pointer = canvas.getPointer(e.e);
-    const color = '#666666'; // Neutral color while drawing
+    const color = '#00ffff'; // Bright cyan for visibility while drawing
     
     const newPoint = { x: pointer.x, y: pointer.y };
     const updatedPoints = [...polygonPoints, newPoint];
@@ -428,10 +457,12 @@ export default function TemplateEditor({
     
     // Draw point
     const circle = new fabric.Circle({
-      left: pointer.x - 4,
-      top: pointer.y - 4,
-      radius: 4,
+      left: pointer.x - 5,
+      top: pointer.y - 5,
+      radius: 5,
       fill: color,
+      stroke: '#ffffff',
+      strokeWidth: 2,
       selectable: false,
       evented: false,
       isLabel: true
@@ -446,7 +477,7 @@ export default function TemplateEditor({
         [prevPoint.x, prevPoint.y, newPoint.x, newPoint.y],
         {
           stroke: color,
-          strokeWidth: 2,
+          strokeWidth: 3,
           selectable: false,
           evented: false
         }
@@ -463,9 +494,9 @@ export default function TemplateEditor({
       
       // Draw final polygon
       const polygon = new fabric.Polygon(updatedPoints, {
-        fill: color + '20',
+        fill: color + '30',
         stroke: color,
-        strokeWidth: 2,
+        strokeWidth: 3,
         selectable: false,
         evented: false,
         isPendingShape: true
@@ -672,9 +703,10 @@ export default function TemplateEditor({
               <div className="cvat-canvas-hints-block">
                 <strong>🖱️ Navigation</strong>
                 <ul>
-                  <li><kbd>Alt</kbd> + Drag - Pan canvas</li>
+                  <li><kbd>Space</kbd> + Drag - Pan canvas</li>
+                  <li><kbd>Shift</kbd> + Drag - Pan canvas</li>
+                  <li><kbd>Middle Click</kbd> + Drag - Pan canvas</li>
                   <li><kbd>Scroll</kbd> - Zoom in/out</li>
-                  <li><kbd>Double Click</kbd> - Reset view</li>
                 </ul>
               </div>
               

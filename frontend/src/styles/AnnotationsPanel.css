@@ -14,7 +14,8 @@
 
 .annotations-panel h3 {
   margin: 0 0 16px 0;
-  color: #8b5cf6;
+  color: #c4b5fd;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(99, 102, 241, 0.1) 100%);
   font-size: 16px;
   font-weight: 700;
   letter-spacing: 0.5px;
@@ -22,7 +23,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-bottom: 12px;
+  padding: 12px 16px;
+  margin: -16px -16px 16px -16px;
   border-bottom: 2px solid rgba(139, 92, 246, 0.3);
 }
 
@@ -220,14 +222,15 @@
    ======================================== */
 
 body:not(.dark-mode) .annotations-panel {
-  background: rgba(255, 255, 255, 0.95);
+  background: linear-gradient(135deg, rgba(249, 250, 251, 0.98) 0%, rgba(243, 244, 246, 0.95) 100%);
   border: 2px solid rgba(139, 92, 246, 0.2);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
 }
 
 body:not(.dark-mode) .annotations-panel h3 {
-  color: #8b5cf6;
-  border-bottom: 2px solid rgba(139, 92, 246, 0.2);
+  color: #7c3aed;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.08) 0%, rgba(124, 58, 237, 0.05) 100%);
+  border-bottom: 2px solid rgba(139, 92, 246, 0.3);
 }
 
 body:not(.dark-mode) .annotations-list::-webkit-scrollbar-track {

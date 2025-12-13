@@ -194,9 +194,13 @@
   background-color: #f3f4f6;
 }
 
+.template-actions {
+  margin-bottom: 16px;
+}
+
 .template-actions label.btn {
   cursor: pointer;
-  margin: 0;
+  margin: 0 16px 0 0;
 }
 
 .template-editor-layout {
