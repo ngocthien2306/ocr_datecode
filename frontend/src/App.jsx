@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Dashboard from './components/Dashboard';
 import { authAPI } from './services/api';
+import { ToastProvider } from './contexts/ToastContext';
 import './App.css';
 
 export default function SuntechAutomation() {
@@ -83,7 +84,11 @@ export default function SuntechAutomation() {
 
   // Show Dashboard if logged in
   if (isLoggedIn) {
-    return <Dashboard onLogout={handleLogout} />;
+    return (
+      <ToastProvider>
+        <Dashboard onLogout={handleLogout} />
+      </ToastProvider>
+    );
   }
 
   // Show login loading screen
@@ -763,6 +768,6 @@ export default function SuntechAutomation() {
           </div>
         </div>
       </div>
-    </>
+    </ToastProvider>
   );
 }

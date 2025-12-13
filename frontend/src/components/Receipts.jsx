@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { recipesAPI, receiptsAPI } from '../services/api';
 import RecipeFormModal from './RecipeFormModal';
 import RecipeViewModal from './RecipeViewModal';
+import { useToast } from '../contexts/ToastContext';
 
 export default function Receipts() {
+  const toast = useToast();
   const [receipts, setReceipts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -47,15 +49,21 @@ export default function Receipts() {
         name: recipe.name,
         productCode: recipe.product_code,
         date: new Date(recipe.created_at).toISOString().split('T')[0],
-        camera: `Camera Settings: ${recipe.camera_settings.exposure_time}ms`,
+        camera: `Camera Settings: ${recipe.camera_settings?.exposure_time || 'N/A'}ms`,
         products: 0, // This should come from production data
         passed: 0,
         failed: 0,
         operator: recipe.created_by,
         status: recipe.is_active ? 'Active' : 'Inactive',
         description: recipe.description,
+        // Include all recipe fields for editing
+        cameras: recipe.cameras || [],
+        delay_reject: recipe.delay_reject,
         cameraSettings: recipe.camera_settings,
         modelThresholds: recipe.model_thresholds,
+        template_config: recipe.template_config,
+        roi_config: recipe.roi_config,
+        is_active: recipe.is_active,
         createdAt: recipe.created_at,
         updatedAt: recipe.updated_at
       }));
@@ -136,8 +144,10 @@ export default function Receipts() {
       let response;
       if (modalMode === 'create') {
         response = await receiptsAPI.createReceipt(formData);
+        toast.success(`Recipe "${formData.name}" created successfully!`);
       } else {
         response = await receiptsAPI.updateReceipt(selectedRecipe.id, formData);
+        toast.success(`Recipe "${formData.name}" updated successfully!`);
       }
       
       console.log('Recipe saved successfully:', response);
@@ -152,6 +162,8 @@ export default function Receipts() {
     } catch (error) {
       console.error('Error saving recipe:', error);
       console.error('Error details:', error.response?.data);
+      const errorMsg = error.response?.data?.detail || 'Failed to save recipe. Please try again.';
+      toast.error(errorMsg);
       throw error; // Let the modal handle the error display
     }
   };
@@ -197,14 +209,14 @@ export default function Receipts() {
       console.log('Loading receipt:', receipt);
       
       // Placeholder for API call
-      alert(`Recipe "${receipt.name}" loaded successfully!\n\nRecipe ID: ${receipt.id}\nProduct Code: ${receipt.productCode}`);
+      toast.success(`Recipe "${receipt.name}" loaded successfully!\nRecipe ID: ${receipt.id}\nProduct Code: ${receipt.productCode}`);
       
       // Optionally refresh the list
       await loadReceipts();
       
     } catch (error) {
       console.error('Error loading receipt:', error);
-      alert('Failed to load receipt. Please try again.');
+      toast.error('Failed to load receipt. Please try again.');
     }
   };
 
@@ -221,15 +233,16 @@ export default function Receipts() {
       await loadReceipts();
       await loadStatistics();
       setSelectedIds(selectedIds.filter(id => id !== receipt.id));
+      toast.success(`Recipe "${receipt.name}" deleted successfully!`);
     } catch (error) {
       console.error('Error deleting receipt:', error);
-      alert('Failed to delete receipt. Please try again.');
+      toast.error('Failed to delete receipt. Please try again.');
     }
   };
 
   const handleDeleteSelected = async () => {
     if (selectedIds.length === 0) {
-      alert('Please select at least one receipt to delete.');
+      toast.warning('Please select at least one receipt to delete.');
       return;
     }
 
@@ -247,9 +260,10 @@ export default function Receipts() {
       await loadStatistics();
       setSelectedIds([]);
       setSelectAll(false);
+      toast.success(`${selectedIds.length} recipe(s) deleted successfully!`);
     } catch (error) {
       console.error('Error deleting receipts:', error);
-      alert('Failed to delete some receipts. Please try again.');
+      toast.error('Failed to delete some receipts. Please try again.');
     }
   };
 

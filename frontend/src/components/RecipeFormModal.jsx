@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import TemplateEditor from './TemplateEditor';
 import { camerasAPI } from '../services/api';
+import { useToast } from '../contexts/ToastContext';
 import '../styles/RecipeFormModal.css';
 
 export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = null, mode = 'create' }) {
   const [activeTab, setActiveTab] = useState('basic');
+  const toast = useToast();
   const [formData, setFormData] = useState({
     name: '',
     product_code: '',
@@ -41,15 +43,52 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
   useEffect(() => {
     if (recipe && mode === 'edit') {
+      console.log('Loading recipe for edit:', recipe);
+      console.log('Recipe cameras:', recipe.cameras);
+      
+      // Ensure cameras array has proper structure with defaults
+      const normalizedCameras = (recipe.cameras || []).map(cam => {
+        console.log('Normalizing camera:', cam);
+        return {
+          camera_id: cam.camera_id || '',
+          model_name: cam.model_name || '',
+          serial_number: cam.serial_number || '',
+          location: cam.location || '',
+          exposure_time: cam.exposure_time || 50.0,
+          delay_trigger: cam.delay_trigger || 100.0,
+          gain: cam.gain || 1.0,
+          pixel_format: cam.pixel_format || 'Mono8',
+          trigger_config: {
+            trigger_mode: cam.trigger_config?.trigger_mode !== undefined ? cam.trigger_config.trigger_mode : true,
+            trigger_source: cam.trigger_config?.trigger_source || 'Software',
+            trigger_selector: cam.trigger_config?.trigger_selector || 'FrameStart',
+            trigger_activation: cam.trigger_config?.trigger_activation || 'RisingEdge'
+          }
+        };
+      });
+      
+      console.log('Normalized cameras:', normalizedCameras);
+
       setFormData({
         name: recipe.name || '',
         product_code: recipe.productCode || recipe.product_code || '',
         description: recipe.description || '',
         delay_reject: recipe.delay_reject || 100.0,
         is_active: recipe.is_active !== undefined ? recipe.is_active : (recipe.status === 'Active'),
-        cameras: recipe.cameras || [],
-        camera_settings: recipe.cameraSettings || recipe.camera_settings || formData.camera_settings,
-        model_thresholds: recipe.modelThresholds || recipe.model_thresholds || formData.model_thresholds,
+        cameras: normalizedCameras,
+        camera_settings: recipe.cameraSettings || recipe.camera_settings || {
+          exposure_time: 50.0,
+          delay_trigger: 100.0,
+          gain: 1.0,
+          brightness: 0.5,
+          contrast: 1.0
+        },
+        model_thresholds: recipe.modelThresholds || recipe.model_thresholds || {
+          detection_threshold: 0.5,
+          recognition_threshold: 0.5,
+          min_text_size: 10,
+          max_text_size: 200
+        },
         template_config: recipe.template_config || null,
         roi_config: recipe.roi_config || null
       });
@@ -119,7 +158,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
     // Check if camera already added
     if (formData.cameras.some(c => c.camera_id === camera.camera_id)) {
-      alert('This camera is already added to the recipe');
+      toast.warning('This camera is already added to the recipe');
       return;
     }
 
