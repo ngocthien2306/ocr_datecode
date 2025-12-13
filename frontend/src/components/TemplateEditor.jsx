@@ -2,21 +2,24 @@ import React, { useState, useRef, useEffect } from 'react';
 import * as fabric from 'fabric';
 import '../styles/TemplateEditor.css';
 
-export default function TemplateEditor({ templateImage, annotations, onAnnotationsChange }) {
+export default function TemplateEditor({ 
+  templateImage, 
+  annotations, 
+  onAnnotationsChange, 
+  selectedAnnotation, 
+  onSelectAnnotation,
+  fabricCanvasRef: externalCanvasRef 
+}) {
   const canvasRef = useRef(null);
-  const fabricCanvasRef = useRef(null);
+  const internalCanvasRef = useRef(null);
+  const fabricCanvasRef = externalCanvasRef || internalCanvasRef;
   const containerRef = useRef(null);
   
   const [drawMode, setDrawMode] = useState('select');
-  const [selectedAnnotation, setSelectedAnnotation] = useState(null);
   const [polygonPoints, setPolygonPoints] = useState([]);
   const [tempLines, setTempLines] = useState([]);
-  
-  // Type selection dialog states
-  const [showTypeDialog, setShowTypeDialog] = useState(false);
-  const [pendingShape, setPendingShape] = useState(null);
-  const [selectedType, setSelectedType] = useState('text');
-  const [textContent, setTextContent] = useState('');
+  const [showHints, setShowHints] = useState(true);
+  const [objectBeforeTransform, setObjectBeforeTransform] = useState(null);
 
   const ANNOTATION_TYPES = [
     { value: 'text', label: 'Text OCR', color: '#50fa7b', needsText: true },
@@ -100,39 +103,169 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
     canvas.on('selection:created', (e) => {
       const obj = e.selected[0];
       if (obj && obj.annotationIndex !== undefined) {
-        setSelectedAnnotation(obj.annotationIndex);
+        onSelectAnnotation?.(obj.annotationIndex);
       }
     });
 
     canvas.on('selection:updated', (e) => {
       const obj = e.selected[0];
       if (obj && obj.annotationIndex !== undefined) {
-        setSelectedAnnotation(obj.annotationIndex);
+        onSelectAnnotation?.(obj.annotationIndex);
       }
     });
 
     canvas.on('selection:cleared', () => {
-      setSelectedAnnotation(null);
+      onSelectAnnotation?.(null);
+    });
+
+    // Save object state before transformation
+    canvas.on('object:moving', (e) => {
+      if (!objectBeforeTransform && e.target.annotationIndex !== undefined) {
+        setObjectBeforeTransform({
+          target: e.target,
+          left: e.target.left,
+          top: e.target.top,
+          scaleX: e.target.scaleX,
+          scaleY: e.target.scaleY,
+          angle: e.target.angle
+        });
+      }
+    });
+
+    canvas.on('object:scaling', (e) => {
+      if (!objectBeforeTransform && e.target.annotationIndex !== undefined) {
+        setObjectBeforeTransform({
+          target: e.target,
+          left: e.target.left,
+          top: e.target.top,
+          scaleX: e.target.scaleX,
+          scaleY: e.target.scaleY,
+          angle: e.target.angle
+        });
+      }
+    });
+
+    canvas.on('object:rotating', (e) => {
+      if (!objectBeforeTransform && e.target.annotationIndex !== undefined) {
+        setObjectBeforeTransform({
+          target: e.target,
+          left: e.target.left,
+          top: e.target.top,
+          scaleX: e.target.scaleX,
+          scaleY: e.target.scaleY,
+          angle: e.target.angle
+        });
+      }
     });
 
     // Handle object modification
     canvas.on('object:modified', (e) => {
       updateAnnotationFromObject(e.target);
+      setObjectBeforeTransform(null); // Clear saved state after successful modification
     });
 
-    // Handle mouse events for drawing
-    canvas.on('mouse:down', (e) => {
-      if (drawMode === 'rectangle') {
-        startDrawingRect(canvas, e);
-      } else if (drawMode === 'polygon') {
-        addPolygonPoint(canvas, e);
-      }
+    // Clear saved state when mouse up without modification
+    canvas.on('mouse:up', () => {
+      // Only clear if object wasn't actually modified
+      setTimeout(() => {
+        if (objectBeforeTransform) {
+          setObjectBeforeTransform(null);
+        }
+      }, 100);
     });
 
     return () => {
       canvas.dispose();
     };
-  }, [templateImage]);
+  }, [templateImage, objectBeforeTransform]);
+
+  // Handle drawing mouse events - separate useEffect for drawMode dependency
+  useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    // Remove old handlers
+    canvas.off('mouse:down');
+
+    // Add new handlers based on drawMode
+    const handleMouseDown = (e) => {
+      if (drawMode === 'rectangle') {
+        startDrawingRect(canvas, e);
+      } else if (drawMode === 'polygon') {
+        addPolygonPoint(canvas, e);
+      } else if (drawMode === 'select') {
+        // Click on empty canvas to deselect
+        if (!e.target) {
+          canvas.discardActiveObject();
+          canvas.requestRenderAll();
+          onSelectAnnotation?.(null);
+        }
+      }
+    };
+
+    canvas.on('mouse:down', handleMouseDown);
+
+    return () => {
+      canvas.off('mouse:down', handleMouseDown);
+    };
+  }, [drawMode, polygonPoints, annotations]);
+
+  // Keyboard shortcuts - CVAT style
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Ignore if typing in input
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      
+      switch(e.key.toLowerCase()) {
+        case 'v':
+          setDrawMode('select');
+          break;
+        case 'r':
+          setDrawMode('rectangle');
+          break;
+        case 'p':
+          setDrawMode('polygon');
+          setPolygonPoints([]);
+          break;
+        case 'escape':
+          handleCancelDraw();
+          // Also deselect any selected object and restore if transforming
+          if (fabricCanvasRef.current) {
+            // If object is being transformed, restore to previous state
+            if (objectBeforeTransform) {
+              const obj = objectBeforeTransform.target;
+              obj.set({
+                left: objectBeforeTransform.left,
+                top: objectBeforeTransform.top,
+                scaleX: objectBeforeTransform.scaleX,
+                scaleY: objectBeforeTransform.scaleY,
+                angle: objectBeforeTransform.angle
+              });
+              obj.setCoords();
+              fabricCanvasRef.current.requestRenderAll();
+              setObjectBeforeTransform(null);
+            }
+            fabricCanvasRef.current.discardActiveObject();
+            fabricCanvasRef.current.requestRenderAll();
+          }
+          onSelectAnnotation?.(null);
+          break;
+        case 'delete':
+        case 'backspace':
+          // Parent handles deletion via selectedAnnotation
+          e.preventDefault();
+          break;
+        case 'h':
+          setShowHints(prev => !prev);
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedAnnotation, drawMode]);
 
   useEffect(() => {
     if (fabricCanvasRef.current) {
@@ -146,6 +279,13 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
       fabricCanvasRef.current.requestRenderAll();
     }
   }, [drawMode]);
+
+  // Reload annotations when they change
+  useEffect(() => {
+    if (fabricCanvasRef.current && annotations) {
+      loadAnnotations(fabricCanvasRef.current);
+    }
+  }, [annotations]);
 
   const loadAnnotations = (canvas) => {
     // Remove existing annotation objects
@@ -256,16 +396,20 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
       canvas.off('mouse:up');
       
       if (rect.width > 10 && rect.height > 10) {
-        // Store the shape data and show type dialog
-        canvas.remove(rect); // Remove temporary shape
-        setPendingShape({
+        // Auto-add annotation with default type
+        rect.set({
+          selectable: false,
+          evented: false,
+          isPendingShape: true
+        });
+        addAnnotation({
           shape: 'rectangle',
           x: rect.left,
           y: rect.top,
           width: rect.width,
-          height: rect.height
+          height: rect.height,
+          fabricObject: rect
         });
-        setShowTypeDialog(true);
         setDrawMode('select');
       } else {
         canvas.remove(rect);
@@ -313,16 +457,28 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
     
     // Complete polygon after 4 points
     if (updatedPoints.length === 4) {
-      // Remove temp objects
+      // Remove temp objects (points and lines)
       tempLines.forEach(obj => canvas.remove(obj));
       setTempLines([]);
       
-      // Store the shape data and show type dialog
-      setPendingShape({
-        shape: 'polygon',
-        points: updatedPoints.map(p => [p.x, p.y])
+      // Draw final polygon
+      const polygon = new fabric.Polygon(updatedPoints, {
+        fill: color + '20',
+        stroke: color,
+        strokeWidth: 2,
+        selectable: false,
+        evented: false,
+        isPendingShape: true
       });
-      setShowTypeDialog(true);
+      canvas.add(polygon);
+      canvas.requestRenderAll();
+      
+      // Auto-add annotation with default type
+      addAnnotation({
+        shape: 'polygon',
+        points: updatedPoints.map(p => [p.x, p.y]),
+        fabricObject: polygon
+      });
       setPolygonPoints([]);
       setDrawMode('select');
     }
@@ -359,29 +515,7 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
     onAnnotationsChange(updated);
   };
 
-  const handleAnnotationTypeChange = (index, newType) => {
-    const updated = [...annotations];
-    updated[index].type = newType;
-    onAnnotationsChange(updated);
-    
-    // Reload annotations to update colors
-    if (fabricCanvasRef.current) {
-      loadAnnotations(fabricCanvasRef.current);
-    }
-  };
 
-  const handleDeleteAnnotation = (index) => {
-    const updated = annotations.filter((_, i) => i !== index);
-    onAnnotationsChange(updated);
-    
-    if (fabricCanvasRef.current) {
-      loadAnnotations(fabricCanvasRef.current);
-    }
-    
-    if (selectedAnnotation === index) {
-      setSelectedAnnotation(null);
-    }
-  };
 
   const handleZoomIn = () => {
     const canvas = fabricCanvasRef.current;
@@ -422,102 +556,33 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
     setDrawMode('select');
   };
 
-  const handleTypeDialogConfirm = () => {
-    if (!pendingShape) return;
-
-    const newAnnotation = {
-      type: selectedType,
-      ...pendingShape
-    };
-
-    // Add text content if needed
-    const typeInfo = ANNOTATION_TYPES.find(t => t.value === selectedType);
-    if (typeInfo?.needsText && textContent.trim()) {
-      newAnnotation.text = textContent.trim();
+  const addAnnotation = (shapeData, type = 'text') => {
+    // Remove pending shape from canvas if it exists
+    if (shapeData.fabricObject && fabricCanvasRef.current) {
+      fabricCanvasRef.current.remove(shapeData.fabricObject);
     }
 
-    onAnnotationsChange([...annotations, newAnnotation]);
-    
-    // Reset dialog state
-    setShowTypeDialog(false);
-    setPendingShape(null);
-    setSelectedType('text');
-    setTextContent('');
-  };
+    // Create annotation without fabricObject reference
+    const { fabricObject, ...cleanShapeData } = shapeData;
+    const newAnnotation = {
+      type,
+      text: '', // Default empty text, can be edited in panel
+      ...cleanShapeData
+    };
 
-  const handleTypeDialogCancel = () => {
-    setShowTypeDialog(false);
-    setPendingShape(null);
-    setSelectedType('text');
-    setTextContent('');
+    const updatedAnnotations = [...annotations, newAnnotation];
+    onAnnotationsChange(updatedAnnotations);
+    
+    // Auto-select the newly created annotation
+    onSelectAnnotation(updatedAnnotations.length - 1);
   };
 
   return (
     <div className="template-editor">
-      {/* Type Selection Dialog */}
-      {showTypeDialog && (
-        <div className="type-dialog-overlay" onClick={handleTypeDialogCancel}>
-          <div className="type-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="type-dialog-header">
-              <h3>Select Annotation Type</h3>
-              <button className="close-btn" onClick={handleTypeDialogCancel}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                  <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2"/>
-                  <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2"/>
-                </svg>
-              </button>
-            </div>
-            
-            <div className="type-dialog-body">
-              <div className="type-options">
-                {ANNOTATION_TYPES.map(type => (
-                  <label key={type.value} className="type-option">
-                    <input
-                      type="radio"
-                      name="annotationType"
-                      value={type.value}
-                      checked={selectedType === type.value}
-                      onChange={(e) => setSelectedType(e.target.value)}
-                    />
-                    <span className="type-color" style={{ backgroundColor: type.color }} />
-                    <span className="type-label">{type.label}</span>
-                  </label>
-                ))}
-              </div>
-
-              {ANNOTATION_TYPES.find(t => t.value === selectedType)?.needsText && (
-                <div className="text-input-section">
-                  <label htmlFor="textContent">Text Content:</label>
-                  <input
-                    id="textContent"
-                    type="text"
-                    value={textContent}
-                    onChange={(e) => setTextContent(e.target.value)}
-                    placeholder="Enter text content..."
-                    autoFocus
-                  />
-                </div>
-              )}
-            </div>
-            
-            <div className="type-dialog-footer">
-              <button className="cancel-btn" onClick={handleTypeDialogCancel}>
-                Cancel
-              </button>
-              <button 
-                className="confirm-btn" 
-                onClick={handleTypeDialogConfirm}
-                disabled={ANNOTATION_TYPES.find(t => t.value === selectedType)?.needsText && !textContent.trim()}
-              >
-                Add Annotation
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       <div className="editor-toolbar">
         <div className="toolbar-group">
           <button
+            type="button"
             className={`tool-btn ${drawMode === 'select' ? 'active' : ''}`}
             onClick={() => setDrawMode('select')}
             title="Select & Edit"
@@ -527,6 +592,7 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
             </svg>
           </button>
           <button
+            type="button"
             className={`tool-btn ${drawMode === 'rectangle' ? 'active' : ''}`}
             onClick={() => setDrawMode('rectangle')}
             title="Draw Rectangle"
@@ -536,6 +602,7 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
             </svg>
           </button>
           <button
+            type="button"
             className={`tool-btn ${drawMode === 'polygon' ? 'active' : ''}`}
             onClick={() => {
               setDrawMode('polygon');
@@ -549,7 +616,7 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
           </button>
           
           {(drawMode === 'rectangle' || drawMode === 'polygon') && (
-            <button className="tool-btn cancel-btn" onClick={handleCancelDraw} title="Cancel Drawing">
+            <button type="button" className="tool-btn cancel-btn" onClick={handleCancelDraw} title="Cancel Drawing">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                 <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2"/>
                 <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2"/>
@@ -559,7 +626,7 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
         </div>
 
         <div className="toolbar-group">
-          <button className="tool-btn" onClick={handleZoomOut} title="Zoom Out">
+          <button type="button" className="tool-btn" onClick={handleZoomOut} title="Zoom Out">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
               <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
               <line x1="8" y1="11" x2="14" y2="11" stroke="currentColor" strokeWidth="2"/>
@@ -569,7 +636,7 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
           <span className="zoom-label">
             {fabricCanvasRef.current ? Math.round(fabricCanvasRef.current.getZoom() * 100) : 100}%
           </span>
-          <button className="tool-btn" onClick={handleZoomIn} title="Zoom In">
+          <button type="button" className="tool-btn" onClick={handleZoomIn} title="Zoom In">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
               <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
               <line x1="11" y1="8" x2="11" y2="14" stroke="currentColor" strokeWidth="2"/>
@@ -577,7 +644,7 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
               <line x1="17" y1="17" x2="21" y2="21" stroke="currentColor" strokeWidth="2"/>
             </svg>
           </button>
-          <button className="tool-btn" onClick={handleResetZoom} title="Reset Zoom">
+          <button type="button" className="tool-btn" onClick={handleResetZoom} title="Reset Zoom">
             100%
           </button>
         </div>
@@ -586,108 +653,72 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
       <div className="editor-content">
         <div className="canvas-container" ref={containerRef}>
           <canvas ref={canvasRef} />
+          
+          {/* Canvas Hints - CVAT Style */}
+          {showHints && (
+            <div className="cvat-canvas-hints-container">
+              <button 
+                type="button"
+                className="cvat-canvas-hints-hide-button"
+                onClick={() => setShowHints(false)}
+                title="Hide hints"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <line x1="18" y1="6" x2="6" y2="18" stroke="white" strokeWidth="2"/>
+                  <line x1="6" y1="6" x2="18" y2="18" stroke="white" strokeWidth="2"/>
+                </svg>
+              </button>
+              
+              <div className="cvat-canvas-hints-block">
+                <strong>🖱️ Navigation</strong>
+                <ul>
+                  <li><kbd>Alt</kbd> + Drag - Pan canvas</li>
+                  <li><kbd>Scroll</kbd> - Zoom in/out</li>
+                  <li><kbd>Double Click</kbd> - Reset view</li>
+                </ul>
+              </div>
+              
+              <div className="cvat-canvas-hints-block">
+                <strong>⌨️ Shortcuts</strong>
+                <ul>
+                  <li><kbd>V</kbd> - Select mode</li>
+                  <li><kbd>R</kbd> - Rectangle tool</li>
+                  <li><kbd>P</kbd> - Polygon tool (4 points)</li>
+                  <li><kbd>Esc</kbd> - Cancel drawing</li>
+                  <li><kbd>Del</kbd> - Delete selected</li>
+                </ul>
+              </div>
+              
+              <div className="cvat-canvas-hints-block">
+                <strong>✏️ Drawing</strong>
+                <ul>
+                  <li>Rectangle: Click & drag</li>
+                  <li>Polygon: Click 4 points</li>
+                  <li>Edit: Drag corners to resize</li>
+                </ul>
+              </div>
+            </div>
+          )}
+          
+          {!showHints && (
+            <button 
+              type="button"
+              className="cvat-canvas-hints-show-button"
+              onClick={() => setShowHints(true)}
+              title="Show hints"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+                <path d="M12 16v-4M12 8h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              </svg>
+            </button>
+          )}
+          
           {polygonPoints.length > 0 && (
             <div className="polygon-hint">
               Click {4 - polygonPoints.length} more point{4 - polygonPoints.length !== 1 ? 's' : ''} to complete polygon
             </div>
           )}
-          <div className="canvas-help">
-            <span>💡 Alt + Drag to pan | Scroll to zoom | Drag corners to resize</span>
-          </div>
-        </div>
-
-        <div className="annotations-panel">
-          <h3>Bounding Boxes ({annotations.length})</h3>
-          <div className="annotations-list">
-            {annotations.map((ann, index) => (
-              <div
-                key={index}
-                className={`annotation-item ${selectedAnnotation === index ? 'selected' : ''}`}
-                onClick={() => {
-                  setSelectedAnnotation(index);
-                  if (fabricCanvasRef.current) {
-                    const obj = fabricCanvasRef.current.getObjects().find(
-                      o => o.annotationIndex === index
-                    );
-                    if (obj) {
-                      fabricCanvasRef.current.setActiveObject(obj);
-                      fabricCanvasRef.current.requestRenderAll();
-                    }
-                  }
-                }}
-              >
-                <div className="annotation-header">
-                  <span
-                    className="annotation-color"
-                    style={{
-                      backgroundColor: ANNOTATION_TYPES.find(t => t.value === ann.type)?.color || '#ffffff'
-                    }}
-                  />
-                  <span className="annotation-index">BBox #{index + 1}</span>
-                </div>
-                
-                <select
-                  value={ann.type}
-                  onChange={(e) => handleAnnotationTypeChange(index, e.target.value)}
-                  className="annotation-type-select"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {ANNOTATION_TYPES.map(type => (
-                    <option key={type.value} value={type.value}>
-                      {type.label}
-                    </option>
-                  ))}
-                </select>
-
-                <div className="annotation-info">
-                  <span className="info-label">Shape:</span>
-                  <span className="info-value">{ann.shape}</span>
-                </div>
-
-                {ann.shape === 'rectangle' && (
-                  <div className="annotation-info">
-                    <span className="info-label">Size:</span>
-                    <span className="info-value">
-                      {Math.round(ann.width)} × {Math.round(ann.height)}
-                    </span>
-                  </div>
-                )}
-
-                {ann.shape === 'polygon' && ann.points && (
-                  <div className="annotation-info">
-                    <span className="info-label">Points:</span>
-                    <span className="info-value">{ann.points.length}</span>
-                  </div>
-                )}
-
-                {ann.text && (
-                  <div className="annotation-info">
-                    <span className="info-label">Text:</span>
-                    <span className="info-value" style={{ fontStyle: 'italic' }}>{ann.text}</span>
-                  </div>
-                )}
-
-                <button
-                  className="delete-annotation-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeleteAnnotation(index);
-                  }}
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                    <path d="M3 6H5H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                    <path d="M8 6V4C8 3.46957 8.21071 2.96086 8.58579 2.58579C8.96086 2.21071 9.46957 2 10 2H14C14.5304 2 15.0391 2.21071 15.4142 2.58579C15.7893 2.96086 16 3.46957 16 4V6M19 6V20C19 20.5304 18.7893 21.0391 18.4142 21.4142C18.0391 21.7893 17.5304 22 17 22H7C6.46957 22 5.96086 21.7893 5.58579 21.4142C5.21071 21.0391 5 20.5304 5 20V6H19Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </button>
-              </div>
-            ))}
-
-            {annotations.length === 0 && (
-              <div className="empty-message">
-                No annotations yet. Use the tools above to draw bounding boxes.
-              </div>
-            )}
-          </div>
         </div>
       </div>
     </div>

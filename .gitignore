@@ -157,3 +157,4 @@ weights/
 pylon_env/
 data/
 cvat/
+label-studio/

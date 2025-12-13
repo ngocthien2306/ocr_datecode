@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import TemplateEditor from './TemplateEditor';
+import AnnotationsPanel from './AnnotationsPanel';
 import { camerasAPI } from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import '../styles/RecipeFormModal.css';
@@ -44,6 +45,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   // Template editor states
   const [selectedCameraForTemplate, setSelectedCameraForTemplate] = useState('');
   const [cameraTemplates, setCameraTemplates] = useState({}); // { camera_id: { image, annotations } }
+  const [selectedAnnotation, setSelectedAnnotation] = useState(null);
+  const fabricCanvasRef = useRef(null);
 
   useEffect(() => {
     if (recipe && mode === 'edit' && isOpen) {
@@ -339,6 +342,33 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       return cameraTemplates[selectedCameraForTemplate].annotations || [];
     }
     return annotations;
+  };
+
+  const handleAnnotationTypeChange = (index, newType) => {
+    const currentAnnotations = getCurrentAnnotations();
+    const updated = [...currentAnnotations];
+    updated[index].type = newType;
+    handleAnnotationsChange(updated);
+  };
+
+  const handleAnnotationTextChange = (index, newText) => {
+    const currentAnnotations = getCurrentAnnotations();
+    const updated = [...currentAnnotations];
+    updated[index].text = newText;
+    handleAnnotationsChange(updated);
+  };
+
+  const handleDeleteAnnotation = (index) => {
+    const currentAnnotations = getCurrentAnnotations();
+    const updated = currentAnnotations.filter((_, i) => i !== index);
+    handleAnnotationsChange(updated);
+    
+    // Reset selection if deleted
+    if (selectedAnnotation === index) {
+      setSelectedAnnotation(null);
+    } else if (selectedAnnotation > index) {
+      setSelectedAnnotation(selectedAnnotation - 1);
+    }
   };
 
   const handleClose = () => {
@@ -688,12 +718,28 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                     </div>
 
                     {getCurrentTemplateImage() ? (
-                      <div className="template-editor-container">
-                        <TemplateEditor
-                          templateImage={getCurrentTemplateImage()}
-                          annotations={getCurrentAnnotations()}
-                          onAnnotationsChange={handleAnnotationsChange}
-                        />
+                      <div className="template-editor-layout">
+                        <div className="template-editor-canvas">
+                          <TemplateEditor
+                            templateImage={getCurrentTemplateImage()}
+                            annotations={getCurrentAnnotations()}
+                            onAnnotationsChange={handleAnnotationsChange}
+                            selectedAnnotation={selectedAnnotation}
+                            onSelectAnnotation={setSelectedAnnotation}
+                            fabricCanvasRef={fabricCanvasRef}
+                          />
+                        </div>
+                        <div className="template-editor-sidebar">
+                          <AnnotationsPanel
+                            annotations={getCurrentAnnotations()}
+                            selectedAnnotation={selectedAnnotation}
+                            onSelectAnnotation={setSelectedAnnotation}
+                            onAnnotationTypeChange={handleAnnotationTypeChange}
+                            onAnnotationTextChange={handleAnnotationTextChange}
+                            onDeleteAnnotation={handleDeleteAnnotation}
+                            fabricCanvasRef={fabricCanvasRef}
+                          />
+                        </div>
                       </div>
                     ) : (
                       <div className="template-placeholder">

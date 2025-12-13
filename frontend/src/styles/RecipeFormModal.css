@@ -152,11 +152,74 @@
   margin-bottom: 20px;
 }
 
+.template-camera-selector {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.template-camera-selector label {
+  font-weight: 600;
+  font-size: 14px;
+  color: #374151;
+  white-space: nowrap;
+}
+
+.template-camera-selector select {
+  min-width: 300px;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background-color: white;
+  color: #1f2937;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.template-camera-selector select:hover {
+  border-color: #8b5cf6;
+  background-color: #f9fafb;
+}
+
+.template-camera-selector select:focus {
+  outline: none;
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+}
+
+.template-camera-selector select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background-color: #f3f4f6;
+}
+
 .template-actions label.btn {
   cursor: pointer;
   margin: 0;
 }
 
+.template-editor-layout {
+  display: flex;
+  gap: 16px;
+  height: 600px;
+}
+
+.template-editor-canvas {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.template-editor-sidebar {
+  width: 320px;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+/* Legacy container for backwards compatibility */
 .template-editor-container {
   height: 600px;
   border: 1px solid #e5e7eb;
@@ -485,6 +548,39 @@ body.dark-mode .error-message.global-error {
 body.dark-mode .template-placeholder {
   border-color: #4b5563;
   color: #9ca3af;
+}
+
+body.dark-mode .template-editor-canvas {
+  border-color: #4b5563;
+}
+
+body.dark-mode .template-editor-container {
+  border-color: #4b5563;
+}
+
+body.dark-mode .template-header {
+  color: #e5e7eb;
+}
+
+body.dark-mode .template-camera-selector label {
+  color: #e5e7eb;
+}
+
+body.dark-mode .template-camera-selector select {
+  background-color: #374151;
+  color: #e5e7eb;
+  border-color: #4b5563;
+}
+
+body.dark-mode .template-camera-selector select:hover {
+  background-color: #4b5563;
+  border-color: #6b7280;
+}
+
+body.dark-mode .template-camera-selector select:focus {
+  background-color: #374151;
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
 }
 
 body.dark-mode .template-placeholder p.hint {
