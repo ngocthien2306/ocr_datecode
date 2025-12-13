@@ -338,7 +338,10 @@ export default function TemplateEditor({
           selectable: true,
           hasControls: true,
           hasBorders: true,
-          cornerSize: 8,
+          lockRotation: true, // Không cho xoay
+          lockSkewingX: true,
+          lockSkewingY: true,
+          cornerSize: 10,
           transparentCorners: false,
           cornerColor: color,
           cornerStrokeColor: '#ffffff',
@@ -358,14 +361,64 @@ export default function TemplateEditor({
           selectable: true,
           hasControls: true,
           hasBorders: true,
-          cornerSize: 8,
+          lockMovementX: true, // Không cho di chuyển cả polygon
+          lockMovementY: true,
+          lockRotation: true,
+          lockScalingX: true,
+          lockScalingY: true,
+          cornerSize: 10,
           transparentCorners: false,
           cornerColor: color,
           cornerStrokeColor: '#ffffff',
           borderColor: color,
+          objectCaching: false,
+          perPixelTargetFind: true,
           annotationIndex: index,
           annotationType: ann.type
         });
+        
+        // Enable polygon point editing
+        polygon.controls = polygon.points.reduce((acc, point, idx) => {
+          acc['p' + idx] = new fabric.Control({
+            positionHandler: (dim, finalMatrix, fabricObject) => {
+              const x = fabricObject.points[idx].x - fabricObject.pathOffset.x;
+              const y = fabricObject.points[idx].y - fabricObject.pathOffset.y;
+              return fabric.util.transformPoint(
+                { x, y },
+                fabric.util.multiplyTransformMatrices(
+                  fabricObject.canvas.viewportTransform,
+                  fabricObject.calcTransformMatrix()
+                )
+              );
+            },
+            actionHandler: (eventData, transform, x, y) => {
+              const polygon = transform.target;
+              const mouseLocalPosition = polygon.toLocalPoint(new fabric.Point(x, y), 'center', 'center');
+              const polygonBaseSize = polygon._getNonTransformedDimensions();
+              const size = polygon._getTransformedDimensions(0, 0);
+              const finalPointPosition = {
+                x: (mouseLocalPosition.x * polygonBaseSize.x) / size.x + polygon.pathOffset.x,
+                y: (mouseLocalPosition.y * polygonBaseSize.y) / size.y + polygon.pathOffset.y,
+              };
+              polygon.points[idx] = finalPointPosition;
+              return true;
+            },
+            cursorStyle: 'pointer',
+            actionName: 'modifyPolygon',
+            render: (ctx, left, top, styleOverride, fabricObject) => {
+              ctx.save();
+              ctx.fillStyle = color;
+              ctx.strokeStyle = '#ffffff';
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              ctx.arc(left, top, 5, 0, 2 * Math.PI);
+              ctx.fill();
+              ctx.stroke();
+              ctx.restore();
+            },
+          });
+          return acc;
+        }, {});
         
         canvas.add(polygon);
         addLabel(canvas, ann.type, ann.points[0][0], ann.points[0][1], color);

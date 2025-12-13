@@ -184,7 +184,7 @@
 
 .delete-annotation-btn {
   position: absolute;
-  top: 8px;
+  top: -2px;
   right: 8px;
   width: 32px;
   height: 32px;
@@ -198,6 +198,7 @@
   transition: all 0.2s;
   color: #ff5555;
   padding: 0;
+
 }
 
 .delete-annotation-btn:hover {
