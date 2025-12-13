@@ -19,6 +19,7 @@ body:has(.dashboard-container) #root {
   flex-direction: column;
   background-color: #f5f7fa;
   overflow: hidden;
+  position: relative;
 }
 
 /* Header */
@@ -4783,3 +4784,56 @@ body.dark-mode .timeline-card {
   background: rgba(99, 102, 241, 0.15);
   border-color: rgba(99, 102, 241, 0.4);
 }
+
+/* ============================================
+   LOADING BACKGROUND
+   ============================================ */
+
+/* ============================================
+   DASHBOARD BACKGROUND (for entire container)
+   ============================================ */
+
+.dashboard-background {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  filter: blur(10px);
+  z-index: 0;
+  pointer-events: none;
+  transform: scale(1.1);
+}
+
+/* ============================================
+   LOADING OVERLAY (no background, just overlay)
+   ============================================ */
+
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: fadeIn 0.3s ease-out;
+  overflow: hidden;
+}
+
+.loading-container {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2rem;
+}
+

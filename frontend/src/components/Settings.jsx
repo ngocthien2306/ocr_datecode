@@ -16,6 +16,10 @@ export default function Settings() {
     historicalLoading: 'historical',
     settingsLoading: 'settings',
 
+    // Loading Background Settings
+    loadingBackground: 'background1',
+    loadingBackgroundOpacity: 0.2,
+
     // Camera Settings
     camera1Enabled: true,
     camera1Fps: 30,
@@ -51,6 +55,16 @@ export default function Settings() {
         loadedSettings[`${tab}Loading`] = saved;
       }
     });
+
+    // Load background settings
+    const savedBackground = localStorage.getItem('loadingBackground');
+    const savedOpacity = localStorage.getItem('loadingBackgroundOpacity');
+    if (savedBackground) {
+      loadedSettings.loadingBackground = savedBackground;
+    }
+    if (savedOpacity) {
+      loadedSettings.loadingBackgroundOpacity = parseFloat(savedOpacity);
+    }
     
     if (Object.keys(loadedSettings).length > 0) {
       setSettings(prev => ({ ...prev, ...loadedSettings }));
@@ -61,11 +75,23 @@ export default function Settings() {
     setSettings(prev => ({ ...prev, [key]: value }));
     
     // Save tab loading templates to localStorage when changed
-    if (key.endsWith('Loading')) {
+    if (key.endsWith('Loading') && key !== 'loadingBackground') {
       localStorage.setItem(key, value);
       // Dispatch custom event to notify Dashboard component
       window.dispatchEvent(new CustomEvent('tabLoadingChanged', { 
         detail: { tab: key, template: value } 
+      }));
+    }
+
+    // Save background settings
+    if (key === 'loadingBackground' || key === 'loadingBackgroundOpacity') {
+      localStorage.setItem(key, value);
+      // Dispatch custom event to notify Dashboard component
+      window.dispatchEvent(new CustomEvent('loadingBackgroundChanged', { 
+        detail: { 
+          background: key === 'loadingBackground' ? value : settings.loadingBackground, 
+          opacity: key === 'loadingBackgroundOpacity' ? value : settings.loadingBackgroundOpacity 
+        } 
       }));
     }
   };
@@ -300,6 +326,48 @@ export default function Settings() {
                 <option value="historical">Timeline History</option>
                 <option value="settings">Gear System</option>
               </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Loading Background Settings */}
+        <div className="settings-section">
+          <h2>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/>
+              <path d="M3 9h18M9 21V9" stroke="currentColor" strokeWidth="2"/>
+            </svg>
+            Loading Background
+          </h2>
+          <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '20px' }}>
+            Customize background image and opacity for loading screens
+          </p>
+          <div className="settings-grid">
+            <div className="setting-item">
+              <label>Background Image</label>
+              <select 
+                value={settings.loadingBackground} 
+                onChange={(e) => handleChange('loadingBackground', e.target.value)}
+              >
+                <option value="none">None</option>
+                <option value="background1">Background 1</option>
+                <option value="background2">Background 2</option>
+                <option value="background3">Background 3</option>
+                <option value="background4">Background 4</option>
+              </select>
+            </div>
+
+            <div className="setting-item">
+              <label>Background Opacity: {(settings.loadingBackgroundOpacity * 100).toFixed(0)}%</label>
+              <input 
+                type="range" 
+                min="0" 
+                max="1" 
+                step="0.05"
+                value={settings.loadingBackgroundOpacity}
+                onChange={(e) => handleChange('loadingBackgroundOpacity', parseFloat(e.target.value))}
+                style={{ width: '100%' }}
+              />
             </div>
           </div>
         </div>

@@ -20,6 +20,12 @@ export default function Dashboard({ onLogout }) {
       settings: localStorage.getItem('settingsLoading') || 'settings'
     };
   });
+  const [loadingBackground, setLoadingBackground] = useState(() => {
+    return {
+      image: localStorage.getItem('loadingBackground') || 'background1',
+      opacity: parseFloat(localStorage.getItem('loadingBackgroundOpacity') || '0.2')
+    };
+  });
   const [darkMode, setDarkMode] = useState(() => {
     const savedMode = localStorage.getItem('appThemeMode');
     return savedMode === 'dark' ? true : false;
@@ -393,10 +399,20 @@ export default function Dashboard({ onLogout }) {
       }));
     };
 
+    const handleBackgroundChange = (event) => {
+      const { background, opacity } = event.detail;
+      setLoadingBackground({
+        image: background,
+        opacity: opacity
+      });
+    };
+
     window.addEventListener('tabLoadingChanged', handleTemplateChange);
+    window.addEventListener('loadingBackgroundChanged', handleBackgroundChange);
 
     return () => {
       window.removeEventListener('tabLoadingChanged', handleTemplateChange);
+      window.removeEventListener('loadingBackgroundChanged', handleBackgroundChange);
     };
   }, []);
 
@@ -615,6 +631,17 @@ export default function Dashboard({ onLogout }) {
 
   return (
     <div className="dashboard-container">
+      {/* Background for entire dashboard-container */}
+      {loadingBackground.image !== 'none' && (
+        <div 
+          className="dashboard-background"
+          style={{
+            backgroundImage: `url(/background/${loadingBackground.image}.png)`,
+            opacity: loadingBackground.opacity
+          }}
+        />
+      )}
+      
       {/* Header */}
       <header className="dashboard-header-top">
         <div className="header-left">
