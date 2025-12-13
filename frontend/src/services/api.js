@@ -205,4 +205,47 @@ export const receiptsAPI = {
   },
 };
 
+// Cameras API
+export const camerasAPI = {
+  getAllCameras: async (skip = 0, limit = 100) => {
+    const response = await api.get(`/cameras?skip=${skip}&limit=${limit}`);
+    return response.data;
+  },
+
+  getConnectedCameras: async () => {
+    const response = await api.get('/cameras/connected');
+    return response.data;
+  },
+
+  getCameraById: async (cameraId) => {
+    const response = await api.get(`/cameras/${cameraId}`);
+    return response.data;
+  },
+
+  getCamerasCount: async () => {
+    const response = await api.get('/cameras/count/total');
+    return response.data;
+  },
+
+  createCamera: async (cameraData) => {
+    const response = await api.post('/cameras', cameraData);
+    return response.data;
+  },
+
+  updateCamera: async (cameraId, cameraData) => {
+    const response = await api.put(`/cameras/${cameraId}`, cameraData);
+    return response.data;
+  },
+
+  updateCameraConnection: async (cameraId, isConnected) => {
+    const response = await api.patch(`/cameras/${cameraId}/connection`, { is_connected: isConnected });
+    return response.data;
+  },
+
+  deleteCamera: async (cameraId) => {
+    const response = await api.delete(`/cameras/${cameraId}`);
+    return response.data;
+  },
+};
+
 export default api;

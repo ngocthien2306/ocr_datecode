@@ -8,6 +8,8 @@ export default function UserManagement() {
   const [error, setError] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [selectAll, setSelectAll] = useState(false);
   const [newUser, setNewUser] = useState({
     username: '',
     email: '',
@@ -96,10 +98,57 @@ export default function UserManagement() {
 
     try {
       await usersAPI.deleteUser(userId);
+      setSelectedIds([]);
+      setSelectAll(false);
       fetchUsers(); // Refresh user list
     } catch (err) {
       console.error('Error deleting user:', err);
       setError(err.response?.data?.detail || 'Failed to delete user. Please try again.');
+    }
+  };
+
+  const handleSelectAll = (e) => {
+    e.stopPropagation();
+    const checked = e.target.checked;
+    setSelectAll(checked);
+    if (checked) {
+      setSelectedIds(filteredUsers.map(u => u._id));
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
+  const handleSelectUser = (userId) => {
+    setSelectedIds(prev => {
+      if (prev.includes(userId)) {
+        const newSelected = prev.filter(id => id !== userId);
+        setSelectAll(false);
+        return newSelected;
+      } else {
+        const newSelected = [...prev, userId];
+        if (newSelected.length === filteredUsers.length) {
+          setSelectAll(true);
+        }
+        return newSelected;
+      }
+    });
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedIds.length === 0) return;
+    
+    if (!window.confirm(`Are you sure you want to delete ${selectedIds.length} user(s)?`)) {
+      return;
+    }
+
+    try {
+      await Promise.all(selectedIds.map(id => usersAPI.deleteUser(id)));
+      setSelectedIds([]);
+      setSelectAll(false);
+      fetchUsers();
+    } catch (err) {
+      console.error('Error deleting users:', err);
+      setError('Failed to delete some users. Please try again.');
     }
   };
 
@@ -138,9 +187,14 @@ export default function UserManagement() {
           />
         </div>
         <div className="filter-buttons">
-          <button className="filter-btn active">All Users</button>
-          <button className="filter-btn">Active</button>
-          <button className="filter-btn">Inactive</button>
+          {selectedIds.length > 0 && (
+            <button className="action-btn delete" onClick={handleDeleteSelected}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" stroke="currentColor" strokeWidth="2"/>
+              </svg>
+              Delete Selected ({selectedIds.length})
+            </button>
+          )}
         </div>
       </div>
 
@@ -180,6 +234,16 @@ export default function UserManagement() {
           <table className="data-table">
             <thead>
               <tr>
+                <th style={{ width: '50px' }} onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={selectAll}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      handleSelectAll(e);
+                    }}
+                  />
+                </th>
                 <th>Username</th>
                 <th>Name</th>
                 <th>Email</th>
@@ -192,13 +256,26 @@ export default function UserManagement() {
             <tbody>
               {filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan="7" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
+                  <td colSpan="8" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
                     No users found
                   </td>
                 </tr>
               ) : (
                 filteredUsers.map(user => (
-                  <tr key={user._id}>
+                  <tr 
+                    key={user._id}
+                    className={selectedIds.includes(user._id) ? 'selected-row' : ''}
+                  >
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(user._id)}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          handleSelectUser(user._id);
+                        }}
+                      />
+                    </td>
                     <td>
                       <div className="user-cell">
                         <div className="user-avatar">{user.full_name?.charAt(0) || user.username.charAt(0)}</div>

@@ -2169,4 +2169,316 @@ body.dark-mode .dashboard-container .btn-secondary:hover {
   background: #4b5563;
 }
 
+/* ============================================
+   CAMERA MANAGEMENT STYLES
+   ============================================ */
+
+.camera-management {
+  padding: 2rem;
+}
+
+.camera-management .section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 2rem;
+}
+
+.camera-management .section-header h2 {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 0 0 0.5rem 0;
+}
+
+.camera-management .section-header p {
+  color: #6b7280;
+  margin: 0;
+}
+
+.camera-management .create-button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.camera-management .create-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+}
+
+/* Stats Grid */
+.camera-management .stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.camera-management .stat-card {
+  background: white;
+  border-radius: 12px;
+  padding: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e5e7eb;
+}
+
+.camera-management .stat-icon {
+  width: 60px;
+  height: 60px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.camera-management .stat-content {
+  flex: 1;
+}
+
+.camera-management .stat-label {
+  font-size: 14px;
+  color: #6b7280;
+  margin-bottom: 0.25rem;
+}
+
+.camera-management .stat-value {
+  font-size: 32px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+/* Table Controls */
+.camera-management .table-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.camera-management .search-box {
+  flex: 1;
+  max-width: 500px;
+}
+
+/* Camera Specific Styles */
+.camera-management .camera-id {
+  font-weight: 600;
+  color: #6366f1;
+  font-family: 'Courier New', monospace;
+}
+
+.camera-management .serial-number {
+  background: #f3f4f6;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9em;
+  color: #374151;
+}
+
+.camera-management .ip-address {
+  background: #f0fdf4;
+  color: #15803d;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9em;
+}
+
+/* Action Buttons - Connect/Disconnect */
+.camera-management .action-btn.connect {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+}
+
+.camera-management .action-btn.connect:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+.camera-management .action-btn.disconnect {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  color: white;
+}
+
+.camera-management .action-btn.disconnect:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+}
+
+/* Camera Modal */
+.camera-modal {
+  max-width: 800px !important;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.camera-modal .form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.camera-modal .form-group.full-width {
+  grid-column: span 2;
+}
+
+.camera-modal .form-group.checkbox-group {
+  display: flex;
+  align-items: center;
+}
+
+.camera-modal .form-group.checkbox-group label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  margin: 0;
+}
+
+.camera-modal .form-group.checkbox-group input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+
+.camera-modal .form-group textarea {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.camera-modal .form-group select {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  background: white;
+  cursor: pointer;
+}
+
+.camera-modal .modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.camera-modal .cancel-button {
+  padding: 0.75rem 1.5rem;
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.camera-modal .cancel-button:hover {
+  background: #e5e7eb;
+}
+
+.camera-modal .submit-button {
+  padding: 0.75rem 1.5rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.camera-modal .submit-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+}
+
+/* Dark Mode - Camera Management */
+body.dark-mode .camera-management .section-header h2 {
+  color: #f9fafb;
+}
+
+body.dark-mode .camera-management .section-header p {
+  color: #9ca3af;
+}
+
+body.dark-mode .camera-management .stat-card {
+  background: #1f2937;
+  border-color: #374151;
+}
+
+body.dark-mode .camera-management .stat-label {
+  color: #9ca3af;
+}
+
+body.dark-mode .camera-management .stat-value {
+  color: #f9fafb;
+}
+
+body.dark-mode .camera-management .camera-id {
+  color: #818cf8;
+}
+
+body.dark-mode .camera-management .serial-number {
+  background: #374151;
+  color: #d1d5db;
+}
+
+body.dark-mode .camera-management .ip-address {
+  background: #064e3b;
+  color: #6ee7b7;
+}
+
+body.dark-mode .camera-modal .form-group textarea,
+body.dark-mode .camera-modal .form-group select {
+  background: #111827;
+  border-color: #374151;
+  color: #f9fafb;
+}
+
+body.dark-mode .camera-modal .form-group textarea:focus,
+body.dark-mode .camera-modal .form-group select:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+}
+
+body.dark-mode .camera-modal .cancel-button {
+  background: #374151;
+  color: #d1d5db;
+  border-color: #4b5563;
+}
+
+body.dark-mode .camera-modal .cancel-button:hover {
+  background: #4b5563;
+}
+
+body.dark-mode .camera-modal .modal-actions {
+  border-color: #374151;
+}
+
+
 

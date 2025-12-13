@@ -44,10 +44,15 @@ class CameraUpdate(BaseModel):
 
 class CameraResponse(CameraBase):
     """Schema for camera response"""
+    id: Optional[str] = Field(None, alias="_id", description="MongoDB document ID")
     is_connected: bool = Field(..., description="Connection status")
     created_at: datetime
     updated_at: datetime
     created_by: str
+    
+    class Config:
+        populate_by_name = True
+        arbitrary_types_allowed = True
     
     class Config:
         from_attributes = True

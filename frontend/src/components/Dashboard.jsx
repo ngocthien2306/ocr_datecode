@@ -4,6 +4,7 @@ import UserManagement from './UserManagement';
 import Receipts from './Receipts';
 import Historical from './Historical';
 import Settings from './Settings';
+import CameraManagement from './CameraManagement';
 
 export default function Dashboard({ onLogout }) {
   const [currentSection, setCurrentSection] = useState('dashboard');
@@ -278,6 +279,18 @@ export default function Dashboard({ onLogout }) {
                 <polyline points="10,9 9,9 8,9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
               Receipts
+            </a>
+            <a
+              href="#cameras"
+              className={`nav-item ${currentSection === 'cameras' ? 'active' : ''}`}
+              onClick={(e) => { e.preventDefault(); setCurrentSection('cameras'); }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" strokeWidth="2"/>
+                <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
+                <path d="M7 4v2M17 4v2" stroke="currentColor" strokeWidth="2"/>
+              </svg>
+              Cameras
             </a>
             <a
               href="#historical"
@@ -580,6 +593,7 @@ export default function Dashboard({ onLogout }) {
 
           {currentSection === 'users' && <UserManagement />}
           {currentSection === 'receipts' && <Receipts />}
+          {currentSection === 'cameras' && <CameraManagement />}
           {currentSection === 'historical' && <Historical />}
           {currentSection === 'settings' && <Settings />}
         </main>
