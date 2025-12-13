@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { usersAPI } from '../services/api';
+import { useToast } from '../contexts/ToastContext';
+import ConfirmDialog from './ConfirmDialog';
 
 export default function UserManagement() {
+  const toast = useToast();
   const [users, setUsers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -10,6 +13,13 @@ export default function UserManagement() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
   const [selectAll, setSelectAll] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'warning',
+    onConfirm: null
+  });
   const [newUser, setNewUser] = useState({
     username: '',
     email: '',
@@ -92,19 +102,25 @@ export default function UserManagement() {
   };
 
   const handleDeleteUser = async (userId, username) => {
-    if (!window.confirm(`Are you sure you want to delete user "${username}"?`)) {
-      return;
-    }
-
-    try {
-      await usersAPI.deleteUser(userId);
-      setSelectedIds([]);
-      setSelectAll(false);
-      fetchUsers(); // Refresh user list
-    } catch (err) {
-      console.error('Error deleting user:', err);
-      setError(err.response?.data?.detail || 'Failed to delete user. Please try again.');
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete User',
+      message: `Are you sure you want to delete user "${username}"?\n\nThis action cannot be undone.`,
+      type: 'danger',
+      onConfirm: async () => {
+        try {
+          await usersAPI.deleteUser(userId);
+          setSelectedIds([]);
+          setSelectAll(false);
+          fetchUsers(); // Refresh user list
+          toast.success(`User "${username}" deleted successfully!`);
+        } catch (err) {
+          console.error('Error deleting user:', err);
+          setError(err.response?.data?.detail || 'Failed to delete user. Please try again.');
+          toast.error('Failed to delete user');
+        }
+      }
+    });
   };
 
   const handleSelectAll = (e) => {
@@ -137,19 +153,25 @@ export default function UserManagement() {
   const handleDeleteSelected = async () => {
     if (selectedIds.length === 0) return;
     
-    if (!window.confirm(`Are you sure you want to delete ${selectedIds.length} user(s)?`)) {
-      return;
-    }
-
-    try {
-      await Promise.all(selectedIds.map(id => usersAPI.deleteUser(id)));
-      setSelectedIds([]);
-      setSelectAll(false);
-      fetchUsers();
-    } catch (err) {
-      console.error('Error deleting users:', err);
-      setError('Failed to delete some users. Please try again.');
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Multiple Users',
+      message: `Are you sure you want to delete ${selectedIds.length} user(s)?\n\nThis action cannot be undone.`,
+      type: 'danger',
+      onConfirm: async () => {
+        try {
+          await Promise.all(selectedIds.map(id => usersAPI.deleteUser(id)));
+          setSelectedIds([]);
+          setSelectAll(false);
+          fetchUsers();
+          toast.success(`${selectedIds.length} user(s) deleted successfully!`);
+        } catch (err) {
+          console.error('Error deleting users:', err);
+          setError('Failed to delete some users. Please try again.');
+          toast.error('Failed to delete some users');
+        }
+      }
+    });
   };
 
   const filteredUsers = users.filter(user =>
@@ -520,6 +542,16 @@ export default function UserManagement() {
           </div>
         </div>
       )}
+
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        onClose={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
+        onConfirm={confirmDialog.onConfirm}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+      />
     </div>
   );
 }

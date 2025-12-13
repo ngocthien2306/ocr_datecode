@@ -1,8 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useToast } from '../contexts/ToastContext';
+import ConfirmDialog from './ConfirmDialog';
 
 export default function Settings() {
   const toast = useToast();
+  const [confirmDialog, setConfirmDialog] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'warning',
+    onConfirm: null
+  });
+  
   const [settings, setSettings] = useState({
     // System Settings
     systemName: 'Suntech Automation',
@@ -104,10 +113,16 @@ export default function Settings() {
   };
 
   const handleReset = () => {
-    if (window.confirm('Are you sure you want to reset all settings to default?')) {
-      console.log('Resetting settings to default');
-      toast.success('Settings reset to default values!');
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Reset Settings',
+      message: 'Are you sure you want to reset all settings to default?\n\nThis action cannot be undone.',
+      type: 'warning',
+      onConfirm: () => {
+        console.log('Resetting settings to default');
+        toast.success('Settings reset to default values!');
+      }
+    });
   };
 
   return (
@@ -617,6 +632,16 @@ export default function Settings() {
           </div>
         </div>
       </div>
+
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        onClose={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
+        onConfirm={confirmDialog.onConfirm}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+      />
     </div>
   );
 }

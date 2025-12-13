@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { recipesAPI, receiptsAPI } from '../services/api';
 import RecipeFormModal from './RecipeFormModal';
 import RecipeViewModal from './RecipeViewModal';
+import ConfirmDialog from './ConfirmDialog';
 import { useToast } from '../contexts/ToastContext';
 
 export default function Receipts() {
@@ -30,6 +31,15 @@ export default function Receipts() {
   // Selection states
   const [selectedIds, setSelectedIds] = useState([]);
   const [selectAll, setSelectAll] = useState(false);
+
+  // Confirmation dialog states
+  const [confirmDialog, setConfirmDialog] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'warning',
+    onConfirm: null
+  });
 
   // Load receipts from API
   useEffect(() => {
@@ -187,51 +197,51 @@ export default function Receipts() {
   };
 
   const handleLoadReceipt = async (receipt) => {
-    try {
-      // Hiển thị confirmation dialog
-      const confirmLoad = window.confirm(
-        `Load recipe "${receipt.name}" (${receipt.productCode})?\n\n` +
-        `This will load the recipe configuration into the system.`
-      );
-      
-      if (!confirmLoad) return;
-
-      // TODO: Implement load receipt logic
-      // This could involve:
-      // 1. Sending recipe to backend to set as active
-      // 2. Updating system configuration
-      // 3. Notifying user of successful load
-      
-      // Placeholder for API call
-      toast.success(`Recipe "${receipt.name}" loaded successfully!\nRecipe ID: ${receipt.id}\nProduct Code: ${receipt.productCode}`);
-      
-      // Optionally refresh the list
-      await loadReceipts();
-      
-    } catch (error) {
-      console.error('Error loading receipt:', error);
-      toast.error('Failed to load receipt. Please try again.');
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Load Recipe',
+      message: `Load recipe "${receipt.name}" (${receipt.productCode})?\n\nThis will load the recipe configuration into the system.`,
+      type: 'info',
+      onConfirm: async () => {
+        try {
+          // TODO: Implement load receipt logic
+          // This could involve:
+          // 1. Sending recipe to backend to set as active
+          // 2. Updating system configuration
+          // 3. Notifying user of successful load
+          
+          // Placeholder for API call
+          toast.success(`Recipe "${receipt.name}" loaded successfully!\nRecipe ID: ${receipt.id}\nProduct Code: ${receipt.productCode}`);
+          
+          // Optionally refresh the list
+          await loadReceipts();
+        } catch (error) {
+          console.error('Error loading receipt:', error);
+          toast.error('Failed to load receipt. Please try again.');
+        }
+      }
+    });
   };
 
   const handleDeleteReceipt = async (receipt) => {
-    const confirmDelete = window.confirm(
-      `Delete recipe "${receipt.name}" (${receipt.productCode})?\n\n` +
-      `This action cannot be undone.`
-    );
-    
-    if (!confirmDelete) return;
-
-    try {
-      await receiptsAPI.deleteReceipt(receipt.id);
-      await loadReceipts();
-      await loadStatistics();
-      setSelectedIds(selectedIds.filter(id => id !== receipt.id));
-      toast.success(`Recipe "${receipt.name}" deleted successfully!`);
-    } catch (error) {
-      console.error('Error deleting receipt:', error);
-      toast.error('Failed to delete receipt. Please try again.');
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Recipe',
+      message: `Delete recipe "${receipt.name}" (${receipt.productCode})?\n\nThis action cannot be undone.`,
+      type: 'danger',
+      onConfirm: async () => {
+        try {
+          await receiptsAPI.deleteReceipt(receipt.id);
+          await loadReceipts();
+          await loadStatistics();
+          setSelectedIds(selectedIds.filter(id => id !== receipt.id));
+          toast.success(`Recipe "${receipt.name}" deleted successfully!`);
+        } catch (error) {
+          console.error('Error deleting receipt:', error);
+          toast.error('Failed to delete receipt. Please try again.');
+        }
+      }
+    });
   };
 
   const handleDeleteSelected = async () => {
@@ -240,25 +250,26 @@ export default function Receipts() {
       return;
     }
 
-    const confirmDelete = window.confirm(
-      `Delete ${selectedIds.length} selected recipe(s)?\n\n` +
-      `This action cannot be undone.`
-    );
-    
-    if (!confirmDelete) return;
-
-    try {
-      // Delete all selected receipts
-      await Promise.all(selectedIds.map(id => receiptsAPI.deleteReceipt(id)));
-      await loadReceipts();
-      await loadStatistics();
-      setSelectedIds([]);
-      setSelectAll(false);
-      toast.success(`${selectedIds.length} recipe(s) deleted successfully!`);
-    } catch (error) {
-      console.error('Error deleting receipts:', error);
-      toast.error('Failed to delete some receipts. Please try again.');
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Multiple Recipes',
+      message: `Delete ${selectedIds.length} selected recipe(s)?\n\nThis action cannot be undone.`,
+      type: 'danger',
+      onConfirm: async () => {
+        try {
+          // Delete all selected receipts
+          await Promise.all(selectedIds.map(id => receiptsAPI.deleteReceipt(id)));
+          await loadReceipts();
+          await loadStatistics();
+          setSelectedIds([]);
+          setSelectAll(false);
+          toast.success(`${selectedIds.length} recipe(s) deleted successfully!`);
+        } catch (error) {
+          console.error('Error deleting receipts:', error);
+          toast.error('Failed to delete some receipts. Please try again.');
+        }
+      }
+    });
   };
 
   const handleSelectAll = () => {
@@ -619,6 +630,16 @@ export default function Receipts() {
         onClose={() => setIsViewModalOpen(false)}
         recipe={selectedRecipe}
         onEdit={handleViewModalEdit}
+      />
+
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        onClose={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
+        onConfirm={confirmDialog.onConfirm}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
       />
     </div>
   );

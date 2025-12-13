@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { camerasAPI } from '../services/api';
 import { useToast } from '../contexts/ToastContext';
+import ConfirmDialog from './ConfirmDialog';
 import './Dashboard.css';
 
 export default function CameraManagement() {
@@ -17,6 +18,14 @@ export default function CameraManagement() {
     total: 0,
     connected: 0,
     active: 0
+  });
+
+  const [confirmDialog, setConfirmDialog] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'warning',
+    onConfirm: null
   });
 
   const [formData, setFormData] = useState({
@@ -112,39 +121,48 @@ export default function CameraManagement() {
   };
 
   const handleDeleteCamera = async (cameraId) => {
-    if (!window.confirm('Are you sure you want to delete this camera?')) {
-      return;
-    }
-
-    try {
-      await camerasAPI.deleteCamera(cameraId);
-      await fetchCameras();
-      setSelectedIds([]);
-      setSelectAll(false);
-      toast.success('Camera deleted successfully!');
-    } catch (err) {
-      console.error('Error deleting camera:', err);
-      toast.error('Failed to delete camera');
-    }
+    const camera = cameras.find(c => c.camera_id === cameraId);
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Camera',
+      message: `Are you sure you want to delete camera "${camera?.camera_id || cameraId}"?\n\nThis action cannot be undone.`,
+      type: 'danger',
+      onConfirm: async () => {
+        try {
+          await camerasAPI.deleteCamera(cameraId);
+          await fetchCameras();
+          setSelectedIds([]);
+          setSelectAll(false);
+          toast.success('Camera deleted successfully!');
+        } catch (err) {
+          console.error('Error deleting camera:', err);
+          toast.error('Failed to delete camera');
+        }
+      }
+    });
   };
 
   const handleDeleteSelected = async () => {
     if (selectedIds.length === 0) return;
     
-    if (!window.confirm(`Are you sure you want to delete ${selectedIds.length} camera(s)?`)) {
-      return;
-    }
-
-    try {
-      await Promise.all(selectedIds.map(id => camerasAPI.deleteCamera(id)));
-      await fetchCameras();
-      setSelectedIds([]);
-      setSelectAll(false);
-      toast.success(`${selectedIds.length} camera(s) deleted successfully!`);
-    } catch (err) {
-      console.error('Error deleting cameras:', err);
-      toast.error('Failed to delete cameras');
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Multiple Cameras',
+      message: `Are you sure you want to delete ${selectedIds.length} camera(s)?\n\nThis action cannot be undone.`,
+      type: 'danger',
+      onConfirm: async () => {
+        try {
+          await Promise.all(selectedIds.map(id => camerasAPI.deleteCamera(id)));
+          await fetchCameras();
+          setSelectedIds([]);
+          setSelectAll(false);
+          toast.success(`${selectedIds.length} camera(s) deleted successfully!`);
+        } catch (err) {
+          console.error('Error deleting cameras:', err);
+          toast.error('Failed to delete cameras');
+        }
+      }
+    });
   };
 
   const handleToggleConnection = async (camera) => {
@@ -613,6 +631,16 @@ export default function CameraManagement() {
           </div>
         </div>
       )}
+
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        onClose={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
+        onConfirm={confirmDialog.onConfirm}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+      />
     </div>
   );
 }

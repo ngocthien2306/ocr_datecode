@@ -5,6 +5,7 @@ import Receipts from './Receipts';
 import Historical from './Historical';
 import Settings from './Settings';
 import CameraManagement from './CameraManagement';
+import ConfirmDialog from './ConfirmDialog';
 import { camerasAPI } from '../services/api';
 
 export default function Dashboard({ onLogout }) {
@@ -33,6 +34,13 @@ export default function Dashboard({ onLogout }) {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [totalProductsToday, setTotalProductsToday] = useState(1247);
   const [cameras, setCameras] = useState([]);
+  const [confirmDialog, setConfirmDialog] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'warning',
+    onConfirm: null
+  });
   const [cameraStats, setCameraStats] = useState({
     total: 0,
     connected: 0,
@@ -610,10 +618,16 @@ export default function Dashboard({ onLogout }) {
   };
 
   const handleLogout = () => {
-    if (window.confirm('Are you sure you want to logout?')) {
-      document.body.classList.remove('dark-mode');
-      onLogout();
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Logout',
+      message: 'Are you sure you want to logout?',
+      type: 'warning',
+      onConfirm: () => {
+        document.body.classList.remove('dark-mode');
+        onLogout();
+      }
+    });
   };
 
   const timeString = currentTime.toLocaleTimeString('en-US', {
@@ -1078,6 +1092,16 @@ export default function Dashboard({ onLogout }) {
           )}
         </main>
       </div>
+
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        onClose={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
+        onConfirm={confirmDialog.onConfirm}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+      />
     </div>
   );
 }
