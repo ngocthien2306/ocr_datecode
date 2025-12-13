@@ -43,12 +43,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
   useEffect(() => {
     if (recipe && mode === 'edit') {
-      console.log('Loading recipe for edit:', recipe);
-      console.log('Recipe cameras:', recipe.cameras);
-      
       // Ensure cameras array has proper structure with defaults
       const normalizedCameras = (recipe.cameras || []).map(cam => {
-        console.log('Normalizing camera:', cam);
         return {
           camera_id: cam.camera_id || '',
           model_name: cam.model_name || '',
@@ -66,8 +62,6 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           }
         };
       });
-      
-      console.log('Normalized cameras:', normalizedCameras);
 
       setFormData({
         name: recipe.name || '',
@@ -250,11 +244,6 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           annotations: annotations
         } : formData.template_config
       };
-      
-      // Debug: Log the data being submitted
-      console.log('Submitting recipe data:', submitData);
-      console.log('Cameras count:', submitData.cameras?.length || 0);
-      console.log('Delay reject:', submitData.delay_reject);
       
       await onSubmit(submitData);
       handleClose();

@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { camerasAPI } from '../services/api';
+import { useToast } from '../contexts/ToastContext';
 import './Dashboard.css';
 
 export default function CameraManagement() {
+  const toast = useToast();
   const [cameras, setCameras] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -119,9 +121,10 @@ export default function CameraManagement() {
       await fetchCameras();
       setSelectedIds([]);
       setSelectAll(false);
+      toast.success('Camera deleted successfully!');
     } catch (err) {
       console.error('Error deleting camera:', err);
-      alert('Failed to delete camera');
+      toast.error('Failed to delete camera');
     }
   };
 
@@ -137,9 +140,10 @@ export default function CameraManagement() {
       await fetchCameras();
       setSelectedIds([]);
       setSelectAll(false);
+      toast.success(`${selectedIds.length} camera(s) deleted successfully!`);
     } catch (err) {
       console.error('Error deleting cameras:', err);
-      alert('Failed to delete cameras');
+      toast.error('Failed to delete cameras');
     }
   };
 
@@ -147,9 +151,10 @@ export default function CameraManagement() {
     try {
       await camerasAPI.updateCameraConnection(camera.camera_id, !camera.is_connected);
       await fetchCameras();
+      toast.success(`Camera ${camera.is_connected ? 'disconnected' : 'connected'} successfully!`);
     } catch (err) {
       console.error('Error toggling camera connection:', err);
-      alert('Failed to update camera connection status');
+      toast.error('Failed to update camera connection status');
     }
   };
 
@@ -208,15 +213,17 @@ export default function CameraManagement() {
     try {
       if (editingCamera) {
         await camerasAPI.updateCamera(editingCamera.camera_id, formData);
+        toast.success('Camera updated successfully!');
       } else {
         await camerasAPI.createCamera(formData);
+        toast.success('Camera created successfully!');
       }
       
       setShowModal(false);
       await fetchCameras();
     } catch (err) {
       console.error('Error saving camera:', err);
-      alert(err.response?.data?.detail || 'Failed to save camera');
+      toast.error(err.response?.data?.detail || 'Failed to save camera');
     }
   };
 

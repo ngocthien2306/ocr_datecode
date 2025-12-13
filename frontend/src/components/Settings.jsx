@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { useToast } from '../contexts/ToastContext';
 
 export default function Settings() {
+  const toast = useToast();
   const [settings, setSettings] = useState({
     // System Settings
     systemName: 'Suntech Automation',
@@ -98,13 +100,13 @@ export default function Settings() {
 
   const handleSave = () => {
     console.log('Saving settings:', settings);
-    alert('Settings saved successfully!');
+    toast.success('Settings saved successfully!');
   };
 
   const handleReset = () => {
     if (window.confirm('Are you sure you want to reset all settings to default?')) {
       console.log('Resetting settings to default');
-      alert('Settings reset to default values!');
+      toast.success('Settings reset to default values!');
     }
   };
 

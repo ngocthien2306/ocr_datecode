@@ -150,10 +150,6 @@ export default function Receipts() {
         toast.success(`Recipe "${formData.name}" updated successfully!`);
       }
       
-      console.log('Recipe saved successfully:', response);
-      console.log('Cameras in response:', response.cameras);
-      console.log('Delay reject in response:', response.delay_reject);
-      
       // Reload receipts after create/update
       await loadReceipts();
       await loadStatistics();
@@ -205,8 +201,6 @@ export default function Receipts() {
       // 1. Sending recipe to backend to set as active
       // 2. Updating system configuration
       // 3. Notifying user of successful load
-      
-      console.log('Loading receipt:', receipt);
       
       // Placeholder for API call
       toast.success(`Recipe "${receipt.name}" loaded successfully!\nRecipe ID: ${receipt.id}\nProduct Code: ${receipt.productCode}`);
@@ -428,7 +422,7 @@ export default function Receipts() {
               <option key={date} value={date}>{date}</option>
             ))}
           </select>
-          <button className="filter-btn" onClick={() => alert('Export feature - to be implemented')}>
+          <button className="filter-btn" onClick={() => toast.info('Export feature - to be implemented')}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
               <path d="M21 15V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               <polyline points="7,10 12,15 17,10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>

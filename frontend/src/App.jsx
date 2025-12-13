@@ -141,7 +141,7 @@ export default function SuntechAutomation() {
   }
 
   return (
-    <>
+    <ToastProvider>
       <div className={isLightMode ? 'bg-gradient-to-br from-gray-100 via-blue-50 to-gray-200' : 'grid-bg'}>
         <div className="relative w-full flex items-center justify-center overflow-hidden" style={{ height: '1090px' }}>
           
