@@ -152,3 +152,85 @@
     font-size: 13px;
   }
 }
+
+/* Dark Mode Styles */
+body.dark-mode .recipe-view-modal {
+  background: #1f2937;
+  border: 1px solid #374151;
+}
+
+body.dark-mode .modal-header {
+  background: #1f2937;
+  border-bottom-color: #374151;
+}
+
+body.dark-mode .modal-header h2 {
+  color: #f9fafb;
+}
+
+body.dark-mode .close-btn {
+  color: #9ca3af;
+}
+
+body.dark-mode .close-btn:hover {
+  background-color: #374151;
+  color: #f9fafb;
+}
+
+body.dark-mode .info-section {
+  border-bottom-color: #374151;
+}
+
+body.dark-mode .info-section h3 {
+  color: #f9fafb;
+}
+
+body.dark-mode .info-item label {
+  color: #9ca3af;
+}
+
+body.dark-mode .info-item .info-value {
+  color: #f9fafb;
+}
+
+body.dark-mode .status-badge.active {
+  background-color: #064e3b;
+  color: #6ee7b7;
+}
+
+body.dark-mode .status-badge.inactive {
+  background-color: #7f1d1d;
+  color: #fca5a5;
+}
+
+body.dark-mode .config-block label {
+  color: #d1d5db;
+}
+
+body.dark-mode .config-json {
+  background-color: #111827;
+  border-color: #374151;
+  color: #d1d5db;
+}
+
+body.dark-mode .config-json::-webkit-scrollbar-track {
+  background: #1f2937;
+}
+
+body.dark-mode .config-json::-webkit-scrollbar-thumb {
+  background: #4b5563;
+}
+
+body.dark-mode .modal-footer {
+  background-color: #111827;
+  border-top-color: #374151;
+}
+
+body.dark-mode .btn-secondary {
+  background-color: #374151;
+  color: #d1d5db;
+}
+
+body.dark-mode .btn-secondary:hover:not(:disabled) {
+  background-color: #4b5563;
+}

@@ -416,16 +416,32 @@ input:checked + .slider:before {
   color: #10b981;
 }
 
+body.dark-mode .card-status.online {
+  color: #6ee7b7;
+}
+
 .card-status.increase {
   color: #10b981;
+}
+
+body.dark-mode .card-status.increase {
+  color: #6ee7b7;
 }
 
 .card-status.normal {
   color: #6b7280;
 }
 
+body.dark-mode .card-status.normal {
+  color: #9ca3af;
+}
+
 .card-status.success {
   color: #10b981;
+}
+
+body.dark-mode .card-status.success {
+  color: #6ee7b7;
 }
 
 /* Camera Previews */
@@ -879,6 +895,11 @@ body.dark-mode .nav-item:hover {
   color: #f9fafb;
 }
 
+body.dark-mode .nav-item.active {
+  background: #374151;
+  color: #f9fafb;
+}
+
 body.dark-mode .summary-card,
 body.dark-mode .camera-preview-card,
 body.dark-mode .right-card,
@@ -1175,8 +1196,17 @@ body.dark-mode .camera-chart {
   transition: background 0.15s;
 }
 
-.data-table tbody tr:hover {
+/* Zebra striping for tables */
+.data-table tbody tr:nth-child(even) {
   background: #f9fafb;
+}
+
+.data-table tbody tr:nth-child(odd) {
+  background: white;
+}
+
+.data-table tbody tr:hover {
+  background: #f0f9ff !important;
 }
 
 .data-table td {
@@ -1226,6 +1256,11 @@ body.dark-mode .camera-chart {
   color: #7c3aed;
 }
 
+body.dark-mode .role-badge {
+  background: #4c1d95;
+  color: #e9d5ff;
+}
+
 /* Status Badge */
 .status-badge {
   display: inline-block;
@@ -1238,6 +1273,21 @@ body.dark-mode .camera-chart {
 .status-badge.active {
   background: #d1fae5;
   color: #065f46;
+}
+
+body.dark-mode .status-badge.active {
+  background: #064e3b;
+  color: #6ee7b7;
+}
+
+body.dark-mode .status-badge.completed {
+  background: #064e3b;
+  color: #6ee7b7;
+}
+
+body.dark-mode .status-badge.inactive {
+  background: #374151;
+  color: #9ca3af;
 }
 
 .status-badge.inactive {
@@ -1302,6 +1352,50 @@ body.dark-mode .camera-chart {
 
 .action-btn.download:hover {
   background: #d1fae5;
+}
+
+/* Load Button - Prominent style */
+.action-btn.load-btn {
+  color: white;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  font-weight: 600;
+  padding: 8px 16px;
+  gap: 6px;
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+  border: none;
+}
+
+.action-btn.load-btn:hover {
+  background: linear-gradient(135deg, #d97706, #b45309);
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+  transform: translateY(-1px);
+}
+
+.action-btn.load-btn svg {
+  stroke-width: 2.5;
+}
+
+/* Selected Row Highlight */
+.data-table tbody tr.selected-row {
+  background: #eff6ff !important;
+  border-left: 3px solid #3b82f6;
+}
+
+body.dark-mode .data-table tbody tr.selected-row {
+  background: #1e3a8a !important;
+  border-left: 3px solid #60a5fa;
+}
+
+/* Delete Selected Button */
+.delete-selected-btn {
+  color: white !important;
+  font-weight: 600;
+}
+
+.delete-selected-btn:hover {
+  background: linear-gradient(135deg, #dc2626, #b91c1c) !important;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4) !important;
+  transform: translateY(-1px);
 }
 
 /* Pagination */
@@ -1401,9 +1495,17 @@ body.dark-mode .camera-chart {
   font-weight: 600;
 }
 
+body.dark-mode .text-success {
+  color: #6ee7b7;
+}
+
 .text-error {
   color: #ef4444;
   font-weight: 600;
+}
+
+body.dark-mode .text-error {
+  color: #fca5a5;
 }
 
 /* Historical Page Specific */
@@ -1683,12 +1785,34 @@ body.dark-mode .pagination-number {
   color: #f9fafb;
 }
 
+/* Dark mode for search input */
+body.dark-mode .search-box input {
+  color: #f9fafb;
+}
+
+body.dark-mode .search-box input::placeholder {
+  color: #6b7280;
+}
+
+body.dark-mode .search-box svg {
+  color: #9ca3af;
+}
+
 body.dark-mode .data-table thead {
   background: #111827;
 }
 
+/* Dark mode zebra striping */
+body.dark-mode .data-table tbody tr:nth-child(even) {
+  background: #1f2937;
+}
+
+body.dark-mode .data-table tbody tr:nth-child(odd) {
+  background: #111827;
+}
+
 body.dark-mode .data-table tbody tr:hover {
-  background: #374151;
+  background: #374151 !important;
 }
 
 body.dark-mode .data-table th {
@@ -1701,11 +1825,79 @@ body.dark-mode .data-table td {
   border-color: #374151;
 }
 
+/* Dark mode for table strong text (Receipt ID, etc.) */
+body.dark-mode .data-table td strong {
+  color: #f9fafb;
+  font-weight: 600;
+}
+
+/* Dark mode for user name */
+body.dark-mode .user-name {
+  color: #f9fafb;
+}
+
+/* Dark mode for user cell */
+body.dark-mode .user-cell {
+  color: #f9fafb;
+}
+
 body.dark-mode .filter-btn.active,
 body.dark-mode .pagination-number.active {
   background: #6366f1;
   border-color: #6366f1;
   color: white;
+}
+
+body.dark-mode .action-btn {
+  background: #374151;
+}
+
+body.dark-mode .action-btn:hover {
+  background: #4b5563;
+}
+
+body.dark-mode .action-btn.edit {
+  color: #60a5fa;
+}
+
+body.dark-mode .action-btn.edit:hover {
+  background: #1e3a8a;
+}
+
+body.dark-mode .action-btn.delete {
+  color: #f87171;
+}
+
+body.dark-mode .action-btn.delete:hover {
+  background: #7f1d1d;
+}
+
+body.dark-mode .action-btn.view {
+  color: #818cf8;
+}
+
+body.dark-mode .action-btn.view:hover {
+  background: #312e81;
+}
+
+body.dark-mode .action-btn.download {
+  color: #6ee7b7;
+}
+
+body.dark-mode .action-btn.download:hover {
+  background: #064e3b;
+}
+
+/* Dark mode for Load button */
+body.dark-mode .action-btn.load-btn {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: white;
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.4);
+}
+
+body.dark-mode .action-btn.load-btn:hover {
+  background: linear-gradient(135deg, #d97706, #b45309);
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.5);
 }
 
 body.dark-mode .camera-settings-group {
