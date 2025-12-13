@@ -11,13 +11,19 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
   const [selectedAnnotation, setSelectedAnnotation] = useState(null);
   const [polygonPoints, setPolygonPoints] = useState([]);
   const [tempLines, setTempLines] = useState([]);
+  
+  // Type selection dialog states
+  const [showTypeDialog, setShowTypeDialog] = useState(false);
+  const [pendingShape, setPendingShape] = useState(null);
+  const [selectedType, setSelectedType] = useState('text');
+  const [textContent, setTextContent] = useState('');
 
   const ANNOTATION_TYPES = [
-    { value: 'text', label: 'Text OCR', color: '#50fa7b' },
-    { value: 'barcode', label: 'Barcode', color: '#ffdc5c' },
-    { value: 'template', label: 'Template Match', color: '#ff5555' },
-    { value: 'crop_area', label: 'Crop Area', color: '#ff64ff' },
-    { value: 'datecode', label: 'Date Code', color: '#5096ff' }
+    { value: 'text', label: 'Text OCR', color: '#50fa7b', needsText: true },
+    { value: 'barcode', label: 'Barcode', color: '#ffdc5c', needsText: false },
+    { value: 'template', label: 'Template Match', color: '#ff5555', needsText: false },
+    { value: 'crop_area', label: 'Crop Area', color: '#ff64ff', needsText: false },
+    { value: 'datecode', label: 'Date Code', color: '#5096ff', needsText: true }
   ];
 
   useEffect(() => {
@@ -216,7 +222,7 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
 
   const startDrawingRect = (canvas, e) => {
     const pointer = canvas.getPointer(e.e);
-    const color = ANNOTATION_TYPES.find(t => t.value === 'crop_area')?.color || '#ff64ff';
+    const color = '#666666'; // Neutral color while drawing
     
     const rect = new fabric.Rect({
       left: pointer.x,
@@ -250,26 +256,27 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
       canvas.off('mouse:up');
       
       if (rect.width > 10 && rect.height > 10) {
-        const newAnnotation = {
-          type: 'crop_area',
+        // Store the shape data and show type dialog
+        canvas.remove(rect); // Remove temporary shape
+        setPendingShape({
           shape: 'rectangle',
           x: rect.left,
           y: rect.top,
           width: rect.width,
           height: rect.height
-        };
-        
-        onAnnotationsChange([...annotations, newAnnotation]);
+        });
+        setShowTypeDialog(true);
         setDrawMode('select');
       } else {
         canvas.remove(rect);
+        setDrawMode('select');
       }
     });
   };
 
   const addPolygonPoint = (canvas, e) => {
     const pointer = canvas.getPointer(e.e);
-    const color = ANNOTATION_TYPES.find(t => t.value === 'text')?.color || '#50fa7b';
+    const color = '#666666'; // Neutral color while drawing
     
     const newPoint = { x: pointer.x, y: pointer.y };
     const updatedPoints = [...polygonPoints, newPoint];
@@ -310,28 +317,12 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
       tempLines.forEach(obj => canvas.remove(obj));
       setTempLines([]);
       
-      const polygon = new fabric.Polygon(updatedPoints, {
-        fill: color + '20',
-        stroke: color,
-        strokeWidth: 2,
-        selectable: true,
-        hasControls: true,
-        hasBorders: true,
-        cornerSize: 8,
-        transparentCorners: false,
-        cornerColor: color,
-        cornerStrokeColor: '#ffffff',
-        borderColor: color
-      });
-      canvas.add(polygon);
-      
-      const newAnnotation = {
-        type: 'text',
+      // Store the shape data and show type dialog
+      setPendingShape({
         shape: 'polygon',
         points: updatedPoints.map(p => [p.x, p.y])
-      };
-      
-      onAnnotationsChange([...annotations, newAnnotation]);
+      });
+      setShowTypeDialog(true);
       setPolygonPoints([]);
       setDrawMode('select');
     }
@@ -431,8 +422,99 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
     setDrawMode('select');
   };
 
+  const handleTypeDialogConfirm = () => {
+    if (!pendingShape) return;
+
+    const newAnnotation = {
+      type: selectedType,
+      ...pendingShape
+    };
+
+    // Add text content if needed
+    const typeInfo = ANNOTATION_TYPES.find(t => t.value === selectedType);
+    if (typeInfo?.needsText && textContent.trim()) {
+      newAnnotation.text = textContent.trim();
+    }
+
+    onAnnotationsChange([...annotations, newAnnotation]);
+    
+    // Reset dialog state
+    setShowTypeDialog(false);
+    setPendingShape(null);
+    setSelectedType('text');
+    setTextContent('');
+  };
+
+  const handleTypeDialogCancel = () => {
+    setShowTypeDialog(false);
+    setPendingShape(null);
+    setSelectedType('text');
+    setTextContent('');
+  };
+
   return (
     <div className="template-editor">
+      {/* Type Selection Dialog */}
+      {showTypeDialog && (
+        <div className="type-dialog-overlay" onClick={handleTypeDialogCancel}>
+          <div className="type-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="type-dialog-header">
+              <h3>Select Annotation Type</h3>
+              <button className="close-btn" onClick={handleTypeDialogCancel}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                  <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2"/>
+                  <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2"/>
+                </svg>
+              </button>
+            </div>
+            
+            <div className="type-dialog-body">
+              <div className="type-options">
+                {ANNOTATION_TYPES.map(type => (
+                  <label key={type.value} className="type-option">
+                    <input
+                      type="radio"
+                      name="annotationType"
+                      value={type.value}
+                      checked={selectedType === type.value}
+                      onChange={(e) => setSelectedType(e.target.value)}
+                    />
+                    <span className="type-color" style={{ backgroundColor: type.color }} />
+                    <span className="type-label">{type.label}</span>
+                  </label>
+                ))}
+              </div>
+
+              {ANNOTATION_TYPES.find(t => t.value === selectedType)?.needsText && (
+                <div className="text-input-section">
+                  <label htmlFor="textContent">Text Content:</label>
+                  <input
+                    id="textContent"
+                    type="text"
+                    value={textContent}
+                    onChange={(e) => setTextContent(e.target.value)}
+                    placeholder="Enter text content..."
+                    autoFocus
+                  />
+                </div>
+              )}
+            </div>
+            
+            <div className="type-dialog-footer">
+              <button className="cancel-btn" onClick={handleTypeDialogCancel}>
+                Cancel
+              </button>
+              <button 
+                className="confirm-btn" 
+                onClick={handleTypeDialogConfirm}
+                disabled={ANNOTATION_TYPES.find(t => t.value === selectedType)?.needsText && !textContent.trim()}
+              >
+                Add Annotation
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="editor-toolbar">
         <div className="toolbar-group">
           <button
@@ -575,6 +657,13 @@ export default function TemplateEditor({ templateImage, annotations, onAnnotatio
                   <div className="annotation-info">
                     <span className="info-label">Points:</span>
                     <span className="info-value">{ann.points.length}</span>
+                  </div>
+                )}
+
+                {ann.text && (
+                  <div className="annotation-info">
+                    <span className="info-label">Text:</span>
+                    <span className="info-value" style={{ fontStyle: 'italic' }}>{ann.text}</span>
                   </div>
                 )}
 

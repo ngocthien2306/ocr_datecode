@@ -40,9 +40,13 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   const [availableCameras, setAvailableCameras] = useState([]);
   const [loadingCameras, setLoadingCameras] = useState(false);
   const [selectedCameraForAdd, setSelectedCameraForAdd] = useState('');
+  
+  // Template editor states
+  const [selectedCameraForTemplate, setSelectedCameraForTemplate] = useState('');
+  const [cameraTemplates, setCameraTemplates] = useState({}); // { camera_id: { image, annotations } }
 
   useEffect(() => {
-    if (recipe && mode === 'edit') {
+    if (recipe && mode === 'edit' && isOpen) {
       // Ensure cameras array has proper structure with defaults
       const normalizedCameras = (recipe.cameras || []).map(cam => {
         return {
@@ -89,12 +93,44 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
       if (recipe.template_config?.template_image) {
         setTemplateImage(recipe.template_config.template_image);
+      } else {
+        setTemplateImage(null);
       }
+      
       if (recipe.template_config?.annotations) {
         setAnnotations(recipe.template_config.annotations);
+      } else {
+        setAnnotations([]);
       }
+    } else if (mode === 'create' && isOpen) {
+      // Reset form for create mode
+      setFormData({
+        name: '',
+        product_code: '',
+        description: '',
+        delay_reject: 100.0,
+        is_active: true,
+        cameras: [],
+        camera_settings: {
+          exposure_time: 50.0,
+          delay_trigger: 100.0,
+          gain: 1.0,
+          brightness: 0.5,
+          contrast: 1.0
+        },
+        model_thresholds: {
+          detection_threshold: 0.5,
+          recognition_threshold: 0.5,
+          min_text_size: 10,
+          max_text_size: 200
+        },
+        template_config: null,
+        roi_config: null
+      });
+      setTemplateImage(null);
+      setAnnotations([]);
     }
-  }, [recipe, mode]);
+  }, [recipe, mode, isOpen]);
 
   // Load available cameras
   useEffect(() => {
@@ -259,26 +295,54 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = (event) => setTemplateImage(event.target.result);
+      reader.onload = (event) => {
+        const imageData = event.target.result;
+        if (selectedCameraForTemplate) {
+          setCameraTemplates(prev => ({
+            ...prev,
+            [selectedCameraForTemplate]: {
+              image: imageData,
+              annotations: prev[selectedCameraForTemplate]?.annotations || []
+            }
+          }));
+        } else {
+          setTemplateImage(imageData);
+        }
+      };
       reader.readAsDataURL(file);
     }
   };
 
+  const handleAnnotationsChange = (newAnnotations) => {
+    if (selectedCameraForTemplate) {
+      setCameraTemplates(prev => ({
+        ...prev,
+        [selectedCameraForTemplate]: {
+          ...prev[selectedCameraForTemplate],
+          annotations: newAnnotations
+        }
+      }));
+    } else {
+      setAnnotations(newAnnotations);
+    }
+  };
+
+  const getCurrentTemplateImage = () => {
+    if (selectedCameraForTemplate && cameraTemplates[selectedCameraForTemplate]) {
+      return cameraTemplates[selectedCameraForTemplate].image;
+    }
+    return templateImage;
+  };
+
+  const getCurrentAnnotations = () => {
+    if (selectedCameraForTemplate && cameraTemplates[selectedCameraForTemplate]) {
+      return cameraTemplates[selectedCameraForTemplate].annotations || [];
+    }
+    return annotations;
+  };
+
   const handleClose = () => {
-    setFormData({
-      name: '',
-      product_code: '',
-      description: '',
-      delay_reject: 100.0,
-      is_active: true,
-      cameras: [],
-      camera_settings: { exposure_time: 50.0, delay_trigger: 100.0, gain: 1.0, brightness: 0.5, contrast: 1.0 },
-      model_thresholds: { detection_threshold: 0.5, recognition_threshold: 0.5, min_text_size: 10, max_text_size: 200 },
-      template_config: null,
-      roi_config: null
-    });
-    setTemplateImage(null);
-    setAnnotations([]);
+    // Don't reset formData here - let useEffect handle it when modal reopens
     setErrors({});
     setActiveTab('basic');
     setSelectedCameraForAdd('');
@@ -564,30 +628,85 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               <div className="form-section template-section">
                 <div className="template-header">
                   <h3>Template Configuration</h3>
-                  <div className="template-actions">
-                    <input type="file" id="template-upload" accept="image/*" onChange={handleImageUpload} style={{ display: 'none' }} />
-                    <label htmlFor="template-upload" className="btn btn-secondary">📤 Upload Template Image</label>
+                  <div className="template-camera-selector">
+                    <label>Select Camera:</label>
+                    <select 
+                      value={selectedCameraForTemplate} 
+                      onChange={(e) => setSelectedCameraForTemplate(e.target.value)}
+                      disabled={formData.cameras.length === 0}
+                    >
+                      <option value="">-- Select Camera --</option>
+                      {formData.cameras.map(cam => (
+                        <option key={cam.camera_id} value={cam.camera_id}>
+                          {cam.camera_id} - {cam.model_name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
 
-                {templateImage ? (
-                  <div className="template-editor-container">
-                    <TemplateEditor
-                      templateImage={templateImage}
-                      annotations={annotations}
-                      onAnnotationsChange={setAnnotations}
-                    />
+                {formData.cameras.length === 0 ? (
+                  <div className="template-placeholder">
+                    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                    <p>Please add cameras in the Camera tab first</p>
+                    <p className="hint">Template configuration requires at least one camera to be selected</p>
                   </div>
-                ) : (
+                ) : !selectedCameraForTemplate ? (
                   <div className="template-placeholder">
                     <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                       <rect x="3" y="3" width="18" height="18" rx="2" strokeWidth="2"/>
                       <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/>
                       <polyline points="21,15 16,10 5,21" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                     </svg>
-                    <p>No template image uploaded</p>
-                    <p className="hint">Upload an image to configure annotation regions</p>
+                    <p>Select a camera to configure template</p>
+                    <p className="hint">Choose a camera from the dropdown above</p>
                   </div>
+                ) : (
+                  <>
+                    <div className="template-actions">
+                      <input 
+                        type="file" 
+                        id={`template-upload-${selectedCameraForTemplate}`}
+                        accept="image/*" 
+                        onChange={handleImageUpload} 
+                        style={{ display: 'none' }} 
+                      />
+                      <label 
+                        htmlFor={`template-upload-${selectedCameraForTemplate}`}
+                        className="btn btn-secondary"
+                      >
+                        📤 Upload Template Image
+                      </label>
+                      {getCurrentTemplateImage() && (
+                        <span className="template-info">
+                          Camera: {selectedCameraForTemplate} | 
+                          Annotations: {getCurrentAnnotations().length}
+                        </span>
+                      )}
+                    </div>
+
+                    {getCurrentTemplateImage() ? (
+                      <div className="template-editor-container">
+                        <TemplateEditor
+                          templateImage={getCurrentTemplateImage()}
+                          annotations={getCurrentAnnotations()}
+                          onAnnotationsChange={handleAnnotationsChange}
+                        />
+                      </div>
+                    ) : (
+                      <div className="template-placeholder">
+                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                          <rect x="3" y="3" width="18" height="18" rx="2" strokeWidth="2"/>
+                          <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/>
+                          <polyline points="21,15 16,10 5,21" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                        <p>No template image uploaded for this camera</p>
+                        <p className="hint">Upload an image to configure annotation regions</p>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}
