@@ -1,9 +1,4 @@
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
-}
+
 
 .logo {
   height: 6em;
@@ -39,4 +34,314 @@
 
 .read-the-docs {
   color: #888;
+}
+
+/* ============================================
+   LOGIN LOADING SCREEN
+   ============================================ */
+
+.login-loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+.login-loading-overlay.light-mode {
+  background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 50%, #cbd5e1 100%);
+}
+
+.login-loading-content {
+  text-align: center;
+  position: relative;
+}
+
+/* System Boot Animation */
+.system-boot-container {
+  position: relative;
+  width: 400px;
+  height: 300px;
+  margin: 0 auto;
+}
+
+.boot-circle-container {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  margin: 0 auto 30px;
+}
+
+.boot-outer-ring {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: 4px solid rgba(34, 211, 238, 0.2);
+  border-radius: 50%;
+  animation: rotateRing 3s linear infinite;
+}
+
+.login-loading-overlay.light-mode .boot-outer-ring {
+  border-color: rgba(59, 130, 246, 0.2);
+}
+
+.boot-outer-ring::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  background: #22d3ee;
+  border-radius: 50%;
+  box-shadow: 0 0 20px rgba(34, 211, 238, 0.8);
+  animation: orbitDot 3s linear infinite;
+}
+
+.login-loading-overlay.light-mode .boot-outer-ring::before {
+  background: #3b82f6;
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.8);
+}
+
+.boot-middle-ring {
+  position: absolute;
+  top: 15px;
+  left: 15px;
+  width: calc(100% - 30px);
+  height: calc(100% - 30px);
+  border: 3px solid rgba(139, 92, 246, 0.3);
+  border-radius: 50%;
+  animation: rotateRing 2s linear infinite reverse;
+}
+
+.login-loading-overlay.light-mode .boot-middle-ring {
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+.boot-inner-ring {
+  position: absolute;
+  top: 30px;
+  left: 30px;
+  width: calc(100% - 60px);
+  height: calc(100% - 60px);
+  border: 2px solid rgba(236, 72, 153, 0.4);
+  border-radius: 50%;
+  animation: rotateRing 1.5s linear infinite;
+}
+
+.login-loading-overlay.light-mode .boot-inner-ring {
+  border-color: rgba(236, 72, 153, 0.4);
+}
+
+.boot-center-icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 80px;
+  height: 80px;
+  background: linear-gradient(135deg, #22d3ee, #3b82f6);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 40px rgba(34, 211, 238, 0.6);
+  animation: centerPulse 2s ease-in-out infinite;
+}
+
+.login-loading-overlay.light-mode .boot-center-icon {
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  box-shadow: 0 0 40px rgba(59, 130, 246, 0.6);
+}
+
+.boot-center-icon::before {
+  content: '◉';
+  font-size: 40px;
+  color: white;
+  animation: iconSpin 3s ease-in-out infinite;
+}
+
+/* System Info Lines */
+.boot-system-info {
+  margin-top: 40px;
+  text-align: left;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  color: #22d3ee;
+  line-height: 1.8;
+}
+
+.login-loading-overlay.light-mode .boot-system-info {
+  color: #3b82f6;
+}
+
+.boot-info-line {
+  opacity: 0;
+  animation: fadeInText 0.5s ease-in-out forwards;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.boot-info-line:nth-child(1) { animation-delay: 0.2s; }
+.boot-info-line:nth-child(2) { animation-delay: 0.5s; }
+.boot-info-line:nth-child(3) { animation-delay: 0.8s; }
+.boot-info-line:nth-child(4) { animation-delay: 1.1s; }
+.boot-info-line:nth-child(5) { animation-delay: 1.4s; }
+
+.boot-info-line::before {
+  content: '▸';
+  color: #10b981;
+  font-weight: bold;
+}
+
+.login-loading-overlay.light-mode .boot-info-line::before {
+  color: #059669;
+}
+
+.boot-info-check {
+  margin-left: auto;
+  color: #10b981;
+  font-weight: bold;
+}
+
+.login-loading-overlay.light-mode .boot-info-check {
+  color: #059669;
+}
+
+/* Progress Bar */
+.boot-progress-container {
+  margin-top: 30px;
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+}
+
+.login-loading-overlay.light-mode .boot-progress-container {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.boot-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #22d3ee, #3b82f6, #8b5cf6);
+  border-radius: 10px;
+  animation: progressFill 2s ease-in-out forwards;
+  box-shadow: 0 0 20px rgba(34, 211, 238, 0.6);
+}
+
+.login-loading-overlay.light-mode .boot-progress-bar {
+  background: linear-gradient(90deg, #3b82f6, #8b5cf6, #ec4899);
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.6);
+}
+
+/* Welcome Text */
+.boot-welcome-text {
+  margin-top: 25px;
+  font-family: 'Orbitron', sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  color: #22d3ee;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  opacity: 0;
+  animation: fadeInText 0.5s ease-in-out 1.5s forwards;
+}
+
+.login-loading-overlay.light-mode .boot-welcome-text {
+  color: #3b82f6;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes rotateRing {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes orbitDot {
+  from {
+    transform: rotate(0deg) translateX(100px);
+  }
+  to {
+    transform: rotate(360deg) translateX(100px);
+  }
+}
+
+@keyframes centerPulse {
+  0%, 100% {
+    transform: translate(-50%, -50%) scale(1);
+    box-shadow: 0 0 40px rgba(34, 211, 238, 0.6);
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1.1);
+    box-shadow: 0 0 60px rgba(34, 211, 238, 0.9);
+  }
+}
+
+@keyframes iconSpin {
+  0%, 100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(180deg);
+  }
+}
+
+@keyframes fadeInText {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes progressFill {
+  from {
+    width: 0%;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+/* Light mode specific animations */
+.login-loading-overlay.light-mode .boot-center-icon {
+  animation: centerPulseLightMode 2s ease-in-out infinite;
+}
+
+@keyframes centerPulseLightMode {
+  0%, 100% {
+    transform: translate(-50%, -50%) scale(1);
+    box-shadow: 0 0 40px rgba(59, 130, 246, 0.6);
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1.1);
+    box-shadow: 0 0 60px rgba(59, 130, 246, 0.9);
+  }
 }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Dashboard from './components/Dashboard';
 import { authAPI } from './services/api';
+import './App.css';
 
 export default function SuntechAutomation() {
   const [currentSession, setCurrentSession] = useState(1);
@@ -16,6 +17,7 @@ export default function SuntechAutomation() {
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showLoginLoading, setShowLoginLoading] = useState(false);
   const totalSessions = 3;
 
   useEffect(() => {
@@ -43,12 +45,19 @@ export default function SuntechAutomation() {
       localStorage.setItem('user', JSON.stringify(response.user));
 
       console.log('Login successful:', response.user);
-      setIsLoggedIn(true);
+      
+      // Show login loading screen for 2 seconds
+      setIsLoading(false);
+      setShowLoginLoading(true);
+      
+      setTimeout(() => {
+        setShowLoginLoading(false);
+        setIsLoggedIn(true);
+      }, 2000);
     } catch (error) {
       console.error('Login error:', error);
       const errorMessage = error.response?.data?.detail || 'Login failed. Please check your credentials.';
       setLoginError(errorMessage);
-    } finally {
       setIsLoading(false);
     }
   };
@@ -75,6 +84,55 @@ export default function SuntechAutomation() {
   // Show Dashboard if logged in
   if (isLoggedIn) {
     return <Dashboard onLogout={handleLogout} />;
+  }
+
+  // Show login loading screen
+  if (showLoginLoading) {
+    return (
+      <div className={`login-loading-overlay ${isLightMode ? 'light-mode' : ''}`}>
+        <div className="login-loading-content">
+          <div className="system-boot-container">
+            <div className="boot-circle-container">
+              <div className="boot-outer-ring"></div>
+              <div className="boot-middle-ring"></div>
+              <div className="boot-inner-ring"></div>
+              <div className="boot-center-icon"></div>
+            </div>
+
+            <div className="boot-system-info">
+              <div className="boot-info-line">
+                <span>Initializing Camera Vision System</span>
+                <span className="boot-info-check">✓</span>
+              </div>
+              <div className="boot-info-line">
+                <span>Loading OCR Engine Modules</span>
+                <span className="boot-info-check">✓</span>
+              </div>
+              <div className="boot-info-line">
+                <span>Connecting to Database</span>
+                <span className="boot-info-check">✓</span>
+              </div>
+              <div className="boot-info-line">
+                <span>Authenticating User Session</span>
+                <span className="boot-info-check">✓</span>
+              </div>
+              <div className="boot-info-line">
+                <span>Preparing Dashboard Interface</span>
+                <span className="boot-info-check">✓</span>
+              </div>
+            </div>
+
+            <div className="boot-progress-container">
+              <div className="boot-progress-bar"></div>
+            </div>
+
+            <div className="boot-welcome-text">
+              Welcome to System
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (

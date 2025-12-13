@@ -5,15 +5,33 @@ import Receipts from './Receipts';
 import Historical from './Historical';
 import Settings from './Settings';
 import CameraManagement from './CameraManagement';
+import { camerasAPI } from '../services/api';
 
 export default function Dashboard({ onLogout }) {
   const [currentSection, setCurrentSection] = useState('dashboard');
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadingTemplates, setLoadingTemplates] = useState(() => {
+    return {
+      dashboard: localStorage.getItem('dashboardLoading') || 'camera-vision',
+      users: localStorage.getItem('usersLoading') || 'users',
+      receipts: localStorage.getItem('receiptsLoading') || 'receipts',
+      cameras: localStorage.getItem('camerasLoading') || 'cameras',
+      historical: localStorage.getItem('historicalLoading') || 'historical',
+      settings: localStorage.getItem('settingsLoading') || 'settings'
+    };
+  });
   const [darkMode, setDarkMode] = useState(() => {
     const savedMode = localStorage.getItem('appThemeMode');
     return savedMode === 'dark' ? true : false;
   });
   const [currentTime, setCurrentTime] = useState(new Date());
   const [totalProductsToday, setTotalProductsToday] = useState(1247);
+  const [cameras, setCameras] = useState([]);
+  const [cameraStats, setCameraStats] = useState({
+    total: 0,
+    connected: 0,
+    active: 0
+  });
 
   const camera1ChartRef = useRef(null);
   const camera2ChartRef = useRef(null);
@@ -24,6 +42,406 @@ export default function Dashboard({ onLogout }) {
   const [camera3Data, setCamera3Data] = useState([32, 35, 38, 42, 45, 48, 52, 55, 58, 62, 65, 68, 64, 70, 67, 73, 76, 72, 78, 82, 79, 85, 88, 90]);
 
   const hours = ['00:00', '01:00', '02:00', '03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00', '23:00'];
+
+  // Helper function to render loading template
+  const renderLoadingTemplate = (template) => {
+    switch(template) {
+      case 'camera-vision':
+        return (
+          <>
+            <div className="camera-focus-ring">
+              <div className="scan-lines">
+                <div className="scan-line"></div>
+                <div className="scan-line"></div>
+              </div>
+              <div className="focus-ring"></div>
+              <div className="focus-ring"></div>
+              <div className="focus-ring"></div>
+              <div className="focus-ring"></div>
+              <div className="camera-lens"></div>
+              <div className="corner-brackets">
+                <div className="bracket top-left"></div>
+                <div className="bracket top-right"></div>
+                <div className="bracket bottom-left"></div>
+                <div className="bracket bottom-right"></div>
+              </div>
+            </div>
+            <div className="loading-text-container">
+              <div className="loading-title">VISION SYSTEM</div>
+              <div className="loading-subtitle">INITIALIZING...</div>
+            </div>
+            <div className="progress-indicators">
+              <div className="progress-bar-container">
+                <div className="progress-bar-fill"></div>
+              </div>
+              <div className="status-dots">
+                <div className="status-dot"></div>
+                <div className="status-dot"></div>
+                <div className="status-dot"></div>
+                <div className="status-dot"></div>
+              </div>
+            </div>
+            <div className="system-info">
+              <div className="system-info-item">
+                <span className="status-indicator"></span>
+                <span>CAMERA MODULE</span>
+              </div>
+              <div className="system-info-item">
+                <span className="status-indicator"></span>
+                <span>OCR ENGINE</span>
+              </div>
+              <div className="system-info-item">
+                <span className="status-indicator"></span>
+                <span>DATABASE</span>
+              </div>
+            </div>
+          </>
+        );
+
+      case 'spinner':
+        return (
+          <>
+            <div className="spinner-loader">
+              <div className="spinner-circle"></div>
+              <div className="spinner-circle"></div>
+              <div className="spinner-circle"></div>
+            </div>
+            <div className="loading-text-container">
+              <div className="loading-title">LOADING</div>
+              <div className="loading-subtitle">PLEASE WAIT...</div>
+            </div>
+          </>
+        );
+
+      case 'pulse':
+        return (
+          <>
+            <div className="pulse-loader">
+              <div className="pulse-ring"></div>
+              <div className="pulse-ring"></div>
+              <div className="pulse-ring"></div>
+              <div className="pulse-core"></div>
+            </div>
+            <div className="loading-text-container">
+              <div className="loading-title">PROCESSING</div>
+              <div className="loading-subtitle">ANALYZING DATA...</div>
+            </div>
+          </>
+        );
+
+      case 'radar':
+        return (
+          <>
+            <div className="radar-loader">
+              <div className="radar-grid">
+                <div className="radar-circle"></div>
+                <div className="radar-circle"></div>
+                <div className="radar-circle"></div>
+                <div className="radar-circle"></div>
+              </div>
+              <div className="radar-sweep"></div>
+              <div className="radar-dot"></div>
+              <div className="radar-dot"></div>
+              <div className="radar-dot"></div>
+            </div>
+            <div className="loading-text-container">
+              <div className="loading-title">SCANNING</div>
+              <div className="loading-subtitle">DETECTING OBJECTS...</div>
+            </div>
+          </>
+        );
+
+      case 'grid':
+        return (
+          <>
+            <div className="grid-loader">
+              <div className="grid-container">
+                {[...Array(25)].map((_, i) => (
+                  <div key={i} className="grid-cell"></div>
+                ))}
+              </div>
+            </div>
+            <div className="loading-text-container">
+              <div className="loading-title">MATRIX LOADING</div>
+              <div className="loading-subtitle">SYNCING SYSTEMS...</div>
+            </div>
+          </>
+        );
+
+      case 'circuit':
+        return (
+          <>
+            <div className="circuit-loader">
+              <div className="circuit-board">
+                <div className="circuit-line horizontal line-1"></div>
+                <div className="circuit-line horizontal line-2"></div>
+                <div className="circuit-line vertical line-3"></div>
+                <div className="circuit-line vertical line-4"></div>
+                <div className="circuit-node node-1"></div>
+                <div className="circuit-node node-2"></div>
+                <div className="circuit-node node-3"></div>
+                <div className="circuit-node node-4"></div>
+                <div className="circuit-chip"></div>
+              </div>
+            </div>
+            <div className="loading-text-container">
+              <div className="loading-title">SYSTEM BOOT</div>
+              <div className="loading-subtitle">INITIALIZING HARDWARE...</div>
+            </div>
+          </>
+        );
+
+      case 'barcode':
+        return (
+          <>
+            <div className="barcode-loader">
+              <div className="barcode-container">
+                {[...Array(15)].map((_, i) => (
+                  <div key={i} className="barcode-line"></div>
+                ))}
+                <div className="scanner-beam"></div>
+              </div>
+              <div className="scanner-frame">
+                <div className="scanner-corner top-left"></div>
+                <div className="scanner-corner top-right"></div>
+                <div className="scanner-corner bottom-left"></div>
+                <div className="scanner-corner bottom-right"></div>
+              </div>
+              <div className="barcode-digits">8 901234 567890</div>
+            </div>
+            <div className="loading-text-container">
+              <div className="loading-title">BARCODE SCANNING</div>
+              <div className="loading-subtitle">READING CODE...</div>
+            </div>
+          </>
+        );
+
+      case 'ocr':
+        return (
+          <>
+            <div className="ocr-loader">
+              <div className="ocr-document">
+                <div className="ocr-text-line"></div>
+                <div className="ocr-text-line"></div>
+                <div className="ocr-text-line"></div>
+                <div className="ocr-text-line"></div>
+                <div className="ocr-text-line"></div>
+                <div className="ocr-scan-overlay"></div>
+                <div className="ocr-highlight-box"></div>
+                <div className="ocr-highlight-box"></div>
+                <div className="ocr-highlight-box"></div>
+              </div>
+              <div className="ocr-analysis-indicators">
+                <div className="ocr-indicator">
+                  <div className="ocr-indicator-icon">A</div>
+                  <div className="ocr-indicator-label">TEXT</div>
+                </div>
+                <div className="ocr-indicator">
+                  <div className="ocr-indicator-icon">1</div>
+                  <div className="ocr-indicator-label">DIGIT</div>
+                </div>
+                <div className="ocr-indicator">
+                  <div className="ocr-indicator-icon">✓</div>
+                  <div className="ocr-indicator-label">VERIFY</div>
+                </div>
+              </div>
+            </div>
+            <div className="loading-text-container">
+              <div className="loading-title">OCR PROCESSING</div>
+              <div className="loading-subtitle">RECOGNIZING TEXT...</div>
+            </div>
+          </>
+        );
+
+      case 'users':
+        return (
+          <>
+            <div className="users-loader">
+              <div className="users-circle-container">
+                <div className="user-avatar"></div>
+                <div className="user-avatar"></div>
+                <div className="user-avatar"></div>
+              </div>
+              <div className="users-connection"></div>
+            </div>
+            <div className="loading-text-container">
+              <div className="loading-title">USER MANAGEMENT</div>
+              <div className="loading-subtitle">LOADING USERS...</div>
+            </div>
+          </>
+        );
+
+      case 'receipts':
+        return (
+          <>
+            <div className="receipts-loader">
+              <div className="receipt-paper">
+                <div className="receipt-header">
+                  <div className="receipt-icon"></div>
+                  <div className="receipt-title"></div>
+                </div>
+                <div className="receipt-line"></div>
+                <div className="receipt-line"></div>
+                <div className="receipt-line"></div>
+                <div className="receipt-line"></div>
+                <div className="receipt-scanner-line"></div>
+              </div>
+            </div>
+            <div className="loading-text-container">
+              <div className="loading-title">RECEIPTS</div>
+              <div className="loading-subtitle">SCANNING DOCUMENTS...</div>
+            </div>
+          </>
+        );
+
+      case 'cameras':
+        return (
+          <>
+            <div className="cameras-loader">
+              <div className="camera-grid">
+                <div className="camera-lens"></div>
+                <div className="camera-lens"></div>
+                <div className="camera-lens"></div>
+                <div className="camera-lens"></div>
+              </div>
+              <div className="camera-status-indicator">
+                <div className="camera-dot"></div>
+                <div className="camera-dot"></div>
+                <div className="camera-dot"></div>
+                <div className="camera-dot"></div>
+              </div>
+            </div>
+            <div className="loading-text-container">
+              <div className="loading-title">CAMERAS</div>
+              <div className="loading-subtitle">CONNECTING DEVICES...</div>
+            </div>
+          </>
+        );
+
+      case 'historical':
+        return (
+          <>
+            <div className="historical-loader">
+              <div className="timeline-container">
+                <div className="timeline-line"></div>
+                <div className="timeline-point"></div>
+                <div className="timeline-point"></div>
+                <div className="timeline-point"></div>
+                <div className="timeline-card"></div>
+                <div className="timeline-card"></div>
+              </div>
+            </div>
+            <div className="loading-text-container">
+              <div className="loading-title">HISTORICAL DATA</div>
+              <div className="loading-subtitle">LOADING TIMELINE...</div>
+            </div>
+          </>
+        );
+
+      case 'settings':
+        return (
+          <>
+            <div className="settings-loader">
+              <div className="gears-container">
+                <div className="gear gear-large"></div>
+                <div className="gear gear-small-1"></div>
+                <div className="gear gear-small-2"></div>
+                <div className="settings-particles">
+                  <div className="settings-particle"></div>
+                  <div className="settings-particle"></div>
+                  <div className="settings-particle"></div>
+                </div>
+              </div>
+            </div>
+            <div className="loading-text-container">
+              <div className="loading-title">SETTINGS</div>
+              <div className="loading-subtitle">CONFIGURING...</div>
+            </div>
+          </>
+        );
+
+      default:
+        return (
+          <>
+            <div className="spinner-loader">
+              <div className="spinner-circle"></div>
+              <div className="spinner-circle"></div>
+              <div className="spinner-circle"></div>
+            </div>
+            <div className="loading-text-container">
+              <div className="loading-title">LOADING</div>
+              <div className="loading-subtitle">PLEASE WAIT...</div>
+            </div>
+          </>
+        );
+    }
+  };
+
+  // Fetch cameras on component mount
+  useEffect(() => {
+    fetchCameras();
+  }, []);
+
+  // Listen for loading template changes from Settings
+  useEffect(() => {
+    const handleTemplateChange = (event) => {
+      const { tab, template } = event.detail;
+      const tabName = tab.replace('Loading', '');
+      setLoadingTemplates(prev => ({
+        ...prev,
+        [tabName]: template
+      }));
+    };
+
+    window.addEventListener('tabLoadingChanged', handleTemplateChange);
+
+    return () => {
+      window.removeEventListener('tabLoadingChanged', handleTemplateChange);
+    };
+  }, []);
+
+  const fetchCameras = async () => {
+    const startTime = Date.now();
+    
+    try {
+      const [allCameras, countData] = await Promise.all([
+        camerasAPI.getAllCameras(0, 100),
+        camerasAPI.getCamerasCount()
+      ]);
+      
+      setCameras(allCameras);
+      
+      const connectedCount = allCameras.filter(c => c.is_connected).length;
+      const activeCount = allCameras.filter(c => c.is_active).length;
+      
+      setCameraStats({
+        total: countData.count || allCameras.length,
+        connected: connectedCount,
+        active: activeCount
+      });
+    } catch (err) {
+      console.error('Error fetching cameras:', err);
+    } finally {
+      // Ensure minimum loading time of 1000ms
+      const elapsedTime = Date.now() - startTime;
+      const remainingTime = Math.max(0, 1000 - elapsedTime);
+      
+      setTimeout(() => {
+        setIsLoading(false);
+      }, remainingTime);
+    }
+  };
+
+  // Handle section change with loading
+  const handleSectionChange = (section) => {
+    setIsLoading(true);
+    setCurrentSection(section);
+    
+    // Simulate loading time of 1000ms
+    setTimeout(() => {
+      setIsLoading(false);
+    }, 1000);
+  };
 
   // Dark mode effect
   useEffect(() => {
@@ -223,10 +641,10 @@ export default function Dashboard({ onLogout }) {
         <div className="header-right">
           <div className="connection-status">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="2" fill="#10b981"/>
+              <circle cx="12" cy="12" r="2" fill={cameraStats.connected === cameraStats.total && cameraStats.total > 0 ? "#10b981" : "#f59e0b"}/>
               <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" stroke="currentColor" strokeWidth="2"/>
             </svg>
-            <span>All cameras online</span>
+            <span>{cameraStats.connected === cameraStats.total && cameraStats.total > 0 ? 'All cameras online' : `${cameraStats.connected}/${cameraStats.total} cameras online`}</span>
           </div>
           <div className="profile">
             <img src="https://images.pexels.com/photos/30004493/pexels-photo-30004493.jpeg?auto=compress&cs=tinysrgb&h=350" alt="User" className="profile-avatar" />
@@ -243,7 +661,7 @@ export default function Dashboard({ onLogout }) {
             <a
               href="#dashboard"
               className={`nav-item ${currentSection === 'dashboard' ? 'active' : ''}`}
-              onClick={(e) => { e.preventDefault(); setCurrentSection('dashboard'); }}
+              onClick={(e) => { e.preventDefault(); handleSectionChange('dashboard'); }}
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                 <rect x="3" y="3" width="7" height="7" stroke="currentColor" strokeWidth="2"/>
@@ -256,7 +674,7 @@ export default function Dashboard({ onLogout }) {
             <a
               href="#users"
               className={`nav-item ${currentSection === 'users' ? 'active' : ''}`}
-              onClick={(e) => { e.preventDefault(); setCurrentSection('users'); }}
+              onClick={(e) => { e.preventDefault(); handleSectionChange('users'); }}
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                 <path d="M17 21V19C17 17.9391 16.5786 16.9217 15.8284 16.1716C15.0783 15.4214 14.0609 15 13 15H5C3.93913 15 2.92172 15.4214 2.17157 16.1716C1.42143 16.9217 1 17.9391 1 19V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -269,7 +687,7 @@ export default function Dashboard({ onLogout }) {
             <a
               href="#receipts"
               className={`nav-item ${currentSection === 'receipts' ? 'active' : ''}`}
-              onClick={(e) => { e.preventDefault(); setCurrentSection('receipts'); }}
+              onClick={(e) => { e.preventDefault(); handleSectionChange('receipts'); }}
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                 <path d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -283,7 +701,7 @@ export default function Dashboard({ onLogout }) {
             <a
               href="#cameras"
               className={`nav-item ${currentSection === 'cameras' ? 'active' : ''}`}
-              onClick={(e) => { e.preventDefault(); setCurrentSection('cameras'); }}
+              onClick={(e) => { e.preventDefault(); handleSectionChange('cameras'); }}
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                 <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" strokeWidth="2"/>
@@ -295,7 +713,7 @@ export default function Dashboard({ onLogout }) {
             <a
               href="#historical"
               className={`nav-item ${currentSection === 'historical' ? 'active' : ''}`}
-              onClick={(e) => { e.preventDefault(); setCurrentSection('historical'); }}
+              onClick={(e) => { e.preventDefault(); handleSectionChange('historical'); }}
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                 <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
@@ -328,7 +746,7 @@ export default function Dashboard({ onLogout }) {
             <a
               href="#settings"
               className={`nav-item ${currentSection === 'settings' ? 'active' : ''}`}
-              onClick={(e) => { e.preventDefault(); setCurrentSection('settings'); }}
+              onClick={(e) => { e.preventDefault(); handleSectionChange('settings'); }}
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                 <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
@@ -349,8 +767,16 @@ export default function Dashboard({ onLogout }) {
 
         {/* Main Dashboard */}
         <main className="dashboard-main">
-          {currentSection === 'dashboard' && (
-            <section className="content-section active">
+          {isLoading ? (
+            <div className="loading-overlay">
+              <div className="loading-container">
+                {renderLoadingTemplate(loadingTemplates[currentSection] || 'camera-vision')}
+              </div>
+            </div>
+          ) : (
+            <>
+              {currentSection === 'dashboard' && (
+                <section className="content-section active">
               <div className="dashboard-header-section">
                 <div className="welcome-section">
                   <h1>Camera Production Dashboard</h1>
@@ -373,8 +799,10 @@ export default function Dashboard({ onLogout }) {
                   </div>
                   <div className="card-info">
                     <h3>Total Cameras</h3>
-                    <div className="card-value">3</div>
-                    <span className="card-status online">All online</span>
+                    <div className="card-value">{cameraStats.total}</div>
+                    <span className={`card-status ${cameraStats.connected === cameraStats.total && cameraStats.total > 0 ? 'online' : 'offline'}`}>
+                      {cameraStats.connected === cameraStats.total && cameraStats.total > 0 ? 'All online' : `${cameraStats.connected} online`}
+                    </span>
                   </div>
                 </div>
 
@@ -425,82 +853,105 @@ export default function Dashboard({ onLogout }) {
                 {/* Left Section - Camera Previews */}
                 <div className="dashboard-left">
                   <div className="camera-previews">
-                    {[
-                      { id: 1, name: 'Camera 1 - Line A', fps: 30, products: 456, image: 'https://images.pexels.com/photos/1267338/pexels-photo-1267338.jpeg?auto=compress&cs=tinysrgb&w=800' },
-                      { id: 2, name: 'Camera 2 - Line B', fps: 30, products: 423, image: 'https://images.pexels.com/photos/3862130/pexels-photo-3862130.jpeg?auto=compress&cs=tinysrgb&w=800' },
-                      { id: 3, name: 'Camera 3 - QC', fps: 30, products: 368, image: 'https://images.pexels.com/photos/5022849/pexels-photo-5022849.jpeg?auto=compress&cs=tinysrgb&w=800' }
-                    ].map(camera => (
-                      <div key={camera.id} className="camera-preview-card">
+                    {cameras.slice(0, 3).map((camera, index) => (
+                      <div key={camera.camera_id} className="camera-preview-card">
                         <div className="camera-preview-header">
                           <div className="camera-preview-title">
-                            <div className="camera-status active"></div>
-                            <span>{camera.name}</span>
+                            <div className={`camera-status ${camera.is_connected ? 'active' : 'inactive'}`}></div>
+                            <span>{camera.camera_id} - {camera.location || camera.model_name}</span>
                           </div>
-                          <span className="live-badge">LIVE</span>
+                          {camera.is_connected && <span className="live-badge">LIVE</span>}
                         </div>
                         <div className="camera-preview-frame">
-                          <img src={camera.image} alt={`${camera.name} Feed`} />
+                          <img 
+                            src={
+                              index === 0 ? 'https://images.pexels.com/photos/1267338/pexels-photo-1267338.jpeg?auto=compress&cs=tinysrgb&w=800' :
+                              index === 1 ? 'https://images.pexels.com/photos/3862130/pexels-photo-3862130.jpeg?auto=compress&cs=tinysrgb&w=800' :
+                              'https://images.pexels.com/photos/5022849/pexels-photo-5022849.jpeg?auto=compress&cs=tinysrgb&w=800'
+                            }
+                            alt={`${camera.camera_id} Feed`} 
+                          />
                           <div className="camera-overlay-info">
                             <div className="overlay-stat">
                               <span className="overlay-label">FPS:</span>
-                              <span className="overlay-value">{camera.fps}</span>
+                              <span className="overlay-value">{camera.max_frame_rate || 30}</span>
                             </div>
                             <div className="overlay-stat">
-                              <span className="overlay-label">Products:</span>
-                              <span className="overlay-value">{camera.products}</span>
+                              <span className="overlay-label">Resolution:</span>
+                              <span className="overlay-value">{camera.resolution_width}x{camera.resolution_height}</span>
+                            </div>
+                            <div className="overlay-stat">
+                              <span className="overlay-label">IP:</span>
+                              <span className="overlay-value">{camera.ip_address || 'N/A'}</span>
                             </div>
                           </div>
                         </div>
                       </div>
                     ))}
+                    {cameras.length === 0 && (
+                      <div style={{ padding: '2rem', textAlign: 'center', color: '#6b7280' }}>
+                        No cameras available. Please add cameras in Camera Management.
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 {/* Center Section - Camera Statistics Charts */}
                 <div className="dashboard-center">
                   <div className="camera-stats">
-                    {[
-                      { id: 1, name: 'Camera 1 - Production Line A', chartRef: camera1ChartRef, processed: 456, success: 452, failed: 4, avgTime: '2.1s' },
-                      { id: 2, name: 'Camera 2 - Production Line B', chartRef: camera2ChartRef, processed: 423, success: 417, failed: 6, avgTime: '2.3s' },
-                      { id: 3, name: 'Camera 3 - Quality Control', chartRef: camera3ChartRef, processed: 368, success: 360, failed: 8, avgTime: '2.6s' }
-                    ].map(camera => (
-                      <div key={camera.id} className="camera-card">
-                        <div className="camera-card-header">
-                          <div className="camera-title">
-                            <div className="camera-status active"></div>
-                            <h3>{camera.name}</h3>
+                    {cameras.slice(0, 3).map((camera, index) => {
+                      const chartRef = index === 0 ? camera1ChartRef : index === 1 ? camera2ChartRef : camera3ChartRef;
+                      return (
+                        <div key={camera.camera_id} className="camera-card">
+                          <div className="camera-card-header">
+                            <div className="camera-title">
+                              <div className={`camera-status ${camera.is_connected ? 'active' : 'inactive'}`}></div>
+                              <h3>{camera.camera_id} - {camera.location || camera.model_name}</h3>
+                            </div>
+                            <select className="time-filter">
+                              <option>Today</option>
+                              <option>Last 7 days</option>
+                              <option>Last 30 days</option>
+                            </select>
                           </div>
-                          <select className="time-filter">
-                            <option>Today</option>
-                            <option>Last 7 days</option>
-                            <option>Last 30 days</option>
-                          </select>
+                          <div className="camera-card-body">
+                            <div className="camera-metrics">
+                              <div className="metric">
+                                <span className="metric-label">Model</span>
+                                <span className="metric-value" style={{ fontSize: '14px' }}>{camera.model_name}</span>
+                              </div>
+                              <div className="metric">
+                                <span className="metric-label">Serial</span>
+                                <span className="metric-value" style={{ fontSize: '14px' }}>{camera.serial_number}</span>
+                              </div>
+                              <div className="metric success">
+                                <span className="metric-label">Status</span>
+                                <span className="metric-value" style={{ fontSize: '14px' }}>
+                                  {camera.is_connected ? 'Connected' : 'Disconnected'}
+                                </span>
+                              </div>
+                              <div className="metric">
+                                <span className="metric-label">FPS</span>
+                                <span className="metric-value">{camera.max_frame_rate || 'N/A'}</span>
+                              </div>
+                            </div>
+                            <div className="camera-chart">
+                              <canvas ref={chartRef} width="1000" height="250"></canvas>
+                            </div>
+                          </div>
                         </div>
-                        <div className="camera-card-body">
-                          <div className="camera-metrics">
-                            <div className="metric">
-                              <span className="metric-label">Products Processed</span>
-                              <span className="metric-value">{camera.processed}</span>
-                            </div>
-                            <div className="metric success">
-                              <span className="metric-label">Success</span>
-                              <span className="metric-value">{camera.success}</span>
-                            </div>
-                            <div className="metric fail">
-                              <span className="metric-label">Failed</span>
-                              <span className="metric-value">{camera.failed}</span>
-                            </div>
-                            <div className="metric">
-                              <span className="metric-label">Avg Time</span>
-                              <span className="metric-value">{camera.avgTime}</span>
-                            </div>
-                          </div>
-                          <div className="camera-chart">
-                            <canvas ref={camera.chartRef} width="1000" height="250"></canvas>
-                          </div>
-                        </div>
+                      );
+                    })}
+                    {cameras.length === 0 && (
+                      <div style={{ padding: '3rem', textAlign: 'center', color: '#6b7280', background: 'white', borderRadius: '12px' }}>
+                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" style={{ margin: '0 auto 1rem', opacity: 0.3 }}>
+                          <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" strokeWidth="2"/>
+                          <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
+                        </svg>
+                        <p>No cameras available</p>
+                        <p style={{ fontSize: '14px', marginTop: '0.5rem' }}>Add cameras in Camera Management to see statistics</p>
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
 
@@ -596,6 +1047,8 @@ export default function Dashboard({ onLogout }) {
           {currentSection === 'cameras' && <CameraManagement />}
           {currentSection === 'historical' && <Historical />}
           {currentSection === 'settings' && <Settings />}
+            </>
+          )}
         </main>
       </div>
     </div>

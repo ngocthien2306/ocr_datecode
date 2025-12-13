@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 export default function Settings() {
   const [settings, setSettings] = useState({
@@ -7,6 +7,14 @@ export default function Settings() {
     version: 'v1.0.0',
     language: 'en',
     timezone: 'UTC+7',
+
+    // Loading Templates for Each Tab
+    dashboardLoading: 'camera-vision',
+    usersLoading: 'users',
+    receiptsLoading: 'receipts',
+    camerasLoading: 'cameras',
+    historicalLoading: 'historical',
+    settingsLoading: 'settings',
 
     // Camera Settings
     camera1Enabled: true,
@@ -32,8 +40,34 @@ export default function Settings() {
     dailyReport: true,
   });
 
+  // Load saved loading templates from localStorage
+  useEffect(() => {
+    const tabKeys = ['dashboard', 'users', 'receipts', 'cameras', 'historical', 'settings'];
+    const loadedSettings = {};
+    
+    tabKeys.forEach(tab => {
+      const saved = localStorage.getItem(`${tab}Loading`);
+      if (saved) {
+        loadedSettings[`${tab}Loading`] = saved;
+      }
+    });
+    
+    if (Object.keys(loadedSettings).length > 0) {
+      setSettings(prev => ({ ...prev, ...loadedSettings }));
+    }
+  }, []);
+
   const handleChange = (key, value) => {
     setSettings(prev => ({ ...prev, [key]: value }));
+    
+    // Save tab loading templates to localStorage when changed
+    if (key.endsWith('Loading')) {
+      localStorage.setItem(key, value);
+      // Dispatch custom event to notify Dashboard component
+      window.dispatchEvent(new CustomEvent('tabLoadingChanged', { 
+        detail: { tab: key, template: value } 
+      }));
+    }
   };
 
   const handleSave = () => {
@@ -118,6 +152,153 @@ export default function Settings() {
                 <option value="UTC+7">UTC+7 (Bangkok, Hanoi)</option>
                 <option value="UTC+8">UTC+8 (Singapore, Beijing)</option>
                 <option value="UTC+9">UTC+9 (Tokyo, Seoul)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Loading Templates Settings */}
+        <div className="settings-section">
+          <h2>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
+              <path d="M12 1v6m0 6v6M1 12h6m6 0h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+            Loading Animation Templates
+          </h2>
+          <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '20px' }}>
+            Customize loading animations for each section of the application
+          </p>
+          <div className="settings-grid">
+            <div className="setting-item">
+              <label>Dashboard Loading</label>
+              <select 
+                value={settings.dashboardLoading} 
+                onChange={(e) => handleChange('dashboardLoading', e.target.value)}
+              >
+                <option value="camera-vision">Camera Vision System</option>
+                <option value="spinner">Classic Spinner</option>
+                <option value="pulse">Pulse Wave</option>
+                <option value="radar">Radar Scan</option>
+                <option value="grid">Grid Matrix</option>
+                <option value="circuit">Circuit Board</option>
+                <option value="barcode">Barcode Scanner</option>
+                <option value="ocr">OCR Text Recognition</option>
+                <option value="users">Users Network</option>
+                <option value="receipts">Receipt Scanner</option>
+                <option value="cameras">Multi-Lens System</option>
+                <option value="historical">Timeline History</option>
+                <option value="settings">Gear System</option>
+              </select>
+            </div>
+
+            <div className="setting-item">
+              <label>User Management Loading</label>
+              <select 
+                value={settings.usersLoading} 
+                onChange={(e) => handleChange('usersLoading', e.target.value)}
+              >
+                <option value="camera-vision">Camera Vision System</option>
+                <option value="spinner">Classic Spinner</option>
+                <option value="pulse">Pulse Wave</option>
+                <option value="radar">Radar Scan</option>
+                <option value="grid">Grid Matrix</option>
+                <option value="circuit">Circuit Board</option>
+                <option value="barcode">Barcode Scanner</option>
+                <option value="ocr">OCR Text Recognition</option>
+                <option value="users">Users Network</option>
+                <option value="receipts">Receipt Scanner</option>
+                <option value="cameras">Multi-Lens System</option>
+                <option value="historical">Timeline History</option>
+                <option value="settings">Gear System</option>
+              </select>
+            </div>
+
+            <div className="setting-item">
+              <label>Receipts Loading</label>
+              <select 
+                value={settings.receiptsLoading} 
+                onChange={(e) => handleChange('receiptsLoading', e.target.value)}
+              >
+                <option value="camera-vision">Camera Vision System</option>
+                <option value="spinner">Classic Spinner</option>
+                <option value="pulse">Pulse Wave</option>
+                <option value="radar">Radar Scan</option>
+                <option value="grid">Grid Matrix</option>
+                <option value="circuit">Circuit Board</option>
+                <option value="barcode">Barcode Scanner</option>
+                <option value="ocr">OCR Text Recognition</option>
+                <option value="users">Users Network</option>
+                <option value="receipts">Receipt Scanner</option>
+                <option value="cameras">Multi-Lens System</option>
+                <option value="historical">Timeline History</option>
+                <option value="settings">Gear System</option>
+              </select>
+            </div>
+
+            <div className="setting-item">
+              <label>Cameras Loading</label>
+              <select 
+                value={settings.camerasLoading} 
+                onChange={(e) => handleChange('camerasLoading', e.target.value)}
+              >
+                <option value="camera-vision">Camera Vision System</option>
+                <option value="spinner">Classic Spinner</option>
+                <option value="pulse">Pulse Wave</option>
+                <option value="radar">Radar Scan</option>
+                <option value="grid">Grid Matrix</option>
+                <option value="circuit">Circuit Board</option>
+                <option value="barcode">Barcode Scanner</option>
+                <option value="ocr">OCR Text Recognition</option>
+                <option value="users">Users Network</option>
+                <option value="receipts">Receipt Scanner</option>
+                <option value="cameras">Multi-Lens System</option>
+                <option value="historical">Timeline History</option>
+                <option value="settings">Gear System</option>
+              </select>
+            </div>
+
+            <div className="setting-item">
+              <label>Historical Loading</label>
+              <select 
+                value={settings.historicalLoading} 
+                onChange={(e) => handleChange('historicalLoading', e.target.value)}
+              >
+                <option value="camera-vision">Camera Vision System</option>
+                <option value="spinner">Classic Spinner</option>
+                <option value="pulse">Pulse Wave</option>
+                <option value="radar">Radar Scan</option>
+                <option value="grid">Grid Matrix</option>
+                <option value="circuit">Circuit Board</option>
+                <option value="barcode">Barcode Scanner</option>
+                <option value="ocr">OCR Text Recognition</option>
+                <option value="users">Users Network</option>
+                <option value="receipts">Receipt Scanner</option>
+                <option value="cameras">Multi-Lens System</option>
+                <option value="historical">Timeline History</option>
+                <option value="settings">Gear System</option>
+              </select>
+            </div>
+
+            <div className="setting-item">
+              <label>Settings Loading</label>
+              <select 
+                value={settings.settingsLoading} 
+                onChange={(e) => handleChange('settingsLoading', e.target.value)}
+              >
+                <option value="camera-vision">Camera Vision System</option>
+                <option value="spinner">Classic Spinner</option>
+                <option value="pulse">Pulse Wave</option>
+                <option value="radar">Radar Scan</option>
+                <option value="grid">Grid Matrix</option>
+                <option value="circuit">Circuit Board</option>
+                <option value="barcode">Barcode Scanner</option>
+                <option value="ocr">OCR Text Recognition</option>
+                <option value="users">Users Network</option>
+                <option value="receipts">Receipt Scanner</option>
+                <option value="cameras">Multi-Lens System</option>
+                <option value="historical">Timeline History</option>
+                <option value="settings">Gear System</option>
               </select>
             </div>
           </div>
