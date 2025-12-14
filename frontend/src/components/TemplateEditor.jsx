@@ -21,6 +21,7 @@ export default function TemplateEditor({
   const [showHints, setShowHints] = useState(true);
   const [objectBeforeTransform, setObjectBeforeTransform] = useState(null);
   const [isSpacePressed, setIsSpacePressed] = useState(false);
+  const [polygonEditPoints, setPolygonEditPoints] = useState([]); // Circles để edit polygon points
 
   const ANNOTATION_TYPES = [
     { value: 'text', label: 'Text OCR', color: '#50fa7b', needsText: true },
@@ -106,6 +107,10 @@ export default function TemplateEditor({
       const obj = e.selected[0];
       if (obj && obj.annotationIndex !== undefined) {
         onSelectAnnotation?.(obj.annotationIndex);
+        // Nếu là polygon, tạo edit points
+        if (obj.type === 'polygon') {
+          createPolygonEditPoints(canvas, obj);
+        }
       }
     });
 
@@ -113,11 +118,19 @@ export default function TemplateEditor({
       const obj = e.selected[0];
       if (obj && obj.annotationIndex !== undefined) {
         onSelectAnnotation?.(obj.annotationIndex);
+        // Xóa edit points cũ
+        removePolygonEditPoints(canvas);
+        // Nếu là polygon, tạo edit points mới
+        if (obj.type === 'polygon') {
+          createPolygonEditPoints(canvas, obj);
+        }
       }
     });
 
     canvas.on('selection:cleared', () => {
       onSelectAnnotation?.(null);
+      // Xóa edit points
+      removePolygonEditPoints(canvas);
     });
 
     // Save object state before transformation
@@ -163,6 +176,13 @@ export default function TemplateEditor({
     // Handle object modification
     canvas.on('object:modified', (e) => {
       updateAnnotationFromObject(e.target);
+
+      // Update edit points if polygon was moved
+      if (e.target.type === 'polygon' && e.target.annotationIndex !== undefined) {
+        removePolygonEditPoints(canvas);
+        createPolygonEditPoints(canvas, e.target);
+      }
+
       setObjectBeforeTransform(null); // Clear saved state after successful modification
     });
 
@@ -191,9 +211,7 @@ export default function TemplateEditor({
 
     // Add new handlers based on drawMode
     const handleMouseDown = (e) => {
-      if (drawMode === 'rectangle') {
-        startDrawingRect(canvas, e);
-      } else if (drawMode === 'polygon') {
+      if (drawMode === 'polygon') {
         addPolygonPoint(canvas, e);
       } else if (drawMode === 'select') {
         // Click on empty canvas to deselect
@@ -232,9 +250,6 @@ export default function TemplateEditor({
       switch(e.key.toLowerCase()) {
         case 'v':
           setDrawMode('select');
-          break;
-        case 'r':
-          setDrawMode('rectangle');
           break;
         case 'p':
           setDrawMode('polygon');
@@ -316,10 +331,79 @@ export default function TemplateEditor({
     }
   }, [annotations]);
 
+  const createPolygonEditPoints = (canvas, polygon) => {
+    const ann = annotations[polygon.annotationIndex];
+    if (!ann || !ann.points) return;
+
+    const color = ANNOTATION_TYPES.find(t => t.value === ann.type)?.color || '#ffffff';
+    const editPoints = [];
+
+    ann.points.forEach((point, idx) => {
+      const circle = new fabric.Circle({
+        left: point[0],
+        top: point[1],
+        radius: 10, // Tăng size để dễ click
+        fill: color,
+        stroke: '#ffffff',
+        strokeWidth: 2,
+        originX: 'center',
+        originY: 'center',
+        selectable: true,
+        hasControls: false,
+        hasBorders: false,
+        hoverCursor: 'pointer',
+        isPolygonEditPoint: true,
+        polygonRef: polygon,
+        pointIndex: idx
+      });
+
+      // Handle dragging edit point (visual update only)
+      circle.on('moving', function() {
+        const poly = this.polygonRef;
+        const idx = this.pointIndex;
+
+        // Update polygon point visually
+        poly.points[idx].x = this.left;
+        poly.points[idx].y = this.top;
+
+        // Recalculate polygon path
+        poly.set({ dirty: true });
+        poly.setCoords();
+        canvas.requestRenderAll();
+      });
+
+      // Handle when edit point drag finished (save to annotations)
+      circle.on('modified', function() {
+        const poly = this.polygonRef;
+        const idx = this.pointIndex;
+
+        // Update annotation data
+        const updated = [...annotations];
+        const ann = updated[poly.annotationIndex];
+        if (ann && ann.points) {
+          ann.points[idx] = [this.left, this.top];
+          onAnnotationsChange(updated);
+        }
+      });
+
+      canvas.add(circle);
+      editPoints.push(circle);
+    });
+
+    setPolygonEditPoints(editPoints);
+  };
+
+  const removePolygonEditPoints = (canvas) => {
+    // Remove all edit point circles
+    const pointsToRemove = canvas.getObjects().filter(obj => obj.isPolygonEditPoint);
+    pointsToRemove.forEach(obj => canvas.remove(obj));
+    setPolygonEditPoints([]);
+  };
+
   const loadAnnotations = (canvas) => {
     // Remove existing annotation objects
-    const objectsToRemove = canvas.getObjects().filter(obj => 
-      obj.annotationIndex !== undefined || obj.isLabel
+    const objectsToRemove = canvas.getObjects().filter(obj =>
+      obj.annotationIndex !== undefined || obj.isLabel || obj.isPolygonEditPoint
     );
     objectsToRemove.forEach(obj => canvas.remove(obj));
 
@@ -336,9 +420,15 @@ export default function TemplateEditor({
           stroke: color,
           strokeWidth: 2,
           selectable: true,
+          evented: true,
           hasControls: true,
           hasBorders: true,
           lockRotation: true, // Không cho xoay
+          lockScalingFlip: true, // Không cho flip khi resize
+          lockScalingX: false, // Cho phép resize theo X
+          lockScalingY: false, // Cho phép resize theo Y
+          lockMovementX: false, // Cho phép di chuyển X
+          lockMovementY: false, // Cho phép di chuyển Y
           lockSkewingX: true,
           lockSkewingY: true,
           cornerSize: 10,
@@ -346,10 +436,24 @@ export default function TemplateEditor({
           cornerColor: color,
           cornerStrokeColor: '#ffffff',
           borderColor: color,
+          objectCaching: false, // Tắt cache để update real-time
           annotationIndex: index,
           annotationType: ann.type
         });
-        
+
+        // Đảm bảo tất cả controls hiển thị (trừ rotation)
+        rect.setControlsVisibility({
+          mt: true,  // middle top
+          mb: true,  // middle bottom
+          ml: true,  // middle left
+          mr: true,  // middle right
+          tl: true,  // top left
+          tr: true,  // top right
+          bl: true,  // bottom left
+          br: true,  // bottom right
+          mtr: false // rotation (ẩn vì đã lock)
+        });
+
         canvas.add(rect);
         addLabel(canvas, ann.type, ann.x, ann.y, color);
       } else if (ann.shape === 'polygon' && ann.points) {
@@ -359,10 +463,8 @@ export default function TemplateEditor({
           stroke: color,
           strokeWidth: 2,
           selectable: true,
-          hasControls: true,
+          hasControls: false, // Tắt hết controls mặc định
           hasBorders: true,
-          lockMovementX: true, // Không cho di chuyển cả polygon
-          lockMovementY: true,
           lockRotation: true,
           lockScalingX: true,
           lockScalingY: true,
@@ -376,50 +478,7 @@ export default function TemplateEditor({
           annotationIndex: index,
           annotationType: ann.type
         });
-        
-        // Enable polygon point editing
-        polygon.controls = polygon.points.reduce((acc, point, idx) => {
-          acc['p' + idx] = new fabric.Control({
-            positionHandler: (dim, finalMatrix, fabricObject) => {
-              const x = fabricObject.points[idx].x - fabricObject.pathOffset.x;
-              const y = fabricObject.points[idx].y - fabricObject.pathOffset.y;
-              return fabric.util.transformPoint(
-                { x, y },
-                fabric.util.multiplyTransformMatrices(
-                  fabricObject.canvas.viewportTransform,
-                  fabricObject.calcTransformMatrix()
-                )
-              );
-            },
-            actionHandler: (eventData, transform, x, y) => {
-              const polygon = transform.target;
-              const mouseLocalPosition = polygon.toLocalPoint(new fabric.Point(x, y), 'center', 'center');
-              const polygonBaseSize = polygon._getNonTransformedDimensions();
-              const size = polygon._getTransformedDimensions(0, 0);
-              const finalPointPosition = {
-                x: (mouseLocalPosition.x * polygonBaseSize.x) / size.x + polygon.pathOffset.x,
-                y: (mouseLocalPosition.y * polygonBaseSize.y) / size.y + polygon.pathOffset.y,
-              };
-              polygon.points[idx] = finalPointPosition;
-              return true;
-            },
-            cursorStyle: 'pointer',
-            actionName: 'modifyPolygon',
-            render: (ctx, left, top, styleOverride, fabricObject) => {
-              ctx.save();
-              ctx.fillStyle = color;
-              ctx.strokeStyle = '#ffffff';
-              ctx.lineWidth = 2;
-              ctx.beginPath();
-              ctx.arc(left, top, 5, 0, 2 * Math.PI);
-              ctx.fill();
-              ctx.stroke();
-              ctx.restore();
-            },
-          });
-          return acc;
-        }, {});
-        
+
         canvas.add(polygon);
         addLabel(canvas, ann.type, ann.points[0][0], ann.points[0][1], color);
       }
@@ -677,16 +736,6 @@ export default function TemplateEditor({
           </button>
           <button
             type="button"
-            className={`tool-btn ${drawMode === 'rectangle' ? 'active' : ''}`}
-            onClick={() => setDrawMode('rectangle')}
-            title="Draw Rectangle"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-              <rect x="3" y="3" width="18" height="18" stroke="currentColor" strokeWidth="2"/>
-            </svg>
-          </button>
-          <button
-            type="button"
             className={`tool-btn ${drawMode === 'polygon' ? 'active' : ''}`}
             onClick={() => {
               setDrawMode('polygon');
@@ -699,7 +748,7 @@ export default function TemplateEditor({
             </svg>
           </button>
           
-          {(drawMode === 'rectangle' || drawMode === 'polygon') && (
+          {drawMode === 'polygon' && (
             <button type="button" className="tool-btn cancel-btn" onClick={handleCancelDraw} title="Cancel Drawing">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                 <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2"/>
@@ -767,19 +816,18 @@ export default function TemplateEditor({
                 <strong>⌨️ Shortcuts</strong>
                 <ul>
                   <li><kbd>V</kbd> - Select mode</li>
-                  <li><kbd>R</kbd> - Rectangle tool</li>
                   <li><kbd>P</kbd> - Polygon tool (4 points)</li>
                   <li><kbd>Esc</kbd> - Cancel drawing</li>
                   <li><kbd>Del</kbd> - Delete selected</li>
                 </ul>
               </div>
-              
+
               <div className="cvat-canvas-hints-block">
                 <strong>✏️ Drawing</strong>
                 <ul>
-                  <li>Rectangle: Click & drag</li>
                   <li>Polygon: Click 4 points</li>
-                  <li>Edit: Drag corners to resize</li>
+                  <li>Edit: Drag corners/points to resize</li>
+                  <li>Move: Drag shape to reposition</li>
                 </ul>
               </div>
             </div>

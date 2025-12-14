@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import TemplateEditor from './TemplateEditor';
+import TemplateEditor from './TemplateEditorRefactored';
 import AnnotationsPanel from './AnnotationsPanel';
 import { camerasAPI } from '../services/api';
 import { useToast } from '../contexts/ToastContext';

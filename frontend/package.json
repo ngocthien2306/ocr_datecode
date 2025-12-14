@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@dansreis/react-canvas-annotator": "^1.0.5-alpha",
     "axios": "^1.13.2",
     "fabric": "^6.9.0",
     "react": "^19.2.0",

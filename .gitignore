@@ -158,3 +158,4 @@ pylon_env/
 data/
 cvat/
 label-studio/
+react-canvas-annotator/
