@@ -69,14 +69,20 @@ export default function AnnotationsPanel({
 
             {/* Text input for types that need text */}
             {ANNOTATION_TYPES.find(t => t.value === ann.type)?.needsText && (
-              <input
-                type="text"
-                value={ann.text || ''}
-                onChange={(e) => onAnnotationTextChange?.(index, e.target.value)}
-                placeholder="Enter text content..."
-                className="annotation-text-input"
-                onClick={(e) => e.stopPropagation()}
-              />
+              <div className="annotation-text-field">
+                <input
+                  type="text"
+                  value={ann.text || ''}
+                  onChange={(e) => onAnnotationTextChange?.(index, e.target.value)}
+                  placeholder="Enter text content... *"
+                  className={`annotation-text-input ${(!ann.text || ann.text.trim() === '') ? 'required-empty' : ''}`}
+                  onClick={(e) => e.stopPropagation()}
+                  required
+                />
+                {(!ann.text || ann.text.trim() === '') && (
+                  <span className="required-indicator">* Required</span>
+                )}
+              </div>
             )}
 
             <div className="annotation-info">

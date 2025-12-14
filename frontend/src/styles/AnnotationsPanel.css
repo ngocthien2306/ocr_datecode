@@ -155,6 +155,31 @@
   box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
 }
 
+.annotation-text-field {
+  position: relative;
+  margin-bottom: 10px;
+}
+
+.annotation-text-input.required-empty {
+  border-color: rgba(255, 85, 85, 0.5);
+}
+
+.annotation-text-input.required-empty:focus {
+  border-color: #ff5555;
+  box-shadow: 0 0 0 3px rgba(255, 85, 85, 0.1);
+}
+
+.required-indicator {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #ff5555;
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
 .annotation-info {
   display: flex;
   justify-content: space-between;

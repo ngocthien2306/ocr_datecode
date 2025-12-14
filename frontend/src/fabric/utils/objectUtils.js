@@ -117,12 +117,20 @@ export const createPolygonObject = (annotation, index, color) => {
  * @param {number} index - Annotation index to link label
  * @returns {fabric.Text}
  */
-export const createLabel = (text, x, y, color, index) => {
-  return new FabricText(text.toUpperCase(), {
+export const createLabel = (annotation, x, y, color, index) => {
+  // Show type and text (if available)
+  let labelText = annotation.type.toUpperCase();
+  if (annotation.text && annotation.text.trim() !== '') {
+    labelText = `${labelText}: ${annotation.text}`;
+  }
+  
+  return new FabricText(labelText, {
     left: x + 5,
     top: y - 25,
     fontSize: 14,
     fill: color,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    padding: 4,
     selectable: false,
     evented: false,
     fontFamily: 'Arial',

@@ -455,7 +455,7 @@ export default function TemplateEditor({
         });
 
         canvas.add(rect);
-        addLabel(canvas, ann.type, ann.x, ann.y, color);
+        addLabel(canvas, ann, ann.x, ann.y, color);
       } else if (ann.shape === 'polygon' && ann.points) {
         const points = ann.points.map(p => ({ x: p[0], y: p[1] }));
         const polygon = new fabric.Polygon(points, {
@@ -480,19 +480,27 @@ export default function TemplateEditor({
         });
 
         canvas.add(polygon);
-        addLabel(canvas, ann.type, ann.points[0][0], ann.points[0][1], color);
+        addLabel(canvas, ann, ann.points[0][0], ann.points[0][1], color);
       }
     });
     
     canvas.requestRenderAll();
   };
 
-  const addLabel = (canvas, type, x, y, color) => {
-    const label = new fabric.FabricText(type.toUpperCase(), {
+  const addLabel = (canvas, annotation, x, y, color) => {
+    // Show type and text (if available)
+    let labelText = annotation.type.toUpperCase();
+    if (annotation.text && annotation.text.trim() !== '') {
+      labelText = `${labelText}: ${annotation.text}`;
+    }
+    
+    const label = new fabric.FabricText(labelText, {
       left: x + 5,
       top: y - 25,
       fontSize: 14,
       fill: color,
+      backgroundColor: 'rgba(0, 0, 0, 0.7)',
+      padding: 4,
       selectable: false,
       evented: false,
       fontFamily: 'Arial',

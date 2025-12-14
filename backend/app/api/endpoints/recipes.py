@@ -341,9 +341,25 @@ async def get_template_image(filename: str):
             detail="Image not found"
         )
     
-    # Return FileResponse with CORS headers
-    response = FileResponse(file_path)
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    return response
+    return FileResponse(
+        file_path,
+        media_type="image/png",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "*"
+        }
+    )
+
+
+@router.options("/templates/images/{filename}")
+async def options_template_image(filename: str):
+    """Handle CORS preflight request"""
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "*"
+        }
+    )

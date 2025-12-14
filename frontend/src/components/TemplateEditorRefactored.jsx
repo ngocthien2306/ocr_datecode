@@ -279,7 +279,7 @@ export default function TemplateEditor({
             
             if (obj) {
               canvas.add(obj);
-              const label = objectUtils.createLabel(ann.type, ann.x || ann.points[0][0], ann.y || ann.points[0][1], color, i);
+              const label = objectUtils.createLabel(ann, ann.x || ann.points[0][0], ann.y || ann.points[0][1], color, i);
               canvas.add(label);
             }
           }
@@ -348,16 +348,11 @@ export default function TemplateEditor({
             borderColor: newColor
           });
           
-          // Update label
-          const label = canvas.getObjects().find(o => 
-            o.isLabel && o.annotationIndex === index
-          );
-          if (label) {
-            label.set({
-              text: ann.type.toUpperCase(),
-              fill: newColor
-            });
-          }
+          // Update label with new type and text
+          updateLabelText(canvas, index, ann, typeConfig);
+        } else {
+          // Update label text even if type didn't change (text might have changed)
+          updateLabelText(canvas, index, ann, typeConfig);
         }
       });
       
@@ -455,7 +450,7 @@ export default function TemplateEditor({
       
       if (obj) {
         canvas.add(obj);
-        const label = objectUtils.createLabel(ann.type, ann.x || ann.points[0][0], ann.y || ann.points[0][1], color, index);
+        const label = objectUtils.createLabel(ann, ann.x || ann.points[0][0], ann.y || ann.points[0][1], color, index);
         canvas.add(label);
       }
     });
@@ -558,6 +553,22 @@ export default function TemplateEditor({
         });
         label.setCoords();
       }
+    }
+  };
+
+  const updateLabelText = (canvas, annotationIndex, annotation, typeConfig) => {
+    const label = canvas.getObjects().find(o => 
+      o.isLabel && o.annotationIndex === annotationIndex
+    );
+    
+    if (label) {
+      let labelText = annotation.type.toUpperCase();
+      if (annotation.text && annotation.text.trim() !== '') {
+        labelText = `${labelText}: ${annotation.text}`;
+      }
+      label.set('text', labelText);
+      label.set('fill', typeConfig.color);
+      canvas.requestRenderAll();
     }
   };
 

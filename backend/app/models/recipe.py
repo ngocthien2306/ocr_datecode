@@ -7,6 +7,7 @@ class TemplateAnnotation(BaseModel):
     """Single annotation in a template"""
     type: str = Field(..., description="Annotation type: template, text, barcode, datecode, crop_area")
     shape: str = Field(..., description="Shape type: rectangle, polygon")
+    text: Optional[str] = Field(None, description="Text content for text/datecode annotations")
     # Rectangle fields - accept float for precision
     x: Optional[float] = None
     y: Optional[float] = None

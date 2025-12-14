@@ -433,6 +433,13 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   };
 
   const handleAnnotationsChange = (newAnnotations) => {
+    console.log('handleAnnotationsChange called:', {
+      selectedCamera: selectedCameraForTemplate,
+      selectedTemplateIndex,
+      newAnnotations,
+      annotationsCount: newAnnotations.length
+    });
+    
     if (selectedCameraForTemplate) {
       setCameraTemplates(prev => {
         const templates = prev[selectedCameraForTemplate] || [];
@@ -443,6 +450,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
             annotations: newAnnotations
           };
         }
+        
+        console.log('Updated templates:', updatedTemplates);
+        
         return {
           ...prev,
           [selectedCameraForTemplate]: updatedTemplates
@@ -464,7 +474,14 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   const getCurrentAnnotations = () => {
     if (selectedCameraForTemplate && cameraTemplates[selectedCameraForTemplate]) {
       const templates = cameraTemplates[selectedCameraForTemplate];
-      return templates[selectedTemplateIndex]?.annotations || [];
+      const annotations = templates[selectedTemplateIndex]?.annotations || [];
+      console.log('getCurrentAnnotations:', {
+        camera: selectedCameraForTemplate,
+        templateIndex: selectedTemplateIndex,
+        annotationsCount: annotations.length,
+        annotations
+      });
+      return annotations;
     }
     return annotations;
   };
@@ -531,6 +548,13 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         if (!hasRequiredAnnotation) {
           errors.push(`Camera ${cameraId} - ${template.name}: Must have at least one annotation (text, barcode, or datecode)`);
         }
+        
+        // Validate text field for text and datecode annotations
+        template.annotations.forEach((ann, annIdx) => {
+          if ((ann.type === 'text' || ann.type === 'datecode') && (!ann.text || ann.text.trim() === '')) {
+            errors.push(`Camera ${cameraId} - ${template.name} - BBox #${annIdx + 1}: "${ann.type}" annotation requires text content`);
+          }
+        });
       });
     });
     
