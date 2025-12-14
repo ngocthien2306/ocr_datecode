@@ -3,6 +3,34 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 
 
+class TemplateAnnotation(BaseModel):
+    """Single annotation in a template"""
+    type: str = Field(..., description="Annotation type: template, text, barcode, datecode, crop_area")
+    shape: str = Field(..., description="Shape type: rectangle, polygon")
+    # Rectangle fields - accept float for precision
+    x: Optional[float] = None
+    y: Optional[float] = None
+    width: Optional[float] = None
+    height: Optional[float] = None
+    # Polygon fields
+    points: Optional[List[List[float]]] = None
+
+
+class TemplateImage(BaseModel):
+    """Template image with annotations"""
+    name: str = Field(..., description="Template name")
+    image_url: str = Field(..., description="URL to template image stored on server")
+    image_width: int = Field(..., description="Original image width in pixels")
+    image_height: int = Field(..., description="Original image height in pixels")
+    annotations: List[TemplateAnnotation] = Field(default_factory=list, description="List of annotations")
+
+
+class CameraTemplates(BaseModel):
+    """Templates configuration for a camera"""
+    camera_id: str = Field(..., description="Camera identifier")
+    templates: List[TemplateImage] = Field(default_factory=list, description="List of template images")
+
+
 class TriggerConfiguration(BaseModel):
     """Camera trigger configuration"""
     trigger_mode: bool = Field(default=True, description="Enable/disable trigger mode")
@@ -59,6 +87,9 @@ class RecipeBase(BaseModel):
     # Multiple cameras support (new approach)
     cameras: List[CameraConfiguration] = Field(default_factory=list, description="Camera configurations for this recipe")
     
+    # Camera templates (new multi-template support)
+    camera_templates: List[CameraTemplates] = Field(default_factory=list, description="Template configurations for each camera")
+    
     # Keep old camera_settings for backward compatibility (make optional)
     camera_settings: Optional[CameraSettings] = Field(default=None, description="Legacy camera settings (deprecated)")
     
@@ -80,6 +111,7 @@ class RecipeUpdate(BaseModel):
     description: Optional[str] = Field(None, max_length=500)
     delay_reject: Optional[float] = None
     cameras: Optional[List[CameraConfiguration]] = None
+    camera_templates: Optional[List[CameraTemplates]] = None
     camera_settings: Optional[CameraSettings] = None
     model_thresholds: Optional[ModelThresholds] = None
     template_config: Optional[Dict[str, Any]] = None

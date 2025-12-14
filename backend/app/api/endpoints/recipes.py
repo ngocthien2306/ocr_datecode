@@ -1,5 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
+from fastapi.responses import FileResponse, Response
 from typing import List, Optional
+import os
+import uuid
+from pathlib import Path
+import base64
+from PIL import Image
+import io
 
 from app.schemas.recipe import RecipeCreate, RecipeUpdate, RecipeResponse
 from app.models.recipe import RecipeInDB
@@ -34,6 +41,17 @@ def recipe_to_response(recipe: RecipeInDB) -> RecipeResponse:
             else:
                 cameras_data.append(cam)
     
+    # Convert camera_templates if present (always include, even if empty)
+    camera_templates_data = []
+    if hasattr(recipe, 'camera_templates') and recipe.camera_templates is not None:
+        for cam_template in recipe.camera_templates:
+            if hasattr(cam_template, 'model_dump'):
+                camera_templates_data.append(cam_template.model_dump())
+            elif isinstance(cam_template, dict):
+                camera_templates_data.append(cam_template)
+            else:
+                camera_templates_data.append(cam_template)
+    
     return RecipeResponse(
         id=recipe.id,
         name=recipe.name,
@@ -41,6 +59,7 @@ def recipe_to_response(recipe: RecipeInDB) -> RecipeResponse:
         description=recipe.description,
         delay_reject=recipe.delay_reject if hasattr(recipe, 'delay_reject') else 100.0,
         cameras=cameras_data,
+        camera_templates=camera_templates_data,
         camera_settings=recipe.camera_settings.model_dump() if hasattr(recipe.camera_settings, 'model_dump') and recipe.camera_settings else recipe.camera_settings,
         model_thresholds=recipe.model_thresholds.model_dump() if hasattr(recipe.model_thresholds, 'model_dump') else recipe.model_thresholds,
         template_config=recipe.template_config,
@@ -245,3 +264,86 @@ async def get_recipe_count(
     """
     count = await recipe_repo.count(is_active=is_active)
     return {"count": count}
+
+
+# Template image upload directory
+TEMPLATE_UPLOAD_DIR = Path("/Users/ngocthien.ai/Source/Projects/ocr_datecode/backend/uploads/templates")
+TEMPLATE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@router.post("/templates/upload")
+async def upload_template_image(
+    file: UploadFile = File(...),
+    current_user: UserInDB = Depends(get_current_user)
+):
+    """
+    Upload a template image and return its URL and dimensions.
+    
+    **Permission**: All authenticated users
+    
+    Returns:
+        {
+            "url": "/api/recipes/templates/images/{filename}",
+            "width": 1920,
+            "height": 1080
+        }
+    """
+    # Validate file type
+    if not file.content_type.startswith('image/'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be an image"
+        )
+    
+    # Read image data
+    image_data = await file.read()
+    
+    # Get image dimensions using PIL
+    try:
+        image = Image.open(io.BytesIO(image_data))
+        width, height = image.size
+        image_format = image.format.lower() if image.format else 'jpg'
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid image file: {str(e)}"
+        )
+    
+    # Generate unique filename
+    file_extension = file.filename.split('.')[-1] if '.' in file.filename else image_format
+    unique_filename = f"{uuid.uuid4()}.{file_extension}"
+    file_path = TEMPLATE_UPLOAD_DIR / unique_filename
+    
+    # Save file
+    with open(file_path, 'wb') as f:
+        f.write(image_data)
+    
+    # Return URL and dimensions
+    return {
+        "url": f"/api/recipes/templates/images/{unique_filename}",
+        "width": width,
+        "height": height
+    }
+
+
+@router.get("/templates/images/{filename}")
+async def get_template_image(filename: str):
+    """
+    Serve a template image file.
+    
+    **Permission**: Public (no auth required for image serving)
+    """
+    file_path = TEMPLATE_UPLOAD_DIR / filename
+    
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Image not found"
+        )
+    
+    # Return FileResponse with CORS headers
+    response = FileResponse(file_path)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response

@@ -3,6 +3,7 @@ import TemplateEditor from './TemplateEditorRefactored';
 import AnnotationsPanel from './AnnotationsPanel';
 import { camerasAPI } from '../services/api';
 import { useToast } from '../contexts/ToastContext';
+import { API_BASE_URL } from '../config/api';
 import '../styles/RecipeFormModal.css';
 
 export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = null, mode = 'create' }) {
@@ -42,9 +43,10 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   const [loadingCameras, setLoadingCameras] = useState(false);
   const [selectedCameraForAdd, setSelectedCameraForAdd] = useState('');
   
-  // Template editor states
+  // Template editor states - now supports multiple templates per camera
   const [selectedCameraForTemplate, setSelectedCameraForTemplate] = useState('');
-  const [cameraTemplates, setCameraTemplates] = useState({}); // { camera_id: { image, annotations } }
+  const [cameraTemplates, setCameraTemplates] = useState({}); // { camera_id: [{ id, name, image, annotations }] }
+  const [selectedTemplateIndex, setSelectedTemplateIndex] = useState(0); // Index of selected template for current camera
   const [selectedAnnotation, setSelectedAnnotation] = useState(null);
   const fabricCanvasRef = useRef(null);
 
@@ -69,6 +71,46 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           }
         };
       });
+      // Load camera templates
+      const loadedCameraTemplates = {};
+      console.log('Recipe object:', recipe);
+      console.log('camera_templates field:', recipe.camera_templates);
+      console.log('Is array?', Array.isArray(recipe.camera_templates));
+      console.log('Length:', recipe.camera_templates?.length);
+      
+      let firstCameraWithTemplates = null;
+      
+      if (recipe.camera_templates && Array.isArray(recipe.camera_templates) && recipe.camera_templates.length > 0) {
+        console.log('Loading camera_templates from recipe:', recipe.camera_templates);
+        recipe.camera_templates.forEach(camTemplate => {
+          if (camTemplate.templates && camTemplate.templates.length > 0) {
+            loadedCameraTemplates[camTemplate.camera_id] = camTemplate.templates.map(template => ({
+              id: `template-${Date.now()}-${Math.random()}`,
+              name: template.name,
+              image: `${API_BASE_URL}${template.image_url}`, // Convert to full URL for preview
+              image_url: template.image_url,
+              image_width: template.image_width,
+              image_height: template.image_height,
+              annotations: template.annotations
+            }));
+            
+            // Remember first camera with templates for auto-selection
+            if (!firstCameraWithTemplates) {
+              firstCameraWithTemplates = camTemplate.camera_id;
+            }
+          }
+        });
+        console.log('Loaded camera templates:', loadedCameraTemplates);
+      } else {
+        console.log('No camera_templates found in recipe - empty or undefined');
+      }
+      setCameraTemplates(loadedCameraTemplates);
+      
+      // Auto-select first camera with templates
+      if (firstCameraWithTemplates) {
+        setSelectedCameraForTemplate(firstCameraWithTemplates);
+        setSelectedTemplateIndex(0);
+      }
 
       setFormData({
         name: recipe.name || '',
@@ -132,6 +174,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       });
       setTemplateImage(null);
       setAnnotations([]);
+      setCameraTemplates({});
+      setSelectedTemplateIndex(0);
     }
   }, [recipe, mode, isOpen]);
 
@@ -274,10 +318,36 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     e.preventDefault();
     if (!validateForm()) return;
 
+    // Validate all camera templates before submission
+    const validationErrors = validateTemplates();
+    if (validationErrors.length > 0) {
+      alert(`Template validation failed:\n\n${validationErrors.join('\n')}\n\nEach template must have:\n• 1 "template" region (required)\n• At least 1 annotation: text, barcode, or datecode (required)\n• crop_area (optional)`);
+      return;
+    }
+
     setLoading(true);
     try {
+      // Prepare camera templates data for submission
+      const cameraTemplatesArray = [];
+      Object.entries(cameraTemplates).forEach(([cameraId, templates]) => {
+        if (templates && templates.length > 0) {
+          cameraTemplatesArray.push({
+            camera_id: cameraId,
+            templates: templates.map(template => ({
+              name: template.name,
+              image_url: template.image_url,
+              image_width: template.image_width,
+              image_height: template.image_height,
+              annotations: template.annotations
+            }))
+          });
+        }
+      });
+
       const submitData = {
         ...formData,
+        camera_templates: cameraTemplatesArray,
+        // Legacy single template support (fallback)
         template_config: templateImage ? {
           template_image: templateImage,
           annotations: annotations
@@ -294,37 +364,90 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     }
   };
 
-  const handleImageUpload = (e) => {
+  const handleImageUpload = async (e) => {
     const file = e.target.files[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const imageData = event.target.result;
-        if (selectedCameraForTemplate) {
-          setCameraTemplates(prev => ({
-            ...prev,
-            [selectedCameraForTemplate]: {
-              image: imageData,
-              annotations: prev[selectedCameraForTemplate]?.annotations || []
-            }
-          }));
-        } else {
-          setTemplateImage(imageData);
+      try {
+        // Upload image to server
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        const token = localStorage.getItem('access_token');
+        const response = await fetch(`${API_BASE_URL}/api/recipes/templates/upload`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Bypass-Tunnel-Reminder': 'true'
+          },
+          body: formData
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.detail || 'Failed to upload image');
         }
-      };
-      reader.readAsDataURL(file);
+        
+        const { url, width, height } = await response.json();
+        
+        // Also keep base64 for preview
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const imageDataUrl = event.target.result;
+          
+          if (selectedCameraForTemplate) {
+            // Add new template to the selected camera's templates array
+            const currentTemplates = cameraTemplates[selectedCameraForTemplate] || [];
+            const templateName = `Template ${currentTemplates.length + 1}`;
+            const newTemplate = {
+              id: `template-${Date.now()}`,
+              name: templateName,
+              image: imageDataUrl, // For preview in canvas
+              image_url: url, // Server URL for submission
+              image_width: width,
+              image_height: height,
+              annotations: []
+            };
+            
+            setCameraTemplates(prev => ({
+              ...prev,
+              [selectedCameraForTemplate]: [...(prev[selectedCameraForTemplate] || []), newTemplate]
+            }));
+            
+            // Auto-select the new template
+            setSelectedTemplateIndex(currentTemplates.length);
+          } else {
+            setTemplateImage(imageDataUrl);
+            setAnnotations([]);
+          }
+        };
+        reader.readAsDataURL(file);
+        
+      } catch (error) {
+        console.error('Upload error:', error);
+        alert('Failed to upload template image. Please try again.');
+      }
     }
+    
+    // Reset file input
+    e.target.value = '';
   };
 
   const handleAnnotationsChange = (newAnnotations) => {
     if (selectedCameraForTemplate) {
-      setCameraTemplates(prev => ({
-        ...prev,
-        [selectedCameraForTemplate]: {
-          ...prev[selectedCameraForTemplate],
-          annotations: newAnnotations
+      setCameraTemplates(prev => {
+        const templates = prev[selectedCameraForTemplate] || [];
+        const updatedTemplates = [...templates];
+        if (updatedTemplates[selectedTemplateIndex]) {
+          updatedTemplates[selectedTemplateIndex] = {
+            ...updatedTemplates[selectedTemplateIndex],
+            annotations: newAnnotations
+          };
         }
-      }));
+        return {
+          ...prev,
+          [selectedCameraForTemplate]: updatedTemplates
+        };
+      });
     } else {
       setAnnotations(newAnnotations);
     }
@@ -332,16 +455,86 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
   const getCurrentTemplateImage = () => {
     if (selectedCameraForTemplate && cameraTemplates[selectedCameraForTemplate]) {
-      return cameraTemplates[selectedCameraForTemplate].image;
+      const templates = cameraTemplates[selectedCameraForTemplate];
+      return templates[selectedTemplateIndex]?.image || null;
     }
     return templateImage;
   };
 
   const getCurrentAnnotations = () => {
     if (selectedCameraForTemplate && cameraTemplates[selectedCameraForTemplate]) {
-      return cameraTemplates[selectedCameraForTemplate].annotations || [];
+      const templates = cameraTemplates[selectedCameraForTemplate];
+      return templates[selectedTemplateIndex]?.annotations || [];
     }
     return annotations;
+  };
+  
+  const getCurrentTemplate = () => {
+    if (selectedCameraForTemplate && cameraTemplates[selectedCameraForTemplate]) {
+      const templates = cameraTemplates[selectedCameraForTemplate];
+      return templates[selectedTemplateIndex] || null;
+    }
+    return null;
+  };
+  
+  const handleDeleteTemplate = (templateIndex) => {
+    if (!selectedCameraForTemplate) return;
+    
+    setCameraTemplates(prev => {
+      const templates = prev[selectedCameraForTemplate] || [];
+      const updated = templates.filter((_, idx) => idx !== templateIndex);
+      return {
+        ...prev,
+        [selectedCameraForTemplate]: updated
+      };
+    });
+    
+    // Adjust selected index if needed
+    if (selectedTemplateIndex >= templateIndex && selectedTemplateIndex > 0) {
+      setSelectedTemplateIndex(selectedTemplateIndex - 1);
+    }
+  };
+  
+  const handleRenameTemplate = (templateIndex, newName) => {
+    if (!selectedCameraForTemplate) return;
+    
+    setCameraTemplates(prev => {
+      const templates = prev[selectedCameraForTemplate] || [];
+      const updated = [...templates];
+      if (updated[templateIndex]) {
+        updated[templateIndex] = {
+          ...updated[templateIndex],
+          name: newName
+        };
+      }
+      return {
+        ...prev,
+        [selectedCameraForTemplate]: updated
+      };
+    });
+  };
+  
+  const validateTemplates = () => {
+    const errors = [];
+    
+    Object.entries(cameraTemplates).forEach(([cameraId, templates]) => {
+      templates.forEach((template, idx) => {
+        const hasTemplateRegion = template.annotations.some(ann => ann.type === 'template');
+        const hasRequiredAnnotation = template.annotations.some(ann => 
+          ['text', 'barcode', 'datecode'].includes(ann.type)
+        );
+        
+        if (!hasTemplateRegion) {
+          errors.push(`Camera ${cameraId} - ${template.name}: Missing required "template" region`);
+        }
+        
+        if (!hasRequiredAnnotation) {
+          errors.push(`Camera ${cameraId} - ${template.name}: Must have at least one annotation (text, barcode, or datecode)`);
+        }
+      });
+    });
+    
+    return errors;
   };
 
   const handleAnnotationTypeChange = (index, newType) => {
@@ -690,7 +883,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/>
                       <polyline points="21,15 16,10 5,21" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                     </svg>
-                    <p>Select a camera to configure template</p>
+                    <p>Select a camera to configure templates</p>
                     <p className="hint">Choose a camera from the dropdown above</p>
                   </div>
                 ) : (
@@ -707,15 +900,82 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         htmlFor={`template-upload-${selectedCameraForTemplate}`}
                         className="btn btn-secondary"
                       >
-                        📤 Upload Template Image
+                        ➕ Add Template Image
                       </label>
-                      {getCurrentTemplateImage() && (
-                        <span className="template-info">
-                          Camera: {selectedCameraForTemplate} | 
-                          Annotations: {getCurrentAnnotations().length}
-                        </span>
-                      )}
+                      <span className="template-info">
+                        Camera: {selectedCameraForTemplate} | 
+                        Templates: {cameraTemplates[selectedCameraForTemplate]?.length || 0}
+                      </span>
                     </div>
+
+                    {/* Templates List */}
+                    {cameraTemplates[selectedCameraForTemplate]?.length > 0 && (
+                      <div className="templates-list">
+                        {cameraTemplates[selectedCameraForTemplate].map((template, idx) => {
+                          const hasTemplateRegion = template.annotations.some(ann => ann.type === 'template');
+                          const hasRequiredAnnotation = template.annotations.some(ann => 
+                            ['text', 'barcode', 'datecode'].includes(ann.type)
+                          );
+                          const hasCropArea = template.annotations.some(ann => ann.type === 'crop_area');
+                          const isValid = hasTemplateRegion && hasRequiredAnnotation;
+                          
+                          return (
+                            <div 
+                              key={template.id} 
+                              className={`template-item ${idx === selectedTemplateIndex ? 'active' : ''} ${!isValid ? 'invalid' : ''}`}
+                              onClick={() => setSelectedTemplateIndex(idx)}
+                            >
+                              <div className="template-thumbnail">
+                                <img src={template.image} alt={template.name} />
+                                {!isValid && (
+                                  <div className="warning-badge" title="Missing required regions">⚠️</div>
+                                )}
+                              </div>
+                              <div className="template-details">
+                                <input
+                                  type="text"
+                                  value={template.name}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    handleRenameTemplate(idx, e.target.value);
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="template-name-input"
+                                />
+                                <div className="template-stats">
+                                  {hasTemplateRegion && <span className="stat">📐 Template</span>}
+                                  <span className="stat">
+                                    {template.annotations.filter(a => ['text', 'barcode', 'datecode'].includes(a.type)).length} 
+                                    {' '}regions
+                                  </span>
+                                  {hasCropArea && <span className="stat crop">✂️ Crop</span>}
+                                </div>
+                                {!isValid && (
+                                  <div className="validation-error">
+                                    {!hasTemplateRegion && '⚠️ Missing "template" region'}
+                                    {!hasTemplateRegion && !hasRequiredAnnotation && ' • '}
+                                    {!hasRequiredAnnotation && '⚠️ Missing text/barcode/datecode'}
+                                  </div>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                className="btn-delete-template"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (confirm(`Delete ${template.name}?`)) {
+                                    handleDeleteTemplate(idx);
+                                  }
+                                }}
+                                title="Delete template"
+                              >
+                                🗑️
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
 
                     {getCurrentTemplateImage() ? (
                       <div className="template-editor-layout">
@@ -748,8 +1008,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                           <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/>
                           <polyline points="21,15 16,10 5,21" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                         </svg>
-                        <p>No template image uploaded for this camera</p>
-                        <p className="hint">Upload an image to configure annotation regions</p>
+                        <p>No templates added yet</p>
+                        <p className="hint">Click "Add Template Image" to get started</p>
                       </div>
                     )}
                   </>

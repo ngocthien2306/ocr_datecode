@@ -159,3 +159,4 @@ data/
 cvat/
 label-studio/
 react-canvas-annotator/
+backend/uploads

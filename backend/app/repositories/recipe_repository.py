@@ -53,6 +53,9 @@ class RecipeRepository:
             recipe = await self.collection.find_one({"_id": ObjectId(recipe_id)})
             if recipe:
                 recipe["_id"] = str(recipe["_id"])
+                # Ensure camera_templates exists for backward compatibility
+                if "camera_templates" not in recipe:
+                    recipe["camera_templates"] = []
                 return RecipeInDB(**recipe)
         except Exception:
             return None
@@ -63,6 +66,9 @@ class RecipeRepository:
         recipe = await self.collection.find_one({"name": name})
         if recipe:
             recipe["_id"] = str(recipe["_id"])
+            # Ensure camera_templates exists for backward compatibility
+            if "camera_templates" not in recipe:
+                recipe["camera_templates"] = []
             return RecipeInDB(**recipe)
         return None
     
@@ -71,6 +77,9 @@ class RecipeRepository:
         recipe = await self.collection.find_one({"product_code": product_code})
         if recipe:
             recipe["_id"] = str(recipe["_id"])
+            # Ensure camera_templates exists for backward compatibility
+            if "camera_templates" not in recipe:
+                recipe["camera_templates"] = []
             return RecipeInDB(**recipe)
         return None
     
@@ -88,7 +97,11 @@ class RecipeRepository:
         cursor = self.collection.find(query).skip(skip).limit(limit).sort("created_at", -1)
         recipes = []
         async for recipe in cursor:
+            print(recipe)
             recipe["_id"] = str(recipe["_id"])
+            # Ensure camera_templates exists for backward compatibility
+            if "camera_templates" not in recipe:
+                recipe["camera_templates"] = []
             recipes.append(RecipeInDB(**recipe))
         
         return recipes
@@ -116,6 +129,9 @@ class RecipeRepository:
             
             if result:
                 result["_id"] = str(result["_id"])
+                # Ensure camera_templates exists for backward compatibility
+                if "camera_templates" not in result:
+                    result["camera_templates"] = []
                 return RecipeInDB(**result)
         except Exception as e:
             print(f"Error updating recipe: {e}")
@@ -155,6 +171,9 @@ class RecipeRepository:
         recipes = []
         async for recipe in cursor:
             recipe["_id"] = str(recipe["_id"])
+            # Ensure camera_templates exists for backward compatibility
+            if "camera_templates" not in recipe:
+                recipe["camera_templates"] = []
             recipes.append(RecipeInDB(**recipe))
         
         return recipes

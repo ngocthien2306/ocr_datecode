@@ -68,6 +68,7 @@ export default function Receipts() {
         description: recipe.description,
         // Include all recipe fields for editing
         cameras: recipe.cameras || [],
+        camera_templates: recipe.camera_templates || [],
         delay_reject: recipe.delay_reject,
         cameraSettings: recipe.camera_settings,
         modelThresholds: recipe.model_thresholds,
@@ -123,8 +124,18 @@ export default function Receipts() {
         failed: 0,
         operator: recipe.created_by,
         status: recipe.is_active ? 'Active' : 'Inactive',
+        description: recipe.description,
+        // Include all recipe fields for editing
+        cameras: recipe.cameras || [],
+        camera_templates: recipe.camera_templates || [],
+        delay_reject: recipe.delay_reject,
         cameraSettings: recipe.camera_settings,
-        modelThresholds: recipe.model_thresholds
+        modelThresholds: recipe.model_thresholds,
+        template_config: recipe.template_config,
+        roi_config: recipe.roi_config,
+        is_active: recipe.is_active,
+        createdAt: recipe.created_at,
+        updatedAt: recipe.updated_at
       }));
       
       setReceipts(transformedReceipts);
