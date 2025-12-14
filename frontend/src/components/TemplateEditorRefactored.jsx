@@ -18,6 +18,7 @@ export default function TemplateEditor({
   const internalCanvasRef = useRef(null);
   const fabricCanvasRef = externalCanvasRef || internalCanvasRef;
   const containerRef = useRef(null);
+  const isTransformingRef = useRef(false);
   
   const [drawMode, setDrawMode] = useState('select');
   const polygonDrawerRef = useRef(null);
@@ -96,7 +97,35 @@ export default function TemplateEditor({
         return;
       }
       
+      console.log('object:modified - updating and will set isTransforming to false');
       updateAnnotationFromObject(e.target);
+      updateLabelPosition(canvas, e.target);
+      
+      // Set to false AFTER update to allow useEffect to process the final state
+      setTimeout(() => {
+        console.log('Setting isTransforming to false (delayed)');
+        isTransformingRef.current = false;
+      }, 0);
+    });
+    
+    // Update annotation data and label while moving (real-time sync)
+    canvas.on('object:moving', (e) => {
+      if (e.target.annotationIndex !== undefined) {
+        console.log('object:moving - setting isTransforming to true');
+        isTransformingRef.current = true;
+        updateAnnotationFromObject(e.target);
+        updateLabelPosition(canvas, e.target);
+      }
+    });
+    
+    // Update annotation data and label while scaling (for rectangles)
+    canvas.on('object:scaling', (e) => {
+      if (e.target.annotationIndex !== undefined) {
+        console.log('object:scaling - setting isTransforming to true');
+        isTransformingRef.current = true;
+        updateAnnotationFromObject(e.target);
+        updateLabelPosition(canvas, e.target);
+      }
     });
 
     return () => {
@@ -123,9 +152,122 @@ export default function TemplateEditor({
   // Reload annotations when they change
   useEffect(() => {
     if (fabricCanvasRef.current && annotations) {
-      loadAnnotations(fabricCanvasRef.current);
+      const canvas = fabricCanvasRef.current;
+      
+      console.log('useEffect triggered:', {
+        isTransforming: isTransformingRef.current,
+        annotationsCount: annotations.length
+      });
+      
+      // Skip reload during active transform (moving/scaling)
+      if (isTransformingRef.current) {
+        console.log('Skipping reload - transform in progress');
+        return;
+      }
+      
+      // Smart update: check if we can just update properties instead of full reload
+      // Filter out labels and temp objects - only count actual shapes
+      const existingObjects = canvas.getObjects().filter(obj => 
+        obj.annotationIndex !== undefined && !obj.isLabel && !obj.isTemp
+      );
+      
+      console.log('Existing objects:', existingObjects.length, 'Annotations:', annotations.length);
+      
+      // Handle count mismatch - add new or remove deleted annotations
+      if (existingObjects.length !== annotations.length) {
+        if (existingObjects.length < annotations.length) {
+          // New annotations added - only add the new ones
+          console.log('Adding new annotations');
+          for (let i = existingObjects.length; i < annotations.length; i++) {
+            const ann = annotations[i];
+            const typeConfig = TYPE_CONFIGS.find(t => t.value === ann.type) || TYPE_CONFIGS[0];
+            const color = typeConfig.color;
+            
+            console.log('Creating new object:', { index: i, type: ann.type, color, shape: ann.shape });
+            
+            let obj;
+            if (ann.shape === 'rectangle') {
+              obj = objectUtils.createRectangleObject(ann, i, color);
+            } else if (ann.shape === 'polygon') {
+              obj = objectUtils.createPolygonObject(ann, i, color);
+              setupPolygonControls(obj, color);
+            }
+            
+            if (obj) {
+              canvas.add(obj);
+              const label = objectUtils.createLabel(ann.type, ann.x || ann.points[0][0], ann.y || ann.points[0][1], color, i);
+              canvas.add(label);
+            }
+          }
+          canvas.requestRenderAll();
+        } else {
+          // Annotations removed - remove objects with higher indices
+          console.log('Removing deleted annotations');
+          const objectsToRemove = existingObjects.filter(obj => obj.annotationIndex >= annotations.length);
+          objectsToRemove.forEach(obj => {
+            // Remove associated label
+            const label = canvas.getObjects().find(o => 
+              o.isLabel && o.annotationIndex === obj.annotationIndex
+            );
+            if (label) canvas.remove(label);
+            canvas.remove(obj);
+          });
+          canvas.requestRenderAll();
+        }
+        return;
+      }
+      
+      // Update existing objects
+      let needsFullReload = false;
+      annotations.forEach((ann, index) => {
+        const obj = existingObjects.find(o => o.annotationIndex === index);
+        
+        if (!obj) {
+          needsFullReload = true;
+          return;
+        }
+        
+        // Check if shape type changed
+        const objShape = obj.type === 'rect' ? 'rectangle' : 'polygon';
+        if (objShape !== ann.shape) {
+          needsFullReload = true;
+          return;
+        }
+        
+        // Update type and color if changed
+        const typeConfig = TYPE_CONFIGS.find(t => t.value === ann.type) || TYPE_CONFIGS[0];
+        const newColor = typeConfig.color;
+        
+        if (obj.annotationType !== ann.type) {
+          obj.annotationType = ann.type;
+          obj.set({
+            stroke: newColor,
+            fill: newColor + '20',
+            cornerColor: newColor,
+            borderColor: newColor
+          });
+          
+          // Update label
+          const label = canvas.getObjects().find(o => 
+            o.isLabel && o.annotationIndex === index
+          );
+          if (label) {
+            label.set({
+              text: ann.type.toUpperCase(),
+              fill: newColor
+            });
+          }
+        }
+      });
+      
+      if (needsFullReload) {
+        loadAnnotations(canvas);
+      } else {
+        canvas.requestRenderAll();
+      }
     }
   }, [annotations]);
+
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -212,7 +354,7 @@ export default function TemplateEditor({
       
       if (obj) {
         canvas.add(obj);
-        const label = objectUtils.createLabel(ann.type, ann.x || ann.points[0][0], ann.y || ann.points[0][1], color);
+        const label = objectUtils.createLabel(ann.type, ann.x || ann.points[0][0], ann.y || ann.points[0][1], color, index);
         canvas.add(label);
       }
     });
@@ -223,8 +365,6 @@ export default function TemplateEditor({
   const setupPolygonControls = (polygon, color) => {
     // Clear existing controls except default ones
     polygon.controls = {}; 
-    
-    console.log('[TemplateEditor] Setting up polygon controls, points:', polygon.points.length);
     
     // Add control for each point
     polygon.points.forEach((point, idx) => {
@@ -284,12 +424,46 @@ export default function TemplateEditor({
         }
       });
     });
+  };
+
+  const updateLabelPosition = (canvas, obj) => {
+    const label = canvas.getObjects().find(o => 
+      o.isLabel && o.annotationIndex === obj.annotationIndex
+    );
     
-    console.log('[TemplateEditor] Polygon controls set:', Object.keys(polygon.controls));
+    if (label) {
+      let x, y;
+      if (obj.type === 'rect') {
+        x = obj.left;
+        y = obj.top;
+      } else if (obj.type === 'polygon' && obj.points && obj.points.length > 0) {
+        // Get transformed first point
+        const matrix = obj.calcTransformMatrix();
+        const point = util.transformPoint(
+          new Point(
+            obj.points[0].x - obj.pathOffset.x,
+            obj.points[0].y - obj.pathOffset.y
+          ),
+          matrix
+        );
+        x = point.x;
+        y = point.y;
+      }
+      
+      if (x !== undefined && y !== undefined) {
+        label.set({
+          left: x,
+          top: y - 25
+        });
+        label.setCoords();
+      }
+    }
   };
 
   const updateAnnotationFromObject = (obj) => {
     if (obj.annotationIndex === undefined) return;
+    
+    console.log('updateAnnotationFromObject called for index:', obj.annotationIndex, 'isTransforming:', isTransformingRef.current);
     
     const updated = [...annotations];
     const ann = updated[obj.annotationIndex];
@@ -298,9 +472,11 @@ export default function TemplateEditor({
     
     if (ann.shape === 'rectangle') {
       const data = objectUtils.getRectangleData(obj);
+      console.log('Updating rectangle:', data);
       Object.assign(ann, data);
     } else if (ann.shape === 'polygon') {
       const data = objectUtils.getPolygonData(obj);
+      console.log('Updating polygon:', data);
       Object.assign(ann, data);
     }
     
