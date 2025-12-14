@@ -14,9 +14,19 @@ import { Rect, Circle, Line } from 'fabric';
 export const startDrawingRectangle = (canvas, e, color, onComplete) => {
   const pointer = canvas.getPointer(e);
   
+  // Constrain initial point within image bounds
+  let startX = pointer.x;
+  let startY = pointer.y;
+  
+  if (canvas.imageBounds) {
+    const bounds = canvas.imageBounds;
+    startX = Math.max(bounds.left, Math.min(bounds.right, pointer.x));
+    startY = Math.max(bounds.top, Math.min(bounds.bottom, pointer.y));
+  }
+  
   const rect = new Rect({
-    left: pointer.x,
-    top: pointer.y,
+    left: startX,
+    top: startY,
     width: 0,
     height: 0,
     fill: color + '30',
@@ -31,19 +41,31 @@ export const startDrawingRectangle = (canvas, e, color, onComplete) => {
   
   const handleMouseMove = (opt) => {
     if (!isDrawing) return;
-    const pointer = canvas.getPointer(opt.e);
+    let pointer = canvas.getPointer(opt.e);
     
-    const newWidth = Math.abs(pointer.x - rect.left);
-    const newHeight = Math.abs(pointer.y - rect.top);
-    
-    if (pointer.x < rect.left) {
-      rect.set({ left: pointer.x });
+    // Constrain pointer within image bounds
+    if (canvas.imageBounds) {
+      const bounds = canvas.imageBounds;
+      pointer.x = Math.max(bounds.left, Math.min(bounds.right, pointer.x));
+      pointer.y = Math.max(bounds.top, Math.min(bounds.bottom, pointer.y));
     }
-    if (pointer.y < rect.top) {
-      rect.set({ top: pointer.y });
+    
+    const newWidth = Math.abs(pointer.x - startX);
+    const newHeight = Math.abs(pointer.y - startY);
+    
+    let left = startX;
+    let top = startY;
+    
+    if (pointer.x < startX) {
+      left = pointer.x;
+    }
+    if (pointer.y < startY) {
+      top = pointer.y;
     }
     
     rect.set({
+      left: left,
+      top: top,
       width: newWidth,
       height: newHeight
     });
@@ -100,7 +122,15 @@ export class PolygonDrawer {
    * @param {MouseEvent} e 
    */
   addPoint(e) {
-    const pointer = this.canvas.getPointer(e);
+    let pointer = this.canvas.getPointer(e);
+    
+    // Constrain point within image bounds
+    if (this.canvas.imageBounds) {
+      const bounds = this.canvas.imageBounds;
+      pointer.x = Math.max(bounds.left, Math.min(bounds.right, pointer.x));
+      pointer.y = Math.max(bounds.top, Math.min(bounds.bottom, pointer.y));
+    }
+    
     const newPoint = { x: pointer.x, y: pointer.y };
     
     this.points.push(newPoint);

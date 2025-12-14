@@ -23,7 +23,7 @@ export default function TemplateEditor({
   const [drawMode, setDrawMode] = useState('select');
   const polygonDrawerRef = useRef(null);
   const rectangleCleanupRef = useRef(null);
-  const [showHints, setShowHints] = useState(true);
+  const [showHints, setShowHints] = useState(false);
   const [isSpacePressed, setIsSpacePressed] = useState(false);
 
   // Initialize canvas
@@ -53,15 +53,28 @@ export default function TemplateEditor({
         );
         
         img.scale(scale);
+        const imgLeft = (canvas.width - img.width * scale) / 2;
+        const imgTop = (canvas.height - img.height * scale) / 2;
+        
         img.set({
-          left: (canvas.width - img.width * scale) / 2,
-          top: (canvas.height - img.height * scale) / 2,
+          left: imgLeft,
+          top: imgTop,
           selectable: false,
           evented: false,
           hasControls: false,
           lockMovementX: true,
           lockMovementY: true
         });
+        
+        // Store image boundaries for constraining annotations
+        canvas.imageBounds = {
+          left: imgLeft,
+          top: imgTop,
+          right: imgLeft + img.width * scale,
+          bottom: imgTop + img.height * scale,
+          width: img.width * scale,
+          height: img.height * scale
+        };
         
         canvas.backgroundImage = img;
         canvas.requestRenderAll();
@@ -113,6 +126,42 @@ export default function TemplateEditor({
       if (e.target.annotationIndex !== undefined) {
         console.log('object:moving - setting isTransforming to true');
         isTransformingRef.current = true;
+        
+        // Constrain object within image bounds
+        if (canvas.imageBounds) {
+          const obj = e.target;
+          const bounds = canvas.imageBounds;
+          
+          // Get current bounding rect of the object
+          obj.setCoords();
+          const objBounds = obj.getBoundingRect(true, true);
+          
+          // Calculate constrained position
+          let newLeft = obj.left;
+          let newTop = obj.top;
+          
+          // Constrain horizontally
+          if (objBounds.left < bounds.left) {
+            newLeft = obj.left + (bounds.left - objBounds.left);
+          } else if (objBounds.left + objBounds.width > bounds.right) {
+            newLeft = obj.left - ((objBounds.left + objBounds.width) - bounds.right);
+          }
+          
+          // Constrain vertically
+          if (objBounds.top < bounds.top) {
+            newTop = obj.top + (bounds.top - objBounds.top);
+          } else if (objBounds.top + objBounds.height > bounds.bottom) {
+            newTop = obj.top - ((objBounds.top + objBounds.height) - bounds.bottom);
+          }
+          
+          // Apply constrained position
+          obj.set({
+            left: newLeft,
+            top: newTop
+          });
+          obj.setCoords();
+        }
+        
         updateAnnotationFromObject(e.target);
         updateLabelPosition(canvas, e.target);
       }
@@ -123,6 +172,31 @@ export default function TemplateEditor({
       if (e.target.annotationIndex !== undefined) {
         console.log('object:scaling - setting isTransforming to true');
         isTransformingRef.current = true;
+        
+        // Constrain scaled object within image bounds
+        if (canvas.imageBounds) {
+          const obj = e.target;
+          const bounds = obj.getBoundingRect();
+          const imgBounds = canvas.imageBounds;
+          
+          // Prevent scaling beyond image boundaries
+          if (bounds.left < imgBounds.left || 
+              bounds.top < imgBounds.top ||
+              bounds.left + bounds.width > imgBounds.right ||
+              bounds.top + bounds.height > imgBounds.bottom) {
+            
+            // Revert scale if it exceeds bounds
+            const transform = obj._currentTransform;
+            if (transform && transform.original) {
+              obj.scaleX = transform.original.scaleX;
+              obj.scaleY = transform.original.scaleY;
+              obj.left = transform.original.left;
+              obj.top = transform.original.top;
+            }
+            obj.setCoords();
+          }
+        }
+        
         updateAnnotationFromObject(e.target);
         updateLabelPosition(canvas, e.target);
       }
@@ -173,6 +247,16 @@ export default function TemplateEditor({
       
       console.log('Existing objects:', existingObjects.length, 'Annotations:', annotations.length);
       
+      // Debug: Log all objects on canvas
+      const allObjects = canvas.getObjects();
+      console.log('All canvas objects:', allObjects.map(o => ({
+        type: o.type,
+        annotationIndex: o.annotationIndex,
+        isLabel: o.isLabel,
+        isTemp: o.isTemp,
+        name: o.name
+      })));
+      
       // Handle count mismatch - add new or remove deleted annotations
       if (existingObjects.length !== annotations.length) {
         if (existingObjects.length < annotations.length) {
@@ -220,12 +304,29 @@ export default function TemplateEditor({
       // Update existing objects
       let needsFullReload = false;
       annotations.forEach((ann, index) => {
-        const obj = existingObjects.find(o => o.annotationIndex === index);
+        // Find ALL objects with this index (in case of duplicates)
+        const objectsWithIndex = existingObjects.filter(o => o.annotationIndex === index);
         
-        if (!obj) {
+        if (objectsWithIndex.length === 0) {
           needsFullReload = true;
           return;
         }
+        
+        // If there are duplicates, remove all and trigger full reload
+        if (objectsWithIndex.length > 1) {
+          console.warn(`Found ${objectsWithIndex.length} duplicate objects for index ${index}, removing all`);
+          objectsWithIndex.forEach(obj => {
+            const label = canvas.getObjects().find(o => 
+              o.isLabel && o.annotationIndex === index
+            );
+            if (label) canvas.remove(label);
+            canvas.remove(obj);
+          });
+          needsFullReload = true;
+          return;
+        }
+        
+        const obj = objectsWithIndex[0];
         
         // Check if shape type changed
         const objShape = obj.type === 'rect' ? 'rectangle' : 'polygon';
