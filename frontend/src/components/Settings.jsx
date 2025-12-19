@@ -28,7 +28,7 @@ export default function Settings() {
     settingsLoading: 'settings',
 
     // Loading Background Settings
-    loadingBackground: 'background1',
+    loadingBackground: 'none',
     loadingBackgroundOpacity: 0.2,
 
     // Camera Settings

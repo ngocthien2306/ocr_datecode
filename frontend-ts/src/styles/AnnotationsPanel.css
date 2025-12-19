@@ -1,0 +1,363 @@
+/* Annotations Panel - Separate Component */
+
+.annotations-panel {
+  display: flex;
+  flex-direction: column;
+  background: rgba(30, 30, 46, 0.95);
+  backdrop-filter: blur(10px);
+  border: 2px solid rgba(139, 92, 246, 0.2);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.annotations-panel h3 {
+  margin: 0 0 16px 0;
+  color: #c4b5fd;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(99, 102, 241, 0.1) 100%);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  margin: -16px -16px 16px -16px;
+  border-bottom: 2px solid rgba(139, 92, 246, 0.3);
+}
+
+.annotations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  max-height: 500px;
+  padding-right: 8px;
+}
+
+.annotations-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.annotations-list::-webkit-scrollbar-track {
+  background: rgba(30, 30, 46, 0.5);
+  border-radius: 4px;
+}
+
+.annotations-list::-webkit-scrollbar-thumb {
+  background: rgba(139, 92, 246, 0.5);
+  border-radius: 4px;
+  transition: background 0.3s;
+}
+
+.annotations-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 92, 246, 0.7);
+}
+
+.annotation-item {
+  background: rgba(45, 45, 60, 0.8);
+  border: 2px solid rgba(139, 92, 246, 0.2);
+  border-radius: 8px;
+  padding: 12px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+
+.annotation-item:hover {
+  background: rgba(55, 55, 75, 0.9);
+  border-color: rgba(139, 92, 246, 0.5);
+  transform: translateX(4px);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.2);
+}
+
+.annotation-item.selected {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(99, 102, 241, 0.1) 100%);
+  border-color: #8b5cf6;
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.annotation-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.annotation-color {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  flex-shrink: 0;
+}
+
+.annotation-index {
+  font-weight: 700;
+  font-size: 13px;
+  color: #e0e0e0;
+  letter-spacing: 0.3px;
+}
+
+.annotation-type-select {
+  width: 100%;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  background: rgba(30, 30, 46, 0.8);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.annotation-type-select:hover {
+  background: rgba(40, 40, 60, 0.9);
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+.annotation-type-select:focus {
+  outline: none;
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+}
+
+.annotation-text-input {
+  width: 100%;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  background: rgba(30, 30, 46, 0.8);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-weight: 400;
+  transition: all 0.2s;
+}
+
+.annotation-text-input::placeholder {
+  color: rgba(160, 160, 176, 0.5);
+  font-style: italic;
+}
+
+.annotation-text-input:hover {
+  background: rgba(40, 40, 60, 0.9);
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+.annotation-text-input:focus {
+  outline: none;
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+}
+
+.annotation-text-field {
+  position: relative;
+  margin-bottom: 10px;
+}
+
+.annotation-text-input.required-empty {
+  border-color: rgba(255, 85, 85, 0.5);
+}
+
+.annotation-text-input.required-empty:focus {
+  border-color: #ff5555;
+  box-shadow: 0 0 0 3px rgba(255, 85, 85, 0.1);
+}
+
+.required-indicator {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #ff5555;
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.annotation-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-top: 1px solid rgba(139, 92, 246, 0.1);
+  font-size: 12px;
+}
+
+.annotation-info:first-of-type {
+  margin-top: 8px;
+}
+
+.info-label {
+  color: #a0a0b0;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+}
+
+.info-value {
+  color: #e0e0e0;
+  font-weight: 500;
+  font-family: 'Monaco', 'Menlo', monospace;
+}
+
+.delete-annotation-btn {
+  position: absolute;
+  top: -2px;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 85, 85, 0.1);
+  border: 1px solid rgba(255, 85, 85, 0.3);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #ff5555;
+  padding: 0;
+
+}
+
+.delete-annotation-btn:hover {
+  background: rgba(255, 85, 85, 0.2);
+  border-color: #ff5555;
+  transform: scale(1.1);
+}
+
+.empty-message {
+  padding: 24px;
+  text-align: center;
+  color: #858585;
+  font-size: 13px;
+  font-style: italic;
+  background: rgba(30, 30, 46, 0.5);
+  border: 2px dashed rgba(139, 92, 246, 0.2);
+  border-radius: 8px;
+}
+
+/* ========================================
+   LIGHT MODE
+   ======================================== */
+
+body:not(.dark-mode) .annotations-panel {
+  background: linear-gradient(135deg, rgba(249, 250, 251, 0.98) 0%, rgba(243, 244, 246, 0.95) 100%);
+  border: 2px solid rgba(139, 92, 246, 0.2);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+}
+
+body:not(.dark-mode) .annotations-panel h3 {
+  color: #7c3aed;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.08) 0%, rgba(124, 58, 237, 0.05) 100%);
+  border-bottom: 2px solid rgba(139, 92, 246, 0.3);
+}
+
+body:not(.dark-mode) .annotations-list::-webkit-scrollbar-track {
+  background: rgba(243, 244, 246, 0.5);
+}
+
+body:not(.dark-mode) .annotations-list::-webkit-scrollbar-thumb {
+  background: rgba(139, 92, 246, 0.4);
+}
+
+body:not(.dark-mode) .annotations-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 92, 246, 0.6);
+}
+
+body:not(.dark-mode) .annotation-item {
+  background: #f9fafb;
+  border: 2px solid #e5e7eb;
+}
+
+body:not(.dark-mode) .annotation-item:hover {
+  background: rgba(139, 92, 246, 0.05);
+  border-color: rgba(139, 92, 246, 0.4);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.15);
+}
+
+body:not(.dark-mode) .annotation-item.selected {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(124, 58, 237, 0.05) 100%);
+  border-color: #8b5cf6;
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+body:not(.dark-mode) .annotation-color {
+  border: 2px solid white;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1);
+}
+
+body:not(.dark-mode) .annotation-index {
+  color: #1f2937;
+}
+
+body:not(.dark-mode) .annotation-type-select {
+  background: white;
+  border: 1px solid #d1d5db;
+  color: #1f2937;
+}
+
+body:not(.dark-mode) .annotation-type-select:hover {
+  background: #f9fafb;
+  border-color: rgba(139, 92, 246, 0.4);
+}
+
+body:not(.dark-mode) .annotation-type-select:focus {
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+}
+
+body:not(.dark-mode) .annotation-text-input {
+  background: white;
+  border: 1px solid #d1d5db;
+  color: #1f2937;
+}
+
+body:not(.dark-mode) .annotation-text-input::placeholder {
+  color: rgba(107, 114, 128, 0.6);
+}
+
+body:not(.dark-mode) .annotation-text-input:hover {
+  background: #f9fafb;
+  border-color: rgba(139, 92, 246, 0.4);
+}
+
+body:not(.dark-mode) .annotation-text-input:focus {
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+}
+
+body:not(.dark-mode) .annotation-info {
+  border-top: 1px solid #e5e7eb;
+}
+
+body:not(.dark-mode) .info-label {
+  color: #6b7280;
+}
+
+body:not(.dark-mode) .info-value {
+  color: #1f2937;
+}
+
+body:not(.dark-mode) .delete-annotation-btn {
+  background: rgba(255, 85, 85, 0.1);
+  border: 1px solid rgba(255, 85, 85, 0.2);
+  color: #dc2626;
+}
+
+body:not(.dark-mode) .delete-annotation-btn:hover {
+  background: rgba(255, 85, 85, 0.15);
+  border-color: #dc2626;
+}
+
+body:not(.dark-mode) .empty-message {
+  color: #9ca3af;
+  background: rgba(243, 244, 246, 0.5);
+  border: 2px dashed rgba(139, 92, 246, 0.2);
+}

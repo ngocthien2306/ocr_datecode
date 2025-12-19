@@ -1,0 +1,236 @@
+/* Recipe View Modal Styles */
+
+.recipe-view-modal {
+  max-width: 1000px;
+}
+
+.modal-header .header-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.recipe-view-content {
+  padding: 32px;
+}
+
+.info-section {
+  margin-bottom: 32px;
+  padding-bottom: 32px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.info-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.info-section h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #111827;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 24px;
+}
+
+.info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.info-item.full-width {
+  grid-column: 1 / -1;
+}
+
+.info-item label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.info-item .info-value {
+  font-size: 15px;
+  color: #111827;
+  font-weight: 500;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.status-badge.active {
+  background-color: #d1fae5;
+  color: #065f46;
+}
+
+.status-badge.inactive {
+  background-color: #fee2e2;
+  color: #991b1b;
+}
+
+.config-block {
+  margin-top: 16px;
+}
+
+.config-block label {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.config-json {
+  background-color: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px;
+  font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+  font-size: 13px;
+  color: #374151;
+  overflow-x: auto;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.config-json::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.config-json::-webkit-scrollbar-track {
+  background: #f3f4f6;
+}
+
+.config-json::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 3px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 20px 32px;
+  border-top: 1px solid #e5e7eb;
+  background-color: #f9fafb;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .recipe-view-content {
+    padding: 20px;
+  }
+
+  .info-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .modal-header .header-actions {
+    gap: 8px;
+  }
+
+  .modal-header .header-actions .btn {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+}
+
+/* Dark Mode Styles */
+body.dark-mode .recipe-view-modal {
+  background: #1f2937;
+  border: 1px solid #374151;
+}
+
+body.dark-mode .modal-header {
+  background: #1f2937;
+  border-bottom-color: #374151;
+}
+
+body.dark-mode .modal-header h2 {
+  color: #f9fafb;
+}
+
+body.dark-mode .close-btn {
+  color: #9ca3af;
+}
+
+body.dark-mode .close-btn:hover {
+  background-color: #374151;
+  color: #f9fafb;
+}
+
+body.dark-mode .info-section {
+  border-bottom-color: #374151;
+}
+
+body.dark-mode .info-section h3 {
+  color: #f9fafb;
+}
+
+body.dark-mode .info-item label {
+  color: #9ca3af;
+}
+
+body.dark-mode .info-item .info-value {
+  color: #f9fafb;
+}
+
+body.dark-mode .status-badge.active {
+  background-color: #064e3b;
+  color: #6ee7b7;
+}
+
+body.dark-mode .status-badge.inactive {
+  background-color: #7f1d1d;
+  color: #fca5a5;
+}
+
+body.dark-mode .config-block label {
+  color: #d1d5db;
+}
+
+body.dark-mode .config-json {
+  background-color: #111827;
+  border-color: #374151;
+  color: #d1d5db;
+}
+
+body.dark-mode .config-json::-webkit-scrollbar-track {
+  background: #1f2937;
+}
+
+body.dark-mode .config-json::-webkit-scrollbar-thumb {
+  background: #4b5563;
+}
+
+body.dark-mode .modal-footer {
+  background-color: #111827;
+  border-top-color: #374151;
+}
+
+body.dark-mode .btn-secondary {
+  background-color: #374151;
+  color: #d1d5db;
+}
+
+body.dark-mode .btn-secondary:hover:not(:disabled) {
+  background-color: #4b5563;
+}

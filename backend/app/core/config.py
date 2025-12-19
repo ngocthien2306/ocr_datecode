@@ -17,7 +17,7 @@ class Settings(BaseSettings):
         "http://localhost:3000", 
         "http://localhost:5173",
         "https://suntech-vision-api.ngrok.app",
-        "https://*.ngrok.app",
+        "https://suntech-vision.ngrok.app",
         "*"  # Allow all origins in development
     ]
 
