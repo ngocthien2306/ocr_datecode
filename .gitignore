@@ -160,3 +160,7 @@ cvat/
 label-studio/
 react-canvas-annotator/
 backend/uploads
+desktop/__pycache__/styles.cpython-311.pyc
+desktop/__pycache__/main_window.cpython-311.pyc
+desktop/__pycache__/type_dialog.cpython-311.pyc
+desktop/__pycache__/template_matcher.cpython-311.pyc

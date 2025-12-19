@@ -43,6 +43,14 @@ except ImportError:
     BARCODE_AVAILABLE = False
     print("Warning: pyzbar not available. Install with: pip install pyzbar")
 
+# Import image preprocessor for better OCR
+try:
+    from image_preprocessor import ImagePreprocessor
+    PREPROCESSOR_AVAILABLE = True
+except ImportError:
+    PREPROCESSOR_AVAILABLE = False
+    print("Warning: image_preprocessor not available")
+
 
 def run_inference_process(json_path, pipeline_path, image_path, result_queue):
     """
@@ -65,17 +73,38 @@ def run_inference_process(json_path, pipeline_path, image_path, result_queue):
         # Parse annotations
         template_bbox = None
         other_bboxes = []
+        crop_area = None
+        
         for ann in annotations:
             if ann['type'] == 'template':
                 template_bbox = ann
-            elif ann['type'] not in ['crop_area']:
+            elif ann['type'] == 'crop_area':
+                crop_area = ann
+            else:
                 other_bboxes.append(ann)
         
         # Load template
-        scale = 0.5
-        template_img = cv2.imread(template_path)
+        scale = 1
+        template_img_full = cv2.imread(template_path)
         if scale != 1.0:
-            template_img = cv2.resize(template_img, None, fx=scale, fy=scale)
+            template_img_full = cv2.resize(template_img_full, None, fx=scale, fy=scale)
+        
+        # Apply crop area if exists
+        crop_offset = (0, 0)  # (x_offset, y_offset) for mapping back to original
+        
+        if crop_area is not None:
+            # Crop template
+            x, y = int(crop_area['x']), int(crop_area['y'])
+            w, h = int(crop_area['width']), int(crop_area['height'])
+            crop_offset = (x, y)
+            
+            template_img = template_img_full[y:y+h, x:x+w]
+            print(f"✂️  Template cropped: {template_img_full.shape} -> {template_img.shape}")
+            
+            # Save cropped template for debug
+            cv2.imwrite("debug_template_crop_area.png", template_img)
+        else:
+            template_img = template_img_full
         
         template_gray = cv2.cvtColor(template_img, cv2.COLOR_BGR2GRAY)
         
@@ -107,11 +136,24 @@ def run_inference_process(json_path, pipeline_path, image_path, result_queue):
         t_total = time.time()
         
         # Load target
-        target_img_full = cv2.imread(image_path)
+        target_img_original = cv2.imread(image_path)
         if scale != 1.0:
-            target_img = cv2.resize(target_img_full, None, fx=scale, fy=scale)
+            target_img_full = cv2.resize(target_img_original, None, fx=scale, fy=scale)
+        else:
+            target_img_full = target_img_original
+        
+        # Apply crop area if exists (same as template)
+        if crop_area is not None:
+            x, y = int(crop_area['x']), int(crop_area['y'])
+            w, h = int(crop_area['width']), int(crop_area['height'])
+            target_img = target_img_full[y:y+h, x:x+w]
+            print(f"✂️  Target cropped: {target_img_full.shape} -> {target_img.shape}")
+            
+            # Save cropped target for debug
+            cv2.imwrite("debug_target_crop_area.png", target_img)
         else:
             target_img = target_img_full
+        
         target_gray = cv2.cvtColor(target_img, cv2.COLOR_BGR2GRAY)
         
         # Resize
@@ -183,9 +225,21 @@ def run_inference_process(json_path, pipeline_path, image_path, result_queue):
         
         transformed_bboxes = []
         
+        # Adjust template bbox if crop area exists
+        # (subtract crop offset from template points)
+        adjusted_template_pts = np.array(template_bbox['points'], dtype=np.float32)
+        if crop_area is not None:
+            adjusted_template_pts[:, 0] -= crop_offset[0]
+            adjusted_template_pts[:, 1] -= crop_offset[1]
+        
         # Template bbox
-        template_pts = np.array(template_bbox['points'], dtype=np.float32).reshape(-1, 1, 2)
+        template_pts = adjusted_template_pts.reshape(-1, 1, 2)
         template_transformed = cv2.perspectiveTransform(template_pts, H_full)
+        
+        # Add crop offset back to transformed points (map to original image coordinates)
+        if crop_area is not None:
+            template_transformed[:, :, 0] += crop_offset[0]
+            template_transformed[:, :, 1] += crop_offset[1]
         transformed_bboxes.append({
             'type': 'template',
             'points': template_transformed.reshape(-1, 2).tolist()
@@ -193,8 +247,20 @@ def run_inference_process(json_path, pipeline_path, image_path, result_queue):
         
         # Other bboxes
         for bbox in other_bboxes:
-            pts = np.array(bbox['points'], dtype=np.float32).reshape(-1, 1, 2)
+            # Adjust bbox if crop area exists
+            adjusted_pts = np.array(bbox['points'], dtype=np.float32)
+            if crop_area is not None:
+                adjusted_pts[:, 0] -= crop_offset[0]
+                adjusted_pts[:, 1] -= crop_offset[1]
+            
+            pts = adjusted_pts.reshape(-1, 1, 2)
             pts_transformed = cv2.perspectiveTransform(pts, H_full)
+            
+            # Add crop offset back (map to original image coordinates)
+            if crop_area is not None:
+                pts_transformed[:, :, 0] += crop_offset[0]
+                pts_transformed[:, :, 1] += crop_offset[1]
+            
             transformed_bboxes.append({
                 'type': bbox['type'],
                 'points': pts_transformed.reshape(-1, 2).tolist()
@@ -218,43 +284,76 @@ def run_inference_process(json_path, pipeline_path, image_path, result_queue):
                 
                 # Crop regions for OCR (excluding template)
                 cropped_regions = []
+
                 for bbox in transformed_bboxes:
-                    if bbox['type'] in ['template']:
+                    if bbox['type'] == 'template':
                         continue
-                        
-                    # Get bounding box points (4 corners)
+                    
                     pts = np.array(bbox['points'], dtype=np.float32)
                     
-                    # Get straight bounding rectangle (no rotation)
-                    x_coords = pts[:, 0]
-                    y_coords = pts[:, 1]
-                    x_min, x_max = int(np.min(x_coords)), int(np.max(x_coords))
-                    y_min, y_max = int(np.min(y_coords)), int(np.max(y_coords))
+                    width = int(max(
+                        np.linalg.norm(pts[0] - pts[1]),
+                        np.linalg.norm(pts[2] - pts[3])
+                    ))
+                    height = int(max(
+                        np.linalg.norm(pts[1] - pts[2]),
+                        np.linalg.norm(pts[3] - pts[0])
+                    ))
                     
-                    width = x_max - x_min
-                    height = y_max - y_min
+                    dst_pts = np.array([
+                        [0, 0],
+                        [width - 1, 0],
+                        [width - 1, height - 1],
+                        [0, height - 1]
+                    ], dtype=np.float32)
                     
-                    if width > 0 and height > 0:
-                        # Crop the region directly (no rotation)
-                        cropped = target_img_full[y_min:y_max, x_min:x_max]
+                    M = cv2.getPerspectiveTransform(pts, dst_pts)
+                    # Use original full image (not cropped) for warping
+                    cropped = cv2.warpPerspective(target_img_full, M, (width, height))
+                    
+                    cropped_regions.append({
+                        'image': cropped,
+                        'type': bbox['type'],
+                        'bbox_idx': len(cropped_regions)
+                    })
+
+                # for bbox in transformed_bboxes:
+                #     if bbox['type'] in ['template']:
+                #         continue
                         
-                        # Add padding if height is too small
-                        min_height = 48
-                        if height < min_height:
-                            pad_top = (min_height - height) // 2
-                            pad_bottom = min_height - height - pad_top
+                #     # Get bounding box points (4 corners)
+                #     pts = np.array(bbox['points'], dtype=np.float32)
+                    
+                #     # Get straight bounding rectangle (no rotation)
+                #     x_coords = pts[:, 0]
+                #     y_coords = pts[:, 1]
+                #     x_min, x_max = int(np.min(x_coords)), int(np.max(x_coords))
+                #     y_min, y_max = int(np.min(y_coords)), int(np.max(y_coords))
+                    
+                #     width = x_max - x_min
+                #     height = y_max - y_min
+                    
+                #     if width > 0 and height > 0:
+                #         # Crop the region directly (no rotation)
+                #         cropped = target_img_full[y_min:y_max, x_min:x_max]
+                        
+                #         # Add padding if height is too small
+                #         min_height = 48
+                #         if height < min_height:
+                #             pad_top = (min_height - height) // 2
+                #             pad_bottom = min_height - height - pad_top
                             
-                            # Create white canvas with padding
-                            padded = np.ones((min_height, width, 3), dtype=np.uint8) * 255
-                            # Place cropped image in center
-                            padded[pad_top:pad_top+height, :] = cropped
-                            cropped = padded
+                #             # Create white canvas with padding
+                #             padded = np.ones((min_height, width, 3), dtype=np.uint8) * 255
+                #             # Place cropped image in center
+                #             padded[pad_top:pad_top+height, :] = cropped
+                #             cropped = padded
                         
-                        cropped_regions.append({
-                            'image': cropped,
-                            'type': bbox['type'],
-                            'bbox_idx': len(cropped_regions)
-                        })
+                #         cropped_regions.append({
+                #             'image': cropped,
+                #             'type': bbox['type'],
+                #             'bbox_idx': len(cropped_regions)
+                #         })
                 
                 # Run batch OCR and Barcode decoding
                 if cropped_regions:
@@ -314,14 +413,15 @@ def run_inference_process(json_path, pipeline_path, image_path, result_queue):
                             })
                 
                 timings['ocr'] = (time.time() - ocr_start) * 1000
+                print(ocr_results)
                 
             except Exception as e:
                 print(f"OCR error: {e}")
                 import traceback
                 traceback.print_exc()
         
-        # Draw on image
-        annotated = target_img_full.copy()
+        # Draw on image (use original full image, not cropped)
+        annotated = target_img_original.copy() if scale == 1.0 else target_img_full.copy()
         colors = {
             'template': (0, 255, 0),
             'text': (255, 165, 0),
