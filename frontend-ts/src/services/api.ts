@@ -15,9 +15,9 @@ import type {
   Statistics
 } from '@/types';
 
-const API_BASE_URL = 'https://suntech-vision-api.ngrok.app/api';
+// const API_BASE_URL = 'https://suntech-vision-api.ngrok.app/api';
 // const API_BASE_URL = 'https://quiet-corners-lead.loca.lt/api';
-// const API_BASE_URL = 'http://localhost:8000/api';
+const API_BASE_URL = 'http://localhost:8000/api';
 
 // Create axios instance
 const api: AxiosInstance = axios.create({

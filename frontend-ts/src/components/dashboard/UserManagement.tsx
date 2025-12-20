@@ -16,6 +16,8 @@ interface UserFormData {
   username: string;
   email: string;
   full_name: string;
+  phone_number: string;
+  avatar_url: string;
   password: string;
   role: 'admin' | 'operator' | 'viewer';
   is_active: boolean;
@@ -43,6 +45,8 @@ const UserManagement: React.FC = () => {
     username: '',
     email: '',
     full_name: '',
+    phone_number: '',
+    avatar_url: '',
     password: '',
     role: 'operator',
     is_active: true
@@ -76,6 +80,8 @@ const UserManagement: React.FC = () => {
         username: '',
         email: '',
         full_name: '',
+        phone_number: '',
+        avatar_url: '',
         password: '',
         role: 'operator',
         is_active: true
@@ -209,13 +215,11 @@ const UserManagement: React.FC = () => {
   return (
     <div className="user-management-page">
       <div className="section-header">
-        <div>
-          <h2>User Management</h2>
-          <p>Manage system users and permissions</p>
-        </div>
-        <button className="create-button" onClick={() => setShowAddModal(true)}>
+        <h1>User Management</h1>
+        <button className="dashboard-btn" onClick={() => setShowAddModal(true)}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-            <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
           </svg>
           Add User
         </button>
@@ -230,7 +234,7 @@ const UserManagement: React.FC = () => {
           </svg>
           <input
             type="text"
-            placeholder="Search users..."
+            placeholder="Search users by name, email, or role..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -256,11 +260,11 @@ const UserManagement: React.FC = () => {
                 />
               </th>
               <th>Username</th>
-              <th>Full Name</th>
+              <th>Name</th>
               <th>Email</th>
               <th>Role</th>
               <th>Status</th>
-              <th>Created</th>
+              <th>Last Login</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -281,8 +285,13 @@ const UserManagement: React.FC = () => {
                       onChange={() => handleSelectUser(user.id)}
                     />
                   </td>
-                  <td><strong>{user.username}</strong></td>
-                  <td>{user.full_name}</td>
+                  <td>
+                    <div className="user-cell">
+                      <div className="user-avatar">{user.full_name?.charAt(0) || user.username.charAt(0)}</div>
+                      <span className="user-name">{user.username}</span>
+                    </div>
+                  </td>
+                  <td>{user.full_name || '-'}</td>
                   <td>{user.email}</td>
                   <td>
                     <span className={`role-badge ${user.role}`}>
@@ -290,11 +299,11 @@ const UserManagement: React.FC = () => {
                     </span>
                   </td>
                   <td>
-                    <span className={`status-badge ${user.is_active ? 'success' : 'inactive'}`}>
+                    <span className={`status-badge ${user.is_active ? 'active' : 'inactive'}`}>
                       {user.is_active ? 'Active' : 'Inactive'}
                     </span>
                   </td>
-                  <td>{new Date(user.created_at).toLocaleDateString()}</td>
+                  <td>{user.last_login ? new Date(user.last_login).toLocaleString() : 'Never'}</td>
                   <td>
                     <div className="action-buttons">
                       <button
@@ -341,15 +350,7 @@ const UserManagement: React.FC = () => {
                   value={newUser.username}
                   onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
                   required
-                />
-              </div>
-              <div className="form-group">
-                <label>Email *</label>
-                <input
-                  type="email"
-                  value={newUser.email}
-                  onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
-                  required
+                  placeholder="Enter username"
                 />
               </div>
               <div className="form-group">
@@ -359,6 +360,35 @@ const UserManagement: React.FC = () => {
                   value={newUser.full_name}
                   onChange={(e) => setNewUser({ ...newUser, full_name: e.target.value })}
                   required
+                  placeholder="Enter full name"
+                />
+              </div>
+              <div className="form-group">
+                <label>Email *</label>
+                <input
+                  type="email"
+                  value={newUser.email}
+                  onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                  required
+                  placeholder="Enter email"
+                />
+              </div>
+              <div className="form-group">
+                <label>Phone Number</label>
+                <input
+                  type="text"
+                  value={newUser.phone_number}
+                  onChange={(e) => setNewUser({ ...newUser, phone_number: e.target.value })}
+                  placeholder="Enter phone number"
+                />
+              </div>
+              <div className="form-group">
+                <label>Avatar URL</label>
+                <input
+                  type="text"
+                  value={newUser.avatar_url}
+                  onChange={(e) => setNewUser({ ...newUser, avatar_url: e.target.value })}
+                  placeholder="Enter avatar URL"
                 />
               </div>
               <div className="form-group">
@@ -424,6 +454,25 @@ const UserManagement: React.FC = () => {
                   value={editingUser.email}
                   onChange={(e) => setEditingUser({ ...editingUser, email: e.target.value })}
                   required
+                  placeholder="Enter email"
+                />
+              </div>
+              <div className="form-group">
+                <label>Phone Number</label>
+                <input
+                  type="text"
+                  value={editingUser.phone_number || ''}
+                  onChange={(e) => setEditingUser({ ...editingUser, phone_number: e.target.value })}
+                  placeholder="Enter phone number"
+                />
+              </div>
+              <div className="form-group">
+                <label>Avatar URL</label>
+                <input
+                  type="text"
+                  value={editingUser.avatar_url || ''}
+                  onChange={(e) => setEditingUser({ ...editingUser, avatar_url: e.target.value })}
+                  placeholder="Enter avatar URL"
                 />
               </div>
               <div className="form-group">

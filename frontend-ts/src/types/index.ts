@@ -4,8 +4,11 @@ export interface User {
   username: string;
   email: string;
   full_name: string;
+  phone_number?: string;
+  avatar_url?: string;
   role: 'admin' | 'operator' | 'viewer';
   is_active: boolean;
+  last_login?: string;
   created_at: string;
   updated_at: string;
 }
@@ -15,6 +18,8 @@ export interface UserCreate {
   email: string;
   password: string;
   full_name: string;
+  phone_number?: string;
+  avatar_url?: string;
   role: 'admin' | 'operator' | 'viewer';
   is_active?: boolean;
 }
@@ -22,6 +27,8 @@ export interface UserCreate {
 export interface UserUpdate {
   email?: string;
   full_name?: string;
+  phone_number?: string;
+  avatar_url?: string;
   role?: 'admin' | 'operator' | 'viewer';
   is_active?: boolean;
 }
@@ -32,6 +39,7 @@ export interface CameraSettings {
   gain?: number;
   width?: number;
   height?: number;
+  delay_trigger?: number;
 }
 
 export interface Camera {
@@ -76,6 +84,7 @@ export interface ModelThresholds {
   detection_threshold?: number;
   classification_threshold?: number;
   ocr_threshold?: number;
+  recognition_threshold?: number;
 }
 
 export interface TemplateConfig {
