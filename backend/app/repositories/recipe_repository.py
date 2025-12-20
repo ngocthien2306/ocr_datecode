@@ -97,7 +97,6 @@ class RecipeRepository:
         cursor = self.collection.find(query).skip(skip).limit(limit).sort("created_at", -1)
         recipes = []
         async for recipe in cursor:
-            print(recipe)
             recipe["_id"] = str(recipe["_id"])
             # Ensure camera_templates exists for backward compatibility
             if "camera_templates" not in recipe:

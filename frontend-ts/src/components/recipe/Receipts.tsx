@@ -230,20 +230,13 @@ export default function Receipts() {
       type: 'info',
       onConfirm: async () => {
         try {
-          // TODO: Implement load receipt logic
-          // This could involve:
-          // 1. Sending recipe to backend to set as active
-          // 2. Updating system configuration
-          // 3. Notifying user of successful load
-          
-          // Placeholder for API call
-          toast.success(`Recipe "${receipt.name}" loaded successfully!\nRecipe ID: ${receipt.id}\nProduct Code: ${receipt.productCode}`);
-          
-          // Optionally refresh the list
+          const data = await receiptsAPI.loadReceipt(receipt.id);
+          toast.success(`Recipe "${receipt.name}" loaded and recorded (event id: ${data.id}).`);
           await loadReceipts();
-        } catch (error) {
+        } catch (error: any) {
           console.error('Error loading receipt:', error);
-          toast.error('Failed to load receipt. Please try again.');
+          const msg = error?.response?.data?.detail || 'Failed to load receipt. Please try again.';
+          toast.error(msg);
         }
       }
     });

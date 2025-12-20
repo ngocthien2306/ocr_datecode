@@ -19,6 +19,9 @@ from app.api.dependencies.auth import (
     require_admin,
     RoleChecker
 )
+from app.schemas.receipt_load import ReceiptLoadCreate, ReceiptLoadResponse
+from app.repositories.receipt_load_repository import ReceiptLoadRepository
+from datetime import datetime
 
 router = APIRouter()
 
@@ -26,6 +29,11 @@ router = APIRouter()
 async def get_recipe_repository(db=Depends(get_database)) -> RecipeRepository:
     """Dependency to get recipe repository"""
     return RecipeRepository(db)
+
+
+async def get_receipt_load_repository(db=Depends(get_database)) -> ReceiptLoadRepository:
+    """Dependency to get receipt load repository"""
+    return ReceiptLoadRepository(db)
 
 
 def recipe_to_response(recipe: RecipeInDB) -> RecipeResponse:
@@ -70,6 +78,41 @@ def recipe_to_response(recipe: RecipeInDB) -> RecipeResponse:
         created_at=recipe.created_at,
         updated_at=recipe.updated_at
     )
+
+
+def _to_primitive(obj):
+    """Recursively convert Pydantic/model objects to Python primitives safe for BSON.
+
+    - Handles None, primitives, dicts, lists/tuples/sets
+    - Supports Pydantic v2 (`model_dump`) and v1 (`dict`) and falls back to `vars()`
+    - Final fallback converts to str(obj)
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, dict):
+        return {k: _to_primitive(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_to_primitive(v) for v in obj]
+    # Pydantic v2
+    if hasattr(obj, "model_dump"):
+        try:
+            return _to_primitive(obj.model_dump())
+        except Exception:
+            pass
+    # Pydantic v1
+    if hasattr(obj, "dict"):
+        try:
+            return _to_primitive(obj.dict())
+        except Exception:
+            pass
+    if hasattr(obj, "__dict__"):
+        try:
+            return _to_primitive(vars(obj))
+        except Exception:
+            pass
+    return str(obj)
 
 
 @router.post("/", response_model=RecipeResponse, status_code=status.HTTP_201_CREATED)
@@ -166,6 +209,51 @@ async def get_recipe(
         )
     
     return recipe_to_response(recipe)
+
+
+@router.post("/{recipe_id}/load", response_model=ReceiptLoadResponse)
+async def load_recipe(
+    recipe_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+    recipe_repo: RecipeRepository = Depends(get_recipe_repository),
+    load_repo: ReceiptLoadRepository = Depends(get_receipt_load_repository)
+):
+    """
+    Record a recipe load event. Stores who loaded the recipe and when.
+    """
+    # Ensure recipe exists
+    recipe = await recipe_repo.get_by_id(recipe_id)
+    if not recipe:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recipe not found"
+        )
+    # Enforce presence of camera_templates before allowing load
+    camera_templates = getattr(recipe, 'camera_templates', None)
+    if not camera_templates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Recipe has no camera templates. Please draw templates before loading."
+        )
+
+    # Build metadata snapshot (store useful fields only) and convert to primitives
+    metadata = {
+        'name': recipe.name,
+        'product_code': recipe.product_code,
+        'camera_templates': _to_primitive(camera_templates),
+        'model_thresholds': _to_primitive(getattr(recipe, 'model_thresholds', None)),
+        'cameras': _to_primitive(getattr(recipe, 'cameras', []))
+    }
+
+    created = await load_repo.create(recipe_id=recipe_id, user_id=current_user.id, metadata=metadata)
+
+    return ReceiptLoadResponse(
+        id=created['id'],
+        recipe_id=created['recipe_id'],
+        loaded_by=created['loaded_by'],
+        loaded_at=created['loaded_at'],
+        metadata=created.get('metadata')
+    )
 
 
 @router.put("/{recipe_id}", response_model=RecipeResponse)
