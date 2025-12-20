@@ -9,9 +9,9 @@ import { Rect, Polygon, Circle, FabricText, util } from 'fabric';
  * @param {number} index 
  * @returns {fabric.Object | undefined}
  */
-export const findObjectByIndex = (canvas, index) => {
+export const findObjectByIndex = (canvas: any, index: number): any => {
   if (!canvas) return undefined;
-  return canvas.getObjects().find(obj => obj.annotationIndex === index);
+  return canvas.getObjects().find((obj: any) => obj.annotationIndex === index);
 };
 
 /**
@@ -19,9 +19,9 @@ export const findObjectByIndex = (canvas, index) => {
  * @param {fabric.Canvas} canvas 
  * @returns {Array<fabric.Object>}
  */
-export const getAnnotationObjects = (canvas) => {
+export const getAnnotationObjects = (canvas: any): any[] => {
   if (!canvas) return [];
-  return canvas.getObjects().filter(obj => 
+  return canvas.getObjects().filter((obj: any) => 
     obj.annotationIndex !== undefined && 
     !obj.isLabel && 
     !obj.isPolygonEditPoint
@@ -33,10 +33,10 @@ export const getAnnotationObjects = (canvas) => {
  * @param {fabric.Canvas} canvas 
  * @param {Function} predicate - Filter function
  */
-export const removeObjectsByPredicate = (canvas, predicate) => {
+export const removeObjectsByPredicate = (canvas: any, predicate: (obj: any) => boolean): void => {
   if (!canvas) return;
   const objectsToRemove = canvas.getObjects().filter(predicate);
-  objectsToRemove.forEach(obj => canvas.remove(obj));
+  objectsToRemove.forEach((obj: any) => canvas.remove(obj));
 };
 
 /**
@@ -46,7 +46,7 @@ export const removeObjectsByPredicate = (canvas, predicate) => {
  * @param {string} color 
  * @returns {fabric.Rect}
  */
-export const createRectangleObject = (annotation, index, color) => {
+export const createRectangleObject = (annotation: any, index: number, color: string): any => {
   return new Rect({
     left: annotation.x,
     top: annotation.y,
@@ -71,7 +71,7 @@ export const createRectangleObject = (annotation, index, color) => {
     objectCaching: false,
     annotationIndex: index,
     annotationType: annotation.type
-  });
+  } as any);
 };
 
 /**
@@ -81,8 +81,8 @@ export const createRectangleObject = (annotation, index, color) => {
  * @param {string} color 
  * @returns {fabric.Polygon}
  */
-export const createPolygonObject = (annotation, index, color) => {
-  const points = annotation.points.map(p => ({ x: p[0], y: p[1] }));
+export const createPolygonObject = (annotation: any, index: number, color: string): any => {
+  const points = annotation.points.map((p: any) => ({ x: p[0], y: p[1] }));
   
   return new Polygon(points, {
     fill: color + '20',
@@ -105,7 +105,7 @@ export const createPolygonObject = (annotation, index, color) => {
     perPixelTargetFind: true,
     annotationIndex: index,
     annotationType: annotation.type
-  });
+  } as any);
 };
 
 /**
@@ -117,7 +117,7 @@ export const createPolygonObject = (annotation, index, color) => {
  * @param {number} index - Annotation index to link label
  * @returns {fabric.Text}
  */
-export const createLabel = (annotation, x, y, color, index) => {
+export const createLabel = (annotation: any, x: number, y: number, color: string, index: number): any => {
   // Show type and text (if available)
   let labelText = annotation.type.toUpperCase();
   if (annotation.text && annotation.text.trim() !== '') {
@@ -136,7 +136,7 @@ export const createLabel = (annotation, x, y, color, index) => {
     fontFamily: 'Arial',
     isLabel: true,
     annotationIndex: index
-  });
+  } as any);
 };
 
 /**
@@ -147,7 +147,7 @@ export const createLabel = (annotation, x, y, color, index) => {
  * @param {fabric.Polygon} polygon - Reference to parent polygon
  * @returns {fabric.Circle}
  */
-export const createPolygonEditPoint = (point, index, color, polygon) => {
+export const createPolygonEditPoint = (point: any, index: number, color: string, polygon: any): any => {
   return new Circle({
     left: point[0],
     top: point[1],
@@ -164,7 +164,7 @@ export const createPolygonEditPoint = (point, index, color, polygon) => {
     isPolygonEditPoint: true,
     pointIndex: index,
     parentPolygon: polygon
-  });
+  } as any);
 };
 
 /**
@@ -172,7 +172,7 @@ export const createPolygonEditPoint = (point, index, color, polygon) => {
  * @param {fabric.Rect} obj 
  * @returns {Object} Updated annotation data
  */
-export const getRectangleData = (obj) => {
+export const getRectangleData = (obj: any): any => {
   return {
     x: obj.left,
     y: obj.top,
@@ -186,11 +186,11 @@ export const getRectangleData = (obj) => {
  * @param {fabric.Polygon} obj 
  * @returns {Object} Updated annotation data
  */
-export const getPolygonData = (obj) => {
+export const getPolygonData = (obj: any): any => {
   const matrix = obj.calcTransformMatrix();
-  const transformedPoints = [];
+  const transformedPoints: any[] = [];
   
-  obj.points.forEach(p => {
+  obj.points.forEach((p: any) => {
     const point = util.transformPoint(
       { x: p.x - (obj.pathOffset?.x || 0), y: p.y - (obj.pathOffset?.y || 0) },
       matrix
@@ -207,8 +207,8 @@ export const getPolygonData = (obj) => {
  * Setup canvas pan and zoom
  * @param {fabric.Canvas} canvas 
  */
-export const setupCanvasPanning = (canvas) => {
-  canvas.on('mouse:down', function(opt) {
+export const setupCanvasPanning = (canvas: any): void => {
+  canvas.on('mouse:down', function(this: any, opt: any) {
     const evt = opt.e;
     if (evt.button === 1 || (evt.button === 0 && (evt.shiftKey || this.isSpacePressed))) {
       this.isDragging = true;
@@ -219,7 +219,7 @@ export const setupCanvasPanning = (canvas) => {
     }
   });
 
-  canvas.on('mouse:move', function(opt) {
+  canvas.on('mouse:move', function(this: any, opt: any) {
     if (this.isDragging) {
       const e = opt.e;
       const vpt = this.viewportTransform;
@@ -231,14 +231,14 @@ export const setupCanvasPanning = (canvas) => {
     }
   });
 
-  canvas.on('mouse:up', function() {
+  canvas.on('mouse:up', function(this: any) {
     this.setViewportTransform(this.viewportTransform);
     this.isDragging = false;
     this.selection = true;
   });
   
   // Mouse wheel zoom
-  canvas.on('mouse:wheel', function(opt) {
+  canvas.on('mouse:wheel', function(this: any, opt: any) {
     const delta = opt.e.deltaY;
     let zoom = canvas.getZoom();
     zoom *= 0.999 ** delta;
@@ -257,7 +257,7 @@ export const setupCanvasPanning = (canvas) => {
  * @param {fabric.Canvas} canvas 
  * @param {number} zoom - Zoom level (0.5 to 3)
  */
-export const setCanvasZoom = (canvas, zoom) => {
+export const setCanvasZoom = (canvas: any, zoom: number): void => {
   if (!canvas) return;
   canvas.setZoom(Math.min(Math.max(zoom, 0.5), 3));
   canvas.requestRenderAll();
@@ -267,7 +267,7 @@ export const setCanvasZoom = (canvas, zoom) => {
  * Reset canvas zoom and position
  * @param {fabric.Canvas} canvas 
  */
-export const resetCanvasZoom = (canvas) => {
+export const resetCanvasZoom = (canvas: any): void => {
   if (!canvas) return;
   canvas.setZoom(1);
   canvas.viewportTransform[4] = 0;

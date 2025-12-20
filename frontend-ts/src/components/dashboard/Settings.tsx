@@ -170,23 +170,21 @@ const Settings: React.FC = () => {
   return (
     <div className="settings-page">
       <div className="section-header">
-        <div>
-          <h2>System Settings</h2>
-          <p>Configure application preferences</p>
-        </div>
+        <h1>System Settings</h1>
         <div className="header-actions">
-          <button className="btn btn-secondary" onClick={handleReset}>
+          <button className="dashboard-btn secondary" onClick={handleReset}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-              <path d="M23 4V10H17M1 20V14H7" stroke="currentColor" strokeWidth="2"/>
-              <path d="M3.51 9C4.88 5.28 8.18 3 12 3c5.52 0 10 4.48 10 10M1 14l4.64 4.36C6.71 19.43 8.04 20.22 9.5 20.64c1.46.42 3.01.47 4.49.14 1.48-.33 2.85-1.04 3.99-2.05 1.13-1.01 1.99-2.29 2.5-3.73" stroke="currentColor" strokeWidth="2"/>
+              <path d="M23 4V10H17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M1 20V14H7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M3.51 9C4.01717 7.56679 4.87913 6.2854 6.01547 5.27542C7.1518 4.26543 8.52547 3.55976 10.0083 3.22426C11.4911 2.88875 13.0348 2.93434 14.4952 3.35677C15.9556 3.77921 17.2853 4.56471 18.36 5.64L23 10M1 14L5.64 18.36C6.71475 19.4353 8.04437 20.2208 9.50481 20.6432C10.9652 21.0657 12.5089 21.1112 13.9917 20.7757C15.4745 20.4402 16.8482 19.7346 17.9845 18.7246C19.1209 17.7146 19.9828 16.4332 20.49 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
             Reset to Default
           </button>
-          <button className="btn btn-primary" onClick={handleSave}>
+          <button className="dashboard-btn" onClick={handleSave}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-              <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v13a2 2 0 01-2 2z" stroke="currentColor" strokeWidth="2"/>
-              <polyline points="17,21 17,13 7,13 7,21" stroke="currentColor" strokeWidth="2"/>
-              <polyline points="7,3 7,8 15,8" stroke="currentColor" strokeWidth="2"/>
+              <path d="M19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V5C3 4.46957 3.21071 3.96086 3.58579 2.58579C3.96086 2.21071 4.46957 2 5 2H16L21 7V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <polyline points="17,21 17,13 7,13 7,21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <polyline points="7,3 7,8 15,8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
             Save Changes
           </button>
@@ -196,9 +194,15 @@ const Settings: React.FC = () => {
       <div className="settings-sections">
         {/* System Configuration */}
         <div className="settings-section">
-          <h3>System Configuration</h3>
+          <h2>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <rect x="4" y="4" width="16" height="16" rx="2" ry="2" stroke="currentColor" strokeWidth="2"/>
+              <rect x="9" y="9" width="6" height="6" stroke="currentColor" strokeWidth="2"/>
+            </svg>
+            System Configuration
+          </h2>
           <div className="settings-grid">
-            <div className="form-group">
+            <div className="setting-item">
               <label>System Name</label>
               <input
                 type="text"
@@ -206,11 +210,11 @@ const Settings: React.FC = () => {
                 onChange={(e) => handleChange('systemName', e.target.value)}
               />
             </div>
-            <div className="form-group">
+            <div className="setting-item">
               <label>Version</label>
               <input type="text" value={settings.version} disabled />
             </div>
-            <div className="form-group">
+            <div className="setting-item">
               <label>Language</label>
               <select value={settings.language} onChange={(e) => handleChange('language', e.target.value)}>
                 <option value="en">English</option>
@@ -218,7 +222,7 @@ const Settings: React.FC = () => {
                 <option value="zh">中文</option>
               </select>
             </div>
-            <div className="form-group">
+            <div className="setting-item">
               <label>Timezone</label>
               <select value={settings.timezone} onChange={(e) => handleChange('timezone', e.target.value)}>
                 <option value="UTC+7">UTC+7 (Bangkok, Hanoi)</option>
@@ -231,36 +235,118 @@ const Settings: React.FC = () => {
 
         {/* Loading Templates */}
         <div className="settings-section">
-          <h3>Loading Animation Templates</h3>
-          <p className="section-description">Customize loading animations for each section</p>
+          <h2>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
+              <path d="M12 1v6m0 6v6M1 12h6m6 0h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+            Loading Animation Templates
+          </h2>
+          <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '20px' }}>
+            Customize loading animations for each section of the application
+          </p>
           <div className="settings-grid">
-            {['dashboard', 'users', 'receipts', 'cameras', 'historical', 'settings'].map(tab => (
-              <div key={tab} className="form-group">
-                <label>{tab.charAt(0).toUpperCase() + tab.slice(1)} Loading</label>
-                <select
-                  value={settings[`${tab}Loading` as keyof SettingsState] as string}
-                  onChange={(e) => handleChange(`${tab}Loading` as keyof SettingsState, e.target.value as any)}
-                >
-                  {loadingTemplates.map(template => (
-                    <option key={template} value={template}>
-                      {template.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ))}
+            <div className="setting-item">
+              <label>Dashboard Loading</label>
+              <select 
+                value={settings.dashboardLoading} 
+                onChange={(e) => handleChange('dashboardLoading', e.target.value)}
+              >
+                <option value="camera-vision">Camera Vision System</option>
+                <option value="spinner">Classic Spinner</option>
+                <option value="pulse">Pulse Wave</option>
+                <option value="radar">Radar Scan</option>
+                <option value="grid">Grid Matrix</option>
+                <option value="circuit">Circuit Board</option>
+                <option value="barcode">Barcode Scanner</option>
+                <option value="ocr">OCR Text Recognition</option>
+                <option value="users">Users Network</option>
+                <option value="receipts">Receipt Scanner</option>
+                <option value="cameras">Multi-Lens System</option>
+                <option value="historical">Timeline History</option>
+                <option value="settings">Gear System</option>
+              </select>
+            </div>
+
+            <div className="setting-item">
+              <label>User Management Loading</label>
+              <select 
+                value={settings.usersLoading} 
+                onChange={(e) => handleChange('usersLoading', e.target.value)}
+              >
+                {loadingTemplates.map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="setting-item">
+              <label>Receipts Loading</label>
+              <select 
+                value={settings.receiptsLoading} 
+                onChange={(e) => handleChange('receiptsLoading', e.target.value)}
+              >
+                {loadingTemplates.map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="setting-item">
+              <label>Cameras Loading</label>
+              <select 
+                value={settings.camerasLoading} 
+                onChange={(e) => handleChange('camerasLoading', e.target.value)}
+              >
+                {loadingTemplates.map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="setting-item">
+              <label>Historical Loading</label>
+              <select 
+                value={settings.historicalLoading} 
+                onChange={(e) => handleChange('historicalLoading', e.target.value)}
+              >
+                {loadingTemplates.map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="setting-item">
+              <label>Settings Loading</label>
+              <select 
+                value={settings.settingsLoading} 
+                onChange={(e) => handleChange('settingsLoading', e.target.value)}
+              >
+                {loadingTemplates.map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
         {/* Loading Background */}
         <div className="settings-section">
-          <h3>Loading Background</h3>
-          <p className="section-description">Customize background for loading screens</p>
+          <h2>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/>
+              <path d="M3 9h18M9 21V9" stroke="currentColor" strokeWidth="2"/>
+            </svg>
+            Loading Background
+          </h2>
+          <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '20px' }}>
+            Customize background image and opacity for loading screens
+          </p>
           <div className="settings-grid">
-            <div className="form-group">
+            <div className="setting-item">
               <label>Background Image</label>
-              <select
-                value={settings.loadingBackground}
+              <select 
+                value={settings.loadingBackground} 
                 onChange={(e) => handleChange('loadingBackground', e.target.value)}
               >
                 <option value="none">None</option>
@@ -270,105 +356,77 @@ const Settings: React.FC = () => {
                 <option value="background4">Background 4</option>
               </select>
             </div>
-            <div className="form-group">
+
+            <div className="setting-item">
               <label>Background Opacity: {(settings.loadingBackgroundOpacity * 100).toFixed(0)}%</label>
-              <input
-                type="range"
-                min="0"
-                max="1"
+              <input 
+                type="range" 
+                min="0" 
+                max="1" 
                 step="0.05"
                 value={settings.loadingBackgroundOpacity}
                 onChange={(e) => handleChange('loadingBackgroundOpacity', parseFloat(e.target.value))}
+                style={{ width: '100%' }}
               />
             </div>
           </div>
         </div>
 
-        {/* Camera Configuration */}
-        <div className="settings-section">
-          <h3>Camera Configuration</h3>
-          <div className="settings-grid">
-            {[1, 2, 3].map(num => (
-              <React.Fragment key={num}>
-                <div className="form-group checkbox-group">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={settings[`camera${num}Enabled` as keyof SettingsState] as boolean}
-                      onChange={(e) => handleChange(`camera${num}Enabled` as keyof SettingsState, e.target.checked as any)}
-                    />
-                    <span>Camera {num} Enabled</span>
-                  </label>
-                </div>
-                <div className="form-group">
-                  <label>Camera {num} FPS</label>
-                  <input
-                    type="number"
-                    value={settings[`camera${num}Fps` as keyof SettingsState] as number}
-                    onChange={(e) => handleChange(`camera${num}Fps` as keyof SettingsState, parseInt(e.target.value) as any)}
-                    min="1"
-                    max="60"
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Camera {num} Resolution</label>
-                  <select
-                    value={settings[`camera${num}Resolution` as keyof SettingsState] as string}
-                    onChange={(e) => handleChange(`camera${num}Resolution` as keyof SettingsState, e.target.value as any)}
-                  >
-                    <option value="1920x1080">1920x1080 (Full HD)</option>
-                    <option value="1280x720">1280x720 (HD)</option>
-                    <option value="640x480">640x480 (VGA)</option>
-                  </select>
-                </div>
-              </React.Fragment>
-            ))}
-          </div>
-        </div>
+        {/* Camera Configuration removed — handled in Camera Management page */}
 
         {/* Processing Settings */}
         <div className="settings-section">
-          <h3>Processing Configuration</h3>
+          <h2>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
+            </svg>
+            Processing Configuration
+          </h2>
           <div className="settings-grid">
-            <div className="form-group">
-              <label>Detection Threshold: {(settings.detectionThreshold * 100).toFixed(0)}%</label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={settings.detectionThreshold}
-                onChange={(e) => handleChange('detectionThreshold', parseFloat(e.target.value))}
-              />
+            <div className="setting-item">
+              <label>Detection Threshold</label>
+              <div className="range-input">
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={settings.detectionThreshold}
+                  onChange={(e) => handleChange('detectionThreshold', parseFloat(e.target.value))}
+                />
+                <span>{(settings.detectionThreshold * 100).toFixed(0)}%</span>
+              </div>
             </div>
-            <div className="form-group">
+            <div className="setting-item">
               <label>Max Processing Time (seconds)</label>
               <input
                 type="number"
                 value={settings.maxProcessingTime}
                 onChange={(e) => handleChange('maxProcessingTime', parseInt(e.target.value))}
-                min="1"
-                max="30"
+                min={1}
+                max={30}
               />
             </div>
-            <div className="form-group checkbox-group">
-              <label>
+            <div className="setting-item">
+              <label>Auto Reject Failed Products</label>
+              <label className="toggle">
                 <input
                   type="checkbox"
                   checked={settings.autoReject}
                   onChange={(e) => handleChange('autoReject', e.target.checked)}
                 />
-                <span>Auto Reject Failed Images</span>
+                <span className="slider"></span>
               </label>
             </div>
-            <div className="form-group checkbox-group">
-              <label>
+            <div className="setting-item">
+              <label>Save Failed Product Images</label>
+              <label className="toggle">
                 <input
                   type="checkbox"
                   checked={settings.saveFailedImages}
                   onChange={(e) => handleChange('saveFailedImages', e.target.checked)}
                 />
-                <span>Save Failed Images for Review</span>
+                <span className="slider"></span>
               </label>
             </div>
           </div>
@@ -376,46 +434,53 @@ const Settings: React.FC = () => {
 
         {/* Notification Settings */}
         <div className="settings-section">
-          <h3>Notification Preferences</h3>
+          <h2>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M18 8C18 6.4087 17.3679 4.88258 16.2426 3.75736C15.1174 2.63214 13.5913 2 12 2C10.4087 2 8.88258 2.63214 7.75736 3.75736C6.63214 4.88258 6 6.4087 6 8C6 15 3 17 3 17H21C21 17 18 15 18 8Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M13.73 21C13.5542 21.3031 13.3019 21.5547 12.9982 21.7295C12.6946 21.9044 12.3504 21.9965 12 21.9965C11.6496 21.9965 11.3054 21.9044 11.0018 21.7295C10.6982 21.5547 10.4458 21.3031 10.27 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Notifications
+          </h2>
           <div className="settings-grid">
-            <div className="form-group checkbox-group">
-              <label>
+            <div className="setting-item">
+              <label>Email Notifications</label>
+              <label className="toggle">
                 <input
                   type="checkbox"
                   checked={settings.emailNotifications}
                   onChange={(e) => handleChange('emailNotifications', e.target.checked)}
                 />
-                <span>Email Notifications</span>
+                <span className="slider"></span>
               </label>
             </div>
-            <div className="form-group checkbox-group">
-              <label>
+            <div className="setting-item">
+              <label>SMS Notifications</label>
+              <label className="toggle">
                 <input
                   type="checkbox"
                   checked={settings.smsNotifications}
                   onChange={(e) => handleChange('smsNotifications', e.target.checked)}
                 />
-                <span>SMS Notifications</span>
+                <span className="slider"></span>
               </label>
             </div>
-            <div className="form-group">
-              <label>Alert Threshold (errors per hour)</label>
+            <div className="setting-item">
+              <label>Alert Threshold (failures/hour)</label>
               <input
                 type="number"
                 value={settings.alertThreshold}
                 onChange={(e) => handleChange('alertThreshold', parseInt(e.target.value))}
-                min="1"
-                max="100"
               />
             </div>
-            <div className="form-group checkbox-group">
-              <label>
+            <div className="setting-item">
+              <label>Daily Summary Report</label>
+              <label className="toggle">
                 <input
                   type="checkbox"
                   checked={settings.dailyReport}
                   onChange={(e) => handleChange('dailyReport', e.target.checked)}
                 />
-                <span>Daily Summary Report</span>
+                <span className="slider"></span>
               </label>
             </div>
           </div>

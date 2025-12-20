@@ -470,8 +470,8 @@ export default function TemplateEditor({
 
   const loadAnnotations = (canvas: FabricCanvas) => {
     // Remove existing annotation objects
-    objectUtils.removeObjectsByPredicate(canvas, (obj: FabricAnnotationObject) =>
-      obj.annotationIndex !== undefined || obj.isLabel
+    objectUtils.removeObjectsByPredicate(canvas, (obj: any) =>
+      (obj.annotationIndex !== undefined) || !!obj.isLabel
     );
 
     annotations.forEach((ann, index) => {
@@ -484,7 +484,7 @@ export default function TemplateEditor({
       } else if ((ann as any).shape === 'polygon' && (ann as any).points) {
         obj = objectUtils.createPolygonObject(ann, index, color);
         // Add custom controls for polygon point editing
-        setupPolygonControls(obj, color);
+        setupPolygonControls(obj as any, color);
       }
       if (obj) {
         canvas.add(obj);

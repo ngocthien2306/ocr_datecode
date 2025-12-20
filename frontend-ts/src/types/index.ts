@@ -6,7 +6,7 @@ export interface User {
   full_name: string;
   phone_number?: string;
   avatar_url?: string;
-  role: 'admin' | 'operator' | 'viewer';
+  role: 'admin' | 'operator' | 'supervisor' | 'viewer';
   is_active: boolean;
   last_login?: string;
   created_at: string;
@@ -20,7 +20,7 @@ export interface UserCreate {
   full_name: string;
   phone_number?: string;
   avatar_url?: string;
-  role: 'admin' | 'operator' | 'viewer';
+  role: 'admin' | 'operator' | 'supervisor' | 'viewer';
   is_active?: boolean;
 }
 
@@ -29,7 +29,7 @@ export interface UserUpdate {
   full_name?: string;
   phone_number?: string;
   avatar_url?: string;
-  role?: 'admin' | 'operator' | 'viewer';
+  role?: 'admin' | 'operator' | 'supervisor' | 'viewer';
   is_active?: boolean;
 }
 
@@ -46,11 +46,21 @@ export interface Camera {
   id: string;
   name: string;
   camera_id: string;
+  // backend sometimes uses `model_name` instead of `model`
   model?: string;
+  model_name?: string;
+  serial_number?: string;
   ip_address?: string;
   port?: number;
-  status: 'connected' | 'disconnected' | 'error';
+  // boolean connection flag often used in UI
+  is_connected?: boolean;
+  // textual status retained for compatibility
+  status?: 'connected' | 'disconnected' | 'error';
   is_active: boolean;
+  location?: string;
+  // optional resolution fields used when creating/updating cameras
+  resolution_width?: number;
+  resolution_height?: number;
   settings?: CameraSettings;
   created_at: string;
   updated_at: string;
@@ -63,6 +73,32 @@ export interface CameraCreate {
   port?: number;
   is_active?: boolean;
   settings?: CameraSettings;
+  // allow resolution fields in creation payloads
+  resolution_width?: number;
+  resolution_height?: number;
+  model_name?: string;
+  serial_number?: string;
+  location?: string;
+  // additional optional camera metadata
+  max_frame_rate?: number;
+  pixel_format?: string;
+  description?: string;
+}
+
+export interface CameraUpdate {
+  name?: string;
+  ip_address?: string;
+  port?: number;
+  is_active?: boolean;
+  settings?: CameraSettings;
+  resolution_width?: number;
+  resolution_height?: number;
+  model_name?: string;
+  serial_number?: string;
+  location?: string;
+  max_frame_rate?: number;
+  pixel_format?: string;
+  description?: string;
 }
 
 export interface CameraUpdate {
@@ -172,19 +208,39 @@ export interface Receipt {
 }
 
 // ==================== Annotation Types ====================
+export type AnnotationShape = 'rectangle' | 'polygon';
+
 export interface Annotation {
-  id: string;
-  type: 'rect' | 'polygon' | 'text' | 'ocr';
-  coordinates: number[];
-  label: string;
+  id?: string;
+  // original API fields
+  type?: string; // e.g. 'template' | 'text' | 'ocr'
+  shape: AnnotationShape;
+
+  // rectangle fields
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+
+  // polygon fields (array of [x, y] pairs)
+  points?: number[][];
+
+  // optional text content for text annotations
+  text?: string;
+
+  // common fields
   confidence?: number;
   metadata?: Record<string, unknown>;
 }
 
 export interface AnnotationCreate {
-  type: 'rect' | 'polygon' | 'text' | 'ocr';
-  coordinates: number[];
-  label: string;
+  shape: AnnotationShape;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  points?: number[][];
+  text?: string;
   confidence?: number;
   metadata?: Record<string, unknown>;
 }

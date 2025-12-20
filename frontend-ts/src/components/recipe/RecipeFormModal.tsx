@@ -1050,7 +1050,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                 <div className="template-stats">
                                   {hasTemplateRegion && <span className="stat">📐 Template</span>}
                                   <span className="stat">
-                                    {template.annotations.filter(a => ['text', 'barcode', 'datecode'].includes(a.type)).length} 
+                                    {template.annotations.filter(a => ['text', 'barcode', 'datecode'].includes(a.type!)).length} 
                                     {' '}regions
                                   </span>
                                   {hasCropArea && <span className="stat crop">✂️ Crop</span>}

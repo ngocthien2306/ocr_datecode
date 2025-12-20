@@ -19,7 +19,7 @@ interface UserFormData {
   phone_number: string;
   avatar_url: string;
   password: string;
-  role: 'admin' | 'operator' | 'viewer';
+  role: 'admin' | 'operator' | 'supervisor';
   is_active: boolean;
 }
 
@@ -114,7 +114,7 @@ const UserManagement: React.FC = () => {
         is_active: editingUser.is_active
       };
 
-      await usersAPI.updateUser(editingUser.id, updateData);
+      await usersAPI.updateUser((editingUser as any)._id || (editingUser as any).id, updateData);
       setShowEditModal(false);
       setEditingUser(null);
       await fetchUsers();
@@ -151,7 +151,7 @@ const UserManagement: React.FC = () => {
     const checked = e.target.checked;
     setSelectAll(checked);
     if (checked) {
-      setSelectedIds(filteredUsers.map(u => u.id));
+      setSelectedIds(filteredUsers.map(u => (u as any)._id || (u as any).id));
     } else {
       setSelectedIds([]);
     }
@@ -269,7 +269,7 @@ const UserManagement: React.FC = () => {
             </tr>
           </thead>
           <tbody>
-            {filteredUsers.length === 0 ? (
+              {filteredUsers.length === 0 ? (
               <tr>
                 <td colSpan={8} style={{ textAlign: 'center', padding: '2rem' }}>
                   {searchTerm ? 'No users found' : 'No users available'}
@@ -277,12 +277,12 @@ const UserManagement: React.FC = () => {
               </tr>
             ) : (
               filteredUsers.map((user) => (
-                <tr key={user.id} className={selectedIds.includes(user.id) ? 'selected-row' : ''}>
+                <tr key={(user as any)._id || (user as any).id} className={selectedIds.includes((user as any)._id || (user as any).id) ? 'selected-row' : ''}>
                   <td>
                     <input
                       type="checkbox"
-                      checked={selectedIds.includes(user.id)}
-                      onChange={() => handleSelectUser(user.id)}
+                      checked={selectedIds.includes((user as any)._id || (user as any).id)}
+                      onChange={() => handleSelectUser((user as any)._id || (user as any).id)}
                     />
                   </td>
                   <td>
@@ -318,7 +318,7 @@ const UserManagement: React.FC = () => {
                       </button>
                       <button
                         className="action-btn delete"
-                        onClick={() => handleDeleteUser(user.id, user.username)}
+                        onClick={() => handleDeleteUser((user as any)._id || (user as any).id, user.username)}
                         title="Delete"
                       >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
@@ -404,7 +404,7 @@ const UserManagement: React.FC = () => {
                 <label>Role</label>
                 <select
                   value={newUser.role}
-                  onChange={(e) => setNewUser({ ...newUser, role: e.target.value as 'admin' | 'operator' | 'viewer' })}
+                  onChange={(e) => setNewUser({ ...newUser, role: e.target.value as 'admin' | 'operator' | 'supervisor' })}
                 >
                   <option value="viewer">Viewer</option>
                   <option value="operator">Operator</option>

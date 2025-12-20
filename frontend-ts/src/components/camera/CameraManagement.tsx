@@ -67,6 +67,11 @@ const CameraManagement: React.FC = () => {
     pixel_format: 'Mono8'
   });
 
+  const getCameraKey = (c: Camera) => {
+    const raw = (c as any).camera_id ?? (c as any)._id ?? (c as any).id ?? '';
+    return String(raw);
+  };
+
   useEffect(() => {
     fetchCameras();
   }, []);
@@ -82,7 +87,7 @@ const CameraManagement: React.FC = () => {
       setCameras(allCameras);
       
       // Calculate statistics
-      const connectedCount = allCameras.filter(c => c.status === 'connected').length;
+      const connectedCount = allCameras.filter(c => c.is_connected).length;
       const activeCount = allCameras.filter(c => c.is_active).length;
       
       setStatistics({
@@ -108,7 +113,9 @@ const CameraManagement: React.FC = () => {
     const search = searchTerm.toLowerCase();
     return (
       camera.camera_id?.toLowerCase().includes(search) ||
-      camera.name?.toLowerCase().includes(search) ||
+      camera.model_name?.toLowerCase().includes(search) ||
+      camera.serial_number?.toLowerCase().includes(search) ||
+      camera.location?.toLowerCase().includes(search) ||
       camera.ip_address?.toLowerCase().includes(search)
     );
   });
@@ -119,7 +126,7 @@ const CameraManagement: React.FC = () => {
     console.log('handleSelectAll called:', checked);
     setSelectAll(checked);
     if (checked) {
-      setSelectedIds(filteredCameras.map(c => c.id));
+      setSelectedIds(filteredCameras.map(c => getCameraKey(c)));
     } else {
       setSelectedIds([]);
     }
@@ -143,11 +150,11 @@ const CameraManagement: React.FC = () => {
   };
 
   const handleDeleteCamera = async (cameraId: string) => {
-    const camera = cameras.find(c => c.id === cameraId);
+    const camera = cameras.find(c => getCameraKey(c) === cameraId);
     setConfirmDialog({
       isOpen: true,
       title: 'Delete Camera',
-      message: `Are you sure you want to delete camera "${camera?.name || cameraId}"?\n\nThis action cannot be undone.`,
+      message: `Are you sure you want to delete camera "${camera ? getCameraKey(camera) : cameraId}"?\n\nThis action cannot be undone.`,
       type: 'danger',
       onConfirm: async () => {
         try {
@@ -189,8 +196,9 @@ const CameraManagement: React.FC = () => {
 
   const handleToggleConnection = async (camera: Camera) => {
     try {
-      const newStatus = camera.status === 'connected';
-      await camerasAPI.updateCameraConnection(camera.id, !newStatus);
+      const newStatus = !!camera.is_connected;
+      const id = getCameraKey(camera);
+      await camerasAPI.updateCameraConnection(id, !newStatus);
       await fetchCameras();
       toast.success(`Camera ${newStatus ? 'disconnected' : 'connected'} successfully!`);
     } catch (err) {
@@ -221,18 +229,18 @@ const CameraManagement: React.FC = () => {
   const openEditModal = (camera: Camera) => {
     setEditingCamera(camera);
     setFormData({
-      camera_id: camera.camera_id,
-      model_name: camera.name,
-      serial_number: camera.camera_id,
-      resolution_width: camera.settings?.width || 1920,
-      resolution_height: camera.settings?.height || 1200,
-      is_connected: camera.status === 'connected',
+      camera_id: getCameraKey(camera),
+      model_name: (camera as any).model_name || camera.name || '',
+      serial_number: (camera as any).serial_number || getCameraKey(camera) || '',
+      resolution_width: (camera as any).resolution_width || camera.settings?.width || 1920,
+      resolution_height: (camera as any).resolution_height || camera.settings?.height || 1200,
+      is_connected: !!camera.is_connected,
       is_active: camera.is_active,
       ip_address: camera.ip_address || '',
-      location: '',
-      description: '',
-      max_frame_rate: 40.0,
-      pixel_format: 'Mono8'
+      location: (camera as any).location || '',
+      description: (camera as any).description || '',
+      max_frame_rate: (camera as any).max_frame_rate || 40.0,
+      pixel_format: (camera as any).pixel_format || 'Mono8'
     });
     setShowModal(true);
   };
@@ -256,7 +264,8 @@ const CameraManagement: React.FC = () => {
     
     try {
       if (editingCamera) {
-        await camerasAPI.updateCamera(editingCamera.id, {
+        const id = getCameraKey(editingCamera as Camera);
+        await camerasAPI.updateCamera(id, {
           name: formData.model_name,
           ip_address: formData.ip_address,
           port: undefined,
@@ -273,10 +282,12 @@ const CameraManagement: React.FC = () => {
           camera_id: formData.camera_id,
           ip_address: formData.ip_address,
           is_active: formData.is_active,
-          settings: {
-            width: formData.resolution_width,
-            height: formData.resolution_height
-          }
+          resolution_width: formData.resolution_width,
+          resolution_height: formData.resolution_height,
+          max_frame_rate: formData.max_frame_rate,
+          pixel_format: formData.pixel_format,
+          location: formData.location,
+          description: formData.description
         });
         toast.success('Camera created successfully!');
       }
@@ -424,50 +435,50 @@ const CameraManagement: React.FC = () => {
             ) : (
               filteredCameras.map((camera) => (
                 <tr
-                  key={camera.id}
-                  className={selectedIds.includes(camera.id) ? 'selected-row' : ''}
-                >
+                    key={getCameraKey(camera)}
+                    className={selectedIds.includes(getCameraKey(camera)) ? 'selected-row' : ''}
+                  >
                   <td onClick={(e) => e.stopPropagation()}>
                     <input
-                      type="checkbox"
-                      checked={selectedIds.includes(camera.id)}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        handleSelectCamera(camera.id);
-                      }}
+                        type="checkbox"
+                        checked={selectedIds.includes(getCameraKey(camera))}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          handleSelectCamera(getCameraKey(camera));
+                        }}
                     />
                   </td>
+                    <td>
+                      <span className="camera-id">{getCameraKey(camera)}</span>
+                    </td>
+                  <td>{(camera as any).model_name || camera.name}</td>
                   <td>
-                    <span className="camera-id">{camera.camera_id}</span>
+                    <code className="serial-number">{(camera as any).serial_number || camera.camera_id}</code>
                   </td>
-                  <td>{camera.name}</td>
-                  <td>
-                    <code className="serial-number">{camera.camera_id}</code>
-                  </td>
-                  <td>{camera.settings?.width || 1920} × {camera.settings?.height || 1200}</td>
+                  <td>{(camera as any).resolution_width || camera.settings?.width || 1920} × {(camera as any).resolution_height || camera.settings?.height || 1200}</td>
                   <td>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                      <span className={`status-badge ${camera.status === 'connected' ? 'success' : 'error'}`}>
-                        {camera.status === 'connected' ? 'Connected' : 'Disconnected'}
+                      <span className={`status-badge ${camera.is_connected ? 'success' : 'error'}`}>
+                        {camera.is_connected ? 'Connected' : 'Disconnected'}
                       </span>
                       {camera.is_active && (
                         <span className="status-badge info">Active</span>
                       )}
                     </div>
                   </td>
-                  <td>-</td>
+                  <td>{(camera as any).location || '-'}</td>
                   <td>
                     {camera.ip_address ? (
                       <code className="ip-address">{camera.ip_address}</code>
                     ) : '-'}
                   </td>
-                  <td>40.0 fps</td>
+                  <td>{(camera as any).max_frame_rate || 40.0} fps</td>
                   <td>
                     <div className="action-buttons">
                       <button
-                        className={`action-btn ${camera.status === 'connected' ? 'disconnect' : 'connect'}`}
+                        className={`action-btn ${camera.is_connected ? 'disconnect' : 'connect'}`}
                         onClick={() => handleToggleConnection(camera)}
-                        title={camera.status === 'connected' ? 'Disconnect' : 'Connect'}
+                        title={camera.is_connected ? 'Disconnect' : 'Connect'}
                       >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                           <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
@@ -486,7 +497,7 @@ const CameraManagement: React.FC = () => {
                       </button>
                       <button
                         className="action-btn delete"
-                        onClick={() => handleDeleteCamera(camera.id)}
+                        onClick={() => handleDeleteCamera(getCameraKey(camera))}
                         title="Delete"
                       >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
