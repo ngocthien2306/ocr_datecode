@@ -12,5 +12,6 @@ class ReceiptLoadResponse(BaseModel):
     id: str
     recipe_id: str
     loaded_by: str
+    loaded_by_full_name: Optional[str] = None
     loaded_at: datetime
     metadata: Optional[Dict[str, Any]] = None

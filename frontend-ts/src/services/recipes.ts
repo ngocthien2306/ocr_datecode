@@ -101,6 +101,22 @@ export const receiptsAPI = {
     const response = await api.post<{ id: string }>(`/recipes/${receiptId}/load`);
     return response.data;
   },
+  
+  // Get load history for a specific receipt (recipe)
+  getLoadHistory: async (receiptId: string, skip = 0, limit = 100) => {
+    const response = await api.get<{ items: any[]; count: number }>(`/recipes/${receiptId}/loads`, {
+      params: { skip, limit },
+    });
+    return response.data;
+  },
+
+  // Get global load history for all receipts (requires appropriate permissions)
+  getGlobalLoadHistory: async (skip = 0, limit = 100) => {
+    const response = await api.get<{ items: any[]; count: number }>(`/recipes/loads`, {
+      params: { skip, limit },
+    });
+    return response.data;
+  },
 };
 
 export default recipesAPI;

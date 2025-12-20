@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { receiptsAPI } from '@/services/api';
+import api from '@/services/http';
 import RecipeFormModal from './RecipeFormModal';
 import RecipeViewModal from './RecipeViewModal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
@@ -55,6 +56,14 @@ export default function Receipts() {
     type: 'warning',
     onConfirm: null
   });
+  
+  // Load history modal state
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [historyItems, setHistoryItems] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyCount, setHistoryCount] = useState(0);
+  const [rawOpenMap, setRawOpenMap] = useState<Record<string, boolean>>({});
+  
 
   // Load receipts from API
   useEffect(() => {
@@ -313,6 +322,43 @@ export default function Receipts() {
     }
   };
 
+  const openHistory = async (receipt: Receipt) => {
+    try {
+      setHistoryLoading(true);
+      setIsHistoryOpen(true);
+      const data = await receiptsAPI.getLoadHistory(receipt.id, 0, 50);
+      const items = data.items || [];
+      setHistoryItems(items);
+      setHistoryCount(data.count || 0);
+    } catch (err) {
+      console.error('Error loading history:', err);
+      toast.error('Failed to load history.');
+      setIsHistoryOpen(false);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const openGlobalHistory = async () => {
+    try {
+      setHistoryLoading(true);
+      setIsHistoryOpen(true);
+      const data = await receiptsAPI.getGlobalLoadHistory(0, 100);
+      const items = data.items || [];
+      setHistoryItems(items);
+      setHistoryCount(data.count || 0);
+    } catch (err: any) {
+      console.error('Error loading global history:', err);
+      const msg = err?.response?.data?.detail || 'Failed to load global history.';
+      toast.error(msg);
+      setIsHistoryOpen(false);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  
+
   const filteredReceipts = receipts.filter(receipt => {
     const matchesSearch = 
       receipt.id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -343,7 +389,7 @@ export default function Receipts() {
                 <path d="M3 6H5H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                 <path d="M8 6V4C8 3.46957 8.21071 2.96086 8.58579 2.58579C8.96086 2.21071 9.46957 2 10 2H14C14.5304 2 15.0391 2.21071 15.4142 2.58579C15.7893 2.96086 16 3.46957 16 4V6M19 6V20C19 20.5304 18.7893 21.0391 18.4142 21.4142C18.0391 21.7893 17.5304 22 17 22H7C6.46957 22 5.96086 21.7893 5.58579 21.4142C5.21071 21.0391 5 20.5304 5 20V6H19Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
-              Delete Selected ({selectedIds.length})
+                    Delete Selected ({selectedIds.length})
             </button>
           )}
           <button className="dashboard-btn" onClick={handleCreateReceipt}>
@@ -352,6 +398,14 @@ export default function Receipts() {
               <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
             </svg>
             Create Receipt
+          </button>
+          <button className="dashboard-btn" onClick={openGlobalHistory} title="Show global load history">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ marginRight: 6 }}>
+              <path d="M21 10H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M21 6H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M21 14H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            History
           </button>
         </div>
       </div>
@@ -551,6 +605,7 @@ export default function Receipts() {
                           </svg>
                           Load
                         </button>
+                        
                         <button 
                           className="action-btn edit" 
                           title="Edit"
@@ -650,6 +705,86 @@ export default function Receipts() {
         recipe={selectedRecipe}
         onEdit={handleViewModalEdit}
       />
+
+      {/* Load History Modal */}
+      {isHistoryOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content history-modal" style={{ width: '92vw', maxWidth: '1100px', maxHeight: '80vh', overflow: 'hidden' }}>
+              <div className="modal-header">
+                <h3>Load History ({historyCount})</h3>
+                <button onClick={() => setIsHistoryOpen(false)}>Close</button>
+              </div>
+              <div className="modal-body" style={{ overflow: 'auto', padding: '12px' }}>
+              {historyLoading ? (
+                <div>Loading history...</div>
+              ) : historyItems.length === 0 ? (
+                <div>No load events recorded.</div>
+              ) : (
+                <table className="data-table small" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: '120px' }}>Image</th>
+                      <th>ID</th>
+                      <th>Loaded By</th>
+                      <th>Loaded At</th>
+                      <th>Metadata</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historyItems.map(item => {
+                      const viz = item?.metadata?.camera_templates?.[0]?.templates?.[0]?.visualization_url;
+                      return (
+                        <tr key={item.id}>
+                          <td style={{ verticalAlign: 'top', padding: '8px', width: '120px' }}>
+                            {viz ? (
+                              <img
+                                src={viz}
+                                alt="visual"
+                                style={{ width: '100px', height: 'auto', borderRadius: 4, cursor: 'pointer', objectFit: 'contain' }}
+                                onClick={() => window.open(viz, '_blank')}
+                              />
+                            ) : (
+                              <div style={{ color: '#888' }}>No image</div>
+                            )}
+                          </td>
+                          <td style={{ verticalAlign: 'top', padding: '8px' }}>{item.id}</td>
+                          <td style={{ verticalAlign: 'top', padding: '8px' }}>{item.loaded_by_full_name || item.loaded_by}</td>
+                          <td style={{ verticalAlign: 'top', padding: '8px' }}>{new Date(item.loaded_at).toLocaleString()}</td>
+                          <td style={{ maxWidth: '640px', verticalAlign: 'top', padding: '8px' }}>
+                            {/* Compact metadata summary */}
+                            <div style={{ fontSize: '0.9rem', marginBottom: '6px' }}>
+                              <div><strong>Name:</strong> {item.metadata?.name || '—'}</div>
+                              <div><strong>Product:</strong> {item.metadata?.product_code || '—'}</div>
+                              <div><strong>Camera templates:</strong> {Array.isArray(item.metadata?.camera_templates) ? item.metadata.camera_templates.length : '—'}</div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                              <button
+                                className="dashboard-btn"
+                                style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                                onClick={() => setRawOpenMap(prev => ({ ...prev, [item.id]: !prev[item.id] }))}
+                              >
+                                {rawOpenMap[item.id] ? 'Hide raw' : 'Show raw'}
+                              </button>
+                              <div style={{ flex: 1 }} />
+                            </div>
+                            {rawOpenMap[item.id] && (
+                              <div style={{ marginTop: '8px', maxHeight: '320px', overflow: 'auto', background: '#fafafa', borderRadius: '6px', padding: '8px' }}>
+                                <pre style={{ whiteSpace: 'pre-wrap', fontSize: '0.75rem', margin: 0 }}>
+                                  {JSON.stringify(item.metadata, null, 2)}
+                                </pre>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirmation Dialog */}
       <ConfirmDialog

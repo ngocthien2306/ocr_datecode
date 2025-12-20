@@ -49,8 +49,14 @@ class RecipeRepository:
     
     async def get_by_id(self, recipe_id: str) -> Optional[RecipeInDB]:
         """Get recipe by ID"""
+        # Try ObjectId lookup first, fall back to string `_id` if conversion fails
         try:
-            recipe = await self.collection.find_one({"_id": ObjectId(recipe_id)})
+            try:
+                query = {"_id": ObjectId(recipe_id)}
+            except Exception:
+                query = {"_id": recipe_id}
+
+            recipe = await self.collection.find_one(query)
             if recipe:
                 recipe["_id"] = str(recipe["_id"])
                 # Ensure camera_templates exists for backward compatibility
@@ -120,8 +126,14 @@ class RecipeRepository:
         update_data["updated_at"] = datetime.utcnow()
         
         try:
+            # Try ObjectId first, fall back to string `_id` if needed
+            try:
+                query = {"_id": ObjectId(recipe_id)}
+            except Exception:
+                query = {"_id": recipe_id}
+
             result = await self.collection.find_one_and_update(
-                {"_id": ObjectId(recipe_id)},
+                query,
                 {"$set": update_data},
                 return_document=True
             )
@@ -143,7 +155,12 @@ class RecipeRepository:
     async def delete(self, recipe_id: str) -> bool:
         """Delete a recipe"""
         try:
-            result = await self.collection.delete_one({"_id": ObjectId(recipe_id)})
+            try:
+                query = {"_id": ObjectId(recipe_id)}
+            except Exception:
+                query = {"_id": recipe_id}
+
+            result = await self.collection.delete_one(query)
             return result.deleted_count > 0
         except Exception:
             return False

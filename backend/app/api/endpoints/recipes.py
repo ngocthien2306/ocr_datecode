@@ -59,7 +59,6 @@ def recipe_to_response(recipe: RecipeInDB) -> RecipeResponse:
                 camera_templates_data.append(cam_template)
             else:
                 camera_templates_data.append(cam_template)
-    
     return RecipeResponse(
         id=recipe.id,
         name=recipe.name,
@@ -187,171 +186,70 @@ async def search_recipes(
     return [recipe_to_response(recipe) for recipe in recipes]
 
 
-@router.get("/{recipe_id}", response_model=RecipeResponse)
-async def get_recipe(
-    recipe_id: str,
-    current_user: UserInDB = Depends(get_current_user),
-    recipe_repo: RecipeRepository = Depends(get_recipe_repository)
+# Move static routes before path-parameter routes so they are matched first.
+@router.get("/loads")
+async def list_all_loads(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+    current_user: UserInDB = Depends(require_supervisor),
+    load_repo: ReceiptLoadRepository = Depends(get_receipt_load_repository),
 ):
     """
-    Load a specific recipe by ID.
-    
-    **Permission**: All authenticated users
-    
-    According to requirements:
-    - Operator: Can load receipt
+    Return all load events (admin/supervisor only).
     """
-    recipe = await recipe_repo.get_by_id(recipe_id)
-    if not recipe:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Recipe not found"
-        )
-    
-    return recipe_to_response(recipe)
+    items = await load_repo.list_all(skip=skip, limit=limit)
+    # Inject visualization_url into each item's metadata.camera_templates when possible
+    def _attach_viz(items_list):
+        for it in items_list:
+            metadata = it.get('metadata') or {}
+            cams = metadata.get('camera_templates') or []
+            for cam in cams:
+                templates = cam.get('templates') or []
+                for idx, tpl in enumerate(templates):
+                    image_url = tpl.get('image_url')
+                    if image_url and isinstance(image_url, str):
+                        filename = image_url.split('/')[-1]
+                        tpl['visualization_url'] = f"/api/recipes/templates/visualize/{it.get('recipe_id')}/{cam.get('camera_id')}/{idx}/{filename}"
+                    else:
+                        tpl['visualization_url'] = None
+        return items_list
 
-
-@router.post("/{recipe_id}/load", response_model=ReceiptLoadResponse)
-async def load_recipe(
-    recipe_id: str,
-    current_user: UserInDB = Depends(get_current_user),
-    recipe_repo: RecipeRepository = Depends(get_recipe_repository),
-    load_repo: ReceiptLoadRepository = Depends(get_receipt_load_repository)
-):
-    """
-    Record a recipe load event. Stores who loaded the recipe and when.
-    """
-    # Ensure recipe exists
-    recipe = await recipe_repo.get_by_id(recipe_id)
-    if not recipe:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Recipe not found"
-        )
-    # Enforce presence of camera_templates before allowing load
-    camera_templates = getattr(recipe, 'camera_templates', None)
-    if not camera_templates:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Recipe has no camera templates. Please draw templates before loading."
-        )
-
-    # Build metadata snapshot (store useful fields only) and convert to primitives
-    metadata = {
-        'name': recipe.name,
-        'product_code': recipe.product_code,
-        'camera_templates': _to_primitive(camera_templates),
-        'model_thresholds': _to_primitive(getattr(recipe, 'model_thresholds', None)),
-        'cameras': _to_primitive(getattr(recipe, 'cameras', []))
+    items = _attach_viz(items)
+    return {
+        'items': items,
+        'count': await load_repo.count_all()
     }
 
-    created = await load_repo.create(recipe_id=recipe_id, user_id=current_user.id, metadata=metadata)
 
-    return ReceiptLoadResponse(
-        id=created['id'],
-        recipe_id=created['recipe_id'],
-        loaded_by=created['loaded_by'],
-        loaded_at=created['loaded_at'],
-        metadata=created.get('metadata')
-    )
-
-
-@router.put("/{recipe_id}", response_model=RecipeResponse)
-async def update_recipe(
+@router.get("/{recipe_id}/loads")
+async def list_recipe_loads(
     recipe_id: str,
-    recipe_update: RecipeUpdate,
-    current_user: UserInDB = Depends(require_supervisor),
-    recipe_repo: RecipeRepository = Depends(get_recipe_repository)
-):
-    """
-    Update an existing recipe (Save Receipt).
-    
-    **Permission**: Supervisor and Admin only
-    
-    According to requirements:
-    - Supervisor: Can create new receipt and edit old receipt content
-    - Admin: Has all permissions
-    """
-    # Check if recipe exists
-    existing_recipe = await recipe_repo.get_by_id(recipe_id)
-    if not existing_recipe:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Recipe not found"
-        )
-    
-    # If name is being updated, check for duplicates
-    if recipe_update.name and recipe_update.name != existing_recipe.name:
-        duplicate = await recipe_repo.get_by_name(recipe_update.name)
-        if duplicate:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Recipe with name '{recipe_update.name}' already exists"
-            )
-    
-    # If product_code is being updated, check for duplicates
-    if recipe_update.product_code and recipe_update.product_code != existing_recipe.product_code:
-        duplicate = await recipe_repo.get_by_product_code(recipe_update.product_code)
-        if duplicate:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Recipe with product code '{recipe_update.product_code}' already exists"
-            )
-    
-    updated_recipe = await recipe_repo.update(recipe_id, recipe_update, current_user.id)
-    if not updated_recipe:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update recipe"
-        )
-    
-    return recipe_to_response(updated_recipe)
-
-
-@router.delete("/{recipe_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_recipe(
-    recipe_id: str,
-    current_user: UserInDB = Depends(require_admin),
-    recipe_repo: RecipeRepository = Depends(get_recipe_repository)
-):
-    """
-    Delete a recipe permanently.
-    
-    **Permission**: Admin only
-    
-    According to requirements:
-    - Admin: Can change/reset passwords for Operator and Supervisor, has all permissions
-    """
-    recipe = await recipe_repo.get_by_id(recipe_id)
-    if not recipe:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Recipe not found"
-        )
-    
-    success = await recipe_repo.delete(recipe_id)
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete recipe"
-        )
-    
-    return None
-
-
-@router.get("/stats/count")
-async def get_recipe_count(
-    is_active: Optional[bool] = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
     current_user: UserInDB = Depends(get_current_user),
-    recipe_repo: RecipeRepository = Depends(get_recipe_repository)
+    load_repo: ReceiptLoadRepository = Depends(get_receipt_load_repository),
 ):
-    """
-    Get total count of recipes.
-    
-    **Permission**: All authenticated users
-    """
-    count = await recipe_repo.count(is_active=is_active)
-    return {"count": count}
+    """List load events for a specific recipe."""
+    items = await load_repo.list_by_recipe(recipe_id=recipe_id, skip=skip, limit=limit)
+
+    # attach visualization urls as above
+    for it in items:
+        metadata = it.get('metadata') or {}
+        cams = metadata.get('camera_templates') or []
+        for cam in cams:
+            templates = cam.get('templates') or []
+            for idx, tpl in enumerate(templates):
+                image_url = tpl.get('image_url')
+                if image_url and isinstance(image_url, str):
+                    filename = image_url.split('/')[-1]
+                    tpl['visualization_url'] = f"/api/recipes/templates/visualize/{it.get('recipe_id')}/{cam.get('camera_id')}/{idx}/{filename}"
+                else:
+                    tpl['visualization_url'] = None
+
+    return {
+        'items': items,
+        'count': await load_repo.count_by_recipe(recipe_id)
+    }
 
 
 # Template image upload directory
@@ -451,3 +349,180 @@ async def options_template_image(filename: str):
             "Access-Control-Allow-Headers": "*"
         }
     )
+
+
+
+@router.get("/{recipe_id}", response_model=RecipeResponse)
+async def get_recipe(
+    recipe_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+    recipe_repo: RecipeRepository = Depends(get_recipe_repository)
+):
+    """
+    Load a specific recipe by ID.
+    
+    **Permission**: All authenticated users
+    
+    According to requirements:
+    - Operator: Can load receipt
+    """
+    recipe = await recipe_repo.get_by_id(recipe_id)
+    if not recipe:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recipe not found"
+        )
+    
+    return recipe_to_response(recipe)
+
+
+@router.post("/{recipe_id}/load", response_model=ReceiptLoadResponse)
+async def load_recipe(
+    recipe_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+    recipe_repo: RecipeRepository = Depends(get_recipe_repository),
+    load_repo: ReceiptLoadRepository = Depends(get_receipt_load_repository)
+):
+    """
+    Record a recipe load event. Stores who loaded the recipe and when.
+    """
+    # Ensure recipe exists
+    recipe = await recipe_repo.get_by_id(recipe_id)
+    if not recipe:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recipe not found"
+        )
+    # Enforce presence of camera_templates before allowing load
+    camera_templates = getattr(recipe, 'camera_templates', None)
+    if not camera_templates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Recipe has no camera templates. Please draw templates before loading."
+        )
+
+    # Build metadata snapshot (store useful fields only) and convert to primitives
+    metadata = {
+        'name': recipe.name,
+        'product_code': recipe.product_code,
+        'camera_templates': _to_primitive(camera_templates),
+        'model_thresholds': _to_primitive(getattr(recipe, 'model_thresholds', None)),
+        'cameras': _to_primitive(getattr(recipe, 'cameras', []))
+    }
+
+    # Persist loader's full name to avoid frontend-side lookups
+    created = await load_repo.create(
+        recipe_id=recipe_id,
+        user_id=current_user.id,
+        metadata=metadata,
+        user_full_name=getattr(current_user, 'full_name', None),
+    )
+
+    return ReceiptLoadResponse(
+        id=created['id'],
+        recipe_id=created['recipe_id'],
+        loaded_by=created['loaded_by'],
+        loaded_by_full_name=created.get('loaded_by_full_name'),
+        loaded_at=created['loaded_at'],
+        metadata=created.get('metadata')
+    )
+
+
+
+@router.put("/{recipe_id}", response_model=RecipeResponse)
+async def update_recipe(
+    recipe_id: str,
+    recipe_update: RecipeUpdate,
+    current_user: UserInDB = Depends(require_supervisor),
+    recipe_repo: RecipeRepository = Depends(get_recipe_repository)
+):
+    """
+    Update an existing recipe (Save Receipt).
+    
+    **Permission**: Supervisor and Admin only
+    
+    According to requirements:
+    - Supervisor: Can create new receipt and edit old receipt content
+    - Admin: Has all permissions
+    """
+    # Check if recipe exists
+    existing_recipe = await recipe_repo.get_by_id(recipe_id)
+    if not existing_recipe:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recipe not found"
+        )
+    
+    # If name is being updated, check for duplicates
+    if recipe_update.name and recipe_update.name != existing_recipe.name:
+        duplicate = await recipe_repo.get_by_name(recipe_update.name)
+        if duplicate:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Recipe with name '{recipe_update.name}' already exists"
+            )
+    
+    # If product_code is being updated, check for duplicates
+    if recipe_update.product_code and recipe_update.product_code != existing_recipe.product_code:
+        duplicate = await recipe_repo.get_by_product_code(recipe_update.product_code)
+        if duplicate:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Recipe with product code '{recipe_update.product_code}' already exists"
+            )
+    
+    updated_recipe = await recipe_repo.update(recipe_id, recipe_update, current_user.id)
+    if not updated_recipe:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update recipe"
+        )
+    
+    return recipe_to_response(updated_recipe)
+
+
+@router.delete("/{recipe_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_recipe(
+    recipe_id: str,
+    current_user: UserInDB = Depends(require_admin),
+    recipe_repo: RecipeRepository = Depends(get_recipe_repository)
+):
+    """
+    Delete a recipe permanently.
+    
+    **Permission**: Admin only
+    
+    According to requirements:
+    - Admin: Can change/reset passwords for Operator and Supervisor, has all permissions
+    """
+    recipe = await recipe_repo.get_by_id(recipe_id)
+    if not recipe:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recipe not found"
+        )
+    
+    success = await recipe_repo.delete(recipe_id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete recipe"
+        )
+    
+    return None
+
+
+@router.get("/stats/count")
+async def get_recipe_count(
+    is_active: Optional[bool] = None,
+    current_user: UserInDB = Depends(get_current_user),
+    recipe_repo: RecipeRepository = Depends(get_recipe_repository)
+):
+    """
+    Get total count of recipes.
+    
+    **Permission**: All authenticated users
+    """
+    count = await recipe_repo.count(is_active=is_active)
+    return {"count": count}
+
