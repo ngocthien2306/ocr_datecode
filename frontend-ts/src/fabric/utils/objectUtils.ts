@@ -47,11 +47,29 @@ export const removeObjectsByPredicate = (canvas: any, predicate: (obj: any) => b
  * @returns {fabric.Rect}
  */
 export const createRectangleObject = (annotation: any, index: number, color: string): any => {
+  // Accept annotation coordinates either as absolute pixels or relative (0..1)
+  let left = annotation.x;
+  let top = annotation.y;
+  let width = annotation.width;
+  let height = annotation.height;
+  // If a canvas with imageBounds was passed inside annotation._canvas, use it to convert relative coords
+  const canvas = (annotation && annotation._canvas) || null;
+  if (canvas && canvas.imageBounds) {
+    const b = canvas.imageBounds;
+    const isRel = (v: any) => typeof v === 'number' && v >= 0 && v <= 1;
+    if (isRel(left) && isRel(width)) {
+      left = b.left + left * b.width;
+      top = b.top + top * b.height;
+      width = width * b.width;
+      height = height * b.height;
+    }
+  }
+
   return new Rect({
-    left: annotation.x,
-    top: annotation.y,
-    width: annotation.width,
-    height: annotation.height,
+    left,
+    top,
+    width,
+    height,
     fill: color + '20', // Add transparency
     stroke: color,
     strokeWidth: 2,
@@ -82,8 +100,22 @@ export const createRectangleObject = (annotation: any, index: number, color: str
  * @returns {fabric.Polygon}
  */
 export const createPolygonObject = (annotation: any, index: number, color: string): any => {
-  const points = annotation.points.map((p: any) => ({ x: p[0], y: p[1] }));
-  
+  // Points may be relative (0..1) or absolute pixels. Support annotation._canvas as conversion hint.
+  const canvas = (annotation && annotation._canvas) || null;
+  const points = (annotation.points || []).map((p: any) => {
+    let px = p[0];
+    let py = p[1];
+    if (canvas && canvas.imageBounds) {
+      const b = canvas.imageBounds;
+      const isRel = (v: any) => typeof v === 'number' && v >= 0 && v <= 1;
+      if (isRel(px) && isRel(py)) {
+        px = b.left + px * b.width;
+        py = b.top + py * b.height;
+      }
+    }
+    return { x: px, y: py };
+  });
+
   return new Polygon(points, {
     fill: color + '20',
     stroke: color,
@@ -124,9 +156,21 @@ export const createLabel = (annotation: any, x: number, y: number, color: string
     labelText = `${labelText}: ${annotation.text}`;
   }
   
+  // If annotation provides _canvas and x/y are relative, convert to pixels
+  const canvas = (annotation && annotation._canvas) || null;
+  let left = x;
+  let top = y;
+  if (canvas && canvas.imageBounds && typeof x === 'number' && typeof y === 'number') {
+    const isRel = (v: any) => typeof v === 'number' && v >= 0 && v <= 1;
+    if (isRel(x) && isRel(y)) {
+      left = canvas.imageBounds.left + x * canvas.imageBounds.width;
+      top = canvas.imageBounds.top + y * canvas.imageBounds.height;
+    }
+  }
+
   return new FabricText(labelText, {
-    left: x + 5,
-    top: y - 25,
+    left: left + 5,
+    top: top - 25,
     fontSize: 14,
     fill: color,
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
@@ -173,12 +217,23 @@ export const createPolygonEditPoint = (point: any, index: number, color: string,
  * @returns {Object} Updated annotation data
  */
 export const getRectangleData = (obj: any): any => {
-  return {
+  const px = {
     x: obj.left,
     y: obj.top,
     width: obj.width * obj.scaleX,
     height: obj.height * obj.scaleY
   };
+  const canvas = obj.canvas || (obj && obj._canvas) || null;
+  if (canvas && canvas.imageBounds) {
+    const b = canvas.imageBounds;
+    return {
+      x: (px.x - b.left) / b.width,
+      y: (px.y - b.top) / b.height,
+      width: px.width / b.width,
+      height: px.height / b.height
+    };
+  }
+  return px;
 };
 
 /**
@@ -189,7 +244,7 @@ export const getRectangleData = (obj: any): any => {
 export const getPolygonData = (obj: any): any => {
   const matrix = obj.calcTransformMatrix();
   const transformedPoints: any[] = [];
-  
+
   obj.points.forEach((p: any) => {
     const point = util.transformPoint(
       { x: p.x - (obj.pathOffset?.x || 0), y: p.y - (obj.pathOffset?.y || 0) },
@@ -197,12 +252,18 @@ export const getPolygonData = (obj: any): any => {
     );
     transformedPoints.push([point.x, point.y]);
   });
-  
+  // If canvas has imageBounds, convert to relative coords
+  const canvas = obj.canvas || (obj && obj._canvas) || null;
+  if (canvas && canvas.imageBounds) {
+    const b = canvas.imageBounds;
+    return {
+      points: transformedPoints.map((p: any) => [ (p[0] - b.left) / b.width, (p[1] - b.top) / b.height ])
+    };
+  }
   return {
     points: transformedPoints
   };
 };
-
 /**
  * Setup canvas pan and zoom
  * @param {fabric.Canvas} canvas 

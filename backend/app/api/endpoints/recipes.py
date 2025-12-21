@@ -36,6 +36,9 @@ TEMPLATE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 TEMPLATE_VISUALIZE_DIR = Path("/Users/ngocthien.ai/Source/Projects/ocr_datecode/backend/uploads/visualizations")
 TEMPLATE_VISUALIZE_DIR.mkdir(parents=True, exist_ok=True)
 
+# Base URL used when returning image/visualization links (frontend should use absolute URLs)
+TEMPLATE_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:8000').rstrip('/')
+
 
 def _coord(value, max_val: int) -> int:
     """Normalize a coordinate which may be absolute pixel or relative (0..1)."""
@@ -48,12 +51,12 @@ def _coord(value, max_val: int) -> int:
     return int(round(v))
 
 
-def _annotations_hash(filename: str, annotations: list) -> str:
-    payload = json.dumps({"file": filename, "annotations": annotations}, sort_keys=True, default=str)
+def _annotations_hash(filename: str, annotations: list, loaded_at: Optional[str] = None) -> str:
+    payload = json.dumps({"file": filename, "annotations": annotations, "loaded_at": loaded_at}, sort_keys=True, default=str)
     return hashlib.sha1(payload.encode('utf-8')).hexdigest()
 
 
-def _draw_template_visualization(image_path: Path, annotations: list) -> str:
+def _draw_template_visualization(image_path: Path, annotations: list, loaded_at: Optional[str] = None) -> str:
     """Draw rectangles, polygons and text onto image and save under TEMPLATE_VISUALIZE_DIR.
 
     Returns relative URL path to the generated visualization file.
@@ -61,8 +64,8 @@ def _draw_template_visualization(image_path: Path, annotations: list) -> str:
     if not image_path.exists():
         raise FileNotFoundError(str(image_path))
 
-    # compute deterministic filename from annotations + source filename
-    digest = _annotations_hash(image_path.name, annotations or [])
+    # compute deterministic filename from annotations + source filename + optional load timestamp
+    digest = _annotations_hash(image_path.name, annotations or [], loaded_at=loaded_at)
     out_name = f"viz_{digest}.png"
     out_path = TEMPLATE_VISUALIZE_DIR / out_name
     if out_path.exists():
@@ -73,11 +76,17 @@ def _draw_template_visualization(image_path: Path, annotations: list) -> str:
     width, height = img.size
 
     # font size proportional to image width
+    # Choose a readable font; fall back silently to default if unavailable
+    font_size = max(12, int(width / 70))
+    font = None
     try:
-        font_size = max(12, int(width / 100))
         font = ImageFont.truetype("DejaVuSans-Bold.ttf", font_size)
     except Exception:
-        font = ImageFont.load_default()
+        try:
+            # Try a common system font as alternative
+            font = ImageFont.truetype("Arial.ttf", font_size)
+        except Exception:
+            font = ImageFont.load_default()
 
     def _get_text_size(draw_obj, text, font_obj):
         try:
@@ -94,7 +103,8 @@ def _draw_template_visualization(image_path: Path, annotations: list) -> str:
     for ann in annotations or []:
         # annotation examples in your data use keys: type, shape, text, x,y,width,height,points
         shape = (ann.get('shape') or ann.get('type') or '').lower()
-        label = ann.get('text')
+        # If explicit text not provided, fall back to the annotation `type` so shapes still show a label
+        label = ann.get('text') or (ann.get('type') or ann.get('annotationType') or None)
         color = ann.get('color') or ann.get('stroke') or '#ff0000'
 
         if shape == 'rectangle' or shape == 'rect' or shape == 'template':
@@ -341,11 +351,12 @@ async def list_all_loads(
                         continue
                     annotations = tpl.get('annotations') or []
                     if not annotations:
-                        # no annotations: point to raw template image
+                        # no annotations: point to raw template image (relative URL)
                         tpl['visualization_url'] = f"/api/recipes/templates/images/{filename}"
                         continue
                     try:
-                        viz_url = _draw_template_visualization(src_path, annotations)
+                        # include the load timestamp to create per-load visualization filenames
+                        viz_url = _draw_template_visualization(src_path, annotations, loaded_at=item.get('loaded_at'))
                         tpl['visualization_url'] = viz_url
                     except Exception:
                         traceback.print_exc()

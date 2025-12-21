@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { receiptsAPI } from '@/services/api';
 import api from '@/services/http';
+import { receiptsAPI } from '@/services/api';
 import RecipeFormModal from './RecipeFormModal';
 import RecipeViewModal from './RecipeViewModal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
@@ -338,6 +338,9 @@ export default function Receipts() {
       setHistoryLoading(false);
     }
   };
+
+  // reference to prevent TS "declared but its value is never read" when UI wiring removed
+  void openHistory;
 
   const openGlobalHistory = async () => {
     try {
@@ -709,7 +712,7 @@ export default function Receipts() {
       {/* Load History Modal */}
       {isHistoryOpen && (
         <div className="modal-overlay">
-          <div className="modal-content history-modal" style={{ width: '92vw', maxWidth: '1100px', maxHeight: '80vh', overflow: 'hidden' }}>
+          <div className="modal-content history-modal" style={{ width: '92vw', maxWidth: '1400px', maxHeight: '80vh', overflow: 'hidden' }}>
               <div className="modal-header">
                 <h3>Load History ({historyCount})</h3>
                 <button onClick={() => setIsHistoryOpen(false)}>Close</button>
@@ -733,15 +736,21 @@ export default function Receipts() {
                   <tbody>
                     {historyItems.map(item => {
                       const viz = item?.metadata?.camera_templates?.[0]?.templates?.[0]?.visualization_url;
+                      const makeAbsolute = (p?: string) => {
+                        if (!p) return p;
+                        if (p.startsWith('http')) return p;
+                        const base = 'http://localhost:8000'
+                        return `${base}${p}`;
+                      };
                       return (
                         <tr key={item.id}>
-                          <td style={{ verticalAlign: 'top', padding: '8px', width: '120px' }}>
+                          <td style={{ verticalAlign: 'top', padding: '8px', width: '200px' }}>
                             {viz ? (
                               <img
-                                src={viz}
+                                src={makeAbsolute(viz)}
                                 alt="visual"
-                                style={{ width: '100px', height: 'auto', borderRadius: 4, cursor: 'pointer', objectFit: 'contain' }}
-                                onClick={() => window.open(viz, '_blank')}
+                                style={{ width: '200px', height: 'auto', borderRadius: 4, cursor: 'pointer', objectFit: 'contain' }}
+                                onClick={() => window.open(makeAbsolute(viz), '_blank')}
                               />
                             ) : (
                               <div style={{ color: '#888' }}>No image</div>
@@ -757,6 +766,29 @@ export default function Receipts() {
                               <div><strong>Product:</strong> {item.metadata?.product_code || '—'}</div>
                               <div><strong>Camera templates:</strong> {Array.isArray(item.metadata?.camera_templates) ? item.metadata.camera_templates.length : '—'}</div>
                             </div>
+
+                            {/* Compact camera settings (show first camera or all if multiple) */}
+                            {/* {Array.isArray(item.metadata?.cameras) && item.metadata.cameras.length > 0 && (
+                              <div style={{ fontSize: '0.9rem', marginTop: '6px' }}>
+                                <strong>Camera Settings</strong>
+                                {item.metadata.cameras.map((cam: any, idx: number) => (
+                                  <div key={idx} style={{ marginTop: 6, paddingLeft: 6 }}>
+                                    <div><strong>Exposure:</strong> {cam?.exposure_time ?? '—'} ms</div>
+                                    <div><strong>Delay:</strong> {cam?.delay_trigger ?? cam?.delay ?? '—'} ms</div>
+                                    <div><strong>Gain:</strong> {cam?.gain ?? '—'}</div>
+                                    {cam?.trigger_config && (
+                                      <div style={{ marginTop: 4, marginLeft: 8 }}>
+                                        <div><strong>Trigger Config</strong></div>
+                                        <div>Mode: {String(cam.trigger_config.trigger_mode)}</div>
+                                        <div>Source: {cam.trigger_config.trigger_source || '—'}</div>
+                                        <div>Selector: {cam.trigger_config.trigger_selector || '—'}</div>
+                                        <div>Activation: {cam.trigger_config.trigger_activation || '—'}</div>
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )} */}
                             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                               <button
                                 className="dashboard-btn"
@@ -768,10 +800,28 @@ export default function Receipts() {
                               <div style={{ flex: 1 }} />
                             </div>
                             {rawOpenMap[item.id] && (
-                              <div style={{ marginTop: '8px', maxHeight: '320px', overflow: 'auto', background: '#fafafa', borderRadius: '6px', padding: '8px' }}>
-                                <pre style={{ whiteSpace: 'pre-wrap', fontSize: '0.75rem', margin: 0 }}>
-                                  {JSON.stringify(item.metadata, null, 2)}
-                                </pre>
+                              <div style={{ marginTop: '8px', maxHeight: '200px', overflow: 'auto', background: '#fafafa', borderRadius: '6px', padding: '8px' }}>
+                                {Array.isArray(item.metadata?.cameras) && item.metadata.cameras.length > 0 ? (
+                                  item.metadata.cameras.map((cam: any, idx: number) => (
+                                    <div key={idx} style={{ marginBottom: 8, fontSize: '0.85rem' }}>
+                                      <div><strong>Camera #{idx + 1}</strong></div>
+                                      <div>Exposure: {cam?.exposure_time ?? '—'} ms</div>
+                                      <div>Delay: {cam?.delay_trigger ?? cam?.delay ?? '—'} ms</div>
+                                      <div>Gain: {cam?.gain ?? '—'}</div>
+                                      {cam?.trigger_config && (
+                                        <div style={{ marginLeft: 8, marginTop: 4 }}>
+                                          <div><strong>Trigger Config</strong></div>
+                                          <div>Mode: {String(cam.trigger_config.trigger_mode)}</div>
+                                          <div>Source: {cam.trigger_config.trigger_source || '—'}</div>
+                                          <div>Selector: {cam.trigger_config.trigger_selector || '—'}</div>
+                                          <div>Activation: {cam.trigger_config.trigger_activation || '—'}</div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div style={{ fontSize: '0.85rem' }}>No camera config available.</div>
+                                )}
                               </div>
                             )}
                           </td>

@@ -307,16 +307,18 @@ export default function TemplateEditor({
             const color = typeConfig ? typeConfig.color : '#fff';
             console.log('Creating new object:', { index: i, type: ann.type, color, shape: (ann as any).shape });
             let obj;
+            // pass canvas reference via a shallow copy so objectUtils can convert relative coords
+            const annForCanvas = { ...(ann as any), _canvas: canvas } as any;
             if ((ann as any).shape === 'rectangle') {
-              obj = objectUtils.createRectangleObject(ann, i, color);
+              obj = objectUtils.createRectangleObject(annForCanvas, i, color);
             } else if ((ann as any).shape === 'polygon') {
-              obj = objectUtils.createPolygonObject(ann, i, color);
+              obj = objectUtils.createPolygonObject(annForCanvas, i, color);
               setupPolygonControls(obj, color);
             }
             if (obj) {
               canvas.add(obj);
-              const annAny = ann as any;
-              const label = objectUtils.createLabel(ann, annAny.x || (annAny.points && annAny.points[0][0]), annAny.y || (annAny.points && annAny.points[0][1]), color, i);
+              const annAny = annForCanvas as any;
+              const label = objectUtils.createLabel(annForCanvas, annAny.x || (annAny.points && annAny.points[0][0]), annAny.y || (annAny.points && annAny.points[0][1]), color, i);
               canvas.add(label);
             }
           }
@@ -479,17 +481,18 @@ export default function TemplateEditor({
       if (!typeConfig && TYPE_CONFIGS.length > 0) typeConfig = TYPE_CONFIGS[0];
       const color = typeConfig ? typeConfig.color : '#fff';
       let obj: FabricObject | undefined;
+      const annForCanvas = { ...(ann as any), _canvas: canvas } as any;
       if ((ann as any).shape === 'rectangle') {
-        obj = objectUtils.createRectangleObject(ann, index, color);
+        obj = objectUtils.createRectangleObject(annForCanvas, index, color);
       } else if ((ann as any).shape === 'polygon' && (ann as any).points) {
-        obj = objectUtils.createPolygonObject(ann, index, color);
+        obj = objectUtils.createPolygonObject(annForCanvas, index, color);
         // Add custom controls for polygon point editing
         setupPolygonControls(obj as any, color);
       }
       if (obj) {
         canvas.add(obj);
-        const annAny = ann as any;
-        const label = objectUtils.createLabel(ann, annAny.x || (annAny.points && annAny.points[0][0]), annAny.y || (annAny.points && annAny.points[0][1]), color, index);
+        const annAny = annForCanvas as any;
+        const label = objectUtils.createLabel(annForCanvas, annAny.x || (annAny.points && annAny.points[0][0]), annAny.y || (annAny.points && annAny.points[0][1]), color, index);
         canvas.add(label);
       }
     });
@@ -697,11 +700,44 @@ export default function TemplateEditor({
   };
 
   const addAnnotation = (shapeData: any, type: string = 'text') => {
+    const canvas = fabricCanvasRef.current as CanvasWithImageBounds | null;
+
+    const normalize = (data: any) => {
+      if (!canvas || !canvas.imageBounds) return data;
+      const b = canvas.imageBounds;
+      const isRect = data.width !== undefined && data.height !== undefined;
+      if (isRect) {
+        const pxX = data.x ?? data.left ?? 0;
+        const pxY = data.y ?? data.top ?? 0;
+        const pxW = data.width ?? data.w ?? 0;
+        const pxH = data.height ?? data.h ?? 0;
+        return {
+          ...data,
+          shape: data.shape || 'rectangle',
+          x: (pxX - b.left) / b.width,
+          y: (pxY - b.top) / b.height,
+          width: pxW / b.width,
+          height: pxH / b.height
+        };
+      }
+      // polygon
+      if (Array.isArray(data.points)) {
+        const pts = data.points.map((p: any) => {
+          const px = p[0];
+          const py = p[1];
+          return [(px - b.left) / b.width, (py - b.top) / b.height];
+        });
+        return { ...data, shape: data.shape || 'polygon', points: pts };
+      }
+      return data;
+    };
+
+    const normalized = normalize(shapeData);
     const newAnnotation = {
       id: `annotation-${Date.now()}`,
       type,
       text: '',
-      ...shapeData
+      ...normalized
     };
 
     const updatedAnnotations = [...annotations, newAnnotation];
