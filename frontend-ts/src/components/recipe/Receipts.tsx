@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import api from '@/services/http';
 import { receiptsAPI } from '@/services/api';
 import RecipeFormModal from './RecipeFormModal';
 import RecipeViewModal from './RecipeViewModal';
@@ -758,7 +757,7 @@ export default function Receipts() {
                           </td>
                           <td style={{ verticalAlign: 'top', padding: '8px' }}>{item.id}</td>
                           <td style={{ verticalAlign: 'top', padding: '8px' }}>{item.loaded_by_full_name || item.loaded_by}</td>
-                          <td style={{ verticalAlign: 'top', padding: '8px' }}>{new Date(item.loaded_at).toLocaleString()}</td>
+                          <td style={{ verticalAlign: 'top', padding: '8px' }}>{new Date(item.loaded_at_local).toLocaleString()}</td>
                           <td style={{ maxWidth: '640px', verticalAlign: 'top', padding: '8px' }}>
                             {/* Compact metadata summary */}
                             <div style={{ fontSize: '0.9rem', marginBottom: '6px' }}>

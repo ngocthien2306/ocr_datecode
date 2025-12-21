@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = True
 
+    # Timezone used for storing/displaying datetimes (IANA zone name)
+    # Default to Vietnam (Ho Chi Minh) as requested; change via .env if needed
+    TIMEZONE: str = "Asia/Ho_Chi_Minh"
+
     class Config:
         env_file = ".env"
         case_sensitive = True

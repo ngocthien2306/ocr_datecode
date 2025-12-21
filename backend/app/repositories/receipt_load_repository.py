@@ -1,5 +1,8 @@
+import traceback
 from typing import Optional, Dict, Any
 from datetime import datetime
+from zoneinfo import ZoneInfo
+from app.core.config import settings
 
 
 class ReceiptLoadRepository:
@@ -20,11 +23,21 @@ class ReceiptLoadRepository:
         from the frontend and ensures historical correctness even if
         the user's profile changes later.
         """
+        # Use configured timezone when recording timestamps (defaults to Asia/Ho_Chi_Minh)
+        try:
+            tz = ZoneInfo(settings.TIMEZONE)
+        except Exception:
+            tz = None
+        loaded_at = datetime.now(tz) if tz is not None else datetime.utcnow()
+        # Also store a local ISO string for easy human-readable display in DB
+        loaded_at_local = loaded_at.isoformat()
+
         doc = {
             'recipe_id': recipe_id,
             'loaded_by': user_id,
             'loaded_by_full_name': user_full_name,
-            'loaded_at': datetime.utcnow(),
+            'loaded_at': loaded_at,
+            'loaded_at_local': loaded_at_local,
             'metadata': metadata or {}
         }
         result = await self.collection.insert_one(doc)

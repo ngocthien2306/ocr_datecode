@@ -24,7 +24,9 @@ from app.api.dependencies.auth import (
 )
 from app.schemas.receipt_load import ReceiptLoadCreate, ReceiptLoadResponse
 from app.repositories.receipt_load_repository import ReceiptLoadRepository
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -321,6 +323,19 @@ async def search_recipes(
 
 
 # Move static routes before path-parameter routes so they are matched first.
+
+
+@router.get("/loads/latest")
+async def get_latest_load(
+    load_repo: ReceiptLoadRepository = Depends(get_receipt_load_repository),
+):
+    """Public endpoint: return the most recent receipt load event (no auth required)."""
+    items = await load_repo.list_all(skip=0, limit=1)
+    if not items:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No load events")
+    item = items[0]
+
+    return item
 @router.get("/loads")
 async def list_all_loads(
     skip: int = Query(0, ge=0),
