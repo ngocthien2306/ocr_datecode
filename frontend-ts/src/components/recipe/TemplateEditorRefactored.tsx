@@ -61,7 +61,7 @@ export default function TemplateEditor({
   const [drawMode, setDrawMode] = useState('select');
   const polygonDrawerRef = useRef<any>(null);
   const rectangleCleanupRef = useRef<(() => void) | null>(null);
-  const [, setShowHints] = useState(false);
+  const [showHints, setShowHints] = useState(false);
   const [isSpacePressed, setIsSpacePressed] = useState(false);
 
   // Initialize canvas
@@ -720,11 +720,176 @@ export default function TemplateEditor({
     onSelectAnnotation(null);
   };
 
-  // Basic render: canvas container and simple controls. Full UI previously omitted.
+  const handleZoomIn = () => {
+    const canvas = fabricCanvasRef.current;
+    if (canvas) {
+      const zoom = (canvas as any).getZoom();
+      objectUtils.setCanvasZoom(canvas, zoom * 1.2);
+    }
+  };
+
+  const handleZoomOut = () => {
+    const canvas = fabricCanvasRef.current;
+    if (canvas) {
+      const zoom = (canvas as any).getZoom();
+      objectUtils.setCanvasZoom(canvas, zoom / 1.2);
+    }
+  };
+
+  const handleResetZoom = () => {
+    objectUtils.resetCanvasZoom(fabricCanvasRef.current as any);
+  };
+
+  // Full editor UI (toolbar, zoom controls, hints, canvas)
   return (
-    <div className="template-editor" style={{ width: '100%', height: '100%' }}>
-      <div ref={containerRef} style={{ width: '100%', height: '100%' }}>
-        <canvas ref={canvasRef} />
+    <div className="template-editor">
+      <div className="editor-toolbar">
+        <div className="toolbar-group">
+          <button
+            type="button"
+            className={`tool-btn ${drawMode === 'select' ? 'active' : ''}`}
+            onClick={handleStopDrawing}
+            title="Select & Edit"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M3 3L10.07 19.97L12.58 12.58L19.97 10.07L3 3Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+            </svg>
+          </button>
+          <button
+            type="button"
+            className={`tool-btn ${drawMode === 'rectangle' ? 'active' : ''}`}
+            onClick={startDrawingRectangle}
+            title="Draw Rectangle (R)"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <rect x="3" y="3" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none"/>
+            </svg>
+          </button>
+
+          <button
+            type="button"
+            className={`tool-btn ${drawMode === 'polygon' ? 'active' : ''}`}
+            onClick={startDrawingPolygon}
+            title="Draw Polygon (4 points)"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M12 2L22 8.5L18 20.5H6L2 8.5L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+            </svg>
+          </button>
+          
+          {(drawMode === 'polygon' || drawMode === 'rectangle') && (
+            <button type="button" className="tool-btn cancel-btn" onClick={handleCancelDraw} title="Cancel Drawing">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2"/>
+                <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2"/>
+              </svg>
+            </button>
+          )}
+        </div>
+
+        <div className="toolbar-group">
+          <button type="button" className="tool-btn" onClick={handleZoomOut} title="Zoom Out">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
+              <line x1="8" y1="11" x2="14" y2="11" stroke="currentColor" strokeWidth="2"/>
+              <line x1="17" y1="17" x2="21" y2="21" stroke="currentColor" strokeWidth="2"/>
+            </svg>
+          </button>
+          <span className="zoom-label">
+            {fabricCanvasRef.current ? Math.round(((fabricCanvasRef.current as any).getZoom() || 1) * 100) : 100}%
+          </span>
+          <button type="button" className="tool-btn" onClick={handleZoomIn} title="Zoom In">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
+              <line x1="11" y1="8" x2="11" y2="14" stroke="currentColor" strokeWidth="2"/>
+              <line x1="8" y1="11" x2="14" y2="11" stroke="currentColor" strokeWidth="2"/>
+              <line x1="17" y1="17" x2="21" y2="21" stroke="currentColor" strokeWidth="2"/>
+            </svg>
+          </button>
+          <button type="button" className="tool-btn" onClick={handleResetZoom} title="Reset Zoom">
+            100%
+          </button>
+        </div>
+      </div>
+
+      <div className="editor-content">
+        <div className="canvas-container" ref={containerRef}>
+          <canvas ref={canvasRef} />
+          
+          {showHints && (
+            <div className="cvat-canvas-hints-container">
+              <button 
+                type="button"
+                className="cvat-canvas-hints-hide-button"
+                onClick={() => setShowHints(false)}
+                title="Hide hints"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <line x1="18" y1="6" x2="6" y2="18" stroke="white" strokeWidth="2"/>
+                  <line x1="6" y1="6" x2="18" y2="18" stroke="white" strokeWidth="2"/>
+                </svg>
+              </button>
+              
+              <div className="cvat-canvas-hints-block">
+                <strong>🖱️ Navigation</strong>
+                <ul>
+                  <li><kbd>Space</kbd> + Drag - Pan canvas</li>
+                  <li><kbd>Shift</kbd> + Drag - Pan canvas</li>
+                  <li><kbd>Middle Click</kbd> + Drag - Pan canvas</li>
+                  <li><kbd>Mouse Wheel</kbd> - Zoom in/out</li>
+                  <li><kbd>Trackpad Pinch</kbd> - Zoom in/out</li>
+                </ul>
+              </div>
+              
+              <div className="cvat-canvas-hints-block">
+                <strong>⌨️ Shortcuts</strong>
+                <ul>
+                  <li><kbd>V</kbd> - Select mode</li>
+                  <li><kbd>R</kbd> - Rectangle tool</li>
+                  <li><kbd>P</kbd> - Polygon tool (4 points)</li>
+                  <li><kbd>Esc</kbd> - Cancel drawing</li>
+                  <li><kbd>Del</kbd> - Delete selected</li>
+                </ul>
+              </div>
+
+              <div className="cvat-canvas-hints-block">
+                <strong>✏️ Drawing</strong>
+                <ul>
+                  <li>Rectangle: Click and drag</li>
+                  <li>Polygon: Click 4 points</li>
+                  <li>Edit: Drag corners/points to resize</li>
+                  <li>Move: Drag shape to reposition</li>
+                </ul>
+              </div>
+            </div>
+          )}
+          
+          {!showHints && (
+            <button 
+              type="button"
+              className="cvat-canvas-hints-show-button"
+              onClick={() => setShowHints(true)}
+              title="Show hints"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+                <path d="M12 16v-4M12 8h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              </svg>
+            </button>
+          )}
+          
+          {drawMode === 'rectangle' && (
+            <div className="polygon-hint">
+              Click and drag to draw rectangle
+            </div>
+          )}
+          
+          {drawMode === 'polygon' && polygonDrawerRef.current && (
+            <div className="polygon-hint">
+              Click {polygonDrawerRef.current.getRemainingPoints()} more point{polygonDrawerRef.current.getRemainingPoints() !== 1 ? 's' : ''} to complete polygon
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

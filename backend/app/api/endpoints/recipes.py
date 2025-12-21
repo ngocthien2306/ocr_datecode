@@ -1,3 +1,4 @@
+import traceback
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from fastapi.responses import FileResponse, Response
 from typing import List, Optional
@@ -5,7 +6,9 @@ import os
 import uuid
 from pathlib import Path
 import base64
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
+import json
+import hashlib
 import io
 
 from app.schemas.recipe import RecipeCreate, RecipeUpdate, RecipeResponse
@@ -24,6 +27,126 @@ from app.repositories.receipt_load_repository import ReceiptLoadRepository
 from datetime import datetime
 
 router = APIRouter()
+
+
+# Template image upload directory
+TEMPLATE_UPLOAD_DIR = Path("/Users/ngocthien.ai/Source/Projects/ocr_datecode/backend/uploads/templates")
+TEMPLATE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+TEMPLATE_VISUALIZE_DIR = Path("/Users/ngocthien.ai/Source/Projects/ocr_datecode/backend/uploads/visualizations")
+TEMPLATE_VISUALIZE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _coord(value, max_val: int) -> int:
+    """Normalize a coordinate which may be absolute pixel or relative (0..1)."""
+    try:
+        v = float(value)
+    except Exception:
+        return 0
+    if 0.0 <= v <= 1.0:
+        return int(v * max_val)
+    return int(round(v))
+
+
+def _annotations_hash(filename: str, annotations: list) -> str:
+    payload = json.dumps({"file": filename, "annotations": annotations}, sort_keys=True, default=str)
+    return hashlib.sha1(payload.encode('utf-8')).hexdigest()
+
+
+def _draw_template_visualization(image_path: Path, annotations: list) -> str:
+    """Draw rectangles, polygons and text onto image and save under TEMPLATE_VISUALIZE_DIR.
+
+    Returns relative URL path to the generated visualization file.
+    """
+    if not image_path.exists():
+        raise FileNotFoundError(str(image_path))
+
+    # compute deterministic filename from annotations + source filename
+    digest = _annotations_hash(image_path.name, annotations or [])
+    out_name = f"viz_{digest}.png"
+    out_path = TEMPLATE_VISUALIZE_DIR / out_name
+    if out_path.exists():
+        return f"/api/recipes/templates/visualizations/{out_name}"
+
+    img = Image.open(str(image_path)).convert("RGBA")
+    draw = ImageDraw.Draw(img)
+    width, height = img.size
+
+    # font size proportional to image width
+    try:
+        font_size = max(12, int(width / 100))
+        font = ImageFont.truetype("DejaVuSans-Bold.ttf", font_size)
+    except Exception:
+        font = ImageFont.load_default()
+
+    def _get_text_size(draw_obj, text, font_obj):
+        try:
+            # PIL >=8.0
+            bbox = draw_obj.textbbox((0, 0), text, font=font_obj)
+            return bbox[2] - bbox[0], bbox[3] - bbox[1]
+        except Exception:
+            try:
+                return font_obj.getsize(text)
+            except Exception:
+                # fallback estimate
+                return (len(text) * (font_obj.size if hasattr(font_obj, 'size') else 10) * 0.6, (font_obj.size if hasattr(font_obj, 'size') else 10))
+
+    for ann in annotations or []:
+        # annotation examples in your data use keys: type, shape, text, x,y,width,height,points
+        shape = (ann.get('shape') or ann.get('type') or '').lower()
+        label = ann.get('text')
+        color = ann.get('color') or ann.get('stroke') or '#ff0000'
+
+        if shape == 'rectangle' or shape == 'rect' or shape == 'template':
+            # rectangle stored as x,y,width,height
+            x = ann.get('x')
+            y = ann.get('y')
+            w = ann.get('width') or ann.get('w')
+            h = ann.get('height') or ann.get('h')
+            if x is None or y is None or w is None or h is None:
+                continue
+            try:
+                x = float(x); y = float(y); w = float(w); h = float(h)
+            except Exception:
+                continue
+            x1 = _coord(x, width)
+            y1 = _coord(y, height)
+            x2 = _coord(x + w, width)
+            y2 = _coord(y + h, height)
+            draw.rectangle([x1, y1, x2, y2], outline=color, width=max(2, int(width/800)))
+            if label:
+                # draw label background and text
+                text_w, text_h = _get_text_size(draw, label, font)
+                bx1, by1 = x1, max(0, y1 - text_h - 6)
+                bx2, by2 = x1 + text_w + 6, by1 + text_h + 4
+                draw.rectangle([bx1, by1, bx2, by2], fill=color)
+                draw.text((bx1 + 3, by1 + 2), label, fill='#ffffff', font=font)
+
+        elif shape == 'polygon' or shape == 'poly' or ann.get('points'):
+            pts = ann.get('points') or ann.get('polygon') or []
+            proc = []
+            for p in pts:
+                if not isinstance(p, (list, tuple)) or len(p) < 2:
+                    continue
+                try:
+                    px = float(p[0]); py = float(p[1])
+                except Exception:
+                    continue
+                proc.append((_coord(px, width), _coord(py, height)))
+            if len(proc) >= 2:
+                draw.line(proc + [proc[0]], fill=color, width=max(2, int(width/800)))
+                if label:
+                    lx, ly = proc[0]
+                    text_w, text_h = _get_text_size(draw, label, font)
+                    bx1, by1 = lx, max(0, ly - text_h - 6)
+                    bx2, by2 = lx + text_w + 6, by1 + text_h + 4
+                    draw.rectangle([bx1, by1, bx2, by2], fill=color)
+                    draw.text((bx1 + 3, by1 + 2), label, fill='#ffffff', font=font)
+
+    # save output as PNG
+    img.convert('RGB').save(str(out_path), format='PNG')
+    return f"/api/recipes/templates/visualizations/{out_name}"
+
 
 
 async def get_recipe_repository(db=Depends(get_database)) -> RecipeRepository:
@@ -186,6 +309,7 @@ async def search_recipes(
     return [recipe_to_response(recipe) for recipe in recipes]
 
 
+
 # Move static routes before path-parameter routes so they are matched first.
 @router.get("/loads")
 async def list_all_loads(
@@ -198,23 +322,38 @@ async def list_all_loads(
     Return all load events (admin/supervisor only).
     """
     items = await load_repo.list_all(skip=skip, limit=limit)
-    # Inject visualization_url into each item's metadata.camera_templates when possible
-    def _attach_viz(items_list):
-        for it in items_list:
-            metadata = it.get('metadata') or {}
+
+    # Attach visualization_url for each template when possible (generate deterministic viz files)
+    for item in items:
+        try:
+            metadata = item.get('metadata') or {}
             cams = metadata.get('camera_templates') or []
             for cam in cams:
                 templates = cam.get('templates') or []
-                for idx, tpl in enumerate(templates):
+                for tpl in templates:
                     image_url = tpl.get('image_url')
-                    if image_url and isinstance(image_url, str):
-                        filename = image_url.split('/')[-1]
-                        tpl['visualization_url'] = f"/api/recipes/templates/visualize/{it.get('recipe_id')}/{cam.get('camera_id')}/{idx}/{filename}"
-                    else:
+                    tpl['visualization_url'] = None
+                    if not image_url:
+                        continue
+                    filename = image_url.split('/')[-1]
+                    src_path = TEMPLATE_UPLOAD_DIR / filename
+                    if not src_path.exists():
+                        continue
+                    annotations = tpl.get('annotations') or []
+                    if not annotations:
+                        # no annotations: point to raw template image
+                        tpl['visualization_url'] = f"/api/recipes/templates/images/{filename}"
+                        continue
+                    try:
+                        viz_url = _draw_template_visualization(src_path, annotations)
+                        tpl['visualization_url'] = viz_url
+                    except Exception:
+                        traceback.print_exc()
                         tpl['visualization_url'] = None
-        return items_list
+        except Exception:
+            # be resilient to malformed metadata
+            continue
 
-    items = _attach_viz(items)
     return {
         'items': items,
         'count': await load_repo.count_all()
@@ -232,29 +371,11 @@ async def list_recipe_loads(
     """List load events for a specific recipe."""
     items = await load_repo.list_by_recipe(recipe_id=recipe_id, skip=skip, limit=limit)
 
-    # attach visualization urls as above
-    for it in items:
-        metadata = it.get('metadata') or {}
-        cams = metadata.get('camera_templates') or []
-        for cam in cams:
-            templates = cam.get('templates') or []
-            for idx, tpl in enumerate(templates):
-                image_url = tpl.get('image_url')
-                if image_url and isinstance(image_url, str):
-                    filename = image_url.split('/')[-1]
-                    tpl['visualization_url'] = f"/api/recipes/templates/visualize/{it.get('recipe_id')}/{cam.get('camera_id')}/{idx}/{filename}"
-                else:
-                    tpl['visualization_url'] = None
-
     return {
         'items': items,
         'count': await load_repo.count_by_recipe(recipe_id)
     }
 
-
-# Template image upload directory
-TEMPLATE_UPLOAD_DIR = Path("/Users/ngocthien.ai/Source/Projects/ocr_datecode/backend/uploads/templates")
-TEMPLATE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @router.post("/templates/upload")
@@ -330,6 +451,33 @@ async def get_template_image(filename: str):
     return FileResponse(
         file_path,
         media_type="image/png",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "*"
+        }
+    )
+
+
+@router.get("/templates/visualizations/{filename}")
+async def get_visualization_image(filename: str):
+    file_path = TEMPLATE_VISUALIZE_DIR / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visualization not found")
+    return FileResponse(
+        file_path,
+        media_type="image/png",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "*"
+        }
+    )
+
+@router.options("/templates/visualizations/{filename}")
+async def options_visualization_image(filename: str):
+    return Response(
+        status_code=200,
         headers={
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "GET, OPTIONS",
