@@ -680,29 +680,111 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={handleClose}>
-      <div className="modal-content recipe-form-modal large" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2>{mode === 'create' ? 'Create New Recipe' : 'Edit Recipe'}</h2>
-          <button className="close-btn" onClick={handleClose}>×</button>
-        </div>
-
-        <div className="modal-tabs">
-          <button className={`tab-btn ${activeTab === 'basic' ? 'active' : ''}`} onClick={() => setActiveTab('basic')}>
-            📋 Basic Info
+    <div className="recipe-form-page">
+      <div className="page-header">
+        <button className="back-btn" onClick={handleClose}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          Back to List
+        </button>
+        <h2>{mode === 'create' ? 'Create New Recipe' : 'Edit Recipe'}</h2>
+        <div className="header-actions">
+          <button type="button" className="btn btn-secondary" onClick={handleClose} disabled={loading}>
+            Cancel
           </button>
-          <button className={`tab-btn ${activeTab === 'camera' ? 'active' : ''}`} onClick={() => setActiveTab('camera')}>
-            📷 Camera
-          </button>
-          <button className={`tab-btn ${activeTab === 'model' ? 'active' : ''}`} onClick={() => setActiveTab('model')}>
-            🎯 Model
-          </button>
-          <button className={`tab-btn ${activeTab === 'template' ? 'active' : ''}`} onClick={() => setActiveTab('template')}>
-            🖼️ Template {annotations.length > 0 && <span className="badge">{annotations.length}</span>}
+          <button type="button" className="btn btn-primary" onClick={(e) => { e.preventDefault(); handleSubmit(e); }} disabled={loading}>
+            {loading ? 'Saving...' : (mode === 'create' ? 'Create Recipe' : 'Update Recipe')}
           </button>
         </div>
+      </div>
 
-        <form onSubmit={handleSubmit} className="recipe-form">
+      <div className="recipe-form-container">
+        {/* Navigation Tabs */}
+        <div className="nav-tabs-container">
+          <div className="nav-tabs">
+            <div className={`nav-tab ${activeTab === 'basic' ? 'active' : ''}`} onClick={() => setActiveTab('basic')}>
+              <div className="nav-tab-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                  <path d="M9 5H7C6.46957 5 5.96086 5.21071 5.58579 5.58579C5.21071 5.96086 5 6.46957 5 7V19C5 19.5304 5.21071 20.0391 5.58579 20.4142C5.96086 20.7893 6.46957 21 7 21H17C17.5304 21 18.0391 20.7893 18.4142 20.4142C18.7893 20.0391 19 19.5304 19 19V7C19 6.46957 18.7893 5.96086 18.4142 5.58579C18.0391 5.21071 17.5304 5 17 5H15M9 5C9 5.53043 9.21071 6.03914 9.58579 6.41421C9.96086 6.78929 10.4696 7 11 7H13C13.5304 7 14.0391 6.78929 14.4142 6.41421C14.7893 6.03914 15 5.53043 15 5M9 5C9 4.46957 9.21071 3.96086 9.58579 3.58579C9.96086 3.21071 10.4696 3 11 3H13C13.5304 3 14.0391 3.21071 14.4142 3.58579C14.7893 3.96086 15 4.46957 15 5" stroke="currentColor" strokeWidth="2"/>
+                </svg>
+              </div>
+              <span className="nav-tab-title">Basic Info</span>
+            </div>
+            <div className="nav-tab-divider"></div>
+
+            <div className={`nav-tab ${activeTab === 'camera' ? 'active' : ''}`} onClick={() => setActiveTab('camera')}>
+              <div className="nav-tab-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                  <path d="M23 19C23 19.5304 22.7893 20.0391 22.4142 20.4142C22.0391 20.7893 21.5304 21 21 21H3C2.46957 21 1.96086 20.7893 1.58579 20.4142C1.21071 20.0391 1 19.5304 1 19V8C1 7.46957 1.21071 6.96086 1.58579 6.58579C1.96086 6.21071 2.46957 6 3 6H7L9 3H15L17 6H21C21.5304 6 22.0391 6.21071 22.4142 6.58579C22.7893 6.96086 23 7.46957 23 8V19Z" stroke="currentColor" strokeWidth="2"/>
+                  <circle cx="12" cy="13" r="4" stroke="currentColor" strokeWidth="2"/>
+                </svg>
+              </div>
+              <span className="nav-tab-title">Camera</span>
+            </div>
+            <div className="nav-tab-divider"></div>
+
+            <div className={`nav-tab ${activeTab === 'model' ? 'active' : ''}`} onClick={() => setActiveTab('model')}>
+              <div className="nav-tab-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+                  <circle cx="12" cy="12" r="6" stroke="currentColor" strokeWidth="2"/>
+                  <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                </svg>
+              </div>
+              <span className="nav-tab-title">Model</span>
+            </div>
+            <div className="nav-tab-divider"></div>
+
+            <div className={`nav-tab ${activeTab === 'template' ? 'active' : ''}`} onClick={() => setActiveTab('template')}>
+              <div className="nav-tab-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                  <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/>
+                  <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/>
+                  <path d="M21 15L16 10L5 21" stroke="currentColor" strokeWidth="2"/>
+                </svg>
+              </div>
+              <span className="nav-tab-title">Template</span>
+              {annotations.length > 0 && <span className="nav-badge">{annotations.length}</span>}
+            </div>
+          </div>
+        </div>
+
+        <div className="recipe-form-layout">
+          <div className="vertical-tabs" style={{ display: 'none' }}>
+            <button className={`tab-btn ${activeTab === 'basic' ? 'active' : ''}`} onClick={() => setActiveTab('basic')}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M9 5H7C6.46957 5 5.96086 5.21071 5.58579 5.58579C5.21071 5.96086 5 6.46957 5 7V19C5 19.5304 5.21071 20.0391 5.58579 20.4142C5.96086 20.7893 6.46957 21 7 21H17C17.5304 21 18.0391 20.7893 18.4142 20.4142C18.7893 20.0391 19 19.5304 19 19V7C19 6.46957 18.7893 5.96086 18.4142 5.58579C18.0391 5.21071 17.5304 5 17 5H15M9 5C9 5.53043 9.21071 6.03914 9.58579 6.41421C9.96086 6.78929 10.4696 7 11 7H13C13.5304 7 14.0391 6.78929 14.4142 6.41421C14.7893 6.03914 15 5.53043 15 5M9 5C9 4.46957 9.21071 3.96086 9.58579 3.58579C9.96086 3.21071 10.4696 3 11 3H13C13.5304 3 14.0391 3.21071 14.4142 3.58579C14.7893 3.96086 15 4.46957 15 5" stroke="currentColor" strokeWidth="2"/>
+              </svg>
+              <span>Basic Info</span>
+            </button>
+            <button className={`tab-btn ${activeTab === 'camera' ? 'active' : ''}`} onClick={() => setActiveTab('camera')}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M23 19C23 19.5304 22.7893 20.0391 22.4142 20.4142C22.0391 20.7893 21.5304 21 21 21H3C2.46957 21 1.96086 20.7893 1.58579 20.4142C1.21071 20.0391 1 19.5304 1 19V8C1 7.46957 1.21071 6.96086 1.58579 6.58579C1.96086 6.21071 2.46957 6 3 6H7L9 3H15L17 6H21C21.5304 6 22.0391 6.21071 22.4142 6.58579C22.7893 6.96086 23 7.46957 23 8V19Z" stroke="currentColor" strokeWidth="2"/>
+                <circle cx="12" cy="13" r="4" stroke="currentColor" strokeWidth="2"/>
+              </svg>
+              <span>Camera</span>
+            </button>
+            <button className={`tab-btn ${activeTab === 'model' ? 'active' : ''}`} onClick={() => setActiveTab('model')}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+                <circle cx="12" cy="12" r="6" stroke="currentColor" strokeWidth="2"/>
+                <circle cx="12" cy="12" r="2" fill="currentColor"/>
+              </svg>
+              <span>Model</span>
+            </button>
+            <button className={`tab-btn ${activeTab === 'template' ? 'active' : ''}`} onClick={() => setActiveTab('template')}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/>
+                <path d="M21 15L16 10L5 21" stroke="currentColor" strokeWidth="2"/>
+              </svg>
+              <span>Template</span>
+              {annotations.length > 0 && <span className="badge">{annotations.length}</span>}
+            </button>
+          </div>
+
+          <form onSubmit={handleSubmit} className="recipe-form">
           {errors.submit && <div className="error-message global-error">{errors.submit}</div>}
 
           <div className="tab-content">
@@ -1122,14 +1204,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               </div>
             )}
           </div>
-
-          <div className="form-actions">
-            <button type="button" className="btn btn-secondary" onClick={handleClose} disabled={loading}>Cancel</button>
-            <button type="submit" className="btn btn-primary" disabled={loading}>
-              {loading ? 'Saving...' : (mode === 'create' ? 'Create Recipe' : 'Update Recipe')}
-            </button>
-          </div>
         </form>
+        </div>
       </div>
     </div>
   );

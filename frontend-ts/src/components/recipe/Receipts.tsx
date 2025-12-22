@@ -20,6 +20,8 @@ interface Statistics {
   successRate: number;
 }
 
+type ViewMode = 'list' | 'create' | 'edit' | 'view';
+
 export default function Receipts() {
   const toast = useToast();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
@@ -30,19 +32,18 @@ export default function Receipts() {
     totalProducts: 0,
     successRate: 0
   });
-  
+
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDate, setSelectedDate] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const itemsPerPage = 10;
 
-  // Modal states
-  const [isFormModalOpen, setIsFormModalOpen] = useState(false);
-  const [isViewModalOpen, setIsViewModalOpen] = useState(false);
+  // View mode state
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
   const [selectedRecipe, setSelectedRecipe] = useState<Receipt | null>(null);
-  
+
   // Selection states
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectAll, setSelectAll] = useState(false);
@@ -173,13 +174,13 @@ export default function Receipts() {
   const handleCreateReceipt = () => {
     setModalMode('create');
     setSelectedRecipe(null);
-    setIsFormModalOpen(true);
+    setViewMode('create');
   };
 
   const handleEditReceipt = (receipt: Receipt) => {
     setModalMode('edit');
     setSelectedRecipe(receipt);
-    setIsFormModalOpen(true);
+    setViewMode('edit');
   };
 
   const handleModalSubmit = async (formData: any) => {
@@ -191,12 +192,12 @@ export default function Receipts() {
         await receiptsAPI.updateReceipt(selectedRecipe!.id, formData);
         toast.success(`Recipe "${formData.name}" updated successfully!`);
       }
-      
+
       // Reload receipts after create/update
       await loadReceipts();
       await loadStatistics();
-      
-      setIsFormModalOpen(false);
+
+      setViewMode('list');
     } catch (error: any) {
       console.error('Error saving recipe:', error);
       console.error('Error details:', error.response?.data);
@@ -208,14 +209,18 @@ export default function Receipts() {
 
   const handleViewReceipt = (receipt: Receipt) => {
     setSelectedRecipe(receipt);
-    setIsViewModalOpen(true);
+    setViewMode('view');
   };
 
   const handleViewModalEdit = () => {
-    setIsViewModalOpen(false);
     if (selectedRecipe) {
       handleEditReceipt(selectedRecipe);
     }
+  };
+
+  const handleBackToList = () => {
+    setViewMode('list');
+    setSelectedRecipe(null);
   };
 
   const handleDownloadReceipt = (receipt: Receipt) => {
@@ -362,7 +367,7 @@ export default function Receipts() {
   
 
   const filteredReceipts = receipts.filter(receipt => {
-    const matchesSearch = 
+    const matchesSearch =
       receipt.id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       receipt.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       receipt.productCode?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -372,6 +377,34 @@ export default function Receipts() {
 
     return matchesSearch && matchesDate;
   });
+
+  // Render different views based on viewMode
+  if (viewMode === 'create' || viewMode === 'edit') {
+    return (
+      <div className="receipts-page">
+        <RecipeFormModal
+          isOpen={true}
+          onClose={handleBackToList}
+          onSubmit={handleModalSubmit}
+          recipe={selectedRecipe as any}
+          mode={modalMode}
+        />
+      </div>
+    );
+  }
+
+  if (viewMode === 'view') {
+    return (
+      <div className="receipts-page">
+        <RecipeViewModal
+          isOpen={true}
+          onClose={handleBackToList}
+          recipe={selectedRecipe}
+          onEdit={handleViewModalEdit}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="receipts-page">
@@ -690,23 +723,6 @@ export default function Receipts() {
           Next
         </button>
       </div>
-
-      {/* Recipe Form Modal */}
-      <RecipeFormModal
-        isOpen={isFormModalOpen}
-        onClose={() => setIsFormModalOpen(false)}
-        onSubmit={handleModalSubmit}
-        recipe={selectedRecipe as any}
-        mode={modalMode}
-      />
-
-      {/* Recipe View Modal */}
-      <RecipeViewModal
-        isOpen={isViewModalOpen}
-        onClose={() => setIsViewModalOpen(false)}
-        recipe={selectedRecipe}
-        onEdit={handleViewModalEdit}
-      />
 
       {/* Load History Modal */}
       {isHistoryOpen && (
