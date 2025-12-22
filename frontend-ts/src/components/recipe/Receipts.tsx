@@ -5,6 +5,7 @@ import RecipeViewModal from './RecipeViewModal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import { useToast } from '@/contexts/ToastContext';
 import type { Receipt } from '@/types';
+import '@/styles/HistoryView.css';
 
 interface ConfirmDialogState {
   isOpen: boolean;
@@ -20,7 +21,7 @@ interface Statistics {
   successRate: number;
 }
 
-type ViewMode = 'list' | 'create' | 'edit' | 'view';
+type ViewMode = 'list' | 'create' | 'edit' | 'view' | 'history';
 
 export default function Receipts() {
   const toast = useToast();
@@ -57,8 +58,7 @@ export default function Receipts() {
     onConfirm: null
   });
   
-  // Load history modal state
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  // Load history state
   const [historyItems, setHistoryItems] = useState<any[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyCount, setHistoryCount] = useState(0);
@@ -329,7 +329,6 @@ export default function Receipts() {
   const openHistory = async (receipt: Receipt) => {
     try {
       setHistoryLoading(true);
-      setIsHistoryOpen(true);
       const data = await receiptsAPI.getLoadHistory(receipt.id, 0, 50);
       const items = data.items || [];
       setHistoryItems(items);
@@ -337,7 +336,6 @@ export default function Receipts() {
     } catch (err) {
       console.error('Error loading history:', err);
       toast.error('Failed to load history.');
-      setIsHistoryOpen(false);
     } finally {
       setHistoryLoading(false);
     }
@@ -349,7 +347,7 @@ export default function Receipts() {
   const openGlobalHistory = async () => {
     try {
       setHistoryLoading(true);
-      setIsHistoryOpen(true);
+      setViewMode('history');
       const data = await receiptsAPI.getGlobalLoadHistory(0, 100);
       const items = data.items || [];
       setHistoryItems(items);
@@ -358,7 +356,7 @@ export default function Receipts() {
       console.error('Error loading global history:', err);
       const msg = err?.response?.data?.detail || 'Failed to load global history.';
       toast.error(msg);
-      setIsHistoryOpen(false);
+      setViewMode('list');
     } finally {
       setHistoryLoading(false);
     }
@@ -402,6 +400,121 @@ export default function Receipts() {
           recipe={selectedRecipe}
           onEdit={handleViewModalEdit}
         />
+      </div>
+    );
+  }
+
+  if (viewMode === 'history') {
+    const makeAbsolute = (p?: string) => {
+      if (!p) return p;
+      if (p.startsWith('http')) return p;
+      const base = 'http://localhost:8000';
+      return `${base}${p}`;
+    };
+
+    return (
+      <div className="receipts-page">
+        <div className="history-view-page">
+          <div className="page-header">
+            <button className="back-btn" onClick={handleBackToList}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Back to List
+            </button>
+            <h2>Load History ({historyCount})</h2>
+          </div>
+
+          <div className="history-container">
+            {historyLoading ? (
+              <div style={{ textAlign: 'center', padding: '40px' }}>Loading history...</div>
+            ) : historyItems.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+                No load events recorded.
+              </div>
+            ) : (
+              <table className="history-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: '120px' }}>Image</th>
+                    <th>ID</th>
+                    <th>Loaded By</th>
+                    <th>Loaded At</th>
+                    <th>Metadata</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historyItems.map(item => {
+                    const viz = item?.metadata?.camera_templates?.[0]?.templates?.[0]?.visualization_url;
+                    return (
+                      <tr key={item.id}>
+                        <td style={{ verticalAlign: 'top', padding: '8px', width: '200px' }}>
+                          {viz ? (
+                            <img
+                              src={makeAbsolute(viz)}
+                              alt="visual"
+                              style={{ width: '200px', height: 'auto', borderRadius: 4, cursor: 'pointer', objectFit: 'contain' }}
+                              onClick={() => window.open(makeAbsolute(viz), '_blank')}
+                            />
+                          ) : (
+                            <div style={{ color: '#888' }}>No image</div>
+                          )}
+                        </td>
+                        <td style={{ verticalAlign: 'top', padding: '8px' }}>{item.id}</td>
+                        <td style={{ verticalAlign: 'top', padding: '8px' }}>{item.loaded_by_full_name || item.loaded_by}</td>
+                        <td style={{ verticalAlign: 'top', padding: '8px' }}>{new Date(item.loaded_at_local).toLocaleString()}</td>
+                        <td style={{ maxWidth: '640px', verticalAlign: 'top', padding: '8px' }}>
+                          {/* Compact metadata summary */}
+                          <div style={{ fontSize: '0.9rem', marginBottom: '6px' }}>
+                            <div><strong>Name:</strong> {item.metadata?.name || '—'}</div>
+                            <div><strong>Product:</strong> {item.metadata?.product_code || '—'}</div>
+                            <div><strong>Camera templates:</strong> {Array.isArray(item.metadata?.camera_templates) ? item.metadata.camera_templates.length : '—'}</div>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <button
+                              className="dashboard-btn"
+                              style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                              onClick={() => setRawOpenMap(prev => ({ ...prev, [item.id]: !prev[item.id] }))}
+                            >
+                              {rawOpenMap[item.id] ? 'Hide raw' : 'Show raw'}
+                            </button>
+                            <div style={{ flex: 1 }} />
+                          </div>
+                          {rawOpenMap[item.id] && (
+                            <div style={{ marginTop: '8px', maxHeight: '200px', overflow: 'auto', background: '#fafafa', borderRadius: '6px', padding: '8px' }}>
+                              {Array.isArray(item.metadata?.cameras) && item.metadata.cameras.length > 0 ? (
+                                item.metadata.cameras.map((cam: any, idx: number) => (
+                                  <div key={idx} style={{ marginBottom: 8, fontSize: '0.85rem' }}>
+                                    <div><strong>Camera #{idx + 1}</strong></div>
+                                    <div>Exposure: {cam?.exposure_time ?? '—'} ms</div>
+                                    <div>Delay: {cam?.delay_trigger ?? cam?.delay ?? '—'} ms</div>
+                                    <div>Gain: {cam?.gain ?? '—'}</div>
+                                    {cam?.trigger_config && (
+                                      <div style={{ marginLeft: 8, marginTop: 4 }}>
+                                        <div><strong>Trigger Config</strong></div>
+                                        <div>Mode: {String(cam.trigger_config.trigger_mode)}</div>
+                                        <div>Source: {cam.trigger_config.trigger_source || '—'}</div>
+                                        <div>Selector: {cam.trigger_config.trigger_selector || '—'}</div>
+                                        <div>Activation: {cam.trigger_config.trigger_activation || '—'}</div>
+                                      </div>
+                                    )}
+                                  </div>
+                                ))
+                              ) : (
+                                <div style={{ fontSize: '0.85rem' }}>No camera config available.</div>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
       </div>
     );
   }
@@ -723,133 +836,6 @@ export default function Receipts() {
           Next
         </button>
       </div>
-
-      {/* Load History Modal */}
-      {isHistoryOpen && (
-        <div className="modal-overlay">
-          <div className="modal-content history-modal" style={{ width: '92vw', maxWidth: '1400px', maxHeight: '80vh', overflow: 'hidden' }}>
-              <div className="modal-header">
-                <h3>Load History ({historyCount})</h3>
-                <button onClick={() => setIsHistoryOpen(false)}>Close</button>
-              </div>
-              <div className="modal-body" style={{ overflow: 'auto', padding: '12px' }}>
-              {historyLoading ? (
-                <div>Loading history...</div>
-              ) : historyItems.length === 0 ? (
-                <div>No load events recorded.</div>
-              ) : (
-                <table className="data-table small" style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr>
-                      <th style={{ width: '120px' }}>Image</th>
-                      <th>ID</th>
-                      <th>Loaded By</th>
-                      <th>Loaded At</th>
-                      <th>Metadata</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {historyItems.map(item => {
-                      const viz = item?.metadata?.camera_templates?.[0]?.templates?.[0]?.visualization_url;
-                      const makeAbsolute = (p?: string) => {
-                        if (!p) return p;
-                        if (p.startsWith('http')) return p;
-                        const base = 'http://localhost:8000'
-                        return `${base}${p}`;
-                      };
-                      return (
-                        <tr key={item.id}>
-                          <td style={{ verticalAlign: 'top', padding: '8px', width: '200px' }}>
-                            {viz ? (
-                              <img
-                                src={makeAbsolute(viz)}
-                                alt="visual"
-                                style={{ width: '200px', height: 'auto', borderRadius: 4, cursor: 'pointer', objectFit: 'contain' }}
-                                onClick={() => window.open(makeAbsolute(viz), '_blank')}
-                              />
-                            ) : (
-                              <div style={{ color: '#888' }}>No image</div>
-                            )}
-                          </td>
-                          <td style={{ verticalAlign: 'top', padding: '8px' }}>{item.id}</td>
-                          <td style={{ verticalAlign: 'top', padding: '8px' }}>{item.loaded_by_full_name || item.loaded_by}</td>
-                          <td style={{ verticalAlign: 'top', padding: '8px' }}>{new Date(item.loaded_at_local).toLocaleString()}</td>
-                          <td style={{ maxWidth: '640px', verticalAlign: 'top', padding: '8px' }}>
-                            {/* Compact metadata summary */}
-                            <div style={{ fontSize: '0.9rem', marginBottom: '6px' }}>
-                              <div><strong>Name:</strong> {item.metadata?.name || '—'}</div>
-                              <div><strong>Product:</strong> {item.metadata?.product_code || '—'}</div>
-                              <div><strong>Camera templates:</strong> {Array.isArray(item.metadata?.camera_templates) ? item.metadata.camera_templates.length : '—'}</div>
-                            </div>
-
-                            {/* Compact camera settings (show first camera or all if multiple) */}
-                            {/* {Array.isArray(item.metadata?.cameras) && item.metadata.cameras.length > 0 && (
-                              <div style={{ fontSize: '0.9rem', marginTop: '6px' }}>
-                                <strong>Camera Settings</strong>
-                                {item.metadata.cameras.map((cam: any, idx: number) => (
-                                  <div key={idx} style={{ marginTop: 6, paddingLeft: 6 }}>
-                                    <div><strong>Exposure:</strong> {cam?.exposure_time ?? '—'} ms</div>
-                                    <div><strong>Delay:</strong> {cam?.delay_trigger ?? cam?.delay ?? '—'} ms</div>
-                                    <div><strong>Gain:</strong> {cam?.gain ?? '—'}</div>
-                                    {cam?.trigger_config && (
-                                      <div style={{ marginTop: 4, marginLeft: 8 }}>
-                                        <div><strong>Trigger Config</strong></div>
-                                        <div>Mode: {String(cam.trigger_config.trigger_mode)}</div>
-                                        <div>Source: {cam.trigger_config.trigger_source || '—'}</div>
-                                        <div>Selector: {cam.trigger_config.trigger_selector || '—'}</div>
-                                        <div>Activation: {cam.trigger_config.trigger_activation || '—'}</div>
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            )} */}
-                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                              <button
-                                className="dashboard-btn"
-                                style={{ padding: '4px 8px', fontSize: '0.8rem' }}
-                                onClick={() => setRawOpenMap(prev => ({ ...prev, [item.id]: !prev[item.id] }))}
-                              >
-                                {rawOpenMap[item.id] ? 'Hide raw' : 'Show raw'}
-                              </button>
-                              <div style={{ flex: 1 }} />
-                            </div>
-                            {rawOpenMap[item.id] && (
-                              <div style={{ marginTop: '8px', maxHeight: '200px', overflow: 'auto', background: '#fafafa', borderRadius: '6px', padding: '8px' }}>
-                                {Array.isArray(item.metadata?.cameras) && item.metadata.cameras.length > 0 ? (
-                                  item.metadata.cameras.map((cam: any, idx: number) => (
-                                    <div key={idx} style={{ marginBottom: 8, fontSize: '0.85rem' }}>
-                                      <div><strong>Camera #{idx + 1}</strong></div>
-                                      <div>Exposure: {cam?.exposure_time ?? '—'} ms</div>
-                                      <div>Delay: {cam?.delay_trigger ?? cam?.delay ?? '—'} ms</div>
-                                      <div>Gain: {cam?.gain ?? '—'}</div>
-                                      {cam?.trigger_config && (
-                                        <div style={{ marginLeft: 8, marginTop: 4 }}>
-                                          <div><strong>Trigger Config</strong></div>
-                                          <div>Mode: {String(cam.trigger_config.trigger_mode)}</div>
-                                          <div>Source: {cam.trigger_config.trigger_source || '—'}</div>
-                                          <div>Selector: {cam.trigger_config.trigger_selector || '—'}</div>
-                                          <div>Activation: {cam.trigger_config.trigger_activation || '—'}</div>
-                                        </div>
-                                      )}
-                                    </div>
-                                  ))
-                                ) : (
-                                  <div style={{ fontSize: '0.85rem' }}>No camera config available.</div>
-                                )}
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Confirmation Dialog */}
       <ConfirmDialog
