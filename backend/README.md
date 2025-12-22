@@ -5,29 +5,35 @@ FastAPI backend with Clean Architecture for OCR Datecode system.
 ## 🎯 Features
 
 ### ✅ **Recipe Management System** (NEW!)
+
 Complete receipt management with role-based permissions:
+
 - **New Receipt**: Create recipes for machine training
 - **Load Receipt**: Load recipe to verify datecode
 - **Save Receipt**: Update existing recipe configurations
 - **Delete Receipt**: Remove obsolete recipes (Admin only)
 
 Each recipe includes:
+
 - 📸 **Camera Settings**: Exposure time, delay trigger, gain, brightness, contrast
 - 🤖 **Model Thresholds**: Detection/recognition thresholds for AI models
 - 📐 **ROI Config**: Region of interest configuration
 - 🎯 **Template Config**: Template matching settings
 
 ### ✅ **Three-Tier Permission System**
+
 - **👤 Operator**: Load recipes, input datecode for verification
-- **👨‍💼 Supervisor**: Create/edit recipes + all Operator permissions  
+- **👨‍💼 Supervisor**: Create/edit recipes + all Operator permissions
 - **👑 Admin**: Full access + user management + delete recipes
 
 ### ✅ **Authentication & Authorization**
+
 - JWT-based authentication
 - Role-based access control (RBAC)
 - Password reset functionality
 
 ### ✅ **User Management**
+
 - User CRUD operations
 - Role assignment
 - Profile management
@@ -89,6 +95,7 @@ cp .env.example .env
 ```
 
 Edit `.env`:
+
 ```env
 MONGODB_URL=mongodb://localhost:27017
 DATABASE_NAME=ocr_datecode_db
@@ -116,6 +123,7 @@ python init_db.py
 ```
 
 This creates:
+
 - Admin: `admin` / `admin123`
 - Supervisor: `supervisor` / `supervisor123`
 - Operator: `operator` / `operator123`
@@ -148,9 +156,11 @@ API will be available at: http://localhost:8000
 ## API Endpoints
 
 ### Authentication
+
 - `POST /api/auth/login` - Login and get JWT token
 
 ### Users (Admin only)
+
 - `POST /api/users/` - Create new user
 - `GET /api/users/` - List all users
 - `GET /api/users/me` - Get current user info
@@ -161,6 +171,7 @@ API will be available at: http://localhost:8000
 - `POST /api/users/{id}/reset-password` - Reset user password (Admin)
 
 ### Recipes (NEW!)
+
 - `POST /api/recipes/` - Create recipe (Supervisor+)
 - `GET /api/recipes/` - List all recipes (All users)
 - `GET /api/recipes/{id}` - Get recipe by ID (All users)
@@ -177,19 +188,19 @@ API will be available at: http://localhost:8000
 
 ## Role Permissions
 
-| Feature | Operator | Supervisor | Admin |
-|---------|----------|------------|-------|
-| Login | ✅ | ✅ | ✅ |
-| Load Recipe | ✅ | ✅ | ✅ |
-| Validate Datecode | ✅ | ✅ | ✅ |
-| Create Recipe | ❌ | ✅ | ✅ |
-| Edit Recipe | ❌ | ✅ | ✅ |
-| Delete Recipe | ❌ | ✅ | ✅ |
-| View Users | ❌ | ✅ | ✅ |
-| Create User | ❌ | ❌ | ✅ |
-| Edit User | ❌ | ❌ | ✅ |
-| Delete User | ❌ | ❌ | ✅ |
-| Reset Password | ❌ | ❌ | ✅ |
+| Feature           | Operator | Supervisor | Admin |
+| ----------------- | -------- | ---------- | ----- |
+| Login             | ✅       | ✅         | ✅    |
+| Load Recipe       | ✅       | ✅         | ✅    |
+| Validate Datecode | ✅       | ✅         | ✅    |
+| Create Recipe     | ❌       | ✅         | ✅    |
+| Edit Recipe       | ❌       | ✅         | ✅    |
+| Delete Recipe     | ❌       | ✅         | ✅    |
+| View Users        | ❌       | ✅         | ✅    |
+| Create User       | ❌       | ❌         | ✅    |
+| Edit User         | ❌       | ❌         | ✅    |
+| Delete User       | ❌       | ❌         | ✅    |
+| Reset Password    | ❌       | ❌         | ✅    |
 
 ## Example Usage
 
@@ -202,6 +213,7 @@ curl -X POST "http://localhost:8000/api/auth/login" \
 ```
 
 Response:
+
 ```json
 {
   "access_token": "eyJhbGciOiJIUzI1NiIs...",
@@ -255,6 +267,7 @@ curl -X POST "http://localhost:8000/api/recipes/validate-datecode" \
 ## Development
 
 Run with auto-reload:
+
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
