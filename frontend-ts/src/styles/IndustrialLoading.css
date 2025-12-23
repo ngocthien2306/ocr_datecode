@@ -61,8 +61,8 @@
   letter-spacing: 2px;
 }
 
-/* Gear System */
-.gear-system {
+/* Gear System (scoped to industrial container) */
+.industrial-container .gear-system {
   position: relative;
   display: flex;
   align-items: center;
@@ -71,7 +71,7 @@
   height: 120px;
 }
 
-.gear {
+.industrial-container .gear {
   position: relative;
   width: 100px;
   height: 100px;
@@ -87,7 +87,7 @@
   justify-content: center;
 }
 
-.light-mode .gear {
+.light-mode .industrial-container .gear {
   background: linear-gradient(135deg, #cbd5e1, #94a3b8);
   border: 8px solid #e2e8f0;
   box-shadow:
@@ -96,7 +96,7 @@
     0 8px 24px rgba(0, 0, 0, 0.15);
 }
 
-.gear::before {
+.industrial-container .gear::before {
   content: '';
   position: absolute;
   inset: -20px;
@@ -108,7 +108,7 @@
   border-radius: 50%;
 }
 
-.light-mode .gear::before {
+.light-mode .industrial-container .gear::before {
   background:
     linear-gradient(0deg, transparent 40%, #94a3b8 40%, #94a3b8 60%, transparent 60%),
     linear-gradient(90deg, transparent 40%, #94a3b8 40%, #94a3b8 60%, transparent 60%),
@@ -116,7 +116,7 @@
     linear-gradient(-45deg, transparent 40%, #94a3b8 40%, #94a3b8 60%, transparent 60%);
 }
 
-.gear-center {
+.industrial-container .gear-center {
   width: 40px;
   height: 40px;
   background: radial-gradient(circle, #1e293b, #0f172a);
@@ -126,36 +126,36 @@
   z-index: 10;
 }
 
-.light-mode .gear-center {
+.light-mode .industrial-container .gear-center {
   background: radial-gradient(circle, #e2e8f0, #cbd5e1);
   border: 3px solid #94a3b8;
   box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
-.gear-1 {
-  animation: gearRotate 3s linear infinite;
+.industrial-container .gear-1 {
+  animation: industrialGearRotate 3s linear infinite;
 }
 
-.gear-2 {
-  animation: gearRotateReverse 3s linear infinite;
+.industrial-container .gear-2 {
+  animation: industrialGearRotateReverse 3s linear infinite;
 }
 
-.gear-3 {
-  animation: gearRotate 3s linear infinite;
+.industrial-container .gear-3 {
+  animation: industrialGearRotate 3s linear infinite;
 }
 
-@keyframes gearRotate {
+@keyframes industrialGearRotate {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
 
-@keyframes gearRotateReverse {
+@keyframes industrialGearRotateReverse {
   from { transform: rotate(360deg); }
   to { transform: rotate(0deg); }
 }
 
-/* Connecting Chains */
-.chain {
+/* Connecting Chains (scoped) */
+.industrial-container .chain {
   position: absolute;
   top: 50%;
   height: 4px;
@@ -169,7 +169,7 @@
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
-.light-mode .chain {
+.light-mode .industrial-container .chain {
   background: repeating-linear-gradient(
     90deg,
     #94a3b8 0px,
@@ -180,12 +180,12 @@
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
 }
 
-.chain-1 {
+.industrial-container .chain-1 {
   left: 130px;
   width: 70px;
 }
 
-.chain-2 {
+.industrial-container .chain-2 {
   right: 130px;
   width: 70px;
 }
@@ -285,8 +285,8 @@
     inset 0 2px 4px rgba(255, 255, 255, 0.5);
 }
 
-/* Scanning Line Effect */
-.progress-scanner {
+/* Scanning Line Effect (scoped) */
+.industrial-container .progress-scanner {
   position: absolute;
   top: 0;
   left: 0;
@@ -294,10 +294,10 @@
   height: 100%;
   background: linear-gradient(90deg, transparent, #fff, transparent);
   box-shadow: 0 0 10px #fff;
-  animation: scannerMove 2s ease-in-out infinite;
+  animation: industrialScannerMove 2s ease-in-out infinite;
 }
 
-@keyframes scannerMove {
+@keyframes industrialScannerMove {
   0%, 100% { left: 0%; opacity: 0; }
   10% { opacity: 1; }
   90% { opacity: 1; }
@@ -317,15 +317,15 @@
   letter-spacing: 2px;
 }
 
-/* Status Info */
-.status-info {
+/* Status Info (scoped) */
+.industrial-container .status-info {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-top: 16px;
 }
 
-.status-text {
+.industrial-container .status-text {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -335,25 +335,25 @@
   letter-spacing: 1px;
 }
 
-.light-mode .status-text {
+.light-mode .industrial-container .status-text {
   color: #64748b;
 }
 
-.status-indicator {
+.industrial-container .status-indicator {
   width: 12px;
   height: 12px;
   background: #3b82f6;
   border-radius: 50%;
   box-shadow: 0 0 12px rgba(59, 130, 246, 0.8);
-  animation: indicatorPulse 1.5s ease-in-out infinite;
+  animation: industrialIndicatorPulse 1.5s ease-in-out infinite;
 }
 
-.light-mode .status-indicator {
+.light-mode .industrial-container .status-indicator {
   background: #2563eb;
   box-shadow: 0 0 12px rgba(37, 99, 235, 0.6);
 }
 
-@keyframes indicatorPulse {
+@keyframes industrialIndicatorPulse {
   0%, 100% { opacity: 0.6; transform: scale(1); }
   50% { opacity: 1; transform: scale(1.3); }
 }
@@ -364,21 +364,21 @@
   font-weight: 600;
 }
 
-/* LED Indicators */
-.led-panel {
+/* LED Indicators (scoped) */
+.industrial-container .led-panel {
   display: flex;
   gap: 16px;
   margin-top: 24px;
 }
 
-.led-item {
+.industrial-container .led-item {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
 }
 
-.led {
+.industrial-container .led {
   width: 24px;
   height: 24px;
   border-radius: 50%;
@@ -388,13 +388,13 @@
   transition: all 0.3s ease;
 }
 
-.light-mode .led {
+.light-mode .industrial-container .led {
   border: 3px solid #cbd5e1;
   background: #e2e8f0;
   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
-.led.active {
+.industrial-container .led.active {
   background: #22c55e;
   box-shadow:
     0 0 20px rgba(34, 197, 94, 0.8),
@@ -407,7 +407,7 @@
   50% { opacity: 0.6; }
 }
 
-.led-label {
+.industrial-container .led-label {
   font-size: 10px;
   color: #64748b;
   font-weight: 600;
@@ -415,17 +415,17 @@
   letter-spacing: 1px;
 }
 
-.light-mode .led-label {
+.light-mode .industrial-container .led-label {
   color: #475569;
 }
 
-.led.active + .led-label {
+.industrial-container .led.active + .industrial-container .led-label {
   color: #22c55e;
   font-weight: 700;
 }
 
-/* Hydraulic Pistons Animation */
-.pistons {
+/* Hydraulic Pistons Animation (scoped) */
+.industrial-container .pistons {
   position: absolute;
   bottom: -60px;
   left: 50%;
@@ -434,7 +434,7 @@
   gap: 40px;
 }
 
-.piston {
+.industrial-container .piston {
   width: 20px;
   height: 50px;
   background: linear-gradient(180deg, #475569, #334155);
@@ -444,13 +444,13 @@
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
 }
 
-.light-mode .piston {
+.light-mode .industrial-container .piston {
   background: linear-gradient(180deg, #cbd5e1, #94a3b8);
   border: 2px solid #64748b;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
 }
 
-.piston::before {
+.industrial-container .piston::before {
   content: '';
   position: absolute;
   bottom: 100%;
@@ -463,24 +463,24 @@
   border: 3px solid #1e293b;
 }
 
-.light-mode .piston::before {
+.light-mode .industrial-container .piston::before {
   background: #94a3b8;
   border: 3px solid #64748b;
 }
 
-.piston-1 {
-  animation: pistonMove 1.5s ease-in-out infinite;
+.industrial-container .piston-1 {
+  animation: industrialPistonMove 1.5s ease-in-out infinite;
 }
 
-.piston-2 {
-  animation: pistonMove 1.5s ease-in-out infinite 0.5s;
+.industrial-container .piston-2 {
+  animation: industrialPistonMove 1.5s ease-in-out infinite 0.5s;
 }
 
-.piston-3 {
-  animation: pistonMove 1.5s ease-in-out infinite 1s;
+.industrial-container .piston-3 {
+  animation: industrialPistonMove 1.5s ease-in-out infinite 1s;
 }
 
-@keyframes pistonMove {
+@keyframes industrialPistonMove {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-15px); }
 }
