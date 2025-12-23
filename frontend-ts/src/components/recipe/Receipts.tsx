@@ -6,6 +6,7 @@ import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import { useToast } from '@/contexts/ToastContext';
 import type { Receipt } from '@/types';
 import '@/styles/HistoryView.css';
+import '@/styles/IndustrialLoading.css';
 
 interface ConfirmDialogState {
   isOpen: boolean;
@@ -63,6 +64,14 @@ export default function Receipts() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyCount, setHistoryCount] = useState(0);
   const [rawOpenMap, setRawOpenMap] = useState<Record<string, boolean>>({});
+
+  // Loading animation state
+  const [showLoadingAnimation, setShowLoadingAnimation] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [isLightMode] = useState(() => {
+    const savedMode = localStorage.getItem('appThemeMode');
+    return savedMode ? savedMode === 'light' : true;
+  });
   
 
   // Load receipts from API
@@ -244,6 +253,30 @@ export default function Receipts() {
       onConfirm: async () => {
         try {
           const data = await receiptsAPI.loadReceipt(receipt.id);
+
+          // Show loading animation with progress on success
+          setShowLoadingAnimation(true);
+          setLoadingProgress(0);
+
+          // Animate progress from 0 to 100%
+          const progressInterval = setInterval(() => {
+            setLoadingProgress(prev => {
+              if (prev >= 100) {
+                clearInterval(progressInterval);
+                return 100;
+              }
+              // Smooth acceleration
+              const increment = prev < 30 ? 2 : prev < 70 ? 3 : 5;
+              return Math.min(prev + increment, 100);
+            });
+          }, 50);
+
+          setTimeout(() => {
+            clearInterval(progressInterval);
+            setShowLoadingAnimation(false);
+            setLoadingProgress(0);
+          }, 3000);
+
           toast.success(`Recipe "${receipt.name}" loaded and recorded (event id: ${data.id}).`);
           await loadReceipts();
         } catch (error: any) {
@@ -520,7 +553,85 @@ export default function Receipts() {
   }
 
   return (
-    <div className="receipts-page">
+    <div className="receipts-page" style={{ position: 'relative' }}>
+      {/* Industrial Loading Animation */}
+      {showLoadingAnimation && (
+        <div className={`industrial-loading-overlay ${isLightMode ? 'light-mode' : ''}`}>
+          <div className="industrial-container">
+            {/* Header */}
+            <div className="factory-header">
+              <div className="factory-title">PROCESSING</div>
+              <div className="factory-subtitle">Loading Recipe Configuration</div>
+            </div>
+
+            {/* Gear System */}
+            <div className="gear-system">
+              <div className="gear gear-1">
+                <div className="gear-center"></div>
+              </div>
+              <div className="chain chain-1"></div>
+              <div className="gear gear-2">
+                <div className="gear-center"></div>
+              </div>
+              <div className="chain chain-2"></div>
+              <div className="gear gear-3">
+                <div className="gear-center"></div>
+              </div>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="industrial-progress">
+              <div className="progress-frame">
+                <div className="progress-track">
+                  <div className="progress-fill" style={{ width: `${loadingProgress}%` }}></div>
+                  <div className="progress-scanner"></div>
+                  <div className="progress-percentage">{loadingProgress}%</div>
+                </div>
+              </div>
+
+              <div className="status-info">
+                <div className="status-text">
+                  <div className="status-indicator"></div>
+                  <span>LOADING RECIPE DATA</span>
+                </div>
+                <div className="time-remaining">~3s remaining</div>
+              </div>
+
+              {/* LED Indicators */}
+              <div className="led-panel">
+                <div className="led-item">
+                  <div className={`led ${loadingProgress >= 20 ? 'active' : ''}`}></div>
+                  <div className="led-label">Init</div>
+                </div>
+                <div className="led-item">
+                  <div className={`led ${loadingProgress >= 40 ? 'active' : ''}`}></div>
+                  <div className="led-label">Load</div>
+                </div>
+                <div className="led-item">
+                  <div className={`led ${loadingProgress >= 60 ? 'active' : ''}`}></div>
+                  <div className="led-label">Config</div>
+                </div>
+                <div className="led-item">
+                  <div className={`led ${loadingProgress >= 80 ? 'active' : ''}`}></div>
+                  <div className="led-label">Setup</div>
+                </div>
+                <div className="led-item">
+                  <div className={`led ${loadingProgress >= 100 ? 'active' : ''}`}></div>
+                  <div className="led-label">Ready</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Hydraulic Pistons */}
+            <div className="pistons">
+              <div className="piston piston-1"></div>
+              <div className="piston piston-2"></div>
+              <div className="piston piston-3"></div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="section-header">
         <h1>Production Receipts (Recipes)</h1>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -626,7 +737,7 @@ export default function Receipts() {
             placeholder="Search receipts by ID, name, product code..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
           />
           <button 
             onClick={handleSearch}
