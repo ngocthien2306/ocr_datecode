@@ -32,10 +32,10 @@ router = APIRouter()
 
 
 # Template image upload directory
-TEMPLATE_UPLOAD_DIR = Path("/Users/ngocthien.ai/Source/Projects/ocr_datecode/backend/uploads/templates")
+TEMPLATE_UPLOAD_DIR = Path("uploads/templates")
 TEMPLATE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-TEMPLATE_VISUALIZE_DIR = Path("/Users/ngocthien.ai/Source/Projects/ocr_datecode/backend/uploads/visualizations")
+TEMPLATE_VISUALIZE_DIR = Path("uploads/visualizations")
 TEMPLATE_VISUALIZE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Base URL used when returning image/visualization links (frontend should use absolute URLs)
