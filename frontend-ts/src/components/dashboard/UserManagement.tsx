@@ -18,7 +18,7 @@ interface UserFormData {
   email: string;
   full_name: string;
   phone_number: string;
-  avatar_url: string;
+  avatar_url: string | null;
   password: string;
   role: 'admin' | 'operator' | 'supervisor' | 'viewer';
   is_active: boolean;
@@ -54,7 +54,7 @@ const UserManagement: React.FC = () => {
     email: '',
     full_name: '',
     phone_number: '',
-    avatar_url: '',
+    avatar_url: null,
     password: '',
     role: 'operator',
     is_active: true
@@ -90,7 +90,7 @@ const UserManagement: React.FC = () => {
       email: '',
       full_name: '',
       phone_number: '',
-      avatar_url: '',
+      avatar_url: null,
       password: '',
       role: 'operator',
       is_active: true
@@ -107,7 +107,7 @@ const UserManagement: React.FC = () => {
       email: user.email,
       full_name: user.full_name,
       phone_number: user.phone_number || '',
-      avatar_url: user.avatar_url || '',
+      avatar_url: user.avatar_url ?? null,
       password: '',
       role: user.role,
       is_active: user.is_active
@@ -155,7 +155,9 @@ const UserManagement: React.FC = () => {
       reader.readAsDataURL(file);
 
       // Upload to server
+      console.log('Uploading avatar file:', file.name, file.size);
       const avatarUrl = await uploadAPI.uploadAvatar(file);
+      console.log('Upload successful, avatarUrl:', avatarUrl);
 
       setFormData(prev => ({
         ...prev,
@@ -165,6 +167,7 @@ const UserManagement: React.FC = () => {
       toast.success('Avatar uploaded successfully!');
     } catch (err: any) {
       console.error('Error uploading avatar:', err);
+      console.error('Response:', err.response);
       toast.error(err.response?.data?.detail || 'Failed to upload avatar');
       setAvatarPreview('');
     } finally {
@@ -176,7 +179,7 @@ const UserManagement: React.FC = () => {
     setAvatarPreview('');
     setFormData(prev => ({
       ...prev,
-      avatar_url: ''
+      avatar_url: null
     }));
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -278,7 +281,7 @@ const UserManagement: React.FC = () => {
           email: formData.email,
           full_name: formData.full_name,
           phone_number: formData.phone_number || undefined,
-          avatar_url: formData.avatar_url || undefined,
+          avatar_url: formData.avatar_url!,
           role: formData.role,
           is_active: formData.is_active
         };
@@ -399,7 +402,7 @@ const UserManagement: React.FC = () => {
                 <div className="avatar-preview-container">
                   {avatarPreview ? (
                     <div className="avatar-preview">
-                      <img src={`${API_BASE_URL}${avatarPreview}`} alt="Avatar preview" />
+                      <img src={avatarPreview.startsWith('data:') ? avatarPreview : `${API_BASE_URL}${avatarPreview}`} alt="Avatar preview" />
                       <button
                         type="button"
                         className="avatar-remove-btn"
@@ -569,9 +572,9 @@ const UserManagement: React.FC = () => {
                 <button
                   type="submit"
                   className="submit-button"
-                  disabled={!isFormValid()}
+                  disabled={!isFormValid() || uploadingAvatar}
                 >
-                  {editingUser ? 'Update User' : 'Create User'}
+                  {uploadingAvatar ? 'Uploading...' : (editingUser ? 'Update User' : 'Create User')}
                 </button>
               </div>
             </form>
@@ -648,6 +651,7 @@ const UserManagement: React.FC = () => {
                   onChange={handleSelectAll}
                 />
               </th>
+              <th style={{ width: '60px' }}>Avatar</th>
               <th>Username</th>
               <th>Name</th>
               <th>Email</th>
@@ -660,7 +664,7 @@ const UserManagement: React.FC = () => {
           <tbody>
               {filteredUsers.length === 0 ? (
               <tr>
-                <td colSpan={8} style={{ textAlign: 'center', padding: '2rem' }}>
+                <td colSpan={9} style={{ textAlign: 'center', padding: '2rem' }}>
                   {searchTerm ? 'No users found' : 'No users available'}
                 </td>
               </tr>
@@ -675,11 +679,17 @@ const UserManagement: React.FC = () => {
                     />
                   </td>
                   <td>
-                    <div className="user-cell">
-                      <div className="user-avatar">{user.full_name?.charAt(0) || user.username.charAt(0)}</div>
-                      <span className="user-name">{user.username}</span>
+                    <div className="table-avatar">
+                      {user.avatar_url ? (
+                        <img src={`${API_BASE_URL}${user.avatar_url}`} alt={user.full_name || user.username} />
+                      ) : (
+                        <div className="avatar-placeholder">
+                          {user.full_name?.charAt(0) || user.username.charAt(0)}
+                        </div>
+                      )}
                     </div>
                   </td>
+                  <td>{user.username}</td>
                   <td>{user.full_name || '-'}</td>
                   <td>{user.email}</td>
                   <td>

@@ -55,7 +55,13 @@ class UserRepository:
         if not ObjectId.is_valid(user_id):
             return None
 
-        update_data = {k: v for k, v in user_update.model_dump(exclude_unset=True).items() if v is not None}
+        # Get all set fields, including None values for avatar_url (to allow removing avatar)
+        update_dict = user_update.model_dump(exclude_unset=True)
+        update_data = {}
+        for k, v in update_dict.items():
+            if k == 'avatar_url' or v is not None:
+                update_data[k] = v
+
         if not update_data:
             return await self.get_user_by_id(user_id)
 

@@ -7,6 +7,7 @@ import Settings from './Settings';
 import CameraManagement from '../camera/CameraManagement';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { camerasAPI } from '@/services/api';
+import { API_BASE_URL } from '@/config/api';
 import type { Camera as BaseCamera } from '@/types';
 
 interface DashboardCamera extends Omit<BaseCamera, 'status'> {
@@ -94,6 +95,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     connected: 0,
     active: 0
   });
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
   const camera1ChartRef = useRef<HTMLCanvasElement>(null);
   const camera2ChartRef = useRef<HTMLCanvasElement>(null);
@@ -444,6 +446,19 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     fetchCameras();
   }, []);
 
+  // Load current user info
+  useEffect(() => {
+    const userData = localStorage.getItem('user');
+    if (userData) {
+      try {
+        const user = JSON.parse(userData);
+        setCurrentUser(user);
+      } catch (error) {
+        console.error('Error parsing user data:', error);
+      }
+    }
+  }, []);
+
   // Listen for loading template changes from Settings
   useEffect(() => {
     const handleTemplateChange = (event: any) => {
@@ -737,8 +752,18 @@ export default function Dashboard({ onLogout }: DashboardProps) {
             <span>{cameraStats.connected === cameraStats.total && cameraStats.total > 0 ? 'All cameras online' : `${cameraStats.connected}/${cameraStats.total} cameras online`}</span>
           </div>
           <div className="profile">
-            <img src="https://images.pexels.com/photos/30004493/pexels-photo-30004493.jpeg?auto=compress&cs=tinysrgb&h=350" alt="User" className="profile-avatar" />
-            <span>Admin User</span>
+            {currentUser?.avatar_url ? (
+              <img 
+                src={`${API_BASE_URL}${currentUser.avatar_url}`} 
+                alt="User Avatar" 
+                className="profile-avatar" 
+              />
+            ) : (
+              <div className="profile-avatar-placeholder">
+                {currentUser?.full_name?.charAt(0) || currentUser?.username?.charAt(0) || 'U'}
+              </div>
+            )}
+            <span>{currentUser?.full_name || currentUser?.username || 'User'}</span>
           </div>
         </div>
       </header>

@@ -5,14 +5,13 @@ nhưng không được xoá template. Có quyền update phần template và loa
 
 có quyền xem historical 
 
-không có quyền vào page user management, camera và setting. Vui lòng ẩn đi 
+
+không có quyền vào page user management, camera management, settings. Vui lòng ẩn đi 
 
 
-Supervisor: có quyền xem page dashboard, cho phép create và update receipt cũ 
+Supervisor: có quyền xem page dashboard, cho phép create và update receipt cũ, ko có quyền xoá 
 cho phép vào page historical
-
-
-không có quyền vào page user management, camera và setting. Vui lòng ẩn đi 
+không có quyền vào page user management, camera management, settings. Vui lòng ẩn đi 
 
 
 Admin: full quyền và có thể thay đổi mật khẩu của operator và supervisor
