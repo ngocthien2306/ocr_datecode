@@ -60,6 +60,7 @@ export default function TemplateEditor({
   
   const [drawMode, setDrawMode] = useState('select');
   const polygonDrawerRef = useRef<any>(null);
+  const polygonCleanupRef = useRef<(() => void) | null>(null);
   const rectangleCleanupRef = useRef<(() => void) | null>(null);
   const [showHints, setShowHints] = useState(false);
   const [isSpacePressed, setIsSpacePressed] = useState(false);
@@ -666,7 +667,14 @@ export default function TemplateEditor({
 
     let typeConfig = TYPE_CONFIGS.find(t => t.value === 'text');
     if (!typeConfig && TYPE_CONFIGS.length > 0) typeConfig = TYPE_CONFIGS[0];
-    
+
+    // Add mouse down handler for polygon point clicks
+    const handlePolygonMouseDown = (e: any) => {
+      if (polygonDrawerRef.current && (!e.target || e.target === canvas.backgroundImage)) {
+        polygonDrawerRef.current.addPoint(e.e);
+      }
+    };
+
     polygonDrawerRef.current = new PolygonDrawer(
       canvas,
       (typeConfig && typeConfig.color) || '#fff',
@@ -674,14 +682,27 @@ export default function TemplateEditor({
         addAnnotation(polygonData);
         setDrawMode('select');
         polygonDrawerRef.current = null;
+        canvas.off('mouse:down', handlePolygonMouseDown);
+        polygonCleanupRef.current = null;
       }
     );
+
+    canvas.on('mouse:down', handlePolygonMouseDown);
+
+    // Store cleanup function
+    polygonCleanupRef.current = () => {
+      canvas.off('mouse:down', handlePolygonMouseDown);
+    };
   };
 
   const handleStopDrawing = () => {
     if (polygonDrawerRef.current) {
       polygonDrawerRef.current.cancel();
       polygonDrawerRef.current = null;
+    }
+    if (polygonCleanupRef.current) {
+      polygonCleanupRef.current();
+      polygonCleanupRef.current = null;
     }
     if (rectangleCleanupRef.current) {
       rectangleCleanupRef.current();

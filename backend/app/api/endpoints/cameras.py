@@ -12,10 +12,12 @@ from app.schemas.camera import (
     CameraCreate,
     CameraUpdate,
     CameraResponse,
-    CameraConnectionStatus
+    CameraConnectionStatus,
+    CameraSettingsUpdate
 )
-from app.api.dependencies.auth import get_current_user
+from app.api.dependencies.auth import get_current_user, get_current_user_from_query
 from app.services import camera_frame_service, camera_producer_service
+from app.services.camera_settings_service import camera_settings_service
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
@@ -262,7 +264,7 @@ async def get_camera_frame(
     serial_number: str,
     quality: int = 85,
     db=Depends(get_database),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user_from_query)
 ):
     """
     Lấy frame mới nhất từ camera.
@@ -479,4 +481,98 @@ async def get_camera_producer_status(
         "serial_number": serial_number,
         "camera_id": camera["camera_id"],
         "producer_status": status_info
+    }
+
+
+@router.post(
+    "/{serial_number}/settings",
+    summary="Update camera runtime settings",
+    response_model=dict
+)
+async def update_camera_settings(
+    serial_number: str,
+    settings: CameraSettingsUpdate,
+    db=Depends(get_database),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Update camera runtime settings (exposure, gain).
+    Settings are applied immediately if camera is running.
+
+    - **serial_number**: Serial number của camera
+    - **exposure_time**: Exposure time in microseconds (100-1000000)
+    - **gain**: Camera gain value (0.0-20.0)
+
+    Returns: Updated settings
+    """
+    # Kiểm tra camera có tồn tại trong database không
+    repo = CameraRepository(db)
+    camera = await repo.get_by_serial(serial_number)
+
+    if not camera:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Camera with serial number '{serial_number}' not found"
+        )
+
+    try:
+        updated_settings = camera_settings_service.update_settings(
+            serial_number=serial_number,
+            exposure_time=settings.exposure_time,
+            gain=settings.gain
+        )
+
+        return {
+            "success": True,
+            "message": "Settings updated successfully",
+            "serial_number": serial_number,
+            "settings": updated_settings
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update settings: {str(e)}"
+        )
+
+
+@router.get(
+    "/{serial_number}/settings",
+    summary="Get camera runtime settings",
+    response_model=dict
+)
+async def get_camera_settings(
+    serial_number: str,
+    db=Depends(get_database),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get current camera runtime settings.
+
+    - **serial_number**: Serial number của camera
+
+    Returns: Current settings
+    """
+    # Kiểm tra camera có tồn tại trong database không
+    repo = CameraRepository(db)
+    camera = await repo.get_by_serial(serial_number)
+
+    if not camera:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Camera with serial number '{serial_number}' not found"
+        )
+
+    settings = camera_settings_service.get_settings(serial_number)
+
+    if settings is None:
+        # Return default settings if not found
+        settings = {
+            "exposure_time": 10000,
+            "gain": 1.0
+        }
+
+    return {
+        "serial_number": serial_number,
+        "settings": settings
     }

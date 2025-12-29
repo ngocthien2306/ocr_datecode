@@ -37,7 +37,6 @@ const CameraManagement: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectAll, setSelectAll] = useState(false);
-  const [showModal, setShowModal] = useState(false);
   const [editingCamera, setEditingCamera] = useState<Camera | null>(null);
   const [statistics, setStatistics] = useState<CameraStats>({
     total: 0,
@@ -54,7 +53,7 @@ const CameraManagement: React.FC = () => {
   });
   const [viewingCamera, setViewingCamera] = useState<Camera | null>(null);
   const [connectingCameras, setConnectingCameras] = useState<Set<string>>(new Set());
-  const [viewMode, setViewMode] = useState<'list' | 'viewer'>('list');
+  const [viewMode, setViewMode] = useState<'list' | 'viewer' | 'form'>('list');
 
   const [formData, setFormData] = useState<CameraFormData>({
     camera_id: '',
@@ -258,7 +257,7 @@ const CameraManagement: React.FC = () => {
       max_frame_rate: 40.0,
       pixel_format: 'Mono8'
     });
-    setShowModal(true);
+    setViewMode('form');
   };
 
   const openEditModal = (camera: Camera) => {
@@ -277,7 +276,12 @@ const CameraManagement: React.FC = () => {
       max_frame_rate: (camera as any).max_frame_rate || 40.0,
       pixel_format: (camera as any).pixel_format || 'Mono8'
     });
-    setShowModal(true);
+    setViewMode('form');
+  };
+
+  const handleBackToListFromForm = () => {
+    setViewMode('list');
+    setEditingCamera(null);
   };
 
   const handleFormChange = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -296,7 +300,7 @@ const CameraManagement: React.FC = () => {
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    
+
     try {
       if (editingCamera) {
         const id = getCameraKey(editingCamera as Camera);
@@ -305,6 +309,15 @@ const CameraManagement: React.FC = () => {
           ip_address: formData.ip_address,
           port: undefined,
           is_active: formData.is_active,
+          is_connected: formData.is_connected,
+          model_name: formData.model_name,
+          serial_number: formData.serial_number,
+          resolution_width: formData.resolution_width,
+          resolution_height: formData.resolution_height,
+          location: formData.location,
+          description: formData.description,
+          max_frame_rate: formData.max_frame_rate,
+          pixel_format: formData.pixel_format,
           settings: {
             width: formData.resolution_width,
             height: formData.resolution_height
@@ -326,8 +339,9 @@ const CameraManagement: React.FC = () => {
         });
         toast.success('Camera created successfully!');
       }
-      
-      setShowModal(false);
+
+      setViewMode('list');
+      setEditingCamera(null);
       await fetchCameras();
     } catch (err: any) {
       console.error('Error saving camera:', err);
@@ -343,6 +357,185 @@ const CameraManagement: React.FC = () => {
           camera={viewingCamera}
           onBack={handleBackToList}
         />
+      </div>
+    );
+  }
+
+  // Form Mode
+  if (viewMode === 'form') {
+    return (
+      <div className="camera-management">
+        <div className="camera-form-view">
+          <div className="form-header">
+            <button className="back-button" onClick={handleBackToListFromForm}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                <path d="M19 12H5M5 12l7 7M5 12l7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Back to Camera List
+            </button>
+            <h2>{editingCamera ? 'Edit Camera' : 'Add New Camera'}</h2>
+          </div>
+
+          <div className="form-content">
+            <form onSubmit={handleSubmit}>
+              <div className="form-grid">
+                <div className="form-group">
+                  <label>Camera ID *</label>
+                  <input
+                    type="text"
+                    name="camera_id"
+                    value={formData.camera_id}
+                    onChange={handleFormChange}
+                    placeholder="CAM001"
+                    required
+                    disabled={!!editingCamera}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Model Name *</label>
+                  <input
+                    type="text"
+                    name="model_name"
+                    value={formData.model_name}
+                    onChange={handleFormChange}
+                    placeholder="Basler acA1920-40gm"
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Serial Number *</label>
+                  <input
+                    type="text"
+                    name="serial_number"
+                    value={formData.serial_number}
+                    onChange={handleFormChange}
+                    placeholder="40123456"
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>IP Address</label>
+                  <input
+                    type="text"
+                    name="ip_address"
+                    value={formData.ip_address}
+                    onChange={handleFormChange}
+                    placeholder="192.168.1.100"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Resolution Width *</label>
+                  <input
+                    type="number"
+                    name="resolution_width"
+                    value={formData.resolution_width}
+                    onChange={handleFormChange}
+                    placeholder="1920"
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Resolution Height *</label>
+                  <input
+                    type="number"
+                    name="resolution_height"
+                    value={formData.resolution_height}
+                    onChange={handleFormChange}
+                    placeholder="1200"
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Max Frame Rate (fps)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    name="max_frame_rate"
+                    value={formData.max_frame_rate}
+                    onChange={handleFormChange}
+                    placeholder="40.0"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Pixel Format</label>
+                  <select
+                    name="pixel_format"
+                    value={formData.pixel_format}
+                    onChange={handleFormChange}
+                  >
+                    <option value="Mono8">Mono8</option>
+                    <option value="Mono12">Mono12</option>
+                    <option value="RGB8">RGB8</option>
+                    <option value="BGR8">BGR8</option>
+                    <option value="YUV422">YUV422</option>
+                  </select>
+                </div>
+
+                <div className="form-group full-width">
+                  <label>Location</label>
+                  <input
+                    type="text"
+                    name="location"
+                    value={formData.location}
+                    onChange={handleFormChange}
+                    placeholder="Production Line 1 - Position A"
+                  />
+                </div>
+
+                <div className="form-group full-width">
+                  <label>Description</label>
+                  <textarea
+                    name="description"
+                    value={formData.description}
+                    onChange={handleFormChange}
+                    placeholder="Camera description and usage details..."
+                    rows={3}
+                  />
+                </div>
+
+                <div className="form-group checkbox-group">
+                  <label>
+                    <input
+                      type="checkbox"
+                      name="is_connected"
+                      checked={formData.is_connected}
+                      onChange={handleFormChange}
+                    />
+                    <span>Connected</span>
+                  </label>
+                </div>
+
+                <div className="form-group checkbox-group">
+                  <label>
+                    <input
+                      type="checkbox"
+                      name="is_active"
+                      checked={formData.is_active}
+                      onChange={handleFormChange}
+                    />
+                    <span>Active</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="form-actions">
+                <button type="button" className="cancel-button" onClick={handleBackToListFromForm}>
+                  Cancel
+                </button>
+                <button type="submit" className="submit-button">
+                  {editingCamera ? 'Update Camera' : 'Create Camera'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       </div>
     );
   }
@@ -583,180 +776,6 @@ const CameraManagement: React.FC = () => {
           </tbody>
         </table>
       </div>
-
-      {/* Camera Form Modal */}
-      {showModal && (
-        <div className="modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="modal-content camera-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{editingCamera ? 'Edit Camera' : 'Add New Camera'}</h3>
-              <button className="close-button" onClick={() => setShowModal(false)}>
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                  <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2"/>
-                </svg>
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmit}>
-              <div className="form-grid">
-                <div className="form-group">
-                  <label>Camera ID *</label>
-                  <input
-                    type="text"
-                    name="camera_id"
-                    value={formData.camera_id}
-                    onChange={handleFormChange}
-                    placeholder="CAM001"
-                    required
-                    disabled={!!editingCamera}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label>Model Name *</label>
-                  <input
-                    type="text"
-                    name="model_name"
-                    value={formData.model_name}
-                    onChange={handleFormChange}
-                    placeholder="Basler acA1920-40gm"
-                    required
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label>Serial Number *</label>
-                  <input
-                    type="text"
-                    name="serial_number"
-                    value={formData.serial_number}
-                    onChange={handleFormChange}
-                    placeholder="40123456"
-                    required
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label>IP Address</label>
-                  <input
-                    type="text"
-                    name="ip_address"
-                    value={formData.ip_address}
-                    onChange={handleFormChange}
-                    placeholder="192.168.1.100"
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label>Resolution Width *</label>
-                  <input
-                    type="number"
-                    name="resolution_width"
-                    value={formData.resolution_width}
-                    onChange={handleFormChange}
-                    placeholder="1920"
-                    required
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label>Resolution Height *</label>
-                  <input
-                    type="number"
-                    name="resolution_height"
-                    value={formData.resolution_height}
-                    onChange={handleFormChange}
-                    placeholder="1200"
-                    required
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label>Max Frame Rate (fps)</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    name="max_frame_rate"
-                    value={formData.max_frame_rate}
-                    onChange={handleFormChange}
-                    placeholder="40.0"
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label>Pixel Format</label>
-                  <select
-                    name="pixel_format"
-                    value={formData.pixel_format}
-                    onChange={handleFormChange}
-                  >
-                    <option value="Mono8">Mono8</option>
-                    <option value="Mono12">Mono12</option>
-                    <option value="RGB8">RGB8</option>
-                    <option value="BGR8">BGR8</option>
-                    <option value="YUV422">YUV422</option>
-                  </select>
-                </div>
-
-                <div className="form-group full-width">
-                  <label>Location</label>
-                  <input
-                    type="text"
-                    name="location"
-                    value={formData.location}
-                    onChange={handleFormChange}
-                    placeholder="Production Line 1 - Position A"
-                  />
-                </div>
-
-                <div className="form-group full-width">
-                  <label>Description</label>
-                  <textarea
-                    name="description"
-                    value={formData.description}
-                    onChange={handleFormChange}
-                    placeholder="Camera description and usage details..."
-                    rows={3}
-                  />
-                </div>
-
-                <div className="form-group checkbox-group">
-                  <label>
-                    <input
-                      type="checkbox"
-                      name="is_connected"
-                      checked={formData.is_connected}
-                      onChange={handleFormChange}
-                    />
-                    <span>Connected</span>
-                  </label>
-                </div>
-
-                <div className="form-group checkbox-group">
-                  <label>
-                    <input
-                      type="checkbox"
-                      name="is_active"
-                      checked={formData.is_active}
-                      onChange={handleFormChange}
-                    />
-                    <span>Active</span>
-                  </label>
-                </div>
-              </div>
-
-              <div className="modal-actions">
-                <button type="button" className="cancel-button" onClick={() => setShowModal(false)}>
-                  Cancel
-                </button>
-                <button type="submit" className="submit-button">
-                  {editingCamera ? 'Update Camera' : 'Create Camera'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* Confirmation Dialog */}
       <ConfirmDialog

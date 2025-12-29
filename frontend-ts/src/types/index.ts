@@ -90,6 +90,7 @@ export interface CameraUpdate {
   ip_address?: string;
   port?: number;
   is_active?: boolean;
+  is_connected?: boolean;
   settings?: CameraSettings;
   resolution_width?: number;
   resolution_height?: number;
@@ -99,14 +100,6 @@ export interface CameraUpdate {
   max_frame_rate?: number;
   pixel_format?: string;
   description?: string;
-}
-
-export interface CameraUpdate {
-  name?: string;
-  ip_address?: string;
-  port?: number;
-  is_active?: boolean;
-  settings?: CameraSettings;
 }
 
 export interface CameraStats {

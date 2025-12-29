@@ -1,5 +1,5 @@
 // API Configuration
-export const API_BASE_URL = 'http://localhost:8000';
+export const API_BASE_URL = 'https://suntech-vision-api.ngrok.app';
 
 export const API_ENDPOINTS = {
   recipes: `${API_BASE_URL}/api/recipes`,

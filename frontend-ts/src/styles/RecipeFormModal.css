@@ -484,6 +484,12 @@
   gap: 12px;
 }
 
+.template-add-buttons {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .template-actions label.btn {
   cursor: pointer;
   margin: 0;
@@ -1086,6 +1092,10 @@
 @keyframes spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
 }
 
 .btn-primary:disabled::after {

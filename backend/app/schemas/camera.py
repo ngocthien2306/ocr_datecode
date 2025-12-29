@@ -63,3 +63,9 @@ class CameraConnectionStatus(BaseModel):
     camera_id: str
     is_connected: bool
     last_checked: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CameraSettingsUpdate(BaseModel):
+    """Schema for updating camera runtime settings"""
+    exposure_time: Optional[int] = Field(None, ge=100, le=1000000, description="Exposure time in microseconds (μs)")
+    gain: Optional[float] = Field(None, ge=0.0, le=20.0, description="Camera gain value")

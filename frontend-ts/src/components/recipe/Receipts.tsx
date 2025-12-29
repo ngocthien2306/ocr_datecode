@@ -7,6 +7,7 @@ import { useToast } from '@/contexts/ToastContext';
 import type { Receipt } from '@/types';
 import '@/styles/HistoryView.css';
 import '@/styles/IndustrialLoading.css';
+import { API_BASE_URL } from '@/config/api';
 
 interface ConfirmDialogState {
   isOpen: boolean;
@@ -441,8 +442,7 @@ export default function Receipts() {
     const makeAbsolute = (p?: string) => {
       if (!p) return p;
       if (p.startsWith('http')) return p;
-      const base = 'http://localhost:8000';
-      return `${base}${p}`;
+      return `${API_BASE_URL}${p}`;
     };
 
     return (

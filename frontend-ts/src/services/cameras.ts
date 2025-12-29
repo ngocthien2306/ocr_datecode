@@ -55,12 +55,22 @@ export const camerasAPI = {
   },
 
   getCameraFrame: (serialNumber: string, quality: number = 85): string => {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('access_token');
     return `${api.defaults.baseURL}/cameras/${serialNumber}/frame?quality=${quality}&token=${token}`;
   },
 
   getCameraStatus: async (serialNumber: string): Promise<any> => {
     const response = await api.get(`/cameras/${serialNumber}/status`);
+    return response.data;
+  },
+
+  updateCameraSettings: async (serialNumber: string, settings: { exposure_time?: number; gain?: number }): Promise<any> => {
+    const response = await api.post(`/cameras/${serialNumber}/settings`, settings);
+    return response.data;
+  },
+
+  getCameraSettings: async (serialNumber: string): Promise<any> => {
+    const response = await api.get(`/cameras/${serialNumber}/settings`);
     return response.data;
   },
 };

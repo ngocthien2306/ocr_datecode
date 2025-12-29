@@ -29,19 +29,39 @@ const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
     autoRefresh: false,
     refreshInterval: 100
   });
+  const [isApplyingSettings, setIsApplyingSettings] = useState(false);
+  const [hasUnsavedSettings, setHasUnsavedSettings] = useState(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
 
   const serialNumber = (camera as any).serial_number || camera.camera_id;
 
   useEffect(() => {
+    // Load camera settings on mount
+    const loadSettings = async () => {
+      try {
+        const response = await camerasAPI.getCameraSettings(serialNumber);
+        if (response.settings) {
+          setSettings(prev => ({
+            ...prev,
+            exposure: response.settings.exposure_time || 10000,
+            gain: response.settings.gain || 1.0
+          }));
+        }
+      } catch (err) {
+        console.error('Error loading camera settings:', err);
+      }
+    };
+
+    loadSettings();
+
     return () => {
       // Cleanup on unmount
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }
     };
-  }, []);
+  }, [serialNumber]);
 
   useEffect(() => {
     if (isLiveMode || settings.autoRefresh) {
@@ -90,6 +110,28 @@ const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
       ...prev,
       [key]: value
     }));
+
+    // Mark as unsaved if exposure or gain changed
+    if (key === 'exposure' || key === 'gain') {
+      setHasUnsavedSettings(true);
+    }
+  };
+
+  const applySettings = async () => {
+    try {
+      setIsApplyingSettings(true);
+      await camerasAPI.updateCameraSettings(serialNumber, {
+        exposure_time: settings.exposure,
+        gain: settings.gain
+      });
+      setHasUnsavedSettings(false);
+      toast.success('Camera settings applied successfully!');
+    } catch (err) {
+      console.error('Error applying camera settings:', err);
+      toast.error('Failed to apply camera settings');
+    } finally {
+      setIsApplyingSettings(false);
+    }
   };
 
   const downloadFrame = () => {
@@ -111,15 +153,15 @@ const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
     <div className="camera-viewer-page">
       {/* Header */}
       <div className="section-header">
-        <div>
-          <button className="back-button" onClick={onBack}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-              <path d="M19 12H5M12 19l-7-7 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            Back to List
-          </button>
-          <h2>{camera.camera_id} - Camera Viewer</h2>
-          <p>{(camera as any).model_name || camera.name} • Serial: {(camera as any).serial_number || camera.camera_id}</p>
+        <button className="back-button" onClick={onBack}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <path d="M19 12H5M12 19l-7-7 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          Back to List
+        </button>
+        <div className="camera-header-info">
+          <h2><span className="camera-details">{(camera as any).model_name || camera.name} • Serial: {(camera as any).serial_number || camera.camera_id}</span> </h2>
+          
         </div>
       </div>
 
@@ -236,6 +278,33 @@ const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
                 onChange={(e) => handleSettingChange('gain', Number(e.target.value))}
               />
             </div>
+
+            {hasUnsavedSettings && (
+              <div className="setting-group">
+                <button
+                  className="apply-settings-btn"
+                  onClick={applySettings}
+                  disabled={isApplyingSettings}
+                >
+                  {isApplyingSettings ? (
+                    <>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="spin">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" opacity="0.25"/>
+                        <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="2"/>
+                      </svg>
+                      Applying...
+                    </>
+                  ) : (
+                    <>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                        <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                      Apply Settings
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
 
             <div className="setting-group">
               <label>

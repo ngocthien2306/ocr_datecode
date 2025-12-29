@@ -112,6 +112,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   const [cameraTemplates, setCameraTemplates] = useState<CameraTemplates>({}); // { camera_id: [{ id, name, image, annotations }] }
   const [selectedTemplateIndex, setSelectedTemplateIndex] = useState<number>(0); // Index of selected template for current camera
   const [selectedAnnotation, setSelectedAnnotation] = useState<number | null>(null);
+  const [isGettingFrame, setIsGettingFrame] = useState(false);
   const fabricCanvasRef = useRef<any>(null);
 
   useEffect(() => {
@@ -430,6 +431,107 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     }
   };
 
+  const handleGetCurrentFrame = async () => {
+    if (!selectedCameraForTemplate) {
+      toast.warning('Please select a camera first');
+      return;
+    }
+
+    // Find the selected camera details
+    const selectedCamera = formData.cameras.find(c => c.camera_id === selectedCameraForTemplate);
+    if (!selectedCamera) {
+      toast.error('Camera not found in recipe configuration');
+      return;
+    }
+
+    const serialNumber = selectedCamera.serial_number;
+
+    setIsGettingFrame(true);
+    try {
+      toast.info('Fetching current frame from camera...');
+
+      // First check if camera is connected
+      const statusResponse = await camerasAPI.getCameraStatus(serialNumber);
+      if (!statusResponse.producer_status?.running) {
+        toast.error('Camera is not connected. Please go to Camera Management to connect the camera first.');
+        return;
+      }
+
+      // Fetch current frame
+      const token = localStorage.getItem('access_token');
+      const frameUrl = `${API_BASE_URL}/api/cameras/${serialNumber}/frame?quality=95&token=${token}&t=${Date.now()}`;
+
+      // Download the frame as blob
+      const frameResponse = await fetch(frameUrl);
+      if (!frameResponse.ok) {
+        if (frameResponse.status === 404) {
+          toast.error('Camera is not streaming. Please connect the camera in Camera Management.');
+          return;
+        }
+        throw new Error('Failed to fetch frame');
+      }
+
+      const blob = await frameResponse.blob();
+
+      // Upload the frame to server
+      toast.info('Uploading frame to server...');
+      const uploadFormData = new FormData();
+      uploadFormData.append('file', blob, `camera_${serialNumber}_${Date.now()}.jpg`);
+
+      const uploadToken = localStorage.getItem('access_token');
+      const uploadResponse = await fetch(`${API_BASE_URL}/api/recipes/templates/upload`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${uploadToken}`,
+          'Bypass-Tunnel-Reminder': 'true'
+        },
+        body: uploadFormData
+      });
+
+      if (!uploadResponse.ok) {
+        const errorData = await uploadResponse.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Failed to upload frame');
+      }
+
+      const { url, width, height } = await uploadResponse.json();
+
+      // Convert blob to base64 for canvas preview
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const imageDataUrl = event.target?.result as string;
+
+        // Add new template to the selected camera's templates array
+        const currentTemplates = cameraTemplates[selectedCameraForTemplate] || [];
+        const templateName = `Frame ${currentTemplates.length + 1}`;
+        const newTemplate = {
+          id: `template-${Date.now()}`,
+          name: templateName,
+          image: imageDataUrl, // For preview in canvas
+          image_url: url, // Server URL for submission
+          image_width: width,
+          image_height: height,
+          annotations: []
+        };
+
+        setCameraTemplates(prev => ({
+          ...prev,
+          [selectedCameraForTemplate]: [...(prev[selectedCameraForTemplate] || []), newTemplate]
+        }));
+
+        // Auto-select the new template
+        setSelectedTemplateIndex(currentTemplates.length);
+        toast.success('Frame captured successfully!');
+      };
+      reader.readAsDataURL(blob);
+
+    } catch (error: any) {
+      console.error('Get frame error:', error);
+      toast.error(error.message || 'Failed to get current frame from camera');
+    } finally {
+      setIsGettingFrame(false);
+    }
+  };
+
   const handleImageUpload = async (e: any) => {
     const file = e.target.files[0];
     if (file) {
@@ -437,7 +539,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         // Upload image to server
         const formData = new FormData();
         formData.append('file', file);
-        
+
         const token = localStorage.getItem('access_token');
         const response = await fetch(`${API_BASE_URL}/api/recipes/templates/upload`, {
           method: 'POST',
@@ -447,19 +549,19 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           },
           body: formData
         });
-        
+
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
           throw new Error(errorData.detail || 'Failed to upload image');
         }
-        
+
         const { url, width, height } = await response.json();
-        
+
         // Also keep base64 for preview
         const reader = new FileReader();
         reader.onload = (event) => {
           const imageDataUrl = event.target?.result as string;
-          
+
           if (selectedCameraForTemplate) {
             // Add new template to the selected camera's templates array
             const currentTemplates = cameraTemplates[selectedCameraForTemplate] || [];
@@ -473,12 +575,12 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               image_height: height,
               annotations: []
             };
-            
+
             setCameraTemplates(prev => ({
               ...prev,
               [selectedCameraForTemplate]: [...(prev[selectedCameraForTemplate] || []), newTemplate]
             }));
-            
+
             // Auto-select the new template
             setSelectedTemplateIndex(currentTemplates.length);
           } else {
@@ -487,13 +589,13 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           }
         };
         reader.readAsDataURL(file);
-        
+
       } catch (error) {
         console.error('Upload error:', error);
         alert('Failed to upload template image. Please try again.');
       }
     }
-    
+
     // Reset file input
     e.target.value = '';
   };
@@ -1026,21 +1128,44 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                 ) : (
                   <>
                     <div className="template-actions">
-                      <input 
-                        type="file" 
-                        id={`template-upload-${selectedCameraForTemplate}`}
-                        accept="image/*" 
-                        onChange={handleImageUpload} 
-                        style={{ display: 'none' }} 
-                      />
-                      <label 
-                        htmlFor={`template-upload-${selectedCameraForTemplate}`}
-                        className="btn btn-secondary"
-                      >
-                        ➕ Add Template Image
-                      </label>
+                      <div className="template-add-buttons">
+                        <input
+                          type="file"
+                          id={`template-upload-${selectedCameraForTemplate}`}
+                          accept="image/*"
+                          onChange={handleImageUpload}
+                          style={{ display: 'none' }}
+                        />
+                        <label
+                          htmlFor={`template-upload-${selectedCameraForTemplate}`}
+                          className="btn btn-secondary"
+                        >
+                          📁 Upload Image
+                        </label>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={handleGetCurrentFrame}
+                          disabled={isGettingFrame}
+                          title="Get current frame from camera"
+                        >
+                          {isGettingFrame ? (
+                            <>
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="spin">
+                                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" opacity="0.25"/>
+                                <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="2"/>
+                              </svg>
+                              Getting Frame...
+                            </>
+                          ) : (
+                            <>
+                              📷 Get Current Frame
+                            </>
+                          )}
+                        </button>
+                      </div>
                       <span className="template-info">
-                        Camera: {selectedCameraForTemplate} | 
+                        Camera: {selectedCameraForTemplate} |
                         Templates: {cameraTemplates[selectedCameraForTemplate]?.length || 0}
                       </span>
                     </div>

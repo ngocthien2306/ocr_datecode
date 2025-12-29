@@ -1936,7 +1936,8 @@ body.dark-mode .setting-item input[type="number"]:disabled {
 }
 
 /* Modal Styles - Scoped to dashboard only */
-.dashboard-container .modal-overlay {
+.dashboard-container .modal-overlay,
+.modal-overlay {
   position: fixed;
   top: 0;
   left: 0;
@@ -1959,7 +1960,8 @@ body.dark-mode .setting-item input[type="number"]:disabled {
   }
 }
 
-.dashboard-container .modal-content {
+.dashboard-container .modal-content,
+.modal-content {
   background: white;
   border-radius: 16px;
   padding: 24px;
@@ -1982,7 +1984,8 @@ body.dark-mode .setting-item input[type="number"]:disabled {
   }
 }
 
-.dashboard-container .modal-header {
+.dashboard-container .modal-header,
+.modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1991,14 +1994,24 @@ body.dark-mode .setting-item input[type="number"]:disabled {
   border-bottom: 1px solid #e5e7eb;
 }
 
-.dashboard-container .modal-header h2 {
+.dashboard-container .modal-header h2,
+.modal-header h2 {
   margin: 0;
   font-size: 20px;
   font-weight: 600;
   color: #111827;
 }
 
-.dashboard-container .modal-close {
+.dashboard-container .modal-header h3,
+.modal-header h3 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.dashboard-container .modal-close,
+.close-button {
   background: none;
   border: none;
   font-size: 28px;
@@ -2014,16 +2027,19 @@ body.dark-mode .setting-item input[type="number"]:disabled {
   transition: all 0.2s;
 }
 
-.dashboard-container .modal-close:hover {
+.dashboard-container .modal-close:hover,
+.close-button:hover {
   background: #f3f4f6;
   color: #111827;
 }
 
-.dashboard-container .form-group {
+.dashboard-container .form-group,
+.form-group {
   margin-bottom: 20px;
 }
 
-.dashboard-container .form-group label {
+.dashboard-container .form-group label,
+.form-group label {
   display: block;
   margin-bottom: 8px;
   font-weight: 500;
@@ -2034,7 +2050,13 @@ body.dark-mode .setting-item input[type="number"]:disabled {
 .dashboard-container .form-group input[type="text"],
 .dashboard-container .form-group input[type="email"],
 .dashboard-container .form-group input[type="password"],
-.dashboard-container .form-group select {
+.dashboard-container .form-group input[type="number"],
+.dashboard-container .form-group select,
+.form-group input[type="text"],
+.form-group input[type="email"],
+.form-group input[type="password"],
+.form-group input[type="number"],
+.form-group select {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid #d1d5db;
@@ -2047,7 +2069,9 @@ body.dark-mode .setting-item input[type="number"]:disabled {
 }
 
 .dashboard-container .form-group input:focus,
-.dashboard-container .form-group select:focus {
+.dashboard-container .form-group select:focus,
+.form-group input:focus,
+.form-group select:focus {
   outline: none;
   border-color: #6366f1;
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
@@ -2072,7 +2096,8 @@ body.dark-mode .setting-item input[type="number"]:disabled {
   color: #374151;
 }
 
-.dashboard-container .modal-actions {
+.dashboard-container .modal-actions,
+.modal-actions {
   display: flex;
   gap: 12px;
   margin-top: 24px;
@@ -2112,46 +2137,62 @@ body.dark-mode .setting-item input[type="number"]:disabled {
 }
 
 /* Dark Mode Modal Styles */
-body.dark-mode .dashboard-container .modal-overlay {
+body.dark-mode .dashboard-container .modal-overlay,
+body.dark-mode .modal-overlay {
   background: rgba(0, 0, 0, 0.7);
 }
 
-body.dark-mode .dashboard-container .modal-content {
+body.dark-mode .dashboard-container .modal-content,
+body.dark-mode .modal-content {
   background: #1f2937;
 }
 
-body.dark-mode .dashboard-container .modal-header {
+body.dark-mode .dashboard-container .modal-header,
+body.dark-mode .modal-header {
   border-color: #374151;
 }
 
-body.dark-mode .dashboard-container .modal-header h2 {
+body.dark-mode .dashboard-container .modal-header h2,
+body.dark-mode .modal-header h2,
+body.dark-mode .modal-header h3 {
   color: #f9fafb;
 }
 
-body.dark-mode .dashboard-container .modal-close {
+body.dark-mode .dashboard-container .modal-close,
+body.dark-mode .close-button {
   color: #9ca3af;
 }
 
-body.dark-mode .dashboard-container .modal-close:hover {
+body.dark-mode .dashboard-container .modal-close:hover,
+body.dark-mode .close-button:hover {
   background: #374151;
   color: #f9fafb;
 }
 
-body.dark-mode .dashboard-container .form-group label {
+body.dark-mode .dashboard-container .form-group label,
+body.dark-mode .form-group label {
   color: #d1d5db;
 }
 
 body.dark-mode .dashboard-container .form-group input[type="text"],
 body.dark-mode .dashboard-container .form-group input[type="email"],
 body.dark-mode .dashboard-container .form-group input[type="password"],
-body.dark-mode .dashboard-container .form-group select {
+body.dark-mode .dashboard-container .form-group input[type="number"],
+body.dark-mode .dashboard-container .form-group select,
+body.dark-mode .form-group input[type="text"],
+body.dark-mode .form-group input[type="email"],
+body.dark-mode .form-group input[type="password"],
+body.dark-mode .form-group input[type="number"],
+body.dark-mode .form-group select {
   background: #111827;
   border-color: #374151;
   color: #f9fafb;
 }
 
 body.dark-mode .dashboard-container .form-group input:focus,
-body.dark-mode .dashboard-container .form-group select:focus {
+body.dark-mode .dashboard-container .form-group select:focus,
+body.dark-mode .form-group input:focus,
+body.dark-mode .form-group select:focus {
   border-color: #6366f1;
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
 }
@@ -2175,7 +2216,7 @@ body.dark-mode .dashboard-container .btn-secondary:hover {
    ============================================ */
 
 .camera-management {
-  padding: 2rem;
+  padding: 1rem;
 }
 
 .camera-management .section-header {
@@ -2351,6 +2392,132 @@ body.dark-mode .dashboard-container .btn-secondary:hover {
   animation: spin 1s linear infinite;
 }
 
+/* Camera Form View */
+.camera-form-view {
+  background: white;
+  border-radius: 12px;
+  padding: 2rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e5e7eb;
+}
+
+.camera-form-view .form-header {
+  margin-bottom: 2rem;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 1.5rem;
+}
+
+.camera-form-view .form-header h2 {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 1rem 0 0 0;
+}
+
+.camera-form-view .back-button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 14px;
+}
+
+.camera-form-view .back-button:hover {
+  background: #e5e7eb;
+  transform: translateX(-2px);
+}
+
+.camera-form-view .form-content {
+  max-width: 1400px;
+}
+
+.camera-form-view .form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.camera-form-view .form-group.full-width {
+  grid-column: span 2;
+}
+
+.camera-form-view .form-group.checkbox-group {
+  display: flex;
+  align-items: center;
+}
+
+.camera-form-view .form-group.checkbox-group label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  margin: 0;
+}
+
+.camera-form-view .form-group.checkbox-group input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+
+.camera-form-view .form-group textarea {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 100px;
+}
+
+.camera-form-view .form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+  padding-top: 2rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.camera-form-view .cancel-button {
+  padding: 0.75rem 1.5rem;
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.camera-form-view .cancel-button:hover {
+  background: #e5e7eb;
+}
+
+.camera-form-view .submit-button {
+  padding: 0.75rem 1.5rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.camera-form-view .submit-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+}
+
 /* Camera Modal */
 .camera-modal {
   max-width: 800px !important;
@@ -2508,6 +2675,55 @@ body.dark-mode .camera-modal .cancel-button:hover {
 
 body.dark-mode .camera-modal .modal-actions {
   border-color: #374151;
+}
+
+/* Dark Mode - Camera Form View */
+body.dark-mode .camera-form-view {
+  background: #1f2937;
+  border-color: #374151;
+}
+
+body.dark-mode .camera-form-view .form-header {
+  border-color: #374151;
+}
+
+body.dark-mode .camera-form-view .form-header h2 {
+  color: #f9fafb;
+}
+
+body.dark-mode .camera-form-view .back-button {
+  background: #374151;
+  color: #d1d5db;
+  border-color: #4b5563;
+}
+
+body.dark-mode .camera-form-view .back-button:hover {
+  background: #4b5563;
+}
+
+body.dark-mode .camera-form-view .form-group textarea {
+  background: #111827;
+  border-color: #374151;
+  color: #f9fafb;
+}
+
+body.dark-mode .camera-form-view .form-group textarea:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+}
+
+body.dark-mode .camera-form-view .form-actions {
+  border-color: #374151;
+}
+
+body.dark-mode .camera-form-view .cancel-button {
+  background: #374151;
+  color: #d1d5db;
+  border-color: #4b5563;
+}
+
+body.dark-mode .camera-form-view .cancel-button:hover {
+  background: #4b5563;
 }
 
 /* ============================================

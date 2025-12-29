@@ -7,6 +7,9 @@
 }
 
 .camera-viewer-page .section-header {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
   margin-bottom: 1.5rem;
 }
 
@@ -15,7 +18,6 @@
   align-items: center;
   gap: 0.5rem;
   padding: 0.625rem 1.25rem;
-  margin-bottom: 1rem;
   background: white;
   border: 2px solid #e5e7eb;
   border-radius: 8px;
@@ -24,6 +26,7 @@
   color: #374151;
   cursor: pointer;
   transition: all 0.2s;
+  flex-shrink: 0;
 }
 
 .camera-viewer-page .back-button:hover {
@@ -38,11 +41,23 @@
   height: 20px;
 }
 
+.camera-header-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
 .camera-viewer-page h2 {
   margin: 0;
   font-size: 1.5rem;
   font-weight: 600;
   color: #111827;
+}
+
+.camera-details {
+  font-size: 0.9375rem;
+  color: #6b7280;
 }
 
 .camera-viewer-page .section-header p {
@@ -83,29 +98,37 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   position: relative;
   min-height: 400px;
+  max-height: 600px;
 }
 
 .camera-feed-image {
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
 }
 
 .camera-feed-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
   color: #6b7280;
+  width: 100%;
+  height: 100%;
   padding: 3rem;
 }
 
 .camera-feed-placeholder svg {
   opacity: 0.3;
-  margin-bottom: 1rem;
+  margin-bottom: 1.5rem;
   stroke: currentColor;
 }
 
 .camera-feed-placeholder p {
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   margin: 0;
+  line-height: 1.5;
 }
 
 /* Controls */
@@ -288,6 +311,49 @@
   accent-color: #667eea;
 }
 
+/* Apply Settings Button */
+.apply-settings-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  border: none;
+  border-radius: 8px;
+  color: white;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+}
+
+.apply-settings-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+}
+
+.apply-settings-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.apply-settings-btn svg.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Camera Metadata */
 .camera-metadata {
   margin-top: 1.5rem;
@@ -325,6 +391,10 @@
 /* Dark Mode Support */
 .dark-mode .camera-viewer-page h2 {
   color: #f3f4f6;
+}
+
+.dark-mode .camera-details {
+  color: #9ca3af;
 }
 
 .dark-mode .camera-viewer-page .section-header p {
@@ -388,4 +458,8 @@
 
 .dark-mode .setting-group input[type="range"] {
   background: #374151;
+}
+
+.dark-mode .apply-settings-btn {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
 }
