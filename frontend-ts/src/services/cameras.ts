@@ -43,6 +43,26 @@ export const camerasAPI = {
     const response = await api.delete(`/cameras/${cameraId}`);
     return response.data;
   },
+
+  connectCamera: async (serialNumber: string, deviceIndex: number = 0): Promise<any> => {
+    const response = await api.post(`/cameras/${serialNumber}/connect?device_index=${deviceIndex}`);
+    return response.data;
+  },
+
+  disconnectCamera: async (serialNumber: string): Promise<any> => {
+    const response = await api.post(`/cameras/${serialNumber}/disconnect`);
+    return response.data;
+  },
+
+  getCameraFrame: (serialNumber: string, quality: number = 85): string => {
+    const token = localStorage.getItem('token');
+    return `${api.defaults.baseURL}/cameras/${serialNumber}/frame?quality=${quality}&token=${token}`;
+  },
+
+  getCameraStatus: async (serialNumber: string): Promise<any> => {
+    const response = await api.get(`/cameras/${serialNumber}/status`);
+    return response.data;
+  },
 };
 
 export default camerasAPI;

@@ -129,13 +129,13 @@ def show_latest_template():
 
     annotations = tpl.get('annotations') or []
     annotated = draw_annotations(img, annotations)
-
+    cv2.imwrite("latest_template_visualization.jpg", annotated)
     win = 'Latest template visualization'
-    cv2.namedWindow(win, cv2.WINDOW_NORMAL)
-    cv2.imshow(win, annotated)
-    print('Press any key in image window to exit')
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    # cv2.namedWindow(win, cv2.WINDOW_NORMAL)
+    # cv2.imshow(win, annotated)
+    # print('Press any key in image window to exit')
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
 
 
 def main():

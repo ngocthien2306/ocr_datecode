@@ -2307,7 +2307,7 @@ body.dark-mode .dashboard-container .btn-secondary:hover {
   color: white;
 }
 
-.camera-management .action-btn.connect:hover {
+.camera-management .action-btn.connect:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
 }
@@ -2317,9 +2317,38 @@ body.dark-mode .dashboard-container .btn-secondary:hover {
   color: white;
 }
 
-.camera-management .action-btn.disconnect:hover {
+.camera-management .action-btn.disconnect:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+}
+
+.camera-management .action-btn.view {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: white;
+}
+
+.camera-management .action-btn.view:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.camera-management .action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Spin animation for loading */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
 }
 
 /* Camera Modal */

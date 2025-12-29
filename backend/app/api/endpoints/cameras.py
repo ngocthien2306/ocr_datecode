@@ -3,6 +3,8 @@ Camera API Endpoints
 """
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse, JSONResponse
+import io
 
 from app.db.mongodb import get_database
 from app.repositories.camera_repository import CameraRepository
@@ -13,6 +15,7 @@ from app.schemas.camera import (
     CameraConnectionStatus
 )
 from app.api.dependencies.auth import get_current_user
+from app.services import camera_frame_service, camera_producer_service
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
@@ -238,5 +241,242 @@ async def get_camera_count(
     """
     repo = CameraRepository(db)
     count = await repo.count(is_active=is_active)
-    
+
     return {"count": count, "is_active": is_active}
+
+
+@router.get(
+    "/{serial_number}/frame",
+    summary="Get latest camera frame",
+    responses={
+        200: {
+            "content": {"image/jpeg": {}},
+            "description": "Returns the latest camera frame as JPEG image"
+        },
+        404: {
+            "description": "Camera not found or not streaming"
+        }
+    }
+)
+async def get_camera_frame(
+    serial_number: str,
+    quality: int = 85,
+    db=Depends(get_database),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Lấy frame mới nhất từ camera.
+
+    - **serial_number**: Serial number của camera
+    - **quality**: JPEG quality (0-100), mặc định 85
+
+    Returns: JPEG image
+    """
+    # Kiểm tra camera có tồn tại trong database không
+    repo = CameraRepository(db)
+    camera = await repo.get_by_serial(serial_number)
+
+    if not camera:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Camera with serial number '{serial_number}' not found"
+        )
+
+    # Đọc frame từ shared memory
+    frame_data = camera_frame_service.get_frame(serial_number)
+
+    if frame_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Camera '{serial_number}' is not streaming. Please ensure camera producer is running."
+        )
+
+    # Encode frame thành JPEG
+    jpeg_bytes = camera_frame_service.encode_frame_jpeg(frame_data['frame'], quality)
+
+    if jpeg_bytes is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to encode frame"
+        )
+
+    # Return image as streaming response
+    return StreamingResponse(
+        io.BytesIO(jpeg_bytes),
+        media_type="image/jpeg",
+        headers={
+            "X-Frame-Index": str(frame_data['metadata']['frame_idx']),
+            "X-Timestamp": str(frame_data['metadata']['timestamp']),
+            "X-Camera-Model": frame_data['metadata']['model_name']
+        }
+    )
+
+
+@router.get(
+    "/{serial_number}/frame/metadata",
+    summary="Get latest camera frame metadata",
+    response_model=dict
+)
+async def get_camera_frame_metadata(
+    serial_number: str,
+    db=Depends(get_database),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Lấy metadata của frame mới nhất từ camera (không bao gồm ảnh).
+
+    - **serial_number**: Serial number của camera
+
+    Returns: Frame metadata (timestamp, frame_idx, shape, etc.)
+    """
+    # Kiểm tra camera có tồn tại trong database không
+    repo = CameraRepository(db)
+    camera = await repo.get_by_serial(serial_number)
+
+    if not camera:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Camera with serial number '{serial_number}' not found"
+        )
+
+    # Đọc frame từ shared memory
+    frame_data = camera_frame_service.get_frame(serial_number)
+
+    if frame_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Camera '{serial_number}' is not streaming. Please ensure camera producer is running."
+        )
+
+    return frame_data['metadata']
+
+
+@router.post(
+    "/{serial_number}/connect",
+    summary="Connect and start camera producer",
+    response_model=dict
+)
+async def connect_camera(
+    serial_number: str,
+    device_index: int = 0,
+    db=Depends(get_database),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Connect camera and start producer process.
+
+    - **serial_number**: Serial number của camera
+    - **device_index**: Camera device index (default 0)
+
+    Returns: Status message
+    """
+    # Kiểm tra camera có tồn tại trong database không
+    repo = CameraRepository(db)
+    camera = await repo.get_by_serial(serial_number)
+
+    if not camera:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Camera with serial number '{serial_number}' not found"
+        )
+
+    # Start camera producer
+    success = camera_producer_service.start_camera(serial_number, device_index)
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start camera producer for '{serial_number}'"
+        )
+
+    # Update camera connection status in database
+    await repo.update_connection_status(camera["camera_id"], True)
+
+    return {
+        "success": True,
+        "message": f"Camera '{serial_number}' connected successfully",
+        "serial_number": serial_number,
+        "status": camera_producer_service.get_camera_status(serial_number)
+    }
+
+
+@router.post(
+    "/{serial_number}/disconnect",
+    summary="Disconnect and stop camera producer",
+    response_model=dict
+)
+async def disconnect_camera(
+    serial_number: str,
+    db=Depends(get_database),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Disconnect camera and stop producer process.
+
+    - **serial_number**: Serial number của camera
+
+    Returns: Status message
+    """
+    # Kiểm tra camera có tồn tại trong database không
+    repo = CameraRepository(db)
+    camera = await repo.get_by_serial(serial_number)
+
+    if not camera:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Camera with serial number '{serial_number}' not found"
+        )
+
+    # Stop camera producer
+    success = camera_producer_service.stop_camera(serial_number)
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to stop camera producer for '{serial_number}'"
+        )
+
+    # Update camera connection status in database
+    await repo.update_connection_status(camera["camera_id"], False)
+
+    return {
+        "success": True,
+        "message": f"Camera '{serial_number}' disconnected successfully",
+        "serial_number": serial_number
+    }
+
+
+@router.get(
+    "/{serial_number}/status",
+    summary="Get camera producer status",
+    response_model=dict
+)
+async def get_camera_producer_status(
+    serial_number: str,
+    db=Depends(get_database),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get camera producer process status.
+
+    - **serial_number**: Serial number của camera
+
+    Returns: Producer status
+    """
+    # Kiểm tra camera có tồn tại trong database không
+    repo = CameraRepository(db)
+    camera = await repo.get_by_serial(serial_number)
+
+    if not camera:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Camera with serial number '{serial_number}' not found"
+        )
+
+    status_info = camera_producer_service.get_camera_status(serial_number)
+
+    return {
+        "serial_number": serial_number,
+        "camera_id": camera["camera_id"],
+        "producer_status": status_info
+    }

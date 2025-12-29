@@ -2,6 +2,7 @@ import React, { useState, useEffect, ChangeEvent, FormEvent } from 'react';
 import { camerasAPI } from '@/services/api';
 import { useToast } from '@/contexts/ToastContext';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import CameraViewer from './CameraViewer';
 import type { Camera, CameraStats } from '@/types';
 import '@/styles/Dashboard.css';
 
@@ -51,6 +52,9 @@ const CameraManagement: React.FC = () => {
     type: 'warning',
     onConfirm: null
   });
+  const [viewingCamera, setViewingCamera] = useState<Camera | null>(null);
+  const [connectingCameras, setConnectingCameras] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<'list' | 'viewer'>('list');
 
   const [formData, setFormData] = useState<CameraFormData>({
     camera_id: '',
@@ -195,16 +199,47 @@ const CameraManagement: React.FC = () => {
   };
 
   const handleToggleConnection = async (camera: Camera) => {
+    const serialNumber = (camera as any).serial_number || getCameraKey(camera);
+    const isConnected = !!camera.is_connected;
+
+    setConnectingCameras(prev => new Set(prev).add(serialNumber));
+
     try {
-      const newStatus = !!camera.is_connected;
-      const id = getCameraKey(camera);
-      await camerasAPI.updateCameraConnection(id, !newStatus);
+      if (isConnected) {
+        // Disconnect camera
+        await camerasAPI.disconnectCamera(serialNumber);
+        toast.success(`Camera ${serialNumber} disconnected successfully!`);
+      } else {
+        // Connect camera
+        await camerasAPI.connectCamera(serialNumber, 0);
+        toast.success(`Camera ${serialNumber} connected successfully!`);
+      }
+
       await fetchCameras();
-      toast.success(`Camera ${newStatus ? 'disconnected' : 'connected'} successfully!`);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error toggling camera connection:', err);
-      toast.error('Failed to update camera connection status');
+      toast.error(err.response?.data?.detail || 'Failed to update camera connection status');
+    } finally {
+      setConnectingCameras(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(serialNumber);
+        return newSet;
+      });
     }
+  };
+
+  const handleViewCamera = (camera: Camera) => {
+    if (!camera.is_connected) {
+      toast.warning('Please connect the camera first');
+      return;
+    }
+    setViewingCamera(camera);
+    setViewMode('viewer');
+  };
+
+  const handleBackToList = () => {
+    setViewMode('list');
+    setViewingCamera(null);
   };
 
   const openCreateModal = () => {
@@ -300,6 +335,19 @@ const CameraManagement: React.FC = () => {
     }
   };
 
+  // Camera Viewer Mode
+  if (viewMode === 'viewer' && viewingCamera) {
+    return (
+      <div className="camera-management">
+        <CameraViewer
+          camera={viewingCamera}
+          onBack={handleBackToList}
+        />
+      </div>
+    );
+  }
+
+  // List Mode
   if (loading) {
     return (
       <div className="loading-container">
@@ -479,10 +527,33 @@ const CameraManagement: React.FC = () => {
                         className={`action-btn ${camera.is_connected ? 'disconnect' : 'connect'}`}
                         onClick={() => handleToggleConnection(camera)}
                         title={camera.is_connected ? 'Disconnect' : 'Connect'}
+                        disabled={connectingCameras.has((camera as any).serial_number || getCameraKey(camera))}
+                      >
+                        {connectingCameras.has((camera as any).serial_number || getCameraKey(camera)) ? (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="spin">
+                            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" opacity="0.25"/>
+                            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="2"/>
+                          </svg>
+                        ) : camera.is_connected ? (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                            <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2"/>
+                          </svg>
+                        ) : (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+                            <path d="M12 6v6l4 2" stroke="currentColor" strokeWidth="2"/>
+                          </svg>
+                        )}
+                      </button>
+                      <button
+                        className="action-btn view"
+                        onClick={() => handleViewCamera(camera)}
+                        title="View Camera"
+                        disabled={!camera.is_connected}
                       >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
-                          <path d="M12 6v6l4 2" stroke="currentColor" strokeWidth="2"/>
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" strokeWidth="2"/>
+                          <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
                         </svg>
                       </button>
                       <button
