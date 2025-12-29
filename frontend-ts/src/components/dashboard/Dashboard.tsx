@@ -354,7 +354,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
               </div>
             </div>
             <div className="loading-text-container">
-              <div className="loading-title">RECEIPTS</div>
+              <div className="loading-title">RECIPES</div>
               <div className="loading-subtitle">SCANNING DOCUMENTS...</div>
             </div>
           </>
@@ -815,7 +815,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                 <line x1="16" y1="17" x2="8" y2="17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                 <polyline points="10,9 9,9 8,9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
-              Receipts
+              Recipes
             </a>
             {canAccessPage('cameraManagement') && (
               <a

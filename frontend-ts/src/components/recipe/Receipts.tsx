@@ -635,7 +635,7 @@ export default function Receipts() {
       )}
 
       <div className="section-header">
-        <h1>Production Receipts (Recipes)</h1>
+        <h1>Production Recipes</h1>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           {selectedIds.length > 0 && canPerformAction('delete', 'receipt') && (
             <button 
@@ -659,7 +659,7 @@ export default function Receipts() {
                 <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
                 <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
               </svg>
-              Create Receipt
+              Create Recipe
             </button>
           )}
           <button className="dashboard-btn" onClick={openGlobalHistory} title="Show global load history">

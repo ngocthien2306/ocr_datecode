@@ -1,6 +1,6 @@
 import React from 'react';
 import type { Receipt } from '@/types';
-import '@/styles/RecipeViewModal.css';
+import './RecipeViewModal.css';
 
 interface RecipeViewModalProps {
   isOpen: boolean;
@@ -39,24 +39,24 @@ const RecipeViewModal: React.FC<RecipeViewModalProps> = ({ isOpen, onClose, reci
             <h3>Basic Information</h3>
             <div className="info-grid">
               <div className="info-item">
-                <label>Recipe ID</label>
-                <div className="info-value">{recipe.id}</div>
-              </div>
-              <div className="info-item">
                 <label>Recipe Name</label>
                 <div className="info-value">{recipe.name}</div>
               </div>
               <div className="info-item">
                 <label>Product Code</label>
-                <div className="info-value">{recipe.productCode}</div>
+                <div className="info-value">{(recipe as any).product_code || recipe.productCode}</div>
               </div>
               <div className="info-item">
                 <label>Status</label>
                 <div className="info-value">
-                  <span className={`status-badge ${recipe.status === 'Active' ? 'active' : 'inactive'}`}>
-                    {recipe.status}
+                  <span className={`status-badge ${recipe.is_active ? 'active' : 'inactive'}`}>
+                    {recipe.is_active ? 'Active' : 'Inactive'}
                   </span>
                 </div>
+              </div>
+              <div className="info-item">
+                <label>Delay Reject</label>
+                <div className="info-value">{recipe.delay_reject || 'N/A'} ms</div>
               </div>
             </div>
             {recipe.description && (
@@ -67,20 +67,62 @@ const RecipeViewModal: React.FC<RecipeViewModalProps> = ({ isOpen, onClose, reci
             )}
           </div>
 
-          {/* Camera Settings */}
-          <div className="info-section">
-            <h3>Camera Settings</h3>
-            <div className="info-grid">
-              <div className="info-item">
-                <label>Exposure Time</label>
-                <div className="info-value">{recipe.cameraSettings?.exposure_time} ms</div>
-              </div>
-              <div className="info-item">
-                <label>Gain</label>
-                <div className="info-value">{recipe.cameraSettings?.gain || 'N/A'}</div>
-              </div>
+          {/* Individual Camera Configurations */}
+          {recipe.cameras && recipe.cameras.length > 0 && (
+            <div className="info-section">
+              <h3>Camera Configurations</h3>
+              {recipe.cameras.map((camera: any, index: number) => (
+                <div key={index} className="camera-config">
+                  <h4>Camera {index + 1}: {camera.model_name} ({camera.serial_number})</h4>
+                  <div className="info-grid">
+                    <div className="info-item">
+                      <label>Location</label>
+                      <div className="info-value">{camera.location || 'N/A'}</div>
+                    </div>
+                    <div className="info-item">
+                      <label>Exposure Time</label>
+                      <div className="info-value">{camera.exposure_time} ms</div>
+                    </div>
+                    <div className="info-item">
+                      <label>Delay Trigger</label>
+                      <div className="info-value">{camera.delay_trigger} ms</div>
+                    </div>
+                    <div className="info-item">
+                      <label>Gain</label>
+                      <div className="info-value">{camera.gain}</div>
+                    </div>
+                    <div className="info-item">
+                      <label>Pixel Format</label>
+                      <div className="info-value">{camera.pixel_format}</div>
+                    </div>
+                  </div>
+                  {camera.trigger_config && (
+                    <div className="trigger-config">
+                      <h5>Trigger Configuration</h5>
+                      <div className="info-grid">
+                        <div className="info-item">
+                          <label>Trigger Mode</label>
+                          <div className="info-value">{camera.trigger_config.trigger_mode ? 'Enabled' : 'Disabled'}</div>
+                        </div>
+                        <div className="info-item">
+                          <label>Trigger Source</label>
+                          <div className="info-value">{camera.trigger_config.trigger_source}</div>
+                        </div>
+                        <div className="info-item">
+                          <label>Trigger Selector</label>
+                          <div className="info-value">{camera.trigger_config.trigger_selector}</div>
+                        </div>
+                        <div className="info-item">
+                          <label>Trigger Activation</label>
+                          <div className="info-value">{camera.trigger_config.trigger_activation}</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
-          </div>
+          )}
 
           {/* Model Thresholds */}
           <div className="info-section">
@@ -89,63 +131,52 @@ const RecipeViewModal: React.FC<RecipeViewModalProps> = ({ isOpen, onClose, reci
               <div className="info-item">
                 <label>Detection Threshold</label>
                 <div className="info-value">
-                  {recipe.modelThresholds?.detection_threshold ? 
-                    `${(recipe.modelThresholds.detection_threshold * 100).toFixed(1)}%` : 'N/A'}
+                  {((recipe as any).modelThresholds?.detection_threshold || (recipe as any).model_thresholds?.detection_threshold) ? 
+                    `${(((recipe as any).modelThresholds?.detection_threshold || (recipe as any).model_thresholds?.detection_threshold) * 100).toFixed(1)}%` : 'N/A'}
                 </div>
               </div>
               <div className="info-item">
-                <label>OCR Threshold</label>
+                <label>Recognition Threshold</label>
                 <div className="info-value">
-                  {recipe.modelThresholds?.ocr_threshold ? 
-                    `${(recipe.modelThresholds.ocr_threshold * 100).toFixed(1)}%` : 'N/A'}
+                  {((recipe as any).modelThresholds?.recognition_threshold || (recipe as any).model_thresholds?.recognition_threshold) ? 
+                    `${(((recipe as any).modelThresholds?.recognition_threshold || (recipe as any).model_thresholds?.recognition_threshold) * 100).toFixed(1)}%` : 'N/A'}
+                </div>
+              </div>
+              <div className="info-item">
+                <label>Min Text Size</label>
+                <div className="info-value">
+                  {(recipe as any).modelThresholds?.min_text_size || (recipe as any).model_thresholds?.min_text_size || 'N/A'}
+                </div>
+              </div>
+              <div className="info-item">
+                <label>Max Text Size</label>
+                <div className="info-value">
+                  {(recipe as any).modelThresholds?.max_text_size || (recipe as any).model_thresholds?.max_text_size || 'N/A'}
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Metadata */}
-          <div className="info-section">
-            <h3>Metadata</h3>
-            <div className="info-grid">
-              <div className="info-item">
-                <label>Created By</label>
-                <div className="info-value">{recipe.operator}</div>
-              </div>
-              <div className="info-item">
-                <label>Created At</label>
-                <div className="info-value">
-                  {recipe.createdAt ? new Date(recipe.createdAt).toLocaleString() : recipe.date}
-                </div>
-              </div>
-              <div className="info-item">
-                <label>Updated At</label>
-                <div className="info-value">
-                  {recipe.updatedAt ? new Date(recipe.updatedAt).toLocaleString() : 'N/A'}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Configuration JSON */}
-          {(recipe.template_config || recipe.roi_config) && (
+          {/* Camera Templates */}
+          {(recipe as any).camera_templates && (recipe as any).camera_templates.length > 0 && (
             <div className="info-section">
-              <h3>Advanced Configuration</h3>
-              {recipe.template_config && (
-                <div className="config-block">
-                  <label>Template Configuration</label>
-                  <pre className="config-json">
-                    {JSON.stringify(recipe.template_config, null, 2)}
-                  </pre>
+              <h3>Camera Templates</h3>
+              {(recipe as any).camera_templates.map((camTemplate: any, camIndex: number) => (
+                <div key={camIndex} className="camera-template">
+                  <h4>Camera: {camTemplate.camera_id}</h4>
+                  {camTemplate.templates && camTemplate.templates.map((template: any, tempIndex: number) => (
+                    <div key={tempIndex} className="template-info">
+                      <h5>Template: {template.name}</h5>
+                      <div className="info-grid">
+                        <div className="info-item">
+                          <label>Image Size</label>
+                          <div className="info-value">{template.image_width} × {template.image_height}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              )}
-              {recipe.roi_config && (
-                <div className="config-block">
-                  <label>ROI Configuration</label>
-                  <pre className="config-json">
-                    {JSON.stringify(recipe.roi_config, null, 2)}
-                  </pre>
-                </div>
-              )}
+              ))}
             </div>
           )}
         </div>
