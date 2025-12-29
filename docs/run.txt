@@ -1,0 +1,2 @@
+ngrok http --url=suntech-vision.ngrok.app 5173
+ngrok http --url=suntech-vision-api.ngrok.app 8000
