@@ -8,6 +8,7 @@ import CameraManagement from '../camera/CameraManagement';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { camerasAPI } from '@/services/api';
 import { API_BASE_URL } from '@/config/api';
+import { useUser } from '@/contexts/UserContext';
 import type { Camera as BaseCamera } from '@/types';
 
 interface DashboardCamera extends Omit<BaseCamera, 'status'> {
@@ -58,6 +59,7 @@ interface CameraStats {
 }
 
 export default function Dashboard({ onLogout }: DashboardProps) {
+  const { user, canAccessPage } = useUser();
   const [currentSection, setCurrentSection] = useState<Section>('dashboard');
   const [isLoading, setIsLoading] = useState(true);
   const [loadingTemplates, setLoadingTemplates] = useState<LoadingTemplates>(() => {
@@ -786,19 +788,21 @@ export default function Dashboard({ onLogout }: DashboardProps) {
               </svg>
               Dashboard
             </a>
-            <a
-              href="#users"
-              className={`nav-item ${currentSection === 'users' ? 'active' : ''}`}
-              onClick={(e) => { e.preventDefault(); handleSectionChange('users'); }}
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                <path d="M17 21V19C17 17.9391 16.5786 16.9217 15.8284 16.1716C15.0783 15.4214 14.0609 15 13 15H5C3.93913 15 2.92172 15.4214 2.17157 16.1716C1.42143 16.9217 1 17.9391 1 19V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <circle cx="9" cy="7" r="4" stroke="currentColor" strokeWidth="2"/>
-                <path d="M23 21V19C22.9993 18.1137 22.7044 17.2528 22.1614 16.5523C21.6184 15.8519 20.8581 15.3516 20 15.13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M16 3.13C16.8604 3.35031 17.623 3.85071 18.1676 4.55232C18.7122 5.25392 19.0078 6.11683 19.0078 7.005C19.0078 7.89318 18.7122 8.75608 18.1676 9.45769C17.623 10.1593 16.8604 10.6597 16 10.88" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              User Management
-            </a>
+            {canAccessPage('userManagement') && (
+              <a
+                href="#users"
+                className={`nav-item ${currentSection === 'users' ? 'active' : ''}`}
+                onClick={(e) => { e.preventDefault(); handleSectionChange('users'); }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                  <path d="M17 21V19C17 17.9391 16.5786 16.9217 15.8284 16.1716C15.0783 15.4214 14.0609 15 13 15H5C3.93913 15 2.92172 15.4214 2.17157 16.1716C1.42143 16.9217 1 17.9391 1 19V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <circle cx="9" cy="7" r="4" stroke="currentColor" strokeWidth="2"/>
+                  <path d="M23 21V19C22.9993 18.1137 22.7044 17.2528 22.1614 16.5523C21.6184 15.8519 20.8581 15.3516 20 15.13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M16 3.13C16.8604 3.35031 17.623 3.85071 18.1676 4.55232C18.7122 5.25392 19.0078 6.11683 19.0078 7.005C19.0078 7.89318 18.7122 8.75608 18.1676 9.45769C17.623 10.1593 16.8604 10.6597 16 10.88" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                User Management
+              </a>
+            )}
             <a
               href="#receipts"
               className={`nav-item ${currentSection === 'receipts' ? 'active' : ''}`}
@@ -813,18 +817,20 @@ export default function Dashboard({ onLogout }: DashboardProps) {
               </svg>
               Receipts
             </a>
-            <a
-              href="#cameras"
-              className={`nav-item ${currentSection === 'cameras' ? 'active' : ''}`}
-              onClick={(e) => { e.preventDefault(); handleSectionChange('cameras'); }}
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" strokeWidth="2"/>
-                <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
-                <path d="M7 4v2M17 4v2" stroke="currentColor" strokeWidth="2"/>
-              </svg>
-              Cameras
-            </a>
+            {canAccessPage('cameraManagement') && (
+              <a
+                href="#cameras"
+                className={`nav-item ${currentSection === 'cameras' ? 'active' : ''}`}
+                onClick={(e) => { e.preventDefault(); handleSectionChange('cameras'); }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                  <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" strokeWidth="2"/>
+                  <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
+                  <path d="M7 4v2M17 4v2" stroke="currentColor" strokeWidth="2"/>
+                </svg>
+                Cameras
+              </a>
+            )}
             <a
               href="#historical"
               className={`nav-item ${currentSection === 'historical' ? 'active' : ''}`}
@@ -858,17 +864,19 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
           <h3>Action</h3>
           <nav className="action-menu">
-            <a
-              href="#settings"
-              className={`nav-item ${currentSection === 'settings' ? 'active' : ''}`}
-              onClick={(e) => { e.preventDefault(); handleSectionChange('settings'); }}
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
-                <path d="M19.4 15A1.65 1.65 0 0 0 21 13.35A1.65 1.65 0 0 0 19.4 11.65L18.7 12.35A7.81 7.81 0 0 0 12 5.29V4A1 1 0 0 0 11 3A1 1 0 0 0 10 4V5.29A7.81 7.81 0 0 0 3.3 12.35L2.6 11.65A1.65 1.65 0 0 0 1 13.35A1.65 1.65 0 0 0 2.6 15L3.3 14.3A7.81 7.81 0 0 0 10 20.71V22A1 1 0 0 0 11 23A1 1 0 0 0 12 22V20.71A7.81 7.81 0 0 0 18.7 14.3L19.4 15Z" stroke="currentColor" strokeWidth="2"/>
-              </svg>
-              Settings
-            </a>
+            {canAccessPage('settings') && (
+              <a
+                href="#settings"
+                className={`nav-item ${currentSection === 'settings' ? 'active' : ''}`}
+                onClick={(e) => { e.preventDefault(); handleSectionChange('settings'); }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
+                  <path d="M19.4 15A1.65 1.65 0 0 0 21 13.35A1.65 1.65 0 0 0 19.4 11.65L18.7 12.35A7.81 7.81 0 0 0 12 5.29V4A1 1 0 0 0 11 3A1 1 0 0 0 10 4V5.29A7.81 7.81 0 0 0 3.3 12.35L2.6 11.65A1.65 1.65 0 0 0 1 13.35A1.65 1.65 0 0 0 2.6 15L3.3 14.3A7.81 7.81 0 0 0 10 20.71V22A1 1 0 0 0 11 23A1 1 0 0 0 12 22V20.71A7.81 7.81 0 0 0 18.7 14.3L19.4 15Z" stroke="currentColor" strokeWidth="2"/>
+                </svg>
+                Settings
+              </a>
+            )}
             <a href="#logout" className="nav-item" onClick={(e) => { e.preventDefault(); handleLogout(); }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                 <path d="M9 21H5A2 2 0 0 1 3 19V5A2 2 0 0 1 5 3H9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>

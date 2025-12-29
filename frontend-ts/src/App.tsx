@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Dashboard from './components/dashboard/Dashboard';
 import { authAPI } from './services/api';
 import { ToastProvider } from './contexts/ToastContext';
+import { UserProvider } from './contexts/UserContext';
 import './styles/App.css';
 
 export default function SuntechAutomation() {
@@ -86,7 +87,9 @@ export default function SuntechAutomation() {
   if (isLoggedIn) {
     return (
       <ToastProvider>
-        <Dashboard onLogout={handleLogout} />
+        <UserProvider>
+          <Dashboard onLogout={handleLogout} />
+        </UserProvider>
       </ToastProvider>
     );
   }

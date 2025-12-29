@@ -20,6 +20,7 @@ from app.api.dependencies.auth import (
     get_current_user, 
     require_supervisor, 
     require_admin,
+    require_operator,
     RoleChecker
 )
 from app.schemas.receipt_load import ReceiptLoadCreate, ReceiptLoadResponse
@@ -340,7 +341,7 @@ async def get_latest_load(
 async def list_all_loads(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
-    current_user: UserInDB = Depends(require_supervisor),
+    current_user: UserInDB = Depends(require_operator),
     load_repo: ReceiptLoadRepository = Depends(get_receipt_load_repository),
 ):
     """
@@ -607,7 +608,7 @@ async def load_recipe(
 async def update_recipe(
     recipe_id: str,
     recipe_update: RecipeUpdate,
-    current_user: UserInDB = Depends(require_supervisor),
+    current_user: UserInDB = Depends(require_operator),
     recipe_repo: RecipeRepository = Depends(get_recipe_repository)
 ):
     """

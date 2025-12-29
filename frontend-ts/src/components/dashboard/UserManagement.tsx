@@ -1,6 +1,7 @@
 import React, { useState, useEffect, ChangeEvent, FormEvent, useRef } from 'react';
 import { usersAPI, uploadAPI } from '@/services/api';
 import { useToast } from '@/contexts/ToastContext';
+import { useUser } from '@/contexts/UserContext';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import type { User, UserCreate, UserUpdate } from '@/types';
 import { API_BASE_URL } from '@/config/api';
@@ -34,6 +35,7 @@ interface ValidationErrors {
 
 const UserManagement: React.FC = () => {
   const toast = useToast();
+  const { canPerformAction } = useUser();
   const [users, setUsers] = useState<User[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -608,13 +610,15 @@ const UserManagement: React.FC = () => {
     <div className="user-management-page">
       <div className="section-header">
         <h1>User Management</h1>
-        <button className="dashboard-btn" onClick={openCreateForm}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-            <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-            <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-          </svg>
-          Add User
-        </button>
+        {canPerformAction('create', 'user') && (
+          <button className="dashboard-btn" onClick={openCreateForm}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+            Add User
+          </button>
+        )}
       </div>
 
       {/* Search and Actions */}
@@ -632,7 +636,7 @@ const UserManagement: React.FC = () => {
           />
         </div>
         
-        {selectedIds.length > 0 && (
+        {selectedIds.length > 0 && canPerformAction('delete', 'user') && (
           <button className="action-btn delete" onClick={handleDeleteSelected}>
             Delete Selected ({selectedIds.length})
           </button>
@@ -705,25 +709,29 @@ const UserManagement: React.FC = () => {
                   <td>{user.last_login ? new Date(user.last_login).toLocaleString() : 'Never'}</td>
                   <td>
                     <div className="action-buttons">
-                      <button
-                        className="action-btn edit"
-                        onClick={() => handleEditClick(user)}
-                        title="Edit"
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                          <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" strokeWidth="2"/>
-                          <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" strokeWidth="2"/>
-                        </svg>
-                      </button>
-                      <button
-                        className="action-btn delete"
-                        onClick={() => handleDeleteUser((user as any)._id || (user as any).id, user.username)}
-                        title="Delete"
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                          <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" stroke="currentColor" strokeWidth="2"/>
-                        </svg>
-                      </button>
+                      {canPerformAction('update', 'user') && (
+                        <button
+                          className="action-btn edit"
+                          onClick={() => handleEditClick(user)}
+                          title="Edit"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" strokeWidth="2"/>
+                            <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" strokeWidth="2"/>
+                          </svg>
+                        </button>
+                      )}
+                      {canPerformAction('delete', 'user') && (
+                        <button
+                          className="action-btn delete"
+                          onClick={() => handleDeleteUser((user as any)._id || (user as any).id, user.username)}
+                          title="Delete"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                            <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" stroke="currentColor" strokeWidth="2"/>
+                          </svg>
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

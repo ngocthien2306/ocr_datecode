@@ -341,6 +341,21 @@
   background-color: #2563eb;
 }
 
+.vertical-tabs .tab-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  color: #9ca3af;
+}
+
+.vertical-tabs .tab-btn:disabled:hover {
+  background: white;
+  border-left-color: transparent;
+}
+
+.vertical-tabs .tab-btn:disabled svg {
+  opacity: 0.5;
+}
+
 /* Old horizontal tabs - keep for backwards compatibility */
 .modal-tabs {
   display: flex;
@@ -1291,6 +1306,21 @@ body.dark-mode .vertical-tabs .tab-btn.active {
 
 body.dark-mode .vertical-tabs .tab-btn.active svg {
   color: #60a5fa;
+}
+
+body.dark-mode .vertical-tabs .tab-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  color: #6b7280;
+}
+
+body.dark-mode .vertical-tabs .tab-btn:disabled:hover {
+  background: #1f2937;
+  border-left-color: transparent;
+}
+
+body.dark-mode .vertical-tabs .tab-btn:disabled svg {
+  opacity: 0.5;
 }
 
 body.dark-mode .recipe-form {
