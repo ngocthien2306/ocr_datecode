@@ -1,0 +1,18 @@
+Operator: 
+có thể xem page dashboard, receipt thì chỉ được click load receipt, 
+có thể bấm vào edit nhưng chỉ có thể thao tác ở tab template cho phép vẽ hình lên template, 
+nhưng không được xoá template. Có quyền update phần template và load receipt
+
+có quyền xem historical 
+
+không có quyền vào page user management, camera và setting. Vui lòng ẩn đi 
+
+
+Supervisor: có quyền xem page dashboard, cho phép create và update receipt cũ 
+cho phép vào page historical
+
+
+không có quyền vào page user management, camera và setting. Vui lòng ẩn đi 
+
+
+Admin: full quyền và có thể thay đổi mật khẩu của operator và supervisor

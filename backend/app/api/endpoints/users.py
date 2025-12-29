@@ -45,6 +45,45 @@ async def get_current_user_info(current_user: UserInDB = Depends(get_current_use
     return UserResponse(**current_user.model_dump())
 
 
+@router.put("/me", response_model=UserResponse)
+async def update_current_user_profile(
+    user_update: UserUpdate,
+    db=Depends(get_database),
+    current_user: UserInDB = Depends(get_current_user)
+):
+    """
+    Update current user's own profile
+
+    Users can update their own:
+    - **email**: Email address
+    - **full_name**: Full name
+    - **phone_number**: Phone number
+    - **avatar_url**: Avatar image URL
+
+    Note: Users cannot change their own role or is_active status
+    """
+    # Prevent users from changing their own role and active status
+    update_data = user_update.model_dump(exclude_unset=True)
+    if 'role' in update_data:
+        del update_data['role']
+    if 'is_active' in update_data:
+        del update_data['is_active']
+
+    # Create filtered update object
+    filtered_update = UserUpdate(**update_data)
+
+    user_repo = UserRepository(db)
+    updated_user = await user_repo.update_user(current_user.id, filtered_update)
+
+    if not updated_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Failed to update profile"
+        )
+
+    return UserResponse(**updated_user.model_dump())
+
+
 @router.get("/", response_model=List[UserResponse])
 async def get_all_users(
     skip: int = 0,

@@ -249,16 +249,126 @@ export default function TemplateEditor({
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    canvas.selection = drawMode === 'select';
+    // In select mode, disable selection and enable panning
+    canvas.selection = false;
     canvas.forEachObject((obj) => {
-      // Annotation objects only selectable in select mode
       const objAnn = obj as FabricAnnotationObject;
       if (objAnn.annotationIndex !== undefined) {
-        obj.selectable = drawMode === 'select';
-        obj.evented = drawMode === 'select';
+        // Objects are not selectable in select mode (it's a pan mode)
+        obj.selectable = false;
+        obj.evented = false;
       }
     });
     canvas.requestRenderAll();
+  }, [drawMode]);
+
+  // Setup panning for select mode
+  useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    if (drawMode === 'select') {
+      let isDragging = false;
+      let lastPosX = 0;
+      let lastPosY = 0;
+
+      // Mouse events
+      const handleMouseDown = function(this: any, opt: any) {
+        const evt = opt.e;
+        // Only left button (button 0) without clicking on an object
+        if (evt.button === 0 && !opt.target) {
+          isDragging = true;
+          this.selection = false;
+          lastPosX = evt.clientX;
+          lastPosY = evt.clientY;
+          evt.preventDefault();
+        }
+      };
+
+      const handleMouseMove = function(this: any, opt: any) {
+        if (isDragging) {
+          const e = opt.e;
+          const vpt = this.viewportTransform;
+          vpt[4] += e.clientX - lastPosX;
+          vpt[5] += e.clientY - lastPosY;
+          this.requestRenderAll();
+          lastPosX = e.clientX;
+          lastPosY = e.clientY;
+        }
+      };
+
+      const handleMouseUp = function(this: any) {
+        if (isDragging) {
+          this.setViewportTransform(this.viewportTransform);
+          isDragging = false;
+        }
+      };
+
+      const handleMouseLeave = function(this: any) {
+        if (isDragging) {
+          this.setViewportTransform(this.viewportTransform);
+          isDragging = false;
+        }
+      };
+
+      // Touch events
+      const handleTouchStart = (e: TouchEvent) => {
+        if (e.touches.length === 1) {
+          const touch = e.touches[0]!;
+          isDragging = true;
+          lastPosX = touch.clientX;
+          lastPosY = touch.clientY;
+          e.preventDefault();
+        }
+      };
+
+      const handleTouchMove = (e: TouchEvent) => {
+        if (isDragging && e.touches.length === 1) {
+          const touch = e.touches[0]!;
+          const vpt = canvas.viewportTransform;
+          vpt[4] += touch.clientX - lastPosX;
+          vpt[5] += touch.clientY - lastPosY;
+          canvas.requestRenderAll();
+          lastPosX = touch.clientX;
+          lastPosY = touch.clientY;
+          e.preventDefault();
+        }
+      };
+
+      const handleTouchEnd = () => {
+        if (isDragging) {
+          canvas.setViewportTransform(canvas.viewportTransform);
+          isDragging = false;
+        }
+      };
+
+      // Register mouse events
+      canvas.on('mouse:down', handleMouseDown);
+      canvas.on('mouse:move', handleMouseMove);
+      canvas.on('mouse:up', handleMouseUp);
+
+      // Register touch events on canvas element
+      const canvasElement = canvas.getElement();
+      if (canvasElement) {
+        canvasElement.addEventListener('touchstart', handleTouchStart, { passive: false });
+        canvasElement.addEventListener('touchmove', handleTouchMove, { passive: false });
+        canvasElement.addEventListener('touchend', handleTouchEnd);
+        canvasElement.addEventListener('mouseleave', handleMouseLeave);
+      }
+
+      return () => {
+        canvas.off('mouse:down', handleMouseDown);
+        canvas.off('mouse:move', handleMouseMove);
+        canvas.off('mouse:up', handleMouseUp);
+
+        if (canvasElement) {
+          canvasElement.removeEventListener('touchstart', handleTouchStart);
+          canvasElement.removeEventListener('touchmove', handleTouchMove);
+          canvasElement.removeEventListener('touchend', handleTouchEnd);
+          canvasElement.removeEventListener('mouseleave', handleMouseLeave);
+        }
+      };
+    }
   }, [drawMode]);
 
   // Reload annotations when they change
@@ -295,6 +405,18 @@ export default function TemplateEditor({
         name: (o as FabricAnnotationObject).name
       })));
       
+      // Validate index integrity: check for gaps or orphaned objects
+      const objectIndices = existingObjects.map(o => (o as FabricAnnotationObject).annotationIndex).sort((a, b) => a! - b!);
+      const expectedIndices = annotations.map((_, i) => i);
+      const hasIndexMismatch = JSON.stringify(objectIndices) !== JSON.stringify(expectedIndices);
+
+      if (hasIndexMismatch) {
+        console.warn('Index mismatch detected. Expected:', expectedIndices, 'Got:', objectIndices);
+        console.log('Forcing full reload to fix index sync');
+        loadAnnotations(canvas);
+        return;
+      }
+
       // Handle count mismatch - add new or remove deleted annotations
       if (existingObjects.length !== annotations.length) {
         if (existingObjects.length < annotations.length) {
@@ -325,19 +447,10 @@ export default function TemplateEditor({
           }
           canvas.requestRenderAll();
         } else {
-          // Annotations removed - remove objects with higher indices
-          console.log('Removing deleted annotations');
-          const safeExisting = existingObjects.filter(Boolean) as FabricObject[];
-          const objectsToRemove = safeExisting.filter((obj: any) => obj && obj.annotationIndex !== undefined && obj.annotationIndex >= annotations.length);
-          objectsToRemove.forEach(obj => {
-            // Remove associated label
-            const label = canvas.getObjects().find(o => 
-              (o as FabricAnnotationObject).isLabel && (o as FabricAnnotationObject).annotationIndex === (obj as FabricAnnotationObject).annotationIndex
-            );
-            if (label) canvas.remove(label);
-            canvas.remove(obj);
-          });
-          canvas.requestRenderAll();
+          // Annotations removed - this should have been handled by deleteByIndex reindexing
+          // If we still see mismatch here, force full reload
+          console.warn('Unexpected count mismatch after deletion - forcing full reload');
+          loadAnnotations(canvas);
         }
         return;
       }
@@ -806,10 +919,10 @@ export default function TemplateEditor({
             type="button"
             className={`tool-btn ${drawMode === 'select' ? 'active' : ''}`}
             onClick={handleStopDrawing}
-            title="Select & Edit"
+            title="Pan Canvas (Click & Drag)"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-              <path d="M3 3L10.07 19.97L12.58 12.58L19.97 10.07L3 3Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+              <path d="M9 11V6C9 4.89543 9.89543 4 11 4C12.1046 4 13 4.89543 13 6V11M13 11V6C13 4.89543 13.8954 4 15 4C16.1046 4 17 4.89543 17 6V11M17 11V7C17 5.89543 17.8954 5 19 5C20.1046 5 21 5.89543 21 7V12C21 12 21 20 12 20C3 20 3 12 3 12V11C3 9.89543 3.89543 9 5 9C6.10457 9 7 9.89543 7 11V12M13 11H9M13 11H17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </button>
           <button
@@ -890,9 +1003,10 @@ export default function TemplateEditor({
               <div className="cvat-canvas-hints-block">
                 <strong>🖱️ Navigation</strong>
                 <ul>
-                  <li><kbd>Space</kbd> + Drag - Pan canvas</li>
-                  <li><kbd>Shift</kbd> + Drag - Pan canvas</li>
-                  <li><kbd>Middle Click</kbd> + Drag - Pan canvas</li>
+                  <li><strong>Pan Mode (V):</strong> Click & Drag to pan</li>
+                  <li><kbd>Space</kbd> + Drag - Pan (any mode)</li>
+                  <li><kbd>Shift</kbd> + Drag - Pan (any mode)</li>
+                  <li><kbd>Middle Click</kbd> + Drag - Pan (any mode)</li>
                   <li><kbd>Mouse Wheel</kbd> - Zoom in/out</li>
                   <li><kbd>Trackpad Pinch</kbd> - Zoom in/out</li>
                 </ul>
@@ -901,7 +1015,7 @@ export default function TemplateEditor({
               <div className="cvat-canvas-hints-block">
                 <strong>⌨️ Shortcuts</strong>
                 <ul>
-                  <li><kbd>V</kbd> - Select mode</li>
+                  <li><kbd>V</kbd> - Pan mode (Click & Drag to move canvas)</li>
                   <li><kbd>R</kbd> - Rectangle tool</li>
                   <li><kbd>P</kbd> - Polygon tool (4 points)</li>
                   <li><kbd>Esc</kbd> - Cancel drawing</li>
@@ -910,12 +1024,12 @@ export default function TemplateEditor({
               </div>
 
               <div className="cvat-canvas-hints-block">
-                <strong>✏️ Drawing</strong>
+                <strong>✏️ Drawing & Navigation</strong>
                 <ul>
-                  <li>Rectangle: Click and drag</li>
-                  <li>Polygon: Click 4 points</li>
-                  <li>Edit: Drag corners/points to resize</li>
-                  <li>Move: Drag shape to reposition</li>
+                  <li>Pan: Click and drag to move canvas</li>
+                  <li>Rectangle: Click and drag to draw</li>
+                  <li>Polygon: Click 4 points to draw</li>
+                  <li>Zoom: Mouse wheel or pinch gesture</li>
                 </ul>
               </div>
             </div>

@@ -31,22 +31,37 @@ export const deleteSelected = (canvas: any) => {
 
 /**
  * Delete object by annotation index
- * @param {fabric.Canvas} canvas 
- * @param {number} index 
+ * @param {fabric.Canvas} canvas
+ * @param {number} index
  */
 export const deleteByIndex = (canvas: any, index: number) => {
   if (!canvas) return;
-  
+
   const objects = canvas.getObjects().filter((obj: any) => obj.annotationIndex === index);
   objects.forEach((obj: any) => canvas.remove(obj));
-  
+
   // Remove associated labels and edit points
-  const related = canvas.getObjects().filter((obj: any) => 
-    (obj.isLabel || obj.isPolygonEditPoint) && 
+  const related = canvas.getObjects().filter((obj: any) =>
+    (obj.isLabel || obj.isPolygonEditPoint) &&
     obj.annotationIndex === index
   );
   related.forEach((obj: any) => canvas.remove(obj));
-  
+
+  // CRITICAL FIX: Reindex all objects with annotationIndex > deleted index
+  // This keeps canvas objects in sync with the annotations array after deletion
+  const reindexed: number[] = [];
+  canvas.getObjects().forEach((obj: any) => {
+    if (obj.annotationIndex !== undefined && obj.annotationIndex > index) {
+      const oldIndex = obj.annotationIndex;
+      obj.annotationIndex = obj.annotationIndex - 1;
+      reindexed.push(oldIndex);
+    }
+  });
+
+  if (reindexed.length > 0) {
+    console.log(`Deleted index ${index}, reindexed objects:`, reindexed, '-> decremented by 1');
+  }
+
   canvas.requestRenderAll();
 };
 

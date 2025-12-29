@@ -2051,11 +2051,13 @@ body.dark-mode .setting-item input[type="number"]:disabled {
 .dashboard-container .form-group input[type="email"],
 .dashboard-container .form-group input[type="password"],
 .dashboard-container .form-group input[type="number"],
+.dashboard-container .form-group input[type="tel"],
 .dashboard-container .form-group select,
 .form-group input[type="text"],
 .form-group input[type="email"],
 .form-group input[type="password"],
 .form-group input[type="number"],
+.form-group input[type="tel"],
 .form-group select {
   width: 100%;
   padding: 10px 12px;
@@ -2075,6 +2077,207 @@ body.dark-mode .setting-item input[type="number"]:disabled {
   outline: none;
   border-color: #6366f1;
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+/* Error states */
+.dashboard-container .form-group input.error,
+.dashboard-container .form-group select.error,
+.form-group input.error,
+.form-group select.error {
+  border-color: #ef4444;
+  background-color: #fef2f2;
+}
+
+.dashboard-container .form-group input.error:focus,
+.dashboard-container .form-group select.error:focus,
+.form-group input.error:focus,
+.form-group select.error:focus {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
+}
+
+.dashboard-container .error-message,
+.error-message {
+  display: block;
+  color: #ef4444;
+  font-size: 12px;
+  margin-top: 4px;
+  font-weight: 500;
+}
+
+/* Disabled submit button */
+.submit-button:disabled,
+button[type="submit"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #9ca3af !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* Avatar Upload Section */
+.avatar-upload-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 32px;
+  padding: 24px;
+  background: #f9fafb;
+  border-radius: 12px;
+  border: 2px dashed #d1d5db;
+}
+
+.avatar-preview-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 160px;
+  height: 160px;
+}
+
+.avatar-preview {
+  position: relative;
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 4px solid #6366f1;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
+}
+
+.avatar-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatar-remove-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  background: rgba(239, 68, 68, 0.9);
+  border: none;
+  border-radius: 50%;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.avatar-remove-btn:hover {
+  background: #dc2626;
+  transform: scale(1.1);
+}
+
+.avatar-remove-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.avatar-placeholder {
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  background: white;
+  border: 3px dashed #d1d5db;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s;
+  color: #6b7280;
+}
+
+.avatar-placeholder:hover {
+  border-color: #6366f1;
+  color: #6366f1;
+  background: #f0f1ff;
+  transform: scale(1.05);
+}
+
+.avatar-placeholder svg {
+  margin-bottom: 8px;
+  stroke: currentColor;
+}
+
+.avatar-placeholder span {
+  display: block;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.avatar-hint {
+  font-size: 12px !important;
+  font-weight: 400 !important;
+  color: #9ca3af !important;
+  margin-top: 4px;
+}
+
+.avatar-uploading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.avatar-uploading .spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #e5e7eb;
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.avatar-change-btn {
+  padding: 10px 24px;
+  background: #6366f1;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.avatar-change-btn:hover {
+  background: #4f46e5;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Dark mode avatar upload */
+body.dark-mode .avatar-upload-section {
+  background: #1f2937;
+  border-color: #374151;
+}
+
+body.dark-mode .avatar-placeholder {
+  background: #111827;
+  border-color: #374151;
+  color: #9ca3af;
+}
+
+body.dark-mode .avatar-placeholder:hover {
+  border-color: #6366f1;
+  color: #6366f1;
+  background: #1e1b4b;
+}
+
+body.dark-mode .avatar-hint {
+  color: #6b7280 !important;
 }
 
 .dashboard-container .checkbox-label {
@@ -2178,11 +2381,13 @@ body.dark-mode .dashboard-container .form-group input[type="text"],
 body.dark-mode .dashboard-container .form-group input[type="email"],
 body.dark-mode .dashboard-container .form-group input[type="password"],
 body.dark-mode .dashboard-container .form-group input[type="number"],
+body.dark-mode .dashboard-container .form-group input[type="tel"],
 body.dark-mode .dashboard-container .form-group select,
 body.dark-mode .form-group input[type="text"],
 body.dark-mode .form-group input[type="email"],
 body.dark-mode .form-group input[type="password"],
 body.dark-mode .form-group input[type="number"],
+body.dark-mode .form-group input[type="tel"],
 body.dark-mode .form-group select {
   background: #111827;
   border-color: #374151;
@@ -2195,6 +2400,28 @@ body.dark-mode .form-group input:focus,
 body.dark-mode .form-group select:focus {
   border-color: #6366f1;
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+}
+
+/* Dark mode error states */
+body.dark-mode .dashboard-container .form-group input.error,
+body.dark-mode .dashboard-container .form-group select.error,
+body.dark-mode .form-group input.error,
+body.dark-mode .form-group select.error {
+  border-color: #f87171;
+  background-color: #7f1d1d;
+}
+
+body.dark-mode .dashboard-container .form-group input.error:focus,
+body.dark-mode .dashboard-container .form-group select.error:focus,
+body.dark-mode .form-group input.error:focus,
+body.dark-mode .form-group select.error:focus {
+  border-color: #f87171;
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.2);
+}
+
+body.dark-mode .dashboard-container .error-message,
+body.dark-mode .error-message {
+  color: #fca5a5;
 }
 
 body.dark-mode .dashboard-container .checkbox-label span {

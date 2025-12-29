@@ -12,6 +12,11 @@ export const usersAPI = {
     return response.data;
   },
 
+  updateCurrentUserProfile: async (userData: UserUpdate): Promise<User> => {
+    const response = await api.put<User>('/users/me', userData);
+    return response.data;
+  },
+
   getUserById: async (userId: string): Promise<User> => {
     const response = await api.get<User>(`/users/${userId}`);
     return response.data;

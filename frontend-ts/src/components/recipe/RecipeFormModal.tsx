@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import TemplateEditor from './TemplateEditorRefactored';
 import AnnotationsPanel from '@/components/shared/AnnotationsPanel';
+import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import { camerasAPI } from '@/services/api';
 import { useToast } from '@/contexts/ToastContext';
 import { API_BASE_URL } from '@/config/api';
@@ -114,6 +115,21 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   const [selectedAnnotation, setSelectedAnnotation] = useState<number | null>(null);
   const [isGettingFrame, setIsGettingFrame] = useState(false);
   const fabricCanvasRef = useRef<any>(null);
+
+  // Confirm dialog state
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'warning' | 'danger' | 'info';
+    onConfirm: (() => void) | null;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'warning',
+    onConfirm: null
+  });
 
   useEffect(() => {
     if (recipe && mode === 'edit' && isOpen) {
@@ -388,7 +404,13 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     // Validate all camera templates before submission
     const validationErrors = validateTemplates();
     if (validationErrors.length > 0) {
-      alert(`Template validation failed:\n\n${validationErrors.join('\n')}\n\nEach template must have:\n• 1 "template" region (required)\n• At least 1 annotation: text, barcode, or datecode (required)\n• crop_area (optional)`);
+      setConfirmDialog({
+        isOpen: true,
+        title: 'Template Validation Failed',
+        message: `${validationErrors.join('\n')}\n\nEach template must have:\n• 1 "template" region (required)\n• At least 1 annotation: text, barcode, or datecode (required)\n• crop_area (optional)`,
+        type: 'warning',
+        onConfirm: null
+      });
       return;
     }
 
@@ -592,7 +614,13 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
       } catch (error) {
         console.error('Upload error:', error);
-        alert('Failed to upload template image. Please try again.');
+        setConfirmDialog({
+          isOpen: true,
+          title: 'Upload Failed',
+          message: 'Failed to upload template image. Please try again.',
+          type: 'danger',
+          onConfirm: null
+        });
       }
     }
 
@@ -1225,9 +1253,15 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                 className="btn-delete-template"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  if (confirm(`Delete ${template.name}?`)) {
-                                    handleDeleteTemplate(idx);
-                                  }
+                                  setConfirmDialog({
+                                    isOpen: true,
+                                    title: 'Delete Template',
+                                    message: `Are you sure you want to delete ${template.name}?\n\nThis action cannot be undone.`,
+                                    type: 'danger',
+                                    onConfirm: () => {
+                                      handleDeleteTemplate(idx);
+                                    }
+                                  });
                                 }}
                                 title="Delete template"
                               >
@@ -1282,6 +1316,18 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         </form>
         </div>
       </div>
+
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        onClose={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
+        onConfirm={confirmDialog.onConfirm || (() => setConfirmDialog({ ...confirmDialog, isOpen: false }))}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+        confirmText={confirmDialog.onConfirm ? 'Confirm' : 'OK'}
+        cancelText={confirmDialog.onConfirm ? 'Cancel' : ''}
+      />
     </div>
   );
 }
