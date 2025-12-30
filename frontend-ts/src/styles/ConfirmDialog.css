@@ -9,7 +9,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 10000;
+  z-index: 15000;
   animation: fadeIn 0.2s ease-out;
 }
 
@@ -59,18 +59,34 @@
   align-items: center;
   justify-content: center;
   margin-bottom: 24px;
+  background: none;
+  border: none;
+  padding: 0;
+  border-radius: 0;
 }
 
 .confirm-dialog-icon.warning {
   color: #fbbf24;
+  background: none !important;
+  border: none !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
 }
 
 .confirm-dialog-icon.danger {
   color: #ef4444;
+  background: none !important;
+  border: none !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
 }
 
 .confirm-dialog-icon.info {
   color: #3b82f6;
+  background: none !important;
+  border: none !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
 }
 
 .confirm-dialog-content {

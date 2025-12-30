@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loading</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script> window.FontAwesomeConfig = { autoReplaceSvg: 'nest'};</script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>::-webkit-scrollbar { display: none;}</style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        'sans': ['Inter', 'sans-serif']
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="font-sans bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 overflow-hidden">
+
+<div id="loading-screen" class="relative w-[1440px] h-[1024px] mx-auto flex items-center justify-center">
+    
+    <div class="absolute inset-0 overflow-hidden">
+        <div class="absolute top-20 left-40 w-3 h-3 bg-violet-400 rounded-full animate-pulse"></div>
+        <div class="absolute top-60 left-20 w-2 h-2 bg-cyan-300 rounded-full animate-pulse" style="animation-delay: 0.5s;"></div>
+        <div class="absolute top-40 right-60 w-3 h-3 bg-emerald-400 rounded-full animate-pulse" style="animation-delay: 1s;"></div>
+        <div class="absolute bottom-40 right-40 w-2 h-2 bg-orange-300 rounded-full animate-pulse" style="animation-delay: 1.5s;"></div>
+        <div class="absolute bottom-60 left-60 w-3 h-3 bg-pink-400 rounded-full animate-pulse" style="animation-delay: 2s;"></div>
+        
+        <div class="absolute top-1/4 right-1/3 w-40 h-40 border border-violet-500/20 rounded-2xl transform rotate-45 animate-pulse"></div>
+        <div class="absolute bottom-1/4 left-1/4 w-32 h-32 border border-emerald-500/20 rounded-2xl transform -rotate-12 animate-pulse" style="animation-delay: 1s;"></div>
+        
+        <div class="absolute top-1/3 left-1/2 w-24 h-1 bg-gradient-to-r from-transparent via-cyan-500/30 to-transparent animate-pulse"></div>
+        <div class="absolute bottom-1/3 right-1/2 w-32 h-1 bg-gradient-to-r from-transparent via-violet-500/30 to-transparent animate-pulse" style="animation-delay: 1.5s;"></div>
+    </div>
+
+    <div class="relative z-10 w-full max-w-5xl px-8">
+        
+        <div class="text-center mb-16">
+            <div class="inline-flex items-center gap-3 mb-4">
+                <div class="w-12 h-12 bg-gradient-to-br from-violet-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-violet-500/30">
+                    <i class="fa-solid fa-robot text-white text-xl"></i>
+                </div>
+                <h1 class="text-4xl font-bold text-white">AI Recipe Vision System</h1>
+            </div>
+            <p class="text-indigo-200 text-lg">Smart Recipe Loading • Image Capture • OCR Processing • AI Analysis</p>
+        </div>
+
+        <div class="flex items-center justify-between mb-12 relative">
+            
+            <div id="step-1" class="flex flex-col items-center relative z-10 transition-all duration-500">
+                <div class="w-28 h-28 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-3xl flex items-center justify-center mb-4 shadow-xl shadow-emerald-500/40 step-icon transform hover:scale-105 transition-transform">
+                    <i class="fa-solid fa-book-open text-white text-3xl"></i>
+                </div>
+                <span class="text-white font-semibold text-base">Load Recipe</span>
+                <div class="w-3 h-3 bg-emerald-400 rounded-full mt-2 step-dot opacity-0 animate-pulse"></div>
+            </div>
+
+            <div class="flex-1 h-2 bg-slate-700 mx-6 relative overflow-hidden rounded-full">
+                <div id="progress-1" class="h-full bg-gradient-to-r from-emerald-500 to-teal-600 rounded-full transition-all duration-500" style="width: 0%">
+                    <div class="absolute inset-0 bg-white/20 animate-pulse"></div>
+                </div>
+            </div>
+
+            <div id="step-2" class="flex flex-col items-center relative z-10 transition-all duration-500 opacity-50">
+                <div class="w-28 h-28 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-3xl flex items-center justify-center mb-4 shadow-xl step-icon transform hover:scale-105 transition-transform">
+                    <i class="fa-solid fa-camera text-white text-3xl"></i>
+                </div>
+                <span class="text-white font-semibold text-base">Image Capture</span>
+                <div class="w-3 h-3 bg-cyan-400 rounded-full mt-2 step-dot opacity-0"></div>
+            </div>
+
+            <div class="flex-1 h-2 bg-slate-700 mx-6 relative overflow-hidden rounded-full">
+                <div id="progress-2" class="h-full bg-gradient-to-r from-cyan-500 to-blue-600 rounded-full transition-all duration-500" style="width: 0%">
+                    <div class="absolute inset-0 bg-white/20 animate-pulse"></div>
+                </div>
+            </div>
+
+            <div id="step-3" class="flex flex-col items-center relative z-10 transition-all duration-500 opacity-50">
+                <div class="w-28 h-28 bg-gradient-to-br from-violet-500 to-purple-600 rounded-3xl flex items-center justify-center mb-4 shadow-xl step-icon transform hover:scale-105 transition-transform">
+                    <i class="fa-solid fa-brain text-white text-3xl"></i>
+                </div>
+                <span class="text-white font-semibold text-base">Load AI Model</span>
+                <div class="w-3 h-3 bg-violet-400 rounded-full mt-2 step-dot opacity-0"></div>
+            </div>
+
+            <div class="flex-1 h-2 bg-slate-700 mx-6 relative overflow-hidden rounded-full">
+                <div id="progress-3" class="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all duration-500" style="width: 0%">
+                    <div class="absolute inset-0 bg-white/20 animate-pulse"></div>
+                </div>
+            </div>
+
+            <div id="step-4" class="flex flex-col items-center relative z-10 transition-all duration-500 opacity-50">
+                <div class="w-28 h-28 bg-gradient-to-br from-orange-500 to-red-600 rounded-3xl flex items-center justify-center mb-4 shadow-xl step-icon transform hover:scale-105 transition-transform">
+                    <i class="fa-solid fa-text-height text-white text-3xl"></i>
+                </div>
+                <span class="text-white font-semibold text-base">OCR Process</span>
+                <div class="w-3 h-3 bg-orange-400 rounded-full mt-2 step-dot opacity-0"></div>
+            </div>
+
+            <div class="flex-1 h-2 bg-slate-700 mx-6 relative overflow-hidden rounded-full">
+                <div id="progress-4" class="h-full bg-gradient-to-r from-orange-500 to-red-600 rounded-full transition-all duration-500" style="width: 0%">
+                    <div class="absolute inset-0 bg-white/20 animate-pulse"></div>
+                </div>
+            </div>
+
+            <div id="step-5" class="flex flex-col items-center relative z-10 transition-all duration-500 opacity-50">
+                <div class="w-28 h-28 bg-gradient-to-br from-pink-500 to-rose-600 rounded-3xl flex items-center justify-center mb-4 shadow-xl step-icon transform hover:scale-105 transition-transform">
+                    <i class="fa-solid fa-check-circle text-white text-3xl"></i>
+                </div>
+                <span class="text-white font-semibold text-base">Complete</span>
+                <div class="w-3 h-3 bg-pink-400 rounded-full mt-2 step-dot opacity-0"></div>
+            </div>
+        </div>
+
+        <div class="bg-slate-800/60 backdrop-blur-lg rounded-3xl p-10 border border-slate-700/50 shadow-2xl">
+            <div class="flex items-center justify-between mb-8">
+                <div>
+                    <h3 id="status-text" class="text-2xl font-bold text-white mb-2">Initializing Recipe Database...</h3>
+                    <p id="substatus-text" class="text-indigo-300 text-base">Connecting to recipe library</p>
+                </div>
+                <div class="text-right">
+                    <div class="text-5xl font-bold text-white mb-2"><span id="progress-number">0</span>%</div>
+                    <div class="text-sm text-slate-400">Processing Pipeline</div>
+                </div>
+            </div>
+
+            <div class="relative w-full h-4 bg-slate-700 rounded-full overflow-hidden mb-8">
+                <div id="main-progress" class="h-full bg-gradient-to-r from-emerald-500 via-cyan-500 via-violet-500 via-orange-500 to-pink-500 rounded-full transition-all duration-500 relative" style="width: 0%">
+                    <div class="absolute inset-0 bg-white/20 animate-pulse"></div>
+                    <div class="absolute right-0 top-0 w-4 h-4 bg-white rounded-full shadow-lg transform translate-x-2"></div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-5 gap-6">
+                <div class="bg-gradient-to-br from-slate-700/40 to-slate-600/40 rounded-2xl p-5 text-center backdrop-blur-sm border border-slate-600/30">
+                    <i class="fa-solid fa-utensils text-emerald-400 text-2xl mb-3"></i>
+                    <div class="text-sm text-slate-300 mb-1">Recipes</div>
+                    <div id="recipes-count" class="text-xl font-bold text-white">0</div>
+                </div>
+                <div class="bg-gradient-to-br from-slate-700/40 to-slate-600/40 rounded-2xl p-5 text-center backdrop-blur-sm border border-slate-600/30">
+                    <i class="fa-solid fa-images text-cyan-400 text-2xl mb-3"></i>
+                    <div class="text-sm text-slate-300 mb-1">Images</div>
+                    <div id="images-count" class="text-xl font-bold text-white">0</div>
+                </div>
+                <div class="bg-gradient-to-br from-slate-700/40 to-slate-600/40 rounded-2xl p-5 text-center backdrop-blur-sm border border-slate-600/30">
+                    <i class="fa-solid fa-microchip text-violet-400 text-2xl mb-3"></i>
+                    <div class="text-sm text-slate-300 mb-1">AI Models</div>
+                    <div id="models-count" class="text-xl font-bold text-white">0</div>
+                </div>
+                <div class="bg-gradient-to-br from-slate-700/40 to-slate-600/40 rounded-2xl p-5 text-center backdrop-blur-sm border border-slate-600/30">
+                    <i class="fa-solid fa-font text-orange-400 text-2xl mb-3"></i>
+                    <div class="text-sm text-slate-300 mb-1">Text Blocks</div>
+                    <div id="text-count" class="text-xl font-bold text-white">0</div>
+                </div>
+                <div class="bg-gradient-to-br from-slate-700/40 to-slate-600/40 rounded-2xl p-5 text-center backdrop-blur-sm border border-slate-600/30">
+                    <i class="fa-solid fa-clock text-pink-400 text-2xl mb-3"></i>
+                    <div class="text-sm text-slate-300 mb-1">Duration</div>
+                    <div id="time-count" class="text-xl font-bold text-white">0s</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-10 flex items-center justify-center gap-3">
+            <div class="w-3 h-3 bg-emerald-400 rounded-full animate-bounce"></div>
+            <div class="w-3 h-3 bg-cyan-400 rounded-full animate-bounce" style="animation-delay: 0.1s;"></div>
+            <div class="w-3 h-3 bg-violet-400 rounded-full animate-bounce" style="animation-delay: 0.2s;"></div>
+            <div class="w-3 h-3 bg-orange-400 rounded-full animate-bounce" style="animation-delay: 0.3s;"></div>
+            <div class="w-3 h-3 bg-pink-400 rounded-full animate-bounce" style="animation-delay: 0.4s;"></div>
+        </div>
+    </div>
+
+    <div class="absolute bottom-8 left-8 flex items-center gap-3 text-slate-400 text-sm">
+        <i class="fa-solid fa-shield-halved text-lg"></i>
+        <span>Secure Recipe Processing</span>
+    </div>
+
+    <div class="absolute bottom-8 right-8 flex items-center gap-3 text-slate-400 text-sm">
+        <div class="w-3 h-3 bg-emerald-400 rounded-full animate-pulse"></div>
+        <span>AI System Online</span>
+    </div>
+
+    <div class="absolute top-8 left-8 flex items-center gap-3 text-slate-400 text-sm">
+        <i class="fa-solid fa-database text-lg"></i>
+        <span>Recipe Database Connected</span>
+    </div>
+
+    <div class="absolute top-8 right-8 flex items-center gap-3 text-slate-400 text-sm">
+        <i class="fa-solid fa-wifi text-lg"></i>
+        <span>Cloud AI Ready</span>
+    </div>
+</div>
+
+<script>
+window.addEventListener('load', function() {
+    let progress = 0;
+    let currentStep = 1;
+    let startTime = Date.now();
+    
+    const statusTexts = [
+        { main: 'Initializing Recipe Database...', sub: 'Connecting to recipe library', step: 1 },
+        { main: 'Loading Recipe Collection...', sub: 'Scanning available recipes', step: 1 },
+        { main: 'Recipe Data Loaded Successfully', sub: 'Preparing image capture system', step: 1 },
+        { main: 'Initializing Camera System...', sub: 'Calibrating image sensors', step: 2 },
+        { main: 'Capturing High-Resolution Image...', sub: 'Adjusting focus and lighting', step: 2 },
+        { main: 'Image Capture Complete', sub: 'Processing image data', step: 2 },
+        { main: 'Loading AI Neural Networks...', sub: 'Initializing deep learning models', step: 3 },
+        { main: 'AI Models Loaded Successfully', sub: 'Preparing vision analysis', step: 3 },
+        { main: 'Running AI Image Analysis...', sub: 'Detecting recipe elements', step: 3 },
+        { main: 'Starting OCR Text Recognition...', sub: 'Scanning for text regions', step: 4 },
+        { main: 'Extracting Recipe Text...', sub: 'Processing ingredients and steps', step: 4 },
+        { main: 'OCR Processing Complete', sub: 'Validating extracted data', step: 4 },
+        { main: 'Finalizing Recipe Analysis...', sub: 'Compiling results', step: 5 },
+        { main: 'Recipe Processing Complete!', sub: 'All systems ready', step: 5 }
+    ];
+    
+    let statusIndex = 0;
+    
+    function updateProgress() {
+        if (progress < 100) {
+            progress += 0.4;
+            
+            document.getElementById('progress-number').textContent = Math.floor(progress);
+            document.getElementById('main-progress').style.width = progress + '%';
+            
+            const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+            document.getElementById('time-count').textContent = elapsedSeconds + 's';
+            document.getElementById('recipes-count').textContent = Math.min(Math.floor(progress / 25), 4);
+            document.getElementById('images-count').textContent = Math.min(Math.floor(progress / 20), 5);
+            document.getElementById('models-count').textContent = Math.min(Math.floor(progress / 33), 3);
+            document.getElementById('text-count').textContent = Math.min(Math.floor(progress * 2.5), 250);
+            
+            const newStatusIndex = Math.floor((progress / 100) * statusTexts.length);
+            if (newStatusIndex !== statusIndex && newStatusIndex < statusTexts.length) {
+                statusIndex = newStatusIndex;
+                document.getElementById('status-text').textContent = statusTexts[statusIndex].main;
+                document.getElementById('substatus-text').textContent = statusTexts[statusIndex].sub;
+                
+                const newStep = statusTexts[statusIndex].step;
+                if (newStep !== currentStep) {
+                    if (currentStep <= 5) {
+                        document.getElementById('step-' + currentStep).classList.add('opacity-50');
+                        document.getElementById('step-' + currentStep).querySelector('.step-dot').classList.add('opacity-0');
+                    }
+                    
+                    currentStep = newStep;
+                    if (currentStep <= 5) {
+                        document.getElementById('step-' + currentStep).classList.remove('opacity-50');
+                        document.getElementById('step-' + currentStep).querySelector('.step-dot').classList.remove('opacity-0');
+                        document.getElementById('step-' + currentStep).querySelector('.step-dot').classList.add('animate-pulse');
+                    }
+                }
+            }
+            
+            if (progress >= 20) {
+                document.getElementById('progress-1').style.width = '100%';
+            }
+            if (progress >= 40) {
+                document.getElementById('progress-2').style.width = '100%';
+                document.getElementById('step-2').classList.remove('opacity-50');
+            }
+            if (progress >= 60) {
+                document.getElementById('progress-3').style.width = '100%';
+                document.getElementById('step-3').classList.remove('opacity-50');
+            }
+            if (progress >= 80) {
+                document.getElementById('progress-4').style.width = '100%';
+                document.getElementById('step-4').classList.remove('opacity-50');
+            }
+            if (progress >= 95) {
+                document.getElementById('step-5').classList.remove('opacity-50');
+            }
+            
+            setTimeout(updateProgress, 60);
+        } else {
+            if (document.getElementById('step-5')) {
+                document.getElementById('step-5').querySelector('.step-dot').classList.remove('opacity-0');
+                document.getElementById('step-5').querySelector('.step-dot').classList.add('animate-pulse');
+            }
+        }
+    }
+    
+    setTimeout(updateProgress, 800);
+});
+</script>
+
+</body>
+</html>

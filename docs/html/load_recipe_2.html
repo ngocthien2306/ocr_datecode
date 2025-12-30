@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loading</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script> window.FontAwesomeConfig = { autoReplaceSvg: 'nest'};</script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        ::-webkit-scrollbar { display: none;}
+        body { font-family: 'Space Grotesk', sans-serif; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        
+        @keyframes pulse-glow {
+            0%, 100% { box-shadow: 0 0 20px rgba(59, 130, 246, 0.5); }
+            50% { box-shadow: 0 0 40px rgba(59, 130, 246, 0.8); }
+        }
+        
+        @keyframes scan {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(300%); }
+        }
+        
+        @keyframes flow {
+            0% { transform: translateX(-100%) translateY(-50%); opacity: 0; }
+            50% { opacity: 1; }
+            100% { transform: translateX(200%) translateY(-50%); opacity: 0; }
+        }
+        
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(-20px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        .pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
+        .scan-line { animation: scan 3s linear infinite; }
+        .flow-particle { animation: flow 2s ease-in-out infinite; }
+        .rotate-slow { animation: rotate 10s linear infinite; }
+        .slide-in { animation: slideIn 0.5s ease-out forwards; }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-slate-950 via-blue-950 to-slate-950 h-[1024px] w-[1440px] overflow-hidden">
+
+<div id="loading-main" class="flex items-center justify-center h-full px-16">
+    <div class="max-w-7xl w-full">
+        
+        <div class="text-center mb-10">
+            <div class="inline-flex items-center justify-center mb-6 relative">
+                <div class="absolute w-32 h-32 rounded-full bg-blue-500 opacity-20 blur-3xl"></div>
+                <div class="relative w-24 h-24 rounded-2xl bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 flex items-center justify-center pulse-glow">
+                    <i class="fa-solid fa-microchip text-white text-4xl"></i>
+                    <div class="absolute inset-0 border-4 border-blue-400 rounded-2xl animate-ping opacity-20"></div>
+                </div>
+            </div>
+            <h1 class="text-5xl font-bold text-white mb-3 tracking-tight">AI Vision Processing System</h1>
+            <p class="text-blue-300 text-xl mono">Neural Pipeline Initialization</p>
+        </div>
+
+        <div class="bg-slate-900 bg-opacity-60 backdrop-blur-2xl rounded-3xl p-10 border border-slate-700 shadow-2xl">
+            
+            <div class="mb-10">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center space-x-4">
+                        <div class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                        <span class="text-white font-semibold text-xl" id="stage-text">Initializing Recipe Loader</span>
+                    </div>
+                    <div class="flex items-center space-x-4">
+                        <span class="text-slate-400 mono text-lg" id="progress-count">0/100</span>
+                        <span class="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 font-bold text-3xl mono" id="progress-percentage">0%</span>
+                    </div>
+                </div>
+                
+                <div class="relative h-4 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+                    <div class="absolute inset-0 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-full transition-all duration-300" style="width: 0%;" id="progress-bar"></div>
+                    <div class="absolute inset-0 h-full w-32 bg-gradient-to-r from-transparent via-white to-transparent opacity-40 flow-particle"></div>
+                </div>
+                
+                <div class="flex justify-between mt-2 px-1">
+                    <span class="text-slate-500 text-xs mono">START</span>
+                    <span class="text-slate-500 text-xs mono">COMPLETE</span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-5 gap-6 mb-10">
+                
+                <div id="step-1" class="relative bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 border-2 border-blue-500 transition-all duration-500">
+                    <div class="absolute top-4 right-4 w-8 h-8 border-3 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                    <div class="flex flex-col items-center space-y-4">
+                        <div class="w-16 h-16 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center relative overflow-hidden">
+                            <div class="absolute inset-0 scan-line h-1 bg-white opacity-30"></div>
+                            <i class="fa-solid fa-file-code text-white text-2xl relative z-10"></i>
+                        </div>
+                        <div class="text-center">
+                            <span class="text-white text-sm font-semibold block">Load Recipe</span>
+                            <span class="text-blue-400 text-xs mono">config.json</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="step-2" class="relative bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 border-2 border-slate-700 transition-all duration-500 opacity-50">
+                    <div class="flex flex-col items-center space-y-4">
+                        <div class="w-16 h-16 rounded-xl bg-slate-700 flex items-center justify-center">
+                            <i class="fa-solid fa-camera text-slate-500 text-2xl"></i>
+                        </div>
+                        <div class="text-center">
+                            <span class="text-slate-400 text-sm font-semibold block">Capture Image</span>
+                            <span class="text-slate-600 text-xs mono">camera.init</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="step-3" class="relative bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 border-2 border-slate-700 transition-all duration-500 opacity-50">
+                    <div class="flex flex-col items-center space-y-4">
+                        <div class="w-16 h-16 rounded-xl bg-slate-700 flex items-center justify-center">
+                            <i class="fa-solid fa-brain text-slate-500 text-2xl"></i>
+                        </div>
+                        <div class="text-center">
+                            <span class="text-slate-400 text-sm font-semibold block">Load AI Model</span>
+                            <span class="text-slate-600 text-xs mono">neural.net</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="step-4" class="relative bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 border-2 border-slate-700 transition-all duration-500 opacity-50">
+                    <div class="flex flex-col items-center space-y-4">
+                        <div class="w-16 h-16 rounded-xl bg-slate-700 flex items-center justify-center">
+                            <i class="fa-solid fa-text-width text-slate-500 text-2xl"></i>
+                        </div>
+                        <div class="text-center">
+                            <span class="text-slate-400 text-sm font-semibold block">Process OCR</span>
+                            <span class="text-slate-600 text-xs mono">ocr.engine</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="step-5" class="relative bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 border-2 border-slate-700 transition-all duration-500 opacity-50">
+                    <div class="flex flex-col items-center space-y-4">
+                        <div class="w-16 h-16 rounded-xl bg-slate-700 flex items-center justify-center">
+                            <i class="fa-solid fa-circle-check text-slate-500 text-2xl"></i>
+                        </div>
+                        <div class="text-center">
+                            <span class="text-slate-400 text-sm font-semibold block">Complete</span>
+                            <span class="text-slate-600 text-xs mono">success</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-6">
+                
+                <div id="pipeline-visual" class="bg-slate-950 bg-opacity-50 rounded-2xl p-6 border border-slate-700">
+                    <div class="flex items-center justify-between mb-5">
+                        <h3 class="text-white font-semibold text-lg">Pipeline Visualization</h3>
+                        <div class="flex items-center space-x-2">
+                            <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                            <span class="text-green-400 text-sm mono">ACTIVE</span>
+                        </div>
+                    </div>
+                    
+                    <div class="relative h-48 bg-slate-900 rounded-xl overflow-hidden border border-slate-800 flex items-center justify-center">
+                        <div class="absolute inset-0 overflow-hidden h-full">
+                            <img class="w-full h-full object-cover opacity-60" src="https://storage.googleapis.com/uxpilot-auth.appspot.com/1de6b338ea-df19014836c8030a04ea.png" alt="futuristic AI neural network visualization with glowing blue nodes and connections, digital data flow, machine learning pipeline, dark tech background, holographic interface" />
+                        </div>
+                        <div class="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-slate-900"></div>
+                        <div class="relative z-10 text-center">
+                            <div class="w-20 h-20 mx-auto mb-3 rounded-full border-4 border-blue-500 border-t-transparent animate-spin"></div>
+                            <p class="text-blue-300 font-medium mono">Processing Neural Data</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="system-logs" class="bg-slate-950 bg-opacity-50 rounded-2xl p-6 border border-slate-700">
+                    <div class="flex items-center justify-between mb-5">
+                        <h3 class="text-white font-semibold text-lg">System Logs</h3>
+                        <i class="fa-solid fa-terminal text-slate-400"></i>
+                    </div>
+                    
+                    <div class="space-y-3 h-48 overflow-hidden">
+                        <div id="log-1" class="flex items-start space-x-3 opacity-0 slide-in">
+                            <i class="fa-solid fa-chevron-right text-blue-400 mt-1 text-xs"></i>
+                            <div class="flex-1">
+                                <p class="text-blue-300 text-sm mono">[INIT] Loading recipe configuration...</p>
+                                <p class="text-slate-500 text-xs mono">Reading parameters from config.json</p>
+                            </div>
+                        </div>
+                        
+                        <div id="log-2" class="flex items-start space-x-3 opacity-0">
+                            <i class="fa-solid fa-chevron-right text-purple-400 mt-1 text-xs"></i>
+                            <div class="flex-1">
+                                <p class="text-purple-300 text-sm mono">[CAMERA] Initializing capture device...</p>
+                                <p class="text-slate-500 text-xs mono">Resolution: 1920x1080 | FPS: 60</p>
+                            </div>
+                        </div>
+                        
+                        <div id="log-3" class="flex items-start space-x-3 opacity-0">
+                            <i class="fa-solid fa-chevron-right text-pink-400 mt-1 text-xs"></i>
+                            <div class="flex-1">
+                                <p class="text-pink-300 text-sm mono">[AI] Loading neural network model...</p>
+                                <p class="text-slate-500 text-xs mono">Model: vision-transformer-v2.3</p>
+                            </div>
+                        </div>
+                        
+                        <div id="log-4" class="flex items-start space-x-3 opacity-0">
+                            <i class="fa-solid fa-chevron-right text-cyan-400 mt-1 text-xs"></i>
+                            <div class="flex-1">
+                                <p class="text-cyan-300 text-sm mono">[OCR] Running text recognition...</p>
+                                <p class="text-slate-500 text-xs mono">Engine: Tesseract 5.0 | Lang: multi</p>
+                            </div>
+                        </div>
+                        
+                        <div id="log-5" class="flex items-start space-x-3 opacity-0">
+                            <i class="fa-solid fa-check text-green-400 mt-1 text-xs"></i>
+                            <div class="flex-1">
+                                <p class="text-green-300 text-sm mono">[SUCCESS] Processing completed</p>
+                                <p class="text-slate-500 text-xs mono">Time elapsed: 3.42s | Accuracy: 98.7%</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-8 flex items-center justify-between px-4 py-4 bg-slate-950 bg-opacity-30 rounded-xl border border-slate-800">
+                <div class="flex items-center space-x-8">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-10 h-10 rounded-lg bg-blue-500 bg-opacity-20 flex items-center justify-center">
+                            <i class="fa-solid fa-microchip text-blue-400"></i>
+                        </div>
+                        <div>
+                            <p class="text-slate-400 text-xs">GPU Acceleration</p>
+                            <p class="text-white text-sm font-semibold mono">CUDA 12.1</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <div class="w-10 h-10 rounded-lg bg-purple-500 bg-opacity-20 flex items-center justify-center">
+                            <i class="fa-solid fa-shield-halved text-purple-400"></i>
+                        </div>
+                        <div>
+                            <p class="text-slate-400 text-xs">Security</p>
+                            <p class="text-white text-sm font-semibold mono">AES-256</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <div class="w-10 h-10 rounded-lg bg-pink-500 bg-opacity-20 flex items-center justify-center">
+                            <i class="fa-solid fa-bolt text-pink-400"></i>
+                        </div>
+                        <div>
+                            <p class="text-slate-400 text-xs">Performance</p>
+                            <p class="text-white text-sm font-semibold mono">Real-time</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <p class="text-slate-500 text-xs mono">System Version</p>
+                    <p class="text-slate-300 text-sm font-semibold mono">v2.5.1</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="text-center mt-6">
+            <p class="text-slate-500 text-sm mono">Powered by Advanced Machine Vision & Neural Processing Technology</p>
+        </div>
+    </div>
+</div>
+
+<script>
+window.addEventListener('load', function() {
+    let progress = 0;
+    const progressBar = document.getElementById('progress-bar');
+    const progressPercentage = document.getElementById('progress-percentage');
+    const progressCount = document.getElementById('progress-count');
+    const stageText = document.getElementById('stage-text');
+    
+    const stages = [
+        { name: 'Loading Recipe Configuration', step: 1, log: 1, start: 0, end: 20, color: 'blue', icon: 'fa-file-code' },
+        { name: 'Capturing High-Resolution Image', step: 2, log: 2, start: 20, end: 40, color: 'purple', icon: 'fa-camera' },
+        { name: 'Initializing AI Neural Network', step: 3, log: 3, start: 40, end: 65, color: 'pink', icon: 'fa-brain' },
+        { name: 'Processing OCR Analysis', step: 4, log: 4, start: 65, end: 90, color: 'cyan', icon: 'fa-text-width' },
+        { name: 'Finalizing Results', step: 5, log: 5, start: 90, end: 100, color: 'green', icon: 'fa-circle-check' }
+    ];
+    
+    let currentStageIndex = 0;
+    
+    function updateProgress() {
+        if (progress <= 100) {
+            progress += 0.4;
+            const displayProgress = Math.min(Math.floor(progress), 100);
+            progressBar.style.width = displayProgress + '%';
+            progressPercentage.textContent = displayProgress + '%';
+            progressCount.textContent = displayProgress + '/100';
+            
+            for (let i = 0; i < stages.length; i++) {
+                if (progress >= stages[i].start && progress < stages[i].end) {
+                    if (currentStageIndex !== i) {
+                        currentStageIndex = i;
+                        stageText.textContent = stages[i].name;
+                        
+                        const logEl = document.getElementById('log-' + stages[i].log);
+                        if (logEl) {
+                            logEl.style.animation = 'slideIn 0.5s ease-out forwards';
+                            logEl.style.opacity = '1';
+                        }
+                        
+                        for (let j = 1; j <= 5; j++) {
+                            const stepEl = document.getElementById('step-' + j);
+                            const iconDiv = stepEl.querySelector('.w-16');
+                            const icon = stepEl.querySelector('i');
+                            const textSpan = stepEl.querySelectorAll('span')[0];
+                            const monoSpan = stepEl.querySelectorAll('span')[1];
+                            
+                            if (j < stages[i].step) {
+                                stepEl.className = 'relative bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 border-2 border-green-500 transition-all duration-500';
+                                stepEl.style.opacity = '1';
+                                iconDiv.className = 'w-16 h-16 rounded-xl bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center';
+                                icon.className = 'fa-solid ' + stages[j-1].icon + ' text-white text-2xl';
+                                textSpan.className = 'text-white text-sm font-semibold block';
+                                monoSpan.className = 'text-green-400 text-xs mono';
+                                const spinner = stepEl.querySelector('.animate-spin');
+                                if (spinner) spinner.remove();
+                            } else if (j === stages[i].step) {
+                                const colorMap = { blue: 'blue', purple: 'purple', pink: 'pink', cyan: 'cyan', green: 'green' };
+                                const color = colorMap[stages[i].color];
+                                stepEl.className = 'relative bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 border-2 border-' + color + '-500 transition-all duration-500';
+                                stepEl.style.opacity = '1';
+                                iconDiv.className = 'w-16 h-16 rounded-xl bg-gradient-to-br from-' + color + '-500 to-' + color + '-600 flex items-center justify-center relative overflow-hidden';
+                                icon.className = 'fa-solid ' + stages[i].icon + ' text-white text-2xl relative z-10';
+                                textSpan.className = 'text-white text-sm font-semibold block';
+                                monoSpan.className = 'text-' + color + '-400 text-xs mono';
+                                
+                                if (!stepEl.querySelector('.animate-spin')) {
+                                    const spinner = document.createElement('div');
+                                    spinner.className = 'absolute top-4 right-4 w-8 h-8 border-3 border-' + color + '-500 border-t-transparent rounded-full animate-spin';
+                                    stepEl.insertBefore(spinner, stepEl.firstChild);
+                                }
+                                
+                                if (!iconDiv.querySelector('.scan-line')) {
+                                    const scanLine = document.createElement('div');
+                                    scanLine.className = 'absolute inset-0 scan-line h-1 bg-white opacity-30';
+                                    iconDiv.appendChild(scanLine);
+                                }
+                            } else {
+                                stepEl.className = 'relative bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 border-2 border-slate-700 transition-all duration-500 opacity-50';
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if (progress < 100) {
+                requestAnimationFrame(updateProgress);
+            } else {
+                stageText.textContent = 'Processing Complete - System Ready';
+                const step5 = document.getElementById('step-5');
+                step5.className = 'relative bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 border-2 border-green-500 transition-all duration-500';
+                step5.style.opacity = '1';
+                const iconDiv = step5.querySelector('.w-16');
+                iconDiv.className = 'w-16 h-16 rounded-xl bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center';
+                const icon = step5.querySelector('i');
+                icon.className = 'fa-solid fa-circle-check text-white text-2xl';
+                const textSpan = step5.querySelectorAll('span')[0];
+                textSpan.className = 'text-white text-sm font-semibold block';
+                const monoSpan = step5.querySelectorAll('span')[1];
+                monoSpan.className = 'text-green-400 text-xs mono';
+                const spinner = step5.querySelector('.animate-spin');
+                if (spinner) spinner.remove();
+            }
+        }
+    }
+    
+    setTimeout(() => {
+        updateProgress();
+    }, 800);
+});
+</script>
+
+</body>
+</html>

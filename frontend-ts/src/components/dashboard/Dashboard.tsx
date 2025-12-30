@@ -5,6 +5,7 @@ import Receipts from '../recipe/Receipts';
 import Historical from './Historical';
 import Settings from './Settings';
 import Logs from './Logs';
+import Documentation from './Documentation';
 import CameraManagement from '../camera/CameraManagement';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { camerasAPI } from '@/services/api';
@@ -29,9 +30,9 @@ interface DashboardProps {
   onLogout: () => void;
 }
 
-type Section = 'dashboard' | 'users' | 'receipts' | 'cameras' | 'historical' | 'settings' | 'logs';
+type Section = 'dashboard' | 'users' | 'receipts' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation';
 
-type LoadingTemplate = 'camera-vision' | 'users' | 'receipts' | 'cameras' | 'historical' | 'settings' | 'logs' | 'spinner' | 'pulse' | 'radar' | 'grid' | 'circuit' | 'barcode' | 'ocr' | 'dots' | 'waves';
+type LoadingTemplate = 'camera-vision' | 'users' | 'receipts' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation' | 'spinner' | 'pulse' | 'radar' | 'grid' | 'circuit' | 'barcode' | 'ocr' | 'dots' | 'waves';
 
 interface LoadingTemplates {
   dashboard: LoadingTemplate;
@@ -41,6 +42,7 @@ interface LoadingTemplates {
   historical: LoadingTemplate;
   settings: LoadingTemplate;
   logs: LoadingTemplate;
+  documentation: LoadingTemplate;
 }
 
 interface LoadingBackground {
@@ -74,7 +76,8 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       cameras: (localStorage.getItem('camerasLoading') as LoadingTemplate) || 'cameras',
       historical: (localStorage.getItem('historicalLoading') as LoadingTemplate) || 'historical',
       settings: (localStorage.getItem('settingsLoading') as LoadingTemplate) || 'settings',
-      logs: (localStorage.getItem('logsLoading') as LoadingTemplate) || 'logs'
+      logs: (localStorage.getItem('logsLoading') as LoadingTemplate) || 'logs',
+      documentation: (localStorage.getItem('documentationLoading') as LoadingTemplate) || 'ocr'
     };
   });
   const [loadingBackground, setLoadingBackground] = useState<LoadingBackground>(() => {
@@ -459,6 +462,43 @@ export default function Dashboard({ onLogout }: DashboardProps) {
             <div className="loading-text-container">
               <div className="loading-title">LOGS</div>
               <div className="loading-subtitle">LOADING AUDIT TRAIL...</div>
+            </div>
+          </>
+        );
+
+      case 'documentation':
+        return (
+          <>
+            <div className="ocr-loader">
+              <div className="ocr-document">
+                <div className="ocr-text-line"></div>
+                <div className="ocr-text-line"></div>
+                <div className="ocr-text-line"></div>
+                <div className="ocr-text-line"></div>
+                <div className="ocr-text-line"></div>
+                <div className="ocr-scan-overlay"></div>
+                <div className="ocr-highlight-box"></div>
+                <div className="ocr-highlight-box"></div>
+                <div className="ocr-highlight-box"></div>
+              </div>
+              <div className="ocr-analysis-indicators">
+                <div className="ocr-indicator">
+                  <div className="ocr-indicator-icon">📚</div>
+                  <div className="ocr-indicator-label">DOCS</div>
+                </div>
+                <div className="ocr-indicator">
+                  <div className="ocr-indicator-icon">📖</div>
+                  <div className="ocr-indicator-label">GUIDE</div>
+                </div>
+                <div className="ocr-indicator">
+                  <div className="ocr-indicator-icon">✓</div>
+                  <div className="ocr-indicator-label">HELP</div>
+                </div>
+              </div>
+            </div>
+            <div className="loading-text-container">
+              <div className="loading-title">DOCUMENTATION</div>
+              <div className="loading-subtitle">LOADING GUIDES...</div>
             </div>
           </>
         );
@@ -994,6 +1034,18 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                 Settings
               </a>
             )}
+            <a
+              href="#documentation"
+              className={`nav-item ${currentSection === 'documentation' ? 'active' : ''}`}
+              onClick={(e) => { e.preventDefault(); handleSectionChange('documentation'); }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M6.5 2H20V22H6.5A2.5 2.5 0 0 1 4 19.5V4.5A2.5 2.5 0 0 1 6.5 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M8 7H16M8 11H16M8 15H12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Documentation
+            </a>
             <a href="#logout" className="nav-item" onClick={(e) => { e.preventDefault(); handleLogout(); }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                 <path d="M9 21H5A2 2 0 0 1 3 19V5A2 2 0 0 1 5 3H9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -1307,6 +1359,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           {currentSection === 'historical' && <Historical />}
           {currentSection === 'logs' && <Logs />}
           {currentSection === 'settings' && <Settings />}
+          {currentSection === 'documentation' && <Documentation />}
             </>
           )}
         </main>

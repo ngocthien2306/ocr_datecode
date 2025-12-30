@@ -1,6 +1,6 @@
 Operator: 
 có thể xem page dashboard, receipt thì chỉ được click load receipt, 
-có thể bấm vào edit nhưng chỉ có thể thao tác ở tab template cho phép vẽ hình lên template, 
+có thể bấm vào edit nhưng chỉ có thể thao tác ở tab template cho phép vẽ hình lên template unable (tab basic info, camera, model) , 
 nhưng không được xoá template. Có quyền update phần template và load receipt
 
 có quyền xem historical 
