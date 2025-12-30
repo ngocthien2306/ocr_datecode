@@ -84,7 +84,14 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   });
   const [darkMode, setDarkMode] = useState(() => {
     const savedMode = localStorage.getItem('appThemeMode');
-    return savedMode === 'dark';
+    const isDark = savedMode === 'dark';
+    // Set initial dark mode class on mount
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    return isDark;
   });
   const [currentTime, setCurrentTime] = useState(new Date());
   const [totalProductsToday, setTotalProductsToday] = useState(1247);
@@ -571,9 +578,11 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   useEffect(() => {
     if (darkMode) {
       document.body.classList.add('dark-mode');
+      document.documentElement.classList.add('dark');
       localStorage.setItem('appThemeMode', 'dark');
     } else {
       document.body.classList.remove('dark-mode');
+      document.documentElement.classList.remove('dark');
       localStorage.setItem('appThemeMode', 'light');
     }
   }, [darkMode]);
@@ -726,6 +735,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       type: 'warning',
       onConfirm: () => {
         document.body.classList.remove('dark-mode');
+        document.documentElement.classList.remove('dark');
         onLogout();
       }
     });

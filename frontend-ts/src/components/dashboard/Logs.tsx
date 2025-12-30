@@ -15,6 +15,8 @@ const Logs: React.FC<LogsProps> = () => {
   const [totalLogs, setTotalLogs] = useState(0);
   const [selectedLog, setSelectedLog] = useState<ActionLog | null>(null);
   const [loadingTemplate, setLoadingTemplate] = useState('logs');
+  const [expandedDetails, setExpandedDetails] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<'list' | 'detail'>('list');
   const logsPerPage = 50;
 
   const actionTypeLabels: Record<ActionType, string> = {
@@ -58,6 +60,8 @@ const Logs: React.FC<LogsProps> = () => {
 
   useEffect(() => {
     loadLogs();
+    // Reset expanded details when page or filters change
+    setExpandedDetails(new Set());
   }, [currentPage, filters]);
 
   useEffect(() => {
@@ -125,24 +129,147 @@ const Logs: React.FC<LogsProps> = () => {
     }
   };
 
+  const toggleDetailsExpansion = (logId: string) => {
+    const newExpanded = new Set(expandedDetails);
+    if (newExpanded.has(logId)) {
+      newExpanded.delete(logId);
+    } else {
+      newExpanded.add(logId);
+    }
+    setExpandedDetails(newExpanded);
+  };
+
+  const shouldShowDetailsToggle = (log: ActionLog): boolean => {
+    const oldValueText = formatValue(log.old_value);
+    const newValueText = formatValue(log.new_value);
+    const detailsText = oldValueText + newValueText;
+    return detailsText.length > 150; // Show toggle if content is longer than 150 chars
+  };
+
+  const truncateText = (text: string, maxLength: number = 50): string => {
+    if (text.length <= maxLength) return text;
+    return text.slice(0, maxLength) + '...';
+  };
+
+  const handleViewDetails = (log: ActionLog) => {
+    setSelectedLog(log);
+    setViewMode('detail');
+  };
+
+  const handleBackToList = () => {
+    setViewMode('list');
+    setSelectedLog(null);
+  };
+
+  // Detail View Mode
+  if (viewMode === 'detail' && selectedLog) {
+    return (
+      <div className="p-6">
+        <div className="mb-6">
+          <button
+            onClick={handleBackToList}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Back to List
+          </button>
+        </div>
+
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-6">Action Log Details</h2>
+
+          {/* Log Info */}
+          <div className="mb-6 bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div>
+                <span className="font-medium text-gray-700 dark:text-gray-300">Time:</span>
+                <div className="text-gray-900 dark:text-gray-100 mt-1">{formatDateTime(selectedLog.timestamp)}</div>
+              </div>
+              <div>
+                <span className="font-medium text-gray-700 dark:text-gray-300">User:</span>
+                <div className="text-gray-900 dark:text-gray-100 mt-1">{selectedLog.username}</div>
+                <div className="text-gray-500 dark:text-gray-400 text-xs mt-1">{selectedLog.user_id}</div>
+              </div>
+              <div>
+                <span className="font-medium text-gray-700 dark:text-gray-300">Action:</span>
+                <div className="mt-1">
+                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getActionTypeColor(selectedLog.action_type)}`}>
+                    {actionTypeLabels[selectedLog.action_type]}
+                  </span>
+                </div>
+              </div>
+              <div>
+                <span className="font-medium text-gray-700 dark:text-gray-300">Resource:</span>
+                <div className="mt-1">
+                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getResourceTypeColor(selectedLog.resource_type)}`}>
+                    {resourceTypeLabels[selectedLog.resource_type]}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="mt-4">
+              <span className="font-medium text-gray-700 dark:text-gray-300">Description:</span>
+              <div className="text-gray-900 dark:text-gray-100 mt-1">{selectedLog.description}</div>
+            </div>
+            {selectedLog.ip_address && (
+              <div className="mt-4">
+                <span className="font-medium text-gray-700 dark:text-gray-300">IP Address:</span>
+                <div className="text-gray-900 dark:text-gray-100 mt-1">{selectedLog.ip_address}</div>
+              </div>
+            )}
+          </div>
+
+          {/* JSON Comparison */}
+          {(selectedLog.old_value || selectedLog.new_value) && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Before */}
+              <div>
+                <h4 className="text-md font-medium text-red-600 dark:text-red-400 mb-2">Before</h4>
+                <textarea
+                  className="w-full h-96 p-3 border border-red-200 dark:border-red-700 rounded-md bg-red-50 dark:bg-red-900 text-sm font-mono text-gray-900 dark:text-gray-100"
+                  value={selectedLog.old_value ? JSON.stringify(selectedLog.old_value, null, 2) : ''}
+                  readOnly
+                  placeholder="No previous value"
+                />
+              </div>
+
+              {/* After */}
+              <div>
+                <h4 className="text-md font-medium text-green-600 dark:text-green-400 mb-2">After</h4>
+                <textarea
+                  className="w-full h-96 p-3 border border-green-200 dark:border-green-700 rounded-md bg-green-50 dark:bg-green-900 text-sm font-mono text-gray-900 dark:text-gray-100"
+                  value={selectedLog.new_value ? JSON.stringify(selectedLog.new_value, null, 2) : ''}
+                  readOnly
+                  placeholder="No new value"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Activity Logs</h1>
-        <p className="text-gray-600">Monitor all system activities</p>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-2">Activity Logs</h1>
+        <p className="text-gray-600 dark:text-gray-400">Monitor all system activities</p>
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Action Type
             </label>
             <select
               value={filters.action_type || ''}
               onChange={(e) => handleFilterChange('action_type', e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
             >
               <option value="">All</option>
               {Object.entries(actionTypeLabels).map(([value, label]) => (
@@ -152,13 +279,13 @@ const Logs: React.FC<LogsProps> = () => {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Resource Type
             </label>
             <select
               value={filters.resource_type || ''}
               onChange={(e) => handleFilterChange('resource_type', e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
             >
               <option value="">All</option>
               {Object.entries(resourceTypeLabels).map(([value, label]) => (
@@ -168,26 +295,26 @@ const Logs: React.FC<LogsProps> = () => {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               From Date
             </label>
             <input
               type="date"
               value={filters.start_date || ''}
               onChange={(e) => handleFilterChange('start_date', e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               To Date
             </label>
             <input
               type="date"
               value={filters.end_date || ''}
               onChange={(e) => handleFilterChange('end_date', e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
             />
           </div>
         </div>
@@ -198,7 +325,7 @@ const Logs: React.FC<LogsProps> = () => {
               setFilters({});
               setCurrentPage(1);
             }}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md"
+            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md"
           >
             Clear Filters
           </button>
@@ -206,91 +333,107 @@ const Logs: React.FC<LogsProps> = () => {
       </div>
 
       {/* Logs Table */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
         {isLoading ? (
           <IndustrialLoading template={loadingTemplate} />
         ) : logs.length === 0 ? (
-          <div className="p-8 text-center text-gray-500">
+          <div className="p-8 text-center text-gray-500 dark:text-gray-400">
             No activity logs found
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+              <thead className="bg-gray-50 dark:bg-gray-700">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                     Time
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                     User
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                     Action
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                     Resource
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                     Description
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                     Details
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {logs.map((log) => (
-                  <tr key={log.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+              <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                {logs.map((log, index) => (
+                  <tr key={log.id} className={`${index % 2 === 0 ? 'bg-white dark:bg-gray-800' : 'bg-gray-50 dark:bg-gray-700'} hover:bg-gray-100 dark:hover:bg-gray-600`}>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 align-top">
                       {formatDateTime(log.timestamp)}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 align-top">
                       <div className="font-medium">{log.username}</div>
-                      <div className="text-gray-500 text-xs">{log.user_id}</div>
+                      <div className="text-gray-500 dark:text-gray-400 text-xs">{log.user_id}</div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-6 py-4 whitespace-nowrap align-top">
                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getActionTypeColor(log.action_type)}`}>
                         {actionTypeLabels[log.action_type]}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-6 py-4 whitespace-nowrap align-top">
                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getResourceTypeColor(log.resource_type)}`}>
                         {resourceTypeLabels[log.resource_type]}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-900 max-w-xs">
+                    <td className="px-6 py-4 text-sm text-gray-900 dark:text-gray-100 max-w-xs align-top">
                       <div className="truncate" title={log.description}>
                         {log.description}
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-500">
+                    <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400 align-top max-w-md">
                       <div className="space-y-1">
                         {log.old_value && (
                           <div>
-                            <span className="font-medium text-red-600">Before: </span>
-                            <span className="text-xs">{formatValue(log.old_value)}</span>
+                            <span className="font-medium text-red-600 dark:text-red-400">Before: </span>
+                            <span className="text-xs break-all">
+                              {expandedDetails.has(log.id)
+                                ? formatValue(log.old_value)
+                                : truncateText(formatValue(log.old_value))}
+                            </span>
                           </div>
                         )}
                         {log.new_value && (
                           <div>
-                            <span className="font-medium text-green-600">After: </span>
-                            <span className="text-xs">{formatValue(log.new_value)}</span>
+                            <span className="font-medium text-green-600 dark:text-green-400">After: </span>
+                            <span className="text-xs break-all">
+                              {expandedDetails.has(log.id)
+                                ? formatValue(log.new_value)
+                                : truncateText(formatValue(log.new_value))}
+                            </span>
                           </div>
                         )}
                         {log.ip_address && (
-                          <div className="text-xs text-gray-400">
+                          <div className="text-xs text-gray-400 dark:text-gray-500">
                             IP: {log.ip_address}
                           </div>
                         )}
+                        {shouldShowDetailsToggle(log) && (
+                          <button
+                            onClick={() => toggleDetailsExpansion(log.id)}
+                            className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 mt-1 font-medium"
+                          >
+                            {expandedDetails.has(log.id) ? 'Show less' : 'Show more'}
+                          </button>
+                        )}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium align-top">
                       <button
-                        onClick={() => setSelectedLog(log)}
-                        className="text-blue-600 hover:text-blue-900 px-3 py-1 rounded-md text-sm font-medium bg-blue-50 hover:bg-blue-100 transition-colors"
+                        onClick={() => handleViewDetails(log)}
+                        className="text-blue-600 dark:text-blue-400 hover:text-blue-900 dark:hover:text-blue-300 px-3 py-1 rounded-md text-sm font-medium bg-blue-50 dark:bg-blue-900 hover:bg-blue-100 dark:hover:bg-blue-800 transition-colors"
                       >
                         Details
                       </button>
@@ -307,117 +450,27 @@ const Logs: React.FC<LogsProps> = () => {
       {/* Pagination */}
       {logs.length > 0 && (
         <div className="mt-6 flex justify-between items-center">
-          <div className="text-sm text-gray-700">
+          <div className="text-sm text-gray-700 dark:text-gray-300">
             Showing {((currentPage - 1) * logsPerPage) + 1} - {Math.min(currentPage * logsPerPage, totalLogs)} of {totalLogs} results
           </div>
           <div className="flex space-x-2">
             <button
               onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
               disabled={currentPage === 1}
-              className="px-3 py-1 text-sm border border-gray-300 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+              className="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-800"
             >
               Previous
             </button>
-            <span className="px-3 py-1 text-sm text-gray-700">
+            <span className="px-3 py-1 text-sm text-gray-700 dark:text-gray-300">
               Page {currentPage}
             </span>
             <button
               onClick={() => setCurrentPage(prev => prev + 1)}
               disabled={logs.length < logsPerPage}
-              className="px-3 py-1 text-sm border border-gray-300 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+              className="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-800"
             >
               Next
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* Detail Modal */}
-      {selectedLog && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50" onClick={() => setSelectedLog(null)}>
-          <div className="relative top-20 mx-auto p-5 border w-11/12 max-w-6xl shadow-lg rounded-md bg-white" onClick={e => e.stopPropagation()}>
-            <div className="mt-3">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-medium text-gray-900">
-                  Action Log Details
-                </h3>
-                <button
-                  onClick={() => setSelectedLog(null)}
-                  className="text-gray-400 hover:text-gray-600 text-2xl"
-                >
-                  ×
-                </button>
-              </div>
-
-              {/* Log Info */}
-              <div className="mb-6 bg-gray-50 p-4 rounded-lg">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                  <div>
-                    <span className="font-medium text-gray-700">Time:</span>
-                    <div className="text-gray-900">{formatDateTime(selectedLog.timestamp)}</div>
-                  </div>
-                  <div>
-                    <span className="font-medium text-gray-700">User:</span>
-                    <div className="text-gray-900">{selectedLog.username}</div>
-                  </div>
-                  <div>
-                    <span className="font-medium text-gray-700">Action:</span>
-                    <div className="text-gray-900">{actionTypeLabels[selectedLog.action_type]}</div>
-                  </div>
-                  <div>
-                    <span className="font-medium text-gray-700">Resource:</span>
-                    <div className="text-gray-900">{resourceTypeLabels[selectedLog.resource_type]}</div>
-                  </div>
-                </div>
-                <div className="mt-2">
-                  <span className="font-medium text-gray-700">Description:</span>
-                  <div className="text-gray-900 mt-1">{selectedLog.description}</div>
-                </div>
-                {selectedLog.ip_address && (
-                  <div className="mt-2">
-                    <span className="font-medium text-gray-700">IP Address:</span>
-                    <div className="text-gray-900 mt-1">{selectedLog.ip_address}</div>
-                  </div>
-                )}
-              </div>
-
-              {/* JSON Comparison */}
-              {(selectedLog.old_value || selectedLog.new_value) && (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Before */}
-                  <div>
-                    <h4 className="text-md font-medium text-red-600 mb-2">Before</h4>
-                    <textarea
-                      className="w-full h-64 p-3 border border-red-200 rounded-md bg-red-50 text-sm font-mono"
-                      value={selectedLog.old_value ? JSON.stringify(selectedLog.old_value, null, 2) : ''}
-                      readOnly
-                      placeholder="No previous value"
-                    />
-                  </div>
-
-                  {/* After */}
-                  <div>
-                    <h4 className="text-md font-medium text-green-600 mb-2">After</h4>
-                    <textarea
-                      className="w-full h-64 p-3 border border-green-200 rounded-md bg-green-50 text-sm font-mono"
-                      value={selectedLog.new_value ? JSON.stringify(selectedLog.new_value, null, 2) : ''}
-                      readOnly
-                      placeholder="No new value"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Close Button */}
-              <div className="flex justify-end mt-6">
-                <button
-                  onClick={() => setSelectedLog(null)}
-                  className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       )}

@@ -251,6 +251,7 @@ const Settings: React.FC = () => {
                 <option value="cameras">Multi-Lens System</option>
                 <option value="historical">Timeline History</option>
                 <option value="settings">Gear System</option>
+                <option value="logs">Activity Logs</option>
               </select>
             </div>
 
@@ -273,6 +274,7 @@ const Settings: React.FC = () => {
                 <option value="cameras">Multi-Lens System</option>
                 <option value="historical">Timeline History</option>
                 <option value="settings">Gear System</option>
+                <option value="logs">Activity Logs</option>
               </select>
             </div>
 
@@ -295,6 +297,7 @@ const Settings: React.FC = () => {
                 <option value="cameras">Multi-Lens System</option>
                 <option value="historical">Timeline History</option>
                 <option value="settings">Gear System</option>
+                <option value="logs">Activity Logs</option>
               </select>
             </div>
 
@@ -317,6 +320,7 @@ const Settings: React.FC = () => {
                 <option value="cameras">Multi-Lens System</option>
                 <option value="historical">Timeline History</option>
                 <option value="settings">Gear System</option>
+                <option value="logs">Activity Logs</option>
               </select>
             </div>
 
@@ -339,6 +343,7 @@ const Settings: React.FC = () => {
                 <option value="cameras">Multi-Lens System</option>
                 <option value="historical">Timeline History</option>
                 <option value="settings">Gear System</option>
+                <option value="logs">Activity Logs</option>
               </select>
             </div>
 
@@ -361,6 +366,7 @@ const Settings: React.FC = () => {
                 <option value="cameras">Multi-Lens System</option>
                 <option value="historical">Timeline History</option>
                 <option value="settings">Gear System</option>
+                <option value="logs">Activity Logs</option>
               </select>
             </div>
 

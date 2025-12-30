@@ -5329,10 +5329,16 @@ body.dark-mode .ocr-indicator:nth-child(3) .ocr-indicator-icon {
   position: relative;
   width: 200px;
   height: 160px;
-  background: linear-gradient(135deg, #1f2937 0%, #374151 100%);
+  background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
   border-radius: 8px;
-  border: 2px solid #4b5563;
+  border: 2px solid #d1d5db;
   overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+.dark-mode .logs-container {
+  background: linear-gradient(135deg, #1f2937 0%, #374151 100%);
+  border: 2px solid #4b5563;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
 }
 
@@ -5386,9 +5392,13 @@ body.dark-mode .ocr-indicator:nth-child(3) .ocr-indicator-icon {
   transform: translateY(-50%);
   width: 4px;
   height: 120px;
-  background: linear-gradient(to bottom, #6b7280 0%, #9ca3af 50%, #6b7280 100%);
+  background: linear-gradient(to bottom, #d1d5db 0%, #9ca3af 50%, #d1d5db 100%);
   border-radius: 2px;
   opacity: 0.6;
+}
+
+.dark-mode .log-scroll-indicator {
+  background: linear-gradient(to bottom, #6b7280 0%, #9ca3af 50%, #6b7280 100%);
 }
 
 .log-scroll-indicator::before {
