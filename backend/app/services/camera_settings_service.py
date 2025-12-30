@@ -10,7 +10,7 @@ from pathlib import Path
 from datetime import datetime
 
 # Setup logging to file
-LOGS_DIR = Path("/home/demo/Source/ocr_datecode/logs")
+LOGS_DIR = Path("logs")
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Configure file handler for settings service
@@ -26,7 +26,7 @@ logger.setLevel(logging.INFO)
 class CameraSettingsService:
     """Service to manage camera settings files"""
 
-    def __init__(self, settings_dir: str = "/home/demo/Source/ocr_datecode/backend/camera_settings"):
+    def __init__(self, settings_dir: str = "camera_settings"):
         self.settings_dir = Path(settings_dir)
         self.settings_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"📁 [INIT] Camera settings directory: {self.settings_dir}")

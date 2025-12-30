@@ -13,8 +13,8 @@ import json
 import os
 from pathlib import Path
 
-SETTINGS_DIR = Path("/home/demo/Source/ocr_datecode/backend/camera_settings")
-LOGS_DIR = Path("/home/demo/Source/ocr_datecode/logs")
+SETTINGS_DIR = Path("camera_settings")
+LOGS_DIR = Path("logs")
 
 # Create logs directory
 LOGS_DIR.mkdir(parents=True, exist_ok=True)

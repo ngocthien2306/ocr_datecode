@@ -7,9 +7,10 @@ import Settings from './Settings';
 import CameraManagement from '../camera/CameraManagement';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { camerasAPI } from '@/services/api';
+import { receiptsAPI } from '@/services/recipes';
 import { API_BASE_URL } from '@/config/api';
 import { useUser } from '@/contexts/UserContext';
-import type { Camera as BaseCamera } from '@/types';
+import type { Camera as BaseCamera, ReceiptLoad } from '@/types';
 
 interface DashboardCamera extends Omit<BaseCamera, 'status'> {
   is_connected: boolean;
@@ -59,7 +60,7 @@ interface CameraStats {
 }
 
 export default function Dashboard({ onLogout }: DashboardProps) {
-  const { user, canAccessPage } = useUser();
+  const { canAccessPage } = useUser();
   const [currentSection, setCurrentSection] = useState<Section>('dashboard');
   const [isLoading, setIsLoading] = useState(true);
   const [loadingTemplates, setLoadingTemplates] = useState<LoadingTemplates>(() => {
@@ -98,6 +99,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     active: 0
   });
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [recentLoads, setRecentLoads] = useState<ReceiptLoad[]>([]);
 
   const camera1ChartRef = useRef<HTMLCanvasElement>(null);
   const camera2ChartRef = useRef<HTMLCanvasElement>(null);
@@ -446,6 +448,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   // Fetch cameras on component mount
   useEffect(() => {
     fetchCameras();
+    fetchRecentLoads();
   }, []);
 
   // Load current user info
@@ -518,6 +521,15 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       setTimeout(() => {
         setIsLoading(false);
       }, remainingTime);
+    }
+  };
+
+  const fetchRecentLoads = async () => {
+    try {
+      const response = await receiptsAPI.getGlobalLoadHistory(0, 10); // Get top 10 recent loads
+      setRecentLoads(response.items as ReceiptLoad[]);
+    } catch (err) {
+      console.error('Error fetching recent loads:', err);
     }
   };
 
@@ -1109,55 +1121,59 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                     <a href="#" className="view-all">View all Members</a>
                   </div>
 
-                  {/* Recent Products */}
+                  {/* Recent Recipes */}
                   <div className="right-card recent-products">
-                    <h3>Recent Products</h3>
+                    <h3>Recent Recipes</h3>
                     <div className="product-list">
-                      {[
-                        { id: 'A-1247', line: 'Production Line A', start: '09:15:23', end: '09:15:25', duration: '2.1s', success: true },
-                        { id: 'B-0423', line: 'Production Line B', start: '09:14:18', end: '09:14:20', duration: '2.3s', success: true },
-                        { id: 'Q-0368', line: 'Quality Control', start: '09:13:45', end: '09:13:47', duration: '2.6s', success: false },
-                        { id: 'A-1246', line: 'Production Line A', start: '09:13:10', end: '09:13:12', duration: '2.0s', success: true },
-                        { id: 'B-0422', line: 'Production Line B', start: '09:12:35', end: '09:12:37', duration: '2.2s', success: true },
-                        { id: 'A-1245', line: 'Production Line A', start: '09:11:58', end: '09:12:00', duration: '2.0s', success: true },
-                        { id: 'Q-0367', line: 'Quality Control', start: '09:11:20', end: '09:11:22', duration: '2.5s', success: false },
-                        { id: 'B-0421', line: 'Production Line B', start: '09:10:45', end: '09:10:47', duration: '2.3s', success: true }
-                      ].map((product, index) => (
-                        <div key={index} className="product-item">
-                          <div className="product-header">
-                            <div className={`product-icon ${product.success ? 'success' : 'fail'}`}>
-                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                                {product.success ? (
+                      {recentLoads.length > 0 ? recentLoads.map((load) => {
+                        const localTime = load.loaded_at_local ? (() => {
+                          // Parse ISO string manually: 2025-12-22T23:44:33.004945+07:00
+                          const match = load.loaded_at_local!.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+                          if (!match) return 'Invalid date';
+                          const [, year, month, day, hour, minute] = match;
+                          const date = new Date(parseInt(year!), parseInt(month!) - 1, parseInt(day!), parseInt(hour!), parseInt(minute!));
+                          return date.toLocaleString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: true
+                          });
+                        })() : 'N/A';
+                        return (
+                          <div key={load.id} className="product-item">
+                            <div className="product-header">
+                              <div className="product-icon success">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                                   <polyline points="20,6 9,17 4,12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                ) : (
-                                  <>
-                                    <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                                    <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                                  </>
-                                )}
-                              </svg>
+                                </svg>
+                              </div>
+                              <div className="product-info">
+                                <h4>{load.metadata?.name || 'Unknown Recipe'}</h4>
+                                <span className="product-line">{load.metadata?.product_code || 'N/A'}</span>
+                              </div>
                             </div>
-                            <div className="product-info">
-                              <h4>Product #{product.id}</h4>
-                              <span className="product-line">{product.line}</span>
-                            </div>
-                          </div>
-                          <div className="product-details">
-                            <div className="detail-row">
-                              <span className="detail-label">Start:</span>
-                              <span className="detail-value">{product.start}</span>
-                            </div>
-                            <div className="detail-row">
-                              <span className="detail-label">End:</span>
-                              <span className="detail-value">{product.end}</span>
-                            </div>
-                            <div className="detail-row">
-                              <span className="detail-label">Duration:</span>
-                              <span className="detail-value">{product.duration}</span>
+                            <div className="product-details">
+                              <div className="detail-row">
+                                <span className="detail-label">Loaded by:</span>
+                                <span className="detail-value">{load.loaded_by_full_name || load.loaded_by}</span>
+                              </div>
+                              <div className="detail-row">
+                                <span className="detail-label">Loaded at:</span>
+                                <span className="detail-value">{localTime}</span>
+                              </div>
+                              {/* <div className="detail-row">
+                                <span className="detail-label">Recipe ID:</span>
+                                <span className="detail-value">{load.recipe_id}</span>
+                              </div> */}
                             </div>
                           </div>
+                        );
+                      }) : (
+                        <div style={{ padding: '1rem', textAlign: 'center', color: '#6b7280' }}>
+                          No recent recipe loads
                         </div>
-                      ))}
+                      )}
                     </div>
                   </div>
                 </div>

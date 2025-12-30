@@ -66,6 +66,10 @@ const UserManagement: React.FC = () => {
   const [editingUser, setEditingUser] = useState<(User & { password?: string }) | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string>('');
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [resetPasswordUser, setResetPasswordUser] = useState<User | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [showResetPasswordModal, setShowResetPasswordModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -373,6 +377,52 @@ const UserManagement: React.FC = () => {
         }
       }
     });
+  };
+
+  const handleResetPasswordClick = (user: User) => {
+    setResetPasswordUser(user);
+    setNewPassword('');
+    setConfirmNewPassword('');
+    setShowResetPasswordModal(true);
+  };
+
+  const handleResetPasswordSubmit = async () => {
+    if (!resetPasswordUser) return;
+
+    if (!newPassword.trim()) {
+      toast.error('Password is required');
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      toast.error('Password must be at least 6 characters long');
+      return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      toast.error('Passwords do not match');
+      return;
+    }
+
+    try {
+      const userId = (resetPasswordUser as any)._id || resetPasswordUser.id;
+      await usersAPI.resetPassword(userId, newPassword);
+      toast.success(`Password reset successfully for ${resetPasswordUser.username}`);
+      setShowResetPasswordModal(false);
+      setResetPasswordUser(null);
+      setNewPassword('');
+      setConfirmNewPassword('');
+    } catch (err) {
+      console.error('Error resetting password:', err);
+      toast.error('Failed to reset password');
+    }
+  };
+
+  const handleResetPasswordCancel = () => {
+    setShowResetPasswordModal(false);
+    setResetPasswordUser(null);
+    setNewPassword('');
+    setConfirmNewPassword('');
   };
 
   const filteredUsers = users.filter(user =>
@@ -721,6 +771,19 @@ const UserManagement: React.FC = () => {
                           </svg>
                         </button>
                       )}
+                      {canPerformAction('changePasswords') && (user.role === 'operator' || user.role === 'supervisor') && (
+                        <button
+                          className="action-btn reset-password"
+                          onClick={() => handleResetPasswordClick(user)}
+                          title="Reset Password"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke="currentColor" strokeWidth="2"/>
+                            <circle cx="12" cy="16" r="1" stroke="currentColor" strokeWidth="2"/>
+                            <path d="M7 11V7a5 5 0 0110 0v4" stroke="currentColor" strokeWidth="2"/>
+                          </svg>
+                        </button>
+                      )}
                       {canPerformAction('delete', 'user') && (
                         <button
                           className="action-btn delete"
@@ -750,6 +813,68 @@ const UserManagement: React.FC = () => {
         message={confirmDialog.message}
         type={confirmDialog.type}
       />
+
+      {/* Reset Password Modal */}
+      {showResetPasswordModal && resetPasswordUser && (
+        <div className="modal-overlay" onClick={handleResetPasswordCancel}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Reset Password</h3>
+              <button className="modal-close" onClick={handleResetPasswordCancel}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                  <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label htmlFor="reset-username">Username</label>
+                <input
+                  type="text"
+                  id="reset-username"
+                  value={resetPasswordUser.username}
+                  disabled
+                  className="form-input"
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="new-password">New Password *</label>
+                <input
+                  type="password"
+                  id="new-password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Enter new password"
+                  className="form-input"
+                  autoFocus
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="confirm-password">Confirm New Password *</label>
+                <input
+                  type="password"
+                  id="confirm-password"
+                  value={confirmNewPassword}
+                  onChange={(e) => setConfirmNewPassword(e.target.value)}
+                  placeholder="Confirm new password"
+                  className="form-input"
+                />
+              </div>
+              <div className="password-requirements">
+                <small>Password must be at least 6 characters long</small>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn-secondary" onClick={handleResetPasswordCancel}>
+                Cancel
+              </button>
+              <button className="btn-primary" onClick={handleResetPasswordSubmit}>
+                Reset Password
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

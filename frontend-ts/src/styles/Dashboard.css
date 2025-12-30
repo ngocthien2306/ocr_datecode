@@ -1402,6 +1402,14 @@ body.dark-mode .status-badge.inactive {
   background: #d1fae5;
 }
 
+.action-btn.reset-password {
+  color: #f59e0b;
+}
+
+.action-btn.reset-password:hover {
+  background: #fef3c7;
+}
+
 /* Load Button - Prominent style */
 .action-btn.load-btn {
   color: white;
@@ -2086,6 +2094,20 @@ body.dark-mode .setting-item input[type="number"]:disabled {
   color: #111827;
 }
 
+.dashboard-container .modal-body,
+.modal-body {
+  margin-bottom: 24px;
+}
+
+.dashboard-container .modal-footer,
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+}
+
 .dashboard-container .form-group,
 .form-group {
   margin-bottom: 20px;
@@ -2156,6 +2178,13 @@ body.dark-mode .setting-item input[type="number"]:disabled {
   font-size: 12px;
   margin-top: 4px;
   font-weight: 500;
+}
+
+.dashboard-container .password-requirements,
+.password-requirements {
+  color: #6b7280;
+  font-size: 12px;
+  margin-top: 4px;
 }
 
 /* Disabled submit button */

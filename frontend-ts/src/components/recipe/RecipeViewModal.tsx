@@ -1,6 +1,6 @@
 import React from 'react';
 import type { Receipt } from '@/types';
-import './RecipeViewModal.css';
+import '@/styles/RecipeViewModal.css';
 
 interface RecipeViewModalProps {
   isOpen: boolean;

@@ -350,7 +350,20 @@ export interface AppSettings {
   dailyReport: boolean;
 }
 
-// ==================== Fabric.js Types ====================
+// ==================== Receipt Load Types ====================
+export interface ReceiptLoad {
+  id: string;
+  recipe_id: string;
+  loaded_by: string;
+  loaded_by_full_name?: string;
+  loaded_at: string;
+  loaded_at_local?: string;
+  metadata?: {
+    name: string;
+    product_code: string;
+    [key: string]: any;
+  };
+}
 export interface FabricObject {
   type: string;
   left: number;

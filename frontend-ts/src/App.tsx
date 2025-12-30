@@ -15,8 +15,18 @@ export default function SuntechAutomation() {
     // Check if user is already logged in
     return !!localStorage.getItem('access_token');
   });
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const [username, setUsername] = useState(() => {
+    // Load remembered username if exists
+    return localStorage.getItem('remembered_username') || '';
+  });
+  const [password, setPassword] = useState(() => {
+    // Load remembered password if exists
+    return localStorage.getItem('remembered_password') || '';
+  });
+  const [rememberDevice, setRememberDevice] = useState(() => {
+    // Check if device was remembered
+    return !!localStorage.getItem('remembered_username');
+  });
   const [loginError, setLoginError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showLoginLoading, setShowLoginLoading] = useState(false);
@@ -29,6 +39,17 @@ export default function SuntechAutomation() {
 
     return () => clearInterval(interval);
   }, []);
+
+  const handleRememberDeviceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const isChecked = e.target.checked;
+    setRememberDevice(isChecked);
+    
+    // If unchecking remember device, clear stored credentials
+    if (!isChecked) {
+      localStorage.removeItem('remembered_username');
+      localStorage.removeItem('remembered_password');
+    }
+  };
 
   const getProductImage = (productNumber: number) => {
     return `product${currentSession}/${productNumber}.png`;
@@ -45,6 +66,15 @@ export default function SuntechAutomation() {
       // Save token and user info
       localStorage.setItem('access_token', response.access_token);
       localStorage.setItem('user', JSON.stringify(response.user));
+
+      // Handle remember device
+      if (rememberDevice) {
+        localStorage.setItem('remembered_username', username);
+        localStorage.setItem('remembered_password', password);
+      } else {
+        localStorage.removeItem('remembered_username');
+        localStorage.removeItem('remembered_password');
+      }
 
       console.log('Login successful:', response.user);
       
@@ -75,9 +105,15 @@ export default function SuntechAutomation() {
     const savedMode = localStorage.getItem('appThemeMode');
     setIsLightMode(savedMode ? savedMode === 'light' : true);
 
-    // Reset form
-    setUsername('');
-    setPassword('');
+    // Load remembered credentials if they exist
+    const rememberedUsername = localStorage.getItem('remembered_username') || '';
+    const rememberedPassword = localStorage.getItem('remembered_password') || '';
+    const hasRememberedCredentials = !!rememberedUsername;
+
+    // Reset form with remembered credentials if available
+    setUsername(rememberedUsername);
+    setPassword(rememberedPassword);
+    setRememberDevice(hasRememberedCredentials);
     setLoginError('');
 
     setIsLoggedIn(false);
@@ -656,18 +692,31 @@ export default function SuntechAutomation() {
                 </div>
                 
                 <div className="flex items-center justify-between text-sm">
-                  <label className="flex items-center gap-3 cursor-pointer group">
-                    <input type="checkbox" className={`w-5 h-5 rounded border-2 cursor-pointer ${
-                      isLightMode
-                        ? 'border-gray-300 bg-gray-50 checked:bg-blue-500 checked:border-blue-500'
-                        : 'border-slate-600 bg-slate-900 checked:bg-blue-500 checked:border-blue-500'
-                    }`}/>
-                    <span className={`transition-colors ${
-                      isLightMode
-                        ? 'text-gray-600 group-hover:text-gray-800'
-                        : 'text-gray-400 group-hover:text-gray-300'
-                    }`}>Remember Device</span>
-                  </label>
+                  <div className="flex flex-col gap-1">
+                    <label className="flex items-center gap-3 cursor-pointer group">
+                      <input 
+                        type="checkbox" 
+                        checked={rememberDevice}
+                        onChange={handleRememberDeviceChange}
+                        className={`w-5 h-5 rounded border-2 cursor-pointer ${
+                        isLightMode
+                          ? 'border-gray-300 bg-gray-50 checked:bg-blue-500 checked:border-blue-500'
+                          : 'border-slate-600 bg-slate-900 checked:bg-blue-500 checked:border-blue-500'
+                      }`}/>
+                      <span className={`transition-colors ${
+                        isLightMode
+                          ? 'text-gray-600 group-hover:text-gray-800'
+                          : 'text-gray-400 group-hover:text-gray-300'
+                      }`}>Remember Device</span>
+                    </label>
+                    {rememberDevice && localStorage.getItem('remembered_username') && (
+                      <span className={`text-xs ml-8 ${
+                        isLightMode ? 'text-green-600' : 'text-green-400'
+                      }`}>
+                        ✓ Device remembered
+                      </span>
+                    )}
+                  </div>
                   <a href="#" className={`transition-colors font-medium ${
                     isLightMode
                       ? 'text-blue-600 hover:text-blue-700'
