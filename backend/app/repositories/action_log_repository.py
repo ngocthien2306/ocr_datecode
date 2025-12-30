@@ -1,6 +1,8 @@
 from motor.motor_asyncio import AsyncIOMotorCollection
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+from app.core.config import settings
 from bson import ObjectId
 from app.models.action_log import ActionLogCreate, ActionLogResponse, ActionLogInDB
 
@@ -12,6 +14,8 @@ class ActionLogRepository:
     async def create_action_log(self, action_log: ActionLogCreate) -> ActionLogResponse:
         """Create a new action log entry"""
         action_log_dict = action_log.model_dump()
+        # Store timestamps in UTC (best practice). We'll convert to configured
+        # local timezone when returning results to API callers.
         action_log_dict["timestamp"] = datetime.utcnow()
 
         result = await self.collection.insert_one(action_log_dict)
@@ -52,9 +56,17 @@ class ActionLogRepository:
         cursor = self.collection.find(query).sort("timestamp", -1).skip(skip).limit(limit)
         action_logs = await cursor.to_list(length=None)
 
-        # Convert ObjectId to string for each log
+        # Convert ObjectId to string for each log and convert timestamps to
+        # the configured local timezone for presentation.
+        tz = ZoneInfo(settings.TIMEZONE)
         for log in action_logs:
             log["_id"] = str(log["_id"])
+            ts = log.get("timestamp")
+            if isinstance(ts, datetime):
+                # If naive, assume it's UTC; make it aware then convert.
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                log["timestamp"] = ts.astimezone(tz)
 
         return [ActionLogResponse(**log) for log in action_logs]
 
@@ -64,9 +76,14 @@ class ActionLogRepository:
             action_log = await self.collection.find_one({"_id": ObjectId(action_log_id)})
         except:
             return None
-        
+
         if action_log:
             action_log["_id"] = str(action_log["_id"])
+            ts = action_log.get("timestamp")
+            if isinstance(ts, datetime):
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                action_log["timestamp"] = ts.astimezone(ZoneInfo(settings.TIMEZONE))
             return ActionLogResponse(**action_log)
         return None
 
@@ -80,9 +97,15 @@ class ActionLogRepository:
         cursor = self.collection.find({"user_id": user_id}).sort("timestamp", -1).skip(skip).limit(limit)
         action_logs = await cursor.to_list(length=None)
 
-        # Convert ObjectId to string for each log
+        # Convert ObjectId to string for each log and convert timestamps
+        tz = ZoneInfo(settings.TIMEZONE)
         for log in action_logs:
             log["_id"] = str(log["_id"])
+            ts = log.get("timestamp")
+            if isinstance(ts, datetime):
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                log["timestamp"] = ts.astimezone(tz)
 
         return [ActionLogResponse(**log) for log in action_logs]
 
@@ -91,8 +114,14 @@ class ActionLogRepository:
         cursor = self.collection.find().sort("timestamp", -1).limit(limit)
         action_logs = await cursor.to_list(length=None)
 
-        # Convert ObjectId to string for each log
+        # Convert ObjectId to string for each log and convert timestamps
+        tz = ZoneInfo(settings.TIMEZONE)
         for log in action_logs:
             log["_id"] = str(log["_id"])
+            ts = log.get("timestamp")
+            if isinstance(ts, datetime):
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                log["timestamp"] = ts.astimezone(tz)
 
         return [ActionLogResponse(**log) for log in action_logs]
