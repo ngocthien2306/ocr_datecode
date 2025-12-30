@@ -32,7 +32,8 @@
   align-items: center;
   justify-content: center;
   gap: 40px;
-  transform: translateY(-100px);
+  transform: none !important;
+  transition: none !important;
 }
 
 /* Factory Header */
@@ -483,4 +484,16 @@
 @keyframes industrialPistonMove {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-15px); }
+}
+
+/* Fix for dashboard-main overlay mode */
+.recipe-loading-overlay.dashboard-main-only .industrial-container {
+  transform: none !important;
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+}
+
+.recipe-loading-overlay.dashboard-main-only .recipe-loading-container {
+  transform: none !important;
+  padding-top: 60px;
 }

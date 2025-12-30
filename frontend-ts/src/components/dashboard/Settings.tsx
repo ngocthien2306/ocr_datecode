@@ -18,6 +18,13 @@ interface SettingsState {
   settingsLoading: string;
   logsLoading: string;
 
+  // Recipe Loading Template (for handleLoadReceipt animation)
+  recipeLoadTemplate: string;
+  recipeLoadOverlayMode: 'fullscreen' | 'dashboard-main';
+
+  // Page Loading Overlay Mode
+  pageLoadingOverlayMode: 'fullscreen' | 'dashboard-main';
+
   // Loading Background
   loadingBackground: string;
   loadingBackgroundOpacity: number;
@@ -68,6 +75,9 @@ const Settings: React.FC = () => {
     historicalLoading: 'historical',
     settingsLoading: 'settings',
     logsLoading: 'logs',
+    recipeLoadTemplate: 'ocr-scanner',
+    recipeLoadOverlayMode: 'fullscreen',
+    pageLoadingOverlayMode: 'fullscreen',
     loadingBackground: 'background1',
     loadingBackgroundOpacity: 0.2,
     camera1Enabled: true,
@@ -100,6 +110,21 @@ const Settings: React.FC = () => {
       }
     });
 
+    const savedRecipeTemplate = localStorage.getItem('recipeLoadTemplate');
+    if (savedRecipeTemplate) {
+      loadedSettings.recipeLoadTemplate = savedRecipeTemplate;
+    }
+
+    const savedOverlayMode = localStorage.getItem('recipeLoadOverlayMode');
+    if (savedOverlayMode) {
+      loadedSettings.recipeLoadOverlayMode = savedOverlayMode as 'fullscreen' | 'dashboard-main';
+    }
+
+    const savedPageOverlayMode = localStorage.getItem('pageLoadingOverlayMode');
+    if (savedPageOverlayMode) {
+      loadedSettings.pageLoadingOverlayMode = savedPageOverlayMode as 'fullscreen' | 'dashboard-main';
+    }
+
     const savedBackground = localStorage.getItem('loadingBackground');
     const savedOpacity = localStorage.getItem('loadingBackgroundOpacity');
     if (savedBackground) {
@@ -121,6 +146,27 @@ const Settings: React.FC = () => {
       localStorage.setItem(key, value as string);
       window.dispatchEvent(new CustomEvent('tabLoadingChanged', {
         detail: { tab: key, template: value }
+      }));
+    }
+
+    if (key === 'recipeLoadTemplate') {
+      localStorage.setItem('recipeLoadTemplate', value as string);
+      window.dispatchEvent(new CustomEvent('recipeLoadTemplateChanged', {
+        detail: { template: value }
+      }));
+    }
+
+    if (key === 'recipeLoadOverlayMode') {
+      localStorage.setItem('recipeLoadOverlayMode', value as string);
+      window.dispatchEvent(new CustomEvent('recipeLoadOverlayModeChanged', {
+        detail: { mode: value }
+      }));
+    }
+
+    if (key === 'pageLoadingOverlayMode') {
+      localStorage.setItem('pageLoadingOverlayMode', value as string);
+      window.dispatchEvent(new CustomEvent('pageLoadingOverlayModeChanged', {
+        detail: { mode: value }
       }));
     }
 
@@ -219,6 +265,50 @@ const Settings: React.FC = () => {
           </div>
         </div>
 
+        {/* Recipe Load Animation Template */}
+        <div className="settings-section">
+          <h2>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12Z" stroke="currentColor" strokeWidth="2"/>
+              <path d="M12 7V12L15 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Recipe Load Animation
+          </h2>
+          <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '20px' }}>
+            Choose the animation displayed when loading a recipe configuration
+          </p>
+          <div className="settings-grid">
+            <div className="setting-item">
+              <label>Recipe Load Template</label>
+              <select
+                value={settings.recipeLoadTemplate}
+                onChange={(e) => handleChange('recipeLoadTemplate', e.target.value)}
+              >
+                <option value="ocr-scanner">OCR Scanner - Text recognition scanning</option>
+                <option value="camera-vision">Camera Vision - Grid-based vision system</option>
+                <option value="barcode-scanner">Barcode Scanner - Laser barcode detection</option>
+                <option value="neural-network">Neural Network - AI processing visualization</option>
+                <option value="qr-detector">QR Detector - QR code detection system</option>
+                <option value="industrial-factory">Industrial Factory - Gear system with LED indicators</option>
+              </select>
+            </div>
+
+            <div className="setting-item">
+              <label>Loading Overlay Mode</label>
+              <select
+                value={settings.recipeLoadOverlayMode}
+                onChange={(e) => handleChange('recipeLoadOverlayMode', e.target.value as 'fullscreen' | 'dashboard-main')}
+              >
+                <option value="fullscreen">Full Screen - Cover entire window</option>
+                <option value="dashboard-main">Dashboard Main - Cover content area only</option>
+              </select>
+              <p style={{ fontSize: '12px', color: '#9ca3af', marginTop: '8px', fontStyle: 'italic' }}>
+                Choose where the loading animation appears when loading a recipe
+              </p>
+            </div>
+          </div>
+        </div>
+
         {/* Loading Templates */}
         <div className="settings-section">
           <h2>
@@ -226,11 +316,29 @@ const Settings: React.FC = () => {
               <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
               <path d="M12 1v6m0 6v6M1 12h6m6 0h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
             </svg>
-            Loading Animation Templates
+            Page Loading Animation Templates
           </h2>
           <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '20px' }}>
             Customize loading animations for each section of the application
           </p>
+
+          {/* Page Loading Overlay Mode */}
+          <div className="settings-grid" style={{ marginBottom: '24px' }}>
+            <div className="setting-item">
+              <label>Page Loading Overlay Mode</label>
+              <select
+                value={settings.pageLoadingOverlayMode}
+                onChange={(e) => handleChange('pageLoadingOverlayMode', e.target.value as 'fullscreen' | 'dashboard-main')}
+              >
+                <option value="fullscreen">Full Screen - Cover entire window</option>
+                <option value="dashboard-main">Dashboard Main - Cover content area only</option>
+              </select>
+              <p style={{ fontSize: '12px', color: '#9ca3af', marginTop: '8px', fontStyle: 'italic' }}>
+                Choose where page loading animations appear (affects all page transitions)
+              </p>
+            </div>
+          </div>
+
           <div className="settings-grid">
             <div className="setting-item">
               <label>Dashboard Loading</label>

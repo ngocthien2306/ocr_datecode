@@ -3,11 +3,12 @@ import { receiptsAPI } from '@/services/api';
 import RecipeFormModal from './RecipeFormModal';
 import RecipeViewModal from './RecipeViewModal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import RecipeLoadingTemplates from '@/components/shared/RecipeLoadingTemplates';
 import { useToast } from '@/contexts/ToastContext';
 import { useUser } from '@/contexts/UserContext';
 import type { Receipt } from '@/types';
 import '@/styles/HistoryView.css';
-import '@/styles/IndustrialLoading.css';
+import '@/styles/RecipeLoadingAnimations.css';
 import { API_BASE_URL } from '@/config/api';
 
 interface ConfirmDialogState {
@@ -71,6 +72,8 @@ export default function Receipts() {
   // Loading animation state
   const [showLoadingAnimation, setShowLoadingAnimation] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(0);
+  const [loadingTemplate, setLoadingTemplate] = useState<'ocr-scanner' | 'camera-vision' | 'barcode-scanner' | 'neural-network' | 'qr-detector' | 'industrial-factory'>('ocr-scanner');
+  const [overlayMode, setOverlayMode] = useState<'fullscreen' | 'dashboard-main'>('fullscreen');
   const [isLightMode] = useState(() => {
     const savedMode = localStorage.getItem('appThemeMode');
     return savedMode ? savedMode === 'light' : true;
@@ -82,6 +85,37 @@ export default function Receipts() {
     loadReceipts();
     loadStatistics();
   }, [currentPage]);
+
+  // Load recipe template and overlay mode from settings
+  useEffect(() => {
+    const savedTemplate = localStorage.getItem('recipeLoadTemplate');
+    if (savedTemplate) {
+      setLoadingTemplate(savedTemplate as any);
+    }
+
+    const savedOverlayMode = localStorage.getItem('recipeLoadOverlayMode');
+    console.log('Receipts - Loading overlay mode from localStorage:', savedOverlayMode);
+    if (savedOverlayMode) {
+      setOverlayMode(savedOverlayMode as 'fullscreen' | 'dashboard-main');
+    }
+
+    const handleTemplateChange = (event: CustomEvent) => {
+      setLoadingTemplate(event.detail.template as any);
+    };
+
+    const handleOverlayModeChange = (event: CustomEvent) => {
+      console.log('Receipts - Overlay mode changed via event:', event.detail.mode);
+      setOverlayMode(event.detail.mode as 'fullscreen' | 'dashboard-main');
+    };
+
+    window.addEventListener('recipeLoadTemplateChanged', handleTemplateChange as EventListener);
+    window.addEventListener('recipeLoadOverlayModeChanged', handleOverlayModeChange as EventListener);
+
+    return () => {
+      window.removeEventListener('recipeLoadTemplateChanged', handleTemplateChange as EventListener);
+      window.removeEventListener('recipeLoadOverlayModeChanged', handleOverlayModeChange as EventListener);
+    };
+  }, []);
 
   const loadReceipts = async () => {
     try {
@@ -556,82 +590,14 @@ export default function Receipts() {
 
   return (
     <div className="receipts-page" style={{ position: 'relative' }}>
-      {/* Industrial Loading Animation */}
+      {/* Recipe Loading Animation */}
       {showLoadingAnimation && (
-        <div className={`industrial-loading-overlay ${isLightMode ? 'light-mode' : ''}`}>
-          <div className="industrial-container">
-            {/* Header */}
-            <div className="factory-header">
-              <div className="factory-title">PROCESSING</div>
-              <div className="factory-subtitle">Loading Recipe Configuration</div>
-            </div>
-
-            {/* Gear System */}
-            <div className="gear-system">
-              <div className="gear gear-1">
-                <div className="gear-center"></div>
-              </div>
-              <div className="chain chain-1"></div>
-              <div className="gear gear-2">
-                <div className="gear-center"></div>
-              </div>
-              <div className="chain chain-2"></div>
-              <div className="gear gear-3">
-                <div className="gear-center"></div>
-              </div>
-            </div>
-
-            {/* Progress Bar */}
-            <div className="industrial-progress">
-              <div className="progress-frame">
-                <div className="progress-track">
-                  <div className="progress-fill" style={{ width: `${loadingProgress}%` }}></div>
-                  <div className="progress-scanner"></div>
-                  <div className="progress-percentage">{loadingProgress}%</div>
-                </div>
-              </div>
-
-              <div className="status-info">
-                <div className="status-text">
-                  <div className="status-indicator"></div>
-                  <span>LOADING RECIPE DATA</span>
-                </div>
-                <div className="time-remaining">~3s remaining</div>
-              </div>
-
-              {/* LED Indicators */}
-              <div className="led-panel">
-                <div className="led-item">
-                  <div className={`led ${loadingProgress >= 20 ? 'active' : ''}`}></div>
-                  <div className="led-label">Init</div>
-                </div>
-                <div className="led-item">
-                  <div className={`led ${loadingProgress >= 40 ? 'active' : ''}`}></div>
-                  <div className="led-label">Load</div>
-                </div>
-                <div className="led-item">
-                  <div className={`led ${loadingProgress >= 60 ? 'active' : ''}`}></div>
-                  <div className="led-label">Config</div>
-                </div>
-                <div className="led-item">
-                  <div className={`led ${loadingProgress >= 80 ? 'active' : ''}`}></div>
-                  <div className="led-label">Setup</div>
-                </div>
-                <div className="led-item">
-                  <div className={`led ${loadingProgress >= 100 ? 'active' : ''}`}></div>
-                  <div className="led-label">Ready</div>
-                </div>
-              </div>
-            </div>
-
-            {/* Hydraulic Pistons */}
-            <div className="pistons">
-              <div className="piston piston-1"></div>
-              <div className="piston piston-2"></div>
-              <div className="piston piston-3"></div>
-            </div>
-          </div>
-        </div>
+        <RecipeLoadingTemplates
+          template={loadingTemplate}
+          progress={loadingProgress}
+          isLightMode={isLightMode}
+          overlayMode={overlayMode}
+        />
       )}
 
       <div className="section-header">

@@ -1,0 +1,862 @@
+/* ===========================
+   Recipe Loading Animations
+   5 Machine Vision / OCR themed templates
+   =========================== */
+
+/* Common overlay styles */
+.recipe-loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(30, 41, 59, 0.98));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  animation: instantFadeIn 0.15s ease-out;
+  backdrop-filter: blur(10px);
+}
+
+/* Dashboard main only mode - overlays only the content area */
+.recipe-loading-overlay.dashboard-main-only {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  z-index: 100;
+  /* Remove transform to prevent layout shift */
+  transform: none !important;
+}
+
+/* Fix industrial container shift in dashboard-main mode */
+.recipe-loading-overlay.dashboard-main-only .industrial-container {
+  transform: none !important;
+  margin-top: 0 !important;
+}
+
+.recipe-loading-overlay.dashboard-main-only .recipe-loading-container {
+  transform: none !important;
+  padding-top: 80px;
+}
+
+.recipe-loading-overlay.light-mode {
+  background: linear-gradient(135deg, rgba(241, 245, 249, 0.98), rgba(226, 232, 240, 0.98));
+}
+
+@keyframes instantFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.recipe-loading-container {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 30px;
+  padding: 40px;
+  transform: none !important;
+  transition: none !important;
+}
+
+/* ===========================
+   Template 1: OCR Scanner
+   =========================== */
+.ocr-scanner-animation {
+  width: 500px;
+  height: 350px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 30px;
+}
+
+.ocr-title {
+  font-size: 32px;
+  font-weight: 800;
+  color: #3b82f6;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  text-shadow: 0 0 20px rgba(59, 130, 246, 0.6);
+  animation: ocrPulse 2s ease-in-out infinite;
+}
+
+.light-mode .ocr-title {
+  color: #2563eb;
+  text-shadow: 0 0 20px rgba(37, 99, 235, 0.4);
+}
+
+@keyframes ocrPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.8; transform: scale(1.05); }
+}
+
+.ocr-scan-area {
+  position: relative;
+  width: 400px;
+  height: 200px;
+  background: #0f172a;
+  border: 3px solid #3b82f6;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow:
+    0 0 30px rgba(59, 130, 246, 0.5),
+    inset 0 0 50px rgba(59, 130, 246, 0.1);
+}
+
+.light-mode .ocr-scan-area {
+  background: #f1f5f9;
+  border: 3px solid #2563eb;
+  box-shadow:
+    0 0 30px rgba(37, 99, 235, 0.3),
+    inset 0 0 50px rgba(37, 99, 235, 0.05);
+}
+
+/* Simulated text lines */
+.ocr-text-lines {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.ocr-text-line {
+  height: 12px;
+  background: #1e293b;
+  border-radius: 4px;
+  opacity: 0.3;
+}
+
+.light-mode .ocr-text-line {
+  background: #cbd5e1;
+}
+
+.ocr-text-line:nth-child(1) { width: 80%; }
+.ocr-text-line:nth-child(2) { width: 95%; }
+.ocr-text-line:nth-child(3) { width: 70%; }
+.ocr-text-line:nth-child(4) { width: 85%; }
+.ocr-text-line:nth-child(5) { width: 90%; }
+
+/* Scanning beam */
+.ocr-scan-beam {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 4px;
+  background: linear-gradient(90deg, transparent, #3b82f6, transparent);
+  box-shadow: 0 0 20px #3b82f6, 0 0 40px #3b82f6;
+  animation: ocrBeamScan 2s linear infinite;
+}
+
+.light-mode .ocr-scan-beam {
+  background: linear-gradient(90deg, transparent, #2563eb, transparent);
+  box-shadow: 0 0 20px #2563eb, 0 0 40px #2563eb;
+}
+
+@keyframes ocrBeamScan {
+  0% { transform: translateY(0); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(200px); opacity: 0; }
+}
+
+/* Corner brackets */
+.ocr-corner {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  border: 3px solid #3b82f6;
+}
+
+.light-mode .ocr-corner {
+  border: 3px solid #2563eb;
+}
+
+.ocr-corner.top-left {
+  top: 10px;
+  left: 10px;
+  border-right: none;
+  border-bottom: none;
+  animation: cornerPulse 2s ease-in-out infinite;
+}
+
+.ocr-corner.top-right {
+  top: 10px;
+  right: 10px;
+  border-left: none;
+  border-bottom: none;
+  animation: cornerPulse 2s ease-in-out infinite 0.5s;
+}
+
+.ocr-corner.bottom-left {
+  bottom: 10px;
+  left: 10px;
+  border-right: none;
+  border-top: none;
+  animation: cornerPulse 2s ease-in-out infinite 1s;
+}
+
+.ocr-corner.bottom-right {
+  bottom: 10px;
+  right: 10px;
+  border-left: none;
+  border-top: none;
+  animation: cornerPulse 2s ease-in-out infinite 1.5s;
+}
+
+@keyframes cornerPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; box-shadow: 0 0 10px currentColor; }
+}
+
+.ocr-progress-text {
+  font-size: 18px;
+  font-weight: 700;
+  color: #64748b;
+  letter-spacing: 2px;
+}
+
+.light-mode .ocr-progress-text {
+  color: #475569;
+}
+
+/* ===========================
+   Template 2: Camera Vision Grid
+   =========================== */
+.camera-vision-animation {
+  width: 500px;
+  height: 350px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 30px;
+}
+
+.vision-title {
+  font-size: 28px;
+  font-weight: 800;
+  color: #10b981;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  text-shadow: 0 0 20px rgba(16, 185, 129, 0.6);
+}
+
+.light-mode .vision-title {
+  color: #059669;
+  text-shadow: 0 0 20px rgba(5, 150, 105, 0.4);
+}
+
+.vision-grid-container {
+  position: relative;
+  width: 400px;
+  height: 250px;
+}
+
+.vision-grid {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(6, 1fr);
+  gap: 4px;
+  padding: 20px;
+  background: #0f172a;
+  border: 3px solid #10b981;
+  border-radius: 12px;
+  box-shadow: 0 0 40px rgba(16, 185, 129, 0.4);
+}
+
+.light-mode .vision-grid {
+  background: #f1f5f9;
+  border: 3px solid #059669;
+  box-shadow: 0 0 40px rgba(5, 150, 105, 0.3);
+}
+
+.vision-cell {
+  background: #1e293b;
+  border-radius: 2px;
+  opacity: 0.2;
+  animation: visionCellScan 3s ease-in-out infinite;
+}
+
+.light-mode .vision-cell {
+  background: #cbd5e1;
+}
+
+.vision-cell:nth-child(8n+1) { animation-delay: 0s; }
+.vision-cell:nth-child(8n+2) { animation-delay: 0.1s; }
+.vision-cell:nth-child(8n+3) { animation-delay: 0.2s; }
+.vision-cell:nth-child(8n+4) { animation-delay: 0.3s; }
+.vision-cell:nth-child(8n+5) { animation-delay: 0.4s; }
+.vision-cell:nth-child(8n+6) { animation-delay: 0.5s; }
+.vision-cell:nth-child(8n+7) { animation-delay: 0.6s; }
+.vision-cell:nth-child(8n) { animation-delay: 0.7s; }
+
+@keyframes visionCellScan {
+  0%, 100% { opacity: 0.2; background: #1e293b; }
+  20% { opacity: 1; background: #10b981; box-shadow: 0 0 8px #10b981; }
+  40%, 100% { opacity: 0.2; }
+}
+
+.light-mode .vision-cell {
+  animation-name: visionCellScanLight;
+}
+
+@keyframes visionCellScanLight {
+  0%, 100% { opacity: 0.2; background: #cbd5e1; }
+  20% { opacity: 1; background: #059669; box-shadow: 0 0 8px #059669; }
+  40%, 100% { opacity: 0.2; }
+}
+
+/* Crosshair */
+.vision-crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100px;
+  height: 100px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.vision-crosshair::before,
+.vision-crosshair::after {
+  content: '';
+  position: absolute;
+  background: #10b981;
+  box-shadow: 0 0 10px #10b981;
+}
+
+.light-mode .vision-crosshair::before,
+.light-mode .vision-crosshair::after {
+  background: #059669;
+  box-shadow: 0 0 10px #059669;
+}
+
+.vision-crosshair::before {
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  transform: translateY(-50%);
+}
+
+.vision-crosshair::after {
+  top: 0;
+  left: 50%;
+  width: 2px;
+  height: 100%;
+  transform: translateX(-50%);
+}
+
+/* ===========================
+   Template 3: Barcode Scanner
+   =========================== */
+.barcode-scanner-animation {
+  width: 500px;
+  height: 350px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 30px;
+}
+
+.barcode-title {
+  font-size: 28px;
+  font-weight: 800;
+  color: #f59e0b;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  text-shadow: 0 0 20px rgba(245, 158, 11, 0.6);
+}
+
+.light-mode .barcode-title {
+  color: #d97706;
+  text-shadow: 0 0 20px rgba(217, 119, 6, 0.4);
+}
+
+.barcode-container {
+  position: relative;
+  width: 350px;
+  height: 200px;
+  background: #0f172a;
+  border: 3px solid #f59e0b;
+  border-radius: 8px;
+  padding: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 40px rgba(245, 158, 11, 0.4);
+}
+
+.light-mode .barcode-container {
+  background: #f1f5f9;
+  border: 3px solid #d97706;
+  box-shadow: 0 0 40px rgba(217, 119, 6, 0.3);
+}
+
+.barcode-lines {
+  display: flex;
+  gap: 4px;
+  height: 120px;
+  align-items: flex-end;
+}
+
+.barcode-bar {
+  width: 6px;
+  background: #1e293b;
+  border-radius: 2px;
+  animation: barcodePulse 1.5s ease-in-out infinite;
+}
+
+.light-mode .barcode-bar {
+  background: #334155;
+}
+
+.barcode-bar:nth-child(1) { height: 80%; animation-delay: 0s; }
+.barcode-bar:nth-child(2) { height: 100%; animation-delay: 0.1s; }
+.barcode-bar:nth-child(3) { height: 60%; animation-delay: 0.2s; }
+.barcode-bar:nth-child(4) { height: 90%; animation-delay: 0.3s; }
+.barcode-bar:nth-child(5) { height: 70%; animation-delay: 0.4s; }
+.barcode-bar:nth-child(6) { height: 100%; animation-delay: 0.5s; }
+.barcode-bar:nth-child(7) { height: 85%; animation-delay: 0.6s; }
+.barcode-bar:nth-child(8) { height: 95%; animation-delay: 0.7s; }
+.barcode-bar:nth-child(9) { height: 75%; animation-delay: 0.8s; }
+.barcode-bar:nth-child(10) { height: 100%; animation-delay: 0.9s; }
+.barcode-bar:nth-child(11) { height: 65%; animation-delay: 1s; }
+.barcode-bar:nth-child(12) { height: 90%; animation-delay: 1.1s; }
+
+@keyframes barcodePulse {
+  0%, 100% { background: #1e293b; opacity: 0.5; }
+  50% { background: #f59e0b; opacity: 1; box-shadow: 0 0 10px #f59e0b; }
+}
+
+.light-mode .barcode-bar {
+  animation-name: barcodePulseLight;
+}
+
+@keyframes barcodePulseLight {
+  0%, 100% { background: #334155; opacity: 0.5; }
+  50% { background: #d97706; opacity: 1; box-shadow: 0 0 10px #d97706; }
+}
+
+/* Laser scanner line */
+.barcode-laser {
+  position: absolute;
+  top: 50%;
+  left: 20px;
+  right: 20px;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, #ef4444, transparent);
+  box-shadow: 0 0 20px #ef4444;
+  transform: translateY(-50%);
+  animation: laserScan 2s ease-in-out infinite;
+}
+
+@keyframes laserScan {
+  0%, 100% { opacity: 0; transform: translateY(-80px); }
+  10% { opacity: 1; }
+  50% { transform: translateY(-50%); }
+  90% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(30px); }
+}
+
+.barcode-status {
+  position: absolute;
+  bottom: 10px;
+  font-size: 12px;
+  color: #64748b;
+  letter-spacing: 1px;
+  font-weight: 600;
+}
+
+/* ===========================
+   Template 4: Neural Network
+   =========================== */
+.neural-network-animation {
+  width: 500px;
+  height: 350px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 30px;
+}
+
+.neural-title {
+  font-size: 28px;
+  font-weight: 800;
+  color: #8b5cf6;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  text-shadow: 0 0 20px rgba(139, 92, 246, 0.6);
+}
+
+.light-mode .neural-title {
+  color: #7c3aed;
+  text-shadow: 0 0 20px rgba(124, 58, 237, 0.4);
+}
+
+.neural-network-container {
+  position: relative;
+  width: 450px;
+  height: 250px;
+  background: #0f172a;
+  border: 3px solid #8b5cf6;
+  border-radius: 12px;
+  padding: 30px;
+  box-shadow: 0 0 40px rgba(139, 92, 246, 0.4);
+}
+
+.light-mode .neural-network-container {
+  background: #f1f5f9;
+  border: 3px solid #7c3aed;
+  box-shadow: 0 0 40px rgba(124, 58, 237, 0.3);
+}
+
+.neural-layers {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 100%;
+}
+
+.neural-layer {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  justify-content: center;
+}
+
+.neural-node {
+  width: 30px;
+  height: 30px;
+  background: #1e293b;
+  border: 3px solid #8b5cf6;
+  border-radius: 50%;
+  box-shadow: inset 0 0 10px rgba(139, 92, 246, 0.3);
+  animation: neuralPulse 2s ease-in-out infinite;
+}
+
+.light-mode .neural-node {
+  background: #e2e8f0;
+  border: 3px solid #7c3aed;
+  box-shadow: inset 0 0 10px rgba(124, 58, 237, 0.2);
+}
+
+.neural-layer:nth-child(1) .neural-node:nth-child(1) { animation-delay: 0s; }
+.neural-layer:nth-child(1) .neural-node:nth-child(2) { animation-delay: 0.2s; }
+.neural-layer:nth-child(1) .neural-node:nth-child(3) { animation-delay: 0.4s; }
+.neural-layer:nth-child(2) .neural-node:nth-child(1) { animation-delay: 0.6s; }
+.neural-layer:nth-child(2) .neural-node:nth-child(2) { animation-delay: 0.8s; }
+.neural-layer:nth-child(2) .neural-node:nth-child(3) { animation-delay: 1s; }
+.neural-layer:nth-child(2) .neural-node:nth-child(4) { animation-delay: 1.2s; }
+.neural-layer:nth-child(3) .neural-node:nth-child(1) { animation-delay: 1.4s; }
+.neural-layer:nth-child(3) .neural-node:nth-child(2) { animation-delay: 1.6s; }
+.neural-layer:nth-child(3) .neural-node:nth-child(3) { animation-delay: 1.8s; }
+
+@keyframes neuralPulse {
+  0%, 100% {
+    background: #1e293b;
+    box-shadow: inset 0 0 10px rgba(139, 92, 246, 0.3);
+  }
+  50% {
+    background: #8b5cf6;
+    box-shadow:
+      0 0 20px rgba(139, 92, 246, 0.8),
+      inset 0 0 20px rgba(255, 255, 255, 0.3);
+  }
+}
+
+.light-mode .neural-node {
+  animation-name: neuralPulseLight;
+}
+
+@keyframes neuralPulseLight {
+  0%, 100% {
+    background: #e2e8f0;
+    box-shadow: inset 0 0 10px rgba(124, 58, 237, 0.2);
+  }
+  50% {
+    background: #7c3aed;
+    box-shadow:
+      0 0 20px rgba(124, 58, 237, 0.6),
+      inset 0 0 20px rgba(255, 255, 255, 0.4);
+  }
+}
+
+/* Connection lines (simplified - use SVG for better connections) */
+.neural-connections {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.neural-connection-line {
+  position: absolute;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #8b5cf6, transparent);
+  opacity: 0;
+  animation: connectionPulse 3s ease-in-out infinite;
+}
+
+.light-mode .neural-connection-line {
+  background: linear-gradient(90deg, transparent, #7c3aed, transparent);
+}
+
+@keyframes connectionPulse {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.6; }
+}
+
+/* ===========================
+   Template 5: QR Code Detector
+   =========================== */
+.qr-detector-animation {
+  width: 500px;
+  height: 350px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 30px;
+}
+
+.qr-title {
+  font-size: 28px;
+  font-weight: 800;
+  color: #ec4899;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  text-shadow: 0 0 20px rgba(236, 72, 153, 0.6);
+}
+
+.light-mode .qr-title {
+  color: #db2777;
+  text-shadow: 0 0 20px rgba(219, 39, 119, 0.4);
+}
+
+.qr-detector-container {
+  position: relative;
+  width: 300px;
+  height: 250px;
+}
+
+.qr-frame {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 200px;
+  height: 200px;
+  border: 3px solid #ec4899;
+  border-radius: 8px;
+  animation: qrFramePulse 2s ease-in-out infinite;
+}
+
+.light-mode .qr-frame {
+  border: 3px solid #db2777;
+}
+
+@keyframes qrFramePulse {
+  0%, 100% {
+    width: 200px;
+    height: 200px;
+    opacity: 1;
+    box-shadow: 0 0 20px rgba(236, 72, 153, 0.4);
+  }
+  50% {
+    width: 220px;
+    height: 220px;
+    opacity: 0.8;
+    box-shadow: 0 0 40px rgba(236, 72, 153, 0.6);
+  }
+}
+
+/* QR Corner markers */
+.qr-corner-marker {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  border: 4px solid #ec4899;
+  animation: qrCornerScan 2s ease-in-out infinite;
+}
+
+.light-mode .qr-corner-marker {
+  border: 4px solid #db2777;
+}
+
+.qr-corner-marker.tl {
+  top: 20px;
+  left: 20px;
+  border-right: none;
+  border-bottom: none;
+  animation-delay: 0s;
+}
+
+.qr-corner-marker.tr {
+  top: 20px;
+  right: 20px;
+  border-left: none;
+  border-bottom: none;
+  animation-delay: 0.5s;
+}
+
+.qr-corner-marker.bl {
+  bottom: 20px;
+  left: 20px;
+  border-right: none;
+  border-top: none;
+  animation-delay: 1s;
+}
+
+.qr-corner-marker.br {
+  bottom: 20px;
+  right: 20px;
+  border-left: none;
+  border-top: none;
+  animation-delay: 1.5s;
+}
+
+@keyframes qrCornerScan {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+    box-shadow: 0 0 20px currentColor;
+  }
+}
+
+/* QR Grid pattern */
+.qr-grid {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 150px;
+  height: 150px;
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  grid-template-rows: repeat(9, 1fr);
+  gap: 3px;
+}
+
+.qr-pixel {
+  background: #1e293b;
+  border-radius: 2px;
+  opacity: 0.3;
+  animation: qrPixelFlicker 1.5s ease-in-out infinite;
+}
+
+.light-mode .qr-pixel {
+  background: #334155;
+}
+
+.qr-pixel:nth-child(3n) { animation-delay: 0s; }
+.qr-pixel:nth-child(3n+1) { animation-delay: 0.2s; }
+.qr-pixel:nth-child(3n+2) { animation-delay: 0.4s; }
+
+@keyframes qrPixelFlicker {
+  0%, 100% { opacity: 0.3; background: #1e293b; }
+  50% { opacity: 1; background: #ec4899; }
+}
+
+.light-mode .qr-pixel {
+  animation-name: qrPixelFlickerLight;
+}
+
+@keyframes qrPixelFlickerLight {
+  0%, 100% { opacity: 0.3; background: #334155; }
+  50% { opacity: 1; background: #db2777; }
+}
+
+.qr-status-text {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 14px;
+  font-weight: 700;
+  color: #64748b;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+/* ===========================
+   Common Progress Display
+   =========================== */
+.recipe-progress-display {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15px;
+  margin-top: 20px;
+}
+
+.recipe-progress-bar {
+  width: 400px;
+  height: 8px;
+  background: #1e293b;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.light-mode .recipe-progress-bar {
+  background: #cbd5e1;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.recipe-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #60a5fa);
+  border-radius: 10px;
+  transition: width 0.3s ease-out;
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+}
+
+.light-mode .recipe-progress-fill {
+  background: linear-gradient(90deg, #2563eb, #3b82f6);
+  box-shadow: 0 0 10px rgba(37, 99, 235, 0.3);
+}
+
+.recipe-progress-percent {
+  font-size: 24px;
+  font-weight: 800;
+  color: #3b82f6;
+  letter-spacing: 2px;
+}
+
+.light-mode .recipe-progress-percent {
+  color: #2563eb;
+}
+
+.recipe-status-message {
+  font-size: 14px;
+  font-weight: 600;
+  color: #64748b;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.light-mode .recipe-status-message {
+  color: #475569;
+}

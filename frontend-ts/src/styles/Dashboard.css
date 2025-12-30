@@ -3055,6 +3055,16 @@ body.dark-mode .camera-form-view .cancel-button:hover {
   animation: fadeIn 0.3s ease-out;
 }
 
+/* Dashboard main only mode - overlay only content area */
+.loading-overlay.dashboard-main-only {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  z-index: 100 !important;
+}
+
 .loading-container {
   display: flex;
   flex-direction: column;
@@ -3427,6 +3437,10 @@ body.dark-mode .camera-form-view .cancel-button:hover {
 body.dark-mode .loading-overlay {
   background: rgba(17, 24, 39, 0.98);
   backdrop-filter: blur(10px);
+}
+
+body.dark-mode .loading-overlay.dashboard-main-only {
+  background: rgba(17, 24, 39, 0.98);
 }
 
 body.dark-mode .loading-title {

@@ -83,6 +83,9 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       opacity: parseFloat(localStorage.getItem('loadingBackgroundOpacity') || '0.2')
     };
   });
+  const [pageLoadingOverlayMode, setPageLoadingOverlayMode] = useState<'fullscreen' | 'dashboard-main'>(() => {
+    return (localStorage.getItem('pageLoadingOverlayMode') as 'fullscreen' | 'dashboard-main') || 'fullscreen';
+  });
   const [darkMode, setDarkMode] = useState(() => {
     const savedMode = localStorage.getItem('appThemeMode');
     const isDark = savedMode === 'dark';
@@ -516,12 +519,19 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       });
     };
 
+    const handlePageOverlayModeChange = (event: any) => {
+      const { mode } = event.detail;
+      setPageLoadingOverlayMode(mode);
+    };
+
     window.addEventListener('tabLoadingChanged', handleTemplateChange);
     window.addEventListener('loadingBackgroundChanged', handleBackgroundChange);
+    window.addEventListener('pageLoadingOverlayModeChanged', handlePageOverlayModeChange);
 
     return () => {
       window.removeEventListener('tabLoadingChanged', handleTemplateChange);
       window.removeEventListener('loadingBackgroundChanged', handleBackgroundChange);
+      window.removeEventListener('pageLoadingOverlayModeChanged', handlePageOverlayModeChange);
     };
   }, []);
 
@@ -996,9 +1006,9 @@ export default function Dashboard({ onLogout }: DashboardProps) {
         </aside>
 
         {/* Main Dashboard */}
-        <main className="dashboard-main">
+        <main className="dashboard-main" style={{ position: 'relative' }}>
           {isLoading ? (
-            <div className="loading-overlay">
+            <div className={`loading-overlay ${pageLoadingOverlayMode === 'dashboard-main' ? 'dashboard-main-only' : ''}`}>
               <div className="loading-container">
                 {renderLoadingTemplate(loadingTemplates[currentSection] || 'camera-vision')}
               </div>
