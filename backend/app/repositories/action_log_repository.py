@@ -1,6 +1,7 @@
 from motor.motor_asyncio import AsyncIOMotorCollection
 from typing import List, Optional
 from datetime import datetime
+from bson import ObjectId
 from app.models.action_log import ActionLogCreate, ActionLogResponse, ActionLogInDB
 
 
@@ -48,12 +49,21 @@ class ActionLogRepository:
         cursor = self.collection.find(query).sort("timestamp", -1).skip(skip).limit(limit)
         action_logs = await cursor.to_list(length=None)
 
+        # Convert ObjectId to string for each log
+        for log in action_logs:
+            log["_id"] = str(log["_id"])
+
         return [ActionLogResponse(**log) for log in action_logs]
 
     async def get_action_log_by_id(self, action_log_id: str) -> Optional[ActionLogResponse]:
         """Get a specific action log by ID"""
-        action_log = await self.collection.find_one({"_id": action_log_id})
+        try:
+            action_log = await self.collection.find_one({"_id": ObjectId(action_log_id)})
+        except:
+            return None
+        
         if action_log:
+            action_log["_id"] = str(action_log["_id"])
             return ActionLogResponse(**action_log)
         return None
 
@@ -67,11 +77,19 @@ class ActionLogRepository:
         cursor = self.collection.find({"user_id": user_id}).sort("timestamp", -1).skip(skip).limit(limit)
         action_logs = await cursor.to_list(length=None)
 
+        # Convert ObjectId to string for each log
+        for log in action_logs:
+            log["_id"] = str(log["_id"])
+
         return [ActionLogResponse(**log) for log in action_logs]
 
     async def get_recent_action_logs(self, limit: int = 20) -> List[ActionLogResponse]:
         """Get the most recent action logs"""
         cursor = self.collection.find().sort("timestamp", -1).limit(limit)
         action_logs = await cursor.to_list(length=None)
+
+        # Convert ObjectId to string for each log
+        for log in action_logs:
+            log["_id"] = str(log["_id"])
 
         return [ActionLogResponse(**log) for log in action_logs]

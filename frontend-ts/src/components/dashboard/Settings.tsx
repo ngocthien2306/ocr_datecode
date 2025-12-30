@@ -16,6 +16,7 @@ interface SettingsState {
   camerasLoading: string;
   historicalLoading: string;
   settingsLoading: string;
+  logsLoading: string;
 
   // Loading Background
   loadingBackground: string;
@@ -66,6 +67,7 @@ const Settings: React.FC = () => {
     camerasLoading: 'cameras',
     historicalLoading: 'historical',
     settingsLoading: 'settings',
+    logsLoading: 'logs',
     loadingBackground: 'background1',
     loadingBackgroundOpacity: 0.2,
     camera1Enabled: true,
@@ -88,7 +90,7 @@ const Settings: React.FC = () => {
   });
 
   useEffect(() => {
-    const tabKeys = ['dashboard', 'users', 'receipts', 'cameras', 'historical', 'settings'];
+    const tabKeys = ['dashboard', 'users', 'receipts', 'cameras', 'historical', 'settings', 'logs'];
     const loadedSettings: Partial<SettingsState> = {};
 
     tabKeys.forEach(tab => {
@@ -359,6 +361,29 @@ const Settings: React.FC = () => {
                 <option value="cameras">Multi-Lens System</option>
                 <option value="historical">Timeline History</option>
                 <option value="settings">Gear System</option>
+              </select>
+            </div>
+
+            <div className="setting-item">
+              <label>Logs Loading</label>
+              <select 
+                value={settings.logsLoading} 
+                onChange={(e) => handleChange('logsLoading', e.target.value)}
+              >
+                <option value="camera-vision">Camera Vision System</option>
+                <option value="spinner">Classic Spinner</option>
+                <option value="pulse">Pulse Wave</option>
+                <option value="radar">Radar Scan</option>
+                <option value="grid">Grid Matrix</option>
+                <option value="circuit">Circuit Board</option>
+                <option value="barcode">Barcode Scanner</option>
+                <option value="ocr">OCR Text Recognition</option>
+                <option value="users">Users Network</option>
+                <option value="receipts">Receipt Scanner</option>
+                <option value="cameras">Multi-Lens System</option>
+                <option value="historical">Timeline History</option>
+                <option value="settings">Gear System</option>
+                <option value="logs">Activity Logs</option>
               </select>
             </div>
           </div>

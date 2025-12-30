@@ -4,6 +4,7 @@ import UserManagement from './UserManagement';
 import Receipts from '../recipe/Receipts';
 import Historical from './Historical';
 import Settings from './Settings';
+import Logs from './Logs';
 import CameraManagement from '../camera/CameraManagement';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { camerasAPI } from '@/services/api';
@@ -27,9 +28,9 @@ interface DashboardProps {
   onLogout: () => void;
 }
 
-type Section = 'dashboard' | 'users' | 'receipts' | 'cameras' | 'historical' | 'settings';
+type Section = 'dashboard' | 'users' | 'receipts' | 'cameras' | 'historical' | 'settings' | 'logs';
 
-type LoadingTemplate = 'camera-vision' | 'users' | 'receipts' | 'cameras' | 'historical' | 'settings' | 'spinner' | 'pulse' | 'radar' | 'grid' | 'circuit' | 'barcode' | 'ocr' | 'dots' | 'waves';
+type LoadingTemplate = 'camera-vision' | 'users' | 'receipts' | 'cameras' | 'historical' | 'settings' | 'logs' | 'spinner' | 'pulse' | 'radar' | 'grid' | 'circuit' | 'barcode' | 'ocr' | 'dots' | 'waves';
 
 interface LoadingTemplates {
   dashboard: LoadingTemplate;
@@ -38,6 +39,7 @@ interface LoadingTemplates {
   cameras: LoadingTemplate;
   historical: LoadingTemplate;
   settings: LoadingTemplate;
+  logs: LoadingTemplate;
 }
 
 interface LoadingBackground {
@@ -70,7 +72,8 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       receipts: (localStorage.getItem('receiptsLoading') as LoadingTemplate) || 'receipts',
       cameras: (localStorage.getItem('camerasLoading') as LoadingTemplate) || 'cameras',
       historical: (localStorage.getItem('historicalLoading') as LoadingTemplate) || 'historical',
-      settings: (localStorage.getItem('settingsLoading') as LoadingTemplate) || 'settings'
+      settings: (localStorage.getItem('settingsLoading') as LoadingTemplate) || 'settings',
+      logs: (localStorage.getItem('logsLoading') as LoadingTemplate) || 'logs'
     };
   });
   const [loadingBackground, setLoadingBackground] = useState<LoadingBackground>(() => {
@@ -424,6 +427,26 @@ export default function Dashboard({ onLogout }: DashboardProps) {
             <div className="loading-text-container">
               <div className="loading-title">SETTINGS</div>
               <div className="loading-subtitle">CONFIGURING...</div>
+            </div>
+          </>
+        );
+
+      case 'logs':
+        return (
+          <>
+            <div className="logs-loader">
+              <div className="logs-container">
+                <div className="log-entry"></div>
+                <div className="log-entry"></div>
+                <div className="log-entry"></div>
+                <div className="log-entry"></div>
+                <div className="log-entry"></div>
+                <div className="log-scroll-indicator"></div>
+              </div>
+            </div>
+            <div className="loading-text-container">
+              <div className="loading-title">LOGS</div>
+              <div className="loading-subtitle">LOADING AUDIT TRAIL...</div>
             </div>
           </>
         );
@@ -876,6 +899,19 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
           <h3>Action</h3>
           <nav className="action-menu">
+            {canAccessPage('logs') && (
+              <a
+                href="#logs"
+                className={`nav-item ${currentSection === 'logs' ? 'active' : ''}`}
+                onClick={(e) => { e.preventDefault(); handleSectionChange('logs'); }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                  <path d="M9 12H15M9 16H15M17 21H7C5.89543 21 5 20.1046 5 19V5C5 3.89543 5.89543 3 7 3H12L19 10V19C19 20.1046 18.1046 21 17 21Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M12 3V10H19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                Logs
+              </a>
+            )}
             {canAccessPage('settings') && (
               <a
                 href="#settings"
@@ -1185,6 +1221,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           {currentSection === 'receipts' && <Receipts />}
           {currentSection === 'cameras' && <CameraManagement />}
           {currentSection === 'historical' && <Historical />}
+          {currentSection === 'logs' && <Logs />}
           {currentSection === 'settings' && <Settings />}
             </>
           )}

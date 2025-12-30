@@ -378,6 +378,47 @@ export interface FabricObject {
   strokeWidth?: number;
 }
 
+// ==================== Action Log Types ====================
+export type ActionType =
+  | 'login'
+  | 'logout'
+  | 'create_user'
+  | 'update_user'
+  | 'delete_user'
+  | 'reset_user_password'
+  | 'create_recipe'
+  | 'update_recipe'
+  | 'delete_recipe'
+  | 'load_recipe'
+  | 'create_camera'
+  | 'update_camera'
+  | 'delete_camera';
+
+export type ResourceType = 'user' | 'recipe' | 'camera' | 'auth';
+
+export interface ActionLog {
+  id: string;
+  user_id: string;
+  username: string;
+  action_type: ActionType;
+  resource_type: ResourceType;
+  resource_id?: string;
+  description: string;
+  old_value?: Record<string, any>;
+  new_value?: Record<string, any>;
+  ip_address?: string;
+  user_agent?: string;
+  timestamp: string;
+}
+
+export interface ActionLogFilters {
+  user_id?: string;
+  action_type?: ActionType;
+  resource_type?: ResourceType;
+  start_date?: string;
+  end_date?: string;
+}
+
 export interface CanvasState {
   objects: FabricObject[];
   background?: string;
