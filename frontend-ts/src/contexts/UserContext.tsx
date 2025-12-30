@@ -105,7 +105,7 @@ export const UserProvider: React.FC<UserProviderProps> = ({ children }) => {
     return requiredPermission ? hasPermission(requiredPermission) : true;
   };
 
-  const canPerformAction = (action: string, resource?: string): boolean => {
+  const canPerformAction = (action: string, _resource?: string): boolean => {
     const actionPermissions: Record<string, string> = {
       create: 'create_receipt',
       update: 'update_receipt',

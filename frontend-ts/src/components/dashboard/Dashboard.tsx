@@ -8,6 +8,7 @@ import Logs from './Logs';
 import CameraManagement from '../camera/CameraManagement';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { camerasAPI } from '@/services/api';
+import { actionLogsAPI, usersAPI } from '@/services/api';
 import { receiptsAPI } from '@/services/recipes';
 import { API_BASE_URL } from '@/config/api';
 import { useUser } from '@/contexts/UserContext';
@@ -110,6 +111,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   });
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [recentLoads, setRecentLoads] = useState<ReceiptLoad[]>([]);
+  const [recentMembers, setRecentMembers] = useState<{username: string; full_name?: string; last_seen?: string; avatar_url?: string | null}[]>([]);
 
   const camera1ChartRef = useRef<HTMLCanvasElement>(null);
   const camera2ChartRef = useRef<HTMLCanvasElement>(null);
@@ -479,6 +481,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   useEffect(() => {
     fetchCameras();
     fetchRecentLoads();
+    fetchRecentMembers();
   }, []);
 
   // Load current user info
@@ -560,6 +563,52 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       setRecentLoads(response.items as ReceiptLoad[]);
     } catch (err) {
       console.error('Error fetching recent loads:', err);
+    }
+  };
+
+  const fetchRecentMembers = async (topK = 4) => {
+    try {
+      // get recent action logs (backend returns timestamps in configured TZ)
+      const logs = await actionLogsAPI.getRecentActionLogs(50);
+      // filter for login actions and dedupe by username preserving order
+      const seen = new Set<string>();
+      const members: {username: string; last_seen?: string}[] = [];
+      for (const l of logs) {
+        if (l.action_type !== 'login') continue;
+        if (!l.username) continue;
+        if (seen.has(l.username)) continue;
+        seen.add(l.username);
+        members.push({ username: l.username, last_seen: l.timestamp });
+        if (members.length >= topK) break;
+      }
+
+      // fetch simple user list to get full names and avatars (optional)
+      let fullnameMap: Record<string, string> = {};
+      let avatarMap: Record<string, string | undefined> = {};
+      try {
+        const users = await usersAPI.getSimpleUsers(0, 200);
+        users.forEach(u => {
+          if (u.username) {
+            fullnameMap[u.username] = u.full_name || '';
+            // normalize empty string to undefined
+            avatarMap[u.username] = u.avatar_url && u.avatar_url.length > 0 ? u.avatar_url : undefined;
+          }
+        });
+      } catch (e) {
+        // ignore permission errors
+      }
+
+      // format last_seen nicely
+      const formatted = members.map(m => ({
+        username: m.username,
+        full_name: fullnameMap[m.username] || undefined,
+        avatar_url: avatarMap[m.username] || undefined,
+        last_seen: m.last_seen ? (new Date(m.last_seen)).toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }) : undefined
+      }));
+
+      setRecentMembers(formatted);
+    } catch (err) {
+      console.error('Error fetching recent members:', err);
     }
   };
 
@@ -1141,30 +1190,45 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                   {/* Recent Members */}
                   <div className="right-card recent-members">
                     <h3>Recent Visited Members</h3>
-                    <div className="member-list">
-                      <div className="member-item">
-                        <img src="https://images.pexels.com/photos/30004320/pexels-photo-30004320.jpeg?auto=compress&cs=tinysrgb&h=350" alt="User" className="member-avatar" />
-                        <div className="member-info">
-                          <h4>Corey Rhiel Madsen</h4>
-                          <span>Today, 4:23 AM</span>
-                        </div>
+                      <div className="member-list">
+                        {recentMembers.length === 0 ? (
+                          <div style={{ padding: '1rem', textAlign: 'center', color: '#6b7280' }}>
+                            No recent members
+                          </div>
+                        ) : (
+                          recentMembers.map((m) => (
+                            <div key={m.username} className="member-item">
+                              {m.avatar_url! ? (
+                                <img
+                                  src={`${API_BASE_URL}${m.avatar_url}`}
+                                  alt={m.full_name || m.username}
+                                  className="member-avatar"
+                                  style={{ width: 48, height: 48, borderRadius: 30, objectFit: 'cover' }}
+                                />
+                              ) : (
+                                <div className="member-avatar" style={{ width: 48, height: 48, borderRadius: 30, background: '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#374151' }}>
+                                  {(m.full_name && m.full_name.charAt(0)) || m.username.charAt(0)}
+                                </div>
+                              )}
+                              <div className="member-info">
+                                <h4>{m.username}{m.full_name ? ` — ${m.full_name}` : ''}</h4>
+                                <span>{m.last_seen ? `Last seen ${m.last_seen}` : ''}</span>
+                              </div>
+                            </div>
+                          ))
+                        )}
                       </div>
-                      <div className="member-item">
-                        <img src="https://images.pexels.com/photos/30004322/pexels-photo-30004322.jpeg?auto=compress&cs=tinysrgb&h=350" alt="User" className="member-avatar" />
-                        <div className="member-info">
-                          <h4>Gretchen Calzoni</h4>
-                          <span>Today, 8:30 AM</span>
-                        </div>
-                      </div>
-                      <div className="member-item">
-                        <img src="https://images.pexels.com/photos/30004493/pexels-photo-30004493.jpeg?auto=compress&cs=tinysrgb&h=350" alt="User" className="member-avatar" />
-                        <div className="member-info">
-                          <h4>Charlie George</h4>
-                          <span>Today, 2:56 PM</span>
-                        </div>
-                      </div>
-                    </div>
-                    <a href="#" className="view-all">View all Members</a>
+                      {currentUser?.role === 'admin' ? (
+                        <a
+                          href="#"
+                          className="view-all"
+                          onClick={(e) => { e.preventDefault(); handleSectionChange('users'); }}
+                        >
+                          View all Members
+                        </a>
+                      ) : (
+                        <span className="view-all" style={{ color: '#9ca3af', cursor: 'default', pointerEvents: 'none' }}>View all Members</span>
+                      )}
                   </div>
 
                   {/* Recent Recipes */}

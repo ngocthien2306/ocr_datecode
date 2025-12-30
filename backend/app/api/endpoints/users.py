@@ -147,7 +147,7 @@ async def get_simple_users(
     user_repo = UserRepository(db)
     users = await user_repo.get_all_users(skip=skip, limit=limit)
     return [
-        {"id": u.id, "username": u.username, "full_name": u.full_name}
+        {"id": u.id, "username": u.username, "full_name": u.full_name, "avatar_url": u.avatar_url}
         for u in users
     ]
 
