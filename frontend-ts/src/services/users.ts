@@ -22,6 +22,11 @@ export const usersAPI = {
     return response.data;
   },
 
+  getSimpleUsers: async (skip = 0, limit = 200): Promise<{id: string; username: string; full_name?: string;}[]> => {
+    const response = await api.get<{id: string; username: string; full_name?: string;}[]>('/users/simple', { params: { skip, limit } });
+    return response.data;
+  },
+
   createUser: async (userData: UserCreate): Promise<User> => {
     const response = await api.post<User>('/users/', userData);
     return response.data;

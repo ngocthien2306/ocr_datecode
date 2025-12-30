@@ -11,6 +11,7 @@ export const actionLogsAPI = {
 
     if (filters) {
       if (filters.user_id) params.user_id = filters.user_id;
+      if ((filters as any).username) params.username = (filters as any).username;
       if (filters.action_type) params.action_type = filters.action_type;
       if (filters.resource_type) params.resource_type = filters.resource_type;
       if (filters.start_date) params.start_date = filters.start_date;

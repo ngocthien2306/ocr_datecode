@@ -131,6 +131,27 @@ async def get_all_users(
     return [UserResponse(**user.model_dump()) for user in users]
 
 
+@router.get("/simple", response_model=List[dict])
+async def get_simple_users(
+    skip: int = 0,
+    limit: int = 100,
+    db=Depends(get_database),
+    current_user: UserInDB = Depends(require_supervisor)
+):
+    """
+    Return a lightweight list of users for selection controls.
+
+    Permissions: Supervisor and Admin only.
+    Returns items with `id`, `username`, and `full_name`.
+    """
+    user_repo = UserRepository(db)
+    users = await user_repo.get_all_users(skip=skip, limit=limit)
+    return [
+        {"id": u.id, "username": u.username, "full_name": u.full_name}
+        for u in users
+    ]
+
+
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
     user_id: str,

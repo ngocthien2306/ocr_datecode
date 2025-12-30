@@ -413,6 +413,7 @@ export interface ActionLog {
 
 export interface ActionLogFilters {
   user_id?: string;
+  username?: string;
   action_type?: ActionType;
   resource_type?: ResourceType;
   start_date?: string;

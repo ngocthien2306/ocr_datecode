@@ -24,6 +24,7 @@ class ActionLogRepository:
         skip: int = 0,
         limit: int = 100,
         user_id: Optional[str] = None,
+        username: Optional[str] = None,
         action_type: Optional[str] = None,
         resource_type: Optional[str] = None,
         start_date: Optional[datetime] = None,
@@ -34,6 +35,8 @@ class ActionLogRepository:
 
         if user_id:
             query["user_id"] = user_id
+        if username:
+            query["username"] = username
         if action_type:
             query["action_type"] = action_type
         if resource_type:

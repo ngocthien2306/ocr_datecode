@@ -16,6 +16,7 @@ async def get_action_logs(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     user_id: Optional[str] = None,
+    username: Optional[str] = None,
     action_type: Optional[str] = None,
     resource_type: Optional[str] = None,
     start_date: Optional[datetime] = None,
@@ -31,11 +32,13 @@ async def get_action_logs(
     if current_user.role != "admin":
         # Non-admin users can only see their own action logs
         user_id = current_user.id
+        username = current_user.username
 
     action_logs = await action_log_repo.get_action_logs(
         skip=skip,
         limit=limit,
         user_id=user_id,
+        username=username,
         action_type=action_type,
         resource_type=resource_type,
         start_date=start_date,

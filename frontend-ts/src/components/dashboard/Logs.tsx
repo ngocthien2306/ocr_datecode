@@ -3,6 +3,7 @@ import { actionLogsAPI } from '@/services/api';
 import { useToast } from '@/contexts/ToastContext';
 import { IndustrialLoading } from '@/components/ui/IndustrialLoading';
 import type { ActionLog, ActionLogFilters, ActionType, ResourceType } from '@/types';
+import { usersAPI } from '@/services/api';
 
 interface LogsProps {}
 
@@ -16,6 +17,8 @@ const Logs: React.FC<LogsProps> = () => {
   const [selectedLog, setSelectedLog] = useState<ActionLog | null>(null);
   const [loadingTemplate, setLoadingTemplate] = useState('logs');
   const [expandedDetails, setExpandedDetails] = useState<Set<string>>(new Set());
+  const [userOptions, setUserOptions] = useState<{id: string; username: string; full_name?: string}[]>([]);
+  const [usernameToFullname, setUsernameToFullname] = useState<Record<string, string>>({});
   const [viewMode, setViewMode] = useState<'list' | 'detail'>('list');
   const logsPerPage = 50;
 
@@ -83,7 +86,27 @@ const Logs: React.FC<LogsProps> = () => {
     };
   }, []);
 
+  useEffect(() => {
+    // fetch simple user list for select; ignore errors (e.g., insufficient permissions)
+    let mounted = true;
+    (async () => {
+      try {
+        const users = await usersAPI.getSimpleUsers();
+        if (!mounted) return;
+        setUserOptions(users);
+        const map: Record<string, string> = {};
+        users.forEach(u => { if (u.username) map[u.username] = u.full_name || ''; });
+        setUsernameToFullname(map);
+      } catch (err) {
+        // silently ignore (will mean select is empty for users without permission)
+        console.debug('Could not load simple users for select', err);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
   const handleFilterChange = (field: keyof ActionLogFilters, value: string) => {
+    console.log('Filter change:', field, value);
     setFilters(prev => ({
       ...prev,
       [field]: value || undefined
@@ -261,7 +284,7 @@ const Logs: React.FC<LogsProps> = () => {
 
       {/* Filters */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4 mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Action Type
@@ -274,6 +297,24 @@ const Logs: React.FC<LogsProps> = () => {
               <option value="">All</option>
               {Object.entries(actionTypeLabels).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              User
+            </label>
+            <select
+              value={(filters as any).username || ''}
+              onChange={(e) => handleFilterChange('username' as keyof ActionLogFilters, e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+            >
+              <option value="">All</option>
+              {userOptions.map(u => (
+                <option key={u.id} value={u.username}>
+                  {u.username}{u.full_name ? ` — ${u.full_name}` : ''}
+                </option>
               ))}
             </select>
           </div>
@@ -376,7 +417,7 @@ const Logs: React.FC<LogsProps> = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 align-top">
                       <div className="font-medium">{log.username}</div>
-                      <div className="text-gray-500 dark:text-gray-400 text-xs">{log.user_id}</div>
+                      <div className="text-gray-500 dark:text-gray-400 text-xs mt-1">{usernameToFullname[log.username] ?? '-'}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap align-top">
                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getActionTypeColor(log.action_type)}`}>

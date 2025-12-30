@@ -706,11 +706,19 @@ async def update_recipe(
     user_agent = request.headers.get("user-agent")
 
     # Prepare old and new values for logging
+    # Include commonly-used recipe fields and convert complex objects to primitives
     old_value = {
-        "name": existing_recipe.name,
-        "product_code": existing_recipe.product_code,
-        "description": existing_recipe.description,
-        "is_active": existing_recipe.is_active
+        "name": getattr(existing_recipe, 'name', None),
+        "product_code": getattr(existing_recipe, 'product_code', None),
+        "description": getattr(existing_recipe, 'description', None),
+        "is_active": getattr(existing_recipe, 'is_active', None),
+        "delay_reject": getattr(existing_recipe, 'delay_reject', None),
+        "cameras": _to_primitive(getattr(existing_recipe, 'cameras', None)),
+        "camera_templates": _to_primitive(getattr(existing_recipe, 'camera_templates', None)),
+        "camera_settings": _to_primitive(getattr(existing_recipe, 'camera_settings', None)),
+        "model_thresholds": _to_primitive(getattr(existing_recipe, 'model_thresholds', None)),
+        "template_config": _to_primitive(getattr(existing_recipe, 'template_config', None)),
+        "roi_config": _to_primitive(getattr(existing_recipe, 'roi_config', None))
     }
 
     new_value = {}
