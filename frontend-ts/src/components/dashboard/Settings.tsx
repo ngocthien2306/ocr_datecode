@@ -368,8 +368,8 @@ const Settings: React.FC = () => {
                 <option value="neural-network">Neural Network</option>
                 <option value="qr-detector">QR Detector</option>
                 <option value="industrial-factory">Industrial Factory</option>
-                {/* <option value="ai-vision-pipeline">AI Vision Pipeline - 5-step process visualization</option>
-                <option value="neural-processing">Neural Processing - Technical system dashboard</option> */}
+                <option value="ai-vision-pipeline">AI Vision Pipeline</option>
+                <option value="neural-processing">Neural Processing</option>
               </select>
             </div>
 
@@ -393,14 +393,14 @@ const Settings: React.FC = () => {
                 <option value="historical">Timeline History</option>
                 <option value="settings">Gear System</option>
                 <option value="logs">Activity Logs</option>
-                <option value="ocr-scanner">OCR Scanner - Text recognition scanning</option>
-                <option value="camera-vision">Camera Vision - Grid-based vision system</option>
-                <option value="barcode-scanner">Barcode Scanner - Laser barcode detection</option>
-                <option value="neural-network">Neural Network - AI processing visualization</option>
-                <option value="qr-detector">QR Detector - QR code detection system</option>
-                <option value="industrial-factory">Industrial Factory - Gear system with LED indicators</option>
-                {/* <option value="ai-vision-pipeline">AI Vision Pipeline - 5-step process visualization</option>
-                <option value="neural-processing">Neural Processing - Technical system dashboard</option> */}
+                <option value="ocr-scanner">OCR Scanner</option>
+                <option value="camera-vision">Camera Vision</option>
+                <option value="barcode-scanner">Laser barcode</option>
+                <option value="neural-network">Neural Network</option>
+                <option value="qr-detector">QR Detector</option>
+                <option value="industrial-factory">Industrial Factory</option>
+                <option value="ai-vision-pipeline">AI Vision Pipeline</option>
+                <option value="neural-processing">Neural Processing</option>
               </select>
             </div>
 
@@ -424,14 +424,14 @@ const Settings: React.FC = () => {
                 <option value="historical">Timeline History</option>
                 <option value="settings">Gear System</option>
                 <option value="logs">Activity Logs</option>
-                <option value="ocr-scanner">OCR Scanner - Text recognition scanning</option>
-                <option value="camera-vision">Camera Vision - Grid-based vision system</option>
-                <option value="barcode-scanner">Barcode Scanner - Laser barcode detection</option>
-                <option value="neural-network">Neural Network - AI processing visualization</option>
-                <option value="qr-detector">QR Detector - QR code detection system</option>
-                <option value="industrial-factory">Industrial Factory - Gear system with LED indicators</option>
-                {/* <option value="ai-vision-pipeline">AI Vision Pipeline - 5-step process visualization</option>
-                <option value="neural-processing">Neural Processing - Technical system dashboard</option> */}
+                <option value="ocr-scanner">OCR Scanner</option>
+                <option value="camera-vision">Camera Vision</option>
+                <option value="barcode-scanner">Laser barcode</option>
+                <option value="neural-network">Neural Network</option>
+                <option value="qr-detector">QR Detector</option>
+                <option value="industrial-factory">Industrial Factory</option>
+                <option value="ai-vision-pipeline">AI Vision Pipeline</option>
+                <option value="neural-processing">Neural Processing</option>
               </select>
             </div>
 
@@ -455,14 +455,14 @@ const Settings: React.FC = () => {
                 <option value="historical">Timeline History</option>
                 <option value="settings">Gear System</option>
                 <option value="logs">Activity Logs</option>
-                <option value="ocr-scanner">OCR Scanner - Text recognition scanning</option>
-                <option value="camera-vision">Camera Vision - Grid-based vision system</option>
-                <option value="barcode-scanner">Barcode Scanner - Laser barcode detection</option>
-                <option value="neural-network">Neural Network - AI processing visualization</option>
-                <option value="qr-detector">QR Detector - QR code detection system</option>
-                <option value="industrial-factory">Industrial Factory - Gear system with LED indicators</option>
-                {/* <option value="ai-vision-pipeline">AI Vision Pipeline - 5-step process visualization</option>
-                <option value="neural-processing">Neural Processing - Technical system dashboard</option> */}
+                <option value="ocr-scanner">OCR Scanner</option>
+                <option value="camera-vision">Camera Vision</option>
+                <option value="barcode-scanner">Laser barcode</option>
+                <option value="neural-network">Neural Network</option>
+                <option value="qr-detector">QR Detector</option>
+                <option value="industrial-factory">Industrial Factory</option>
+                <option value="ai-vision-pipeline">AI Vision Pipeline</option>
+                <option value="neural-processing">Neural Processing</option>
               </select>
             </div>
 
@@ -486,14 +486,14 @@ const Settings: React.FC = () => {
                 <option value="historical">Timeline History</option>
                 <option value="settings">Gear System</option>
                 <option value="logs">Activity Logs</option>
-                <option value="ocr-scanner">OCR Scanner - Text recognition scanning</option>
-                <option value="camera-vision">Camera Vision - Grid-based vision system</option>
-                <option value="barcode-scanner">Barcode Scanner - Laser barcode detection</option>
-                <option value="neural-network">Neural Network - AI processing visualization</option>
-                <option value="qr-detector">QR Detector - QR code detection system</option>
-                <option value="industrial-factory">Industrial Factory - Gear system with LED indicators</option>
-                {/* <option value="ai-vision-pipeline">AI Vision Pipeline - 5-step process visualization</option>
-                <option value="neural-processing">Neural Processing - Technical system dashboard</option> */}
+                <option value="ocr-scanner">OCR Scanner</option>
+                <option value="camera-vision">Camera Vision</option>
+                <option value="barcode-scanner">Laser barcode</option>
+                <option value="neural-network">Neural Network</option>
+                <option value="qr-detector">QR Detector</option>
+                <option value="industrial-factory">Industrial Factory</option>
+                <option value="ai-vision-pipeline">AI Vision Pipeline</option>
+                <option value="neural-processing">Neural Processing</option>
               </select>
             </div>
 
@@ -517,14 +517,14 @@ const Settings: React.FC = () => {
                 <option value="historical">Timeline History</option>
                 <option value="settings">Gear System</option>
                 <option value="logs">Activity Logs</option>
-                <option value="ocr-scanner">OCR Scanner - Text recognition scanning</option>
-                <option value="camera-vision">Camera Vision - Grid-based vision system</option>
-                <option value="barcode-scanner">Barcode Scanner - Laser barcode detection</option>
-                <option value="neural-network">Neural Network - AI processing visualization</option>
-                <option value="qr-detector">QR Detector - QR code detection system</option>
-                <option value="industrial-factory">Industrial Factory - Gear system with LED indicators</option>
-                {/* <option value="ai-vision-pipeline">AI Vision Pipeline - 5-step process visualization</option>
-                <option value="neural-processing">Neural Processing - Technical system dashboard</option> */}
+                <option value="ocr-scanner">OCR Scanner</option>
+                <option value="camera-vision">Camera Vision</option>
+                <option value="barcode-scanner">Laser barcode</option>
+                <option value="neural-network">Neural Network</option>
+                <option value="qr-detector">QR Detector</option>
+                <option value="industrial-factory">Industrial Factory</option>
+                <option value="ai-vision-pipeline">AI Vision Pipeline</option>
+                <option value="neural-processing">Neural Processing</option>
               </select>
             </div>
 
@@ -548,14 +548,14 @@ const Settings: React.FC = () => {
                 <option value="historical">Timeline History</option>
                 <option value="settings">Gear System</option>
                 <option value="logs">Activity Logs</option>
-                <option value="ocr-scanner">OCR Scanner - Text recognition scanning</option>
-                <option value="camera-vision">Camera Vision - Grid-based vision system</option>
-                <option value="barcode-scanner">Barcode Scanner - Laser barcode detection</option>
-                <option value="neural-network">Neural Network - AI processing visualization</option>
-                <option value="qr-detector">QR Detector - QR code detection system</option>
-                <option value="industrial-factory">Industrial Factory - Gear system with LED indicators</option>
-                {/* <option value="ai-vision-pipeline">AI Vision Pipeline - 5-step process visualization</option>
-                <option value="neural-processing">Neural Processing - Technical system dashboard</option> */}
+                <option value="ocr-scanner">OCR Scanner</option>
+                <option value="camera-vision">Camera Vision</option>
+                <option value="barcode-scanner">Laser barcode</option>
+                <option value="neural-network">Neural Network</option>
+                <option value="qr-detector">QR Detector</option>
+                <option value="industrial-factory">Industrial Factory</option>
+                <option value="ai-vision-pipeline">AI Vision Pipeline</option>
+                <option value="neural-processing">Neural Processing</option>
               </select>
             </div>
           </div>

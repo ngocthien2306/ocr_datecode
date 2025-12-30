@@ -8,6 +8,7 @@ import Logs from './Logs';
 import Documentation from './Documentation';
 import CameraManagement from '../camera/CameraManagement';
 import ConfirmDialog from '../shared/ConfirmDialog';
+import RecipeLoadingTemplates from '../shared/RecipeLoadingTemplates';
 import { camerasAPI } from '@/services/api';
 import { actionLogsAPI, usersAPI } from '@/services/api';
 import { receiptsAPI } from '@/services/recipes';
@@ -32,7 +33,7 @@ interface DashboardProps {
 
 type Section = 'dashboard' | 'users' | 'receipts' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation';
 
-type LoadingTemplate = 'camera-vision' | 'users' | 'receipts' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation' | 'spinner' | 'pulse' | 'radar' | 'grid' | 'circuit' | 'barcode' | 'ocr' | 'dots' | 'waves';
+type LoadingTemplate = 'camera-vision' | 'users' | 'receipts' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation' | 'spinner' | 'pulse' | 'radar' | 'grid' | 'circuit' | 'barcode' | 'ocr' | 'dots' | 'waves' | 'ocr-scanner' | 'barcode-scanner' | 'neural-network' | 'qr-detector' | 'industrial-factory' | 'ai-vision-pipeline' | 'neural-processing';
 
 interface LoadingTemplates {
   dashboard: LoadingTemplate;
@@ -68,6 +69,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   const { canAccessPage } = useUser();
   const [currentSection, setCurrentSection] = useState<Section>('dashboard');
   const [isLoading, setIsLoading] = useState(true);
+  const [loadingProgress, setLoadingProgress] = useState(0);
   const [loadingTemplates, setLoadingTemplates] = useState<LoadingTemplates>(() => {
     return {
       dashboard: (localStorage.getItem('dashboardLoading') as LoadingTemplate) || 'camera-vision',
@@ -503,6 +505,22 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           </>
         );
 
+      case 'ocr-scanner':
+      case 'barcode-scanner':
+      case 'neural-network':
+      case 'qr-detector':
+      case 'industrial-factory':
+      case 'ai-vision-pipeline':
+      case 'neural-processing':
+        return (
+          <RecipeLoadingTemplates
+            template={template}
+            progress={loadingProgress}
+            isLightMode={!darkMode}
+            overlayMode="fullscreen"
+          />
+        );
+
       default:
         return (
           <>
@@ -574,6 +592,26 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       window.removeEventListener('pageLoadingOverlayModeChanged', handlePageOverlayModeChange);
     };
   }, []);
+
+  // Animate loading progress
+  useEffect(() => {
+    if (isLoading) {
+      setLoadingProgress(0);
+      const interval = setInterval(() => {
+        setLoadingProgress(prev => {
+          if (prev >= 95) {
+            clearInterval(interval);
+            return prev;
+          }
+          return prev + Math.random() * 10;
+        });
+      }, 100);
+
+      return () => clearInterval(interval);
+    } else {
+      setLoadingProgress(100);
+    }
+  }, [isLoading]);
 
   const fetchCameras = async () => {
     const startTime = Date.now();
