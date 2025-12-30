@@ -860,3 +860,143 @@
 .light-mode .recipe-status-message {
   color: #475569;
 }
+/* ===========================
+   Placeholder Templates
+   AI Vision Pipeline & Neural Processing
+   =========================== */
+
+.ai-pipeline-placeholder,
+.neural-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 48px;
+  max-width: 500px;
+  margin: 0 auto;
+}
+
+.placeholder-icon {
+  width: 80px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  border-radius: 50%;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.placeholder-icon svg {
+  color: white;
+}
+
+.placeholder-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: #f1f5f9;
+  text-align: center;
+  letter-spacing: 1px;
+}
+
+.light-mode .placeholder-title {
+  color: #0f172a;
+}
+
+.placeholder-subtitle {
+  font-size: 16px;
+  color: #94a3b8;
+  text-align: center;
+  margin-top: -12px;
+}
+
+.light-mode .placeholder-subtitle {
+  color: #64748b;
+}
+
+.placeholder-progress {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.placeholder-bar {
+  width: 100%;
+  height: 8px;
+  background: #1e293b;
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+}
+
+.light-mode .placeholder-bar {
+  background: #e2e8f0;
+}
+
+.placeholder-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+  border-radius: 8px;
+  transition: width 0.3s ease;
+  position: relative;
+}
+
+.placeholder-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.placeholder-percentage {
+  text-align: center;
+  font-size: 32px;
+  font-weight: 700;
+  color: #3b82f6;
+  font-family: 'Courier New', monospace;
+}
+
+.light-mode .placeholder-percentage {
+  color: #2563eb;
+}
+
+.placeholder-note {
+  font-size: 13px;
+  color: #64748b;
+  text-align: center;
+  font-style: italic;
+  margin-top: 8px;
+  padding: 12px 24px;
+  background: rgba(59, 130, 246, 0.1);
+  border-radius: 8px;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.light-mode .placeholder-note {
+  color: #475569;
+  background: rgba(37, 99, 235, 0.1);
+  border-color: rgba(37, 99, 235, 0.2);
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.9;
+  }
+}

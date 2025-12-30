@@ -1,0 +1,684 @@
+/* ===========================
+   Neural Processing Template
+   Technical System Dashboard
+   =========================== */
+
+.neural-processing-container {
+  width: 1400px;
+  max-width: 1500px;
+  padding: 40px;
+}
+
+/* Header */
+.neural-header {
+  text-align: center;
+  margin-bottom: 40px;
+}
+
+.neural-logo {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+.neural-logo-blur {
+  position: absolute;
+  width: 128px;
+  height: 128px;
+  border-radius: 50%;
+  background: #3b82f6;
+  opacity: 0.2;
+  filter: blur(60px);
+}
+
+.neural-logo-icon {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6, #ec4899);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 40px rgba(59, 130, 246, 0.5);
+  animation: pulseGlow 8s ease-in-out infinite;
+}
+
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 40px rgba(59, 130, 246, 0.5); }
+  50% { box-shadow: 0 0 60px rgba(59, 130, 246, 0.8); }
+}
+
+.neural-logo-icon::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 4px solid #3b82f6;
+  border-radius: 16px;
+  animation: ping 8s cubic-bezier(0, 0, 0.2, 1) infinite;
+  opacity: 0.2;
+}
+
+@keyframes ping {
+  75%, 100% {
+    transform: scale(1.2);
+    opacity: 0;
+  }
+}
+
+.neural-logo-icon svg {
+  width: 48px;
+  height: 48px;
+  color: white;
+}
+
+.neural-main-title {
+  font-size: 48px;
+  font-weight: 800;
+  color: #f1f5f9;
+  margin: 0 0 12px 0;
+  letter-spacing: -0.5px;
+}
+
+.light-mode .neural-main-title {
+  color: #0f172a;
+}
+
+.neural-main-subtitle {
+  font-size: 20px;
+  color: #60a5fa;
+  margin: 0;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 1px;
+}
+
+.light-mode .neural-main-subtitle {
+  color: #3b82f6;
+}
+
+/* Main Panel */
+.neural-panel {
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(40px);
+  border-radius: 24px;
+  padding: 40px;
+  border: 1px solid rgba(71, 85, 105, 0.5);
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+}
+
+.light-mode .neural-panel {
+  background: rgba(248, 250, 252, 0.6);
+  border: 1px solid rgba(226, 232, 240, 0.5);
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
+}
+
+/* Progress Section */
+.neural-progress-section {
+  margin-bottom: 40px;
+}
+
+.neural-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.neural-progress-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.neural-status-dot {
+  width: 12px;
+  height: 12px;
+  background: #22c55e;
+  border-radius: 50%;
+  box-shadow: 0 0 16px rgba(34, 197, 94, 0.8);
+  animation: statusPulse 8s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.3); }
+}
+
+.neural-progress-status span {
+  font-size: 20px;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.light-mode .neural-progress-status span {
+  color: #0f172a;
+}
+
+.neural-progress-count {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.neural-progress-count .count {
+  font-size: 18px;
+  color: #64748b;
+  font-family: 'Courier New', monospace;
+}
+
+.neural-progress-count .percentage {
+  font-size: 32px;
+  font-weight: 700;
+  background: linear-gradient(90deg, #60a5fa, #a78bfa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-family: 'Courier New', monospace;
+}
+
+/* Progress Bar */
+.neural-progress-bar-container {
+  position: relative;
+  height: 16px;
+  background: #0f172a;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(71, 85, 105, 0.7);
+  margin-bottom: 8px;
+}
+
+.light-mode .neural-progress-bar-container {
+  background: #e2e8f0;
+  border: 1px solid rgba(203, 213, 225, 0.7);
+}
+
+.neural-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #8b5cf6, #ec4899);
+  border-radius: 12px;
+  transition: width 0.3s ease;
+  position: relative;
+}
+
+.neural-progress-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  animation: flowParticle 8s ease-in-out infinite;
+}
+
+@keyframes flowParticle {
+  0% { transform: translateX(-100%); opacity: 0; }
+  50% { opacity: 1; }
+  100% { transform: translateX(200%); opacity: 0; }
+}
+
+.neural-progress-labels {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 4px;
+}
+
+.neural-progress-labels span {
+  font-size: 12px;
+  color: #64748b;
+  font-family: 'Courier New', monospace;
+}
+
+/* Steps Grid */
+.neural-steps-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 24px;
+  margin-bottom: 40px;
+}
+
+.neural-step-card {
+  position: relative;
+  background: linear-gradient(135deg, rgba(30, 41, 59, 1), rgba(15, 23, 42, 1));
+  border-radius: 16px;
+  padding: 24px;
+  border: 2px solid rgba(71, 85, 105, 0.7);
+  transition: all 0.5s ease;
+}
+
+.light-mode .neural-step-card {
+  background: linear-gradient(135deg, rgba(241, 245, 249, 1), rgba(226, 232, 240, 1));
+  border: 2px solid rgba(203, 213, 225, 0.7);
+}
+
+.neural-step-card.active {
+  border-color: #3b82f6;
+  box-shadow: 0 0 30px rgba(59, 130, 246, 0.3);
+}
+
+.neural-step-card.completed {
+  border-color: #22c55e;
+}
+
+.neural-step-spinner {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  border: 3px solid transparent;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 8s linear infinite;
+  opacity: 0;
+}
+
+.neural-step-card.active .neural-step-spinner {
+  opacity: 1;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.neural-step-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.neural-step-icon-wrapper {
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  background: rgba(71, 85, 105, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.5s ease;
+}
+
+.light-mode .neural-step-icon-wrapper {
+  background: rgba(203, 213, 225, 1);
+}
+
+.neural-step-card.active .neural-step-icon-wrapper {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+}
+
+.neural-step-card.completed .neural-step-icon-wrapper {
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+}
+
+.neural-step-icon-wrapper .scan-line {
+  position: absolute;
+  inset: 0;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.3);
+  animation: scan 8s linear infinite;
+  opacity: 0;
+}
+
+.neural-step-card.active .neural-step-icon-wrapper .scan-line {
+  opacity: 1;
+}
+
+@keyframes scan {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(300%); }
+}
+
+.neural-step-icon-wrapper svg {
+  width: 32px;
+  height: 32px;
+  color: #64748b;
+  position: relative;
+  z-index: 2;
+  transition: color 0.5s ease;
+}
+
+.neural-step-card.active .neural-step-icon-wrapper svg,
+.neural-step-card.completed .neural-step-icon-wrapper svg {
+  color: white;
+}
+
+.neural-step-label {
+  text-align: center;
+}
+
+.neural-step-label .title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #64748b;
+  display: block;
+  margin-bottom: 4px;
+  transition: color 0.5s ease;
+}
+
+.neural-step-card.active .neural-step-label .title {
+  color: #f1f5f9;
+}
+
+.light-mode .neural-step-card.active .neural-step-label .title {
+  color: #0f172a;
+}
+
+.neural-step-label .subtitle {
+  font-size: 12px;
+  color: #475569;
+  font-family: 'Courier New', monospace;
+  transition: color 0.5s ease;
+}
+
+.neural-step-card.active .neural-step-label .subtitle {
+  color: #60a5fa;
+}
+
+/* Bottom Section */
+.neural-bottom {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+/* Visualization Panel */
+.neural-visual-panel {
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(10px);
+  border-radius: 16px;
+  padding: 24px;
+  border: 1px solid rgba(71, 85, 105, 0.7);
+}
+
+.light-mode .neural-visual-panel {
+  background: rgba(248, 250, 252, 0.5);
+  border: 1px solid rgba(203, 213, 225, 0.7);
+}
+
+.neural-visual-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.neural-visual-header h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #f1f5f9;
+  margin: 0;
+}
+
+.light-mode .neural-visual-header h3 {
+  color: #0f172a;
+}
+
+.neural-visual-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.neural-visual-badge .dot {
+  width: 8px;
+  height: 8px;
+  background: #22c55e;
+  border-radius: 50%;
+  animation: statusPulse 8s ease-in-out infinite;
+}
+
+.neural-visual-badge span {
+  font-size: 14px;
+  color: #22c55e;
+  font-family: 'Courier New', monospace;
+  font-weight: 500;
+}
+
+.neural-visual-content {
+  position: relative;
+  height: 192px;
+  background: rgba(15, 23, 42, 1);
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(71, 85, 105, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.light-mode .neural-visual-content {
+  background: rgba(241, 245, 249, 1);
+  border: 1px solid rgba(203, 213, 225, 0.8);
+}
+
+.neural-visual-spinner {
+  width: 80px;
+  height: 80px;
+  border: 4px solid rgba(59, 130, 246, 0.2);
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 8s linear infinite;
+}
+
+.neural-visual-text {
+  margin-top: 12px;
+  text-align: center;
+  color: #60a5fa;
+  font-family: 'Courier New', monospace;
+  font-weight: 500;
+}
+
+.light-mode .neural-visual-text {
+  color: #3b82f6;
+}
+
+/* Logs Panel */
+.neural-logs-panel {
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(10px);
+  border-radius: 16px;
+  padding: 24px;
+  border: 1px solid rgba(71, 85, 105, 0.7);
+}
+
+.light-mode .neural-logs-panel {
+  background: rgba(248, 250, 252, 0.5);
+  border: 1px solid rgba(203, 213, 225, 0.7);
+}
+
+.neural-logs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.neural-logs-header h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #f1f5f9;
+  margin: 0;
+}
+
+.light-mode .neural-logs-header h3 {
+  color: #0f172a;
+}
+
+.neural-logs-header svg {
+  width: 20px;
+  height: 20px;
+  color: #64748b;
+}
+
+.neural-logs-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 192px;
+  overflow: hidden;
+}
+
+.neural-log-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  opacity: 0;
+  animation: slideIn 0.5s ease-out forwards;
+}
+
+.neural-log-entry:nth-child(1) { animation-delay: 0s; }
+.neural-log-entry:nth-child(2) { animation-delay: 0.3s; }
+.neural-log-entry:nth-child(3) { animation-delay: 0.6s; }
+.neural-log-entry:nth-child(4) { animation-delay: 0.9s; }
+.neural-log-entry:nth-child(5) { animation-delay: 1.2s; }
+
+@keyframes slideIn {
+  from {
+    transform: translateX(-20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.neural-log-entry svg {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.neural-log-entry .log-text {
+  flex: 1;
+}
+
+.neural-log-entry .log-text .message {
+  font-size: 14px;
+  color: #60a5fa;
+  font-family: 'Courier New', monospace;
+  margin-bottom: 2px;
+}
+
+.light-mode .neural-log-entry .log-text .message {
+  color: #3b82f6;
+}
+
+.neural-log-entry .log-text .detail {
+  font-size: 12px;
+  color: #64748b;
+  font-family: 'Courier New', monospace;
+}
+
+/* Info Bar */
+.neural-info-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 32px;
+  padding: 16px 24px;
+  background: rgba(15, 23, 42, 0.3);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  border: 1px solid rgba(71, 85, 105, 0.8);
+}
+
+.light-mode .neural-info-bar {
+  background: rgba(241, 245, 249, 0.3);
+  border: 1px solid rgba(203, 213, 225, 0.8);
+}
+
+.neural-info-items {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+}
+
+.neural-info-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.neural-info-item-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.neural-info-item-icon.blue {
+  background: rgba(59, 130, 246, 0.2);
+}
+
+.neural-info-item-icon.purple {
+  background: rgba(139, 92, 246, 0.2);
+}
+
+.neural-info-item-icon.pink {
+  background: rgba(236, 72, 153, 0.2);
+}
+
+.neural-info-item-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.neural-info-item-icon.blue svg { color: #60a5fa; }
+.neural-info-item-icon.purple svg { color: #a78bfa; }
+.neural-info-item-icon.pink svg { color: #f472b6; }
+
+.neural-info-item-text .label {
+  font-size: 12px;
+  color: #64748b;
+  display: block;
+  margin-bottom: 2px;
+}
+
+.neural-info-item-text .value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f1f5f9;
+  font-family: 'Courier New', monospace;
+}
+
+.light-mode .neural-info-item-text .value {
+  color: #0f172a;
+}
+
+.neural-version {
+  text-align: right;
+}
+
+.neural-version .label {
+  font-size: 12px;
+  color: #64748b;
+  font-family: 'Courier New', monospace;
+  display: block;
+  margin-bottom: 2px;
+}
+
+.neural-version .value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #94a3b8;
+  font-family: 'Courier New', monospace;
+}
+
+/* Footer */
+.neural-footer {
+  text-align: center;
+  margin-top: 24px;
+}
+
+.neural-footer p {
+  font-size: 14px;
+  color: #64748b;
+  font-family: 'Courier New', monospace;
+  margin: 0;
+}
