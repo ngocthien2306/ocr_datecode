@@ -45,22 +45,6 @@ interface SettingsState {
   dailyReport: boolean;
 }
 
-const loadingTemplates = [
-  'camera-vision',
-  'spinner',
-  'pulse',
-  'radar',
-  'grid',
-  'circuit',
-  'barcode',
-  'ocr',
-  'users',
-  'receipts',
-  'cameras',
-  'historical',
-  'settings',
-];
-
 const Settings: React.FC = () => {
   const toast = useToast();
   const [confirmDialog, setConfirmDialog] = useState({
@@ -82,7 +66,7 @@ const Settings: React.FC = () => {
     camerasLoading: 'cameras',
     historicalLoading: 'historical',
     settingsLoading: 'settings',
-    loadingBackground: 'none',
+    loadingBackground: 'background1',
     loadingBackgroundOpacity: 0.2,
     camera1Enabled: true,
     camera1Fps: 30,
@@ -274,9 +258,19 @@ const Settings: React.FC = () => {
                 value={settings.usersLoading} 
                 onChange={(e) => handleChange('usersLoading', e.target.value)}
               >
-                {loadingTemplates.map(t => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
+                <option value="camera-vision">Camera Vision System</option>
+                <option value="spinner">Classic Spinner</option>
+                <option value="pulse">Pulse Wave</option>
+                <option value="radar">Radar Scan</option>
+                <option value="grid">Grid Matrix</option>
+                <option value="circuit">Circuit Board</option>
+                <option value="barcode">Barcode Scanner</option>
+                <option value="ocr">OCR Text Recognition</option>
+                <option value="users">Users Network</option>
+                <option value="receipts">Receipt Scanner</option>
+                <option value="cameras">Multi-Lens System</option>
+                <option value="historical">Timeline History</option>
+                <option value="settings">Gear System</option>
               </select>
             </div>
 
@@ -286,9 +280,19 @@ const Settings: React.FC = () => {
                 value={settings.receiptsLoading} 
                 onChange={(e) => handleChange('receiptsLoading', e.target.value)}
               >
-                {loadingTemplates.map(t => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
+                <option value="camera-vision">Camera Vision System</option>
+                <option value="spinner">Classic Spinner</option>
+                <option value="pulse">Pulse Wave</option>
+                <option value="radar">Radar Scan</option>
+                <option value="grid">Grid Matrix</option>
+                <option value="circuit">Circuit Board</option>
+                <option value="barcode">Barcode Scanner</option>
+                <option value="ocr">OCR Text Recognition</option>
+                <option value="users">Users Network</option>
+                <option value="receipts">Receipt Scanner</option>
+                <option value="cameras">Multi-Lens System</option>
+                <option value="historical">Timeline History</option>
+                <option value="settings">Gear System</option>
               </select>
             </div>
 
@@ -298,9 +302,19 @@ const Settings: React.FC = () => {
                 value={settings.camerasLoading} 
                 onChange={(e) => handleChange('camerasLoading', e.target.value)}
               >
-                {loadingTemplates.map(t => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
+                <option value="camera-vision">Camera Vision System</option>
+                <option value="spinner">Classic Spinner</option>
+                <option value="pulse">Pulse Wave</option>
+                <option value="radar">Radar Scan</option>
+                <option value="grid">Grid Matrix</option>
+                <option value="circuit">Circuit Board</option>
+                <option value="barcode">Barcode Scanner</option>
+                <option value="ocr">OCR Text Recognition</option>
+                <option value="users">Users Network</option>
+                <option value="receipts">Receipt Scanner</option>
+                <option value="cameras">Multi-Lens System</option>
+                <option value="historical">Timeline History</option>
+                <option value="settings">Gear System</option>
               </select>
             </div>
 
@@ -310,9 +324,19 @@ const Settings: React.FC = () => {
                 value={settings.historicalLoading} 
                 onChange={(e) => handleChange('historicalLoading', e.target.value)}
               >
-                {loadingTemplates.map(t => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
+                <option value="camera-vision">Camera Vision System</option>
+                <option value="spinner">Classic Spinner</option>
+                <option value="pulse">Pulse Wave</option>
+                <option value="radar">Radar Scan</option>
+                <option value="grid">Grid Matrix</option>
+                <option value="circuit">Circuit Board</option>
+                <option value="barcode">Barcode Scanner</option>
+                <option value="ocr">OCR Text Recognition</option>
+                <option value="users">Users Network</option>
+                <option value="receipts">Receipt Scanner</option>
+                <option value="cameras">Multi-Lens System</option>
+                <option value="historical">Timeline History</option>
+                <option value="settings">Gear System</option>
               </select>
             </div>
 
@@ -322,9 +346,19 @@ const Settings: React.FC = () => {
                 value={settings.settingsLoading} 
                 onChange={(e) => handleChange('settingsLoading', e.target.value)}
               >
-                {loadingTemplates.map(t => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
+                <option value="camera-vision">Camera Vision System</option>
+                <option value="spinner">Classic Spinner</option>
+                <option value="pulse">Pulse Wave</option>
+                <option value="radar">Radar Scan</option>
+                <option value="grid">Grid Matrix</option>
+                <option value="circuit">Circuit Board</option>
+                <option value="barcode">Barcode Scanner</option>
+                <option value="ocr">OCR Text Recognition</option>
+                <option value="users">Users Network</option>
+                <option value="receipts">Receipt Scanner</option>
+                <option value="cameras">Multi-Lens System</option>
+                <option value="historical">Timeline History</option>
+                <option value="settings">Gear System</option>
               </select>
             </div>
           </div>

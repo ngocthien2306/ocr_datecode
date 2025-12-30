@@ -1,5 +1,5 @@
 import traceback
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Request
 from fastapi.responses import FileResponse, Response
 from typing import List, Optional
 import os
@@ -15,6 +15,7 @@ from app.schemas.recipe import RecipeCreate, RecipeUpdate, RecipeResponse
 from app.models.recipe import RecipeInDB
 from app.models.user import UserInDB, UserRole
 from app.repositories.recipe_repository import RecipeRepository
+from app.repositories.action_log_repository import ActionLogRepository
 from app.db.mongodb import get_database
 from app.api.dependencies.auth import (
     get_current_user, 
@@ -23,8 +24,10 @@ from app.api.dependencies.auth import (
     require_operator,
     RoleChecker
 )
+from app.api.dependencies.action_log import get_action_log_repository
 from app.schemas.receipt_load import ReceiptLoadCreate, ReceiptLoadResponse
 from app.repositories.receipt_load_repository import ReceiptLoadRepository
+from app.models.action_log import ActionLogCreate, ActionType
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from app.core.config import settings
@@ -253,8 +256,10 @@ def _to_primitive(obj):
 @router.post("/", response_model=RecipeResponse, status_code=status.HTTP_201_CREATED)
 async def create_recipe(
     recipe: RecipeCreate,
+    request: Request,
     current_user: UserInDB = Depends(require_supervisor),
-    recipe_repo: RecipeRepository = Depends(get_recipe_repository)
+    recipe_repo: RecipeRepository = Depends(get_recipe_repository),
+    action_log_repo: ActionLogRepository = Depends(get_action_log_repository)
 ):
     """
     Create a new recipe (Receipt).
@@ -282,6 +287,29 @@ async def create_recipe(
         )
     
     created_recipe = await recipe_repo.create(recipe, current_user.id)
+
+    # Log the action
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    action_log = ActionLogCreate(
+        user_id=current_user.id,
+        username=current_user.username,
+        action_type=ActionType.CREATE_RECIPE,
+        resource_type="recipe",
+        resource_id=created_recipe.id,
+        description=f"Created recipe '{created_recipe.name}' with product code '{created_recipe.product_code}'",
+        new_value={
+            "name": created_recipe.name,
+            "product_code": created_recipe.product_code,
+            "description": created_recipe.description,
+            "is_active": created_recipe.is_active
+        },
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
+    await action_log_repo.create_action_log(action_log)
+
     return recipe_to_response(created_recipe)
 
 
@@ -554,9 +582,11 @@ async def get_recipe(
 @router.post("/{recipe_id}/load", response_model=ReceiptLoadResponse)
 async def load_recipe(
     recipe_id: str,
+    request: Request,
     current_user: UserInDB = Depends(get_current_user),
     recipe_repo: RecipeRepository = Depends(get_recipe_repository),
-    load_repo: ReceiptLoadRepository = Depends(get_receipt_load_repository)
+    load_repo: ReceiptLoadRepository = Depends(get_receipt_load_repository),
+    action_log_repo: ActionLogRepository = Depends(get_action_log_repository)
 ):
     """
     Record a recipe load event. Stores who loaded the recipe and when.
@@ -593,6 +623,22 @@ async def load_recipe(
         user_full_name=getattr(current_user, 'full_name', None),
     )
 
+    # Log the action
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    action_log = ActionLogCreate(
+        user_id=current_user.id,
+        username=current_user.username,
+        action_type=ActionType.LOAD_RECIPE,
+        resource_type="recipe",
+        resource_id=recipe_id,
+        description=f"Loaded recipe '{recipe.name}' with product code '{recipe.product_code}'",
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
+    await action_log_repo.create_action_log(action_log)
+
     return ReceiptLoadResponse(
         id=created['id'],
         recipe_id=created['recipe_id'],
@@ -608,8 +654,10 @@ async def load_recipe(
 async def update_recipe(
     recipe_id: str,
     recipe_update: RecipeUpdate,
+    request: Request,
     current_user: UserInDB = Depends(require_operator),
-    recipe_repo: RecipeRepository = Depends(get_recipe_repository)
+    recipe_repo: RecipeRepository = Depends(get_recipe_repository),
+    action_log_repo: ActionLogRepository = Depends(get_action_log_repository)
 ):
     """
     Update an existing recipe (Save Receipt).
@@ -652,15 +700,49 @@ async def update_recipe(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update recipe"
         )
-    
+
+    # Log the action
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    # Prepare old and new values for logging
+    old_value = {
+        "name": existing_recipe.name,
+        "product_code": existing_recipe.product_code,
+        "description": existing_recipe.description,
+        "is_active": existing_recipe.is_active
+    }
+
+    new_value = {}
+    update_dict = recipe_update.model_dump(exclude_unset=True)
+    for field in update_dict:
+        if hasattr(updated_recipe, field):
+            new_value[field] = getattr(updated_recipe, field)
+
+    action_log = ActionLogCreate(
+        user_id=current_user.id,
+        username=current_user.username,
+        action_type=ActionType.UPDATE_RECIPE,
+        resource_type="recipe",
+        resource_id=recipe_id,
+        description=f"Updated recipe '{updated_recipe.name}'",
+        old_value=old_value,
+        new_value=new_value,
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
+    await action_log_repo.create_action_log(action_log)
+
     return recipe_to_response(updated_recipe)
 
 
 @router.delete("/{recipe_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_recipe(
     recipe_id: str,
+    request: Request,
     current_user: UserInDB = Depends(require_admin),
-    recipe_repo: RecipeRepository = Depends(get_recipe_repository)
+    recipe_repo: RecipeRepository = Depends(get_recipe_repository),
+    action_log_repo: ActionLogRepository = Depends(get_action_log_repository)
 ):
     """
     Delete a recipe permanently.
@@ -683,7 +765,29 @@ async def delete_recipe(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete recipe"
         )
-    
+
+    # Log the action
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    action_log = ActionLogCreate(
+        user_id=current_user.id,
+        username=current_user.username,
+        action_type=ActionType.DELETE_RECIPE,
+        resource_type="recipe",
+        resource_id=recipe_id,
+        description=f"Deleted recipe '{recipe.name}' with product code '{recipe.product_code}'",
+        old_value={
+            "name": recipe.name,
+            "product_code": recipe.product_code,
+            "description": recipe.description,
+            "is_active": recipe.is_active
+        },
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
+    await action_log_repo.create_action_log(action_log)
+
     return None
 
 

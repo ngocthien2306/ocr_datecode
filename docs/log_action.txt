@@ -1,0 +1,15 @@
+
+với mỗi action liên quan tới create, update, delete thì ta nên lưu các log vào database để biết ai và người thực hiện 
+
+ngoài ra login và logout cũng nên lưu vào
+
+như page user management ta cần lưu log tạo user, update user, delete user, update password
+
+page recipe thì lưu log của create/edit/delete và load recipe
+
+page camera cũng lưu log của create, update, delete
+
+với action update thì có field old_value và new_value
+
+
+

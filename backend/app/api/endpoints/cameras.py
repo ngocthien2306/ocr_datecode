@@ -2,12 +2,13 @@
 Camera API Endpoints
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 import io
 
 from app.db.mongodb import get_database
 from app.repositories.camera_repository import CameraRepository
+from app.repositories.action_log_repository import ActionLogRepository
 from app.schemas.camera import (
     CameraCreate,
     CameraUpdate,
@@ -16,8 +17,11 @@ from app.schemas.camera import (
     CameraSettingsUpdate
 )
 from app.api.dependencies.auth import get_current_user, get_current_user_from_query
+from app.api.dependencies.action_log import get_action_log_repository
 from app.services import camera_frame_service, camera_producer_service
 from app.services.camera_settings_service import camera_settings_service
+from app.models.action_log import ActionLogCreate, ActionType
+from app.models.user import UserInDB
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
@@ -30,8 +34,10 @@ router = APIRouter(prefix="/cameras", tags=["cameras"])
 )
 async def create_camera(
     camera: CameraCreate,
+    request: Request,
     db=Depends(get_database),
-    current_user: dict = Depends(get_current_user)
+    current_user: UserInDB = Depends(get_current_user),
+    action_log_repo: ActionLogRepository = Depends(get_action_log_repository)
 ):
     """
     Create a new camera entry in the database.
@@ -60,8 +66,32 @@ async def create_camera(
             detail=f"Camera with serial number '{camera.serial_number}' already exists"
         )
     
-    created_by = current_user.get("username", "system")
+    created_by = current_user.username
     result = await repo.create(camera, created_by=created_by)
+
+    # Log the action
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    action_log = ActionLogCreate(
+        user_id=current_user.id,
+        username=current_user.username,
+        action_type=ActionType.CREATE_CAMERA,
+        resource_type="camera",
+        resource_id=result.camera_id,
+        description=f"Created camera '{result.camera_id}' with model '{result.model_name}'",
+        new_value={
+            "camera_id": result.camera_id,
+            "model_name": result.model_name,
+            "serial_number": result.serial_number,
+            "resolution_width": result.resolution_width,
+            "resolution_height": result.resolution_height,
+            "is_active": result.is_active
+        },
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
+    await action_log_repo.create_action_log(action_log)
     
     return result
 
@@ -140,8 +170,10 @@ async def get_camera(
 async def update_camera(
     camera_id: str,
     camera_update: CameraUpdate,
+    request: Request,
     db=Depends(get_database),
-    current_user: dict = Depends(get_current_user)
+    current_user: UserInDB = Depends(get_current_user),
+    action_log_repo: ActionLogRepository = Depends(get_action_log_repository)
 ):
     """
     Update camera information.
@@ -172,7 +204,41 @@ async def update_camera(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update camera"
         )
-    
+
+    # Log the action
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    # Prepare old and new values for logging
+    old_value = {
+        "camera_id": existing.camera_id,
+        "model_name": existing.model_name,
+        "serial_number": existing.serial_number,
+        "resolution_width": existing.resolution_width,
+        "resolution_height": existing.resolution_height,
+        "is_active": existing.is_active
+    }
+
+    new_value = {}
+    update_dict = camera_update.model_dump(exclude_unset=True)
+    for field in update_dict:
+        if hasattr(updated, field):
+            new_value[field] = getattr(updated, field)
+
+    action_log = ActionLogCreate(
+        user_id=current_user.id,
+        username=current_user.username,
+        action_type=ActionType.UPDATE_CAMERA,
+        resource_type="camera",
+        resource_id=camera_id,
+        description=f"Updated camera '{camera_id}'",
+        old_value=old_value,
+        new_value=new_value,
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
+    await action_log_repo.create_action_log(action_log)
+
     return updated
 
 
@@ -210,13 +276,23 @@ async def update_connection_status(
 )
 async def delete_camera(
     camera_id: str,
+    request: Request,
     db=Depends(get_database),
-    current_user: dict = Depends(get_current_user)
+    current_user: UserInDB = Depends(get_current_user),
+    action_log_repo: ActionLogRepository = Depends(get_action_log_repository)
 ):
     """
     Delete a camera from the database.
     """
     repo = CameraRepository(db)
+
+    # Get camera info before deletion for logging
+    camera = await repo.get_by_id(camera_id)
+    if not camera:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Camera with ID '{camera_id}' not found"
+        )
     
     deleted = await repo.delete(camera_id)
     
@@ -225,7 +301,31 @@ async def delete_camera(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Camera with ID '{camera_id}' not found"
         )
-    
+
+    # Log the action
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    action_log = ActionLogCreate(
+        user_id=current_user.id,
+        username=current_user.username,
+        action_type=ActionType.DELETE_CAMERA,
+        resource_type="camera",
+        resource_id=camera_id,
+        description=f"Deleted camera '{camera_id}' with model '{camera.get('model_name', '')}'",
+        old_value={
+            "camera_id": camera.get("camera_id"),
+            "model_name": camera.get("model_name"),
+            "serial_number": camera.get("serial_number"),
+            "resolution_width": camera.get("resolution_width"),
+            "resolution_height": camera.get("resolution_height"),
+            "is_active": camera.get("is_active")
+        },
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
+    await action_log_repo.create_action_log(action_log)
+
     return None
 
 

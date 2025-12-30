@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from typing import List
 from app.db.mongodb import get_database
 from app.repositories.user_repository import UserRepository
+from app.repositories.action_log_repository import ActionLogRepository
 from app.models.user import UserCreate, UserUpdate, UserResponse, UserChangePassword, UserInDB
+from app.models.action_log import ActionLogCreate, ActionType
 from app.api.dependencies.auth import get_current_user, require_admin, require_supervisor
+from app.api.dependencies.action_log import get_action_log_repository
 
 router = APIRouter()
 
@@ -11,8 +14,10 @@ router = APIRouter()
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
     user_create: UserCreate,
+    request: Request,
     db=Depends(get_database),
-    current_user: UserInDB = Depends(require_admin)
+    current_user: UserInDB = Depends(require_admin),
+    action_log_repo: ActionLogRepository = Depends(get_action_log_repository)
 ):
     """
     Create new user - ADMIN only
@@ -35,6 +40,29 @@ async def create_user(
 
     # Create user
     user = await user_repo.create_user(user_create)
+
+    # Log the action
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    action_log = ActionLogCreate(
+        user_id=current_user.id,
+        username=current_user.username,
+        action_type=ActionType.CREATE_USER,
+        resource_type="user",
+        resource_id=user.id,
+        description=f"Created user '{user.username}' with role '{user.role}'",
+        new_value={
+            "username": user.username,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "is_active": user.is_active
+        },
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
+    await action_log_repo.create_action_log(action_log)
 
     return UserResponse(**user.model_dump())
 
@@ -126,8 +154,10 @@ async def get_user(
 async def update_user(
     user_id: str,
     user_update: UserUpdate,
+    request: Request,
     db=Depends(get_database),
-    current_user: UserInDB = Depends(require_admin)
+    current_user: UserInDB = Depends(require_admin),
+    action_log_repo: ActionLogRepository = Depends(get_action_log_repository)
 ):
     """
     Update user - ADMIN only
@@ -138,6 +168,15 @@ async def update_user(
     - **is_active**: Active status (optional)
     """
     user_repo = UserRepository(db)
+
+    # Get the user before update for logging
+    old_user = await user_repo.get_user_by_id(user_id)
+    if not old_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
     user = await user_repo.update_user(user_id, user_update)
 
     if not user:
@@ -145,6 +184,39 @@ async def update_user(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
+
+    # Log the action
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    # Prepare old and new values for logging
+    old_value = {
+        "username": old_user.username,
+        "email": old_user.email,
+        "full_name": old_user.full_name,
+        "role": old_user.role,
+        "is_active": old_user.is_active
+    }
+
+    new_value = {}
+    update_dict = user_update.model_dump(exclude_unset=True)
+    for field in update_dict:
+        if hasattr(user, field):
+            new_value[field] = getattr(user, field)
+
+    action_log = ActionLogCreate(
+        user_id=current_user.id,
+        username=current_user.username,
+        action_type=ActionType.UPDATE_USER,
+        resource_type="user",
+        resource_id=user.id,
+        description=f"Updated user '{user.username}'",
+        old_value=old_value,
+        new_value=new_value,
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
+    await action_log_repo.create_action_log(action_log)
 
     return UserResponse(**user.model_dump())
 
@@ -182,8 +254,10 @@ async def change_own_password(
 async def reset_user_password(
     user_id: str,
     new_password: str,
+    request: Request,
     db=Depends(get_database),
-    current_user: UserInDB = Depends(require_admin)
+    current_user: UserInDB = Depends(require_admin),
+    action_log_repo: ActionLogRepository = Depends(get_action_log_repository)
 ):
     """
     Reset user password - ADMIN only
@@ -210,17 +284,43 @@ async def reset_user_password(
             detail="Failed to reset password"
         )
 
+    # Log the action
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    action_log = ActionLogCreate(
+        user_id=current_user.id,
+        username=current_user.username,
+        action_type=ActionType.RESET_USER_PASSWORD,
+        resource_type="user",
+        resource_id=user.id,
+        description=f"Reset password for user '{user.username}'",
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
+    await action_log_repo.create_action_log(action_log)
+
     return {"message": f"Password reset successfully for user: {user.username}"}
 
 
 @router.delete("/{user_id}")
 async def delete_user(
     user_id: str,
+    request: Request,
     db=Depends(get_database),
-    current_user: UserInDB = Depends(require_admin)
+    current_user: UserInDB = Depends(require_admin),
+    action_log_repo: ActionLogRepository = Depends(get_action_log_repository)
 ):
     """Delete user - ADMIN only"""
     user_repo = UserRepository(db)
+
+    # Get user info before deletion for logging
+    user = await user_repo.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
 
     # Cannot delete yourself
     if user_id == current_user.id:
@@ -236,5 +336,28 @@ async def delete_user(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
+
+    # Log the action
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    action_log = ActionLogCreate(
+        user_id=current_user.id,
+        username=current_user.username,
+        action_type=ActionType.DELETE_USER,
+        resource_type="user",
+        resource_id=user_id,
+        description=f"Deleted user '{user.username}' with role '{user.role}'",
+        old_value={
+            "username": user.username,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "is_active": user.is_active
+        },
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
+    await action_log_repo.create_action_log(action_log)
 
     return {"message": "User deleted successfully"}
