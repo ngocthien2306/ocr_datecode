@@ -9,6 +9,9 @@ interface SettingsState {
   language: string;
   timezone: string;
 
+  // Login Template
+  loginTemplate: string;
+
   // Loading Templates
   dashboardLoading: string;
   usersLoading: string;
@@ -68,6 +71,7 @@ const Settings: React.FC = () => {
     version: 'v1.0.0',
     language: 'en',
     timezone: 'UTC+7',
+    loginTemplate: 'industrial',
     dashboardLoading: 'camera-vision',
     usersLoading: 'users',
     receiptsLoading: 'receipts',
@@ -102,6 +106,12 @@ const Settings: React.FC = () => {
   useEffect(() => {
     const tabKeys = ['dashboard', 'users', 'receipts', 'cameras', 'historical', 'settings', 'logs'];
     const loadedSettings: Partial<SettingsState> = {};
+
+    // Load login template
+    const savedLoginTemplate = localStorage.getItem('loginTemplate');
+    if (savedLoginTemplate) {
+      loadedSettings.loginTemplate = savedLoginTemplate;
+    }
 
     tabKeys.forEach(tab => {
       const saved = localStorage.getItem(`${tab}Loading`);
@@ -141,6 +151,13 @@ const Settings: React.FC = () => {
 
   const handleChange = <K extends keyof SettingsState>(key: K, value: SettingsState[K]) => {
     setSettings(prev => ({ ...prev, [key]: value }));
+
+    if (key === 'loginTemplate') {
+      localStorage.setItem('loginTemplate', value as string);
+      window.dispatchEvent(new CustomEvent('loginTemplateChanged', {
+        detail: { template: value }
+      }));
+    }
 
     if (typeof key === 'string' && key.endsWith('Loading') && key !== 'loadingBackground') {
       localStorage.setItem(key, value as string);
@@ -261,6 +278,34 @@ const Settings: React.FC = () => {
                 <option value="UTC+8">UTC+8 (Singapore, Beijing)</option>
                 <option value="UTC+9">UTC+9 (Tokyo, Seoul)</option>
               </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Login Template */}
+        <div className="settings-section">
+          <h2>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M10 17l5-5-5-5M3 12h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Login Template
+          </h2>
+          <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '20px' }}>
+            Choose the login page design and style
+          </p>
+          <div className="settings-grid">
+            <div className="setting-item">
+              <label>Login Page Template</label>
+              <select
+                value={settings.loginTemplate}
+                onChange={(e) => handleChange('loginTemplate', e.target.value)}
+              >
+                <option value="industrial">Industrial - Conveyor belt with cameras</option>
+                <option value="futuristic">Futuristic - Holographic neon interface</option>
+              </select>
+              <p style={{ fontSize: '12px', color: '#9ca3af', marginTop: '8px', fontStyle: 'italic' }}>
+                Changes will apply on next login
+              </p>
             </div>
           </div>
         </div>
