@@ -14,6 +14,24 @@ import os
 import subprocess
 from pathlib import Path
 
+# Import for inference (only SuperPointMatcherTRT, not the singleton service)
+try:
+    import sys
+    from pathlib import Path as PathLib
+    ai_services_path = PathLib(__file__).parent
+    if str(ai_services_path) not in sys.path:
+        sys.path.insert(0, str(ai_services_path))
+
+    from inference_service import SuperPointMatcherTRT
+    import requests
+    import shutil
+    INFERENCE_AVAILABLE = True
+    logging.info(f"✅ [INFERENCE] SuperPointMatcherTRT imported successfully")
+except Exception as e:
+    logging.warning(f"Inference service not available: {e}")
+    INFERENCE_AVAILABLE = False
+    SuperPointMatcherTRT = None
+
 SETTINGS_DIR = Path("/home/demo/Source/ocr_datecode/backend/camera_settings")
 LOGS_DIR = Path("/home/demo/Source/ocr_datecode/backend/logs")
 
@@ -214,6 +232,161 @@ def apply_camera_settings(camera, settings: dict, serial_number: str = "Unknown"
         logger.info(f"🎥 [SETTINGS SUMMARY] Camera {serial_number}: {', '.join(applied)}")
 
 
+def load_recipe_and_init_matcher(recipe_id: str, serial_number: str, engine_path: str = "/home/demo/Source/ocr_datecode/weights/pipeline_fp16_small.engine"):
+    """
+    Load recipe from API and initialize TensorRT matcher (called once when recipe changes)
+
+    Returns:
+        (matcher, recipe_name) if successful, (None, None) otherwise
+    """
+    if not INFERENCE_AVAILABLE or not SuperPointMatcherTRT:
+        logger.warning(f"❌ [INFERENCE] SuperPointMatcherTRT not available")
+        return None, None
+
+    try:
+        # Call API to get recipe load metadata (contains full template data)
+        API_BASE = os.environ.get("API_BASE", "http://localhost:8000")
+        url = f"{API_BASE}/api/recipes/loads/latest"
+        logger.info(f"🌐 [API CALL] Fetching latest recipe load from {url}")
+
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+
+        # Extract metadata from recipe load event
+        metadata = data.get('metadata', {})
+        loaded_recipe_id = metadata.get('recipe_id') or data.get('recipe_id')
+        recipe_name = metadata.get('name', 'Unknown')
+
+        # Verify this is the recipe we want
+        if loaded_recipe_id != recipe_id:
+            logger.warning(f"⚠️ [INFERENCE] Latest recipe ({loaded_recipe_id}) does not match requested ({recipe_id})")
+            # Continue anyway - user just loaded this recipe, metadata should be correct
+
+        logger.info(f"✅ [API] Got recipe: {recipe_name} (ID: {loaded_recipe_id})")
+
+        # Find camera config and template in metadata
+        cameras = metadata.get('cameras', [])
+        camera_config = None
+        for cam in cameras:
+            if cam.get('serial_number') == serial_number:
+                camera_config = cam
+                break
+
+        if not camera_config:
+            logger.error(f"❌ [INFERENCE] Camera {serial_number} not found in recipe metadata")
+            return None, None
+
+        # Find template for this camera
+        camera_templates = metadata.get('camera_templates', [])
+        template_data = None
+        for ct in camera_templates:
+            if ct.get('camera_id') == camera_config.get('camera_id'):
+                templates = ct.get('templates', [])
+                if templates:
+                    template_data = templates[0]
+                    break
+
+        if not template_data:
+            logger.error(f"❌ [INFERENCE] No template found for camera {serial_number}")
+            return None, None
+
+        # Get template image from local filesystem
+        image_url = template_data.get('image_url')
+        if not image_url:
+            logger.error(f"❌ [INFERENCE] No template image URL")
+            return None, None
+
+        filename = image_url.split('/')[-1]
+        backend_dir = Path(__file__).parent.parent / "backend"
+        source_template_path = backend_dir / "uploads" / "templates" / filename
+
+        if not source_template_path.exists():
+            logger.error(f"❌ [INFERENCE] Template not found: {source_template_path}")
+            return None, None
+
+        # Copy to temp directory
+        temp_dir = Path("ocr_inference")
+        temp_dir.mkdir(exist_ok=True)
+        template_path = temp_dir / f"template_{serial_number}.jpg"
+        shutil.copy(source_template_path, template_path)
+        logger.info(f"📁 [INFERENCE] Template copied to {template_path}")
+
+        # Parse annotations
+        annotations = template_data.get('annotations', [])
+        template_bbox = None
+        other_bboxes = []
+
+        for ann in annotations:
+            ann_type = ann.get('type', '')
+            if ann_type == 'template':
+                x = ann.get('x', 0)
+                y = ann.get('y', 0)
+                w = ann.get('width', 0)
+                h = ann.get('height', 0)
+
+                template_img = cv2.imread(str(template_path))
+                img_h, img_w = template_img.shape[:2]
+
+                x1 = int(x * img_w)
+                y1 = int(y * img_h)
+                x2 = int((x + w) * img_w)
+                y2 = int((y + h) * img_h)
+
+                template_bbox = {
+                    'type': 'template',
+                    'points': [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+                }
+            elif ann_type == 'text' and ann.get('points'):
+                points = ann.get('points', [])
+                template_img = cv2.imread(str(template_path))
+                img_h, img_w = template_img.shape[:2]
+
+                pixel_points = []
+                for pt in points:
+                    px = int(pt[0] * img_w)
+                    py = int(pt[1] * img_h)
+                    pixel_points.append([px, py])
+
+                other_bboxes.append({
+                    'type': ann_type,
+                    'text': ann.get('text', ''),
+                    'points': pixel_points
+                })
+
+        if not template_bbox:
+            logger.error(f"❌ [INFERENCE] No template bbox in annotations")
+            return None, None
+
+        # Create annotation file for TensorRT matcher
+        ann_json_path = temp_dir / f"annotations_{serial_number}.json"
+        ann_data = {
+            '_template_image': str(template_path),
+            str(template_path): [template_bbox] + other_bboxes
+        }
+
+        with open(ann_json_path, 'w') as f:
+            json.dump(ann_data, f, indent=2)
+
+        # Initialize TensorRT matcher
+        logger.info(f"🔥 [INFERENCE] Initializing TensorRT matcher with {len(other_bboxes)} regions...")
+        matcher = SuperPointMatcherTRT(
+            json_path=str(ann_json_path),
+            engine_path=engine_path,
+            scale=1.0,
+            verbose=True
+        )
+
+        logger.info(f"✅ [INFERENCE] Matcher initialized for recipe: {recipe_name}")
+        return matcher, recipe_name
+
+    except Exception as e:
+        logger.error(f"❌ [INFERENCE] Failed to load recipe: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None, None
+
+
 def camera_producer(device_index=0):
     try:
         tlFactory = pylon.TlFactory.GetInstance()
@@ -287,6 +460,19 @@ def camera_producer(device_index=0):
             previous_di_value = read_di_value(di_number)
             logger.info(f"🔧 [HARDWARE TRIGGER] Monitoring DI {di_number}, activation: {trigger_activation}, initial value: {previous_di_value}")
 
+        # Inference state (managed locally in camera producer)
+        current_recipe_id = settings.get('recipe_id')
+        current_recipe_name = settings.get('recipe_name')
+        inference_matcher = None
+
+        # Initialize matcher if recipe_id exists at startup
+        if current_recipe_id and trigger_mode == 'hardware':
+            logger.info(f"🔍 [INFERENCE] Recipe detected at startup: {current_recipe_name} ({current_recipe_id})")
+            inference_matcher, loaded_recipe_name = load_recipe_and_init_matcher(current_recipe_id, serial_number)
+            if inference_matcher:
+                current_recipe_name = loaded_recipe_name
+                logger.info(f"✅ [INFERENCE] Matcher initialized at startup")
+
         logger.info(f"🎬 [TRIGGER MODE] Camera {serial_number} running in '{trigger_mode}' mode")
         logger.info(f"Streaming to shared memory '{shm_name}'...")
 
@@ -303,6 +489,19 @@ def camera_producer(device_index=0):
                             logger.info(f"🔄 [HOT RELOAD] Detected settings file change for camera {serial_number}")
                             new_settings = load_camera_settings(serial_number)
                             apply_camera_settings(camera, new_settings, serial_number)
+
+                            # Check if recipe_id changed
+                            new_recipe_id = new_settings.get('recipe_id')
+                            if new_recipe_id and new_recipe_id != current_recipe_id:
+                                logger.info(f"🔍 [RECIPE CHANGE] New recipe detected: {new_recipe_id} (was: {current_recipe_id})")
+                                # Load recipe and init matcher (only call API once)
+                                inference_matcher, loaded_recipe_name = load_recipe_and_init_matcher(new_recipe_id, serial_number)
+                                if inference_matcher:
+                                    current_recipe_id = new_recipe_id
+                                    current_recipe_name = loaded_recipe_name
+                                    logger.info(f"✅ [INFERENCE] Matcher updated for new recipe: {current_recipe_name}")
+                                else:
+                                    logger.error(f"❌ [INFERENCE] Failed to load new recipe")
 
                             # Update trigger config
                             trigger_config = new_settings.get('trigger_config', {})
@@ -328,19 +527,30 @@ def camera_producer(device_index=0):
             if trigger_mode == 'continuous':
                 # Continuous mode: always capture
                 should_capture = True
-            elif trigger_mode == 'hardware':
-                # Hardware trigger: check DI for edge
-                current_di_value = read_di_value(di_number)
-                if previous_di_value is not None:
-                    if check_trigger_edge(current_di_value, previous_di_value, trigger_activation):
-                        should_capture = True
-                        logger.info(f"⚡ [TRIGGER] Hardware trigger detected on DI {di_number}: {previous_di_value}→{current_di_value}")
-                previous_di_value = current_di_value
 
-                # Small delay for hardware trigger polling
+            elif trigger_mode == 'hardware':
+                # Hardware trigger: check DI for edge HOẶC trigger file - chỉ chụp 1 frame khi có edge
+
+                # Check trigger file trước (cho test API)
+                trigger_file = Path(f"/tmp/camera_trigger_{serial_number}")
+                if trigger_file.exists():
+                    should_capture = True
+                    trigger_file.unlink()
+                    logger.info(f"⚡ [TRIGGER] Software trigger file detected - capturing frame")
+                else:
+                    # Check hardware DI
+                    current_di_value = read_di_value(di_number)
+                    if previous_di_value is not None:
+                        if check_trigger_edge(current_di_value, previous_di_value, trigger_activation):
+                            should_capture = True
+                            logger.info(f"⚡ [TRIGGER] Hardware trigger detected on DI {di_number}: {previous_di_value}→{current_di_value}")
+                    previous_di_value = current_di_value
+
+                # Nếu không có trigger, đợi và skip frame này
                 if not should_capture:
                     time.sleep(0.01)
                     continue
+
             elif trigger_mode == 'software':
                 # Software trigger: check for trigger file or flag (to be implemented)
                 # For now, skip capturing in software trigger mode
@@ -405,6 +615,50 @@ def camera_producer(device_index=0):
                 if frame_idx == 1 or frame_idx % 100 == 0:
                     logger.info(f"✅ [FRAME WRITTEN] Frame #{frame_idx} written to shared memory (size: {frame_len} bytes)")
 
+                # Run inference if matcher initialized and in hardware trigger mode
+                if inference_matcher and trigger_mode == 'hardware' and should_capture:
+                    try:
+                        logger.info(f"🔍 [INFERENCE] Running TensorRT matching for frame #{frame_idx}...")
+
+                        # Save frame temporarily
+                        temp_dir = Path("ocr_inference")
+                        temp_frame_path = temp_dir / f"trigger_frame_{serial_number}_{frame_idx}.jpg"
+                        cv2.imwrite(str(temp_frame_path), img_array)
+
+                        # Run TensorRT matching
+                        result = inference_matcher.match(
+                            target_path=str(temp_frame_path),
+                            score_threshold=0.3,
+                            ransac_threshold=5.0
+                        )
+
+                        if result['success']:
+                            # Visualize result
+                            output_path = temp_dir / f"result_{serial_number}_{frame_idx}.jpg"
+
+                            # Draw matches and bounding boxes on frame
+                            vis_img = img_array.copy()
+                            if result.get('transformed_bboxes'):
+                                for bbox_data in result['transformed_bboxes']:
+                                    pts = np.array(bbox_data['points'], dtype=np.int32)
+                                    cv2.polylines(vis_img, [pts], True, (0, 255, 0), 2)
+
+                                    # Draw text label
+                                    text = bbox_data.get('text', bbox_data.get('type', ''))
+                                    if text:
+                                        cv2.putText(vis_img, text, tuple(pts[0]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+                            cv2.imwrite(str(output_path), vis_img)
+
+                            logger.info(f"✅ [INFERENCE] Success! Recipe: {current_recipe_name}, Confidence: {result['confidence']:.1%}, Output: {output_path}")
+                        else:
+                            logger.warning(f"⚠️ [INFERENCE] Matching failed: {result.get('error')}")
+
+                    except Exception as e:
+                        logger.error(f"❌ [INFERENCE] Error: {e}")
+                        import traceback
+                        logger.error(traceback.format_exc())
+
                 grabResult.Release()
                 time.sleep(0.033)
 
@@ -433,4 +687,15 @@ def camera_producer(device_index=0):
 
 
 if __name__ == "__main__":
-    camera_producer(device_index=0)
+    import sys
+
+    # Get device_index from command line argument, default to 0
+    device_index = 0
+    if len(sys.argv) > 1:
+        try:
+            device_index = int(sys.argv[1])
+        except ValueError:
+            logger.error(f"Invalid device_index argument: {sys.argv[1]}, using default 0")
+
+    logger.info(f"Starting camera producer with device_index={device_index}")
+    camera_producer(device_index=device_index)

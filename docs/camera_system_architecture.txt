@@ -1,0 +1,9 @@
+/home/demo/Source/ocr_datecode/backend/app/api/endpoints/cameras.py
+chỗ này bên FE user call connect camera thì gọi api này 
+@router.post(
+    "/{serial_number}/connect",
+    summary="Connect and start camera producer",
+    response_model=dict
+)
+
+AP

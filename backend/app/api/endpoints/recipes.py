@@ -646,14 +646,49 @@ async def load_recipe(
                 except Exception as e:
                     logger.error(f"❌ [RECIPE LOAD ERROR] Camera {serial_number}: {e}")
 
-    # Build metadata snapshot (store useful fields only) and convert to primitives
+    # Build metadata snapshot (will be used for both storage and inference)
     metadata = {
+        'recipe_id': recipe_id,
         'name': recipe.name,
         'product_code': recipe.product_code,
         'camera_templates': _to_primitive(camera_templates),
         'model_thresholds': _to_primitive(getattr(recipe, 'model_thresholds', None)),
         'cameras': _to_primitive(getattr(recipe, 'cameras', []))
     }
+
+    # Save recipe_id to camera settings for camera producer to detect and load
+    # Camera producer will call API to get recipe data and init inference
+    try:
+        from pathlib import Path
+        settings_dir = Path(__file__).parent.parent.parent.parent.parent / "backend" / "camera_settings"
+
+        for cam_config in cameras_config:
+            if isinstance(cam_config, dict):
+                serial_number = cam_config.get('serial_number') or cam_config.get('camera_id')
+                trigger_config = cam_config.get('trigger_config', {})
+            else:
+                serial_number = getattr(cam_config, 'serial_number', None) or getattr(cam_config, 'camera_id', None)
+                trigger_config = getattr(cam_config, 'trigger_config', None) or {}
+
+            trigger_mode = trigger_config.get('mode') if isinstance(trigger_config, dict) else getattr(trigger_config, 'mode', None)
+
+            # Save recipe_id to camera settings for hardware trigger cameras
+            if trigger_mode == 'hardware' and serial_number:
+                settings_file = settings_dir / f"{serial_number}.json"
+                if settings_file.exists():
+                    with open(settings_file, 'r') as f:
+                        settings_data = json.load(f)
+
+                    # Add recipe_id and recipe_name to settings
+                    settings_data['recipe_id'] = recipe_id
+                    settings_data['recipe_name'] = recipe.name
+
+                    with open(settings_file, 'w') as f:
+                        json.dump(settings_data, f, indent=2)
+
+                    logger.info(f"💾 [RECIPE INFO] Saved recipe_id {recipe_id} to camera settings {serial_number}")
+    except Exception as e:
+        logger.warning(f"⚠️ [RECIPE INFO] Could not save recipe_id to camera settings: {e}")
 
     # Persist loader's full name to avoid frontend-side lookups
     created = await load_repo.create(

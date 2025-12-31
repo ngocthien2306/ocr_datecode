@@ -1,3 +1,4 @@
+
 """
 Camera API Endpoints
 """
@@ -678,3 +679,77 @@ async def get_camera_settings(
         "serial_number": serial_number,
         "settings": settings
     }
+
+
+@router.post(
+    "/{serial_number}/test-trigger",
+    summary="Test hardware trigger - capture and save frame",
+    response_model=dict
+)
+async def test_hardware_trigger(
+    serial_number: str
+):
+    """
+    Giả lập hardware trigger: Tạo trigger signal, chụp 1 frame và lưu vào test_trigger.png
+    API này không cần authentication để dễ test.
+
+    - **serial_number**: Serial number của camera
+
+    Returns: Success message with saved file path
+    """
+    import cv2
+    import os
+    import asyncio
+    from pathlib import Path
+
+    # Tạo trigger file
+    trigger_file = Path(f"/tmp/camera_trigger_{serial_number}")
+    trigger_file.touch()
+
+    # Đợi camera producer xử lý trigger và chụp frame (max 2s)
+    max_wait = 2.0
+    wait_interval = 0.05
+    waited = 0.0
+    initial_frame_idx = None
+
+    while waited < max_wait:
+        frame_data = camera_frame_service.get_frame(serial_number)
+        if frame_data:
+            current_idx = frame_data['metadata']['frame_idx']
+            if initial_frame_idx is None:
+                initial_frame_idx = current_idx
+            elif current_idx > initial_frame_idx:
+                # Frame mới đã được chụp
+                break
+        await asyncio.sleep(wait_interval)
+        waited += wait_interval
+
+    # Đọc frame cuối cùng
+    frame_data = camera_frame_service.get_frame(serial_number)
+
+    if frame_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Camera '{serial_number}' is not streaming. Please ensure camera producer is running."
+        )
+
+    # Lưu frame vào file
+    output_path = os.path.join(os.getcwd(), "test_trigger.png")
+    success = cv2.imwrite(output_path, frame_data['frame'])
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save frame to file"
+        )
+
+    return {
+        "success": True,
+        "message": "Hardware trigger simulated - frame captured and saved",
+        "serial_number": serial_number,
+        "file_path": output_path,
+        "frame_index": frame_data['metadata']['frame_idx'],
+        "timestamp": frame_data['metadata']['timestamp']
+    }
+
+

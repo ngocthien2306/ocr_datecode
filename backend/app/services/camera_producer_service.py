@@ -35,17 +35,23 @@ class CameraProducerService:
                 return True
 
         try:
-            # Start camera producer process
+            # Start camera producer process with device_index as argument
+            # Also set environment variables for API access
+            env = os.environ.copy()
+            env['API_BASE'] = env.get('API_BASE', 'http://localhost:8000')
+
+            # Don't pipe stdout/stderr to avoid buffer blocking
+            # Camera producer logs to file: /backend/logs/camera_producer.log
             process = subprocess.Popen(
-                ["python3", self._camera_script_path],
+                ["python3", self._camera_script_path, str(device_index)],
                 cwd=os.path.dirname(self._camera_script_path),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
             )
 
             self._processes[serial_number] = process
-            logger.info(f"Started camera producer for {serial_number} (PID: {process.pid})")
+            logger.info(f"Started camera producer for {serial_number} (PID: {process.pid}, device_index: {device_index})")
             return True
 
         except Exception as e:

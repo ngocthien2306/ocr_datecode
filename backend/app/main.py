@@ -6,12 +6,29 @@ from app.db.mongodb import connect_to_mongo, close_mongo_connection, get_databas
 from app.repositories.user_repository import UserRepository
 from app.repositories.recipe_repository import RecipeRepository
 from app.repositories.action_log_repository import ActionLogRepository
+import logging
+from pathlib import Path
 
 from app.api.endpoints import auth, users, recipes, cameras, upload, action_logs
+
+# Setup logging to file
+LOGS_DIR = Path(__file__).parent.parent.parent / "backend" / "logs"
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Console output
+        logging.FileHandler(LOGS_DIR / 'backend.log', mode='a')  # File output
+    ]
+)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Connect to MongoDB
     await connect_to_mongo()
 
     db = get_database()

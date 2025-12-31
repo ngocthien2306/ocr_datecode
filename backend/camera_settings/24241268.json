@@ -1,11 +1,13 @@
 {
-  "exposure_time": 12000,
+  "exposure_time": 18000,
   "gain": 1.0,
   "trigger_config": {
-    "mode": "continuous",
+    "mode": "hardware",
     "trigger_source": "Software",
     "trigger_selector": "FrameStart",
     "trigger_activation": "RisingEdge",
     "di_number": 1
-  }
+  },
+  "recipe_id": "694850c56beac57d01bdf65c",
+  "recipe_name": "Juice Box 200ml Kids Pack"
 }
