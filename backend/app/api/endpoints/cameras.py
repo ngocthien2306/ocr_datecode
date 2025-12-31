@@ -210,13 +210,14 @@ async def update_camera(
     user_agent = request.headers.get("user-agent")
 
     # Prepare old and new values for logging
+    print(existing)
     old_value = {
-        "camera_id": existing.camera_id,
-        "model_name": existing.model_name,
-        "serial_number": existing.serial_number,
-        "resolution_width": existing.resolution_width,
-        "resolution_height": existing.resolution_height,
-        "is_active": existing.is_active
+        "camera_id": existing['camera_id'],
+        "model_name": existing['model_name'],
+        "serial_number": existing['serial_number'],
+        "resolution_width": existing['resolution_width'],
+        "resolution_height": existing['resolution_height'],
+        "is_active": existing['is_active']
     }
 
     new_value = {}
@@ -619,7 +620,8 @@ async def update_camera_settings(
         updated_settings = camera_settings_service.update_settings(
             serial_number=serial_number,
             exposure_time=settings.exposure_time,
-            gain=settings.gain
+            gain=settings.gain,
+            trigger_config=settings.trigger_config
         )
 
         return {

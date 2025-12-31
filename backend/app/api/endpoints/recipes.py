@@ -10,6 +10,9 @@ from PIL import Image, ImageDraw, ImageFont
 import json
 import hashlib
 import io
+import logging
+
+logger = logging.getLogger(__name__)
 
 from app.schemas.recipe import RecipeCreate, RecipeUpdate, RecipeResponse
 from app.models.recipe import RecipeInDB
@@ -204,6 +207,7 @@ def recipe_to_response(recipe: RecipeInDB) -> RecipeResponse:
         product_code=recipe.product_code,
         description=recipe.description,
         delay_reject=recipe.delay_reject if hasattr(recipe, 'delay_reject') else 100.0,
+        do_reject_number=recipe.do_reject_number if hasattr(recipe, 'do_reject_number') else 0,
         cameras=cameras_data,
         camera_templates=camera_templates_data,
         camera_settings=recipe.camera_settings.model_dump() if hasattr(recipe.camera_settings, 'model_dump') and recipe.camera_settings else recipe.camera_settings,
@@ -590,7 +594,10 @@ async def load_recipe(
 ):
     """
     Record a recipe load event. Stores who loaded the recipe and when.
+    Also applies camera trigger configuration from recipe to connected cameras.
     """
+    from app.services.camera_settings_service import camera_settings_service
+
     # Ensure recipe exists
     recipe = await recipe_repo.get_by_id(recipe_id)
     if not recipe:
@@ -605,6 +612,39 @@ async def load_recipe(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Recipe has no camera templates. Please draw templates before loading."
         )
+
+    # Apply camera settings including trigger config to each camera
+    cameras_config = getattr(recipe, 'cameras', [])
+    if cameras_config:
+        for cam_config in cameras_config:
+            if isinstance(cam_config, dict):
+                serial_number = cam_config.get('serial_number') or cam_config.get('camera_id')
+                exposure_time = cam_config.get('exposure_time')
+                gain = cam_config.get('gain')
+                trigger_config = cam_config.get('trigger_config')
+            else:
+                serial_number = getattr(cam_config, 'serial_number', None) or getattr(cam_config, 'camera_id', None)
+                exposure_time = getattr(cam_config, 'exposure_time', None)
+                gain = getattr(cam_config, 'gain', None)
+                trigger_config = getattr(cam_config, 'trigger_config', None)
+
+            if serial_number:
+                try:
+                    if trigger_config and hasattr(trigger_config, 'model_dump'):
+                        trigger_config = trigger_config.model_dump()
+                    elif trigger_config and hasattr(trigger_config, 'dict'):
+                        trigger_config = trigger_config.dict()
+
+                    camera_settings_service.update_settings(
+                        serial_number=serial_number,
+                        exposure_time=int(exposure_time) if exposure_time else None,
+                        gain=float(gain) if gain else None,
+                        trigger_config=trigger_config
+                    )
+
+                    logger.info(f"✅ [RECIPE LOAD] Camera {serial_number}: exposure={exposure_time}, gain={gain}, trigger={trigger_config}")
+                except Exception as e:
+                    logger.error(f"❌ [RECIPE LOAD ERROR] Camera {serial_number}: {e}")
 
     # Build metadata snapshot (store useful fields only) and convert to primitives
     metadata = {

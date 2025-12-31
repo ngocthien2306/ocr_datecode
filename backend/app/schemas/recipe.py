@@ -34,10 +34,11 @@ class CameraTemplates(BaseModel):
 
 class TriggerConfiguration(BaseModel):
     """Camera trigger configuration"""
-    trigger_mode: bool = Field(default=True, description="Enable/disable trigger mode")
-    trigger_source: str = Field(default="Software", description="Trigger source (Software, Line1, Line2, etc.)")
+    mode: str = Field(default="continuous", description="Trigger mode: continuous, software, hardware")
+    trigger_source: str = Field(default="Software", description="Trigger source (Software, Line0, Line1, etc.)")
     trigger_selector: str = Field(default="FrameStart", description="Trigger type (FrameStart, ExposureStart, etc.)")
-    trigger_activation: str = Field(default="RisingEdge", description="Trigger edge activation (RisingEdge, FallingEdge)")
+    trigger_activation: str = Field(default="RisingEdge", description="Trigger edge activation (RisingEdge, FallingEdge, AnyEdge)")
+    di_number: int = Field(default=0, ge=0, le=3, description="Digital Input number for hardware trigger (0-3)")
 
 
 class CameraConfiguration(BaseModel):
@@ -82,6 +83,7 @@ class RecipeBase(BaseModel):
     product_code: str = Field(..., min_length=1, max_length=50, description="Product code")
     description: Optional[str] = Field(None, max_length=500)
     delay_reject: Optional[float] = Field(default=100.0, description="Delay reject time in milliseconds")
+    do_reject_number: Optional[int] = Field(default=0, ge=0, le=3, description="Digital Output number for reject (0-3)")
     
     # Multiple cameras support (new approach)
     cameras: List[CameraConfiguration] = Field(default_factory=list, description="Camera configurations for this recipe")
@@ -109,6 +111,7 @@ class RecipeUpdate(BaseModel):
     product_code: Optional[str] = Field(None, min_length=1, max_length=50)
     description: Optional[str] = Field(None, max_length=500)
     delay_reject: Optional[float] = None
+    do_reject_number: Optional[int] = Field(None, ge=0, le=3)
     cameras: Optional[List[CameraConfiguration]] = None
     camera_templates: Optional[List[CameraTemplates]] = None
     camera_settings: Optional[CameraSettings] = None

@@ -1,4 +1,11 @@
 {
-  "exposure_time": 10000,
-  "gain": 1.0
+  "exposure_time": 12000,
+  "gain": 1.0,
+  "trigger_config": {
+    "mode": "continuous",
+    "trigger_source": "Software",
+    "trigger_selector": "FrameStart",
+    "trigger_activation": "RisingEdge",
+    "di_number": 1
+  }
 }

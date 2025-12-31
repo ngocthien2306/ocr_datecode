@@ -3,7 +3,7 @@ Camera Schemas
 Pydantic schemas for camera API requests and responses
 """
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 
@@ -69,3 +69,4 @@ class CameraSettingsUpdate(BaseModel):
     """Schema for updating camera runtime settings"""
     exposure_time: Optional[int] = Field(None, ge=100, le=1000000, description="Exposure time in microseconds (μs)")
     gain: Optional[float] = Field(None, ge=0.0, le=20.0, description="Camera gain value")
+    trigger_config: Optional[Dict[str, Any]] = Field(None, description="Trigger configuration (mode, source, activation, di_number)")

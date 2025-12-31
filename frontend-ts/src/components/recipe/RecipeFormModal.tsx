@@ -27,10 +27,11 @@ interface RecipeCamera {
   gain: number;
   pixel_format: string;
   trigger_config: {
-    trigger_mode: boolean;
+    mode: string;  // 'continuous', 'software', 'hardware'
     trigger_source: string;
     trigger_selector: string;
     trigger_activation: string;
+    di_number: number;  // Digital Input number for hardware trigger
   };
 }
 
@@ -39,6 +40,7 @@ interface FormDataType {
   product_code: string;
   description: string;
   delay_reject: number;
+  do_reject_number: number;
   is_active: boolean;
   cameras: RecipeCamera[];
   camera_settings: {
@@ -82,6 +84,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     product_code: '',
     description: '',
     delay_reject: 100.0,
+    do_reject_number: 0,
     is_active: true,
     cameras: [],
     camera_settings: {
@@ -150,10 +153,11 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           gain: cam.gain || 1.0,
           pixel_format: cam.pixel_format || 'Mono8',
           trigger_config: {
-            trigger_mode: cam.trigger_config?.trigger_mode !== undefined ? cam.trigger_config.trigger_mode : true,
+            mode: cam.trigger_config?.mode || 'continuous',
             trigger_source: cam.trigger_config?.trigger_source || 'Software',
             trigger_selector: cam.trigger_config?.trigger_selector || 'FrameStart',
-            trigger_activation: cam.trigger_config?.trigger_activation || 'RisingEdge'
+            trigger_activation: cam.trigger_config?.trigger_activation || 'RisingEdge',
+            di_number: cam.trigger_config?.di_number !== undefined ? cam.trigger_config.di_number : 0
           }
         };
       });
@@ -203,6 +207,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         product_code: recipeAny.productCode || recipeAny.product_code || '',
         description: recipeAny.description || '',
         delay_reject: recipeAny.delay_reject || 100.0,
+        do_reject_number: recipeAny.do_reject_number !== undefined ? recipeAny.do_reject_number : 0,
         is_active: recipeAny.is_active !== undefined ? recipeAny.is_active : (recipeAny.status === 'Active'),
         cameras: normalizedCameras,
         camera_settings: recipeAny.cameraSettings || recipeAny.camera_settings || {
@@ -245,6 +250,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         product_code: '',
         description: '',
         delay_reject: 100.0,
+        do_reject_number: 0,
         is_active: true,
         cameras: [],
         camera_settings: {
@@ -291,9 +297,19 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
   const handleInputChange = (e: any) => {
     const { name, value, type, checked } = e.target;
+    let finalValue: any = value;
+
+    if (type === 'checkbox') {
+      finalValue = checked;
+    } else if (name === 'delay_reject') {
+      finalValue = parseFloat(value) || 0;
+    } else if (name === 'do_reject_number') {
+      finalValue = parseInt(value) || 0;
+    }
+
     setFormData(prev => ({
       ...prev,
-      [name]: type === 'checkbox' ? checked : value
+      [name]: finalValue
     }));
   };
 
@@ -340,10 +356,11 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       gain: 1.0,
       pixel_format: 'Mono8',
       trigger_config: {
-        trigger_mode: true,
+        mode: 'continuous',
         trigger_source: 'Software',
         trigger_selector: 'FrameStart',
-        trigger_activation: 'RisingEdge'
+        trigger_activation: 'RisingEdge',
+        di_number: 0
       }
     };
 
@@ -375,13 +392,13 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   const handleCameraTriggerConfigChange = (cameraId: string, field: string, value: any) => {
     setFormData(prev => ({
       ...prev,
-      cameras: prev.cameras.map(cam => 
-        cam.camera_id === cameraId 
-          ? { 
-              ...cam, 
+      cameras: prev.cameras.map(cam =>
+        cam.camera_id === cameraId
+          ? {
+              ...cam,
               trigger_config: {
                 ...cam.trigger_config,
-                [field]: field === 'trigger_mode' ? value : value
+                [field]: field === 'di_number' ? parseInt(value) : value
               }
             }
           : cam
@@ -901,9 +918,25 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                   </div>
                   <div className="form-group">
                     <label>Delay Reject (ms)</label>
-                    <input type="number" name="delay_reject" value={formData.delay_reject} 
-                           onChange={handleInputChange} step="0.1" min="0" 
+                    <input type="number" name="delay_reject" value={formData.delay_reject}
+                           onChange={handleInputChange} step="0.1" min="0"
                            placeholder="Delay reject time in milliseconds" />
+                  </div>
+                  <div className="form-group">
+                    <label>Digital Output (DO) Number</label>
+                    <select
+                      name="do_reject_number"
+                      value={formData.do_reject_number.toString()}
+                      onChange={handleInputChange}
+                    >
+                      <option value="0">DO 0</option>
+                      <option value="1">DO 1</option>
+                      <option value="2">DO 2</option>
+                      <option value="3">DO 3</option>
+                    </select>
+                    <small style={{display: 'block', marginTop: 4, color: '#666'}}>
+                      Digital Output port for reject control (0-3)
+                    </small>
                   </div>
                 </div>
                 <div className="form-group checkbox-group">
@@ -983,7 +1016,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                           <h5>Camera Settings</h5>
                           <div className="form-row">
                             <div className="form-group">
-                              <label>Exposure Time (ms) <span className="required">*</span></label>
+                              <label>Exposure Time (μs) <span className="required">*</span></label>
                               <input 
                                 type="number" 
                                 value={camera.exposure_time}
@@ -1032,54 +1065,85 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
                           <h5>Trigger Configuration</h5>
                           <div className="form-row">
-                            <div className="form-group checkbox-group">
-                              <label>
-                                <input 
-                                  type="checkbox" 
-                                  checked={camera.trigger_config.trigger_mode}
-                                  onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'trigger_mode', e.target.checked)}
-                                />
-                                <span>Trigger Mode Enabled</span>
-                              </label>
+                            <div className="form-group">
+                              <label>Trigger Mode <span className="required">*</span></label>
+                              <select
+                                value={camera.trigger_config.mode}
+                                onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'mode', e.target.value)}
+                              >
+                                <option value="continuous">Continuous (Free-running)</option>
+                                <option value="software">Software Trigger</option>
+                                <option value="hardware">Hardware Trigger (DI)</option>
+                              </select>
+                              <small style={{display: 'block', marginTop: 4, color: '#666'}}>
+                                {camera.trigger_config.mode === 'continuous' && 'Camera captures continuously'}
+                                {camera.trigger_config.mode === 'software' && 'Camera waits for software trigger command'}
+                                {camera.trigger_config.mode === 'hardware' && 'Camera captures on Digital Input signal'}
+                              </small>
                             </div>
                           </div>
-                          
-                          <div className="form-row">
-                            <div className="form-group">
-                              <label>Trigger Source</label>
-                              <select 
-                                value={camera.trigger_config.trigger_source}
-                                onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'trigger_source', e.target.value)}
-                              >
-                                <option value="Software">Software</option>
-                                <option value="Line1">Line1</option>
-                                <option value="Line2">Line2</option>
-                                <option value="Line3">Line3</option>
-                              </select>
-                            </div>
-                            <div className="form-group">
-                              <label>Trigger Selector</label>
-                              <select 
-                                value={camera.trigger_config.trigger_selector}
-                                onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'trigger_selector', e.target.value)}
-                              >
-                                <option value="FrameStart">FrameStart</option>
-                                <option value="ExposureStart">ExposureStart</option>
-                                <option value="FrameBurstStart">FrameBurstStart</option>
-                              </select>
-                            </div>
-                            <div className="form-group">
-                              <label>Trigger Activation</label>
-                              <select 
-                                value={camera.trigger_config.trigger_activation}
-                                onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'trigger_activation', e.target.value)}
-                              >
-                                <option value="RisingEdge">RisingEdge</option>
-                                <option value="FallingEdge">FallingEdge</option>
-                                <option value="AnyEdge">AnyEdge</option>
-                              </select>
-                            </div>
-                          </div>
+
+                          {camera.trigger_config.mode === 'hardware' && (
+                            <>
+                              <div className="form-row">
+                                <div className="form-group">
+                                  <label>Digital Input (DI) Number <span className="required">*</span></label>
+                                  <select
+                                    value={camera.trigger_config.di_number.toString()}
+                                    onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'di_number', e.target.value)}
+                                  >
+                                    <option value="0">DI 0</option>
+                                    <option value="1">DI 1</option>
+                                    <option value="2">DI 2</option>
+                                    <option value="3">DI 3</option>
+                                  </select>
+                                  <small style={{display: 'block', marginTop: 4, color: '#666'}}>
+                                    Digital Input port to monitor (0-3)
+                                  </small>
+                                </div>
+                                <div className="form-group">
+                                  <label>Trigger Activation <span className="required">*</span></label>
+                                  <select
+                                    value={camera.trigger_config.trigger_activation}
+                                    onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'trigger_activation', e.target.value)}
+                                  >
+                                    <option value="RisingEdge">Rising Edge (0 → 1)</option>
+                                    <option value="FallingEdge">Falling Edge (1 → 0)</option>
+                                    <option value="AnyEdge">Any Edge (Both)</option>
+                                  </select>
+                                  <small style={{display: 'block', marginTop: 4, color: '#666'}}>
+                                    When to trigger capture
+                                  </small>
+                                </div>
+                              </div>
+
+                              <div className="form-row">
+                                <div className="form-group">
+                                  <label>Trigger Source</label>
+                                  <select
+                                    value={camera.trigger_config.trigger_source}
+                                    onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'trigger_source', e.target.value)}
+                                  >
+                                    <option value="Line0">Line0</option>
+                                    <option value="Line1">Line1</option>
+                                    <option value="Line2">Line2</option>
+                                    <option value="Line3">Line3</option>
+                                  </select>
+                                </div>
+                                <div className="form-group">
+                                  <label>Trigger Selector</label>
+                                  <select
+                                    value={camera.trigger_config.trigger_selector}
+                                    onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'trigger_selector', e.target.value)}
+                                  >
+                                    <option value="FrameStart">FrameStart</option>
+                                    <option value="ExposureStart">ExposureStart</option>
+                                    <option value="FrameBurstStart">FrameBurstStart</option>
+                                  </select>
+                                </div>
+                              </div>
+                            </>
+                          )}
                         </div>
                       </div>
                     ))}

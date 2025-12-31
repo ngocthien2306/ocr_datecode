@@ -10,7 +10,7 @@ from pathlib import Path
 from datetime import datetime
 
 # Setup logging to file
-LOGS_DIR = Path("logs")
+LOGS_DIR = Path("/home/demo/Source/ocr_datecode/backend/logs")
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Configure file handler for settings service
@@ -60,7 +60,13 @@ class CameraSettingsService:
             logger.error(f"❌ [GET SETTINGS ERROR] Camera {serial_number}: {e}")
             return None
 
-    def update_settings(self, serial_number: str, exposure_time: Optional[int] = None, gain: Optional[float] = None) -> Dict:
+    def update_settings(
+        self,
+        serial_number: str,
+        exposure_time: Optional[int] = None,
+        gain: Optional[float] = None,
+        trigger_config: Optional[Dict] = None
+    ) -> Dict:
         """
         Update settings for a camera
 
@@ -68,6 +74,7 @@ class CameraSettingsService:
             serial_number: Camera serial number
             exposure_time: Exposure time in microseconds (optional)
             gain: Camera gain value (optional)
+            trigger_config: Trigger configuration dict (optional)
 
         Returns:
             Dict with updated settings
@@ -100,6 +107,12 @@ class CameraSettingsService:
             old_val = settings.get('gain', 'None')
             settings['gain'] = gain
             changes.append(f"gain: {old_val} → {gain}")
+
+        if trigger_config is not None:
+            old_val = settings.get('trigger_config', {})
+            settings['trigger_config'] = trigger_config
+            trigger_mode = trigger_config.get('mode', 'continuous')
+            changes.append(f"trigger_mode: {old_val.get('mode', 'N/A') if isinstance(old_val, dict) else 'N/A'} → {trigger_mode}")
 
         # Write settings to file
         try:
