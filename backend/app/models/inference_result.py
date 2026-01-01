@@ -3,26 +3,38 @@ Inference Result Model
 Stores per-product inspection results (aggregate of all cameras)
 """
 
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, Field, ConfigDict, field_serializer
+from pydantic_core import core_schema
+from typing import List, Optional, Dict, Any, Annotated
 from datetime import datetime
 from bson import ObjectId
 
 
 class PyObjectId(ObjectId):
+    """Pydantic v2 compatible ObjectId"""
+
     @classmethod
-    def __get_validators__(cls):
-        yield cls.validate
+    def __get_pydantic_core_schema__(cls, source_type, handler):
+        return core_schema.union_schema([
+            core_schema.is_instance_schema(ObjectId),
+            core_schema.chain_schema([
+                core_schema.str_schema(),
+                core_schema.no_info_plain_validator_function(cls.validate),
+            ])
+        ],
+        serialization=core_schema.plain_serializer_function_ser_schema(
+            lambda x: str(x)
+        ))
 
     @classmethod
     def validate(cls, v):
-        if not ObjectId.is_valid(v):
-            raise ValueError("Invalid objectid")
-        return ObjectId(v)
-
-    @classmethod
-    def __modify_schema__(cls, field_schema):
-        field_schema.update(type="string")
+        if isinstance(v, ObjectId):
+            return v
+        if isinstance(v, str):
+            if not ObjectId.is_valid(v):
+                raise ValueError("Invalid ObjectId")
+            return ObjectId(v)
+        raise ValueError("Invalid ObjectId")
 
 
 class FrameResult(BaseModel):
@@ -66,6 +78,11 @@ class InferenceResultCreate(BaseModel):
 
 class InferenceResultInDB(BaseModel):
     """Schema for inference result stored in database"""
+    model_config = ConfigDict(
+        populate_by_name=True,
+        arbitrary_types_allowed=True
+    )
+
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
     recipe_id: str = Field(..., description="Recipe ID")
     recipe_name: str = Field(..., description="Recipe name")
@@ -75,13 +92,11 @@ class InferenceResultInDB(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
-    class Config:
-        json_encoders = {ObjectId: str}
-        populate_by_name = True
-
 
 class InferenceResultResponse(BaseModel):
     """Schema for inference result API response"""
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str = Field(..., alias="_id", description="Result ID")
     recipe_id: str
     recipe_name: str
@@ -90,7 +105,3 @@ class InferenceResultResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     timestamp: datetime
     created_at: datetime
-
-    class Config:
-        json_encoders = {ObjectId: str}
-        populate_by_name = True

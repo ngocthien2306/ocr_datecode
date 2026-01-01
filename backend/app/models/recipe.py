@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
@@ -43,6 +43,8 @@ class TriggerConfiguration(BaseModel):
 
 class CameraConfiguration(BaseModel):
     """Configuration for a single camera in a recipe"""
+    model_config = ConfigDict(protected_namespaces=())
+
     camera_id: str = Field(..., description="Camera identifier")
     model_name: str = Field(..., description="Camera model name")
     serial_number: str = Field(..., description="Camera serial number")
@@ -72,6 +74,8 @@ class CameraSettings(BaseModel):
 
 class ModelThresholds(BaseModel):
     """Model thresholds for OCR processing"""
+    model_config = ConfigDict(protected_namespaces=())
+
     detection_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     recognition_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     # Additional thresholds

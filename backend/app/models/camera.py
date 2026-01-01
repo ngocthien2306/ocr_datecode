@@ -4,11 +4,13 @@ Defines the camera data structure
 """
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class CameraModel(BaseModel):
     """Camera model for database"""
+    model_config = ConfigDict(protected_namespaces=())
+
     camera_id: str = Field(..., description="Unique camera identifier")
     model_name: str = Field(..., description="Camera model name (e.g., Basler acA1920-40gm)")
     serial_number: str = Field(..., description="Camera serial number")
