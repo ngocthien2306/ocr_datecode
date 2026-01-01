@@ -178,6 +178,38 @@ class CameraManagementService:
                     "data": status
                 })
 
+            elif event == "simulate_trigger":
+                # Simulate hardware trigger
+                serial_number = data.get("serial_number")
+                trigger_type = data.get("trigger_type", "rising_edge")
+
+                result = self.camera_manager.simulate_trigger(
+                    serial_number=serial_number,
+                    trigger_type=trigger_type
+                )
+
+                await self.ws_client.send_message({
+                    "event": "simulate_trigger_response",
+                    "data": result
+                })
+
+            elif event == "simulate_trigger_sequence":
+                # Simulate trigger sequence
+                serial_number = data.get("serial_number")
+                count = data.get("count", 5)
+                interval_ms = data.get("interval_ms", 1000)
+
+                result = self.camera_manager.simulate_trigger_sequence(
+                    serial_number=serial_number,
+                    count=count,
+                    interval_ms=interval_ms
+                )
+
+                await self.ws_client.send_message({
+                    "event": "simulate_trigger_sequence_response",
+                    "data": result
+                })
+
             else:
                 logger.warning(f"Unknown event: {event}")
 

@@ -9,7 +9,7 @@ from app.repositories.action_log_repository import ActionLogRepository
 import logging
 from pathlib import Path
 
-from app.api.endpoints import auth, users, recipes, cameras, upload, action_logs, inference_results
+from app.api.endpoints import auth, users, recipes, cameras, upload, action_logs, inference_results, trigger_simulator
 from app.api.websocket import camera_ws
 from app.services.socketio_service import socket_app
 
@@ -79,6 +79,7 @@ app.include_router(cameras.router, prefix="/api", tags=["Cameras"])
 app.include_router(upload.router, prefix="/api/upload", tags=["Upload"])
 app.include_router(action_logs.router, prefix="/api/action-logs", tags=["Action Logs"])
 app.include_router(inference_results.router, prefix="/api", tags=["Inference Results"])
+app.include_router(trigger_simulator.router, prefix="/api", tags=["Trigger Simulator"])
 
 # WebSocket endpoints
 app.include_router(camera_ws.router, tags=["WebSocket"])

@@ -330,6 +330,99 @@ class CameraManager:
                 for serial_number in self.cameras.keys()
             }
 
+    def simulate_trigger(self, serial_number: str = None, trigger_type: str = "rising_edge") -> Dict[str, Any]:
+        """
+        Simulate hardware trigger without physical DI pin
+
+        Args:
+            serial_number: Camera serial (if None, trigger all cameras in hardware_trigger mode)
+            trigger_type: Type of trigger edge
+
+        Returns:
+            Response dict
+        """
+        with self._lock:
+            try:
+                triggered_cameras = []
+
+                if serial_number:
+                    # Trigger specific camera
+                    if serial_number not in self.cameras:
+                        return {
+                            "success": False,
+                            "error": f"Camera {serial_number} not found"
+                        }
+
+                    camera = self.cameras[serial_number]
+                    if camera.mode == "hardware_trigger":
+                        camera._handle_trigger_event()  # Simulate trigger
+                        triggered_cameras.append(serial_number)
+                        logger.info(f"Simulated trigger for camera {serial_number}")
+                    else:
+                        return {
+                            "success": False,
+                            "error": f"Camera {serial_number} not in hardware_trigger mode (current: {camera.mode})"
+                        }
+                else:
+                    # Trigger all cameras in hardware_trigger mode
+                    for sn, camera in self.cameras.items():
+                        if camera.mode == "hardware_trigger":
+                            camera._handle_trigger_event()
+                            triggered_cameras.append(sn)
+                            logger.info(f"Simulated trigger for camera {sn}")
+
+                if not triggered_cameras:
+                    return {
+                        "success": False,
+                        "error": "No cameras in hardware_trigger mode"
+                    }
+
+                return {
+                    "success": True,
+                    "triggered_cameras": triggered_cameras,
+                    "trigger_type": trigger_type
+                }
+
+            except Exception as e:
+                logger.error(f"Error simulating trigger: {e}")
+                return {
+                    "success": False,
+                    "error": str(e)
+                }
+
+    def simulate_trigger_sequence(self, serial_number: str = None, count: int = 5, interval_ms: int = 1000) -> Dict[str, Any]:
+        """
+        Simulate a sequence of triggers
+
+        Args:
+            serial_number: Camera serial (if None, trigger all cameras)
+            count: Number of triggers
+            interval_ms: Interval between triggers in ms
+
+        Returns:
+            Response dict
+        """
+        import threading
+        import time
+
+        def trigger_loop():
+            for i in range(count):
+                logger.info(f"Trigger sequence {i+1}/{count}")
+                self.simulate_trigger(serial_number=serial_number)
+                if i < count - 1:  # Don't sleep after last trigger
+                    time.sleep(interval_ms / 1000.0)
+
+        # Start trigger sequence in background thread
+        thread = threading.Thread(target=trigger_loop, daemon=True)
+        thread.start()
+
+        return {
+            "success": True,
+            "message": f"Trigger sequence started: {count} triggers every {interval_ms}ms",
+            "count": count,
+            "interval_ms": interval_ms
+        }
+
     def shutdown(self):
         """Shutdown all cameras"""
         with self._lock:

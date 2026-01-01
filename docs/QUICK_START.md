@@ -160,6 +160,34 @@ CORS_ORIGINS = [
 
 **Access**: `https://suntech-vision.ngrok.app`
 
+## Testing Without Hardware
+
+### Simulate Trigger (No Physical DI Pin Required)
+
+```bash
+# Single trigger for specific camera
+curl -X POST http://localhost:8000/api/trigger-simulator/simulate \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"serial_number": "24241268", "trigger_type": "rising_edge"}'
+
+# Trigger all cameras in hardware_trigger mode
+curl -X POST http://localhost:8000/api/trigger-simulator/simulate \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"trigger_type": "rising_edge"}'
+
+# Trigger sequence (5 triggers, 1 second interval)
+curl -X POST "http://localhost:8000/api/trigger-simulator/simulate-sequence?count=5&interval_ms=1000" \
+  -H "Authorization: Bearer <token>"
+```
+
+**What happens:**
+- Camera captures frame as if DI pin was triggered
+- Runs inference on captured frame
+- Saves result to database
+- Emits SocketIO event to frontend
+
 ## Advanced Configuration
 
 See:
