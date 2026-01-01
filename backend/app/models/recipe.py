@@ -129,23 +129,21 @@ class RecipeUpdate(BaseModel):
 
 class RecipeInDB(RecipeBase):
     """Schema for recipe stored in database"""
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str = Field(alias="_id")
     created_by: str = Field(..., description="User ID who created this recipe")
     updated_by: str = Field(..., description="User ID who last updated this recipe")
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        populate_by_name = True
-
 
 class RecipeResponse(RecipeBase):
     """Schema for recipe response"""
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     created_by: str
     updated_by: str
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        from_attributes = True

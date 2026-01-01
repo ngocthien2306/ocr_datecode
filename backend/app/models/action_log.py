@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -45,16 +45,14 @@ class ActionLogCreate(ActionLogBase):
 
 
 class ActionLogResponse(ActionLogBase):
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str = Field(alias="_id")
     timestamp: datetime
-
-    class Config:
-        populate_by_name = True
 
 
 class ActionLogInDB(ActionLogBase):
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str = Field(alias="_id")
     timestamp: datetime
-
-    class Config:
-        populate_by_name = True

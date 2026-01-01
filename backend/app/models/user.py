@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from typing import Optional
 from datetime import datetime
 from enum import Enum
@@ -40,21 +40,19 @@ class UserChangePassword(BaseModel):
 
 
 class UserInDB(UserBase):
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str = Field(alias="_id")
     hashed_password: str
     created_at: datetime
     updated_at: datetime
     last_login: Optional[datetime] = None
 
-    class Config:
-        populate_by_name = True
-
 
 class UserResponse(UserBase):
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str = Field(alias="_id")
     created_at: datetime
     updated_at: datetime
     last_login: Optional[datetime] = None
-
-    class Config:
-        populate_by_name = True
