@@ -75,7 +75,7 @@ async def simulate_trigger(
         )
 
     logger.info(
-        f"Trigger simulated by {current_user['username']}: "
+        f"Trigger simulated by {current_user.username}: "
         f"camera={request.serial_number or 'all'}, type={request.trigger_type}"
     )
 
@@ -147,7 +147,7 @@ async def simulate_trigger_sequence(
         )
 
     logger.info(
-        f"Trigger sequence started by {current_user['username']}: "
+        f"Trigger sequence started by {current_user.username}: "
         f"camera={serial_number or 'all'}, count={count}, interval={interval_ms}ms"
     )
 
