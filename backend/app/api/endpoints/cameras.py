@@ -19,10 +19,16 @@ from app.schemas.camera import (
 )
 from app.api.dependencies.auth import get_current_user, get_current_user_from_query
 from app.api.dependencies.action_log import get_action_log_repository
-from app.services import camera_frame_service, camera_producer_service
+from app.services import camera_frame_service, camera_producer_service, shared_memory_service
 from app.services.camera_settings_service import camera_settings_service
 from app.models.action_log import ActionLogCreate, ActionType
 from app.models.user import UserInDB
+from app.api.websocket.camera_ws import (
+    send_connect_camera,
+    send_disconnect_camera,
+    send_set_camera_mode,
+    camera_ws_manager
+)
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
@@ -386,32 +392,27 @@ async def get_camera_frame(
             detail=f"Camera with serial number '{serial_number}' not found"
         )
 
-    # Đọc frame từ shared memory
-    frame_data = camera_frame_service.get_frame(serial_number)
-
-    if frame_data is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Camera '{serial_number}' is not streaming. Please ensure camera producer is running."
-        )
-
-    # Encode frame thành JPEG
-    jpeg_bytes = camera_frame_service.encode_frame_jpeg(frame_data['frame'], quality)
+    # Đọc frame từ shared memory (new architecture)
+    jpeg_bytes = shared_memory_service.read_frame_as_jpeg(serial_number, quality)
 
     if jpeg_bytes is None:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to encode frame"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Camera '{serial_number}' is not streaming. Please ensure camera is connected."
         )
+
+    # Get metadata for headers
+    result = shared_memory_service.read_frame(serial_number)
+    metadata = result[1] if result else {}
 
     # Return image as streaming response
     return StreamingResponse(
         io.BytesIO(jpeg_bytes),
         media_type="image/jpeg",
         headers={
-            "X-Frame-Index": str(frame_data['metadata']['frame_idx']),
-            "X-Timestamp": str(frame_data['metadata']['timestamp']),
-            "X-Camera-Model": frame_data['metadata']['model_name']
+            "X-Frame-Index": str(metadata.get('frame_idx', 0)),
+            "X-Timestamp": str(metadata.get('timestamp', 0)),
+            "X-Camera-Model": metadata.get('model_name', 'Unknown')
         }
     )
 
@@ -443,21 +444,22 @@ async def get_camera_frame_metadata(
             detail=f"Camera with serial number '{serial_number}' not found"
         )
 
-    # Đọc frame từ shared memory
-    frame_data = camera_frame_service.get_frame(serial_number)
+    # Đọc frame từ shared memory (new architecture)
+    result = shared_memory_service.read_frame(serial_number)
 
-    if frame_data is None:
+    if result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Camera '{serial_number}' is not streaming. Please ensure camera producer is running."
+            detail=f"Camera '{serial_number}' is not streaming. Please ensure camera is connected."
         )
 
-    return frame_data['metadata']
+    _, metadata = result
+    return metadata
 
 
 @router.post(
     "/{serial_number}/connect",
-    summary="Connect and start camera producer",
+    summary="Connect camera via WebSocket",
     response_model=dict
 )
 async def connect_camera(
@@ -467,7 +469,7 @@ async def connect_camera(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Connect camera and start producer process.
+    Connect camera via WebSocket to CameraManagement service.
 
     - **serial_number**: Serial number của camera
     - **device_index**: Camera device index (default 0)
@@ -484,13 +486,20 @@ async def connect_camera(
             detail=f"Camera with serial number '{serial_number}' not found"
         )
 
-    # Start camera producer
-    success = camera_producer_service.start_camera(serial_number, device_index)
+    # Check if CameraManagement service is connected
+    if not camera_ws_manager.is_connected():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Camera Management service is not connected. Please start the service."
+        )
+
+    # Send connect command via WebSocket
+    success = await send_connect_camera(serial_number, device_index)
 
     if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to start camera producer for '{serial_number}'"
+            detail=f"Failed to send connect command for '{serial_number}'"
         )
 
     # Update camera connection status in database
@@ -498,15 +507,14 @@ async def connect_camera(
 
     return {
         "success": True,
-        "message": f"Camera '{serial_number}' connected successfully",
-        "serial_number": serial_number,
-        "status": camera_producer_service.get_camera_status(serial_number)
+        "message": f"Camera '{serial_number}' connect command sent successfully",
+        "serial_number": serial_number
     }
 
 
 @router.post(
     "/{serial_number}/disconnect",
-    summary="Disconnect and stop camera producer",
+    summary="Disconnect camera via WebSocket",
     response_model=dict
 )
 async def disconnect_camera(
@@ -515,7 +523,7 @@ async def disconnect_camera(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Disconnect camera and stop producer process.
+    Disconnect camera via WebSocket from CameraManagement service.
 
     - **serial_number**: Serial number của camera
 
@@ -531,21 +539,31 @@ async def disconnect_camera(
             detail=f"Camera with serial number '{serial_number}' not found"
         )
 
-    # Stop camera producer
-    success = camera_producer_service.stop_camera(serial_number)
+    # Check if CameraManagement service is connected
+    if not camera_ws_manager.is_connected():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Camera Management service is not connected"
+        )
+
+    # Send disconnect command via WebSocket
+    success = await send_disconnect_camera(serial_number)
 
     if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to stop camera producer for '{serial_number}'"
+            detail=f"Failed to send disconnect command for '{serial_number}'"
         )
 
     # Update camera connection status in database
     await repo.update_connection_status(camera["camera_id"], False)
 
+    # Cleanup shared memory connection
+    shared_memory_service.cleanup(serial_number)
+
     return {
         "success": True,
-        "message": f"Camera '{serial_number}' disconnected successfully",
+        "message": f"Camera '{serial_number}' disconnect command sent successfully",
         "serial_number": serial_number
     }
 

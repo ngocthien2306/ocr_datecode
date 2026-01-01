@@ -199,62 +199,63 @@ class CameraManagementService:
         try:
             logger.info("Checking for running recipes...")
 
-            # Call API to get active recipe loads
-            url = f"{self.api_base}/api/recipes/loads/active"
+            # Call API to get latest recipe load (only 1 recipe at a time)
+            url = f"{self.api_base}/api/recipes/loads/latest"
             response = requests.get(url, timeout=10)
 
             if response.status_code != 200:
-                logger.warning(f"Failed to get active recipes: {response.status_code}")
+                logger.warning(f"Failed to get latest recipe: {response.status_code}")
                 return
 
-            active_loads = response.json()
+            load_data = response.json()
 
-            if not active_loads:
-                logger.info("No running recipes found")
+            if not load_data:
+                logger.info("No running recipe found")
                 return
 
-            logger.info(f"Found {len(active_loads)} running recipe(s)")
+            # Extract recipe info
+            recipe_id = load_data.get("recipe_id")
+            metadata = load_data.get("metadata", {})
 
-            # For each active recipe, connect cameras and load recipe
-            for load_data in active_loads:
-                recipe_id = load_data.get("recipe_id")
-                metadata = load_data.get("metadata", {})
+            if not recipe_id:
+                logger.warning("No recipe_id in latest load data")
+                return
 
-                logger.info(f"Auto-loading recipe: {metadata.get('name', recipe_id)}")
+            logger.info(f"Found running recipe: {metadata.get('name', recipe_id)}")
 
-                # Get full recipe data
-                recipe_url = f"{self.api_base}/api/recipes/{recipe_id}"
-                recipe_response = requests.get(recipe_url, timeout=10)
+            # Use metadata directly (it already contains full recipe data)
+            recipe_data = metadata.copy()
+            recipe_data["_id"] = recipe_id
+            recipe_data["id"] = recipe_id
 
-                if recipe_response.status_code != 200:
-                    logger.error(f"Failed to get recipe {recipe_id}")
-                    continue
+            # Connect cameras
+            cameras = recipe_data.get("cameras", [])
 
-                recipe_data = recipe_response.json()
+            if not cameras:
+                logger.warning("No cameras in recipe")
+                return
 
-                # Connect cameras
-                cameras = recipe_data.get("cameras", [])
-                for idx, cam in enumerate(cameras):
-                    serial_number = cam.get("serial_number")
+            for idx, cam in enumerate(cameras):
+                serial_number = cam.get("serial_number")
 
-                    # Try to connect
-                    result = self.camera_manager.add_camera(
-                        serial_number=serial_number,
-                        device_index=idx  # Assume device index matches order
-                    )
+                # Try to connect
+                result = self.camera_manager.add_camera(
+                    serial_number=serial_number,
+                    device_index=idx  # Assume device index matches order
+                )
 
-                    if result["success"]:
-                        logger.info(f"Connected camera {serial_number}")
-                    else:
-                        logger.error(f"Failed to connect camera {serial_number}: {result.get('error')}")
-
-                # Load recipe
-                load_result = self.camera_manager.load_recipe(recipe_data)
-
-                if load_result["success"]:
-                    logger.info(f"Recipe auto-loaded successfully")
+                if result["success"]:
+                    logger.info(f"Connected camera {serial_number}")
                 else:
-                    logger.error(f"Failed to auto-load recipe: {load_result.get('error')}")
+                    logger.error(f"Failed to connect camera {serial_number}: {result.get('error')}")
+
+            # Load recipe
+            load_result = self.camera_manager.load_recipe(recipe_data)
+
+            if load_result["success"]:
+                logger.info(f"Recipe auto-loaded successfully: {metadata.get('name')}")
+            else:
+                logger.error(f"Failed to auto-load recipe: {load_result.get('error')}")
 
         except Exception as e:
             logger.error(f"Error checking running recipes: {e}")

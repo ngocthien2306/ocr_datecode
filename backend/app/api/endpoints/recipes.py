@@ -34,6 +34,7 @@ from app.models.action_log import ActionLogCreate, ActionType
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from app.core.config import settings
+from app.api.websocket.camera_ws import send_load_recipe, send_stop_recipe, camera_ws_manager
 
 router = APIRouter()
 
@@ -613,38 +614,12 @@ async def load_recipe(
             detail="Recipe has no camera templates. Please draw templates before loading."
         )
 
-    # Apply camera settings including trigger config to each camera
-    cameras_config = getattr(recipe, 'cameras', [])
-    if cameras_config:
-        for cam_config in cameras_config:
-            if isinstance(cam_config, dict):
-                serial_number = cam_config.get('serial_number') or cam_config.get('camera_id')
-                exposure_time = cam_config.get('exposure_time')
-                gain = cam_config.get('gain')
-                trigger_config = cam_config.get('trigger_config')
-            else:
-                serial_number = getattr(cam_config, 'serial_number', None) or getattr(cam_config, 'camera_id', None)
-                exposure_time = getattr(cam_config, 'exposure_time', None)
-                gain = getattr(cam_config, 'gain', None)
-                trigger_config = getattr(cam_config, 'trigger_config', None)
-
-            if serial_number:
-                try:
-                    if trigger_config and hasattr(trigger_config, 'model_dump'):
-                        trigger_config = trigger_config.model_dump()
-                    elif trigger_config and hasattr(trigger_config, 'dict'):
-                        trigger_config = trigger_config.dict()
-
-                    camera_settings_service.update_settings(
-                        serial_number=serial_number,
-                        exposure_time=int(exposure_time) if exposure_time else None,
-                        gain=float(gain) if gain else None,
-                        trigger_config=trigger_config
-                    )
-
-                    logger.info(f"✅ [RECIPE LOAD] Camera {serial_number}: exposure={exposure_time}, gain={gain}, trigger={trigger_config}")
-                except Exception as e:
-                    logger.error(f"❌ [RECIPE LOAD ERROR] Camera {serial_number}: {e}")
+    # Check if CameraManagement service is connected
+    if not camera_ws_manager.is_connected():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Camera Management service is not connected. Please start the service."
+        )
 
     # Build metadata snapshot (will be used for both storage and inference)
     metadata = {
@@ -656,39 +631,31 @@ async def load_recipe(
         'cameras': _to_primitive(getattr(recipe, 'cameras', []))
     }
 
-    # Save recipe_id to camera settings for camera producer to detect and load
-    # Camera producer will call API to get recipe data and init inference
-    try:
-        from pathlib import Path
-        settings_dir = Path(__file__).parent.parent.parent.parent.parent / "backend" / "camera_settings"
+    # Send load recipe command via WebSocket to CameraManagement service
+    # Convert recipe to dict for WebSocket transmission
+    cameras_config = getattr(recipe, 'cameras', [])
+    recipe_dict = {
+        '_id': str(recipe.id) if hasattr(recipe, 'id') else recipe_id,
+        'id': recipe_id,
+        'name': recipe.name,
+        'product_code': recipe.product_code,
+        'cameras': _to_primitive(cameras_config),
+        'camera_templates': _to_primitive(camera_templates),
+        'model_thresholds': _to_primitive(getattr(recipe, 'model_thresholds', None)),
+        'camera_settings': _to_primitive(getattr(recipe, 'camera_settings', None)),
+        'template_config': _to_primitive(getattr(recipe, 'template_config', None)),
+        'roi_config': _to_primitive(getattr(recipe, 'roi_config', None)),
+    }
 
-        for cam_config in cameras_config:
-            if isinstance(cam_config, dict):
-                serial_number = cam_config.get('serial_number') or cam_config.get('camera_id')
-                trigger_config = cam_config.get('trigger_config', {})
-            else:
-                serial_number = getattr(cam_config, 'serial_number', None) or getattr(cam_config, 'camera_id', None)
-                trigger_config = getattr(cam_config, 'trigger_config', None) or {}
+    success = await send_load_recipe(recipe_dict)
 
-            trigger_mode = trigger_config.get('mode') if isinstance(trigger_config, dict) else getattr(trigger_config, 'mode', None)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to send load recipe command to Camera Management service"
+        )
 
-            # Save recipe_id to camera settings for hardware trigger cameras
-            if trigger_mode == 'hardware' and serial_number:
-                settings_file = settings_dir / f"{serial_number}.json"
-                if settings_file.exists():
-                    with open(settings_file, 'r') as f:
-                        settings_data = json.load(f)
-
-                    # Add recipe_id and recipe_name to settings
-                    settings_data['recipe_id'] = recipe_id
-                    settings_data['recipe_name'] = recipe.name
-
-                    with open(settings_file, 'w') as f:
-                        json.dump(settings_data, f, indent=2)
-
-                    logger.info(f"💾 [RECIPE INFO] Saved recipe_id {recipe_id} to camera settings {serial_number}")
-    except Exception as e:
-        logger.warning(f"⚠️ [RECIPE INFO] Could not save recipe_id to camera settings: {e}")
+    logger.info(f"✅ [RECIPE LOAD] Sent load recipe command via WebSocket: {recipe.name}")
 
     # Persist loader's full name to avoid frontend-side lookups
     created = await load_repo.create(
@@ -723,6 +690,69 @@ async def load_recipe(
         metadata=created.get('metadata')
     )
 
+
+@router.post("/{recipe_id}/stop", response_model=dict)
+async def stop_recipe(
+    recipe_id: str,
+    request: Request,
+    current_user: UserInDB = Depends(get_current_user),
+    recipe_repo: RecipeRepository = Depends(get_recipe_repository),
+    action_log_repo: ActionLogRepository = Depends(get_action_log_repository)
+):
+    """
+    Stop a running recipe and set cameras to idle mode.
+
+    - **recipe_id**: Recipe ID to stop
+
+    Returns: Status message
+    """
+    # Ensure recipe exists
+    recipe = await recipe_repo.get_by_id(recipe_id)
+    if not recipe:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recipe not found"
+        )
+
+    # Check if CameraManagement service is connected
+    if not camera_ws_manager.is_connected():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Camera Management service is not connected"
+        )
+
+    # Send stop recipe command via WebSocket
+    success = await send_stop_recipe(recipe_id)
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to send stop recipe command"
+        )
+
+    logger.info(f"✅ [RECIPE STOP] Sent stop recipe command via WebSocket: {recipe.name}")
+
+    # Log the action
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    action_log = ActionLogCreate(
+        user_id=current_user.id,
+        username=current_user.username,
+        action_type=ActionType.LOAD_RECIPE,  # Reuse LOAD_RECIPE or create STOP_RECIPE if needed
+        resource_type="recipe",
+        resource_id=recipe_id,
+        description=f"Stopped recipe '{recipe.name}'",
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
+    await action_log_repo.create_action_log(action_log)
+
+    return {
+        "success": True,
+        "message": f"Recipe '{recipe.name}' stopped successfully",
+        "recipe_id": recipe_id
+    }
 
 
 @router.put("/{recipe_id}", response_model=RecipeResponse)
