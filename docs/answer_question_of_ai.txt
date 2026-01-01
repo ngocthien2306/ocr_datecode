@@ -1,0 +1,197 @@
+Vấn đề hiện tại:
+  - Connect camera qua subprocess Python script → khó debug/kiểm soát
+  - Config qua JSON file → bất tiện, nhiều hạn chế
+
+  Solution đề xuất:
+  - Socket giữa BE (FastAPI) ↔ AI Service
+  - CameraManagement quản lý nhiều Camera
+  - Shared memory để share frame
+  - Trigger qua chân DI (0→1, 1→0, hoặc cả hai) → chụp N frame → inference với SuperPointMatcherTRT
+
+Tôi cần làm rõ: BE sẽ giao tiếp với CameraManagement, còn AI Service chỉ là 1 phần nhỏ khi người dùng load recipe để ta inferece các chức năng AI
+  Câu hỏi làm rõ:
+
+  1. Socket Architecture:
+
+  - Dùng SocketIO hay WebSocket thuần?
+    trả lời: Dùng WebSocket trong fastapi, 
+    example:
+        pip install websockets
+        from fastapi import FastAPI, WebSocket
+
+  - Socket bidirectional hay chỉ BE → AI Service?
+    trả lời: chỉ BE và CameraManagement (AI Service), FE không được giao tiếp với CameraManagement (AI Service)
+  - AI Service có gửi event ngược lại BE không (vd: inference result, camera error)?
+    trả lời: CameraManagement (AI Service) có gửi event ngược lại để update kết quả và trạng thái của camera khi nó bị lỗi hay shutdown đột ngột
+
+  2. AI Service:
+
+  - AI Service là process riêng chạy độc lập hay module trong cùng BE?
+    trả lời: CameraManagement (AI Service) là process riêng giao tiếp với BE qua socket 
+  - Nếu riêng, start như thế nào (systemd, docker, manual)?
+    trả lời: manual
+  - Port/endpoint socket là gì?
+    trả lời: tuy chỉnh 
+
+  3. Trigger Logic:
+
+  - Giả lập trigger = gọi API, nhưng production thật đọc chân DI hardware đúng không?
+    trả lời: đúng vậy giả lập trigger bằng API để lấy frame và inference frame đó luôn, production thật thì phải đọc chân DI hardware
+  - "Mỗi lần chụp N frame = số template" → vậy nếu camera có 3 template thì chụp 3 frame liên tiếp?
+    trả lời: đúng có 3 template thì chụp 3 frame liên tiếp, nhưng frame sẽ match với 1 template theo thứ tự
+  - Hay mỗi template được map với 1 frame riêng?
+    trả lời:  đúng có 3 template thì chụp 3 frame liên tiếp, nhưng frame sẽ match với 1 template theo thứ tự
+
+  4. Camera Class:
+
+  - Mỗi Camera instance có chạy thread/process riêng để grab frame liên tục không?
+    trả lời: mỗi camẻa nên chạy process riêng, nhưng không phải lúc nào cũng grab frame liên tục
+    có các case như sau: khi có recipe được load thì nó grab frame theo trigger, bổ sung logic stop bên page recipe, khi bấm load thì status của nó hiện là running và có nút để stop
+    bên /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src/components/camera/CameraViewer.tsx có 2 nút live camera và capture 
+    nếu đang load recipe mà người dùng click 2 nút này thì sao? khi bất nút live camera nếu recipe đang load thì ta cứ fetch lấy frame mới nhất thôi, frame được nhận khi có trigger 
+    và click capture cũng vậy. Cơ bản ta phải xây dựng 1 shared memory để lúc nào nó cũng gửi frame mới nhất vào 
+
+    nếu click vào mà không có recipe nào đang load thì sau? cơ bản vẫn lấy frame mới nhất, live camera thì fetch lấy liên tục với N ms interval (đã có trên FE)
+    khi không có recipe load thì bên BE gửi tín hiệu đến CameraManagement (AI Service) để nó chạy grab frame liên tục 
+
+  - Hay chỉ grab khi có trigger?
+
+    trả lời: tuỳ theo tình huống, hãy phân tích câu trả lời mà tôi của câu hỏi "Mỗi Camera instance có chạy thread/process riêng để grab frame liên tục không?"
+  - Camera nào quản lý việc ghi shared memory?
+    trả lời: camera nào cũng ghi vào shared memory, có 1 service để quản lí
+
+Tôi có 1 câu hỏi: bạn sẽ đề xuất như nào để lấy frame của CameraManagement (AI Service) từ BE, trao đổi socket hay dùng 1 service để đọc nội dung được share từ shared memory mà  CameraManagement (AI Service) đã lưu vào 
+
+  5. Shared Memory:
+
+  - Lưu 1 frame latest hay buffer nhiều frame?
+    trả lời: lưu 1 frame mới nhất
+  - Format: numpy array, bytes raw, hay đã encode (JPEG)?
+    trả lời: hãy để xuất cái nào tốt hơn, như /Users/ngocthien.ai/Source/Projects/ocr_datecode/ai_services/camera_shm_producer.py là đang dùng gì?
+  - Size cố định hay dynamic?
+    trả lời: dynamic vì camera có độ phân giải khác nhau 
+
+  6. Load Recipe Flow:
+
+  - Socket gửi toàn bộ recipe JSON hay chỉ extract params cần thiết (exposure_time, trigger_config, templates...)?
+    trả lời: phải gửi toàn bộ
+
+  - AI Service lưu state recipe hiện tại vào biến memory hay persist vào đâu đó?
+    trả lời: lưu vào biến memory, và call api để lấy recipe đó nếu service CameraManagement (AI Service) vừa mới chạy lần đầu. nếu và check cái recipe đó là đang running hay stop. nếu là running thì phải tự khởi tạo camera và thực hiện logic trigger và inference, còn stop thì đợi thao tác trên UI 
+
+  7. Inference Result:
+
+  - Sau khi inference, AI Service lưu kết quả vào đâu (DB, memory, cache)?
+    trả lời:  CameraManagement (AI Service) sẽ lưu kết quả vào DB và lưu ảnh kết quả vào folder, nhưng có logic chỉ lưu ảnh fail hoặc both thì ta config trên BE (chỗ này sẽ implement sau, nhưng nó note todo, mặc định là lưu fail trước)
+    CameraManagement (AI Service) cần gửi socket hoặc restful api để lưu kết quả
+  - BE lấy kết quả như thế nào để show FE (polling, socket event, REST API)?
+    trả lời: FE call BE để lấy thôi, này là dành cho page Historical, nhưng khi đang load recipe để inference thì, FE lắng nghe socket từ BE, khi BE nhận đuợc kết quả từ CameraManagement (AI Service) thì gửi ngay cho FE (khi load recipe sẽ chuyển sang màng hình khác để coi kết quả), tạo ra 1 page mới là inference page, nó chỉ được enable khi có recipe đang running
+
+   8. Error Handling:
+
+  - Camera disconnect giữa chừng trong lúc load recipe → behavior?
+    trả lời: nếu camera disconnect thì ta sẽ gửi socket để connect, nếu vẫn không được thì trả ra không thể kết nối với camera (có thể CameraManagement (AI Service) đang chưa được chạy hoặc camera đã bị tháo, ...)
+  - Socket connection lost → retry logic?
+    trả lời: liên tục retry
+  - Inference fail → return gì cho FE?
+    trả lời: inference fail để đây là ảnh đó fail hay inference bị gặp lỗi. Nếu ảnh đó fail thì gửi kết quả như logic đã nhắc ở trên thôi, còn gặp lỗi khi inference thì không có return bị gặp lỗi gì, vào vùng log. vùng log này cũng show ảnh pass/fail
+
+  9. Database:
+
+  - Cần log gì vào DB: mỗi trigger event? Inference result? Camera status change?
+    trả lời: Inference result? Camera status change?
+
+  10. Codebase hiện tại:
+
+  - Có code CameraManagement, Camera, SuperPointMatcherTRT sẵn chưa?
+    trả lời: chưa có CameraManagement, Camera, đã có SuperPointMatcherTRT (/Users/ngocthien.ai/Source/Projects/ocr_datecode/ai_services/inference_service.py)
+  - Cần refactor code cũ hay viết mới từ đầu?
+    trả lời: cần xoá những "code rác" lúc đầu, và viết code mới 
+  - Có unit test/integration test nào cần maintain không?
+    trả lời: không có 
+
+
+
+🔍 Câu hỏi bổ sung:
+
+  1️⃣ Multi-template logic chi tiết
+
+  Khi camera có 3 templates:
+  - Delay giữa 3 frame là delay_trigger (ms) từ recipe đúng không?
+    trả lời: đúng vậy, mỗi frame cách nhau delay_trigger, frame đầu chờ delay_trigger rồi chụp, frame thứ 2 -> N cũng vậy 
+  - Hay chụp 3 frame liên tiếp ngay lập tức (as fast as possible)?
+    trả lời: không phải 
+  - Kết quả inference: Cả 3 frame đều PASS mới PASS? Hay 1 frame FAIL = FAIL? Hay logic khác (ví dụ: majority voting)?
+    trả lời: để tôi tự implement logic pass/fail 
+
+  2️⃣ Recipe với nhiều camera
+
+  Nếu recipe có 2 camera (CAM001, CAM002):
+  - 1 trigger DI có kích hoạt cả 2 camera đồng thời không?
+    trả lời: đồng thời 2 camera
+  - Hay mỗi camera config DI riêng trong trigger_config.di_number?
+    trả lời: mỗi camera có config riê
+  - Kết quả product: Cả 2 camera đều PASS mới PASS? Hay logic riêng?
+    trả lời: tôi tự implement 
+    IMPORTANT: mỗi camera sẽ có chức năng riêng, ví dụ có 2 camera check xem đó là sản phẩm gì, camera thứ 3 ở trên là kiểm tra OCR date code.
+    nên cứ chụp các camera 1 lần khi có trigger. có line 1 camera thì mới có logic chụp N ảnh. Còn line có 3 camera thì không, nói chung cứ cho setup trên FE
+    như file /Users/ngocthien.ai/Source/Projects/ocr_datecode/docs/camera_system_architecture.txt tôi có mention 
+    bổ sung thêm select để chọn chức năng của các template đó (OCR, Check Type Product, Check Color ..) chỉ cần bổ sung, tôi sẽ implement sau 
+    ví dụ bên tab template, tôi select camera 1 -> có select box để chọn type, vẽ 3 template của camera đó thì vẫn type này 
+    select camera 2 -> select box để chọn type cho camera đó 
+
+  3️⃣ Stop recipe
+
+  Khi user bấm nút STOP ở trang recipe:
+  - Camera chuyển về continuous mode (grab liên tục) hay idle mode (dừng grab)?
+    trả lời: khi stop thì camera idle -> khi nào bên cameraViewer click live camera / capture thì mới chuyển continuous mode và grab frame
+  - CameraManagement có cần gửi event recipe_stopped về BE không?
+    trả lời: đâu cần vì FE gọi BE để update status là stop và BE gọi CameraManagement (AI Service) để stop rồi 
+
+  4️⃣ Database schema cho inference result
+
+  Cần lưu những field nào:
+  - Option 1: Per-frame record (mỗi frame 1 row)?
+  {
+    recipe_id, camera_id, template_id, frame_idx,
+    timestamp, pass_fail, confidence, image_path
+  }
+  - Option 2: Per-product record (aggregate cả 3 frame)?
+  {
+    recipe_id, timestamp, product_pass_fail,
+    camera_results: [{camera_id, frames: [...]}]
+  }
+  - Hay anh có schema ưu tiên khác?
+
+  trả lời: option 2
+
+  5️⃣ Template function type
+
+  Field mới function_type (OCR, Check_Type, Check_Color...):
+  - Chỉ để display/categorize, hay ảnh hưởng inference logic?
+    trả lởi: có ảnh hưởng
+  - Nếu ảnh hưởng, SuperPointMatcherTRT có cần modify không?
+    trả lời: hiện tại chưa cần modify vì tôi đang dev case chỉ có 1 camera trước 
+  6️⃣ Inference page
+
+  - FE chỉ connect socket khi vào /inference page, hay connect luôn khi login?
+    trả lời: connect khi login 
+  - Nếu user đóng tab nhưng recipe vẫn running → inference vẫn chạy và lưu DB bình thường đúng không?
+    trả lời: vẫn chạy bình thường 
+  7️⃣ Image storage
+
+  - Path convention: /backend/uploads/inference_results/{recipe_id}/{date}/{serial}_{timestamp}_{result}.jpg?
+    trả lời: hợp lý
+  - Hay anh có format khác?
+    trả lời: không
+  - Chỉ lưu FAIL images, hay PASS + FAIL?
+    trả lời: lưu PASS và FAIL tuỳ vào config của tôi 
+
+  8️⃣ WebSocket reconnection
+
+  - Nếu CameraManagement service restart, BE có auto-reconnect không?
+    trả lời: cần có auto-reconnect 
+  - Hay cần manual restart BE?
+    trả lời: không cần 
+  - Heartbeat interval bao nhiêu giây?
+    trả lời: bạn đề xuất 

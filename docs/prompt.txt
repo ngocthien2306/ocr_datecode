@@ -1,0 +1,131 @@
+
+# cm1
+đầu tiên hãy phân tích code và lên plan để implement cho tôi, vì tôi cần đảm bảo hoàn thành các bước nhỏ trước, mỗi module implement tôi sẽ kiểm tra nó hoạt động đúng chưa.
+vui lòng giúp tôi tiết kiệm, tránh lãng phí token, không cần comment quá nhiều hoặc tạo nhiều document. Ở mỗi service nhớ tại 1 file log để tiện debug. Kế hoạch bao gồm remove "code
+rác" cũ trước khi implement code mới.
+
+hãy load file này /Users/ngocthien.ai/Source/Projects/ocr_datecode/docs/camera_system_architecture.txt\
+và phân tích hệ thống hiện tại với các phân tích của tôi 
+
+
+🏗️ Kiến trúc đề xuất
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │                     FE (React TypeScript)                    │
+  │  - REST API calls (connect, load recipe, capture...)        │
+  │  - SocketIO client (listen inference results realtime)      │
+  └──────────────────────┬──────────────────────────────────────┘
+                         │
+            ┌────────────┼──────────────┐
+            │ REST       │ SocketIO     │
+            │            │ (FE ↔ BE)    │
+            ▼            ▼              │
+  ┌─────────────────────────────────────┴───────────────────────┐
+  │              BE (FastAPI - Python)                          │
+  │  ┌──────────────┐  ┌──────────────────┐  ┌───────────────┐ │
+  │  │ REST API     │  │ SocketIO Server  │  │ SharedMemory  │ │
+  │  │ Endpoints    │  │ (FE ↔ BE)        │  │ Reader Service│ │
+  │  └──────────────┘  └──────────────────┘  └───────┬───────┘ │
+  │         │                  │                      │         │
+  │         │    WebSocket     │                      │         │
+  │         │    (BE ↔ AI)     │                      │         │
+  │         └──────────┬───────┘                      │         │
+  └────────────────────┼──────────────────────────────┼─────────┘
+                       │                              │
+                       │ WebSocket                    │ Shared Memory
+                       │ Control + Events             │ Read Frames
+                       ▼                              │
+  ┌────────────────────────────────────────────────────┼─────────┐
+  │       CameraManagement Service (AI Service)        │         │
+  │  ┌─────────────────────────────────────────┐       │         │
+  │  │  WebSocket Client (connect to BE)       │       │         │
+  │  └─────────────────────────────────────────┘       │         │
+  │  ┌─────────────────────────────────────────┐       │         │
+  │  │  CameraManager                           │       │         │
+  │  │   - manage multiple Camera instances    │       │         │
+  │  │   - receive: connect/disconnect/load     │       │         │
+  │  │   - send: events (error, status, result) │       │         │
+  │  └──────────────┬──────────────────────────┘       │         │
+  │                 │                                   │         │
+  │    ┌────────────┼──────────────┐                   │         │
+  │    ▼            ▼              ▼                    │         │
+  │  ┌─────────┐ ┌─────────┐   ┌─────────┐            │         │
+  │  │ Camera  │ │ Camera  │...│ Camera  │            │         │
+  │  │ Process │ │ Process │   │ Process │            │         │
+  │  │ (24xxx) │ │ (25xxx) │   │ (26xxx) │            │         │
+  │  └────┬────┘ └────┬────┘   └────┬────┘            │         │
+  │       │           │             │                  │         │
+  │       │ write     │ write       │ write            │         │
+  │       ▼           ▼             ▼                  │         │
+  └───────┼───────────┼─────────────┼──────────────────┼─────────┘
+          │           │             │                  │
+          │           │             │                  │
+          ▼           ▼             ▼                  ▼
+  ┌──────────────────────────────────────────────────────────────┐
+  │               Shared Memory (OS Kernel)                      │
+  │   camera_24241268  │  camera_25xxx  │  camera_26xxx         │
+  │   [latest frame]   │  [latest frame]│  [latest frame]       │
+  └──────────────────────────────────────────────────────────────┘
+
+  ---
+  📝 Luồng hoạt động chi tiết
+
+  1️⃣ Connect Camera
+
+  FE → BE (POST /cameras/{serial}/connect)
+    → BE → WebSocket → CameraManagement
+      → CameraManager.add_camera(serial)
+        → spawn Camera subprocess
+          → Camera opens Basler, writes to shared_memory
+    ← CameraManagement ← WebSocket ← {status: "connected"}
+  ← BE ← {success: true}
+
+  2️⃣ Load Recipe
+
+  FE → BE (POST /recipes/{id}/load)
+    → BE → WebSocket → CameraManagement
+      → {event: "load_recipe", data: {...full recipe JSON...}}
+        → CameraManager updates all cameras in recipe
+          → Each Camera:
+            - Update exposure/gain/trigger_config
+            - Load templates
+            - Initialize SuperPointMatcherTRT
+            - Start hardware trigger loop
+    ← BE ← {success: true, recipe_id: "xxx"}
+  FE → redirect to /inference page
+
+  3️⃣ Live Camera / Capture
+
+  FE → BE (GET /cameras/{serial}/live or /capture)
+    → BE → SharedMemoryService.read_frame(serial)
+      → Read from shared_memory: camera_{serial}
+      → Decode: frame_bytes → numpy → JPEG encode
+    ← BE ← JPEG image
+  ← FE display
+
+  4️⃣ Trigger Event (Hardware DI)
+
+  Hardware DI: 0→1 (RisingEdge)
+    → Camera detects trigger
+      → Capture frame → write shared_memory
+      → Run SuperPointMatcherTRT.match()
+      → result = {success, confidence, bboxes, pass/fail}
+      → Save result to temp (image + JSON)
+      → CameraManagement → WebSocket → BE
+        → {event: "inference_result", data: result}
+        → BE saves to DB + moves image to storage
+        → BE → SocketIO → FE
+          → {inference_result: ...}
+  ← FE updates UI (show result, pass/fail status)
+
+  5️⃣ Disconnect Camera
+
+  FE → BE (POST /cameras/{serial}/disconnect)
+    → BE → WebSocket → CameraManagement
+      → CameraManager.remove_camera(serial)
+        → Kill Camera subprocess
+        → Cleanup shared_memory
+    ← BE ← {success: true}
+
+  ---
+  🔧 Implementation Plan

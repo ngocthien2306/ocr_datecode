@@ -6,4 +6,169 @@ chỗ này bên FE user call connect camera thì gọi api này
     response_model=dict
 )
 
-AP
+sau đó api này sẽ bắt đầu khởi chạy camera qua CameraProducerService bằng cách gọi
+self._camera_script_path = "/home/demo/Source/ocr_datecode/ai_services/camera_shm_producer.py"
+tuy nhiên vấn đề của việc này rất khó để debug và kiểm soát khi có nhiều camera cũng như trigger lấy frame và update 
+các config phải thông qua lưu file json và check file đó liên tục điều này rất bất tiện 
+
+hiện tại bên FE file /home/demo/Source/ocr_datecode/frontend-ts/src/components/recipe/Receipts.tsx 
+có hàm handleLoadReceipt call api 
+@router.post("/{recipe_id}/load", response_model=ReceiptLoadResponse)
+để ta bắt đầu 1 phiên chạy kiểm tra sản phẩm, vì thiết kế bên trên 
+camera_settings_service, và                     with open(settings_file, 'w') as f:
+                        json.dump(settings_data, f, indent=2)
+
+phải lưu thông tin thành json để bên AI service check với thiết kế này gặp rất nhiều hạn chế
+
+vì vậy tôi cần thiết kế lại kiến trúc, solution của tôi là dùng socket 
+
+ta có FE react typescript, BE python Fastapi, (camera service AI service)
+giữa AI service và BE python nên thiết kế socket để giao tiếp cho vụ connect/disconnect
+khi user load recipe bằng cách call api (FE call restfull BE) thì BE bắn tín hiệu socket 
+sang AI service để bắt đầu logic trigger. Tôi có code mẫu để đọc chân DI (0, 1, 2, 3) tuỳ theo config của người dùng trên FE
+có 3 cách trigger lấy frame khi giá trị từ 0->1, 1->0 hoặc cả hai. mỗi lần chỉ đọc N frame tuỳ theo config của người dùng, mỗi frame cách nhau N ms delay (trong recipe có field Delay Trigger (ms) *)
+để inference (hiện tại có class SuperPointMatcherTRT để template matching suy luận ra các vùng bbox/polygon) tìm ra vùng bbox/polygon dựa vào ảnh template để truy vấn ảnh target
+phần trigger này ta giả lập call 1 api -> api gửi socket để trigger chụp ảnh và inference
+
+trong recipe có thể có nhiều hơn 1 camera, 1 camera có thể có nhiều hơn 1 template 
+số lần chụp N ảnh ở trên phụ thuộc vào số lượng template của camera 
+
+tiếp theo là solution design camera 
+
+ta sẽ có class CameraManagement để quản lý tất cả camera, và class Camera
+
+khi FE call api connect qua BE, BE gửi socket tới CameraManagement, để add Camera vào dựa vào key Serial Number, mỗi camera hoạt động riêng biệt 
+khi FE call api disconnect qua BE thì BE gửi socket tới CameraManagement để delele camera này
+
+Cách để BE lấy frame gửi cho FE khi FE request capture hay live camera, đầu tiên là khi camera đc khởi tạo sẽ tạo shared_memory để lưu frame vào đây, 
+bên BE lấy frame dựa vào serial number để lấy và gửi lại FE
+
+Có các case như sau: gửi load recipe nhưng camera có trong recipe không hoạt động thì sao?
+1. bên python gửi socket qua để kết nối camera đó, nếu kết nối bị lỗi thì trả ra, bên FE gọi api camera để check trước 
+sau khi thoả điều kiện camera rồi ta mới gửi api load để load recipe đó. nhớ update trạng thái vào database 
+
+
+các tính năng mới cần bổ sung, khi load recipe thành công thì ta re-direct tới màng hình khác 
+để check kết quả sản phẩm gồm 1 vùng để show hình ảnh kết quả, và trạng thái pass/fail ... các này implement cuối cùng
+vì có thể tôi sẽ bổ sung 1 vài thông tin có thể show lên màng hình 
+
+cần bổ sung bên tab template (/Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src/components/recipe/RecipeFormModal.tsx) 
+{activeTab === 'template' && (
+    <div className="form-section template-section">
+    <div className="template-header">
+        <h3>Template Configuration</h3>
+        <div className="template-camera-selector">
+bổ sung thêm select để chọn chức năng của các template đó (OCR, Check Type Product, Check Color ..) chỉ cần bổ sung, tôi sẽ implement sau 
+
+Load recipe cũng chỉ để update các tham số mới cho bên camera và AI service, sau đó kích hoạt tính năng inference 
+
+đây là mẫu của recipe
+{
+    _id: ObjectId('694850c56beac57d01bdf65c'),
+    name: 'Juice Box 200ml Kids Pack',
+    product_code: 'JUICE-200-010',
+    description: 'Small juice box for kids with compact size and bright colors',
+    delay_reject: 100,
+    cameras: [
+        {
+            camera_id: 'CAM001',
+            model_name: 'Basler acA2440-35uc',
+            serial_number: '24241268',
+            location: 'Production Line 1 - Position A',
+            exposure_time: 10000,
+            delay_trigger: 100,
+            gain: 1,
+            trigger_config: {
+                mode: 'hardware',
+                trigger_source: 'Software',
+                trigger_selector: 'FrameStart',
+                trigger_activation: 'RisingEdge',
+                di_number: 1
+            },
+            pixel_format: 'Mono8'
+        }
+    ],
+    camera_templates: [
+        {
+            camera_id: 'CAM001',
+            templates: [
+                {
+                    name: 'Frame 2',
+                    image_url: '/api/recipes/templates/images/f6f90a4a-6b5a-413f-b092-b78d5817b774.jpg',
+                    image_width: 2464,
+                    image_height: 2056,
+                    annotations: [
+                        {
+                            type: 'template',
+                            shape: 'rectangle',
+                            text: '',
+                            x: 0.49599084123323567,
+                            y: 0.49437442208279886,
+                            width: 0.07483763031293954,
+                            height: 0.08358001476985712
+                        },
+                        {
+                            type: 'text',
+                            shape: 'polygon',
+                            text: 'BBD 2027/09/04 PL 050961 1215',
+                            points: [
+                                [
+                                    0.36815112764151187,
+                                    0.6203945041237691
+                                ],
+                                [
+                                    0.5686341755336067,
+                                    0.6131957502528875
+                                ],
+                                [
+                                    0.5692772591075368,
+                                    0.6388785458517182
+                                ],
+                                [
+                                    0.3668147413859236,
+                                    0.6453077777570919
+                                ]
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    camera_settings: {
+        exposure_time: 58,
+        delay_trigger: 105,
+        gain: 1.18,
+        brightness: 0.57,
+        contrast: 1.13
+    },
+    model_thresholds: {
+        detection_threshold: 0.69,
+        recognition_threshold: 0.74,
+        min_text_size: 12,
+        max_text_size: 165
+    },
+    template_config: {
+        template_type: 'small_box',
+        roi: [
+            95,
+            100,
+            370,
+            290
+        ],
+        rotation_tolerance: 8
+    },
+    roi_config: {
+        x: 95,
+        y: 100,
+        width: 370,
+        height: 290
+    },
+    is_active: true,
+    created_by: 'admin',
+    updated_by: '69484e532896716a31a96f5b',
+    created_at: ISODate('2025-12-21T19:55:49.957Z'),
+    updated_at: ISODate('2025-12-31T07:19:47.426Z'),
+    do_reject_number: 2
+}
+

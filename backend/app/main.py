@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 
 from app.api.endpoints import auth, users, recipes, cameras, upload, action_logs
+from app.api.websocket import camera_ws
 
 # Setup logging to file
 LOGS_DIR = Path(__file__).parent.parent.parent / "backend" / "logs"
@@ -71,6 +72,9 @@ app.include_router(recipes.router, prefix="/api/recipes", tags=["Recipes"])
 app.include_router(cameras.router, prefix="/api", tags=["Cameras"])
 app.include_router(upload.router, prefix="/api/upload", tags=["Upload"])
 app.include_router(action_logs.router, prefix="/api/action-logs", tags=["Action Logs"])
+
+# WebSocket endpoints
+app.include_router(camera_ws.router, tags=["WebSocket"])
 
 
 @app.get("/")
