@@ -491,6 +491,46 @@
   background-color: #f3f4f6;
 }
 
+.template-function-type-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  background-color: #f9fafb;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  margin-bottom: 20px;
+}
+
+.template-function-type-selector label {
+  font-weight: 600;
+  font-size: 14px;
+  color: #374151;
+}
+
+.template-function-type-selector select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background-color: white;
+  color: #111827;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.template-function-type-selector select:hover {
+  border-color: #8b5cf6;
+  background-color: #fefefe;
+}
+
+.template-function-type-selector select:focus {
+  outline: none;
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+}
+
 .template-actions {
   margin-bottom: 16px;
   display: flex;
@@ -1562,6 +1602,32 @@ body.dark-mode .template-camera-selector select:hover {
 }
 
 body.dark-mode .template-camera-selector select:focus {
+  background-color: #374151;
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+}
+
+body.dark-mode .template-function-type-selector {
+  background-color: #1f2937;
+  border-color: #374151;
+}
+
+body.dark-mode .template-function-type-selector label {
+  color: #e5e7eb;
+}
+
+body.dark-mode .template-function-type-selector select {
+  background-color: #374151;
+  color: #e5e7eb;
+  border-color: #4b5563;
+}
+
+body.dark-mode .template-function-type-selector select:hover {
+  background-color: #4b5563;
+  border-color: #6b7280;
+}
+
+body.dark-mode .template-function-type-selector select:focus {
   background-color: #374151;
   border-color: #8b5cf6;
   box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);

@@ -101,7 +101,26 @@ export const receiptsAPI = {
     const response = await api.post<{ id: string }>(`/recipes/${receiptId}/load`);
     return response.data;
   },
-  
+
+  // Stop a running recipe
+  stopReceipt: async (receiptId: string): Promise<{ success: boolean; message: string; recipe_id: string }> => {
+    const response = await api.post<{ success: boolean; message: string; recipe_id: string }>(`/recipes/${receiptId}/stop`);
+    return response.data;
+  },
+
+  // Get latest loaded recipe
+  getLatestLoadedRecipe: async (): Promise<any> => {
+    try {
+      const response = await api.get<any>('/recipes/loads/latest');
+      return response.data;
+    } catch (error: any) {
+      if (error.response?.status === 404) {
+        return null; // No recipe loaded
+      }
+      throw error;
+    }
+  },
+
   // Get load history for a specific receipt (recipe)
   getLoadHistory: async (receiptId: string, skip = 0, limit = 100) => {
     const response = await api.get<{ items: any[]; count: number }>(`/recipes/${receiptId}/loads`, {

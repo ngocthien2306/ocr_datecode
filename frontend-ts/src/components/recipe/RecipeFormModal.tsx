@@ -117,6 +117,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   // Template editor states - now supports multiple templates per camera
   const [selectedCameraForTemplate, setSelectedCameraForTemplate] = useState<string>('');
   const [cameraTemplates, setCameraTemplates] = useState<CameraTemplates>({}); // { camera_id: [{ id, name, image, annotations }] }
+  const [cameraFunctionTypes, setCameraFunctionTypes] = useState<{ [cameraId: string]: string }>({}); // { camera_id: function_type }
   const [selectedTemplateIndex, setSelectedTemplateIndex] = useState<number>(0); // Index of selected template for current camera
   const [selectedAnnotation, setSelectedAnnotation] = useState<number | null>(null);
   const [isGettingFrame, setIsGettingFrame] = useState(false);
@@ -163,13 +164,14 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       });
       // Load camera templates
       const loadedCameraTemplates: CameraTemplates = {};
+      const loadedFunctionTypes: { [cameraId: string]: string } = {};
       console.log('Recipe object:', recipeAny);
       console.log('camera_templates field:', recipeAny.camera_templates);
       console.log('Is array?', Array.isArray(recipeAny.camera_templates));
       console.log('Length:', recipeAny.camera_templates?.length);
-      
+
       let firstCameraWithTemplates: string | null = null;
-      
+
       if (recipeAny.camera_templates && Array.isArray(recipeAny.camera_templates) && recipeAny.camera_templates.length > 0) {
         console.log('Loading camera_templates from recipe:', recipeAny.camera_templates);
         recipeAny.camera_templates.forEach((camTemplate: any) => {
@@ -183,7 +185,10 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               image_height: template.image_height,
               annotations: template.annotations
             }));
-            
+
+            // Load function_type for this camera (default to 'OCR' if not set)
+            loadedFunctionTypes[camTemplate.camera_id] = camTemplate.function_type || 'OCR';
+
             // Remember first camera with templates for auto-selection
             if (!firstCameraWithTemplates) {
               firstCameraWithTemplates = camTemplate.camera_id;
@@ -191,10 +196,12 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           }
         });
         console.log('Loaded camera templates:', loadedCameraTemplates);
+        console.log('Loaded function types:', loadedFunctionTypes);
       } else {
         console.log('No camera_templates found in recipe - empty or undefined');
       }
       setCameraTemplates(loadedCameraTemplates);
+      setCameraFunctionTypes(loadedFunctionTypes);
       
       // Auto-select first camera with templates
       if (firstCameraWithTemplates) {
@@ -272,6 +279,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       setTemplateImage(null);
       setAnnotations([]);
       setCameraTemplates({});
+      setCameraFunctionTypes({});
       setSelectedTemplateIndex(0);
     }
   }, [recipe, mode, isOpen]);
@@ -447,6 +455,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         if (templates && templates.length > 0) {
           cameraTemplatesArray.push({
             camera_id: cameraId,
+            function_type: cameraFunctionTypes[cameraId] || 'OCR', // Include function type
             templates: templates.map(template => ({
               name: template.name,
               image_url: template.image_url,
@@ -1192,8 +1201,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                   <h3>Template Configuration</h3>
                   <div className="template-camera-selector">
                     <label>Select Camera:</label>
-                    <select 
-                      value={selectedCameraForTemplate} 
+                    <select
+                      value={selectedCameraForTemplate}
                       onChange={(e) => setSelectedCameraForTemplate(e.target.value)}
                       disabled={formData.cameras.length === 0}
                     >
@@ -1205,6 +1214,31 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       ))}
                     </select>
                   </div>
+                  {selectedCameraForTemplate && (
+                    <div className="template-function-type-selector">
+                      <label>Function Type:</label>
+                      <select
+                        value={cameraFunctionTypes[selectedCameraForTemplate] || 'OCR'}
+                        onChange={(e) => {
+                          setCameraFunctionTypes(prev => ({
+                            ...prev,
+                            [selectedCameraForTemplate]: e.target.value
+                          }));
+                        }}
+                      >
+                        <option value="OCR">OCR (Text Recognition)</option>
+                        <option value="Check_Type_Product">Check Type Product</option>
+                        <option value="Check_Color">Check Color</option>
+                        <option value="Check_Defect">Check Defect</option>
+                        <option value="Check_Position">Check Position</option>
+                        <option value="Barcode_Detection">Barcode Detection</option>
+                        <option value="DateCode_Detection">Date Code Detection</option>
+                      </select>
+                      <small style={{display: 'block', marginTop: 4, color: '#666'}}>
+                        All templates for this camera will use this function type
+                      </small>
+                    </div>
+                  )}
                 </div>
 
                 {formData.cameras.length === 0 ? (

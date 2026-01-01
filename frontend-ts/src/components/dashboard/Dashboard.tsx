@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import '@/styles/Dashboard.css';
 import UserManagement from './UserManagement';
 import Receipts from '../recipe/Receipts';
+import InferenceResults from '../inference/InferenceResults';
 import Historical from './Historical';
 import Settings from './Settings';
 import Logs from './Logs';
@@ -31,7 +32,7 @@ interface DashboardProps {
   onLogout: () => void;
 }
 
-type Section = 'dashboard' | 'users' | 'receipts' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation';
+type Section = 'dashboard' | 'users' | 'receipts' | 'inference' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation';
 
 type LoadingTemplate = 'camera-vision' | 'users' | 'receipts' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation' | 'spinner' | 'pulse' | 'radar' | 'grid' | 'circuit' | 'barcode' | 'ocr' | 'dots' | 'waves' | 'ocr-scanner' | 'barcode-scanner' | 'neural-network' | 'qr-detector' | 'industrial-factory' | 'ai-vision-pipeline' | 'neural-processing';
 
@@ -999,6 +1000,18 @@ export default function Dashboard({ onLogout }: DashboardProps) {
               </svg>
               Recipes
             </a>
+            <a
+              href="#inference"
+              className={`nav-item ${currentSection === 'inference' ? 'active' : ''}`}
+              onClick={(e) => { e.preventDefault(); handleSectionChange('inference'); }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+                <circle cx="12" cy="12" r="6" stroke="currentColor" strokeWidth="2"/>
+                <circle cx="12" cy="12" r="2" fill="currentColor"/>
+              </svg>
+              Inference Results
+            </a>
             {canAccessPage('cameraManagement') && (
               <a
                 href="#cameras"
@@ -1393,6 +1406,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
           {currentSection === 'users' && <UserManagement />}
           {currentSection === 'receipts' && <Receipts />}
+          {currentSection === 'inference' && <InferenceResults />}
           {currentSection === 'cameras' && <CameraManagement />}
           {currentSection === 'historical' && <Historical />}
           {currentSection === 'logs' && <Logs />}

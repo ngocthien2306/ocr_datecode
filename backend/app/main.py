@@ -11,6 +11,7 @@ from pathlib import Path
 
 from app.api.endpoints import auth, users, recipes, cameras, upload, action_logs, inference_results
 from app.api.websocket import camera_ws
+from app.services.socketio_service import socket_app
 
 # Setup logging to file
 LOGS_DIR = Path(__file__).parent.parent.parent / "backend" / "logs"
@@ -95,3 +96,7 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+
+# Mount SocketIO app
+app.mount("/socket.io", socket_app)

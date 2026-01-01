@@ -117,7 +117,15 @@ class InferenceResultService:
                 f"recipe={recipe_name}, result={product_pass_fail}"
             )
 
-            # TODO: Emit SocketIO event to frontend (will be implemented when adding SocketIO)
+            # Emit SocketIO event to frontend
+            try:
+                from app.services.socketio_service import emit_inference_result
+                result_dict = result.model_dump()
+                # Convert ObjectId to string for JSON serialization
+                result_dict['id'] = str(result_dict['id'])
+                await emit_inference_result(result_dict)
+            except Exception as e:
+                logger.error(f"Error emitting SocketIO event: {e}")
 
             return result
 
