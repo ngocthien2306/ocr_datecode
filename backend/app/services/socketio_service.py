@@ -20,7 +20,7 @@ socket_app = socketio.ASGIApp(sio)
 
 
 @sio.event
-async def connect(sid, environ):
+async def connect(sid, environ, auth):
     """Handle client connection"""
     logger.info(f"Client connected: {sid}")
     await sio.emit('connection_response', {'status': 'connected', 'sid': sid}, room=sid)
@@ -33,7 +33,7 @@ async def disconnect(sid):
 
 
 @sio.event
-async def subscribe_inference_results(sid):
+async def subscribe_inference_results(sid, data=None):
     """Client subscribes to inference result updates"""
     logger.info(f"Client {sid} subscribed to inference_results")
     await sio.enter_room(sid, 'inference_results')
@@ -41,7 +41,7 @@ async def subscribe_inference_results(sid):
 
 
 @sio.event
-async def unsubscribe_inference_results(sid):
+async def unsubscribe_inference_results(sid, data=None):
     """Client unsubscribes from inference result updates"""
     logger.info(f"Client {sid} unsubscribed from inference_results")
     await sio.leave_room(sid, 'inference_results')

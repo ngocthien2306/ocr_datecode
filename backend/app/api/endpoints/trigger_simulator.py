@@ -59,12 +59,14 @@ async def simulate_trigger(
 
     # Send trigger simulation command via WebSocket
     message = {
-        "type": "simulate_trigger",
-        "serial_number": request.serial_number,
-        "trigger_type": request.trigger_type
+        "event": "simulate_trigger",
+        "data": {
+            "serial_number": request.serial_number,
+            "trigger_type": request.trigger_type
+        }
     }
 
-    success = await camera_ws_manager.send_message(message)
+    success = await camera_ws_manager.send_to_camera_service(message)
 
     if not success:
         raise HTTPException(
@@ -128,13 +130,15 @@ async def simulate_trigger_sequence(
 
     # Send trigger sequence command
     message = {
-        "type": "simulate_trigger_sequence",
-        "serial_number": serial_number,
-        "count": count,
-        "interval_ms": interval_ms
+        "event": "simulate_trigger_sequence",
+        "data": {
+            "serial_number": serial_number,
+            "count": count,
+            "interval_ms": interval_ms
+        }
     }
 
-    success = await camera_ws_manager.send_message(message)
+    success = await camera_ws_manager.send_to_camera_service(message)
 
     if not success:
         raise HTTPException(
