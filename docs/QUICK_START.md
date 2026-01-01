@@ -44,10 +44,12 @@ npm run dev
 ```bash
 cd ai_services
 
-# Set environment variables
-export API_BASE=http://localhost:8000
-export WS_HOST=localhost
-export WS_PORT=8000
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure environment
+cp .env.example .env
+# Edit .env if needed (for ngrok, see below)
 
 # Start camera service
 python3 camera_management_service.py
@@ -111,6 +113,52 @@ Frontend (React TS) ←REST/SocketIO→ Backend (FastAPI) ←WebSocket→ Camera
 ### No real-time updates
 - Check browser console for SocketIO connection
 - Backend logs should show: "Client connected"
+
+## Ngrok Deployment (Remote Access)
+
+### 1. Start ngrok tunnels
+
+```bash
+# Terminal 1: Frontend tunnel
+ngrok http --url=suntech-vision.ngrok.app 5173
+
+# Terminal 2: Backend tunnel
+ngrok http --url=suntech-vision-api.ngrok.app 8000
+```
+
+### 2. Update Frontend API URL
+
+Edit `frontend-ts/src/config/api.ts`:
+```typescript
+export const API_BASE_URL = 'https://suntech-vision-api.ngrok.app';
+```
+
+### 3. Update AI Service Config
+
+Edit `ai_services/.env`:
+```bash
+API_BASE=https://suntech-vision-api.ngrok.app
+WS_HOST=suntech-vision-api.ngrok.app
+WS_PORT=443
+```
+
+### 4. Update Backend CORS
+
+Edit `backend/app/core/config.py`:
+```python
+CORS_ORIGINS = [
+    "https://suntech-vision.ngrok.app",
+    "https://suntech-vision-api.ngrok.app",
+]
+```
+
+### 5. Restart all services
+
+- Backend: Restart to apply CORS
+- AI Service: Restart to connect to new WebSocket URL
+- Frontend: Rebuild (`npm run build`) or restart dev server
+
+**Access**: `https://suntech-vision.ngrok.app`
 
 ## Advanced Configuration
 
