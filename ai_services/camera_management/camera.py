@@ -659,6 +659,7 @@ class Camera:
                     frame_pass = False
                     inliers = 0
                     confidence = 0.0
+                    total_matches = 0
                     image_path = None
                     image_base64 = None
 

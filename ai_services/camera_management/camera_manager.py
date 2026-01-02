@@ -22,34 +22,43 @@ class CameraManager:
     - Thread-safe operations
     """
 
-    def __init__(self, event_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None):
+    def __init__(
+        self,
+        event_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+        event_loop: Optional[Any] = None
+    ):
         """
         Initialize CameraManager
 
         Args:
             event_callback: Callback for events from cameras (event_type, data)
+            event_loop: Event loop for async callbacks from threads
         """
         self.cameras: Dict[str, Camera] = {}
         self.event_callback = event_callback
+        self.event_loop = event_loop
         self._lock = threading.RLock()
 
         logger.info("CameraManager initialized")
 
     def _emit_event(self, event_type: str, data: Dict[str, Any]):
-        """Emit event to callback"""
+        """Emit event to callback (handles both sync and async callbacks from thread)"""
         if self.event_callback:
             try:
-                # Check if callback is async
                 import asyncio
                 import inspect
+
+                # Check if callback is async
                 if inspect.iscoroutinefunction(self.event_callback):
-                    # Schedule coroutine in event loop
-                    try:
-                        loop = asyncio.get_event_loop()
-                        asyncio.ensure_future(self.event_callback(event_type, data), loop=loop)
-                    except RuntimeError:
-                        # No event loop running, create task without loop
-                        asyncio.create_task(self.event_callback(event_type, data))
+                    # Async callback - need to schedule in event loop
+                    if self.event_loop:
+                        # Use provided event loop (from main thread)
+                        asyncio.run_coroutine_threadsafe(
+                            self.event_callback(event_type, data),
+                            self.event_loop
+                        )
+                    else:
+                        logger.warning(f"Async callback but no event loop provided for {event_type}")
                 else:
                     # Sync callback
                     self.event_callback(event_type, data)

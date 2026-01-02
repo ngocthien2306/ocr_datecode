@@ -333,6 +333,10 @@ class CameraManagementService:
 
         logger.info("Starting CameraManagementService...")
 
+        # Pass event loop to camera manager for async callbacks from threads
+        import asyncio
+        self.camera_manager.event_loop = asyncio.get_event_loop()
+
         # Start WebSocket client
         await self.ws_client.start()
 
