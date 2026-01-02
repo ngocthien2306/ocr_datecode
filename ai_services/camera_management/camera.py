@@ -57,7 +57,8 @@ class Camera:
         self,
         serial_number: str,
         pixel_format: str = "Mono8",
-        event_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None
+        event_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+        event_loop: Optional[Any] = None
     ):
         """
         Initialize Camera instance
@@ -66,9 +67,11 @@ class Camera:
             serial_number: Camera serial number
             pixel_format: Pixel format (Mono8, RGB8, etc.) from DB config
             event_callback: Callback for events (event_type, data)
+            event_loop: Event loop for async callbacks from thread
         """
         self.serial_number = serial_number
         self.event_callback = event_callback
+        self.event_loop = event_loop
 
         # Camera state
         self.mode = CameraMode.IDLE
@@ -108,13 +111,32 @@ class Camera:
         logger.info(f"Camera instance created: {serial_number}, pixel_format={pixel_format}")
 
     def _emit_event(self, event_type: str, data: Dict[str, Any]):
-        """Emit event to callback"""
+        """Emit event to callback (handles both sync and async callbacks from thread)"""
         if self.event_callback:
             try:
-                self.event_callback(event_type, {
+                import asyncio
+                import inspect
+
+                event_data = {
                     "serial_number": self.serial_number,
                     **data
-                })
+                }
+
+                # Check if callback is async
+                if inspect.iscoroutinefunction(self.event_callback):
+                    # Async callback - need to schedule in event loop
+                    if self.event_loop:
+                        # Use provided event loop
+                        asyncio.run_coroutine_threadsafe(
+                            self.event_callback(event_type, event_data),
+                            self.event_loop
+                        )
+                    else:
+                        logger.warning(f"Async callback but no event loop provided for {event_type}")
+                else:
+                    # Sync callback
+                    self.event_callback(event_type, event_data)
+
             except Exception as e:
                 logger.error(f"Error emitting event {event_type}: {e}")
 

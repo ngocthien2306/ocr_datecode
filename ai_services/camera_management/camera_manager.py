@@ -88,11 +88,19 @@ class CameraManager:
                 }
 
             try:
+                # Get event loop for async callbacks from camera thread
+                import asyncio
+                try:
+                    event_loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    event_loop = None
+
                 # Create camera instance
                 camera = Camera(
                     serial_number=serial_number,
                     pixel_format=pixel_format,
-                    event_callback=self._camera_event_handler
+                    event_callback=self._camera_event_handler,
+                    event_loop=event_loop
                 )
 
                 # Connect to hardware
