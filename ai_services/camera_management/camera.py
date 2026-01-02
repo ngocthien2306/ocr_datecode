@@ -532,24 +532,45 @@ class Camera:
             for frame_data in captured_frames:
                 img = frame_data['image']
 
-                # Run inference
-                result = self.inference_matcher.process_frame(img)
+                # Save frame to temp file for inference
+                import tempfile
+                temp_dir = Path("/tmp/camera_frames")
+                temp_dir.mkdir(exist_ok=True)
+                temp_path = temp_dir / f"{self.serial_number}_{int(time.time()*1000)}.jpg"
+                cv2.imwrite(str(temp_path), img)
 
-                # Determine PASS/FAIL based on template match
-                frame_pass = result.get('template_matched', False) if result else False
+                # Run inference
+                try:
+                    result = self.inference_matcher.match(str(temp_path))
+
+                    # Determine PASS/FAIL based on template match
+                    # Check if matches count > threshold (e.g., 10 matches means template found)
+                    num_matches = result.get('num_matches', 0)
+                    frame_pass = num_matches >= 10  # Template matched if >= 10 keypoint matches
+
+                except Exception as e:
+                    logger.error(f"[{self.serial_number}] Inference error: {e}")
+                    result = {'error': str(e)}
+                    frame_pass = False
+                finally:
+                    # Clean up temp file
+                    if temp_path.exists():
+                        temp_path.unlink()
+
                 overall_pass = overall_pass and frame_pass
 
                 inference_results.append({
                     'template_name': frame_data['template_name'],
                     'template_idx': frame_data['template_idx'],
                     'pass_fail': 'PASS' if frame_pass else 'FAIL',
+                    'num_matches': result.get('num_matches', 0),
                     'result': result,
                     'timestamp': frame_data['timestamp']
                 })
 
                 logger.info(
                     f"[{self.serial_number}] Template '{frame_data['template_name']}': "
-                    f"{'PASS' if frame_pass else 'FAIL'}"
+                    f"{'PASS' if frame_pass else 'FAIL'} (matches: {result.get('num_matches', 0)})"
                 )
 
             # Emit inference result event

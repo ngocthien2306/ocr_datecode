@@ -370,19 +370,19 @@ class CameraManager:
                         }
 
                     camera = self.cameras[serial_number]
-                    if camera.mode == "hardware_trigger":
+                    if camera.mode == CameraMode.HARDWARE_TRIGGER:
                         camera._handle_trigger_event()  # Simulate trigger
                         triggered_cameras.append(serial_number)
                         logger.info(f"Simulated trigger for camera {serial_number}")
                     else:
                         return {
                             "success": False,
-                            "error": f"Camera {serial_number} not in hardware_trigger mode (current: {camera.mode})"
+                            "error": f"Camera {serial_number} not in hardware_trigger mode (current: {camera.mode.value})"
                         }
                 else:
                     # Trigger all cameras in hardware_trigger mode
                     for sn, camera in self.cameras.items():
-                        if camera.mode == "hardware_trigger":
+                        if camera.mode == CameraMode.HARDWARE_TRIGGER:
                             camera._handle_trigger_event()
                             triggered_cameras.append(sn)
                             logger.info(f"Simulated trigger for camera {sn}")
