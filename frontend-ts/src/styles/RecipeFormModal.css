@@ -493,20 +493,23 @@
 
 .template-function-type-selector {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 16px;
-  background-color: #f9fafb;
+  align-items: center;
+  gap: 12px;
+  width: 30%;
+  /* padding: 16px; */
+  /* background-color: #f9fafb; */
   border-radius: 8px;
-  border: 1px solid #e5e7eb;
-  margin-bottom: 20px;
+  /* border: 1px solid #e5e7eb; */
+  /* margin-bottom: 20px; */
 }
 
 .template-function-type-selector label {
   font-weight: 600;
   font-size: 14px;
   color: #374151;
+  white-space: nowrap;
 }
+
 
 .template-function-type-selector select {
   width: 100%;
@@ -553,6 +556,13 @@
 .template-info {
   font-size: 13px;
   color: #6b7280;
+  font-weight: 500;
+}
+
+.dark-mode .template-info {
+  background-color: #374151;
+  font-size: 13px;
+  color: #e5e7eb;
   font-weight: 500;
 }
 
@@ -1608,7 +1618,7 @@ body.dark-mode .template-camera-selector select:focus {
 }
 
 body.dark-mode .template-function-type-selector {
-  background-color: #1f2937;
+  /* background-color: #1f2937; */
   border-color: #374151;
 }
 

@@ -633,14 +633,14 @@ class Camera:
                             'FAIL'
                         )
 
-                        # Create resized base64 for realtime preview (1/3 resolution)
-                        h, w = annotated_img.shape[:2]
-                        preview_img = cv2.resize(annotated_img, (w//3, h//3), interpolation=cv2.INTER_AREA)
+                    # Create resized base64 for realtime preview (1/3 resolution)
+                    h, w = annotated_img.shape[:2]
+                    preview_img = cv2.resize(annotated_img, (w//3, h//3), interpolation=cv2.INTER_AREA)
 
-                        # Encode to JPEG with quality 85
-                        _, buffer = cv2.imencode('.jpg', preview_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                        import base64
-                        image_base64 = base64.b64encode(buffer).decode('utf-8')
+                    # Encode to JPEG with quality 85
+                    _, buffer = cv2.imencode('.jpg', preview_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    import base64
+                    image_base64 = base64.b64encode(buffer).decode('utf-8')
 
                     # Remove numpy arrays from result for JSON serialization
                     result_clean = {

@@ -631,8 +631,15 @@ async def load_recipe(
         camera_repo = CameraRepository(db)
 
         for cam_config in cameras_config:
-            serial_number = cam_config.get('serial_number')
-            pixel_format = cam_config.get('pixel_format', 'Mono8')
+            # Handle both dict and Pydantic model
+            if isinstance(cam_config, dict):
+                serial_number = cam_config.get('serial_number')
+                pixel_format = cam_config.get('pixel_format', 'Mono8')
+            else:
+                # Pydantic model
+                serial_number = getattr(cam_config, 'serial_number', None)
+                pixel_format = getattr(cam_config, 'pixel_format', 'Mono8')
+
 
             if not serial_number:
                 continue
