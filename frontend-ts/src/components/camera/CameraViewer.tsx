@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { camerasAPI } from '@/services/api';
 import { useToast } from '@/contexts/ToastContext';
+import { socketService } from '@/services/socketio';
 import type { Camera } from '@/types';
 import '@/styles/CameraViewer.css';
 
@@ -23,7 +24,7 @@ const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
   const [frameUrl, setFrameUrl] = useState<string>('');
   const [lastCapture, setLastCapture] = useState<Date | null>(null);
   const [settings, setSettings] = useState<CameraSettings>({
-    exposure: 10000,
+    exposure: 500,
     gain: 1.0,
     quality: 85,
     autoRefresh: false,
@@ -64,7 +65,28 @@ const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
   }, [serialNumber]);
 
   useEffect(() => {
-    if (isLiveMode || settings.autoRefresh) {
+    if (isLiveMode) {
+      // Use SocketIO streaming for live mode
+      socketService.connect();
+
+      // Subscribe to live frames
+      const handleLiveFrame = (data: any) => {
+        if (data.serial_number === serialNumber) {
+          const frameDataUrl = `data:image/jpeg;base64,${data.frame_base64}`;
+          setFrameUrl(frameDataUrl);
+          setLastCapture(new Date());
+        }
+      };
+
+      socketService.subscribeToLiveFrames(handleLiveFrame);
+      socketService.startLiveView(serialNumber, 10); // 10 FPS
+
+      return () => {
+        socketService.stopLiveView(serialNumber);
+        socketService.unsubscribeFromLiveFrames(handleLiveFrame);
+      };
+    } else if (settings.autoRefresh) {
+      // Use API polling for auto refresh mode
       const interval = setInterval(() => {
         captureFrame(true);
       }, settings.refreshInterval);
@@ -76,7 +98,7 @@ const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
         }
       };
     }
-  }, [isLiveMode, settings.autoRefresh, settings.refreshInterval, settings.quality]);
+  }, [isLiveMode, settings.autoRefresh, settings.refreshInterval, settings.quality, serialNumber]);
 
   const captureFrame = async (silent: boolean = false) => {
     try {
@@ -256,9 +278,9 @@ const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
               </label>
               <input
                 type="range"
-                min="1000"
+                min="100"
                 max="100000"
-                step="1000"
+                step="100"
                 value={settings.exposure}
                 onChange={(e) => handleSettingChange('exposure', Number(e.target.value))}
               />

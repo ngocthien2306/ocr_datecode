@@ -77,7 +77,7 @@ class Camera:
         self.shm_name = f"camera_{serial_number}"
 
         # Camera settings (from DB config or defaults)
-        self.exposure_time = 10000  # μs
+        self.exposure_time = 500  # μs (default 500μs = 0.5ms)
         self.gain = 1.0
         self.pixel_format = pixel_format  # From DB config
 
@@ -218,24 +218,30 @@ class Camera:
         except Exception as e:
             logger.error(f"Error disconnecting camera {self.serial_number}: {e}")
 
-    def _apply_settings(self):
-        """Apply camera settings"""
+    def _apply_settings(self, apply_pixel_format: bool = True):
+        """
+        Apply camera settings
+
+        Args:
+            apply_pixel_format: Whether to apply pixel format (only True during initial connect)
+        """
         if not self.camera:
             return
 
         try:
-            # Pixel Format (must be set after Open but before StartGrabbing)
-            if self.pixel_format:
+            # Pixel Format (can ONLY be set when camera is NOT grabbing)
+            # Only apply during initial connect, not during runtime settings update
+            if apply_pixel_format and self.pixel_format and not self.camera.IsGrabbing():
                 self.camera.PixelFormat.SetValue(self.pixel_format)
                 actual_pixel_format = self.camera.PixelFormat.GetValue()
                 logger.info(f"[{self.serial_number}] PixelFormat: {actual_pixel_format}")
 
-            # Exposure
+            # Exposure (can be changed during grabbing)
             self.camera.ExposureTime.SetValue(int(self.exposure_time))
             actual_exposure = self.camera.ExposureTime.GetValue()
             logger.info(f"[{self.serial_number}] Exposure: {actual_exposure} μs")
 
-            # Gain
+            # Gain (can be changed during grabbing)
             self.camera.Gain.SetValue(float(self.gain))
             actual_gain = self.camera.Gain.GetValue()
             logger.info(f"[{self.serial_number}] Gain: {actual_gain}")
@@ -333,9 +339,9 @@ class Camera:
         if "di_number" in trigger_config:
             self.di_number = trigger_config["di_number"]
 
-        # Apply to camera if connected
+        # Apply to camera if connected (skip pixel_format - can't change while grabbing)
         if self.camera:
-            self._apply_settings()
+            self._apply_settings(apply_pixel_format=False)
 
         logger.info(f"[{self.serial_number}] Settings updated")
 
