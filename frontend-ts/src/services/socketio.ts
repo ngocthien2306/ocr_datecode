@@ -108,6 +108,36 @@ class SocketIOService {
   }
 
   /**
+   * Subscribe to recipe status changes
+   */
+  subscribeToRecipeStatus(callback: (data: any) => void): void {
+    if (!this.socket) {
+      console.error('[SocketIO] Socket not connected');
+      return;
+    }
+
+    // Listen for recipe status changes
+    this.socket.on('recipe_status_change', callback);
+
+    console.log('[SocketIO] Subscribed to recipe status changes');
+  }
+
+  /**
+   * Unsubscribe from recipe status changes
+   */
+  unsubscribeFromRecipeStatus(callback?: (data: any) => void): void {
+    if (!this.socket) return;
+
+    if (callback) {
+      this.socket.off('recipe_status_change', callback);
+    } else {
+      this.socket.off('recipe_status_change');
+    }
+
+    console.log('[SocketIO] Unsubscribed from recipe status changes');
+  }
+
+  /**
    * Disconnect from SocketIO server
    */
   disconnect(): void {

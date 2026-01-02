@@ -680,6 +680,20 @@ async def load_recipe(
     )
     await action_log_repo.create_action_log(action_log)
 
+    # Emit SocketIO event for recipe status change
+    try:
+        from app.services.socketio_service import emit_recipe_status_change
+        await emit_recipe_status_change({
+            'event': 'recipe_loaded',
+            'recipe_id': recipe_id,
+            'recipe_name': recipe.name,
+            'product_code': recipe.product_code,
+            'loaded_by': current_user.username
+        })
+        logger.info(f"✅ Emitted recipe_loaded event via SocketIO")
+    except Exception as e:
+        logger.error(f"Error emitting SocketIO event: {e}")
+
     return ReceiptLoadResponse(
         id=created['id'],
         recipe_id=created['recipe_id'],
@@ -759,6 +773,19 @@ async def stop_recipe(
         user_agent=user_agent
     )
     await action_log_repo.create_action_log(action_log)
+
+    # Emit SocketIO event for recipe status change
+    try:
+        from app.services.socketio_service import emit_recipe_status_change
+        await emit_recipe_status_change({
+            'event': 'recipe_stopped',
+            'recipe_id': recipe_id,
+            'recipe_name': recipe.name,
+            'stopped_by': current_user.username
+        })
+        logger.info(f"✅ Emitted recipe_stopped event via SocketIO")
+    except Exception as e:
+        logger.error(f"Error emitting SocketIO event: {e}")
 
     return {
         "success": True,

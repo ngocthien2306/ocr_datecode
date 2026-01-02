@@ -615,7 +615,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     }
   }, [isLoading]);
 
-  // Check for running recipe
+  // Check for running recipe (initial load + subscribe to realtime changes)
   useEffect(() => {
     const checkRunningRecipe = async () => {
       try {
@@ -631,11 +631,32 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       }
     };
 
+    // Initial check
     checkRunningRecipe();
 
-    // Poll every 5 seconds
-    const interval = setInterval(checkRunningRecipe, 5000);
-    return () => clearInterval(interval);
+    // Subscribe to realtime recipe status changes via SocketIO
+    import('@/services/socketio').then(({ socketService }) => {
+      socketService.connect();
+
+      const handleRecipeStatusChange = (data: any) => {
+        console.log('[Dashboard] Recipe status change:', data);
+
+        if (data.event === 'recipe_loaded') {
+          // Recipe was loaded
+          setRunningRecipeId(data.recipe_id);
+        } else if (data.event === 'recipe_stopped') {
+          // Recipe was stopped
+          setRunningRecipeId(null);
+        }
+      };
+
+      socketService.subscribeToRecipeStatus(handleRecipeStatusChange);
+
+      // Cleanup on unmount
+      return () => {
+        socketService.unsubscribeFromRecipeStatus(handleRecipeStatusChange);
+      };
+    });
   }, []);
 
   const fetchCameras = async () => {

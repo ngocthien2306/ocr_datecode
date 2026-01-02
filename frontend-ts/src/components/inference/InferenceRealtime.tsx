@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import '@/styles/InferenceRealtime.css';
 import { socketService } from '@/services/socketio';
-import { api } from '@/services/api';
+import api from '@/services/api';
 import { receiptsAPI } from '@/services/recipes';
 
 interface InferenceLog {

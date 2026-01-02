@@ -471,6 +471,117 @@ class Camera:
             return previous != current
         return False
 
+    def _handle_trigger_event(self):
+        """
+        Handle hardware trigger event
+
+        Process:
+        1. Capture multiple frames (for multi-template recipes)
+        2. Run inference on each frame
+        3. Aggregate results (PASS only if all templates match)
+        4. Emit inference result event
+        """
+        if not self.camera or not self.camera.IsGrabbing():
+            logger.error(f"[{self.serial_number}] Camera not grabbing, cannot handle trigger")
+            return
+
+        if not self.recipe_id:
+            logger.warning(f"[{self.serial_number}] No recipe loaded, ignoring trigger")
+            return
+
+        try:
+            logger.info(f"[{self.serial_number}] ⚡ Trigger event - capturing {len(self.templates)} frames")
+
+            captured_frames = []
+
+            # Capture frames for each template with delay
+            for idx, template in enumerate(self.templates):
+                # Wait for delay_trigger if not first frame
+                if idx > 0:
+                    time.sleep(self.delay_trigger / 1000.0)  # Convert ms to seconds
+
+                # Grab frame
+                grab_result = self.camera.RetrieveResult(1000, pylon.TimeoutHandling_ThrowException)
+
+                if grab_result and grab_result.GrabSucceeded():
+                    img_array = grab_result.Array
+
+                    # Convert Mono8 to BGR
+                    if len(img_array.shape) == 2:
+                        img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
+
+                    captured_frames.append({
+                        'template_idx': idx,
+                        'template_name': template.get('name', f'Template {idx+1}'),
+                        'image': img_array.copy(),
+                        'timestamp': time.time()
+                    })
+
+                    logger.info(f"[{self.serial_number}] Captured frame {idx+1}/{len(self.templates)}")
+
+                grab_result.Release()
+
+            # Run inference on all frames
+            if not self.inference_matcher or not INFERENCE_AVAILABLE:
+                logger.warning(f"[{self.serial_number}] Inference not available, skipping")
+                return
+
+            inference_results = []
+            overall_pass = True
+
+            for frame_data in captured_frames:
+                img = frame_data['image']
+
+                # Run inference
+                result = self.inference_matcher.process_frame(img)
+
+                # Determine PASS/FAIL based on template match
+                frame_pass = result.get('template_matched', False) if result else False
+                overall_pass = overall_pass and frame_pass
+
+                inference_results.append({
+                    'template_name': frame_data['template_name'],
+                    'template_idx': frame_data['template_idx'],
+                    'pass_fail': 'PASS' if frame_pass else 'FAIL',
+                    'result': result,
+                    'timestamp': frame_data['timestamp']
+                })
+
+                logger.info(
+                    f"[{self.serial_number}] Template '{frame_data['template_name']}': "
+                    f"{'PASS' if frame_pass else 'FAIL'}"
+                )
+
+            # Emit inference result event
+            self._emit_event('inference_result', {
+                'recipe_id': self.recipe_id,
+                'recipe_name': self.recipe_name,
+                'product_pass_fail': 'PASS' if overall_pass else 'FAIL',
+                'camera_results': [{
+                    'camera_id': self.serial_number,
+                    'frames': inference_results,
+                    'overall_pass': overall_pass
+                }],
+                'timestamp': time.time(),
+                'frame_count': len(captured_frames)
+            })
+
+            logger.info(
+                f"[{self.serial_number}] ✅ Inference complete: "
+                f"{'PASS' if overall_pass else 'FAIL'} ({len(captured_frames)} frames)"
+            )
+
+        except Exception as e:
+            logger.error(f"[{self.serial_number}] Error handling trigger: {e}")
+            import traceback
+            traceback.print_exc()
+
+            # Emit error event
+            self._emit_event('inference_error', {
+                'recipe_id': self.recipe_id,
+                'error': str(e)
+            })
+
     def _write_frame_to_shm(self, img_array: np.ndarray, metadata: Dict[str, Any]):
         """Write frame and metadata to shared memory"""
         if not self.shm:

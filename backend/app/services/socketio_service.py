@@ -61,5 +61,26 @@ async def emit_inference_result(result_data: dict):
         logger.error(f"Error emitting inference result: {e}")
 
 
+async def emit_recipe_status_change(status_data: dict):
+    """
+    Emit recipe status change to all connected clients
+
+    Args:
+        status_data: Recipe status data to broadcast
+            {
+                'event': 'recipe_loaded' | 'recipe_stopped',
+                'recipe_id': str,
+                'recipe_name': str,
+                ...
+            }
+    """
+    try:
+        event_type = status_data.get('event', 'recipe_status_change')
+        logger.info(f"Broadcasting recipe status change: {event_type} - {status_data.get('recipe_name')}")
+        await sio.emit('recipe_status_change', status_data)
+    except Exception as e:
+        logger.error(f"Error emitting recipe status change: {e}")
+
+
 # Export sio instance for use in other modules
-__all__ = ['sio', 'socket_app', 'emit_inference_result']
+__all__ = ['sio', 'socket_app', 'emit_inference_result', 'emit_recipe_status_change']
