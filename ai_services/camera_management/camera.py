@@ -538,21 +538,25 @@ class Camera:
 
                     # Determine PASS/FAIL based on template match
                     # Use inliers count and confidence score
-                    inliers = result.get('inliers', 0)
-                    confidence = result.get('confidence', 0.0)
+                    inliers = int(result.get('inliers', 0))  # Convert numpy.uint64 to Python int
+                    confidence = float(result.get('confidence', 0.0))  # Convert numpy.float64 to Python float
+                    total_matches = int(result.get('total_matches', 0))
+
                     frame_pass = inliers >= 30 and confidence >= 0.3  # Match if >= 30 inliers and confidence >= 0.3
 
                     # Remove numpy arrays from result for JSON serialization
                     result_clean = {
-                        'success': result.get('success', False),
+                        'success': bool(result.get('success', False)),
                         'confidence': confidence,
                         'inliers': inliers,
-                        'total_matches': result.get('total_matches', 0),
+                        'total_matches': total_matches,
                         'timings': result.get('timings', {})
                     }
 
                 except Exception as e:
                     logger.error(f"[{self.serial_number}] Inference error: {e}")
+                    import traceback
+                    traceback.print_exc()
                     result_clean = {'error': str(e)}
                     frame_pass = False
                     inliers = 0
@@ -562,12 +566,17 @@ class Camera:
 
                 inference_results.append({
                     'template_name': frame_data['template_name'],
-                    'template_idx': frame_data['template_idx'],
+                    'frame_idx': frame_data['template_idx'],  # Renamed to match Pydantic schema
                     'pass_fail': 'PASS' if frame_pass else 'FAIL',
-                    'inliers': inliers,
                     'confidence': confidence,
-                    'result': result_clean,
-                    'timestamp': frame_data['timestamp']
+                    'image_path': None,  # TODO: Save image and add path
+                    'detected_regions': None,  # Optional field
+                    'metadata': {
+                        'inliers': inliers,
+                        'total_matches': total_matches,
+                        'timings': result_clean.get('timings', {}),
+                        'timestamp': frame_data['timestamp']
+                    }
                 })
 
                 logger.info(
@@ -582,11 +591,14 @@ class Camera:
                 'product_pass_fail': 'PASS' if overall_pass else 'FAIL',
                 'camera_results': [{
                     'camera_id': self.serial_number,
-                    'frames': inference_results,
-                    'overall_pass': overall_pass
+                    'serial_number': self.serial_number,  # Add required field
+                    'frames': inference_results
                 }],
-                'timestamp': time.time(),
-                'frame_count': len(captured_frames)
+                'metadata': {
+                    'frame_count': len(captured_frames),
+                    'overall_pass': overall_pass,
+                    'timestamp': time.time()
+                }
             })
 
             logger.info(

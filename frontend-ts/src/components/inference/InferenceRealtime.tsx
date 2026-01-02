@@ -100,22 +100,12 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
     setIsSimulating(true);
 
     try {
-      const response = await api.post('/trigger-simulator/simulate', {
+      await api.post('/trigger-simulator/simulate', {
         trigger_type: 'rising_edge'
       });
 
-      if (response.data.success) {
-        const newLog: InferenceLog = {
-          id: `trigger-${Date.now()}`,
-          timestamp: new Date().toLocaleTimeString(),
-          result: 'PASS',
-          recipe_name: runningRecipe?.metadata?.name || 'Unknown',
-          product_code: runningRecipe?.metadata?.product_code || 'Unknown',
-          message: '🔧 Trigger simulated - waiting for result...'
-        };
-
-        setLogs(prev => [...prev, newLog]);
-      }
+      // Don't add log here - wait for real result from WebSocket
+      // The result will be automatically added by handleNewResult callback
     } catch (error: any) {
       console.error('Error simulating trigger:', error);
       const errorLog: InferenceLog = {

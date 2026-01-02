@@ -123,9 +123,16 @@ class InferenceResultService:
                 result_dict = result.model_dump()
                 # Convert ObjectId to string for JSON serialization
                 result_dict['id'] = str(result_dict['id'])
+                # Convert datetime to ISO string
+                if 'timestamp' in result_dict and result_dict['timestamp']:
+                    result_dict['timestamp'] = result_dict['timestamp'].isoformat()
+                if 'created_at' in result_dict and result_dict['created_at']:
+                    result_dict['created_at'] = result_dict['created_at'].isoformat()
                 await emit_inference_result(result_dict)
             except Exception as e:
                 logger.error(f"Error emitting SocketIO event: {e}")
+                import traceback
+                traceback.print_exc()
 
             return result
 
