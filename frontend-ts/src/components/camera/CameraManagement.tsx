@@ -1,6 +1,6 @@
 import React, { useState, useEffect, ChangeEvent, FormEvent } from 'react';
 import { camerasAPI } from '@/services/api';
-import recipesAPI from '@/services/recipes';
+import { receiptsAPI } from '@/services/recipes';
 import socketService from '@/services/socketio';
 import { useToast } from '@/contexts/ToastContext';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
@@ -234,7 +234,7 @@ const CameraManagement: React.FC = () => {
     try {
       if (isConnected) {
         // Check if recipe is running before disconnecting
-        const latestRecipe = await recipesAPI.getLatestLoadedRecipe();
+        const latestRecipe = await receiptsAPI.getLatestLoadedRecipe();
         if (latestRecipe) {
           toast.error(`Cannot disconnect camera while recipe "${latestRecipe.recipe_name}" is running`);
           setConnectingCameras(prev => {

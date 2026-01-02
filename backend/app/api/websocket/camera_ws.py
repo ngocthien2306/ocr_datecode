@@ -188,6 +188,38 @@ async def handle_camera_service_message(message: dict):
         elif event == "service_disconnected":
             logger.info(f"Camera service disconnected: {data}")
 
+        elif event == "service_shutdown":
+            # Camera service is shutting down gracefully
+            logger.info(f"Camera service shutting down: {data}")
+
+            # Get list of cameras that were connected
+            connected_cameras = data.get("connected_cameras", [])
+
+            # Update database: mark all cameras as disconnected
+            from app.repositories.camera_repository import CameraRepository
+            from app.db.mongodb import get_database
+
+            db = await anext(get_database())
+            camera_repo = CameraRepository(db)
+
+            for serial_number in connected_cameras:
+                try:
+                    await camera_repo.update_connection_status(
+                        serial_number=serial_number,
+                        is_connected=False
+                    )
+                    logger.info(f"Marked camera {serial_number} as disconnected in DB")
+                except Exception as e:
+                    logger.error(f"Failed to disconnect {serial_number} in DB: {e}")
+
+            # Notify frontend clients via SocketIO
+            from app.services.socketio_service import emit_camera_service_status
+            await emit_camera_service_status({
+                'connected': False,
+                'message': data.get('message', 'Camera Management Service disconnected'),
+                'cameras_affected': connected_cameras
+            })
+
         elif event == "camera_connected":
             logger.info(f"Camera connected: {data.get('serial_number')}")
 

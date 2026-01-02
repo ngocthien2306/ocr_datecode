@@ -354,8 +354,8 @@ class CameraManagementService:
 
     async def _cleanup_cameras_on_shutdown(self):
         """
-        Update all connected cameras to disconnected status in database
-        This ensures DB state is consistent when service shuts down
+        Send shutdown notification via WebSocket to backend
+        Backend will handle updating camera status and notifying frontend clients
         """
         try:
             # Get all connected cameras from camera manager
@@ -365,23 +365,21 @@ class CameraManagementService:
                 logger.info("No cameras to cleanup")
                 return
 
-            logger.info(f"Cleaning up {len(connected_serials)} cameras in database...")
+            logger.info(f"Notifying backend about shutdown ({len(connected_serials)} cameras)...")
 
-            # Update each camera's status to disconnected
-            for serial_number in connected_serials:
-                try:
-                    url = f"{self.api_base}/api/cameras/{serial_number}/disconnect"
-                    response = requests.post(url, timeout=5)
+            # Send shutdown notification via WebSocket
+            await self.ws_client.send_message({
+                "event": "service_shutdown",
+                "data": {
+                    "connected_cameras": connected_serials,
+                    "message": "Camera Management Service shutting down"
+                }
+            })
 
-                    if response.status_code == 200:
-                        logger.info(f"Marked camera {serial_number} as disconnected in DB")
-                    else:
-                        logger.warning(f"Failed to disconnect {serial_number} in DB: {response.status_code}")
+            logger.info("Shutdown notification sent to backend")
 
-                except Exception as e:
-                    logger.error(f"Error disconnecting {serial_number} in DB: {e}")
-
-            logger.info("Camera cleanup completed")
+            # Give backend time to process
+            await asyncio.sleep(0.5)
 
         except Exception as e:
             logger.error(f"Error during camera cleanup: {e}")
