@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import '@/styles/Dashboard.css';
 import UserManagement from './UserManagement';
 import Receipts from '../recipe/Receipts';
-import InferenceResults from '../inference/InferenceResults';
+import InferenceRealtime from '../inference/InferenceRealtime';
 import Historical from './Historical';
 import Settings from './Settings';
 import Logs from './Logs';
@@ -32,7 +32,7 @@ interface DashboardProps {
   onLogout: () => void;
 }
 
-type Section = 'dashboard' | 'users' | 'receipts' | 'inference' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation';
+type Section = 'dashboard' | 'users' | 'receipts' | 'realtime' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation';
 
 type LoadingTemplate = 'camera-vision' | 'users' | 'receipts' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation' | 'spinner' | 'pulse' | 'radar' | 'grid' | 'circuit' | 'barcode' | 'ocr' | 'dots' | 'waves' | 'ocr-scanner' | 'barcode-scanner' | 'neural-network' | 'qr-detector' | 'industrial-factory' | 'ai-vision-pipeline' | 'neural-processing';
 
@@ -121,6 +121,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [recentLoads, setRecentLoads] = useState<ReceiptLoad[]>([]);
   const [recentMembers, setRecentMembers] = useState<{username: string; full_name?: string; last_seen?: string; avatar_url?: string | null}[]>([]);
+  const [runningRecipeId, setRunningRecipeId] = useState<string | null>(null);
 
   const camera1ChartRef = useRef<HTMLCanvasElement>(null);
   const camera2ChartRef = useRef<HTMLCanvasElement>(null);
@@ -614,6 +615,29 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     }
   }, [isLoading]);
 
+  // Check for running recipe
+  useEffect(() => {
+    const checkRunningRecipe = async () => {
+      try {
+        const latest = await receiptsAPI.getLatestLoadedRecipe();
+        if (latest && latest.recipe_id) {
+          setRunningRecipeId(latest.recipe_id);
+        } else {
+          setRunningRecipeId(null);
+        }
+      } catch (error) {
+        // No running recipe (404 is expected)
+        setRunningRecipeId(null);
+      }
+    };
+
+    checkRunningRecipe();
+
+    // Poll every 5 seconds
+    const interval = setInterval(checkRunningRecipe, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   const fetchCameras = async () => {
     const startTime = Date.now();
     
@@ -1000,18 +1024,35 @@ export default function Dashboard({ onLogout }: DashboardProps) {
               </svg>
               Recipes
             </a>
-            <a
-              href="#inference"
-              className={`nav-item ${currentSection === 'inference' ? 'active' : ''}`}
-              onClick={(e) => { e.preventDefault(); handleSectionChange('inference'); }}
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
-                <circle cx="12" cy="12" r="6" stroke="currentColor" strokeWidth="2"/>
-                <circle cx="12" cy="12" r="2" fill="currentColor"/>
-              </svg>
-              Inference Results
-            </a>
+            {runningRecipeId && (
+              <a
+                href="#realtime"
+                className={`nav-item ${currentSection === 'realtime' ? 'active' : ''}`}
+                onClick={(e) => { e.preventDefault(); handleSectionChange('realtime'); }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+                  <circle cx="12" cy="12" r="6" stroke="currentColor" strokeWidth="2"/>
+                  <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                  <circle cx="12" cy="12" r="1" fill="currentColor" opacity="0.5">
+                    <animate attributeName="r" from="2" to="10" dur="1.5s" repeatCount="indefinite"/>
+                    <animate attributeName="opacity" from="0.5" to="0" dur="1.5s" repeatCount="indefinite"/>
+                  </circle>
+                </svg>
+                Inference Realtime
+                <span style={{
+                  marginLeft: '0.5rem',
+                  padding: '2px 8px',
+                  background: 'rgba(34, 197, 94, 0.2)',
+                  color: '#22c55e',
+                  borderRadius: '8px',
+                  fontSize: '0.7rem',
+                  fontWeight: 700
+                }}>
+                  LIVE
+                </span>
+              </a>
+            )}
             {canAccessPage('cameraManagement') && (
               <a
                 href="#cameras"
@@ -1406,7 +1447,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
           {currentSection === 'users' && <UserManagement />}
           {currentSection === 'receipts' && <Receipts />}
-          {currentSection === 'inference' && <InferenceResults />}
+          {currentSection === 'realtime' && <InferenceRealtime runningRecipeId={runningRecipeId} />}
           {currentSection === 'cameras' && <CameraManagement />}
           {currentSection === 'historical' && <Historical />}
           {currentSection === 'logs' && <Logs />}

@@ -226,9 +226,25 @@ class Camera:
 
         logger.info(f"[{self.serial_number}] Mode changed: {old_mode.value} → {mode.value}")
 
+        # Start camera loop if switching from IDLE to active mode
+        if old_mode == CameraMode.IDLE and mode != CameraMode.IDLE:
+            if not self._running:
+                self._start_loop()
+
         # Initialize hardware trigger if needed
         if mode == CameraMode.HARDWARE_TRIGGER and self.previous_di_value is None:
             self.previous_di_value = self._read_di_value(self.di_number)
+
+    def _start_loop(self):
+        """Start camera loop in background thread"""
+        import threading
+        if self._running:
+            logger.warning(f"[{self.serial_number}] Camera loop already running")
+            return
+
+        thread = threading.Thread(target=self.run, daemon=True, name=f"Camera_{self.serial_number}")
+        thread.start()
+        logger.info(f"[{self.serial_number}] Camera loop thread started")
 
     def update_settings(self, settings: Dict[str, Any]):
         """Update camera settings from recipe"""
@@ -415,14 +431,14 @@ class Camera:
             return None
 
     def stop_recipe(self):
-        """Stop recipe and switch to idle mode"""
+        """Stop recipe and switch back to continuous mode"""
         self.recipe_id = None
         self.recipe_name = None
         self.templates = []
         self.inference_matcher = None
-        self.set_mode(CameraMode.IDLE)
+        self.set_mode(CameraMode.CONTINUOUS)
 
-        logger.info(f"[{self.serial_number}] Recipe stopped, mode set to IDLE")
+        logger.info(f"[{self.serial_number}] Recipe stopped, mode set to CONTINUOUS")
 
     def _read_di_value(self, di_number: int) -> int:
         """Read Digital Input value from hardware"""
@@ -496,7 +512,80 @@ class Camera:
             logger.error(f"Error writing to shared memory: {e}")
 
     def run(self):
-        """Main camera loop (runs in separate process)"""
-        # TODO: This will be called by CameraManager as separate process
-        # For now, this is the template for the main loop
-        pass
+        """
+        Main camera loop
+
+        Handles:
+        - Continuous frame grabbing (CONTINUOUS mode)
+        - Hardware trigger polling (HARDWARE_TRIGGER mode)
+        - Writing frames to shared memory
+        """
+        if not self.camera:
+            logger.error(f"[{self.serial_number}] Camera not connected")
+            return
+
+        self._running = True
+        logger.info(f"[{self.serial_number}] Starting camera loop (mode: {self.mode.value})")
+
+        try:
+            # Start grabbing
+            self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+
+            while self._running:
+                # Mode-specific behavior
+                if self.mode == CameraMode.IDLE:
+                    # Idle mode: just sleep
+                    time.sleep(0.1)
+                    continue
+
+                elif self.mode == CameraMode.CONTINUOUS:
+                    # Continuous mode: grab and write to shared memory
+                    if self.camera.IsGrabbing():
+                        grab_result = self.camera.RetrieveResult(100, pylon.TimeoutHandling_Return)
+
+                        if grab_result and grab_result.GrabSucceeded():
+                            img_array = grab_result.Array
+
+                            # Convert Mono8 to BGR for consistency
+                            if len(img_array.shape) == 2:
+                                img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
+
+                            # Write to shared memory
+                            metadata = {
+                                "timestamp": time.time(),
+                                "mode": self.mode.value,
+                                "shape": img_array.shape,
+                                "dtype": str(img_array.dtype)
+                            }
+
+                            self._write_frame_to_shm(img_array, metadata)
+                            self.frame_idx += 1
+
+                        grab_result.Release()
+
+                    time.sleep(0.033)  # ~30 FPS
+
+                elif self.mode == CameraMode.HARDWARE_TRIGGER:
+                    # Hardware trigger mode: poll DI and trigger on edge
+                    current_di = self._read_di_value(self.di_number)
+
+                    if self.previous_di_value is not None:
+                        if self._check_trigger_edge(current_di, self.previous_di_value):
+                            logger.info(f"[{self.serial_number}] Trigger detected!")
+                            self._handle_trigger_event()
+
+                    self.previous_di_value = current_di
+                    time.sleep(0.01)  # 100Hz polling
+
+        except Exception as e:
+            logger.error(f"[{self.serial_number}] Error in camera loop: {e}")
+            import traceback
+            traceback.print_exc()
+
+        finally:
+            # Stop grabbing
+            if self.camera and self.camera.IsGrabbing():
+                self.camera.StopGrabbing()
+
+            self._running = False
+            logger.info(f"[{self.serial_number}] Camera loop stopped")

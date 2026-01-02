@@ -334,6 +334,12 @@ export default function Receipts() {
             setShowLoadingAnimation(false);
             setLoadingProgress(0);
             setRunningRecipeId(receipt.id); // Set running recipe
+
+            // Redirect to Realtime tab
+            const realtimeLink = document.querySelector('a[href="#realtime"]') as HTMLAnchorElement;
+            if (realtimeLink) {
+              realtimeLink.click();
+            }
           }, 3000);
 
           toast.success(`Recipe "${receipt.name}" loaded and recorded (event id: ${data.id}).`);
