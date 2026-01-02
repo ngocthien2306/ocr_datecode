@@ -68,11 +68,18 @@ class InferenceResultService:
                 return None
 
             # Process images and update paths
-            for camera_result in camera_results:
+            # Also save base64 for SocketIO emit (but don't save to DB)
+            base64_data = {}  # Store base64 separately for emit
+
+            for camera_idx, camera_result in enumerate(camera_results):
                 serial_number = camera_result.get("serial_number")
                 frames = camera_result.get("frames", [])
 
-                for frame in frames:
+                for frame_idx, frame in enumerate(frames):
+                    # Save base64 for SocketIO (will be added back after DB save)
+                    if frame.get("image_base64"):
+                        base64_data[(camera_idx, frame_idx)] = frame.get("image_base64")
+
                     # Move image from temp to permanent storage
                     temp_image_path = frame.get("temp_image_path")
                     if temp_image_path:
@@ -131,11 +138,16 @@ class InferenceResultService:
                 if 'created_at' in result_dict and result_dict['created_at']:
                     result_dict['created_at'] = result_dict['created_at'].isoformat()
 
-                # Add full URL to image paths for frontend
-                base_url = settings.API_BASE_URL if hasattr(settings, 'API_BASE_URL') else "http://localhost:8000"
-                for camera_result in result_dict.get('camera_results', []):
-                    for frame in camera_result.get('frames', []):
+                # Add base64 back for SocketIO (not saved in DB)
+                for camera_idx, camera_result in enumerate(result_dict.get('camera_results', [])):
+                    for frame_idx, frame in enumerate(camera_result.get('frames', [])):
+                        # Add base64 if exists
+                        if (camera_idx, frame_idx) in base64_data:
+                            frame['image_base64'] = base64_data[(camera_idx, frame_idx)]
+
+                        # Add full URL to image paths for frontend fallback
                         if frame.get('image_path'):
+                            base_url = settings.API_BASE_URL if hasattr(settings, 'API_BASE_URL') else "http://localhost:8000"
                             frame['image_url'] = f"{base_url}/api/uploads/{frame['image_path']}"
 
                 await emit_inference_result(result_dict)

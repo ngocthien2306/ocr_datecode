@@ -49,6 +49,7 @@ class FrameResult(BaseModel):
         None,
         description="Detected regions with bounding boxes"
     )
+    # NOTE: image_base64 is NOT stored in DB - only used for realtime SocketIO emission
 
 
 class CameraResult(BaseModel):
