@@ -176,12 +176,23 @@ class CameraStreamService:
         """
         Read frame from shared memory
 
+        Format written by camera.py:
+        [8 bytes: frame_idx] [4 bytes: metadata_len] [metadata] [4 bytes: frame_len] [frame] [8 bytes: frame_idx verify]
+
         Returns:
             Dict with 'image' (numpy array) and 'metadata'
         """
         try:
-            # Read header (metadata size)
-            metadata_size = struct.unpack('I', bytes(shm.buf[:4]))[0]
+            offset = 0
+
+            # Read frame version (8 bytes)
+            frame_idx = struct.unpack('<Q', bytes(shm.buf[offset:offset+8]))[0]
+            offset += 8
+            logger.debug(f"Frame index: {frame_idx}")
+
+            # Read metadata size (4 bytes)
+            metadata_size = struct.unpack('<I', bytes(shm.buf[offset:offset+4]))[0]
+            offset += 4
             logger.debug(f"Metadata size: {metadata_size}")
 
             if metadata_size == 0 or metadata_size > 1000000:  # Sanity check
@@ -189,30 +200,48 @@ class CameraStreamService:
                 return None
 
             # Read metadata
-            metadata_bytes = bytes(shm.buf[4:4 + metadata_size])
+            metadata_bytes = bytes(shm.buf[offset:offset + metadata_size])
             metadata = pickle.loads(metadata_bytes)
+            offset += metadata_size
             logger.debug(f"Metadata: {metadata}")
 
-            # Read image shape
+            # Read frame length (4 bytes)
+            frame_len = struct.unpack('<I', bytes(shm.buf[offset:offset+4]))[0]
+            offset += 4
+            logger.debug(f"Frame length: {frame_len}")
+
+            # Read image shape from metadata
             shape = metadata.get('shape')
             if not shape or len(shape) != 3:
                 logger.debug(f"Invalid shape: {shape}")
                 return None
 
-            # Calculate image size
+            # Calculate expected image size
             h, w, c = shape
-            image_size = h * w * c
-            logger.debug(f"Image size: {w}x{h}x{c} = {image_size} bytes")
+            expected_size = h * w * c
+            logger.debug(f"Expected image size: {w}x{h}x{c} = {expected_size} bytes")
+
+            if frame_len != expected_size:
+                logger.warning(f"Frame length mismatch: {frame_len} != {expected_size}")
 
             # Read image data
-            image_offset = 4 + metadata_size
-            image_bytes = bytes(shm.buf[image_offset:image_offset + image_size])
+            image_bytes = bytes(shm.buf[offset:offset + frame_len])
+            offset += frame_len
+
+            # Read frame version verify (8 bytes)
+            frame_idx_verify = struct.unpack('<Q', bytes(shm.buf[offset:offset+8]))[0]
+            logger.debug(f"Frame index verify: {frame_idx_verify}")
+
+            # Verify frame consistency
+            if frame_idx != frame_idx_verify:
+                logger.warning(f"Frame index mismatch: {frame_idx} != {frame_idx_verify} (frame being written)")
+                return None
 
             # Reconstruct numpy array
             img_array = np.frombuffer(image_bytes, dtype=np.uint8)
             img_array = img_array.reshape(shape)
 
-            logger.debug(f"Successfully read frame: {img_array.shape}")
+            logger.debug(f"Successfully read frame {frame_idx}: {img_array.shape}")
 
             return {
                 'image': img_array,
