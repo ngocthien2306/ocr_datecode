@@ -274,11 +274,19 @@ const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
             <div className="setting-group">
               <label>
                 <span>Exposure Time (μs)</span>
-                <div className="setting-value">{settings.exposure}</div>
+                <input
+                  type="number"
+                  min="0"
+                  max="100000"
+                  step="100"
+                  value={settings.exposure}
+                  onChange={(e) => handleSettingChange('exposure', Number(e.target.value))}
+                  className="setting-value-input"
+                />
               </label>
               <input
                 type="range"
-                min="100"
+                min="0"
                 max="100000"
                 step="100"
                 value={settings.exposure}
