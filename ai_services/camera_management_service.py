@@ -210,6 +210,21 @@ class CameraManagementService:
                     "data": result
                 })
 
+            elif event == "update_camera_settings":
+                # Update camera settings
+                serial_number = data.get("serial_number")
+                settings = data.get("settings", {})
+
+                result = self.camera_manager.update_camera_settings(
+                    serial_number=serial_number,
+                    settings=settings
+                )
+
+                await self.ws_client.send_message({
+                    "event": "update_camera_settings_response",
+                    "data": result
+                })
+
             else:
                 logger.warning(f"Unknown event: {event}")
 

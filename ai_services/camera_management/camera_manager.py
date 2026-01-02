@@ -439,6 +439,59 @@ class CameraManager:
             "interval_ms": interval_ms
         }
 
+    def update_camera_settings(self, serial_number: str, settings: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update camera settings (exposure, gain, etc.)
+
+        Args:
+            serial_number: Camera serial number
+            settings: Settings dict with exposure_time, gain, etc.
+
+        Returns:
+            Response dict with status
+        """
+        with self._lock:
+            if serial_number not in self.cameras:
+                return {
+                    "success": False,
+                    "error": f"Camera {serial_number} not found"
+                }
+
+            try:
+                camera = self.cameras[serial_number]
+
+                # Update settings
+                if "exposure_time" in settings:
+                    camera.exposure_time = settings["exposure_time"]
+                if "gain" in settings:
+                    camera.gain = settings["gain"]
+                if "trigger_activation" in settings:
+                    camera.trigger_activation = settings["trigger_activation"]
+                if "di_number" in settings:
+                    camera.di_number = settings["di_number"]
+                if "delay_trigger" in settings:
+                    camera.delay_trigger = settings["delay_trigger"]
+
+                # Apply settings to camera hardware
+                camera._apply_settings()
+
+                logger.info(f"Settings updated for camera {serial_number}: {settings}")
+
+                return {
+                    "success": True,
+                    "serial_number": serial_number,
+                    "settings": settings
+                }
+
+            except Exception as e:
+                logger.error(f"Error updating camera settings: {e}")
+                import traceback
+                traceback.print_exc()
+                return {
+                    "success": False,
+                    "error": str(e)
+                }
+
     def shutdown(self):
         """Shutdown all cameras"""
         with self._lock:

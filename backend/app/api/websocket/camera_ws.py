@@ -6,7 +6,7 @@ Handles bidirectional communication with AI Service (CameraManagement)
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import json
 import logging
-from typing import Optional
+from typing import Optional, Dict, Any
 import asyncio
 
 logger = logging.getLogger(__name__)
@@ -301,4 +301,15 @@ async def send_get_camera_status(serial_number: Optional[str] = None) -> bool:
     return await camera_ws_manager.send_to_camera_service({
         "event": "get_camera_status",
         "data": data
+    })
+
+
+async def send_update_camera_settings(serial_number: str, settings: Dict[str, Any]) -> bool:
+    """Send update camera settings command to AI service"""
+    return await camera_ws_manager.send_to_camera_service({
+        "event": "update_camera_settings",
+        "data": {
+            "serial_number": serial_number,
+            "settings": settings
+        }
     })

@@ -27,6 +27,7 @@ from app.api.websocket.camera_ws import (
     send_connect_camera,
     send_disconnect_camera,
     send_set_camera_mode,
+    send_update_camera_settings,
     camera_ws_manager
 )
 
@@ -636,12 +637,23 @@ async def update_camera_settings(
         )
 
     try:
+        # Update settings in file
         updated_settings = camera_settings_service.update_settings(
             serial_number=serial_number,
             exposure_time=settings.exposure_time,
             gain=settings.gain,
             trigger_config=settings.trigger_config
         )
+
+        # Send settings to camera via WebSocket (if camera is connected)
+        if camera_ws_manager.is_connected():
+            success = await send_update_camera_settings(serial_number, updated_settings)
+            if success:
+                print(f"✅ Sent settings update to camera {serial_number} via WebSocket")
+            else:
+                print(f"⚠️ Failed to send settings to camera {serial_number}")
+        else:
+            print(f"⚠️ Camera service not connected, settings saved to file only")
 
         return {
             "success": True,
