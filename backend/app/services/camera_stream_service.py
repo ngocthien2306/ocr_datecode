@@ -121,25 +121,22 @@ class CameraStreamService:
                     frame_data = self._read_frame_from_shm(shm)
 
                     if frame_data is not None:
-                        logger.debug(f"Read frame from {serial_number}: shape={frame_data['image'].shape}")
-
                         # Downscale and encode
                         frame_base64 = self._encode_frame(frame_data['image'])
 
                         if frame_base64:
-                            logger.debug(f"Encoded frame for {serial_number}: base64 length={len(frame_base64)}")
-
                             # Emit to SocketIO
                             from app.services.socketio_service import emit_camera_frame
 
+                            frame_idx = frame_data['metadata'].get('frame_idx', 0)
                             await emit_camera_frame({
                                 'serial_number': serial_number,
                                 'frame_base64': frame_base64,
                                 'timestamp': frame_data['metadata'].get('timestamp'),
-                                'frame_idx': frame_data['metadata'].get('frame_idx', 0)
+                                'frame_idx': frame_idx
                             })
 
-                            logger.debug(f"Emitted frame for {serial_number}")
+                            logger.debug(f"Emitted frame {frame_idx} for {serial_number}, base64_len={len(frame_base64)}")
                         else:
                             logger.warning(f"Failed to encode frame for {serial_number}")
                     else:
@@ -188,38 +185,31 @@ class CameraStreamService:
             # Read frame version (8 bytes)
             frame_idx = struct.unpack('<Q', bytes(shm.buf[offset:offset+8]))[0]
             offset += 8
-            logger.debug(f"Frame index: {frame_idx}")
 
             # Read metadata size (4 bytes)
             metadata_size = struct.unpack('<I', bytes(shm.buf[offset:offset+4]))[0]
             offset += 4
-            logger.debug(f"Metadata size: {metadata_size}")
 
             if metadata_size == 0 or metadata_size > 1000000:  # Sanity check
-                logger.debug(f"Invalid metadata size: {metadata_size}")
                 return None
 
             # Read metadata
             metadata_bytes = bytes(shm.buf[offset:offset + metadata_size])
             metadata = pickle.loads(metadata_bytes)
             offset += metadata_size
-            logger.debug(f"Metadata: {metadata}")
 
             # Read frame length (4 bytes)
             frame_len = struct.unpack('<I', bytes(shm.buf[offset:offset+4]))[0]
             offset += 4
-            logger.debug(f"Frame length: {frame_len}")
 
             # Read image shape from metadata
             shape = metadata.get('shape')
             if not shape or len(shape) != 3:
-                logger.debug(f"Invalid shape: {shape}")
                 return None
 
             # Calculate expected image size
             h, w, c = shape
             expected_size = h * w * c
-            logger.debug(f"Expected image size: {w}x{h}x{c} = {expected_size} bytes")
 
             if frame_len != expected_size:
                 logger.warning(f"Frame length mismatch: {frame_len} != {expected_size}")
@@ -230,7 +220,6 @@ class CameraStreamService:
 
             # Read frame version verify (8 bytes)
             frame_idx_verify = struct.unpack('<Q', bytes(shm.buf[offset:offset+8]))[0]
-            logger.debug(f"Frame index verify: {frame_idx_verify}")
 
             # Verify frame consistency
             if frame_idx != frame_idx_verify:
@@ -241,17 +230,13 @@ class CameraStreamService:
             img_array = np.frombuffer(image_bytes, dtype=np.uint8)
             img_array = img_array.reshape(shape)
 
-            logger.debug(f"Successfully read frame {frame_idx}: {img_array.shape}")
-
             return {
                 'image': img_array,
                 'metadata': metadata
             }
 
         except Exception as e:
-            logger.debug(f"Error reading from shared memory: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.warning(f"Error reading from shared memory: {e}")
             return None
 
     def _encode_frame(self, img_array: np.ndarray, quality: int = 65) -> Optional[str]:

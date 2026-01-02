@@ -72,7 +72,7 @@ const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
 
       // Subscribe to camera frames
       const handleCameraFrame = (data: any) => {
-        console.log('[Camera Stream] Received frame event:', {
+        console.log('[Camera Stream] Received frame:', {
           serial_number: data.serial_number,
           expected_serial: serialNumber,
           base64_length: data.frame_base64?.length,
