@@ -38,7 +38,11 @@ class ReceiptLoadRepository:
             'loaded_by_full_name': user_full_name,
             'loaded_at': loaded_at,
             'loaded_at_local': loaded_at_local,
-            'metadata': metadata or {}
+            'metadata': metadata or {},
+            'status': 'running',  # Default status when loading recipe
+            'stopped_at': None,
+            'stopped_by': None,
+            'stopped_by_full_name': None
         }
         result = await self.collection.insert_one(doc)
         # Normalize id/_id to strings for JSON safety
@@ -80,3 +84,66 @@ class ReceiptLoadRepository:
 
     async def count_all(self) -> int:
         return await self.collection.count_documents({})
+
+    async def stop_recipe_load(
+        self,
+        recipe_id: str,
+        user_id: str,
+        user_full_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Stop a running recipe load by setting status to 'stopped'.
+        Finds the latest running load for the given recipe_id.
+        """
+        from bson.objectid import ObjectId
+
+        # Use configured timezone
+        try:
+            tz = ZoneInfo(settings.TIMEZONE)
+        except Exception:
+            tz = None
+        stopped_at = datetime.now(tz) if tz is not None else datetime.utcnow()
+
+        # Find the latest running load for this recipe
+        doc = await self.collection.find_one(
+            {'recipe_id': recipe_id, 'status': 'running'},
+            sort=[('loaded_at', -1)]
+        )
+
+        if not doc:
+            return None
+
+        # Update status to stopped
+        await self.collection.update_one(
+            {'_id': doc['_id']},
+            {
+                '$set': {
+                    'status': 'stopped',
+                    'stopped_at': stopped_at,
+                    'stopped_by': user_id,
+                    'stopped_by_full_name': user_full_name
+                }
+            }
+        )
+
+        # Return updated document
+        updated_doc = await self.collection.find_one({'_id': doc['_id']})
+        if updated_doc:
+            updated_doc['_id'] = str(updated_doc['_id'])
+            updated_doc['id'] = updated_doc['_id']
+
+        return updated_doc
+
+    async def get_latest_running(self) -> Optional[Dict[str, Any]]:
+        """Get the latest running recipe load (any recipe)."""
+        doc = await self.collection.find_one(
+            {'status': 'running'},
+            sort=[('loaded_at', -1)]
+        )
+
+        if not doc:
+            return None
+
+        doc['_id'] = str(doc['_id'])
+        doc['id'] = doc['_id']
+        return doc

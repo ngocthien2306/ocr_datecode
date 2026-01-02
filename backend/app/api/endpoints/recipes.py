@@ -363,11 +363,10 @@ async def search_recipes(
 async def get_latest_load(
     load_repo: ReceiptLoadRepository = Depends(get_receipt_load_repository),
 ):
-    """Public endpoint: return the most recent receipt load event (no auth required)."""
-    items = await load_repo.list_all(skip=0, limit=1)
-    if not items:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No load events")
-    item = items[0]
+    """Public endpoint: return the most recent running recipe load (no auth required)."""
+    item = await load_repo.get_latest_running()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No running recipe")
 
     return item
 @router.get("/loads")
@@ -697,7 +696,8 @@ async def stop_recipe(
     request: Request,
     current_user: UserInDB = Depends(get_current_user),
     recipe_repo: RecipeRepository = Depends(get_recipe_repository),
-    action_log_repo: ActionLogRepository = Depends(get_action_log_repository)
+    action_log_repo: ActionLogRepository = Depends(get_action_log_repository),
+    load_repo: ReceiptLoadRepository = Depends(get_receipt_load_repository)
 ):
     """
     Stop a running recipe and set cameras to idle mode.
@@ -731,6 +731,18 @@ async def stop_recipe(
         )
 
     logger.info(f"✅ [RECIPE STOP] Sent stop recipe command via WebSocket: {recipe.name}")
+
+    # Update recipe_load status to 'stopped'
+    stopped_load = await load_repo.stop_recipe_load(
+        recipe_id=recipe_id,
+        user_id=current_user.id,
+        user_full_name=current_user.full_name
+    )
+
+    if stopped_load:
+        logger.info(f"✅ [RECIPE STOP] Updated recipe_load status to 'stopped': {stopped_load['id']}")
+    else:
+        logger.warning(f"⚠️ [RECIPE STOP] No running recipe_load found for recipe {recipe_id}")
 
     # Log the action
     client_ip = request.client.host if request.client else None
