@@ -67,21 +67,50 @@ const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
   useEffect(() => {
     if (isLiveMode) {
       // Use SocketIO streaming (Backend reads from shared memory)
+      console.log('[Camera Stream] Starting live mode for:', serialNumber);
       socketService.connect();
 
       // Subscribe to camera frames
       const handleCameraFrame = (data: any) => {
+        console.log('[Camera Stream] Received frame event:', {
+          serial_number: data.serial_number,
+          expected_serial: serialNumber,
+          base64_length: data.frame_base64?.length,
+          timestamp: data.timestamp,
+          frame_idx: data.frame_idx
+        });
+
         if (data.serial_number === serialNumber) {
+          console.log('[Camera Stream] Frame matched, updating display');
           const frameDataUrl = `data:image/jpeg;base64,${data.frame_base64}`;
           setFrameUrl(frameDataUrl);
           setLastCapture(new Date());
+        } else {
+          console.log('[Camera Stream] Frame serial mismatch, ignoring');
         }
       };
 
+      // Listen for stream events
+      socketService.onCameraStreamStarted((data: any) => {
+        console.log('[Camera Stream] Stream started event:', data);
+      });
+
+      socketService.onCameraStreamStopped((data: any) => {
+        console.log('[Camera Stream] Stream stopped event:', data);
+      });
+
+      socketService.onCameraStreamError((data: any) => {
+        console.error('[Camera Stream] Stream error event:', data);
+      });
+
       socketService.subscribeToCameraFrames(handleCameraFrame);
+      console.log('[Camera Stream] Subscribed to camera frames');
+
       socketService.startCameraStream(serialNumber, 10); // 10 FPS
+      console.log('[Camera Stream] Sent start_camera_stream command');
 
       return () => {
+        console.log('[Camera Stream] Cleaning up, stopping stream for:', serialNumber);
         socketService.stopCameraStream(serialNumber);
         socketService.unsubscribeFromCameraFrames(handleCameraFrame);
       };

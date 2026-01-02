@@ -24,6 +24,7 @@ class SocketIOService {
 
     const token = localStorage.getItem('access_token');
 
+    console.log('[SocketIO] Connecting to:', API_BASE_URL);
     this.socket = io(API_BASE_URL, {
       path: '/socket.io',
       transports: ['websocket', 'polling'],
@@ -146,12 +147,13 @@ class SocketIOService {
       return;
     }
 
+    console.log(`[SocketIO] Emitting start_camera_stream for ${serialNumber} at ${frameRate} FPS`);
     this.socket.emit('start_camera_stream', {
       serial_number: serialNumber,
       frame_rate: frameRate
     });
 
-    console.log(`[SocketIO] Started camera stream for ${serialNumber} at ${frameRate} FPS`);
+    console.log(`[SocketIO] Emitted start_camera_stream command`);
   }
 
   /**
@@ -163,11 +165,12 @@ class SocketIOService {
       return;
     }
 
+    console.log(`[SocketIO] Emitting stop_camera_stream for ${serialNumber}`);
     this.socket.emit('stop_camera_stream', {
       serial_number: serialNumber
     });
 
-    console.log(`[SocketIO] Stopped camera stream for ${serialNumber}`);
+    console.log(`[SocketIO] Emitted stop_camera_stream command`);
   }
 
   /**
@@ -179,8 +182,9 @@ class SocketIOService {
       return;
     }
 
+    console.log('[SocketIO] Subscribing to camera_frame events');
     this.socket.on('camera_frame', callback);
-    console.log('[SocketIO] Subscribed to camera frames');
+    console.log('[SocketIO] Successfully subscribed to camera_frame events');
   }
 
   /**

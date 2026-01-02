@@ -14,6 +14,7 @@ import struct
 from typing import Dict, Any, Optional, Set
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # Enable debug logging
 
 
 class CameraStreamService:
@@ -120,10 +121,14 @@ class CameraStreamService:
                     frame_data = self._read_frame_from_shm(shm)
 
                     if frame_data is not None:
+                        logger.debug(f"Read frame from {serial_number}: shape={frame_data['image'].shape}")
+
                         # Downscale and encode
                         frame_base64 = self._encode_frame(frame_data['image'])
 
                         if frame_base64:
+                            logger.debug(f"Encoded frame for {serial_number}: base64 length={len(frame_base64)}")
+
                             # Emit to SocketIO
                             from app.services.socketio_service import emit_camera_frame
 
@@ -134,8 +139,16 @@ class CameraStreamService:
                                 'frame_idx': frame_data['metadata'].get('frame_idx', 0)
                             })
 
+                            logger.debug(f"Emitted frame for {serial_number}")
+                        else:
+                            logger.warning(f"Failed to encode frame for {serial_number}")
+                    else:
+                        logger.debug(f"No frame data available for {serial_number}")
+
                 except Exception as e:
                     logger.error(f"Error reading frame from {serial_number}: {e}")
+                    import traceback
+                    traceback.print_exc()
 
                 # Control frame rate
                 await asyncio.sleep(interval)
@@ -169,22 +182,27 @@ class CameraStreamService:
         try:
             # Read header (metadata size)
             metadata_size = struct.unpack('I', bytes(shm.buf[:4]))[0]
+            logger.debug(f"Metadata size: {metadata_size}")
 
             if metadata_size == 0 or metadata_size > 1000000:  # Sanity check
+                logger.debug(f"Invalid metadata size: {metadata_size}")
                 return None
 
             # Read metadata
             metadata_bytes = bytes(shm.buf[4:4 + metadata_size])
             metadata = pickle.loads(metadata_bytes)
+            logger.debug(f"Metadata: {metadata}")
 
             # Read image shape
             shape = metadata.get('shape')
             if not shape or len(shape) != 3:
+                logger.debug(f"Invalid shape: {shape}")
                 return None
 
             # Calculate image size
             h, w, c = shape
             image_size = h * w * c
+            logger.debug(f"Image size: {w}x{h}x{c} = {image_size} bytes")
 
             # Read image data
             image_offset = 4 + metadata_size
@@ -194,6 +212,8 @@ class CameraStreamService:
             img_array = np.frombuffer(image_bytes, dtype=np.uint8)
             img_array = img_array.reshape(shape)
 
+            logger.debug(f"Successfully read frame: {img_array.shape}")
+
             return {
                 'image': img_array,
                 'metadata': metadata
@@ -201,6 +221,8 @@ class CameraStreamService:
 
         except Exception as e:
             logger.debug(f"Error reading from shared memory: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def _encode_frame(self, img_array: np.ndarray, quality: int = 65) -> Optional[str]:
