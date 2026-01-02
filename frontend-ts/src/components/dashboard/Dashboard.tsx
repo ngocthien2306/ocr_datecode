@@ -45,6 +45,7 @@ interface LoadingTemplates {
   settings: LoadingTemplate;
   logs: LoadingTemplate;
   documentation: LoadingTemplate;
+  realtime: LoadingTemplate;
 }
 
 interface LoadingBackground {
@@ -80,7 +81,8 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       historical: (localStorage.getItem('historicalLoading') as LoadingTemplate) || 'historical',
       settings: (localStorage.getItem('settingsLoading') as LoadingTemplate) || 'settings',
       logs: (localStorage.getItem('logsLoading') as LoadingTemplate) || 'logs',
-      documentation: (localStorage.getItem('documentationLoading') as LoadingTemplate) || 'ocr'
+      documentation: (localStorage.getItem('documentationLoading') as LoadingTemplate) || 'ocr',
+      realtime: (localStorage.getItem('realtimeLoading') as LoadingTemplate) || 'realtime'
     };
   });
   const [loadingBackground, setLoadingBackground] = useState<LoadingBackground>(() => {

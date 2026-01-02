@@ -67,7 +67,16 @@ async def emit_inference_result(result_data: dict):
         result_data: Inference result data to broadcast
     """
     try:
-        logger.info(f"Broadcasting inference result: {result_data.get('id')}")
+        # Create a log-friendly version without image_base64
+        log_data = {
+            'id': result_data.get('id'),
+            'recipe_id': result_data.get('recipe_id'),
+            'recipe_name': result_data.get('recipe_name'),
+            'product_pass_fail': result_data.get('product_pass_fail'),
+            'camera_count': len(result_data.get('camera_results', [])),
+            'timestamp': result_data.get('timestamp')
+        }
+        logger.info(f"Broadcasting inference result: {log_data}")
         await sio.emit('new_inference_result', result_data, room='inference_results')
     except Exception as e:
         logger.error(f"Error emitting inference result: {e}")

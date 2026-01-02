@@ -345,6 +345,7 @@ class Camera:
             # Log camera config for debugging
             logger.info(f"[{self.serial_number}] Camera config from recipe: pixel_format={camera_config.get('pixel_format', 'NOT SET')}")
 
+            
             # Update settings
             self.update_settings(camera_config)
 

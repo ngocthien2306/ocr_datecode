@@ -1056,7 +1056,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                             </div>
                           </div>
 
-                          <div className="form-row">
+                          <div className="form-row hidden">
                             <div className="form-group">
                               <label>Pixel Format</label>
                               <select 

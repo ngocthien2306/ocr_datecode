@@ -107,13 +107,37 @@
   object-fit: contain;
 }
 
+.dark-mode .camera-feed-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #b4bdd0;
+  width: 100%;
+  height: 100%;
+  padding: 3rem;
+}
+
+.dark-mode .camera-feed-placeholder svg {
+  opacity: 0.3;
+  margin-bottom: 1.5rem;
+  stroke: currentColor;
+}
+
+.dark-mode .camera-feed-placeholder p {
+  font-size: 0.9375rem;
+  margin: 0;
+  line-height: 1.5;
+}
+
 .camera-feed-placeholder {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
-  color: #6b7280;
+  color: #101113;
   width: 100%;
   height: 100%;
   padding: 3rem;
