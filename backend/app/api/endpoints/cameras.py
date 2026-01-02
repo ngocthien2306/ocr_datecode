@@ -571,22 +571,22 @@ async def disconnect_camera(
 
 @router.get(
     "/{serial_number}/status",
-    summary="Get camera producer status",
+    summary="Get camera connection status",
     response_model=dict
 )
-async def get_camera_producer_status(
+async def get_camera_status(
     serial_number: str,
     db=Depends(get_database),
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Get camera producer process status.
+    Get camera connection status from database.
 
     - **serial_number**: Serial number của camera
 
-    Returns: Producer status
+    Returns: Camera status including is_connected flag
     """
-    # Kiểm tra camera có tồn tại trong database không
+    # Get camera from database
     repo = CameraRepository(db)
     camera = await repo.get_by_serial(serial_number)
 
@@ -596,12 +596,16 @@ async def get_camera_producer_status(
             detail=f"Camera with serial number '{serial_number}' not found"
         )
 
-    status_info = camera_producer_service.get_camera_status(serial_number)
-
+    # Return connection status
     return {
         "serial_number": serial_number,
-        "camera_id": camera["camera_id"],
-        "producer_status": status_info
+        "camera_id": camera.get("camera_id"),
+        "is_connected": camera.get("is_connected", False),
+        "model_name": camera.get("model_name"),
+        "resolution": {
+            "width": camera.get("resolution_width"),
+            "height": camera.get("resolution_height")
+        }
     }
 
 

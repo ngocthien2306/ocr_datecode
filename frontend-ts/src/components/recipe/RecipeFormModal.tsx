@@ -508,7 +508,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
       // First check if camera is connected
       const statusResponse = await camerasAPI.getCameraStatus(serialNumber);
-      if (!statusResponse.producer_status?.running) {
+
+      if (!statusResponse.is_connected) {
         toast.error('Camera is not connected. Please go to Camera Management to connect the camera first.');
         return;
       }
