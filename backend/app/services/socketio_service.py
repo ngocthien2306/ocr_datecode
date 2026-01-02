@@ -18,6 +18,9 @@ sio = socketio.AsyncServer(
 # Wrap with ASGI app
 socket_app = socketio.ASGIApp(sio)
 
+# Track which client is viewing which camera
+live_view_subscriptions = {}  # {sid: serial_number}
+
 
 @sio.event
 async def connect(sid, environ, auth):
@@ -30,6 +33,23 @@ async def connect(sid, environ, auth):
 async def disconnect(sid):
     """Handle client disconnection"""
     logger.info(f"Client disconnected: {sid}")
+
+    # Clean up live view subscriptions
+    if sid in live_view_subscriptions:
+        serial_number = live_view_subscriptions[sid]
+        del live_view_subscriptions[sid]
+
+        # Check if anyone else is viewing this camera
+        other_viewers = [s for s, cam in live_view_subscriptions.items() if cam == serial_number]
+
+        if not other_viewers:
+            # No one else viewing, stop streaming
+            from app.api.websocket.camera_ws import send_stop_live_view
+            try:
+                await send_stop_live_view(serial_number)
+                logger.info(f"Stopped live view for {serial_number} (no more viewers)")
+            except Exception as e:
+                logger.error(f"Error stopping live view: {e}")
 
 
 @sio.event
@@ -59,6 +79,84 @@ async def emit_inference_result(result_data: dict):
         await sio.emit('new_inference_result', result_data, room='inference_results')
     except Exception as e:
         logger.error(f"Error emitting inference result: {e}")
+
+
+@sio.event
+async def start_live_view(sid, data):
+    """Client requests to start live view for a camera"""
+    try:
+        serial_number = data.get('serial_number')
+        frame_rate = data.get('frame_rate', 10)
+
+        logger.info(f"Client {sid} requesting live view for {serial_number}")
+
+        # Track subscription
+        live_view_subscriptions[sid] = serial_number
+
+        # Forward command to Camera Service
+        from app.api.websocket.camera_ws import send_start_live_view
+        success = await send_start_live_view(serial_number, frame_rate)
+
+        if success:
+            await sio.emit('live_view_started', {'serial_number': serial_number}, room=sid)
+        else:
+            await sio.emit('live_view_error', {'error': 'Failed to start live view'}, room=sid)
+
+    except Exception as e:
+        logger.error(f"Error starting live view: {e}")
+        await sio.emit('live_view_error', {'error': str(e)}, room=sid)
+
+
+@sio.event
+async def stop_live_view(sid, data):
+    """Client requests to stop live view"""
+    try:
+        serial_number = data.get('serial_number')
+
+        logger.info(f"Client {sid} stopping live view for {serial_number}")
+
+        # Remove subscription
+        live_view_subscriptions.pop(sid, None)
+
+        # Check if anyone else is viewing this camera
+        other_viewers = [s for s, cam in live_view_subscriptions.items() if cam == serial_number]
+
+        if not other_viewers:
+            # No one else viewing, stop streaming
+            from app.api.websocket.camera_ws import send_stop_live_view
+            await send_stop_live_view(serial_number)
+            logger.info(f"Stopped streaming for {serial_number} (no more viewers)")
+
+        await sio.emit('live_view_stopped', {'serial_number': serial_number}, room=sid)
+
+    except Exception as e:
+        logger.error(f"Error stopping live view: {e}")
+        await sio.emit('live_view_error', {'error': str(e)}, room=sid)
+
+
+async def emit_live_frame(frame_data: dict):
+    """
+    Emit live frame to clients viewing this camera
+
+    Args:
+        frame_data: Frame data from Camera Service
+            {
+                'serial_number': str,
+                'frame_base64': str,
+                'timestamp': float,
+                'resolution': [width, height]
+            }
+    """
+    try:
+        serial_number = frame_data.get('serial_number')
+
+        # Send to all clients viewing this camera
+        for sid, cam in live_view_subscriptions.items():
+            if cam == serial_number:
+                await sio.emit('live_frame', frame_data, room=sid)
+
+    except Exception as e:
+        logger.error(f"Error emitting live frame: {e}")
 
 
 async def emit_recipe_status_change(status_data: dict):

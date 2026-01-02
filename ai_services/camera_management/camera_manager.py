@@ -333,6 +333,66 @@ class CameraManager:
                 "frame_idx": camera.frame_idx
             }
 
+    def start_live_view(self, serial_number: str, frame_rate: int = 10) -> Dict[str, Any]:
+        """
+        Start live streaming for a camera
+
+        Args:
+            serial_number: Camera serial number
+            frame_rate: Target frame rate (FPS)
+
+        Returns:
+            Response dict with status
+        """
+        with self._lock:
+            if serial_number not in self.cameras:
+                return {
+                    "success": False,
+                    "error": f"Camera {serial_number} not found"
+                }
+
+            camera = self.cameras[serial_number]
+
+            # Start streaming
+            camera.start_streaming(frame_rate)
+
+            logger.info(f"Live view started for camera {serial_number} at {frame_rate} FPS")
+
+            return {
+                "success": True,
+                "serial_number": serial_number,
+                "frame_rate": frame_rate
+            }
+
+    def stop_live_view(self, serial_number: str) -> Dict[str, Any]:
+        """
+        Stop live streaming for a camera
+
+        Args:
+            serial_number: Camera serial number
+
+        Returns:
+            Response dict with status
+        """
+        with self._lock:
+            if serial_number not in self.cameras:
+                return {
+                    "success": False,
+                    "error": f"Camera {serial_number} not found"
+                }
+
+            camera = self.cameras[serial_number]
+
+            # Stop streaming
+            camera.stop_streaming()
+
+            logger.info(f"Live view stopped for camera {serial_number}")
+
+            return {
+                "success": True,
+                "serial_number": serial_number
+            }
+
     def get_all_cameras_status(self) -> Dict[str, Any]:
         """
         Get status of all cameras

@@ -138,6 +138,85 @@ class SocketIOService {
   }
 
   /**
+   * Start live view for a camera
+   */
+  startLiveView(serialNumber: string, frameRate: number = 10): void {
+    if (!this.socket) {
+      console.error('[SocketIO] Socket not connected');
+      return;
+    }
+
+    this.socket.emit('start_live_view', {
+      serial_number: serialNumber,
+      frame_rate: frameRate
+    });
+
+    console.log(`[SocketIO] Started live view for ${serialNumber} at ${frameRate} FPS`);
+  }
+
+  /**
+   * Stop live view for a camera
+   */
+  stopLiveView(serialNumber: string): void {
+    if (!this.socket) {
+      console.error('[SocketIO] Socket not connected');
+      return;
+    }
+
+    this.socket.emit('stop_live_view', {
+      serial_number: serialNumber
+    });
+
+    console.log(`[SocketIO] Stopped live view for ${serialNumber}`);
+  }
+
+  /**
+   * Subscribe to live frames from a camera
+   */
+  subscribeToLiveFrames(callback: (data: any) => void): void {
+    if (!this.socket) {
+      console.error('[SocketIO] Socket not connected');
+      return;
+    }
+
+    this.socket.on('live_frame', callback);
+    console.log('[SocketIO] Subscribed to live frames');
+  }
+
+  /**
+   * Unsubscribe from live frames
+   */
+  unsubscribeFromLiveFrames(callback?: (data: any) => void): void {
+    if (!this.socket) return;
+
+    if (callback) {
+      this.socket.off('live_frame', callback);
+    } else {
+      this.socket.off('live_frame');
+    }
+
+    console.log('[SocketIO] Unsubscribed from live frames');
+  }
+
+  /**
+   * Listen for live view events
+   */
+  onLiveViewStarted(callback: (data: any) => void): void {
+    if (!this.socket) return;
+    this.socket.on('live_view_started', callback);
+  }
+
+  onLiveViewStopped(callback: (data: any) => void): void {
+    if (!this.socket) return;
+    this.socket.on('live_view_stopped', callback);
+  }
+
+  onLiveViewError(callback: (data: any) => void): void {
+    if (!this.socket) return;
+    this.socket.on('live_view_error', callback);
+  }
+
+  /**
    * Disconnect from SocketIO server
    */
   disconnect(): void {

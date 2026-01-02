@@ -194,6 +194,11 @@ async def handle_camera_service_message(message: dict):
             # Process inference result
             await process_inference_result(data)
 
+        elif event == "live_frame":
+            # Forward live frame to frontend via SocketIO
+            from app.services.socketio_service import emit_live_frame
+            await emit_live_frame(data)
+
         elif event.endswith("_response"):
             # Response to command - will be handled by calling code
             logger.debug(f"Response received: {event}")
@@ -301,6 +306,27 @@ async def send_get_camera_status(serial_number: Optional[str] = None) -> bool:
     return await camera_ws_manager.send_to_camera_service({
         "event": "get_camera_status",
         "data": data
+    })
+
+
+async def send_start_live_view(serial_number: str, frame_rate: int = 10) -> bool:
+    """Send start live view command to AI service"""
+    return await camera_ws_manager.send_to_camera_service({
+        "event": "start_live_view",
+        "data": {
+            "serial_number": serial_number,
+            "frame_rate": frame_rate
+        }
+    })
+
+
+async def send_stop_live_view(serial_number: str) -> bool:
+    """Send stop live view command to AI service"""
+    return await camera_ws_manager.send_to_camera_service({
+        "event": "stop_live_view",
+        "data": {
+            "serial_number": serial_number
+        }
     })
 
 
