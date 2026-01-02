@@ -620,6 +620,36 @@ async def load_recipe(
             detail="Camera Management service is not connected. Please start the service."
         )
 
+    # Check and auto-connect cameras if needed
+    cameras_config = getattr(recipe, 'cameras', [])
+    if cameras_config:
+        from app.repositories.camera_repository import CameraRepository
+        from app.db.mongodb import get_database
+        from app.api.websocket.camera_ws import send_connect_camera
+
+        db = get_database()
+        camera_repo = CameraRepository(db)
+
+        for cam_config in cameras_config:
+            serial_number = cam_config.get('serial_number')
+            pixel_format = cam_config.get('pixel_format', 'Mono8')
+
+            if not serial_number:
+                continue
+
+            # Check if camera is connected in DB
+            camera = await camera_repo.get_by_serial(serial_number)
+            if camera and not camera.get('is_connected', False):
+                logger.info(f"Auto-connecting camera {serial_number} for recipe {recipe.name}")
+
+                # Send connect command via WebSocket
+                success = await send_connect_camera(serial_number, pixel_format)
+
+                if success:
+                    logger.info(f"Successfully sent connect command for camera {serial_number}")
+                else:
+                    logger.warning(f"Failed to send connect command for camera {serial_number}")
+
     # Build metadata snapshot (will be used for both storage and inference)
     metadata = {
         'recipe_id': recipe_id,

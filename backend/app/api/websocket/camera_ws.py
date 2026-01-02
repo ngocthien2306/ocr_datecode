@@ -199,16 +199,22 @@ async def handle_camera_service_message(message: dict):
             from app.repositories.camera_repository import CameraRepository
             from app.db.mongodb import get_database
 
-            db = await anext(get_database())
+            db = get_database()
             camera_repo = CameraRepository(db)
 
             for serial_number in connected_cameras:
                 try:
-                    await camera_repo.update_connection_status(
-                        serial_number=serial_number,
-                        is_connected=False
-                    )
-                    logger.info(f"Marked camera {serial_number} as disconnected in DB")
+                    # Get camera by serial number to get camera_id
+                    camera = await camera_repo.get_by_serial(serial_number)
+                    if camera:
+                        camera_id = camera.get('camera_id')
+                        await camera_repo.update_connection_status(
+                            camera_id=camera_id,
+                            is_connected=False
+                        )
+                        logger.info(f"Marked camera {serial_number} as disconnected in DB")
+                    else:
+                        logger.warning(f"Camera {serial_number} not found in DB")
                 except Exception as e:
                     logger.error(f"Failed to disconnect {serial_number} in DB: {e}")
 
