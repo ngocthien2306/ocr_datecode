@@ -138,82 +138,82 @@ class SocketIOService {
   }
 
   /**
-   * Start live view for a camera
+   * Start camera stream
    */
-  startLiveView(serialNumber: string, frameRate: number = 10): void {
+  startCameraStream(serialNumber: string, frameRate: number = 10): void {
     if (!this.socket) {
       console.error('[SocketIO] Socket not connected');
       return;
     }
 
-    this.socket.emit('start_live_view', {
+    this.socket.emit('start_camera_stream', {
       serial_number: serialNumber,
       frame_rate: frameRate
     });
 
-    console.log(`[SocketIO] Started live view for ${serialNumber} at ${frameRate} FPS`);
+    console.log(`[SocketIO] Started camera stream for ${serialNumber} at ${frameRate} FPS`);
   }
 
   /**
-   * Stop live view for a camera
+   * Stop camera stream
    */
-  stopLiveView(serialNumber: string): void {
+  stopCameraStream(serialNumber: string): void {
     if (!this.socket) {
       console.error('[SocketIO] Socket not connected');
       return;
     }
 
-    this.socket.emit('stop_live_view', {
+    this.socket.emit('stop_camera_stream', {
       serial_number: serialNumber
     });
 
-    console.log(`[SocketIO] Stopped live view for ${serialNumber}`);
+    console.log(`[SocketIO] Stopped camera stream for ${serialNumber}`);
   }
 
   /**
-   * Subscribe to live frames from a camera
+   * Subscribe to camera frames
    */
-  subscribeToLiveFrames(callback: (data: any) => void): void {
+  subscribeToCameraFrames(callback: (data: any) => void): void {
     if (!this.socket) {
       console.error('[SocketIO] Socket not connected');
       return;
     }
 
-    this.socket.on('live_frame', callback);
-    console.log('[SocketIO] Subscribed to live frames');
+    this.socket.on('camera_frame', callback);
+    console.log('[SocketIO] Subscribed to camera frames');
   }
 
   /**
-   * Unsubscribe from live frames
+   * Unsubscribe from camera frames
    */
-  unsubscribeFromLiveFrames(callback?: (data: any) => void): void {
+  unsubscribeFromCameraFrames(callback?: (data: any) => void): void {
     if (!this.socket) return;
 
     if (callback) {
-      this.socket.off('live_frame', callback);
+      this.socket.off('camera_frame', callback);
     } else {
-      this.socket.off('live_frame');
+      this.socket.off('camera_frame');
     }
 
-    console.log('[SocketIO] Unsubscribed from live frames');
+    console.log('[SocketIO] Unsubscribed from camera frames');
   }
 
   /**
-   * Listen for live view events
+   * Listen for camera stream events
    */
-  onLiveViewStarted(callback: (data: any) => void): void {
+  onCameraStreamStarted(callback: (data: any) => void): void {
     if (!this.socket) return;
-    this.socket.on('live_view_started', callback);
+    this.socket.on('camera_stream_started', callback);
   }
 
-  onLiveViewStopped(callback: (data: any) => void): void {
+  onCameraStreamStopped(callback: (data: any) => void): void {
     if (!this.socket) return;
-    this.socket.on('live_view_stopped', callback);
+    this.socket.on('camera_stream_stopped', callback);
   }
 
-  onLiveViewError(callback: (data: any) => void): void {
+  onCameraStreamError(callback: (data: any) => void): void {
     if (!this.socket) return;
-    this.socket.on('live_view_error', callback);
+    this.socket.on('camera_stream_error', callback);
   }
 
   /**

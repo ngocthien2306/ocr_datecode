@@ -238,34 +238,6 @@ class CameraManagementService:
                     "data": result
                 })
 
-            elif event == "start_live_view":
-                # Start live streaming
-                serial_number = data.get("serial_number")
-                frame_rate = data.get("frame_rate", 10)
-
-                result = self.camera_manager.start_live_view(
-                    serial_number=serial_number,
-                    frame_rate=frame_rate
-                )
-
-                await self.ws_client.send_message({
-                    "event": "start_live_view_response",
-                    "data": result
-                })
-
-            elif event == "stop_live_view":
-                # Stop live streaming
-                serial_number = data.get("serial_number")
-
-                result = self.camera_manager.stop_live_view(
-                    serial_number=serial_number
-                )
-
-                await self.ws_client.send_message({
-                    "event": "stop_live_view_response",
-                    "data": result
-                })
-
             else:
                 logger.warning(f"Unknown event: {event}")
 

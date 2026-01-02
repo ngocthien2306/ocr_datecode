@@ -11,7 +11,6 @@ import time
 import pickle
 import struct
 import logging
-import base64
 from enum import Enum
 from typing import Optional, Dict, Any, List, Callable
 from pathlib import Path
@@ -98,11 +97,6 @@ class Camera:
         # Frame tracking
         self.frame_idx = 0
         self.previous_di_value: Optional[int] = None
-
-        # Live streaming
-        self.is_streaming = False
-        self.stream_frame_rate = 10  # FPS
-        self.last_stream_time = 0.0
 
         # Process control
         self._running = False
@@ -297,51 +291,6 @@ class Camera:
         thread = threading.Thread(target=self.run, daemon=True, name=f"Camera_{self.serial_number}")
         thread.start()
         logger.info(f"[{self.serial_number}] Camera loop thread started")
-
-    def start_streaming(self, frame_rate: int = 10):
-        """
-        Start live streaming frames
-
-        Args:
-            frame_rate: Target frame rate (FPS)
-        """
-        self.is_streaming = True
-        self.stream_frame_rate = frame_rate
-        self.last_stream_time = 0.0
-        logger.info(f"[{self.serial_number}] Live streaming started at {frame_rate} FPS")
-
-    def stop_streaming(self):
-        """Stop live streaming frames"""
-        self.is_streaming = False
-        logger.info(f"[{self.serial_number}] Live streaming stopped")
-
-    def _emit_live_frame(self, img_array: np.ndarray):
-        """
-        Emit live frame for streaming
-
-        Args:
-            img_array: Full resolution BGR image
-        """
-        try:
-            # Downscale to 1/3 resolution for streaming
-            h, w = img_array.shape[:2]
-            small_img = cv2.resize(img_array, (w // 3, h // 3), interpolation=cv2.INTER_AREA)
-
-            # Encode as JPEG with quality 65
-            _, buffer = cv2.imencode('.jpg', small_img, [cv2.IMWRITE_JPEG_QUALITY, 65])
-
-            # Convert to base64
-            frame_base64 = base64.b64encode(buffer).decode('utf-8')
-
-            # Emit event
-            self._emit_event("live_frame", {
-                "frame_base64": frame_base64,
-                "timestamp": time.time(),
-                "resolution": [w // 3, h // 3]
-            })
-
-        except Exception as e:
-            logger.error(f"[{self.serial_number}] Error emitting live frame: {e}")
 
     def update_settings(self, settings: Dict[str, Any]):
         """Update camera settings from recipe"""
@@ -898,15 +847,6 @@ class Camera:
 
                             self._write_frame_to_shm(img_array, metadata)
                             self.frame_idx += 1
-
-                            # Live streaming: emit frame if enabled and time elapsed
-                            if self.is_streaming:
-                                current_time = time.time()
-                                interval = 1.0 / self.stream_frame_rate
-
-                                if current_time - self.last_stream_time >= interval:
-                                    self._emit_live_frame(img_array)
-                                    self.last_stream_time = current_time
 
                         grab_result.Release()
 

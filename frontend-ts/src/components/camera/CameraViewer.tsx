@@ -66,11 +66,11 @@ const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
 
   useEffect(() => {
     if (isLiveMode) {
-      // Use SocketIO streaming for live mode
+      // Use SocketIO streaming (Backend reads from shared memory)
       socketService.connect();
 
-      // Subscribe to live frames
-      const handleLiveFrame = (data: any) => {
+      // Subscribe to camera frames
+      const handleCameraFrame = (data: any) => {
         if (data.serial_number === serialNumber) {
           const frameDataUrl = `data:image/jpeg;base64,${data.frame_base64}`;
           setFrameUrl(frameDataUrl);
@@ -78,12 +78,12 @@ const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
         }
       };
 
-      socketService.subscribeToLiveFrames(handleLiveFrame);
-      socketService.startLiveView(serialNumber, 10); // 10 FPS
+      socketService.subscribeToCameraFrames(handleCameraFrame);
+      socketService.startCameraStream(serialNumber, 10); // 10 FPS
 
       return () => {
-        socketService.stopLiveView(serialNumber);
-        socketService.unsubscribeFromLiveFrames(handleLiveFrame);
+        socketService.stopCameraStream(serialNumber);
+        socketService.unsubscribeFromCameraFrames(handleCameraFrame);
       };
     } else if (settings.autoRefresh) {
       // Use API polling for auto refresh mode
