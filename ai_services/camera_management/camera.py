@@ -218,6 +218,12 @@ class Camera:
             return
 
         try:
+            # Pixel Format (must be set after Open but before StartGrabbing)
+            if self.pixel_format:
+                self.camera.PixelFormat.SetValue(self.pixel_format)
+                actual_pixel_format = self.camera.PixelFormat.GetValue()
+                logger.info(f"[{self.serial_number}] PixelFormat: {actual_pixel_format}")
+
             # Exposure
             self.camera.ExposureTime.SetValue(int(self.exposure_time))
             actual_exposure = self.camera.ExposureTime.GetValue()
@@ -307,6 +313,9 @@ class Camera:
             if not camera_config:
                 logger.error(f"Camera {self.serial_number} not found in recipe")
                 return False
+
+            # Log camera config for debugging
+            logger.info(f"[{self.serial_number}] Camera config from recipe: pixel_format={camera_config.get('pixel_format', 'NOT SET')}")
 
             # Update settings
             self.update_settings(camera_config)

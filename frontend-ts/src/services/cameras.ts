@@ -44,8 +44,8 @@ export const camerasAPI = {
     return response.data;
   },
 
-  connectCamera: async (serialNumber: string, deviceIndex: number = 0): Promise<any> => {
-    const response = await api.post(`/cameras/${serialNumber}/connect?device_index=${deviceIndex}`);
+  connectCamera: async (serialNumber: string, pixelFormat: string = 'Mono8'): Promise<any> => {
+    const response = await api.post(`/cameras/${serialNumber}/connect?pixel_format=${pixelFormat}`);
     return response.data;
   },
 

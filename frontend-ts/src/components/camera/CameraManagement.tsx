@@ -209,8 +209,9 @@ const CameraManagement: React.FC = () => {
         await camerasAPI.disconnectCamera(serialNumber);
         toast.success(`Camera ${serialNumber} disconnected successfully!`);
       } else {
-        // Connect camera
-        await camerasAPI.connectCamera(serialNumber, 0);
+        // Connect camera with pixel_format from DB
+        const pixelFormat = (camera as any).pixel_format || 'Mono8';
+        await camerasAPI.connectCamera(serialNumber, pixelFormat);
         toast.success(`Camera ${serialNumber} connected successfully!`);
       }
 
