@@ -57,6 +57,13 @@ class CameraWebSocketManager:
 
             logger.info("Camera service disconnected")
 
+            # Notify all frontend clients that camera service is down
+            from app.services.socketio_service import emit_camera_service_status
+            await emit_camera_service_status({
+                'connected': False,
+                'message': 'Camera Management Service disconnected'
+            })
+
     async def send_to_camera_service(self, message: dict) -> bool:
         """
         Send message to camera service

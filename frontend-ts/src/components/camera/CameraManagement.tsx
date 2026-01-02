@@ -1,5 +1,7 @@
 import React, { useState, useEffect, ChangeEvent, FormEvent } from 'react';
 import { camerasAPI } from '@/services/api';
+import recipesAPI from '@/services/recipes';
+import socketService from '@/services/socketio';
 import { useToast } from '@/contexts/ToastContext';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import CameraViewer from './CameraViewer';
@@ -77,7 +79,33 @@ const CameraManagement: React.FC = () => {
 
   useEffect(() => {
     fetchCameras();
-  }, []);
+
+    // Listen for camera service status changes
+    socketService.connect();
+
+    const handleServiceStatus = (data: any) => {
+      console.log('[Camera Service] Status changed:', data);
+
+      if (!data.connected) {
+        toast.error(data.message || 'Camera Management Service disconnected');
+
+        // Refresh cameras list to update connection status
+        fetchCameras();
+
+        // If viewing a camera, go back to list
+        if (viewMode === 'viewer') {
+          setViewMode('list');
+          setViewingCamera(null);
+        }
+      }
+    };
+
+    socketService.onCameraServiceStatus(handleServiceStatus);
+
+    return () => {
+      socketService.offCameraServiceStatus(handleServiceStatus);
+    };
+  }, [viewMode]);
 
   const fetchCameras = async () => {
     try {
@@ -205,6 +233,18 @@ const CameraManagement: React.FC = () => {
 
     try {
       if (isConnected) {
+        // Check if recipe is running before disconnecting
+        const latestRecipe = await recipesAPI.getLatestLoadedRecipe();
+        if (latestRecipe) {
+          toast.error(`Cannot disconnect camera while recipe "${latestRecipe.recipe_name}" is running`);
+          setConnectingCameras(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(serialNumber);
+            return newSet;
+          });
+          return;
+        }
+
         // Disconnect camera
         await camerasAPI.disconnectCamera(serialNumber);
         toast.success(`Camera ${serialNumber} disconnected successfully!`);

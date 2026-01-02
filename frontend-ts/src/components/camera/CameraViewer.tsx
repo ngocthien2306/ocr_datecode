@@ -56,13 +56,28 @@ const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
 
     loadSettings();
 
+    // Listen for camera service disconnection
+    const handleServiceStatus = (data: any) => {
+      console.log('[Camera Viewer] Service status changed:', data);
+
+      if (!data.connected) {
+        toast.error('Camera service disconnected. Returning to camera list.');
+        // Go back to camera list
+        setTimeout(() => onBack(), 1500);
+      }
+    };
+
+    socketService.connect();
+    socketService.onCameraServiceStatus(handleServiceStatus);
+
     return () => {
       // Cleanup on unmount
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }
+      socketService.offCameraServiceStatus(handleServiceStatus);
     };
-  }, [serialNumber]);
+  }, [serialNumber, onBack, toast]);
 
   useEffect(() => {
     if (isLiveMode) {

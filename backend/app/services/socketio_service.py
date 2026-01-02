@@ -151,6 +151,24 @@ async def emit_camera_frame(frame_data: dict):
         logger.error(f"Error emitting camera frame: {e}")
 
 
+async def emit_camera_service_status(status_data: dict):
+    """
+    Emit camera service connection status to all connected clients
+
+    Args:
+        status_data: Service status data
+            {
+                'connected': bool,
+                'message': str
+            }
+    """
+    try:
+        logger.info(f"Broadcasting camera service status: {status_data}")
+        await sio.emit('camera_service_status', status_data)
+    except Exception as e:
+        logger.error(f"Error emitting camera service status: {e}")
+
+
 async def emit_recipe_status_change(status_data: dict):
     """
     Emit recipe status change to all connected clients

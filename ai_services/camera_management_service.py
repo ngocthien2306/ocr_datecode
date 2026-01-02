@@ -352,11 +352,48 @@ class CameraManagementService:
         while self.running:
             await asyncio.sleep(1)
 
+    async def _cleanup_cameras_on_shutdown(self):
+        """
+        Update all connected cameras to disconnected status in database
+        This ensures DB state is consistent when service shuts down
+        """
+        try:
+            # Get all connected cameras from camera manager
+            connected_serials = list(self.camera_manager.cameras.keys())
+
+            if not connected_serials:
+                logger.info("No cameras to cleanup")
+                return
+
+            logger.info(f"Cleaning up {len(connected_serials)} cameras in database...")
+
+            # Update each camera's status to disconnected
+            for serial_number in connected_serials:
+                try:
+                    url = f"{self.api_base}/api/cameras/{serial_number}/disconnect"
+                    response = requests.post(url, timeout=5)
+
+                    if response.status_code == 200:
+                        logger.info(f"Marked camera {serial_number} as disconnected in DB")
+                    else:
+                        logger.warning(f"Failed to disconnect {serial_number} in DB: {response.status_code}")
+
+                except Exception as e:
+                    logger.error(f"Error disconnecting {serial_number} in DB: {e}")
+
+            logger.info("Camera cleanup completed")
+
+        except Exception as e:
+            logger.error(f"Error during camera cleanup: {e}")
+
     async def stop(self):
         """Stop the service"""
         logger.info("Stopping CameraManagementService...")
 
         self.running = False
+
+        # Update all cameras to disconnected in database
+        await self._cleanup_cameras_on_shutdown()
 
         # Shutdown camera manager
         self.camera_manager.shutdown()
@@ -371,11 +408,13 @@ class CameraManagementService:
 service: Optional[CameraManagementService] = None
 
 
-def signal_handler(sig, frame):
+def signal_handler(sig, _frame):
     """Handle shutdown signals"""
     logger.info(f"Received signal {sig}, shutting down...")
     if service:
-        asyncio.create_task(service.stop())
+        # Signal event loop to stop service
+        # The actual cleanup happens in main's finally block
+        service.running = False
 
 
 async def main():
