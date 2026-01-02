@@ -532,30 +532,31 @@ class Camera:
             for frame_data in captured_frames:
                 img = frame_data['image']
 
-                # Save frame to temp file for inference
-                import tempfile
-                temp_dir = Path("/tmp/camera_frames")
-                temp_dir.mkdir(exist_ok=True)
-                temp_path = temp_dir / f"{self.serial_number}_{int(time.time()*1000)}.jpg"
-                cv2.imwrite(str(temp_path), img)
-
-                # Run inference
+                # Run inference directly on numpy array
                 try:
-                    result = self.inference_matcher.match(str(temp_path))
+                    result = self.inference_matcher.match_array(img)
 
                     # Determine PASS/FAIL based on template match
-                    # Check if matches count > threshold (e.g., 10 matches means template found)
-                    num_matches = result.get('num_matches', 0)
-                    frame_pass = num_matches >= 10  # Template matched if >= 10 keypoint matches
+                    # Use inliers count and confidence score
+                    inliers = result.get('inliers', 0)
+                    confidence = result.get('confidence', 0.0)
+                    frame_pass = inliers >= 30 and confidence >= 0.3  # Match if >= 30 inliers and confidence >= 0.3
+
+                    # Remove numpy arrays from result for JSON serialization
+                    result_clean = {
+                        'success': result.get('success', False),
+                        'confidence': confidence,
+                        'inliers': inliers,
+                        'total_matches': result.get('total_matches', 0),
+                        'timings': result.get('timings', {})
+                    }
 
                 except Exception as e:
                     logger.error(f"[{self.serial_number}] Inference error: {e}")
-                    result = {'error': str(e)}
+                    result_clean = {'error': str(e)}
                     frame_pass = False
-                finally:
-                    # Clean up temp file
-                    if temp_path.exists():
-                        temp_path.unlink()
+                    inliers = 0
+                    confidence = 0.0
 
                 overall_pass = overall_pass and frame_pass
 
@@ -563,14 +564,15 @@ class Camera:
                     'template_name': frame_data['template_name'],
                     'template_idx': frame_data['template_idx'],
                     'pass_fail': 'PASS' if frame_pass else 'FAIL',
-                    'num_matches': result.get('num_matches', 0),
-                    'result': result,
+                    'inliers': inliers,
+                    'confidence': confidence,
+                    'result': result_clean,
                     'timestamp': frame_data['timestamp']
                 })
 
                 logger.info(
                     f"[{self.serial_number}] Template '{frame_data['template_name']}': "
-                    f"{'PASS' if frame_pass else 'FAIL'} (matches: {result.get('num_matches', 0)})"
+                    f"{'PASS' if frame_pass else 'FAIL'} (inliers: {inliers}, confidence: {confidence:.2f})"
                 )
 
             # Emit inference result event

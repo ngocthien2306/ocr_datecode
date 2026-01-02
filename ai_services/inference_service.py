@@ -186,21 +186,36 @@ class SuperPointMatcherTRT:
 
     def match(self, target_path: str, score_threshold: float = 0.3,
               ransac_threshold: float = 5.0) -> Dict:
-        """Match template against target image"""
+        """Match template against target image from file path"""
         timings = {}
         t_total = time.time()
 
         # Load target
         t0 = time.time()
         target_img_full = cv2.imread(target_path)
+        timings['load_target'] = (time.time() - t0) * 1000
 
+        # Process with array
+        return self._match_impl(target_img_full, score_threshold, ransac_threshold, timings, t_total)
+
+    def match_array(self, target_img_array: np.ndarray, score_threshold: float = 0.3,
+                    ransac_threshold: float = 5.0) -> Dict:
+        """Match template against target image from numpy array (BGR format)"""
+        timings = {}
+        t_total = time.time()
+
+        # Process directly without file I/O
+        return self._match_impl(target_img_array, score_threshold, ransac_threshold, timings, t_total)
+
+    def _match_impl(self, target_img_full: np.ndarray, score_threshold: float,
+                    ransac_threshold: float, timings: Dict, t_total: float) -> Dict:
+        """Internal implementation of template matching"""
         if self.scale != 1.0:
             target_img = cv2.resize(target_img_full, None, fx=self.scale, fy=self.scale)
         else:
             target_img = target_img_full
 
         target_gray = cv2.cvtColor(target_img, cv2.COLOR_BGR2GRAY)
-        timings['load_target'] = (time.time() - t0) * 1000
 
         # Resize to engine size
         t0 = time.time()
