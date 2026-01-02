@@ -1235,9 +1235,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         <option value="Barcode_Detection">Barcode Detection</option>
                         <option value="DateCode_Detection">Date Code Detection</option>
                       </select>
-                      <small style={{display: 'block', marginTop: 4, color: '#666'}}>
+                      {/* <small style={{display: 'block', marginTop: 4, color: '#666'}}>
                         All templates for this camera will use this function type
-                      </small>
+                      </small> */}
                     </div>
                   )}
                 </div>
