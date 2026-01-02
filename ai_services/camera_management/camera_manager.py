@@ -39,7 +39,20 @@ class CameraManager:
         """Emit event to callback"""
         if self.event_callback:
             try:
-                self.event_callback(event_type, data)
+                # Check if callback is async
+                import asyncio
+                import inspect
+                if inspect.iscoroutinefunction(self.event_callback):
+                    # Schedule coroutine in event loop
+                    try:
+                        loop = asyncio.get_event_loop()
+                        asyncio.ensure_future(self.event_callback(event_type, data), loop=loop)
+                    except RuntimeError:
+                        # No event loop running, create task without loop
+                        asyncio.create_task(self.event_callback(event_type, data))
+                else:
+                    # Sync callback
+                    self.event_callback(event_type, data)
             except Exception as e:
                 logger.error(f"Error emitting event {event_type}: {e}")
 
@@ -89,10 +102,13 @@ class CameraManager:
                         "error": "Failed to connect to camera hardware"
                     }
 
+                # Set to continuous mode for live view and capture
+                camera.set_mode(CameraMode.CONTINUOUS)
+
                 # Store in dict
                 self.cameras[serial_number] = camera
 
-                logger.info(f"Camera {serial_number} added successfully")
+                logger.info(f"Camera {serial_number} added successfully (mode: {camera.mode.value})")
 
                 return {
                     "success": True,
