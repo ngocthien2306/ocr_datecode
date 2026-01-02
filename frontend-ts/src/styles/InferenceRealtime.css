@@ -156,6 +156,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative; /* Ensure log entries stay within panel */
 }
 
 .panel-header {
@@ -240,7 +241,7 @@
   padding: 1rem;
 }
 
-.log-entry {
+.inference-log-entry {
   display: grid;
   grid-template-columns: auto auto 1fr;
   gap: 0.75rem;
@@ -252,15 +253,15 @@
   transition: all 0.2s ease;
 }
 
-.log-entry:hover {
+.inference-log-entry:hover {
   background: var(--surface-hover);
 }
 
-.log-entry.pass {
+.inference-log-entry.pass {
   border-left-color: #22c55e;
 }
 
-.log-entry.fail {
+.inference-log-entry.fail {
   border-left-color: #ef4444;
 }
 

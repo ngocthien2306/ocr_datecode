@@ -544,6 +544,54 @@ class Camera:
 
                     frame_pass = inliers >= 30 and confidence >= 0.3  # Match if >= 30 inliers and confidence >= 0.3
 
+                    # Draw bounding boxes on image for annotation
+                    annotated_img = img.copy()
+                    transformed_bboxes = result.get('transformed_bboxes', [])
+
+                    # Draw bboxes
+                    for bbox in transformed_bboxes:
+                        points = bbox.get('points', [])
+                        bbox_type = bbox.get('type', '')
+
+                        if len(points) >= 4:
+                            pts = np.array(points, dtype=np.int32)
+
+                            # Color based on type: template=green, text=blue, others=yellow
+                            if bbox_type == 'template':
+                                color = (0, 255, 0) if frame_pass else (0, 0, 255)  # Green if PASS, Red if FAIL
+                            elif bbox_type == 'text':
+                                color = (255, 128, 0)  # Orange
+                            else:
+                                color = (255, 255, 0)  # Yellow
+
+                            cv2.polylines(annotated_img, [pts], True, color, 3)
+
+                    # Add PASS/FAIL text
+                    text = f"{'PASS' if frame_pass else 'FAIL'} | Conf: {confidence:.2f} | Inliers: {inliers}"
+                    cv2.putText(annotated_img, text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.2,
+                               (0, 255, 0) if frame_pass else (0, 0, 255), 3)
+
+                    # Save image and create base64 for FAIL results
+                    image_path = None
+                    image_base64 = None
+
+                    if not frame_pass:  # Only save FAIL images
+                        # Save full resolution to disk
+                        image_path = self._save_inference_image(
+                            annotated_img,
+                            frame_data['template_idx'],
+                            'FAIL'
+                        )
+
+                        # Create resized base64 for realtime preview (1/3 resolution)
+                        h, w = annotated_img.shape[:2]
+                        preview_img = cv2.resize(annotated_img, (w//3, h//3), interpolation=cv2.INTER_AREA)
+
+                        # Encode to JPEG with quality 85
+                        _, buffer = cv2.imencode('.jpg', preview_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                        import base64
+                        image_base64 = base64.b64encode(buffer).decode('utf-8')
+
                     # Remove numpy arrays from result for JSON serialization
                     result_clean = {
                         'success': bool(result.get('success', False)),
@@ -561,6 +609,8 @@ class Camera:
                     frame_pass = False
                     inliers = 0
                     confidence = 0.0
+                    image_path = None
+                    image_base64 = None
 
                 overall_pass = overall_pass and frame_pass
 
@@ -569,7 +619,8 @@ class Camera:
                     'frame_idx': frame_data['template_idx'],  # Renamed to match Pydantic schema
                     'pass_fail': 'PASS' if frame_pass else 'FAIL',
                     'confidence': confidence,
-                    'image_path': None,  # TODO: Save image and add path
+                    'image_path': image_path,  # Path to saved full-res image
+                    'image_base64': image_base64,  # Base64 preview for realtime (FAIL only)
                     'detected_regions': None,  # Optional field
                     'metadata': {
                         'inliers': inliers,
@@ -616,6 +667,47 @@ class Camera:
                 'recipe_id': self.recipe_id,
                 'error': str(e)
             })
+
+    def _save_inference_image(self, img: np.ndarray, frame_idx: int, result: str) -> Optional[str]:
+        """
+        Save inference result image to disk
+
+        Args:
+            img: Annotated image (BGR format)
+            frame_idx: Frame index
+            result: PASS or FAIL
+
+        Returns:
+            Relative path to saved image
+        """
+        try:
+            from datetime import datetime
+
+            # Create directory structure
+            base_dir = Path("/home/demo/Source/ocr_datecode/backend/uploads/inference_results")
+            recipe_dir = base_dir / self.recipe_id if self.recipe_id else base_dir / "unknown"
+            today = datetime.utcnow().strftime("%Y-%m-%d")
+            save_dir = recipe_dir / today
+            save_dir.mkdir(parents=True, exist_ok=True)
+
+            # Generate filename
+            timestamp = datetime.utcnow().strftime("%H%M%S%f")
+            filename = f"{self.serial_number}_{timestamp}_{result.lower()}_f{frame_idx}.jpg"
+
+            # Save image
+            save_path = save_dir / filename
+            cv2.imwrite(str(save_path), img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+
+            # Return relative path from uploads directory
+            relative_path = f"inference_results/{self.recipe_id or 'unknown'}/{today}/{filename}"
+
+            logger.info(f"[{self.serial_number}] Image saved: {relative_path}")
+
+            return relative_path
+
+        except Exception as e:
+            logger.error(f"[{self.serial_number}] Error saving inference image: {e}")
+            return None
 
     def _write_frame_to_shm(self, img_array: np.ndarray, metadata: Dict[str, Any]):
         """Write frame and metadata to shared memory"""

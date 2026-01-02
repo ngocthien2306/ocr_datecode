@@ -75,13 +75,19 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
 
       setLogs(prev => [...prev, newLog].slice(-100)); // Keep last 100 logs
 
-      // Update latest image if available
+      // Update latest image if available (base64 from WebSocket)
       if (data.camera_results && data.camera_results.length > 0) {
         const firstCamera = data.camera_results[0];
         if (firstCamera.frames && firstCamera.frames.length > 0) {
           const frame = firstCamera.frames[0];
-          if (frame.annotated_image_url) {
-            setLatestImage(frame.annotated_image_url);
+
+          // Use base64 image if available (realtime)
+          if (frame.image_base64) {
+            setLatestImage(`data:image/jpeg;base64,${frame.image_base64}`);
+          }
+          // Fallback to URL path (historical)
+          else if (frame.image_path) {
+            setLatestImage(`/api/uploads/${frame.image_path}`);
           }
         }
       }
@@ -201,7 +207,7 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
             ) : (
               <div className="log-list">
                 {logs.map((log) => (
-                  <div key={log.id} className={`log-entry ${log.result.toLowerCase()}`}>
+                  <div key={log.id} className={`inference-log-entry ${log.result.toLowerCase()}`}>
                     <span className="log-timestamp">{log.timestamp}</span>
                     <span className={`log-badge ${log.result.toLowerCase()}`}>
                       {log.result}
