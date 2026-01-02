@@ -100,10 +100,37 @@ const CameraManagement: React.FC = () => {
       }
     };
 
+    const handleCameraStatusUpdate = (data: any) => {
+      console.log('[Camera Status] Update:', data);
+
+      // Update cameras list to reflect new connection status
+      setCameras(prevCameras =>
+        prevCameras.map(camera => {
+          const cameraSerial = (camera as any).serial_number;
+          if (cameraSerial === data.serial_number) {
+            return {
+              ...camera,
+              is_connected: data.is_connected
+            };
+          }
+          return camera;
+        })
+      );
+
+      // Show toast notification
+      if (data.is_connected) {
+        toast.success(`Camera ${data.serial_number} connected`);
+      } else {
+        toast.info(`Camera ${data.serial_number} disconnected`);
+      }
+    };
+
     socketService.onCameraServiceStatus(handleServiceStatus);
+    socketService.onCameraStatusUpdate(handleCameraStatusUpdate);
 
     return () => {
       socketService.offCameraServiceStatus(handleServiceStatus);
+      socketService.offCameraStatusUpdate(handleCameraStatusUpdate);
     };
   }, [viewMode]);
 

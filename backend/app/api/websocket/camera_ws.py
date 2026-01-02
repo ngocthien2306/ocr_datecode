@@ -227,10 +227,72 @@ async def handle_camera_service_message(message: dict):
             })
 
         elif event == "camera_connected":
-            logger.info(f"Camera connected: {data.get('serial_number')}")
+            serial_number = data.get('serial_number')
+            logger.info(f"Camera connected: {serial_number}")
+
+            # Update DB: mark camera as connected
+            from app.repositories.camera_repository import CameraRepository
+            from app.db.mongodb import get_database
+
+            db = get_database()
+            camera_repo = CameraRepository(db)
+
+            try:
+                camera = await camera_repo.get_by_serial(serial_number)
+                if camera:
+                    camera_id = camera.get('camera_id')
+                    await camera_repo.update_connection_status(
+                        camera_id=camera_id,
+                        is_connected=True
+                    )
+                    logger.info(f"Updated camera {serial_number} status to connected in DB")
+
+                    # Notify frontend via SocketIO
+                    from app.services.socketio_service import emit_camera_status_update
+                    await emit_camera_status_update({
+                        'serial_number': serial_number,
+                        'camera_id': camera_id,
+                        'is_connected': True,
+                        'event': 'camera_connected'
+                    })
+                else:
+                    logger.warning(f"Camera {serial_number} not found in DB")
+            except Exception as e:
+                logger.error(f"Failed to update camera {serial_number} status: {e}")
 
         elif event == "camera_disconnected":
-            logger.info(f"Camera disconnected: {data.get('serial_number')}")
+            serial_number = data.get('serial_number')
+            logger.info(f"Camera disconnected: {serial_number}")
+
+            # Update DB: mark camera as disconnected
+            from app.repositories.camera_repository import CameraRepository
+            from app.db.mongodb import get_database
+
+            db = get_database()
+            camera_repo = CameraRepository(db)
+
+            try:
+                camera = await camera_repo.get_by_serial(serial_number)
+                if camera:
+                    camera_id = camera.get('camera_id')
+                    await camera_repo.update_connection_status(
+                        camera_id=camera_id,
+                        is_connected=False
+                    )
+                    logger.info(f"Updated camera {serial_number} status to disconnected in DB")
+
+                    # Notify frontend via SocketIO
+                    from app.services.socketio_service import emit_camera_status_update
+                    await emit_camera_status_update({
+                        'serial_number': serial_number,
+                        'camera_id': camera_id,
+                        'is_connected': False,
+                        'event': 'camera_disconnected'
+                    })
+                else:
+                    logger.warning(f"Camera {serial_number} not found in DB")
+            except Exception as e:
+                logger.error(f"Failed to update camera {serial_number} status: {e}")
 
         elif event == "camera_error":
             logger.error(f"Camera error: {data}")

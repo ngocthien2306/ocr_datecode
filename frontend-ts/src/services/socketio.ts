@@ -242,6 +242,27 @@ class SocketIOService {
   }
 
   /**
+   * Listen for individual camera status updates
+   */
+  onCameraStatusUpdate(callback: (data: any) => void): void {
+    if (!this.socket) return;
+    this.socket.on('camera_status_update', callback);
+    console.log('[SocketIO] Subscribed to camera_status_update events');
+  }
+
+  offCameraStatusUpdate(callback?: (data: any) => void): void {
+    if (!this.socket) return;
+
+    if (callback) {
+      this.socket.off('camera_status_update', callback);
+    } else {
+      this.socket.off('camera_status_update');
+    }
+
+    console.log('[SocketIO] Unsubscribed from camera_status_update events');
+  }
+
+  /**
    * Disconnect from SocketIO server
    */
   disconnect(): void {
