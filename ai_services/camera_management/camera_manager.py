@@ -66,14 +66,14 @@ class CameraManager:
     def add_camera(
         self,
         serial_number: str,
-        device_index: int
+        pixel_format: str = "Mono8"
     ) -> Dict[str, Any]:
         """
         Add and connect a camera
 
         Args:
             serial_number: Camera serial number
-            device_index: Pylon device index
+            pixel_format: Pixel format (Mono8, RGB8, etc.)
 
         Returns:
             Response dict with status
@@ -91,7 +91,7 @@ class CameraManager:
                 # Create camera instance
                 camera = Camera(
                     serial_number=serial_number,
-                    device_index=device_index,
+                    pixel_format=pixel_format,
                     event_callback=self._camera_event_handler
                 )
 

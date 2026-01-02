@@ -55,7 +55,7 @@ class Camera:
     def __init__(
         self,
         serial_number: str,
-        device_index: int,
+        pixel_format: str = "Mono8",
         event_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None
     ):
         """
@@ -63,11 +63,10 @@ class Camera:
 
         Args:
             serial_number: Camera serial number
-            device_index: Pylon device index
+            pixel_format: Pixel format (Mono8, RGB8, etc.) from DB config
             event_callback: Callback for events (event_type, data)
         """
         self.serial_number = serial_number
-        self.device_index = device_index
         self.event_callback = event_callback
 
         # Camera state
@@ -76,10 +75,10 @@ class Camera:
         self.shm: Optional[shared_memory.SharedMemory] = None
         self.shm_name = f"camera_{serial_number}"
 
-        # Camera settings
+        # Camera settings (from DB config or defaults)
         self.exposure_time = 10000  # μs
         self.gain = 1.0
-        self.pixel_format = "Mono8"
+        self.pixel_format = pixel_format  # From DB config
 
         # Trigger config
         self.trigger_activation = "RisingEdge"
@@ -100,7 +99,7 @@ class Camera:
         self._running = False
         self._process: Optional[Process] = None
 
-        logger.info(f"Camera instance created: {serial_number} (device_index={device_index})")
+        logger.info(f"Camera instance created: {serial_number}, pixel_format={pixel_format}")
 
     def _emit_event(self, event_type: str, data: Dict[str, Any]):
         """Emit event to callback"""
@@ -114,29 +113,42 @@ class Camera:
                 logger.error(f"Error emitting event {event_type}: {e}")
 
     def connect(self) -> bool:
-        """Connect to Basler camera"""
+        """Connect to Basler camera by serial number"""
         try:
             tlFactory = pylon.TlFactory.GetInstance()
             devices = tlFactory.EnumerateDevices()
 
-            if not devices or self.device_index >= len(devices):
-                logger.error(f"Camera device {self.device_index} not found")
+            if not devices:
+                logger.error("No Basler cameras found")
                 self._emit_event("camera_error", {
-                    "error": f"Device index {self.device_index} not found"
+                    "error": "No cameras detected"
                 })
                 return False
 
-            device = devices[self.device_index]
-            actual_serial = device.GetSerialNumber()
-            model_name = device.GetModelName()
+            # Find device by serial number
+            target_device = None
+            available_serials = []
 
-            if actual_serial != self.serial_number:
-                logger.warning(
-                    f"Serial number mismatch: expected {self.serial_number}, "
-                    f"got {actual_serial}"
-                )
+            for device in devices:
+                serial = device.GetSerialNumber()
+                available_serials.append(serial)
 
-            self.camera = pylon.InstantCamera(tlFactory.CreateDevice(device))
+                if serial == self.serial_number:
+                    target_device = device
+                    break
+
+            if not target_device:
+                logger.error(f"Camera with serial {self.serial_number} not found")
+                logger.error(f"Available cameras: {available_serials}")
+                self._emit_event("camera_error", {
+                    "error": f"Serial {self.serial_number} not found",
+                    "available_cameras": available_serials
+                })
+                return False
+
+            model_name = target_device.GetModelName()
+
+            self.camera = pylon.InstantCamera(tlFactory.CreateDevice(target_device))
             self.camera.Open()
 
             # Apply initial settings

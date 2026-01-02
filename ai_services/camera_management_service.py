@@ -135,7 +135,7 @@ class CameraManagementService:
             if event == "connect_camera":
                 result = self.camera_manager.add_camera(
                     serial_number=data["serial_number"],
-                    device_index=data["device_index"]
+                    pixel_format=data.get("pixel_format", "Mono8")
                 )
                 await self.ws_client.send_message({
                     "event": "connect_camera_response",
@@ -299,17 +299,18 @@ class CameraManagementService:
                 logger.warning("No cameras in recipe")
                 return
 
-            for idx, cam in enumerate(cameras):
+            for cam in cameras:
                 serial_number = cam.get("serial_number")
+                pixel_format = cam.get("pixel_format", "Mono8")
 
-                # Try to connect
+                # Try to connect by serial number
                 result = self.camera_manager.add_camera(
                     serial_number=serial_number,
-                    device_index=idx  # Assume device index matches order
+                    pixel_format=pixel_format
                 )
 
                 if result["success"]:
-                    logger.info(f"Connected camera {serial_number}")
+                    logger.info(f"Connected camera {serial_number} with {pixel_format}")
                 else:
                     logger.error(f"Failed to connect camera {serial_number}: {result.get('error')}")
 

@@ -465,19 +465,19 @@ async def get_camera_frame_metadata(
 )
 async def connect_camera(
     serial_number: str,
-    device_index: int = 0,
+    pixel_format: str = "Mono8",
     db=Depends(get_database),
     current_user: dict = Depends(get_current_user)
 ):
     """
     Connect camera via WebSocket to CameraManagement service.
 
-    - **serial_number**: Serial number của camera
-    - **device_index**: Camera device index (default 0)
+    - **serial_number**: Serial number of the camera
+    - **pixel_format**: Pixel format (Mono8, RGB8, etc.) - default Mono8
 
     Returns: Status message
     """
-    # Kiểm tra camera có tồn tại trong database không
+    # Check if camera exists in database
     repo = CameraRepository(db)
     camera = await repo.get_by_serial(serial_number)
 
@@ -495,7 +495,7 @@ async def connect_camera(
         )
 
     # Send connect command via WebSocket
-    success = await send_connect_camera(serial_number, device_index)
+    success = await send_connect_camera(serial_number, pixel_format)
 
     if not success:
         raise HTTPException(
