@@ -93,12 +93,25 @@ class CameraManagementService:
         - camera_error
         - inference_result
         """
-        logger.info(f"Camera event: {event_type}, data: {data}")
+        # Hide base64 in logs (too long)
+        log_data = data.copy() if isinstance(data, dict) else data
+        if event_type == "inference_result" and isinstance(log_data, dict):
+            # Remove base64 from camera_results.frames for logging
+            if 'camera_results' in log_data:
+                log_data = {**log_data, 'camera_results': [
+                    {**cr, 'frames': [
+                        {k: v for k, v in frame.items() if k != 'image_base64'}
+                        for frame in cr.get('frames', [])
+                    ]}
+                    for cr in log_data['camera_results']
+                ]}
 
-        # Forward event to backend via WebSocket
+        logger.info(f"Camera event: {event_type}, data: {log_data}")
+
+        # Forward event to backend via WebSocket (with full data including base64)
         await self.ws_client.send_message({
             "event": event_type,
-            "data": data
+            "data": data  # Send original data with base64
         })
 
     async def _handle_ws_message(self, message: Dict[str, Any]):

@@ -75,14 +75,18 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
 
       setLogs(prev => [...prev, newLog].slice(-100)); // Keep last 100 logs
 
-      // Update latest image if available (full URL from backend)
+      // Update latest image if available
       if (data.camera_results && data.camera_results.length > 0) {
         const firstCamera = data.camera_results[0];
         if (firstCamera.frames && firstCamera.frames.length > 0) {
           const frame = firstCamera.frames[0];
 
-          // Use full image URL from backend
-          if (frame.image_url) {
+          // Use base64 for realtime (fast, no lag)
+          if (frame.image_base64) {
+            setLatestImage(`data:image/jpeg;base64,${frame.image_base64}`);
+          }
+          // Fallback to URL if base64 not available
+          else if (frame.image_url) {
             setLatestImage(frame.image_url);
           }
         }
