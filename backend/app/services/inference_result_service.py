@@ -120,6 +120,8 @@ class InferenceResultService:
             # Emit SocketIO event to frontend
             try:
                 from app.services.socketio_service import emit_inference_result
+                from app.core.config import settings
+
                 result_dict = result.model_dump()
                 # Convert ObjectId to string for JSON serialization
                 result_dict['id'] = str(result_dict['id'])
@@ -128,6 +130,14 @@ class InferenceResultService:
                     result_dict['timestamp'] = result_dict['timestamp'].isoformat()
                 if 'created_at' in result_dict and result_dict['created_at']:
                     result_dict['created_at'] = result_dict['created_at'].isoformat()
+
+                # Add full URL to image paths for frontend
+                base_url = settings.API_BASE_URL if hasattr(settings, 'API_BASE_URL') else "http://localhost:8000"
+                for camera_result in result_dict.get('camera_results', []):
+                    for frame in camera_result.get('frames', []):
+                        if frame.get('image_path'):
+                            frame['image_url'] = f"{base_url}/api/uploads/{frame['image_path']}"
+
                 await emit_inference_result(result_dict)
             except Exception as e:
                 logger.error(f"Error emitting SocketIO event: {e}")

@@ -571,9 +571,8 @@ class Camera:
                     cv2.putText(annotated_img, text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.2,
                                (0, 255, 0) if frame_pass else (0, 0, 255), 3)
 
-                    # Save image and create base64 for FAIL results
+                    # Save image for FAIL results
                     image_path = None
-                    image_base64 = None
 
                     if not frame_pass:  # Only save FAIL images
                         # Save full resolution to disk
@@ -582,15 +581,6 @@ class Camera:
                             frame_data['template_idx'],
                             'FAIL'
                         )
-
-                        # Create resized base64 for realtime preview (1/3 resolution)
-                        h, w = annotated_img.shape[:2]
-                        preview_img = cv2.resize(annotated_img, (w//3, h//3), interpolation=cv2.INTER_AREA)
-
-                        # Encode to JPEG with quality 85
-                        _, buffer = cv2.imencode('.jpg', preview_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                        import base64
-                        image_base64 = base64.b64encode(buffer).decode('utf-8')
 
                     # Remove numpy arrays from result for JSON serialization
                     result_clean = {
@@ -610,7 +600,6 @@ class Camera:
                     inliers = 0
                     confidence = 0.0
                     image_path = None
-                    image_base64 = None
 
                 overall_pass = overall_pass and frame_pass
 
@@ -619,8 +608,7 @@ class Camera:
                     'frame_idx': frame_data['template_idx'],  # Renamed to match Pydantic schema
                     'pass_fail': 'PASS' if frame_pass else 'FAIL',
                     'confidence': confidence,
-                    'image_path': image_path,  # Path to saved full-res image
-                    'image_base64': image_base64,  # Base64 preview for realtime (FAIL only)
+                    'image_path': image_path,  # Relative path to saved image (FAIL only)
                     'detected_regions': None,  # Optional field
                     'metadata': {
                         'inliers': inliers,

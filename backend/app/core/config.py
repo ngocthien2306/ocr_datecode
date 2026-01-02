@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = True
 
+    # API Base URL (for generating full URLs in responses)
+    # Default to localhost, override with env var for production/ngrok
+    API_BASE_URL: str = "http://localhost:8000"
+
     # Timezone used for storing/displaying datetimes (IANA zone name)
     # Default to Vietnam (Ho Chi Minh) as requested; change via .env if needed
     TIMEZONE: str = "Asia/Ho_Chi_Minh"
