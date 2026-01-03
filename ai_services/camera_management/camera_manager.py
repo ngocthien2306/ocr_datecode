@@ -231,20 +231,17 @@ class CameraManager:
                     f"Recipe '{recipe_name}' loaded to {len(loaded_cameras)}/{len(recipe_cameras)} cameras"
                 )
 
-                # Initialize inference matcher for first camera (in main thread - has CUDA context)
+                # Initialize inference matchers for all cameras (in main thread - has CUDA context)
                 if success and loaded_cameras:
-                    first_serial = loaded_cameras[0]
-                    first_camera = self.cameras[first_serial]
+                    cameras_with_recipe = [self.cameras[sn] for sn in loaded_cameras]
 
-                    if first_camera.templates:
-                        logger.info(f"Initializing inference matcher for camera {first_serial}")
-                        self.inference_handler.init_matcher(first_camera)
-                        if self.inference_handler.inference_matcher:
-                            logger.info("✅ Inference matcher initialized successfully")
-                        else:
-                            logger.warning("⚠️ Failed to initialize inference matcher")
+                    logger.info(f"Initializing inference matchers for {len(cameras_with_recipe)} cameras")
+                    num_initialized = self.inference_handler.init_matchers(cameras_with_recipe)
+
+                    if num_initialized > 0:
+                        logger.info(f"✅ {num_initialized} inference matchers initialized successfully")
                     else:
-                        logger.info("No templates found, skipping inference initialization")
+                        logger.warning("⚠️ Failed to initialize inference matchers")
 
                 # Build DI camera map for Software Trigger mode
                 self.trigger_handler.build_di_camera_map()
@@ -291,9 +288,9 @@ class CameraManager:
 
                 logger.info(f"Recipe {recipe_id} stopped on {len(stopped_cameras)} cameras")
 
-                # Clear inference matcher when recipe is stopped
+                # Clear inference matchers when recipe is stopped
                 if stopped_cameras:
-                    self.inference_handler.clear_matcher()
+                    self.inference_handler.clear_matchers()
 
                 # Rebuild DI map (remove stopped cameras)
                 self.trigger_handler.build_di_camera_map()
@@ -521,7 +518,7 @@ class CameraManager:
                 except Exception as e:
                     logger.error(f"Error shutting down camera {serial_number}: {e}")
 
-            # Clear inference matcher
-            self.inference_handler.clear_matcher()
+            # Clear inference matchers
+            self.inference_handler.clear_matchers()
 
             logger.info("CameraManager shutdown complete")

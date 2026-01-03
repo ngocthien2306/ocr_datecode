@@ -43,123 +43,132 @@ class InferenceHandler:
 
     def __init__(self):
         """Initialize InferenceHandler"""
-        self.inference_matcher: Optional[Any] = None
-        logger.info("InferenceHandler initialized")
+        self.camera_matchers: Dict[str, Any] = {}  # Map serial_number -> matcher
+        self.engine_path = "/home/demo/Source/ocr_datecode/weights/pipeline_fp16_dynamic.engine"
+        logger.info("InferenceHandler initialized with dynamic batch engine")
 
-    def init_matcher(self, camera: 'Camera'):
+    def init_matchers(self, cameras: List['Camera']):
         """
-        Initialize inference matcher using first camera's templates
+        Initialize inference matchers for all cameras with templates
+        Each camera gets its own matcher with its own template
 
         Args:
-            camera: Camera object with templates loaded
+            cameras: List of Camera objects with templates loaded
 
         Returns:
-            SuperPointMatcherTRT instance or None
+            Number of matchers initialized
         """
         try:
             if not INFERENCE_AVAILABLE or not SuperPointMatcherTRT:
                 logger.warning("Inference service not available")
-                return None
-
-            if not camera.templates:
-                logger.error(f"No templates found for camera {camera.serial_number}")
-                return None
-
-            # Get first template
-            template_data = camera.templates[0]
-            image_url = template_data.get("image_url")
-
-            if not image_url:
-                logger.error("No template image URL")
-                return None
-
-            # Copy template to temp directory
-            filename = image_url.split("/")[-1]
-            backend_dir = Path(__file__).parent.parent.parent / "backend"
-            source_path = backend_dir / "uploads" / "templates" / filename
-
-            if not source_path.exists():
-                logger.error(f"Template not found: {source_path}")
-                return None
+                return 0
 
             temp_dir = Path("ocr_inference")
             temp_dir.mkdir(exist_ok=True)
-            template_path = temp_dir / f"template_{camera.serial_number}.jpg"
+            backend_dir = Path(__file__).parent.parent.parent / "backend"
 
-            import shutil
-            shutil.copy(source_path, template_path)
+            initialized_count = 0
 
-            # Parse annotations
-            annotations = template_data.get("annotations", [])
-            template_bbox = None
-            other_bboxes = []
+            for camera in cameras:
+                serial_number = camera.serial_number
 
-            template_img = cv2.imread(str(template_path))
-            img_h, img_w = template_img.shape[:2]
+                if not camera.templates:
+                    logger.warning(f"No templates for camera {serial_number}, skipping")
+                    continue
 
-            for ann in annotations:
-                ann_type = ann.get("type", "")
+                # Get first template
+                template_data = camera.templates[0]
+                image_url = template_data.get("image_url")
 
-                if ann_type == "template":
-                    x, y = ann.get("x", 0), ann.get("y", 0)
-                    w, h = ann.get("width", 0), ann.get("height", 0)
+                if not image_url:
+                    logger.error(f"No template image URL for camera {serial_number}")
+                    continue
 
-                    x1, y1 = int(x * img_w), int(y * img_h)
-                    x2, y2 = int((x + w) * img_w), int((y + h) * img_h)
+                # Copy template to temp directory
+                filename = image_url.split("/")[-1]
+                source_path = backend_dir / "uploads" / "templates" / filename
 
-                    template_bbox = {
-                        "type": "template",
-                        "points": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
-                    }
+                if not source_path.exists():
+                    logger.error(f"Template not found: {source_path}")
+                    continue
 
-                elif ann_type == "text" and ann.get("points"):
-                    pixel_points = [
-                        [int(pt[0] * img_w), int(pt[1] * img_h)]
-                        for pt in ann.get("points", [])
-                    ]
-                    other_bboxes.append({
-                        "type": ann_type,
-                        "text": ann.get("text", ""),
-                        "points": pixel_points
-                    })
+                template_path = temp_dir / f"template_{serial_number}.jpg"
+                import shutil
+                shutil.copy(source_path, template_path)
 
-            if not template_bbox:
-                logger.error("No template bbox in annotations")
-                return None
+                # Parse annotations
+                annotations = template_data.get("annotations", [])
+                template_bbox = None
+                other_bboxes = []
 
-            # Create annotation file
-            ann_json_path = temp_dir / f"annotations_manager.json"
-            ann_data = {
-                "_template_image": str(template_path),
-                str(template_path): [template_bbox] + other_bboxes
-            }
+                template_img = cv2.imread(str(template_path))
+                img_h, img_w = template_img.shape[:2]
 
-            with open(ann_json_path, "w") as f:
-                json.dump(ann_data, f, indent=2)
+                for ann in annotations:
+                    ann_type = ann.get("type", "")
 
-            # Initialize matcher
-            engine_path = "/home/demo/Source/ocr_datecode/weights/pipeline_fp16_small.engine"
-            matcher = SuperPointMatcherTRT(
-                json_path=str(ann_json_path),
-                engine_path=engine_path,
-                scale=1.0,
-                verbose=True
-            )
+                    if ann_type == "template":
+                        x, y = ann.get("x", 0), ann.get("y", 0)
+                        w, h = ann.get("width", 0), ann.get("height", 0)
 
-            logger.info(f"Inference matcher initialized for camera {camera.serial_number}")
-            self.inference_matcher = matcher
-            return matcher
+                        x1, y1 = int(x * img_w), int(y * img_h)
+                        x2, y2 = int((x + w) * img_w), int((y + h) * img_h)
+
+                        template_bbox = {
+                            "type": "template",
+                            "points": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+                        }
+
+                    elif ann_type == "text" and ann.get("points"):
+                        pixel_points = [
+                            [int(pt[0] * img_w), int(pt[1] * img_h)]
+                            for pt in ann.get("points", [])
+                        ]
+                        other_bboxes.append({
+                            "type": ann_type,
+                            "text": ann.get("text", ""),
+                            "points": pixel_points
+                        })
+
+                if not template_bbox:
+                    logger.error(f"No template bbox for camera {serial_number}")
+                    continue
+
+                # Create annotation file for this camera
+                ann_json_path = temp_dir / f"annotations_{serial_number}.json"
+                ann_data = {
+                    "_template_image": str(template_path),
+                    str(template_path): [template_bbox] + other_bboxes
+                }
+
+                with open(ann_json_path, "w") as f:
+                    json.dump(ann_data, f, indent=2)
+
+                # Initialize matcher for this camera
+                matcher = SuperPointMatcherTRT(
+                    json_path=str(ann_json_path),
+                    engine_path=self.engine_path,
+                    scale=1.0,
+                    verbose=(initialized_count == 0)  # Only verbose for first matcher
+                )
+
+                self.camera_matchers[serial_number] = matcher
+                initialized_count += 1
+                logger.info(f"✅ Matcher {initialized_count} initialized for camera {serial_number}")
+
+            logger.info(f"Initialized {initialized_count} matchers using dynamic batch engine")
+            return initialized_count
 
         except Exception as e:
-            logger.error(f"Error initializing inference matcher: {e}")
+            logger.error(f"Error initializing inference matchers: {e}")
             import traceback
             traceback.print_exc()
-            return None
+            return 0
 
-    def clear_matcher(self):
-        """Clear inference matcher"""
-        self.inference_matcher = None
-        logger.info("Inference matcher cleared")
+    def clear_matchers(self):
+        """Clear all inference matchers"""
+        self.camera_matchers.clear()
+        logger.info("All inference matchers cleared")
 
     def process_inference(
         self,
@@ -179,8 +188,8 @@ class InferenceHandler:
         where CUDA context is available for TensorRT inference.
         """
         try:
-            # Process first frame of first 2 cameras (Phase 2)
-            cameras_to_process = cameras[:2]  # Max 2 cameras
+            # Process first frame of all cameras with matchers (up to 4)
+            cameras_to_process = [c for c in cameras if c.serial_number in self.camera_matchers][:4]
 
             # Store inference results per camera
             camera_inference_results = {}
@@ -194,7 +203,7 @@ class InferenceHandler:
 
                 logger.info(f"Running inference on camera {serial_number} frame 0")
 
-                # Run inference using pre-initialized matcher
+                # Run inference using camera's matcher
                 inference_result_data = "PASS"  # Default
                 confidence = 0.0
                 inliers = 0
@@ -202,10 +211,11 @@ class InferenceHandler:
                 timings = {}
                 transformed_bboxes = []
 
-                if self.inference_matcher:
+                matcher = self.camera_matchers.get(serial_number)
+                if matcher:
                     try:
                         # Run matcher inference using match_array (in main thread - CUDA context OK)
-                        match_result = self.inference_matcher.match_array(
+                        match_result = matcher.match_array(
                             target_img_array=first_frame,
                             score_threshold=0.3,
                             ransac_threshold=5.0
