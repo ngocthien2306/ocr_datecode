@@ -20,6 +20,7 @@ class ActionType(str, Enum):
     UPDATE_RECIPE = "update_recipe"
     DELETE_RECIPE = "delete_recipe"
     LOAD_RECIPE = "load_recipe"
+    STOP_RECIPE = "stop_recipe"
 
     # Camera Management
     CREATE_CAMERA = "create_camera"

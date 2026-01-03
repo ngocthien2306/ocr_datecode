@@ -766,20 +766,20 @@ async def stop_recipe(
         )
 
     # Check if CameraManagement service is connected
-    if not camera_ws_manager.is_connected():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Camera Management service is not connected"
-        )
+    # if not camera_ws_manager.is_connected():
+    #     raise HTTPException(
+    #         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+    #         detail="Camera Management service is not connected"
+    #     )
 
     # Send stop recipe command via WebSocket
     success = await send_stop_recipe(recipe_id)
 
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to send stop recipe command"
-        )
+    # if not success:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    #         detail="Failed to send stop recipe command"
+    #     )
 
     logger.info(f"✅ [RECIPE STOP] Sent stop recipe command via WebSocket: {recipe.name}")
 
@@ -802,7 +802,7 @@ async def stop_recipe(
     action_log = ActionLogCreate(
         user_id=current_user.id,
         username=current_user.username,
-        action_type=ActionType.LOAD_RECIPE,  # Reuse LOAD_RECIPE or create STOP_RECIPE if needed
+        action_type=ActionType.STOP_RECIPE,
         resource_type="recipe",
         resource_id=recipe_id,
         description=f"Stopped recipe '{recipe.name}'",

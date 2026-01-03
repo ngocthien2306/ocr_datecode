@@ -870,9 +870,10 @@ class CameraManager:
 
                     # Check if matching succeeded
                     if match_result.get('success', False):
-                        confidence = match_result.get('confidence', 0.0)
-                        inliers = match_result.get('inliers', 0)
-                        total_matches = match_result.get('total_matches', 0)
+                        # Convert numpy types to Python native types for JSON serialization
+                        confidence = float(match_result.get('confidence', 0.0))
+                        inliers = int(match_result.get('inliers', 0))
+                        total_matches = int(match_result.get('total_matches', 0))
 
                         # Simple pass/fail: confidence > 0.5 and enough inliers
                         if confidence > 0.5 and inliers >= 10:

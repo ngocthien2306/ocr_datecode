@@ -33,6 +33,7 @@ const Logs: React.FC<LogsProps> = () => {
     update_recipe: 'Update Recipe',
     delete_recipe: 'Delete Recipe',
     load_recipe: 'Load Recipe',
+    stop_recipe: 'Stop Recipe',
     create_camera: 'Create Camera',
     update_camera: 'Update Camera',
     delete_camera: 'Delete Camera'

@@ -394,6 +394,7 @@ export type ActionType =
   | 'update_recipe'
   | 'delete_recipe'
   | 'load_recipe'
+  | 'stop_recipe'
   | 'create_camera'
   | 'update_camera'
   | 'delete_camera';
