@@ -91,8 +91,19 @@ class CameraManagementService:
         - camera_connected
         - camera_disconnected
         - camera_error
+        - frames_captured (triggers inference in main thread)
         - inference_result
         """
+        # Special handling for frames_captured event - run inference in main thread
+        if event_type == "frames_captured":
+            logger.info("Frames captured, running inference in main thread...")
+            cameras = data.get("cameras", [])
+            results = data.get("results", {})
+
+            # Call process_inference in main thread (has CUDA context)
+            self.camera_manager.process_inference(cameras, results)
+            return  # Don't forward frames_captured to backend
+
         # Hide base64 in logs (too long)
         log_data = data.copy() if isinstance(data, dict) else data
         if event_type == "inference_result" and isinstance(log_data, dict):

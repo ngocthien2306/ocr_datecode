@@ -264,6 +264,21 @@ class CameraManager:
                     f"Recipe '{recipe_name}' loaded to {len(loaded_cameras)}/{len(recipe_cameras)} cameras"
                 )
 
+                # Initialize inference matcher for first camera (in main thread - has CUDA context)
+                if success and loaded_cameras:
+                    first_serial = loaded_cameras[0]
+                    first_camera = self.cameras[first_serial]
+
+                    if INFERENCE_AVAILABLE and SuperPointMatcherTRT and first_camera.templates:
+                        logger.info(f"Initializing inference matcher for camera {first_serial}")
+                        self.inference_matcher = self._init_inference_matcher(first_camera)
+                        if self.inference_matcher:
+                            logger.info("✅ Inference matcher initialized successfully")
+                        else:
+                            logger.warning("⚠️ Failed to initialize inference matcher")
+                    else:
+                        logger.info("Inference not available or no templates found")
+
                 # Build DI camera map for Software Trigger mode
                 self._build_di_camera_map()
 
@@ -308,6 +323,11 @@ class CameraManager:
                         logger.info(f"Recipe stopped on camera {serial_number}")
 
                 logger.info(f"Recipe {recipe_id} stopped on {len(stopped_cameras)} cameras")
+
+                # Clear inference matcher when recipe is stopped
+                if stopped_cameras:
+                    self.inference_matcher = None
+                    logger.info("Inference matcher cleared")
 
                 # Rebuild DI map (remove stopped cameras)
                 self._build_di_camera_map()
@@ -751,7 +771,7 @@ class CameraManager:
 
     def trigger_cameras_group(self, cameras: List[Camera]):
         """
-        Trigger a group of cameras simultaneously and run inference
+        Trigger a group of cameras simultaneously (runs in polling thread)
 
         Args:
             cameras: List of Camera objects to trigger
@@ -759,9 +779,8 @@ class CameraManager:
         Flow:
             1. Trigger all cameras in parallel (ThreadPoolExecutor)
             2. Wait for all to complete capture
-            3. If any fails → emit error event (Option B)
-            4. If all succeed → run inference on first camera's first frame
-            5. Emit inference result
+            3. If any fails → emit error event
+            4. If all succeed → emit frames_captured event (inference runs in main thread)
         """
         if not cameras:
             logger.warning("trigger_cameras_group called with empty camera list")
@@ -796,7 +815,7 @@ class CameraManager:
         failed_cameras = [sn for sn, res in results.items() if not res.get('success', False)]
 
         if failed_cameras:
-            # Option B: Emit error, don't inference
+            # Emit error, don't run inference
             error_msg = f"Camera capture failed: {', '.join(failed_cameras)}"
             logger.error(error_msg)
 
@@ -807,119 +826,138 @@ class CameraManager:
             })
             return
 
-        # Step 3: All cameras succeeded - run inference (Phase 1)
+        # Step 3: All cameras succeeded - emit event for inference in main thread
         logger.info(f"All {len(cameras)} cameras captured successfully")
 
-        # Simple inference: Use first camera's first frame only
-        first_camera = cameras[0]
-        first_frame = results[first_camera.serial_number]['frames'][0]
+        # Emit frames_captured event - inference will be handled in main thread
+        self._emit_event("frames_captured", {
+            "cameras": cameras,
+            "results": results
+        })
 
-        logger.info(f"Running inference on camera {first_camera.serial_number} frame 0")
+    def process_inference(self, cameras: List[Camera], results: Dict[str, Any]):
+        """
+        Process inference on captured frames (runs in main thread - has CUDA context)
 
-        # Initialize inference matcher if not already initialized and inference available
-        if INFERENCE_AVAILABLE and SuperPointMatcherTRT and self.inference_matcher is None:
-            self.inference_matcher = self._init_inference_matcher(first_camera)
+        Args:
+            cameras: List of cameras that captured frames
+            results: Capture results from trigger_cameras_group
 
-        # Run inference
-        inference_result_data = "PASS"  # Default
-        confidence = 0.0
-        inliers = 0
-        total_matches = 0
+        This method is called from the event loop in main thread,
+        where CUDA context is available for TensorRT inference.
+        """
+        try:
+            # Use first camera's first frame only (Phase 1)
+            first_camera = cameras[0]
+            first_frame = results[first_camera.serial_number]['frames'][0]
 
-        if self.inference_matcher:
-            try:
-                # Run matcher inference using match_array
-                match_result = self.inference_matcher.match_array(
-                    target_img_array=first_frame,
-                    score_threshold=0.3,
-                    ransac_threshold=5.0
-                )
+            logger.info(f"Running inference on camera {first_camera.serial_number} frame 0")
 
-                # Check if matching succeeded
-                if match_result.get('success', False):
-                    confidence = match_result.get('confidence', 0.0)
-                    inliers = match_result.get('inliers', 0)
-                    total_matches = match_result.get('total_matches', 0)
+            # Run inference using pre-initialized matcher
+            inference_result_data = "PASS"  # Default
+            confidence = 0.0
+            inliers = 0
+            total_matches = 0
 
-                    # Simple pass/fail: confidence > 0.5 and enough inliers
-                    if confidence > 0.5 and inliers >= 10:
-                        inference_result_data = "PASS"
+            if self.inference_matcher:
+                try:
+                    # Run matcher inference using match_array (in main thread - CUDA context OK)
+                    match_result = self.inference_matcher.match_array(
+                        target_img_array=first_frame,
+                        score_threshold=0.3,
+                        ransac_threshold=5.0
+                    )
+
+                    # Check if matching succeeded
+                    if match_result.get('success', False):
+                        confidence = match_result.get('confidence', 0.0)
+                        inliers = match_result.get('inliers', 0)
+                        total_matches = match_result.get('total_matches', 0)
+
+                        # Simple pass/fail: confidence > 0.5 and enough inliers
+                        if confidence > 0.5 and inliers >= 10:
+                            inference_result_data = "PASS"
+                        else:
+                            inference_result_data = "FAIL"
                     else:
                         inference_result_data = "FAIL"
-                else:
-                    inference_result_data = "FAIL"
 
-                logger.info(
-                    f"Inference result: {inference_result_data}, "
-                    f"confidence: {confidence:.2%}, "
-                    f"inliers: {inliers}/{total_matches}"
-                )
-            except Exception as e:
-                logger.error(f"Error running inference: {e}")
-                import traceback
-                traceback.print_exc()
-                inference_result_data = "ERROR"
-        else:
-            logger.warning("Inference matcher not available, skipping inference")
+                    logger.info(
+                        f"Inference result: {inference_result_data}, "
+                        f"confidence: {confidence:.2%}, "
+                        f"inliers: {inliers}/{total_matches}"
+                    )
+                except Exception as e:
+                    logger.error(f"Error running inference: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    inference_result_data = "ERROR"
+            else:
+                logger.warning("Inference matcher not available, skipping inference")
 
-        # Build camera_results structure for backend
-        camera_results = []
-        for camera in cameras:
-            camera_frames = results[camera.serial_number]['frames']
+            # Build camera_results structure for backend
+            camera_results = []
+            for camera in cameras:
+                camera_frames = results[camera.serial_number]['frames']
 
-            # Build frame results (Phase 1: only process first frame of first camera)
-            frame_results = []
-            for idx, frame in enumerate(camera_frames):
-                # For first camera first frame, use real inference result
-                if camera == first_camera and idx == 0:
-                    frame_result = {
-                        "template_name": camera.templates[idx].get('name', f'Template {idx+1}') if idx < len(camera.templates) else f'Template {idx+1}',
-                        "frame_idx": idx,
-                        "pass_fail": inference_result_data,
+                # Build frame results (Phase 1: only process first frame of first camera)
+                frame_results = []
+                for idx, _frame in enumerate(camera_frames):
+                    # For first camera first frame, use real inference result
+                    if camera == first_camera and idx == 0:
+                        frame_result = {
+                            "template_name": camera.templates[idx].get('name', f'Template {idx+1}') if idx < len(camera.templates) else f'Template {idx+1}',
+                            "frame_idx": idx,
+                            "pass_fail": inference_result_data,
+                            "confidence": confidence,
+                            "detected_regions": None  # TODO: Add detected regions from match_result
+                        }
+                    else:
+                        # For other frames/cameras, placeholder (will be implemented later)
+                        frame_result = {
+                            "template_name": camera.templates[idx].get('name', f'Template {idx+1}') if idx < len(camera.templates) else f'Template {idx+1}',
+                            "frame_idx": idx,
+                            "pass_fail": "PASS",  # Placeholder
+                            "confidence": 0.0,
+                            "detected_regions": None
+                        }
+
+                    frame_results.append(frame_result)
+
+                # Build camera result
+                camera_result = {
+                    "camera_id": camera.serial_number,  # TODO: Use actual camera_id from DB
+                    "serial_number": camera.serial_number,
+                    "frames": frame_results
+                }
+                camera_results.append(camera_result)
+
+            # Build inference result with correct structure for backend
+            inference_result = {
+                "recipe_id": first_camera.recipe_id,
+                "recipe_name": first_camera.recipe_name,
+                "product_pass_fail": inference_result_data,  # Overall result
+                "camera_results": camera_results,
+                "metadata": {
+                    "total_cameras": len(cameras),
+                    "total_frames": sum(len(r['frames']) for r in results.values()),
+                    "inference_stats": {
                         "confidence": confidence,
-                        "detected_regions": None  # TODO: Add detected regions from match_result
+                        "inliers": inliers,
+                        "total_matches": total_matches
                     }
-                else:
-                    # For other frames/cameras, placeholder (will be implemented later)
-                    frame_result = {
-                        "template_name": camera.templates[idx].get('name', f'Template {idx+1}') if idx < len(camera.templates) else f'Template {idx+1}',
-                        "frame_idx": idx,
-                        "pass_fail": "PASS",  # Placeholder
-                        "confidence": 0.0,
-                        "detected_regions": None
-                    }
-
-                frame_results.append(frame_result)
-
-            # Build camera result
-            camera_result = {
-                "camera_id": camera.serial_number,  # TODO: Use actual camera_id from DB
-                "serial_number": camera.serial_number,
-                "frames": frame_results
-            }
-            camera_results.append(camera_result)
-
-        # Build inference result with correct structure for backend
-        inference_result = {
-            "recipe_id": first_camera.recipe_id,
-            "recipe_name": first_camera.recipe_name,
-            "product_pass_fail": inference_result_data,  # Overall result
-            "camera_results": camera_results,
-            "metadata": {
-                "total_cameras": len(cameras),
-                "total_frames": sum(len(r['frames']) for r in results.values()),
-                "inference_stats": {
-                    "confidence": confidence,
-                    "inliers": inliers,
-                    "total_matches": total_matches
                 }
             }
-        }
 
-        # Step 4: Emit inference result
-        self._emit_event("inference_result", inference_result)
+            # Emit inference result to backend
+            self._emit_event("inference_result", inference_result)
 
-        logger.info(f"Inference complete: {inference_result['product_pass_fail']}")
+            logger.info(f"Inference complete: {inference_result['product_pass_fail']}")
+
+        except Exception as e:
+            logger.error(f"Error in process_inference: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _init_inference_matcher(self, camera: Camera):
         """
