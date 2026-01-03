@@ -561,8 +561,24 @@ class CameraManager:
             )
 
             if result.returncode == 0:
-                value = int(result.stdout.strip())
-                return value
+                # Parse output format: "The id-X input gpio status = Y\nCompletion code = 0x00"
+                output = result.stdout.strip()
+
+                # Extract value from "status = Y" line
+                for line in output.split('\n'):
+                    if 'status' in line and '=' in line:
+                        # Extract the value after '='
+                        value_str = line.split('=')[-1].strip()
+                        try:
+                            value = int(value_str)
+                            return value
+                        except ValueError:
+                            logger.warning(f"Failed to parse DI{di_number} value: {value_str}")
+                            return 0
+
+                # Fallback: couldn't find status line
+                logger.warning(f"Unexpected DI{di_number} output format: {output}")
+                return 0
             else:
                 logger.warning(f"Failed to read DI{di_number}: {result.stderr.strip()}")
                 return 0
@@ -778,13 +794,16 @@ class CameraManager:
 
         # Simple inference: Use first camera's first frame only
         first_camera = cameras[0]
-        first_frame = results[first_camera.serial_number]['frames'][0]
 
         logger.info(f"Running inference on camera {first_camera.serial_number} frame 0")
 
         # TODO: Implement actual inference logic here
         # For now, just emit a placeholder result
+        
+
         inference_result = {
+            "recipe_id": first_camera.recipe_id,  # Add recipe_id from camera
+            "recipe_name": first_camera.recipe_name,  # Add recipe_name
             "camera_serial": first_camera.serial_number,
             "frame_count": len(results[first_camera.serial_number]['frames']),
             "total_cameras": len(cameras),

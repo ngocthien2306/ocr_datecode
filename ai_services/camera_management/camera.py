@@ -345,12 +345,24 @@ class Camera:
             self.camera.TriggerSelector.SetValue(self.trigger_selector)
             self.camera.TriggerMode.SetValue("On")
             self.camera.TriggerSource.SetValue("Software")
-            self.camera.TriggerActivation.SetValue(self.trigger_activation)
 
-            logger.info(
-                f"[{self.serial_number}] Software trigger configured: "
-                f"Selector={self.trigger_selector}, Activation={self.trigger_activation}"
-            )
+            # Set TriggerActivation if supported (some camera models don't have this feature)
+            try:
+                if self.camera.TriggerActivation.IsWritable():
+                    self.camera.TriggerActivation.SetValue(self.trigger_activation)
+                    logger.info(
+                        f"[{self.serial_number}] Software trigger configured: "
+                        f"Selector={self.trigger_selector}, Activation={self.trigger_activation}"
+                    )
+                else:
+                    logger.warning(
+                        f"[{self.serial_number}] TriggerActivation not writable, "
+                        f"using default (camera model: {self.model_name})"
+                    )
+            except AttributeError:
+                logger.warning(
+                    f"[{self.serial_number}] TriggerActivation not available on this camera model: {self.model_name}"
+                )
 
             # Resume grabbing with OneByOne strategy
             if was_grabbing or self.mode == CameraMode.SOFTWARE_TRIGGER:
@@ -774,10 +786,42 @@ class Camera:
                     continue
 
                 elif self.mode == CameraMode.CONTINUOUS:
-                    # TODO: Implement continuous mode with SHM write
-                    # Same as before - grab and write to shared memory
-                    logger.warning(f"[{self.serial_number}] Continuous mode not fully implemented")
-                    time.sleep(0.033)
+                    # Continuous mode: grab frames and write to shared memory
+                    try:
+                        # Retrieve frame with timeout (30 FPS = ~33ms)
+                        grab_result = self.camera.RetrieveResult(100, pylon.TimeoutHandling_Return)
+
+                        if grab_result and grab_result.GrabSucceeded():
+                            # Get image array
+                            img_array = grab_result.Array
+
+                            # Convert Mono8 to BGR if needed
+                            if len(img_array.shape) == 2:
+                                img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
+
+                            # Write to shared memory
+                            metadata = {
+                                "timestamp": time.time(),
+                                "mode": self.mode.value,
+                                "shape": img_array.shape,
+                                "dtype": str(img_array.dtype),
+                                "frame_idx": self.frame_idx,
+                                "trigger_event": False
+                            }
+                            self._write_frame_to_shm(img_array, metadata)
+
+                            # Increment frame counter
+                            self.frame_idx += 1
+
+                            # Release grab result
+                            grab_result.Release()
+                        else:
+                            # No frame available, sleep briefly
+                            time.sleep(0.001)
+
+                    except Exception as e:
+                        logger.error(f"[{self.serial_number}] Error in continuous mode: {e}")
+                        time.sleep(0.01)
 
                 elif self.mode == CameraMode.SOFTWARE_TRIGGER:
                     # Just keep camera ready, waiting for ExecuteSoftwareTrigger()
