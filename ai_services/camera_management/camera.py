@@ -56,7 +56,7 @@ class Camera:
     def __init__(
         self,
         serial_number: str,
-        pixel_format: str = "Mono8",
+        pixel_format: str = "BGR8",
         event_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
         event_loop: Optional[Any] = None
     ):
@@ -70,6 +70,7 @@ class Camera:
             event_loop: Event loop for async callbacks from thread
         """
         self.serial_number = serial_number
+        self.model_name: Optional[str] = None  # Will be set when camera connects
         self.event_callback = event_callback
         self.event_loop = event_loop
 
@@ -172,7 +173,7 @@ class Camera:
                 })
                 return False
 
-            model_name = target_device.GetModelName()
+            self.model_name = target_device.GetModelName()
 
             self.camera = pylon.InstantCamera(tlFactory.CreateDevice(target_device))
             self.camera.Open()
@@ -202,13 +203,14 @@ class Camera:
             )
 
             logger.info(
-                f"Camera connected: {model_name} (SN: {self.serial_number}), "
+                f"Camera connected: {self.model_name} (SN: {self.serial_number}), "
                 f"resolution: {actual_width}x{actual_height}, "
                 f"shared memory: {self.shm_name}"
             )
 
             self._emit_event("camera_connected", {
-                "model_name": model_name,
+                "serial_number": self.serial_number,
+                "model_name": self.model_name,
                 "resolution": [actual_width, actual_height]
             })
 
@@ -348,20 +350,35 @@ class Camera:
 
             # Set TriggerActivation if supported (some camera models don't have this feature)
             try:
-                if self.camera.TriggerActivation.IsWritable():
-                    self.camera.TriggerActivation.SetValue(self.trigger_activation)
-                    logger.info(
-                        f"[{self.serial_number}] Software trigger configured: "
-                        f"Selector={self.trigger_selector}, Activation={self.trigger_activation}"
-                    )
+                # Check if TriggerActivation parameter exists and is accessible
+                if hasattr(self.camera, 'TriggerActivation'):
+                    # For GenICam parameters, check GetAccessMode()
+                    try:
+                        from pypylon import genicam
+                        access_mode = self.camera.TriggerActivation.GetAccessMode()
+                        if access_mode == genicam.RW or access_mode == genicam.WO:
+                            self.camera.TriggerActivation.SetValue(self.trigger_activation)
+                            logger.info(
+                                f"[{self.serial_number}] Software trigger configured: "
+                                f"Selector={self.trigger_selector}, Activation={self.trigger_activation}"
+                            )
+                        else:
+                            logger.warning(
+                                f"[{self.serial_number}] TriggerActivation not writable "
+                                f"(AccessMode={access_mode}, model: {self.model_name})"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"[{self.serial_number}] Could not set TriggerActivation: {e} "
+                            f"(model: {self.model_name})"
+                        )
                 else:
                     logger.warning(
-                        f"[{self.serial_number}] TriggerActivation not writable, "
-                        f"using default (camera model: {self.model_name})"
+                        f"[{self.serial_number}] TriggerActivation not available on camera model: {self.model_name}"
                     )
-            except AttributeError:
+            except Exception as e:
                 logger.warning(
-                    f"[{self.serial_number}] TriggerActivation not available on this camera model: {self.model_name}"
+                    f"[{self.serial_number}] Error checking TriggerActivation: {e}"
                 )
 
             # Resume grabbing with OneByOne strategy

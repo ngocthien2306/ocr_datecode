@@ -90,7 +90,7 @@ class CameraManager:
     def add_camera(
         self,
         serial_number: str,
-        pixel_format: str = "Mono8"
+        pixel_format: str = "BGR8"
     ) -> Dict[str, Any]:
         """
         Add and connect a camera
