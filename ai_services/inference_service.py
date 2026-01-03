@@ -103,7 +103,15 @@ class SuperPointMatcherTRT:
             shape = self.engine.get_tensor_shape(tensor_name)
 
             if self.engine.get_tensor_mode(tensor_name) == trt.TensorIOMode.INPUT:
-                size = trt.volume(shape)
+                # Handle dynamic shapes (-1 in shape)
+                if -1 in shape:
+                    # Use max shape for buffer allocation
+                    max_shape = list(shape)
+                    max_shape[0] = 8  # Max batch size from build config
+                    size = trt.volume(max_shape)
+                else:
+                    size = trt.volume(shape)
+
                 host_mem = np.empty(size, dtype=dtype)
                 device_mem = cuda.mem_alloc(host_mem.nbytes)
 
