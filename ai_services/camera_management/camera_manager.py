@@ -903,25 +903,64 @@ class CameraManager:
 
                 # Build frame results (Phase 1: only process first frame of first camera)
                 frame_results = []
-                for idx, _frame in enumerate(camera_frames):
-                    # For first camera first frame, use real inference result
-                    if camera == first_camera and idx == 0:
-                        frame_result = {
-                            "template_name": camera.templates[idx].get('name', f'Template {idx+1}') if idx < len(camera.templates) else f'Template {idx+1}',
-                            "frame_idx": idx,
-                            "pass_fail": inference_result_data,
-                            "confidence": confidence,
-                            "detected_regions": None  # TODO: Add detected regions from match_result
-                        }
-                    else:
-                        # For other frames/cameras, placeholder (will be implemented later)
-                        frame_result = {
-                            "template_name": camera.templates[idx].get('name', f'Template {idx+1}') if idx < len(camera.templates) else f'Template {idx+1}',
-                            "frame_idx": idx,
-                            "pass_fail": "PASS",  # Placeholder
-                            "confidence": 0.0,
-                            "detected_regions": None
-                        }
+                for idx, frame_img in enumerate(camera_frames):
+                    # Determine pass/fail first
+                    is_first_frame = (camera == first_camera and idx == 0)
+                    frame_pass_fail = inference_result_data if is_first_frame else "PASS"
+                    frame_confidence = confidence if is_first_frame else 0.0
+
+                    # Only save/encode image if FAIL (to save storage)
+                    temp_image_path = None
+                    image_base64 = None
+
+                    if frame_pass_fail == "FAIL" or frame_pass_fail == "ERROR":
+                        try:
+                            import base64
+                            from datetime import datetime, timezone
+
+                            # Create temp directory
+                            temp_dir = Path("/tmp/camera_frames")
+                            temp_dir.mkdir(parents=True, exist_ok=True)
+
+                            # Generate temp filename with pass/fail in name
+                            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S%f")
+                            temp_filename = f"{camera.serial_number}_{timestamp}_{frame_pass_fail.lower()}_f{idx}.jpg"
+                            temp_path = temp_dir / temp_filename
+
+                            # Save FULL resolution to temp file (for permanent storage & analysis)
+                            cv2.imwrite(str(temp_path), frame_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                            temp_image_path = str(temp_path)
+
+                            # Create RESIZED + COMPRESSED version for realtime display
+                            # Resize: divide width and height by 3
+                            h, w = frame_img.shape[:2]
+                            new_w = w // 3
+                            new_h = h // 3
+
+                            display_img = cv2.resize(frame_img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+                            # Encode with compression for base64
+                            _, buffer = cv2.imencode('.jpg', display_img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                            image_base64 = base64.b64encode(buffer).decode('utf-8')
+
+                            logger.info(
+                                f"Saved FAIL frame: {temp_filename} "
+                                f"(full: {w}x{h}, display: {new_w}x{new_h})"
+                            )
+
+                        except Exception as e:
+                            logger.error(f"Error saving/encoding FAIL frame: {e}")
+
+                    # Build frame result
+                    frame_result = {
+                        "template_name": camera.templates[idx].get('name', f'Template {idx+1}') if idx < len(camera.templates) else f'Template {idx+1}',
+                        "frame_idx": idx,
+                        "pass_fail": frame_pass_fail,
+                        "confidence": frame_confidence,
+                        "detected_regions": None,  # TODO: Add detected regions from match_result
+                        "temp_image_path": temp_image_path,
+                        "image_base64": image_base64
+                    }
 
                     frame_results.append(frame_result)
 
