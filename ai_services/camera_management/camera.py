@@ -14,7 +14,7 @@ import logging
 from enum import Enum
 from typing import Optional, Dict, Any, List, Callable
 from pathlib import Path
-import subprocess
+from datetime import datetime, timezone
 import shutil
 import json
 
@@ -37,8 +37,9 @@ logger = logging.getLogger(__name__)
 class CameraMode(Enum):
     """Camera operation modes"""
     IDLE = "idle"  # Not grabbing frames
-    CONTINUOUS = "continuous"  # Grab frames continuously
-    HARDWARE_TRIGGER = "hardware_trigger"  # Grab on hardware trigger with inference
+    CONTINUOUS = "continuous"  # Grab frames continuously - TODO
+    SOFTWARE_TRIGGER = "software_trigger"  # Software trigger mode (DI polling in CameraManager)
+    # HARDWARE_TRIGGER = "hardware_trigger"  # TODO: Hardware trigger with camera Line input
 
 
 class Camera:
@@ -82,11 +83,14 @@ class Camera:
         self.exposure_time = 500  # μs (default 500μs = 0.5ms)
         self.gain = 1.0
         self.pixel_format = pixel_format  # From DB config
-
-        # Trigger config
-        self.trigger_activation = "RisingEdge"
-        self.di_number = 0
         self.delay_trigger = 100  # ms
+
+        # Trigger config (per-camera)
+        self.trigger_mode = "continuous"  # "continuous", "software_trigger", "hardware_trigger"
+        self.trigger_selector = "FrameStart"  # "FrameStart", "ExposureStart", "FrameBurstStart"
+        self.trigger_activation = "RisingEdge"  # "RisingEdge", "FallingEdge", "AnyEdge"
+        self.di_number = 0  # Digital Input number (0-3) for software trigger
+        self.trigger_source = "Line0"  # Camera Line input for hardware trigger (TODO)
 
         # Recipe & templates
         self.recipe_id: Optional[str] = None
@@ -96,7 +100,7 @@ class Camera:
 
         # Frame tracking
         self.frame_idx = 0
-        self.previous_di_value: Optional[int] = None
+        self.captured_frames = []  # Store frames after software trigger
 
         # Process control
         self._running = False
@@ -277,10 +281,6 @@ class Camera:
             if not self._running:
                 self._start_loop()
 
-        # Initialize hardware trigger if needed
-        if mode == CameraMode.HARDWARE_TRIGGER and self.previous_di_value is None:
-            self.previous_di_value = self._read_di_value(self.di_number)
-
     def _start_loop(self):
         """Start camera loop in background thread"""
         import threading
@@ -303,18 +303,162 @@ class Camera:
         if "delay_trigger" in settings:
             self.delay_trigger = settings["delay_trigger"]
 
+        # Trigger mode
+        if "trigger_mode" in settings:
+            self.trigger_mode = settings["trigger_mode"]
+
         # Trigger config
         trigger_config = settings.get("trigger_config", {})
+        if "trigger_selector" in trigger_config:
+            self.trigger_selector = trigger_config["trigger_selector"]
         if "trigger_activation" in trigger_config:
             self.trigger_activation = trigger_config["trigger_activation"]
         if "di_number" in trigger_config:
             self.di_number = trigger_config["di_number"]
+        if "trigger_source" in trigger_config:
+            self.trigger_source = trigger_config["trigger_source"]
 
         # Apply to camera if connected (skip pixel_format - can't change while grabbing)
         if self.camera:
             self._apply_settings(apply_pixel_format=False)
 
         logger.info(f"[{self.serial_number}] Settings updated")
+
+    def configure_software_trigger(self) -> bool:
+        """
+        Configure camera for software trigger mode
+
+        Returns:
+            True if successful
+        """
+        if not self.camera or not self.camera.IsOpen():
+            logger.error(f"[{self.serial_number}] Camera not open")
+            return False
+
+        try:
+            # Stop grabbing temporarily
+            was_grabbing = self.camera.IsGrabbing()
+            if was_grabbing:
+                self.camera.StopGrabbing()
+
+            # Configure software trigger
+            self.camera.TriggerSelector.SetValue(self.trigger_selector)
+            self.camera.TriggerMode.SetValue("On")
+            self.camera.TriggerSource.SetValue("Software")
+            self.camera.TriggerActivation.SetValue(self.trigger_activation)
+
+            logger.info(
+                f"[{self.serial_number}] Software trigger configured: "
+                f"Selector={self.trigger_selector}, Activation={self.trigger_activation}"
+            )
+
+            # Resume grabbing with OneByOne strategy
+            if was_grabbing or self.mode == CameraMode.SOFTWARE_TRIGGER:
+                self.camera.StartGrabbing(pylon.GrabStrategy_OneByOne)
+                logger.info(f"[{self.serial_number}] Camera grabbing started (OneByOne)")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"[{self.serial_number}] Error configuring software trigger: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def execute_software_trigger(self) -> Dict[str, Any]:
+        """
+        Execute software trigger and capture N frames (N = number of templates)
+
+        Process:
+        1. Delay before first frame
+        2. For each template:
+           - ExecuteSoftwareTrigger()
+           - Retrieve frame
+           - Write to shared memory
+           - Delay before next frame
+
+        Returns:
+            {
+                'success': bool,
+                'frames': List[np.ndarray],
+                'frame_count': int,
+                'error': str (if failed)
+            }
+        """
+        if not self.camera or not self.camera.IsGrabbing():
+            return {'success': False, 'error': 'Camera not grabbing'}
+
+        if not self.templates:
+            return {'success': False, 'error': 'No templates loaded'}
+
+        self.captured_frames = []
+
+        try:
+            logger.info(
+                f"[{self.serial_number}] Executing SW trigger for {len(self.templates)} frames, "
+                f"delay={self.delay_trigger}ms"
+            )
+
+            for idx, template in enumerate(self.templates):
+                # IMPORTANT: Delay BEFORE each frame (including first)
+                time.sleep(self.delay_trigger / 1000.0)
+
+                # Execute software trigger
+                self.camera.ExecuteSoftwareTrigger()
+
+                # Wait and retrieve frame
+                grab_result = self.camera.RetrieveResult(
+                    2000,  # 2s timeout
+                    pylon.TimeoutHandling_ThrowException
+                )
+
+                if not grab_result or not grab_result.GrabSucceeded():
+                    if grab_result:
+                        grab_result.Release()
+                    return {
+                        'success': False,
+                        'error': f'Failed to grab frame {idx}'
+                    }
+
+                img_array = grab_result.Array
+
+                # Convert Mono8 to BGR
+                if len(img_array.shape) == 2:
+                    img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
+
+                # Write to shared memory (Option B - write all frames)
+                metadata = {
+                    "timestamp": time.time(),
+                    "mode": self.mode.value,
+                    "shape": img_array.shape,
+                    "dtype": str(img_array.dtype),
+                    "frame_idx": idx,
+                    "trigger_event": True,
+                    "template_name": template.get('name', f'Template {idx+1}')
+                }
+                self._write_frame_to_shm(img_array, metadata)
+
+                # Store frame
+                self.captured_frames.append(img_array.copy())
+
+                grab_result.Release()
+
+                logger.info(f"[{self.serial_number}] Captured frame {idx+1}/{len(self.templates)}")
+
+            return {
+                'success': True,
+                'frames': self.captured_frames,
+                'frame_count': len(self.captured_frames)
+            }
+
+        except Exception as e:
+            logger.error(f"[{self.serial_number}] Error executing software trigger: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'error': str(e)
+            }
 
     def load_recipe(self, recipe_data: Dict[str, Any]) -> bool:
         """
@@ -371,11 +515,33 @@ class Camera:
 
             logger.info(
                 f"[{self.serial_number}] Recipe loaded: {self.recipe_name}, "
-                f"templates: {len(self.templates)}"
+                f"templates: {len(self.templates)}, "
+                f"trigger_mode: {self.trigger_mode}"
             )
 
-            # Switch to hardware trigger mode
-            self.set_mode(CameraMode.HARDWARE_TRIGGER)
+            # Configure trigger mode based on settings
+            if self.trigger_mode == "software_trigger":
+                success = self.configure_software_trigger()
+                if success:
+                    self.set_mode(CameraMode.SOFTWARE_TRIGGER)
+                    logger.info(f"[{self.serial_number}] Software trigger mode configured")
+                else:
+                    logger.error(f"[{self.serial_number}] Failed to configure software trigger")
+                    return False
+
+            elif self.trigger_mode == "continuous":
+                # TODO: Implement continuous mode
+                logger.warning(f"[{self.serial_number}] Continuous mode not implemented yet")
+                self.set_mode(CameraMode.CONTINUOUS)
+
+            elif self.trigger_mode == "hardware_trigger":
+                # TODO: Implement hardware trigger mode
+                logger.warning(f"[{self.serial_number}] Hardware trigger mode not implemented yet")
+                return False
+
+            else:
+                logger.error(f"[{self.serial_number}] Unknown trigger mode: {self.trigger_mode}")
+                return False
 
             return True
 
@@ -490,234 +656,8 @@ class Camera:
 
         logger.info(f"[{self.serial_number}] Recipe stopped, mode set to CONTINUOUS")
 
-    def _read_di_value(self, di_number: int) -> int:
-        """Read Digital Input value from hardware"""
-        try:
-            result = subprocess.run(
-                ["sudo", "-n", "dio_in", str(di_number)],
-                capture_output=True,
-                text=True,
-                timeout=1
-            )
-
-            if result.returncode == 0:
-                for line in result.stdout.split("\n"):
-                    if "status" in line and "=" in line:
-                        value_str = line.split("=")[-1].strip()
-                        return int(value_str)
-            return 0
-
-        except Exception as e:
-            logger.error(f"Error reading DI {di_number}: {e}")
-            return 0
-
-    def _check_trigger_edge(self, current: int, previous: int) -> bool:
-        """Check if trigger edge condition is met"""
-        if self.trigger_activation == "RisingEdge":
-            return previous == 0 and current == 1
-        elif self.trigger_activation == "FallingEdge":
-            return previous == 1 and current == 0
-        elif self.trigger_activation == "AnyEdge":
-            return previous != current
-        return False
-
-    def _handle_trigger_event(self):
-        """
-        Handle hardware trigger event
-
-        Process:
-        1. Capture multiple frames (for multi-template recipes)
-        2. Run inference on each frame
-        3. Aggregate results (PASS only if all templates match)
-        4. Emit inference result event
-        """
-        if not self.camera or not self.camera.IsGrabbing():
-            logger.error(f"[{self.serial_number}] Camera not grabbing, cannot handle trigger")
-            return
-
-        if not self.recipe_id:
-            logger.warning(f"[{self.serial_number}] No recipe loaded, ignoring trigger")
-            return
-
-        try:
-            logger.info(f"[{self.serial_number}] ⚡ Trigger event - capturing {len(self.templates)} frames")
-
-            captured_frames = []
-
-            # Capture frames for each template with delay
-            for idx, template in enumerate(self.templates):
-                # Wait for delay_trigger if not first frame
-                if idx > 0:
-                    time.sleep(self.delay_trigger / 1000.0)  # Convert ms to seconds
-
-                # Grab frame
-                grab_result = self.camera.RetrieveResult(1000, pylon.TimeoutHandling_ThrowException)
-
-                if grab_result and grab_result.GrabSucceeded():
-                    img_array = grab_result.Array
-
-                    # Convert Mono8 to BGR
-                    if len(img_array.shape) == 2:
-                        img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
-
-                    captured_frames.append({
-                        'template_idx': idx,
-                        'template_name': template.get('name', f'Template {idx+1}'),
-                        'image': img_array.copy(),
-                        'timestamp': time.time()
-                    })
-
-                    logger.info(f"[{self.serial_number}] Captured frame {idx+1}/{len(self.templates)}")
-
-                grab_result.Release()
-
-            # Run inference on all frames
-            if not self.inference_matcher or not INFERENCE_AVAILABLE:
-                logger.warning(f"[{self.serial_number}] Inference not available, skipping")
-                return
-
-            inference_results = []
-            overall_pass = True
-
-            for frame_data in captured_frames:
-                img = frame_data['image']
-
-                # Run inference directly on numpy array
-                try:
-                    result = self.inference_matcher.match_array(img)
-
-                    # Determine PASS/FAIL based on template match
-                    # Use inliers count and confidence score
-                    inliers = int(result.get('inliers', 0))  # Convert numpy.uint64 to Python int
-                    confidence = float(result.get('confidence', 0.0))  # Convert numpy.float64 to Python float
-                    total_matches = int(result.get('total_matches', 0))
-
-                    frame_pass = inliers >= 30 and confidence >= 0.3  # Match if >= 30 inliers and confidence >= 0.3
-
-                    # Draw bounding boxes on image for annotation
-                    annotated_img = img.copy()
-                    transformed_bboxes = result.get('transformed_bboxes', [])
-
-                    # Draw bboxes
-                    for bbox in transformed_bboxes:
-                        points = bbox.get('points', [])
-                        bbox_type = bbox.get('type', '')
-
-                        if len(points) >= 4:
-                            pts = np.array(points, dtype=np.int32)
-
-                            # Color based on type: template=green, text=blue, others=yellow
-                            if bbox_type == 'template':
-                                color = (0, 255, 0) if frame_pass else (0, 0, 255)  # Green if PASS, Red if FAIL
-                            elif bbox_type == 'text':
-                                color = (255, 128, 0)  # Orange
-                            else:
-                                color = (255, 255, 0)  # Yellow
-
-                            cv2.polylines(annotated_img, [pts], True, color, 3)
-
-                    # Add PASS/FAIL text
-                    text = f"{'PASS' if frame_pass else 'FAIL'} | Conf: {confidence:.2f} | Inliers: {inliers}"
-                    cv2.putText(annotated_img, text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.2,
-                               (0, 255, 0) if frame_pass else (0, 0, 255), 3)
-
-                    # Save image for FAIL results
-                    image_path = None
-                    image_base64 = None
-
-                    if not frame_pass:  # Only save FAIL images
-                        # Save full resolution to disk (for historical)
-                        image_path = self._save_inference_image(
-                            annotated_img,
-                            frame_data['template_idx'],
-                            'FAIL'
-                        )
-
-                    # Create resized base64 for realtime preview (1/3 resolution)
-                    h, w = annotated_img.shape[:2]
-                    preview_img = cv2.resize(annotated_img, (w//3, h//3), interpolation=cv2.INTER_AREA)
-
-                    # Encode to JPEG with quality 85
-                    _, buffer = cv2.imencode('.jpg', preview_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                    import base64
-                    image_base64 = base64.b64encode(buffer).decode('utf-8')
-
-                    # Remove numpy arrays from result for JSON serialization
-                    result_clean = {
-                        'success': bool(result.get('success', False)),
-                        'confidence': confidence,
-                        'inliers': inliers,
-                        'total_matches': total_matches,
-                        'timings': result.get('timings', {})
-                    }
-
-                except Exception as e:
-                    logger.error(f"[{self.serial_number}] Inference error: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    result_clean = {'error': str(e)}
-                    frame_pass = False
-                    inliers = 0
-                    confidence = 0.0
-                    total_matches = 0
-                    image_path = None
-                    image_base64 = None
-
-                overall_pass = overall_pass and frame_pass
-
-                inference_results.append({
-                    'template_name': frame_data['template_name'],
-                    'frame_idx': frame_data['template_idx'],  # Renamed to match Pydantic schema
-                    'pass_fail': 'PASS' if frame_pass else 'FAIL',
-                    'confidence': confidence,
-                    'image_path': image_path,  # Relative path (for historical)
-                    'image_base64': image_base64,  # Base64 preview (for realtime, FAIL only)
-                    'detected_regions': None,  # Optional field
-                    'metadata': {
-                        'inliers': inliers,
-                        'total_matches': total_matches,
-                        'timings': result_clean.get('timings', {}),
-                        'timestamp': frame_data['timestamp']
-                    }
-                })
-
-                logger.info(
-                    f"[{self.serial_number}] Template '{frame_data['template_name']}': "
-                    f"{'PASS' if frame_pass else 'FAIL'} (inliers: {inliers}, confidence: {confidence:.2f})"
-                )
-
-            # Emit inference result event
-            self._emit_event('inference_result', {
-                'recipe_id': self.recipe_id,
-                'recipe_name': self.recipe_name,
-                'product_pass_fail': 'PASS' if overall_pass else 'FAIL',
-                'camera_results': [{
-                    'camera_id': self.serial_number,
-                    'serial_number': self.serial_number,  # Add required field
-                    'frames': inference_results
-                }],
-                'metadata': {
-                    'frame_count': len(captured_frames),
-                    'overall_pass': overall_pass,
-                    'timestamp': time.time()
-                }
-            })
-
-            logger.info(
-                f"[{self.serial_number}] ✅ Inference complete: "
-                f"{'PASS' if overall_pass else 'FAIL'} ({len(captured_frames)} frames)"
-            )
-
-        except Exception as e:
-            logger.error(f"[{self.serial_number}] Error handling trigger: {e}")
-            import traceback
-            traceback.print_exc()
-
-            # Emit error event
-            self._emit_event('inference_error', {
-                'recipe_id': self.recipe_id,
-                'error': str(e)
-            })
+    # NOTE: Old trigger methods removed (_read_di_value, _check_trigger_edge, _handle_trigger_event)
+    # Trigger logic moved to CameraManager for centralized multi-camera triggering
 
     def _save_inference_image(self, img: np.ndarray, frame_idx: int, result: str) -> Optional[str]:
         """
@@ -732,17 +672,15 @@ class Camera:
             Relative path to saved image
         """
         try:
-            from datetime import datetime
-
             # Create directory structure
             base_dir = Path("/home/demo/Source/ocr_datecode/backend/uploads/inference_results")
             recipe_dir = base_dir / self.recipe_id if self.recipe_id else base_dir / "unknown"
-            today = datetime.utcnow().strftime("%Y-%m-%d")
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             save_dir = recipe_dir / today
             save_dir.mkdir(parents=True, exist_ok=True)
 
             # Generate filename
-            timestamp = datetime.utcnow().strftime("%H%M%S%f")
+            timestamp = datetime.now(timezone.utc).strftime("%H%M%S%f")
             filename = f"{self.serial_number}_{timestamp}_{result.lower()}_f{frame_idx}.jpg"
 
             # Save image
@@ -802,12 +740,14 @@ class Camera:
 
     def run(self):
         """
-        Main camera loop
+        Main camera loop - SIMPLIFIED
 
         Handles:
-        - Continuous frame grabbing (CONTINUOUS mode)
-        - Hardware trigger polling (HARDWARE_TRIGGER mode)
-        - Writing frames to shared memory
+        - IDLE mode: Sleep
+        - CONTINUOUS mode: Grab and write to SHM (TODO - not implemented)
+        - SOFTWARE_TRIGGER mode: Keep camera ready, waiting for ExecuteSoftwareTrigger()
+
+        Note: DI polling and trigger detection moved to CameraManager
         """
         if not self.camera:
             logger.error(f"[{self.serial_number}] Camera not connected")
@@ -817,54 +757,32 @@ class Camera:
         logger.info(f"[{self.serial_number}] Starting camera loop (mode: {self.mode.value})")
 
         try:
-            # Start grabbing
-            self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+            # Start grabbing based on mode
+            if self.mode == CameraMode.SOFTWARE_TRIGGER:
+                # Already started in configure_software_trigger() with OneByOne strategy
+                if not self.camera.IsGrabbing():
+                    self.camera.StartGrabbing(pylon.GrabStrategy_OneByOne)
+                    logger.info(f"[{self.serial_number}] Camera grabbing started (OneByOne)")
+            else:
+                # For other modes, use LatestImageOnly
+                self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
 
             while self._running:
-                # Mode-specific behavior
                 if self.mode == CameraMode.IDLE:
                     # Idle mode: just sleep
                     time.sleep(0.1)
                     continue
 
                 elif self.mode == CameraMode.CONTINUOUS:
-                    # Continuous mode: grab and write to shared memory
-                    if self.camera.IsGrabbing():
-                        grab_result = self.camera.RetrieveResult(100, pylon.TimeoutHandling_Return)
+                    # TODO: Implement continuous mode with SHM write
+                    # Same as before - grab and write to shared memory
+                    logger.warning(f"[{self.serial_number}] Continuous mode not fully implemented")
+                    time.sleep(0.033)
 
-                        if grab_result and grab_result.GrabSucceeded():
-                            img_array = grab_result.Array
-
-                            # Convert Mono8 to BGR for consistency
-                            if len(img_array.shape) == 2:
-                                img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
-
-                            # Write to shared memory
-                            metadata = {
-                                "timestamp": time.time(),
-                                "mode": self.mode.value,
-                                "shape": img_array.shape,
-                                "dtype": str(img_array.dtype)
-                            }
-
-                            self._write_frame_to_shm(img_array, metadata)
-                            self.frame_idx += 1
-
-                        grab_result.Release()
-
-                    time.sleep(0.033)  # ~30 FPS
-
-                elif self.mode == CameraMode.HARDWARE_TRIGGER:
-                    # Hardware trigger mode: poll DI and trigger on edge
-                    current_di = self._read_di_value(self.di_number)
-
-                    if self.previous_di_value is not None:
-                        if self._check_trigger_edge(current_di, self.previous_di_value):
-                            logger.info(f"[{self.serial_number}] Trigger detected!")
-                            self._handle_trigger_event()
-
-                    self.previous_di_value = current_di
-                    time.sleep(0.01)  # 100Hz polling
+                elif self.mode == CameraMode.SOFTWARE_TRIGGER:
+                    # Just keep camera ready, waiting for ExecuteSoftwareTrigger()
+                    # No polling here - CameraManager handles trigger detection
+                    time.sleep(0.1)
 
         except Exception as e:
             logger.error(f"[{self.serial_number}] Error in camera loop: {e}")

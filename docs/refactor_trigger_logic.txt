@@ -1,0 +1,191 @@
+để tôi môi tả hình huống hiện tại để cho bạn nắm rõ
+
+/Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src/components/recipe/Receipts.tsx
+/Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src/components/recipe/RecipeFormModal.tsx
+
+RecipeFormModal có tab camera, 
+tab này cho phép config 
+
+Camera Settings:
+Exposure Time (μs)
+Delay Trigger (ms)
+Gain
+
+Trigger Configuration:
+
+Trigger Mode:
+Continuous (Free-running)
+Software Trigger
+Hardware Trigger (I/O)
+
+Tôi cần làm rõ: Software Trigger là dùng "Digital Input (DI) Number" để nhận input sau đó camera sẽ software trigger để lấy frame, các trigger frame khi nhận input 
+0->1 Rising Edge
+1->0 Falling Edge
+Any Edge (Both)
+
+Hardware Trigger là trên camera sẽ có các line để ta đấu dây vào, sẽ tự động trả frame khi có event trigger (điều này có đúng không? hãy trả lời cho tôi)
+
+Với mode Software Trigger hiện tại đang để trống, chưa có config chân DI, Trigger Activation và Trigger Selector 
+
+theo phân tích trên thì khi select Hardware Trigger thì không cần Digital Input (DI) Number đúng không? chỉ cần select Trigger Source (Line0, Line1, ...)
+
+về phần software trigger, camera nào tôi cũng sẽ set chung 1 chân DI để đảm bảo khi chân đó (0->1), (1->0) or both thì camera nào cũng sẽ software trigger để lấy frame cùng thời điểm (cố gắng chụp cùng lúc)
+
+sau khi chụp cùng lúc về phần logic inference để dùng tất cả các frame của các camera để xử lý logic (logic này tôi sẽ implement sau), trước mắt là dùng SuperPointMatcherTRT để inference trước, về sau sẽ có logic OCR các vùng mà SuperPointMatcherTRT tìm ra, tuy nhiên để to do sẽ implement sau
+
+vì vậy hãy thiết kế lại flow của camera và camera managemnt, sau đó chỉnh sửa trên UI và BE về các field cần lưu 
+
+ngoài ra khi có software hoặc hardware trigger thì cứ gửi frame đó và shared memory giống như continuous để lúc nào trong đó cũng có frame mới nhất dù có mode nào đi chăng nữa 
+
+
+  Q2.1: Khi chọn Software Trigger, UI cần hiện các fields sau đúng không?
+    ✓ Digital Input (DI) Number: [Dropdown: DI0, DI1, DI2, DI3]
+    ✓ Trigger Activation: [Dropdown: RisingEdge, FallingEdge, AnyEdge]
+    thêm Trigger Selector (FrameStart, ExposureStart, FrameBurstStart)
+  Q2.2: Khi chọn Hardware Trigger, UI cần hiện các fields sau đúng không?
+    ✓ Trigger Source (Camera Line): [Dropdown: Line0, Line1, Line2, Line3]
+    ✓ Trigger Activation: [Dropdown: RisingEdge, FallingEdge, AnyEdge]
+    thêm Trigger Selector (FrameStart, ExposureStart, FrameBurstStart)
+
+  Q2.3: Các settings này có apply cho TẤT CẢ cameras trong recipe hay từng camera riêng?
+    - Theo document line 32: "camera nào tôi cũng sẽ set chung 1 chân DI"
+    - → Nghĩa là global config cho tất cả cameras?
+    - Hay mỗi camera có thể chọn khác chân DI / Line?
+    trả lời: mỗi camera có thể chọn khác chân DI / Line nhưng tôi sẽ set chúng giống nhau trên UI, vì để linh động sau này, có thể chọn chân khác 
+
+  Q3.1: Khi dùng Software Trigger, tất cả cameras dùng CÙNG 1 chân DI đúng không?
+    - Ví dụ: DI0 → Trigger cả 3 cameras cùng lúc?
+    - Hay mỗi camera có chân DI riêng?
+    trả lời: mỗi camera sẽ có chân DI riêng, tuy nhiên hiện tại trên UI camera nào tôi cũng chọn chân DI0, để DI0 -> trigger -> cả 3 camera chụp cùng lúc 
+
+  Q3.2: Khi dùng Hardware Trigger, tất cả cameras dùng CÙNG 1 Line đúng không?
+    - Ví dụ: Line0 → Trigger cả 3 cameras cùng lúc?
+    - Hay mỗi camera đấu dây vào Line riêng?
+    trả lời: mỗi camera sẽ có Line riêng, tuy nhiên hiện tại trên UI camera nào tôi cũng chọn Line0, để Line0 -> trigger -> cả 3 camera chụp cùng lúc (implement hardware trigger sau, hãy để todo). 
+
+Note: hiện tại load recipe chỉ implement mode software trigger trước (Continuous và Hardware Trigger để sau)
+
+  Q3.3: Có trường hợp MIX mode không?
+    - Ví dụ: Camera 1 dùng Software Trigger (DI0), Camera 2 dùng Hardware Trigger (Line0)?
+    - Hay tất cả cameras trong recipe PHẢI CÙNG MODE?
+    trả lời: có thể, nhưng để todo 
+
+  Q4.1: Mục đích của việc write frame vào shared memory là gì?
+  - Để Frontend Live View hiển thị frame mới nhất?
+  - Hay để service khác đọc frame?
+    trả lời: để Frontend Live View hiển thị frame và Capture cũng vậy 
+    hiện tại chỉ có service bên BE đọc shared memory và gửi lại FE thôi
+
+  Q4.2: Với trigger mode (Software/Hardware), sau khi capture frame và run inference:
+    Step 1: Trigger event detected
+    Step 2: Capture N frames (N = số templates)
+    Step 3: Run inference on N frames
+    Step 4: Write frames to shared memory ← Viết frame nào?
+        Option A: Viết tất cả N frames vào SHM?
+        Option B: Viết frame đầu tiên (frame 0) vào SHM?
+        Option C: Viết frame cuối cùng vào SHM?
+        Option D: Viết frame annotated (có bbox) vào SHM?
+
+    trả lời: Write frames to shared memory trước khi inference và write frame cuối cùng của camera đó 
+  Q4.3: Shared memory có cần timestamp để Frontend biết frame có mới không?
+    trả lời: tôi nghĩ nên có 
+
+
+  Q5.1: Logic inference hiện tại:
+    Current (Per-camera):
+    - Camera 1 → 3 frames → Inference → PASS/FAIL
+    - Camera 2 → 3 frames → Inference → PASS/FAIL
+    - Camera 3 → 3 frames → Inference → PASS/FAIL
+    → Overall: PASS nếu tất cả cameras PASS
+
+    trả lời: hiện tại lấy 1 frame của camera đầu tiên inference trước, logic cụ thể tôi sẽ implement sau
+
+  Q5.2: Logic inference tương lai (TODO):
+    Future (Cross-camera):
+    - Camera 1 → 3 frames
+    - Camera 2 → 3 frames  } → OCR logic dùng TOÀN BỘ frames?
+    - Camera 3 → 3 frames
+    → Tổng 9 frames → Process together?
+    trả lời: cứ để đó tôi tự implement sau
+
+    gửi kết quả qua BE thông qua socket hiện tại cấu trúc gửi kết quả giữ như code cũ 
+
+    Q6: Option B: Per-Camera Trigger Config
+
+  Q7.1: delay_trigger hiện tại dùng để delay giữa các frames khi capture multi-template đúng không?
+  Frame 0 (Template 0) → Capture
+  ↓ delay_trigger (100ms)
+  Frame 1 (Template 1) → Capture
+  ↓ delay_trigger (100ms)
+  Frame 2 (Template 2) → Capture
+
+  trả lời: sai rồi phải như này
+
+  ↓ delay_trigger (100ms)
+  Frame 0 (Template 0) → Capture
+  ↓ delay_trigger (100ms)
+  Frame 1 (Template 1) → Capture
+  ↓ delay_trigger (100ms)
+  Frame 2 (Template 2) → Capture
+
+  khi có 1 template cũng delay trước 
+  ↓ delay_trigger (100ms)
+  Frame 0 (Template 0) → Capture
+  
+  Q7.2: delay_trigger có apply cho TẤT CẢ cameras hay từng camera riêng?
+  - Nếu global: Tất cả cameras đều delay 100ms
+  - Nếu per-camera: Camera 1 delay 50ms, Camera 2 delay 100ms
+  trả lời: riêng cho từng camera 
+  vì vậy trigger sẽ đợi 3 camera chụp xong rồi mới truyền qua inference
+
+
+Q_FINAL_1: UI "Copy to All Cameras" Button
+
+  Bạn có muốn nút này không?
+  [Copy Trigger Config to All Cameras]
+  → Click → Copy trigger_mode, trigger_config từ camera hiện tại sang tất cả cameras
+
+  Trả lời: không cần
+
+   
+  Q_FINAL_2: Shared Memory - Write frame nào?
+
+  Theo Q4.2 bạn nói "write frame cuối cùng của camera đó". Nhưng với flow mới:
+
+  Scenario: Camera có 3 templates, delay=100ms
+  Capture Frame 0 → Write SHM? (Yes/No)
+  Delay 100ms
+  Capture Frame 1 → Write SHM? (Yes/No)
+  Delay 100ms
+  Capture Frame 2 → Write SHM? (Yes/No) ← Frame cuối
+
+  Option A: Chỉ write Frame 2 (frame cuối) vào SHM
+  Option B: Write cả 3 frames vào SHM (overwrite mỗi lần)
+
+  Trả lời: option B
+
+  Q_FINAL_3: DI Polling - Cần check TẤT CẢ 4 chân?
+
+  Nếu recipe config:
+  - Camera 1, 2, 3: DI0
+  - Camera 4: (không có trong recipe)
+
+  → CameraManager chỉ poll DI0 hay poll cả DI0, DI1, DI2, DI3?
+
+  Option A: Chỉ poll các DI được dùng (DI0)
+  Option B: Poll tất cả DI0-DI3 mọi lúc
+
+  Trả lời: Option A
+
+  Q_FINAL_4: Error Handling
+
+  Nếu Camera 1 capture thành công nhưng Camera 2 timeout:
+  Camera 1: OK (3 frames)
+  Camera 2: TIMEOUT
+  Camera 3: OK (3 frames)
+
+  Option A: Bỏ qua Camera 2, chỉ inference Camera 1 frame 0
+  Option B: Emit error event, không inference
+  Option C: Retry Camera 2 một lần
+
+  Trả lời: Option B: Emit error event, không inference

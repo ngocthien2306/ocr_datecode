@@ -26,12 +26,12 @@ interface RecipeCamera {
   delay_trigger: number;
   gain: number;
   pixel_format: string;
+  trigger_mode: string;  // 'continuous', 'software_trigger', 'hardware_trigger'
   trigger_config: {
-    mode: string;  // 'continuous', 'software', 'hardware'
-    trigger_source: string;
-    trigger_selector: string;
-    trigger_activation: string;
-    di_number: number;  // Digital Input number for hardware trigger
+    trigger_selector: string;  // 'FrameStart', 'ExposureStart', 'FrameBurstStart'
+    trigger_activation: string;  // 'RisingEdge', 'FallingEdge', 'AnyEdge'
+    di_number: number;  // Digital Input number (0-3) for software trigger
+    trigger_source: string;  // 'Line0', 'Line1', 'Line2', 'Line3' for hardware trigger
   };
 }
 
@@ -363,12 +363,12 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       delay_trigger: 100.0,
       gain: 1.0,
       pixel_format: 'Mono8',
+      trigger_mode: 'continuous',
       trigger_config: {
-        mode: 'continuous',
-        trigger_source: 'Software',
         trigger_selector: 'FrameStart',
         trigger_activation: 'RisingEdge',
-        di_number: 0
+        di_number: 0,
+        trigger_source: 'Line0'
       }
     };
 
@@ -1078,29 +1078,46 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                             <div className="form-group">
                               <label>Trigger Mode <span className="required">*</span></label>
                               <select
-                                value={camera.trigger_config.mode}
-                                onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'mode', e.target.value)}
+                                value={camera.trigger_mode}
+                                onChange={(e) => handleCameraConfigChange(camera.camera_id, 'trigger_mode', e.target.value)}
                               >
-                                <option value="continuous">Continuous (Free-running)</option>
-                                <option value="software">Software Trigger</option>
-                                <option value="hardware">Hardware Trigger (DI)</option>
+                                <option value="continuous">Continuous (Free-running) - TODO</option>
+                                <option value="software_trigger">Software Trigger</option>
+                                <option value="hardware_trigger" disabled>Hardware Trigger (I/O) - TODO</option>
                               </select>
                               <small style={{display: 'block', marginTop: 4, color: '#666'}}>
-                                {camera.trigger_config.mode === 'continuous' && 'Camera captures continuously'}
-                                {camera.trigger_config.mode === 'software' && 'Camera waits for software trigger command'}
-                                {camera.trigger_config.mode === 'hardware' && 'Camera captures on Digital Input signal'}
+                                {camera.trigger_mode === 'continuous' && 'Camera captures continuously (not implemented yet)'}
+                                {camera.trigger_mode === 'software_trigger' && 'Camera triggers on Digital Input (DI) signal'}
+                                {camera.trigger_mode === 'hardware_trigger' && 'Camera triggers via hardware Line input (not implemented yet)'}
                               </small>
                             </div>
                           </div>
 
-                          {camera.trigger_config.mode === 'hardware' && (
+                          {camera.trigger_mode === 'software_trigger' && (
                             <>
+                              <div className="form-row">
+                                <div className="form-group">
+                                  <label>Trigger Selector <span className="required">*</span></label>
+                                  <select
+                                    value={camera.trigger_config.trigger_selector}
+                                    onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'trigger_selector', e.target.value)}
+                                  >
+                                    <option value="FrameStart">Frame Start</option>
+                                    <option value="ExposureStart">Exposure Start</option>
+                                    <option value="FrameBurstStart">Frame Burst Start</option>
+                                  </select>
+                                  <small style={{display: 'block', marginTop: 4, color: '#666'}}>
+                                    Type of trigger event
+                                  </small>
+                                </div>
+                              </div>
+
                               <div className="form-row">
                                 <div className="form-group">
                                   <label>Digital Input (DI) Number <span className="required">*</span></label>
                                   <select
                                     value={camera.trigger_config.di_number.toString()}
-                                    onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'di_number', e.target.value)}
+                                    onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'di_number', parseInt(e.target.value))}
                                   >
                                     <option value="0">DI 0</option>
                                     <option value="1">DI 1</option>
@@ -1126,33 +1143,17 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                   </small>
                                 </div>
                               </div>
-
-                              <div className="form-row">
-                                <div className="form-group">
-                                  <label>Trigger Source</label>
-                                  <select
-                                    value={camera.trigger_config.trigger_source}
-                                    onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'trigger_source', e.target.value)}
-                                  >
-                                    <option value="Line0">Line0</option>
-                                    <option value="Line1">Line1</option>
-                                    <option value="Line2">Line2</option>
-                                    <option value="Line3">Line3</option>
-                                  </select>
-                                </div>
-                                <div className="form-group">
-                                  <label>Trigger Selector</label>
-                                  <select
-                                    value={camera.trigger_config.trigger_selector}
-                                    onChange={(e) => handleCameraTriggerConfigChange(camera.camera_id, 'trigger_selector', e.target.value)}
-                                  >
-                                    <option value="FrameStart">FrameStart</option>
-                                    <option value="ExposureStart">ExposureStart</option>
-                                    <option value="FrameBurstStart">FrameBurstStart</option>
-                                  </select>
-                                </div>
-                              </div>
                             </>
+                          )}
+
+                          {/* TODO: Hardware Trigger mode - Not implemented yet */}
+                          {camera.trigger_mode === 'hardware_trigger' && (
+                            <div style={{padding: '15px', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: '4px', marginTop: '10px'}}>
+                              <strong>⚠️ Hardware Trigger Mode (TODO)</strong>
+                              <p style={{margin: '8px 0 0 0', fontSize: '14px'}}>
+                                This mode is not implemented yet. It will use camera Line inputs (Line0-Line3) for hardware triggering.
+                              </p>
+                            </div>
                           )}
                         </div>
                       </div>
