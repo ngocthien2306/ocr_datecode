@@ -249,14 +249,14 @@ def save_and_encode_frame(
             )
             logger.info(f"Drew {len(transformed_bboxes)} bboxes on frame")
 
-        # Create directory structure: base_dir/{recipe_id}/{YYYY-MM-DD}/
+        # Create directory structure: base_dir/{recipe_id}/{YYYY-MM-DD}/{camera_serial}/
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        storage_dir = Path(base_dir) / recipe_id / today
+        storage_dir = Path(base_dir) / recipe_id / today / serial_number
         storage_dir.mkdir(parents=True, exist_ok=True)
 
         # Generate filename with timestamp
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S%f")
-        filename = f"{serial_number}_{timestamp}_{pass_fail.lower()}_f{frame_idx}.jpg"
+        filename = f"{pass_fail.lower()}_f{frame_idx}_{timestamp}.jpg"
         full_path = storage_dir / filename
 
         # Get original dimensions
@@ -266,7 +266,7 @@ def save_and_encode_frame(
         cv2.imwrite(str(full_path), img_to_save, [cv2.IMWRITE_JPEG_QUALITY, 95])
 
         # Relative path for DB and API (from uploads/)
-        relative_path = f"inference_results/{recipe_id}/{today}/{filename}"
+        relative_path = f"inference_results/{recipe_id}/{today}/{serial_number}/{filename}"
 
         # Create RESIZED + COMPRESSED version for realtime display (divide by 3)
         display_img = resize_for_display(img_to_save, scale_factor=3)

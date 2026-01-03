@@ -215,6 +215,327 @@ class SuperPointMatcherTRT:
         # Process directly without file I/O
         return self._match_impl(target_img_array, score_threshold, ransac_threshold, timings, t_total)
 
+    def match_batch(
+        self,
+        target_imgs: List[np.ndarray],
+        templates: List['SuperPointMatcherTRT'],
+        score_threshold: float = 0.3,
+        ransac_threshold: float = 5.0
+    ) -> Dict:
+        """
+        Match multiple template-target pairs in a single batch inference
+
+        Args:
+            target_imgs: List of target images (numpy arrays in BGR format)
+            templates: List of matcher instances (one per camera with its template)
+            score_threshold: Matching score threshold
+            ransac_threshold: RANSAC threshold for homography
+
+        Returns:
+            Dict with batch results:
+            {
+                'success': bool,
+                'batch_timings': {...},  # Overall batch timing
+                'results': [...]  # Per-camera results
+            }
+        """
+        batch_timings = {}
+        t_total = time.time()
+
+        num_pairs = len(target_imgs)
+        if num_pairs != len(templates):
+            return {
+                'success': False,
+                'error': 'Number of targets and templates must match',
+                'batch_timings': {},
+                'results': []
+            }
+
+        if num_pairs == 0 or num_pairs > 4:
+            return {
+                'success': False,
+                'error': f'Batch size must be 1-4, got {num_pairs}',
+                'batch_timings': {},
+                'results': []
+            }
+
+        # Preprocess all images
+        t0 = time.time()
+        batch_images = []
+        per_camera_preprocess = []
+
+        for idx, (target_img, matcher) in enumerate(zip(target_imgs, templates)):
+            t_pre = time.time()
+
+            # Scale if needed
+            if matcher.scale != 1.0:
+                target_scaled = cv2.resize(target_img, None, fx=matcher.scale, fy=matcher.scale)
+            else:
+                target_scaled = target_img
+
+            target_gray = cv2.cvtColor(target_scaled, cv2.COLOR_BGR2GRAY)
+
+            # Resize to engine size
+            template_resized, _ = matcher._resize_to_engine_size(matcher.template_gray)
+            target_resized, _ = matcher._resize_to_engine_size(target_gray)
+
+            # Convert to tensors
+            template_tensor = template_resized.astype(np.float32)[None, None] / 255.0
+            target_tensor = target_resized.astype(np.float32)[None, None] / 255.0
+
+            batch_images.append(template_tensor)
+            batch_images.append(target_tensor)
+
+            per_camera_preprocess.append((time.time() - t_pre) * 1000)
+
+        batch_timings['preprocess'] = (time.time() - t0) * 1000
+
+        # Concatenate all images into single batch
+        t0 = time.time()
+        batch_input = np.concatenate(batch_images, axis=0)  # Shape: [num_pairs*2, 1, H, W]
+        batch_timings['concat'] = (time.time() - t0) * 1000
+
+        # Single TRT inference for all pairs
+        t0 = time.time()
+        outputs = self._infer(batch_input)
+        batch_timings['trt_inference'] = (time.time() - t0) * 1000
+
+        # Post-process each pair
+        t0 = time.time()
+        results = []
+        per_camera_postprocess = []
+
+        kpts_raw = outputs[0]
+        matches_raw = outputs[1]
+        mscores_raw = outputs[2]
+
+        for idx, matcher in enumerate(templates):
+            t_post = time.time()
+
+            # Extract this pair's data from batch outputs
+            template_idx = idx * 2
+            target_idx = idx * 2 + 1
+
+            result = self._postprocess_pair(
+                kpts_raw=kpts_raw,
+                matches_raw=matches_raw,
+                mscores_raw=mscores_raw,
+                template_idx=template_idx,
+                target_idx=target_idx,
+                matcher=matcher,
+                target_img_full=target_imgs[idx],
+                score_threshold=score_threshold,
+                ransac_threshold=ransac_threshold
+            )
+
+            per_camera_postprocess.append((time.time() - t_post) * 1000)
+            results.append(result)
+
+        batch_timings['postprocess'] = (time.time() - t0) * 1000
+        batch_timings['total'] = (time.time() - t_total) * 1000
+
+        # Add per-camera timings to each result
+        for idx, result in enumerate(results):
+            result['timings'] = {
+                'total': batch_timings['total'],  # Shared
+                'trt_inference': batch_timings['trt_inference'],  # Shared (batch inference)
+                'preprocess': per_camera_preprocess[idx],  # Per-camera
+                'postprocess': per_camera_postprocess[idx],  # Per-camera
+            }
+
+        return {
+            'success': True,
+            'batch_timings': batch_timings,
+            'per_camera_preprocess': per_camera_preprocess,
+            'per_camera_postprocess': per_camera_postprocess,
+            'results': results
+        }
+
+    def _postprocess_pair(
+        self,
+        kpts_raw: np.ndarray,
+        matches_raw: np.ndarray,
+        mscores_raw: np.ndarray,
+        template_idx: int,
+        target_idx: int,
+        matcher: 'SuperPointMatcherTRT',
+        target_img_full: np.ndarray,
+        score_threshold: float,
+        ransac_threshold: float
+    ) -> Dict:
+        """
+        Post-process a single template-target pair from batch outputs
+
+        Args:
+            kpts_raw: Raw keypoints output from batch inference
+            matches_raw: Raw matches output from batch inference
+            mscores_raw: Raw match scores output from batch inference
+            template_idx: Index of template in batch (e.g., 0, 2, 4, 6)
+            target_idx: Index of target in batch (e.g., 1, 3, 5, 7)
+            matcher: Matcher instance with template info
+            target_img_full: Full-size target image
+            score_threshold: Matching score threshold
+            ransac_threshold: RANSAC threshold
+
+        Returns:
+            Result dict with success, homography, confidence, transformed_bboxes, etc.
+        """
+        # Reshape keypoints
+        kpts_flat = kpts_raw.ravel()
+        try:
+            for num_kpts in [4096, 2048, 1024, 512]:
+                try:
+                    kpts = kpts_flat[:kpts_raw.shape[0]*num_kpts*2].reshape(kpts_raw.shape[0], num_kpts, 2)
+                    break
+                except:
+                    continue
+            else:
+                kpts = kpts_flat[:kpts_raw.shape[0]*1024*2].reshape(kpts_raw.shape[0], 1024, 2)
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Failed to reshape keypoints: {e}',
+                'homography': None,
+                'confidence': 0.0,
+                'inliers': 0,
+                'total_matches': 0,
+                'transformed_bboxes': [],
+                'target_img': target_img_full
+            }
+
+        # Get keypoints for this pair
+        kpts0 = kpts[template_idx].astype(np.float32)
+        kpts1 = kpts[target_idx].astype(np.float32)
+
+        # Find valid matches for this pair
+        matches_flat = matches_raw.ravel()
+        mscores_flat = mscores_raw.ravel()
+
+        valid_mask = mscores_flat > 1e-6
+        num_matches = np.sum(valid_mask)
+
+        if num_matches == 0:
+            num_matches = len(mscores_flat)
+
+        try:
+            matches = matches_flat[:num_matches*3].reshape(num_matches, 3).astype(np.int32)
+            mscores = mscores_flat[:num_matches]
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Failed to reshape matches: {e}',
+                'homography': None,
+                'confidence': 0.0,
+                'inliers': 0,
+                'total_matches': 0,
+                'transformed_bboxes': [],
+                'target_img': target_img_full
+            }
+
+        # Filter by batch index (template_idx -> target_idx pair)
+        # Match format: [batch_idx, kpt0_idx, kpt1_idx]
+        # For pair (template_idx=0, target_idx=1): we want batch_idx == 0
+        # For pair (template_idx=2, target_idx=3): we want batch_idx == 1
+        pair_idx = template_idx // 2
+        batch_mask = matches[:, 0] == pair_idx
+        batch_matches = matches[batch_mask]
+        batch_mscores = mscores[batch_mask]
+
+        # Filter by score
+        valid_mask = batch_mscores > score_threshold
+        valid_matches = batch_matches[valid_mask]
+
+        if len(valid_matches) < 10:
+            return {
+                'success': False,
+                'error': f'Too few matches: {len(valid_matches)}',
+                'homography': None,
+                'confidence': 0.0,
+                'inliers': 0,
+                'total_matches': len(valid_matches),
+                'transformed_bboxes': [],
+                'target_img': target_img_full
+            }
+
+        m_kpts0 = kpts0[valid_matches[:, 1]].copy()
+        m_kpts1 = kpts1[valid_matches[:, 2]].copy()
+
+        # Scale keypoints back to original image size
+        # Note: matcher stores template_gray which is already resized to engine size
+        # Get scale factors
+        template_h, template_w = matcher.template_gray.shape[:2]
+        engine_h, engine_w = matcher.input_shape[2:]
+        template_scale = (template_w / engine_w, template_h / engine_h)
+
+        target_scaled = target_img_full
+        if matcher.scale != 1.0:
+            target_scaled = cv2.resize(target_img_full, None, fx=matcher.scale, fy=matcher.scale)
+        target_gray = cv2.cvtColor(target_scaled, cv2.COLOR_BGR2GRAY)
+        target_h, target_w = target_gray.shape[:2]
+        target_scale = (target_w / engine_w, target_h / engine_h)
+
+        m_kpts0[:, 0] *= template_scale[0]
+        m_kpts0[:, 1] *= template_scale[1]
+        m_kpts1[:, 0] *= target_scale[0]
+        m_kpts1[:, 1] *= target_scale[1]
+
+        # RANSAC homography
+        H, mask = cv2.findHomography(m_kpts0, m_kpts1, cv2.RANSAC, ransac_threshold)
+
+        if H is None:
+            return {
+                'success': False,
+                'error': 'Homography estimation failed',
+                'homography': None,
+                'confidence': 0.0,
+                'inliers': 0,
+                'total_matches': len(valid_matches),
+                'transformed_bboxes': [],
+                'target_img': target_img_full
+            }
+
+        inliers = np.sum(mask)
+        confidence = inliers / len(m_kpts0)
+
+        # Transform bboxes to full-size image
+        scale_matrix = np.array([
+            [1/matcher.scale, 0, 0],
+            [0, 1/matcher.scale, 0],
+            [0, 0, 1]
+        ])
+
+        H_full = scale_matrix @ H @ np.linalg.inv(scale_matrix)
+
+        transformed_bboxes = []
+
+        # Transform template bbox
+        template_pts = np.array(matcher.template_bbox['points'], dtype=np.float32).reshape(-1, 1, 2)
+        template_transformed = cv2.perspectiveTransform(template_pts, H_full)
+        transformed_bboxes.append({
+            'type': 'template',
+            'points': template_transformed.reshape(-1, 2).tolist()
+        })
+
+        # Transform other bboxes
+        for bbox in matcher.other_bboxes:
+            pts = np.array(bbox['points'], dtype=np.float32).reshape(-1, 1, 2)
+            pts_transformed = cv2.perspectiveTransform(pts, H_full)
+            transformed_bboxes.append({
+                'type': bbox['type'],
+                'points': pts_transformed.reshape(-1, 2).tolist(),
+                'text': bbox.get('text', '')
+            })
+
+        return {
+            'success': True,
+            'homography': H_full,
+            'confidence': float(confidence),
+            'inliers': int(inliers),
+            'total_matches': len(valid_matches),
+            'transformed_bboxes': transformed_bboxes,
+            'target_img': target_img_full
+        }
+
     def _match_impl(self, target_img_full: np.ndarray, score_threshold: float,
                     ransac_threshold: float, timings: Dict, t_total: float) -> Dict:
         """Internal implementation of template matching"""

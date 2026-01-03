@@ -195,16 +195,19 @@ class InferenceHandler:
             camera_inference_results = {}
             overall_pass_fail = "PASS"  # Default
 
-            logger.info(f"Running inference on {len(cameras_to_process)} cameras")
+            logger.info(f"Running BATCH inference on {len(cameras_to_process)} cameras")
 
-            for camera in cameras_to_process:
+            if len(cameras_to_process) == 0:
+                logger.warning("No cameras to process")
+            elif len(cameras_to_process) == 1:
+                # Single camera - use original match_array (no batch overhead)
+                camera = cameras_to_process[0]
                 serial_number = camera.serial_number
                 first_frame = results[serial_number]['frames'][0]
 
-                logger.info(f"Running inference on camera {serial_number} frame 0")
+                logger.info(f"Running single-camera inference on {serial_number}")
 
-                # Run inference using camera's matcher
-                inference_result_data = "PASS"  # Default
+                inference_result_data = "PASS"
                 confidence = 0.0
                 inliers = 0
                 total_matches = 0
@@ -214,34 +217,25 @@ class InferenceHandler:
                 matcher = self.camera_matchers.get(serial_number)
                 if matcher:
                     try:
-                        # Run matcher inference using match_array (in main thread - CUDA context OK)
                         match_result = matcher.match_array(
                             target_img_array=first_frame,
                             score_threshold=0.3,
                             ransac_threshold=5.0
                         )
 
-                        # Check if matching succeeded
                         if match_result.get('success', False):
-                            # Convert numpy types to Python native types for JSON serialization
                             confidence = float(match_result.get('confidence', 0.0))
                             inliers = int(match_result.get('inliers', 0))
                             total_matches = int(match_result.get('total_matches', 0))
-
-                            # Get timing information
                             timings = match_result.get('timings', {})
-
-                            # Get transformed bboxes for visualization
                             transformed_bboxes = match_result.get('transformed_bboxes', [])
 
-                            # Simple pass/fail: confidence > 0.5 and enough inliers
                             if confidence > 0.5 and inliers >= 10:
                                 inference_result_data = "PASS"
                             else:
                                 inference_result_data = "FAIL"
                         else:
                             inference_result_data = "FAIL"
-                            # Even on failure, capture timings if available
                             timings = match_result.get('timings', {})
 
                         logger.info(
@@ -251,14 +245,11 @@ class InferenceHandler:
                             f"time: {timings.get('total', 0):.1f}ms"
                         )
                     except Exception as e:
-                        logger.error(f"Error running inference on camera {serial_number}: {e}")
+                        logger.error(f"Error running inference: {e}")
                         import traceback
                         traceback.print_exc()
                         inference_result_data = "ERROR"
-                else:
-                    logger.warning("Inference matcher not available, skipping inference")
 
-                # Store results for this camera
                 camera_inference_results[serial_number] = {
                     "result": inference_result_data,
                     "confidence": confidence,
@@ -268,9 +259,120 @@ class InferenceHandler:
                     "transformed_bboxes": transformed_bboxes
                 }
 
-                # Update overall pass/fail (if any camera fails, overall fails)
                 if inference_result_data in ["FAIL", "ERROR"]:
                     overall_pass_fail = inference_result_data
+
+            else:
+                # Multiple cameras - use batch inference
+                logger.info(f"Using batch inference for {len(cameras_to_process)} cameras")
+
+                # Collect frames and matchers
+                target_imgs = []
+                matchers = []
+                serial_numbers = []
+
+                for camera in cameras_to_process:
+                    serial_number = camera.serial_number
+                    first_frame = results[serial_number]['frames'][0]
+                    matcher = self.camera_matchers.get(serial_number)
+
+                    if matcher:
+                        target_imgs.append(first_frame)
+                        matchers.append(matcher)
+                        serial_numbers.append(serial_number)
+
+                # Run batch inference (single TRT call for all cameras)
+                try:
+                    # Use first matcher to call batch inference
+                    batch_result = matchers[0].match_batch(
+                        target_imgs=target_imgs,
+                        templates=matchers,
+                        score_threshold=0.3,
+                        ransac_threshold=5.0
+                    )
+
+                    if batch_result.get('success', False):
+                        batch_timings = batch_result['batch_timings']
+                        logger.info(
+                            f"Batch inference complete: "
+                            f"total={batch_timings['total']:.1f}ms, "
+                            f"trt={batch_timings['trt_inference']:.1f}ms, "
+                            f"cameras={len(serial_numbers)}"
+                        )
+
+                        # Process results for each camera
+                        for idx, serial_number in enumerate(serial_numbers):
+                            result = batch_result['results'][idx]
+
+                            inference_result_data = "PASS"
+                            confidence = 0.0
+                            inliers = 0
+                            total_matches = 0
+                            timings = {}
+                            transformed_bboxes = []
+
+                            if result.get('success', False):
+                                confidence = float(result.get('confidence', 0.0))
+                                inliers = int(result.get('inliers', 0))
+                                total_matches = int(result.get('total_matches', 0))
+                                timings = result.get('timings', {})
+                                transformed_bboxes = result.get('transformed_bboxes', [])
+
+                                if confidence > 0.5 and inliers >= 10:
+                                    inference_result_data = "PASS"
+                                else:
+                                    inference_result_data = "FAIL"
+                            else:
+                                inference_result_data = "FAIL"
+                                timings = result.get('timings', {})
+
+                            logger.info(
+                                f"Camera {serial_number} result: {inference_result_data}, "
+                                f"confidence: {confidence:.2%}, "
+                                f"inliers: {inliers}/{total_matches}"
+                            )
+
+                            camera_inference_results[serial_number] = {
+                                "result": inference_result_data,
+                                "confidence": confidence,
+                                "inliers": inliers,
+                                "total_matches": total_matches,
+                                "timings": timings,
+                                "transformed_bboxes": transformed_bboxes
+                            }
+
+                            if inference_result_data in ["FAIL", "ERROR"]:
+                                overall_pass_fail = inference_result_data
+
+                    else:
+                        logger.error(f"Batch inference failed: {batch_result.get('error')}")
+                        # Fall back to sequential for all cameras
+                        for serial_number in serial_numbers:
+                            camera_inference_results[serial_number] = {
+                                "result": "ERROR",
+                                "confidence": 0.0,
+                                "inliers": 0,
+                                "total_matches": 0,
+                                "timings": {},
+                                "transformed_bboxes": []
+                            }
+                        overall_pass_fail = "ERROR"
+
+                except Exception as e:
+                    logger.error(f"Error in batch inference: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # Mark all as ERROR
+                    for serial_number in serial_numbers:
+                        camera_inference_results[serial_number] = {
+                            "result": "ERROR",
+                            "confidence": 0.0,
+                            "inliers": 0,
+                            "total_matches": 0,
+                            "timings": {},
+                            "transformed_bboxes": []
+                        }
+                    overall_pass_fail = "ERROR"
 
             # Build inference result structure
             inference_result = self._build_inference_result(
@@ -388,13 +490,44 @@ class InferenceHandler:
         all_total_matches = []
         all_timings = {}
 
+        # Build detailed per-camera stats
+        per_camera_detailed_stats = []
         for serial_number, camera_inference in camera_inference_results.items():
             all_confidences.append(camera_inference["confidence"])
             all_inliers.append(camera_inference["inliers"])
             all_total_matches.append(camera_inference["total_matches"])
-            # Use first camera's timing for now
+
+            # Collect timing from each camera
             if not all_timings and camera_inference["timings"]:
                 all_timings = camera_inference["timings"]
+
+            # Find this camera's result to get frame stats
+            camera_result = next((cr for cr in camera_results if cr["serial_number"] == serial_number), None)
+
+            if camera_result:
+                frames = camera_result.get("frames", [])
+                pass_count = sum(1 for f in frames if f["pass_fail"] == "PASS")
+                fail_count = sum(1 for f in frames if f["pass_fail"] == "FAIL")
+                error_count = sum(1 for f in frames if f["pass_fail"] == "ERROR")
+
+                # Calculate average confidence for all frames of this camera
+                frame_confidences = [f["confidence"] for f in frames if f["confidence"] > 0]
+                avg_frame_confidence = sum(frame_confidences) / len(frame_confidences) if frame_confidences else camera_inference["confidence"]
+
+                per_camera_detailed_stats.append({
+                    "serial_number": serial_number,
+                    "confidence": camera_inference["confidence"],
+                    "inliers": camera_inference["inliers"],
+                    "total_matches": camera_inference["total_matches"],
+                    "timings": camera_inference["timings"],  # Per-camera timing
+                    "frame_stats": {
+                        "total_frames": len(frames),
+                        "pass_count": pass_count,
+                        "fail_count": fail_count,
+                        "error_count": error_count,
+                        "avg_confidence": avg_frame_confidence
+                    }
+                })
 
         # Build inference result with correct structure for backend
         first_camera = cameras[0]  # For recipe info
@@ -410,16 +543,8 @@ class InferenceHandler:
                     "avg_confidence": sum(all_confidences) / len(all_confidences) if all_confidences else 0.0,
                     "total_inliers": sum(all_inliers),
                     "total_matches": sum(all_total_matches),
-                    "per_camera_stats": [
-                        {
-                            "serial_number": sn,
-                            "confidence": camera_inference_results[sn]["confidence"],
-                            "inliers": camera_inference_results[sn]["inliers"],
-                            "total_matches": camera_inference_results[sn]["total_matches"]
-                        }
-                        for sn in camera_inference_results.keys()
-                    ],
-                    "timings": all_timings
+                    "per_camera_stats": per_camera_detailed_stats,  # Enhanced stats
+                    "overall_timings": all_timings  # Renamed for clarity
                 }
             }
         }
