@@ -128,51 +128,60 @@ def encode_image_to_base64(img, quality: int = 70) -> str:
 def save_and_encode_frame(
     frame_img,
     serial_number: str,
+    recipe_id: str,
     pass_fail: str,
     frame_idx: int,
-    temp_dir: str = "/tmp/camera_frames"
+    base_dir: str = "/home/demo/Source/ocr_datecode/backend/uploads/inference_results"
 ) -> Tuple[Optional[str], Optional[str]]:
     """
-    Save frame at full resolution and create resized/compressed version for display
+    Save frame DIRECTLY to permanent storage and create resized version for display
 
     Args:
         frame_img: Input frame (numpy array)
         serial_number: Camera serial number
+        recipe_id: Recipe ID (for directory structure)
         pass_fail: Pass/fail status (for filename)
         frame_idx: Frame index
-        temp_dir: Temporary directory path
+        base_dir: Base directory for permanent storage
 
     Returns:
-        Tuple of (temp_image_path, image_base64) or (None, None) on error
+        Tuple of (relative_image_path, image_base64) or (None, None) on error
+        - relative_image_path: Relative path from uploads/ (e.g., "inference_results/recipe_id/2026-01-04/xxx.jpg")
+        - image_base64: Base64 encoded resized image for display
     """
     try:
-        # Create temp directory
-        temp_path_dir = Path(temp_dir)
-        temp_path_dir.mkdir(parents=True, exist_ok=True)
+        # Create directory structure: base_dir/{recipe_id}/{YYYY-MM-DD}/
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        storage_dir = Path(base_dir) / recipe_id / today
+        storage_dir.mkdir(parents=True, exist_ok=True)
 
-        # Generate temp filename with pass/fail in name
+        # Generate filename with timestamp
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S%f")
-        temp_filename = f"{serial_number}_{timestamp}_{pass_fail.lower()}_f{frame_idx}.jpg"
-        temp_path = temp_path_dir / temp_filename
+        filename = f"{serial_number}_{timestamp}_{pass_fail.lower()}_f{frame_idx}.jpg"
+        full_path = storage_dir / filename
 
         # Get original dimensions
         h, w = frame_img.shape[:2]
 
-        # Save FULL resolution to temp file (for permanent storage & analysis)
-        cv2.imwrite(str(temp_path), frame_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
-        temp_image_path = str(temp_path)
+        # Save FULL resolution to permanent storage
+        cv2.imwrite(str(full_path), frame_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+
+        # Relative path for DB and API (from uploads/)
+        relative_path = f"inference_results/{recipe_id}/{today}/{filename}"
 
         # Create RESIZED + COMPRESSED version for realtime display (divide by 3)
         display_img = resize_for_display(frame_img, scale_factor=3)
         image_base64 = encode_image_to_base64(display_img, quality=70)
 
         logger.info(
-            f"Saved {pass_fail} frame: {temp_filename} "
+            f"Saved {pass_fail} frame: {relative_path} "
             f"(full: {w}x{h}, display: {display_img.shape[1]}x{display_img.shape[0]})"
         )
 
-        return temp_image_path, image_base64
+        return relative_path, image_base64
 
     except Exception as e:
         logger.error(f"Error saving/encoding frame: {e}")
+        import traceback
+        traceback.print_exc()
         return None, None

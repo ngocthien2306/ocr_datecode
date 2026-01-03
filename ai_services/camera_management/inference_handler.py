@@ -289,13 +289,15 @@ class InferenceHandler:
                 frame_confidence = confidence if is_first_frame else 0.0
 
                 # Only save/encode image if FAIL or ERROR (to save storage)
-                temp_image_path = None
+                image_path = None
                 image_base64 = None
 
                 if frame_pass_fail == "FAIL" or frame_pass_fail == "ERROR":
-                    temp_image_path, image_base64 = save_and_encode_frame(
+                    # Save directly to permanent storage with recipe_id
+                    image_path, image_base64 = save_and_encode_frame(
                         frame_img=frame_img,
                         serial_number=camera.serial_number,
+                        recipe_id=first_camera.recipe_id,
                         pass_fail=frame_pass_fail,
                         frame_idx=idx
                     )
@@ -307,7 +309,7 @@ class InferenceHandler:
                     "pass_fail": frame_pass_fail,
                     "confidence": frame_confidence,
                     "detected_regions": None,  # TODO: Add detected regions from match_result
-                    "temp_image_path": temp_image_path,
+                    "image_path": image_path,  # Changed from temp_image_path
                     "image_base64": image_base64
                 }
 

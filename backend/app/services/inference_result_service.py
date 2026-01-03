@@ -67,12 +67,11 @@ class InferenceResultService:
                 logger.error("Missing recipe_id in inference result")
                 return None
 
-            # Process images and update paths
-            # Also save base64 for SocketIO emit (but don't save to DB)
+            # Process images for SocketIO emit
+            # Camera service already saved to permanent storage, no file operations needed!
             base64_data = {}  # Store base64 separately for emit
 
             for camera_idx, camera_result in enumerate(camera_results):
-                serial_number = camera_result.get("serial_number")
                 frames = camera_result.get("frames", [])
 
                 for frame_idx, frame in enumerate(frames):
@@ -80,20 +79,8 @@ class InferenceResultService:
                     if frame.get("image_base64"):
                         base64_data[(camera_idx, frame_idx)] = frame.get("image_base64")
 
-                    # Move image from temp to permanent storage
-                    temp_image_path = frame.get("temp_image_path")
-                    if temp_image_path:
-                        new_path = self._move_image_to_storage(
-                            temp_image_path,
-                            recipe_id,
-                            serial_number,
-                            frame.get("frame_idx", 0),
-                            frame.get("pass_fail", "unknown")
-                        )
-                        if new_path:
-                            frame["image_path"] = new_path
-                            # Remove temp path from data
-                            del frame["temp_image_path"]
+                    # Note: image_path is already the correct permanent path from camera service
+                    # No file move operation needed!
 
             # Determine overall product pass/fail
             # TODO: User will implement custom logic
@@ -164,57 +151,9 @@ class InferenceResultService:
             traceback.print_exc()
             return None
 
-    def _move_image_to_storage(
-        self,
-        temp_path: str,
-        recipe_id: str,
-        serial_number: str,
-        frame_idx: int,
-        result: str
-    ) -> Optional[str]:
-        """
-        Move image from temp to permanent storage
-
-        Args:
-            temp_path: Temporary image path
-            recipe_id: Recipe ID
-            serial_number: Camera serial number
-            frame_idx: Frame index
-            result: Pass or Fail
-
-        Returns:
-            Relative path to stored image or None
-        """
-        try:
-            temp_file = Path(temp_path)
-
-            if not temp_file.exists():
-                logger.warning(f"Temp image not found: {temp_path}")
-                return None
-
-            # Create directory structure: /recipe_id/YYYY-MM-DD/
-            today = datetime.utcnow().strftime("%Y-%m-%d")
-            storage_dir = self.inference_results_path / recipe_id / today
-            storage_dir.mkdir(parents=True, exist_ok=True)
-
-            # Generate filename: serial_timestamp_result.jpg
-            timestamp = datetime.utcnow().strftime("%H%M%S%f")
-            filename = f"{serial_number}_{timestamp}_{result.lower()}_f{frame_idx}.jpg"
-
-            # Copy file
-            dest_path = storage_dir / filename
-            shutil.copy(temp_file, dest_path)
-
-            # Return relative path from uploads directory
-            relative_path = f"inference_results/{recipe_id}/{today}/{filename}"
-
-            logger.info(f"Image saved: {relative_path}")
-
-            return relative_path
-
-        except Exception as e:
-            logger.error(f"Error moving image to storage: {e}")
-            return None
+    # NOTE: _move_image_to_storage() method removed
+    # Camera service now saves directly to permanent storage
+    # No file move operation needed in backend!
 
 
 # Factory function to create service instance

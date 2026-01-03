@@ -123,8 +123,8 @@ class CameraManager:
                 # Add to cameras dict
                 self.cameras[serial_number] = camera
 
-                # Start camera thread
-                camera.start()
+                # Note: Camera loop will start automatically when set_mode() is called
+                # (e.g., when loading recipe with trigger_mode)
 
                 logger.info(f"Camera {serial_number} added and connected")
 
@@ -163,10 +163,7 @@ class CameraManager:
             try:
                 camera = self.cameras[serial_number]
 
-                # Stop camera thread
-                camera.stop()
-
-                # Disconnect camera
+                # Disconnect camera (will stop grabbing automatically)
                 camera.disconnect()
 
                 # Remove from dict
