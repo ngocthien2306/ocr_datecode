@@ -274,6 +274,66 @@ class SocketIOService {
   }
 
   /**
+   * Request I/O status (start tracking)
+   */
+  requestIOStatus(): void {
+    if (!this.socket) {
+      console.error('[SocketIO] Socket not connected');
+      return;
+    }
+
+    console.log('[SocketIO] Requesting I/O status...');
+    this.socket.emit('request_io_status');
+  }
+
+  /**
+   * Stop I/O tracking
+   */
+  stopIOTracking(): void {
+    if (!this.socket) return;
+
+    console.log('[SocketIO] Stopping I/O tracking...');
+    this.socket.emit('stop_io_tracking');
+  }
+
+  /**
+   * Listen for I/O status updates
+   */
+  onIOStatusUpdate(callback: (data: any) => void): void {
+    if (!this.socket) return;
+    this.socket.on('io_status_update', callback);
+    console.log('[SocketIO] Subscribed to io_status_update events');
+  }
+
+  offIOStatusUpdate(callback?: (data: any) => void): void {
+    if (!this.socket) return;
+
+    if (callback) {
+      this.socket.off('io_status_update', callback);
+    } else {
+      this.socket.off('io_status_update');
+    }
+
+    console.log('[SocketIO] Unsubscribed from io_status_update events');
+  }
+
+  /**
+   * Set Digital Output pin value
+   */
+  setDOPin(pinNumber: number, value: number): void {
+    if (!this.socket) {
+      console.error('[SocketIO] Socket not connected');
+      return;
+    }
+
+    console.log(`[SocketIO] Setting DO${pinNumber} to ${value}`);
+    this.socket.emit('set_do_pin', {
+      pin_number: pinNumber,
+      value: value
+    });
+  }
+
+  /**
    * Check if connected
    */
   isConnected(): boolean {

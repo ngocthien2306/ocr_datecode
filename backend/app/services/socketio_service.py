@@ -210,5 +210,92 @@ async def emit_recipe_status_change(status_data: dict):
         logger.error(f"Error emitting recipe status change: {e}")
 
 
+@sio.event
+async def request_io_status(sid, data=None):
+    """Client requests I/O status tracking"""
+    try:
+        logger.info(f"Client {sid} requesting I/O status tracking")
+
+        # Add to I/O tracking room
+        await sio.enter_room(sid, 'io_tracking')
+
+        # Start I/O tracking service
+        from app.services.io_tracking_service import io_tracking_service
+        await io_tracking_service.start_tracking()
+
+        await sio.emit('io_tracking_started', {'status': 'tracking'}, room=sid)
+
+    except Exception as e:
+        logger.error(f"Error starting I/O tracking: {e}")
+        await sio.emit('io_tracking_error', {'error': str(e)}, room=sid)
+
+
+@sio.event
+async def stop_io_tracking(sid, data=None):
+    """Client stops I/O status tracking"""
+    try:
+        logger.info(f"Client {sid} stopping I/O tracking")
+
+        # Leave I/O tracking room
+        await sio.leave_room(sid, 'io_tracking')
+
+        # Check if any clients still tracking
+        room_clients = sio.manager.rooms.get('/').get('io_tracking', set())
+        if not room_clients:
+            # No more clients tracking, stop I/O service
+            from app.services.io_tracking_service import io_tracking_service
+            await io_tracking_service.stop_tracking()
+
+    except Exception as e:
+        logger.error(f"Error stopping I/O tracking: {e}")
+
+
+@sio.event
+async def set_do_pin(sid, data):
+    """Client sets Digital Output pin value"""
+    try:
+        pin_number = data.get('pin_number')
+        value = data.get('value')
+
+        logger.info(f"Client {sid} setting DO{pin_number} to {value}")
+
+        # Write to DO pin directly
+        from app.utils.io_utils import write_do_pin
+        success = write_do_pin(pin_number, value)
+
+        if success:
+            await sio.emit('do_pin_set_success', {'pin_number': pin_number, 'value': value}, room=sid)
+        else:
+            await sio.emit('do_pin_set_error', {'error': 'Failed to set DO pin'}, room=sid)
+
+    except Exception as e:
+        logger.error(f"Error setting DO pin: {e}")
+        await sio.emit('do_pin_set_error', {'error': str(e)}, room=sid)
+
+
+async def emit_io_status_update(io_data: dict):
+    """
+    Emit I/O status update to all tracking clients
+
+    Args:
+        io_data: I/O status data
+            {
+                'di': [0, 1, 0, 1],  # DI0-DI3 values
+                'do': [0, 0, 1, 0],  # DO0-DO3 values
+                'timestamp': 1234567890.123
+            }
+    """
+    try:
+        await sio.emit('io_status_update', io_data, room='io_tracking')
+    except Exception as e:
+        logger.error(f"Error emitting I/O status update: {e}")
+
+
 # Export sio instance for use in other modules
-__all__ = ['sio', 'socket_app', 'emit_inference_result', 'emit_recipe_status_change']
+__all__ = [
+    'sio',
+    'socket_app',
+    'emit_inference_result',
+    'emit_recipe_status_change',
+    'emit_io_status_update'
+]

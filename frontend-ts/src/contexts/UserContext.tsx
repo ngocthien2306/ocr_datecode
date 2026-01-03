@@ -59,6 +59,7 @@ export const UserProvider: React.FC<UserProviderProps> = ({ children }) => {
         'view_camera_management',
         'view_settings',
         'view_logs',
+        'view_system',
         'create_receipt',
         'update_receipt',
         'delete_receipt',
@@ -98,7 +99,8 @@ export const UserProvider: React.FC<UserProviderProps> = ({ children }) => {
       userManagement: 'view_user_management',
       cameraManagement: 'view_camera_management',
       settings: 'view_settings',
-      logs: 'view_logs'
+      logs: 'view_logs',
+      system: 'view_system'
     };
 
     const requiredPermission = pagePermissions[page];

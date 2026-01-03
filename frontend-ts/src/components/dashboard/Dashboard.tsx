@@ -7,6 +7,7 @@ import Historical from './Historical';
 import Settings from './Settings';
 import Logs from './Logs';
 import Documentation from './Documentation';
+import System from '../../pages/System';
 import CameraManagement from '../camera/CameraManagement';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import RecipeLoadingTemplates from '../shared/RecipeLoadingTemplates';
@@ -32,7 +33,7 @@ interface DashboardProps {
   onLogout: () => void;
 }
 
-type Section = 'dashboard' | 'users' | 'receipts' | 'realtime' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation';
+type Section = 'dashboard' | 'users' | 'receipts' | 'realtime' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation' | 'system';
 
 type LoadingTemplate = 'camera-vision' | 'users' | 'receipts' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation' | 'spinner' | 'pulse' | 'radar' | 'grid' | 'circuit' | 'barcode' | 'ocr' | 'dots' | 'waves' | 'ocr-scanner' | 'barcode-scanner' | 'neural-network' | 'qr-detector' | 'industrial-factory' | 'ai-vision-pipeline' | 'neural-processing';
 
@@ -46,6 +47,7 @@ interface LoadingTemplates {
   logs: LoadingTemplate;
   documentation: LoadingTemplate;
   realtime: LoadingTemplate;
+  system: LoadingTemplate;
 }
 
 interface LoadingBackground {
@@ -82,7 +84,8 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       settings: (localStorage.getItem('settingsLoading') as LoadingTemplate) || 'settings',
       logs: (localStorage.getItem('logsLoading') as LoadingTemplate) || 'logs',
       documentation: (localStorage.getItem('documentationLoading') as LoadingTemplate) || 'ocr',
-      realtime: (localStorage.getItem('realtimeLoading') as LoadingTemplate) || 'realtime'
+      realtime: (localStorage.getItem('realtimeLoading') as LoadingTemplate) || 'realtime',
+      system: (localStorage.getItem('systemLoading') as LoadingTemplate) || 'settings'
     };
   });
   const [loadingBackground, setLoadingBackground] = useState<LoadingBackground>(() => {
@@ -1161,6 +1164,21 @@ export default function Dashboard({ onLogout }: DashboardProps) {
               </svg>
               Documentation
             </a>
+            {canAccessPage('system') && (
+              <a
+                href="#system"
+                className={`nav-item ${currentSection === 'system' ? 'active' : ''}`}
+                onClick={(e) => { e.preventDefault(); handleSectionChange('system'); }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                  <rect x="2" y="3" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2"/>
+                  <path d="M8 21H16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  <path d="M12 17V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  <circle cx="12" cy="10" r="2" fill="currentColor"/>
+                </svg>
+                System I/O
+              </a>
+            )}
             <a href="#logout" className="nav-item" onClick={(e) => { e.preventDefault(); handleLogout(); }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                 <path d="M9 21H5A2 2 0 0 1 3 19V5A2 2 0 0 1 5 3H9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -1476,6 +1494,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           {currentSection === 'logs' && <Logs />}
           {currentSection === 'settings' && <Settings />}
           {currentSection === 'documentation' && <Documentation />}
+          {currentSection === 'system' && canAccessPage('system') && <System />}
             </>
           )}
         </main>
