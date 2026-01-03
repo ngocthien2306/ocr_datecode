@@ -153,12 +153,12 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           delay_trigger: cam.delay_trigger || 100.0,
           gain: cam.gain || 1.0,
           pixel_format: cam.pixel_format || 'Mono8',
+          trigger_mode: cam.trigger_mode || 'continuous',
           trigger_config: {
-            mode: cam.trigger_config?.mode || 'continuous',
-            trigger_source: cam.trigger_config?.trigger_source || 'Software',
             trigger_selector: cam.trigger_config?.trigger_selector || 'FrameStart',
             trigger_activation: cam.trigger_config?.trigger_activation || 'RisingEdge',
-            di_number: cam.trigger_config?.di_number !== undefined ? cam.trigger_config.di_number : 0
+            di_number: cam.trigger_config?.di_number !== undefined ? cam.trigger_config.di_number : 0,
+            trigger_source: cam.trigger_config?.trigger_source || 'Line0'
           }
         };
       });

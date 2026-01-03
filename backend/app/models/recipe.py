@@ -34,11 +34,10 @@ class CameraTemplates(BaseModel):
 
 class TriggerConfiguration(BaseModel):
     """Camera trigger configuration"""
-    mode: str = Field(default="continuous", description="Trigger mode: continuous, software, hardware")
-    trigger_source: str = Field(default="Software", description="Trigger source (Software, Line0, Line1, etc.)")
-    trigger_selector: str = Field(default="FrameStart", description="Trigger type (FrameStart, ExposureStart, etc.)")
+    trigger_selector: str = Field(default="FrameStart", description="Trigger selector (FrameStart, ExposureStart, FrameBurstStart)")
     trigger_activation: str = Field(default="RisingEdge", description="Trigger edge activation (RisingEdge, FallingEdge, AnyEdge)")
-    di_number: int = Field(default=0, ge=0, le=3, description="Digital Input number for hardware trigger (0-3)")
+    di_number: int = Field(default=0, ge=0, le=3, description="Digital Input number for software trigger (0-3)")
+    trigger_source: str = Field(default="Line0", description="Trigger source for hardware trigger (Line0, Line1, Line2, Line3)")
 
 
 class CameraConfiguration(BaseModel):
@@ -49,15 +48,16 @@ class CameraConfiguration(BaseModel):
     model_name: str = Field(..., description="Camera model name")
     serial_number: str = Field(..., description="Camera serial number")
     location: Optional[str] = Field(None, description="Camera location")
-    
+
     # Camera-specific settings for this recipe
     exposure_time: float = Field(..., description="Exposure time in milliseconds")
     delay_trigger: float = Field(..., description="Delay trigger in milliseconds")
     gain: float = Field(default=1.0, description="Camera gain")
-    
-    # Trigger configuration
+
+    # Trigger mode and configuration
+    trigger_mode: str = Field(default="continuous", description="Trigger mode: continuous, software_trigger, hardware_trigger")
     trigger_config: TriggerConfiguration = Field(default_factory=TriggerConfiguration)
-    
+
     # Pixel format
     pixel_format: str = Field(default="Mono8", description="Pixel format (Mono8, Mono12, RGB8, YUV422, etc.)")
 
