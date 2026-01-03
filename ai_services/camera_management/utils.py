@@ -7,7 +7,8 @@ import cv2
 import subprocess
 import logging
 import base64
-from typing import Optional, Tuple
+import numpy as np
+from typing import Optional, Tuple, List, Dict, Any
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -125,16 +126,98 @@ def encode_image_to_base64(img, quality: int = 70) -> str:
     return base64.b64encode(buffer).decode('utf-8')
 
 
+def draw_inference_bboxes(
+    img: np.ndarray,
+    transformed_bboxes: List[Dict[str, Any]],
+    confidence: float,
+    inliers: int,
+    total_matches: int
+) -> np.ndarray:
+    """
+    Draw inference bounding boxes on image
+
+    Args:
+        img: Input image (numpy array)
+        transformed_bboxes: List of transformed bbox dicts from inference
+            Each bbox: {'type': str, 'points': [[x,y], ...], 'text': str (optional)}
+        confidence: Confidence score (0-1)
+        inliers: Number of inliers
+        total_matches: Total matches
+
+    Returns:
+        Image with bboxes drawn
+    """
+    result_img = img.copy()
+
+    # Define colors for different bbox types
+    colors = {
+        'template': (0, 255, 0),      # Green
+        'text': (255, 165, 0),         # Orange
+        'barcode': (255, 0, 255),      # Magenta
+        'datecode': (0, 255, 255)      # Cyan
+    }
+
+    # Draw each bbox
+    for bbox in transformed_bboxes:
+        bbox_type = bbox.get('type', 'text')
+        points = bbox.get('points', [])
+        text_label = bbox.get('text', '')
+
+        if len(points) < 3:
+            continue
+
+        # Get color
+        color = colors.get(bbox_type, (255, 255, 255))
+
+        # Convert points to numpy array
+        pts = np.array(points, dtype=np.int32)
+
+        # Draw polygon
+        cv2.polylines(result_img, [pts], isClosed=True, color=color, thickness=3)
+
+        # Draw label if available
+        if text_label and len(points) > 0:
+            label_pos = (int(points[0][0]), int(points[0][1]) - 10)
+            cv2.putText(
+                result_img,
+                text_label,
+                label_pos,
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                color,
+                2
+            )
+
+    # Draw inference stats at top-left
+    stats_text = f"Conf: {confidence:.1%} | Inliers: {inliers}/{total_matches}"
+    cv2.putText(
+        result_img,
+        stats_text,
+        (10, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1.0,
+        (0, 255, 0) if confidence > 0.5 else (0, 0, 255),
+        2
+    )
+
+    return result_img
+
+
 def save_and_encode_frame(
     frame_img,
     serial_number: str,
     recipe_id: str,
     pass_fail: str,
     frame_idx: int,
-    base_dir: str = "/home/demo/Source/ocr_datecode/backend/uploads/inference_results"
+    base_dir: str = "/home/demo/Source/ocr_datecode/backend/uploads/inference_results",
+    transformed_bboxes: Optional[List[Dict[str, Any]]] = None,
+    confidence: float = 0.0,
+    inliers: int = 0,
+    total_matches: int = 0
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Save frame DIRECTLY to permanent storage and create resized version for display
+    Optionally draw inference bboxes on the image
 
     Args:
         frame_img: Input frame (numpy array)
@@ -143,6 +226,10 @@ def save_and_encode_frame(
         pass_fail: Pass/fail status (for filename)
         frame_idx: Frame index
         base_dir: Base directory for permanent storage
+        transformed_bboxes: Optional list of bbox dicts from inference
+        confidence: Confidence score (for drawing)
+        inliers: Number of inliers (for drawing)
+        total_matches: Total matches (for drawing)
 
     Returns:
         Tuple of (relative_image_path, image_base64) or (None, None) on error
@@ -150,6 +237,18 @@ def save_and_encode_frame(
         - image_base64: Base64 encoded resized image for display
     """
     try:
+        # Draw bboxes if provided (for inference frames)
+        img_to_save = frame_img
+        if transformed_bboxes and len(transformed_bboxes) > 0:
+            img_to_save = draw_inference_bboxes(
+                frame_img,
+                transformed_bboxes,
+                confidence,
+                inliers,
+                total_matches
+            )
+            logger.info(f"Drew {len(transformed_bboxes)} bboxes on frame")
+
         # Create directory structure: base_dir/{recipe_id}/{YYYY-MM-DD}/
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         storage_dir = Path(base_dir) / recipe_id / today
@@ -161,16 +260,16 @@ def save_and_encode_frame(
         full_path = storage_dir / filename
 
         # Get original dimensions
-        h, w = frame_img.shape[:2]
+        h, w = img_to_save.shape[:2]
 
-        # Save FULL resolution to permanent storage
-        cv2.imwrite(str(full_path), frame_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        # Save FULL resolution to permanent storage (with bboxes drawn if applicable)
+        cv2.imwrite(str(full_path), img_to_save, [cv2.IMWRITE_JPEG_QUALITY, 95])
 
         # Relative path for DB and API (from uploads/)
         relative_path = f"inference_results/{recipe_id}/{today}/{filename}"
 
         # Create RESIZED + COMPRESSED version for realtime display (divide by 3)
-        display_img = resize_for_display(frame_img, scale_factor=3)
+        display_img = resize_for_display(img_to_save, scale_factor=3)
         image_base64 = encode_image_to_base64(display_img, quality=70)
 
         logger.info(

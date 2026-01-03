@@ -190,6 +190,8 @@ class InferenceHandler:
             confidence = 0.0
             inliers = 0
             total_matches = 0
+            timings = {}
+            transformed_bboxes = []
 
             if self.inference_matcher:
                 try:
@@ -207,6 +209,12 @@ class InferenceHandler:
                         inliers = int(match_result.get('inliers', 0))
                         total_matches = int(match_result.get('total_matches', 0))
 
+                        # Get timing information
+                        timings = match_result.get('timings', {})
+
+                        # Get transformed bboxes for visualization
+                        transformed_bboxes = match_result.get('transformed_bboxes', [])
+
                         # Simple pass/fail: confidence > 0.5 and enough inliers
                         if confidence > 0.5 and inliers >= 10:
                             inference_result_data = "PASS"
@@ -214,11 +222,14 @@ class InferenceHandler:
                             inference_result_data = "FAIL"
                     else:
                         inference_result_data = "FAIL"
+                        # Even on failure, capture timings if available
+                        timings = match_result.get('timings', {})
 
                     logger.info(
                         f"Inference result: {inference_result_data}, "
                         f"confidence: {confidence:.2%}, "
-                        f"inliers: {inliers}/{total_matches}"
+                        f"inliers: {inliers}/{total_matches}, "
+                        f"time: {timings.get('total', 0):.1f}ms"
                     )
                 except Exception as e:
                     logger.error(f"Error running inference: {e}")
@@ -237,7 +248,9 @@ class InferenceHandler:
                     "result": inference_result_data,
                     "confidence": confidence,
                     "inliers": inliers,
-                    "total_matches": total_matches
+                    "total_matches": total_matches,
+                    "timings": timings,
+                    "transformed_bboxes": transformed_bboxes
                 }
             )
 
@@ -274,6 +287,8 @@ class InferenceHandler:
         confidence = inference_data["confidence"]
         inliers = inference_data["inliers"]
         total_matches = inference_data["total_matches"]
+        timings = inference_data.get("timings", {})
+        transformed_bboxes = inference_data.get("transformed_bboxes", [])
 
         # Build camera_results structure for backend
         camera_results = []
@@ -294,12 +309,17 @@ class InferenceHandler:
 
                 if frame_pass_fail == "FAIL" or frame_pass_fail == "ERROR":
                     # Save directly to permanent storage with recipe_id
+                    # Pass bbox info for first frame to draw on image
                     image_path, image_base64 = save_and_encode_frame(
                         frame_img=frame_img,
                         serial_number=camera.serial_number,
                         recipe_id=first_camera.recipe_id,
                         pass_fail=frame_pass_fail,
-                        frame_idx=idx
+                        frame_idx=idx,
+                        transformed_bboxes=transformed_bboxes if is_first_frame else None,
+                        confidence=confidence if is_first_frame else 0.0,
+                        inliers=inliers if is_first_frame else 0,
+                        total_matches=total_matches if is_first_frame else 0
                     )
 
                 # Build frame result
@@ -308,9 +328,10 @@ class InferenceHandler:
                     "frame_idx": idx,
                     "pass_fail": frame_pass_fail,
                     "confidence": frame_confidence,
-                    "detected_regions": None,  # TODO: Add detected regions from match_result
-                    "image_path": image_path,  # Changed from temp_image_path
-                    "image_base64": image_base64
+                    "detected_regions": transformed_bboxes if is_first_frame else None,
+                    "image_path": image_path,
+                    "image_base64": image_base64,
+                    "timings": timings if is_first_frame else None  # Only first frame has timing
                 }
 
                 frame_results.append(frame_result)
@@ -335,7 +356,8 @@ class InferenceHandler:
                 "inference_stats": {
                     "confidence": confidence,
                     "inliers": inliers,
-                    "total_matches": total_matches
+                    "total_matches": total_matches,
+                    "timings": timings
                 }
             }
         }

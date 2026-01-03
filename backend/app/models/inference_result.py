@@ -49,6 +49,10 @@ class FrameResult(BaseModel):
         None,
         description="Detected regions with bounding boxes"
     )
+    timings: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Inference timing breakdown (ms)"
+    )
     # NOTE: image_base64 is NOT stored in DB - only used for realtime SocketIO emission
 
 

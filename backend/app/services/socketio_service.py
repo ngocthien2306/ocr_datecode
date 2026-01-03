@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 sio = socketio.AsyncServer(
     async_mode='asgi',
     cors_allowed_origins='*',  # Configure based on your CORS requirements
-    logger=True,
-    engineio_logger=True
+    logger=False,  # Disable verbose socketio logging (hides base64 data in console)
+    engineio_logger=False  # Disable engineio logging
 )
 
 # Wrap with ASGI app
