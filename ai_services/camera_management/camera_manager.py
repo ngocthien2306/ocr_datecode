@@ -7,9 +7,24 @@ import logging
 import threading
 import subprocess
 import time
+import cv2
 from typing import Dict, Any, Optional, Callable, List, Tuple
+from pathlib import Path
 from .camera import Camera, CameraMode
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Import inference service
+try:
+    import sys
+    ai_services_path = Path(__file__).parent.parent
+    if str(ai_services_path) not in sys.path:
+        sys.path.insert(0, str(ai_services_path))
+    from inference_service import SuperPointMatcherTRT
+    INFERENCE_AVAILABLE = True
+except Exception as e:
+    logging.warning(f"Inference service not available: {e}")
+    INFERENCE_AVAILABLE = False
+    SuperPointMatcherTRT = None
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +68,9 @@ class CameraManager:
 
         # Previous DI values for edge detection
         self.previous_di_values: Dict[int, Optional[int]] = {0: None, 1: None, 2: None, 3: None}
+
+        # Inference matcher (Phase 1: single matcher for first camera)
+        self.inference_matcher: Optional[Any] = None
 
         logger.info("CameraManager initialized")
 
@@ -789,32 +807,225 @@ class CameraManager:
             })
             return
 
-        # Step 3: All cameras succeeded - run simple inference (Phase 1)
+        # Step 3: All cameras succeeded - run inference (Phase 1)
         logger.info(f"All {len(cameras)} cameras captured successfully")
 
         # Simple inference: Use first camera's first frame only
         first_camera = cameras[0]
+        first_frame = results[first_camera.serial_number]['frames'][0]
 
         logger.info(f"Running inference on camera {first_camera.serial_number} frame 0")
 
-        # TODO: Implement actual inference logic here
-        # For now, just emit a placeholder result
-        
+        # Initialize inference matcher if not already initialized and inference available
+        if INFERENCE_AVAILABLE and SuperPointMatcherTRT and self.inference_matcher is None:
+            self.inference_matcher = self._init_inference_matcher(first_camera)
 
+        # Run inference
+        inference_result_data = "PASS"  # Default
+        confidence = 0.0
+        inliers = 0
+        total_matches = 0
+
+        if self.inference_matcher:
+            try:
+                # Run matcher inference using match_array
+                match_result = self.inference_matcher.match_array(
+                    target_img_array=first_frame,
+                    score_threshold=0.3,
+                    ransac_threshold=5.0
+                )
+
+                # Check if matching succeeded
+                if match_result.get('success', False):
+                    confidence = match_result.get('confidence', 0.0)
+                    inliers = match_result.get('inliers', 0)
+                    total_matches = match_result.get('total_matches', 0)
+
+                    # Simple pass/fail: confidence > 0.5 and enough inliers
+                    if confidence > 0.5 and inliers >= 10:
+                        inference_result_data = "PASS"
+                    else:
+                        inference_result_data = "FAIL"
+                else:
+                    inference_result_data = "FAIL"
+
+                logger.info(
+                    f"Inference result: {inference_result_data}, "
+                    f"confidence: {confidence:.2%}, "
+                    f"inliers: {inliers}/{total_matches}"
+                )
+            except Exception as e:
+                logger.error(f"Error running inference: {e}")
+                import traceback
+                traceback.print_exc()
+                inference_result_data = "ERROR"
+        else:
+            logger.warning("Inference matcher not available, skipping inference")
+
+        # Build camera_results structure for backend
+        camera_results = []
+        for camera in cameras:
+            camera_frames = results[camera.serial_number]['frames']
+
+            # Build frame results (Phase 1: only process first frame of first camera)
+            frame_results = []
+            for idx, frame in enumerate(camera_frames):
+                # For first camera first frame, use real inference result
+                if camera == first_camera and idx == 0:
+                    frame_result = {
+                        "template_name": camera.templates[idx].get('name', f'Template {idx+1}') if idx < len(camera.templates) else f'Template {idx+1}',
+                        "frame_idx": idx,
+                        "pass_fail": inference_result_data,
+                        "confidence": confidence,
+                        "detected_regions": None  # TODO: Add detected regions from match_result
+                    }
+                else:
+                    # For other frames/cameras, placeholder (will be implemented later)
+                    frame_result = {
+                        "template_name": camera.templates[idx].get('name', f'Template {idx+1}') if idx < len(camera.templates) else f'Template {idx+1}',
+                        "frame_idx": idx,
+                        "pass_fail": "PASS",  # Placeholder
+                        "confidence": 0.0,
+                        "detected_regions": None
+                    }
+
+                frame_results.append(frame_result)
+
+            # Build camera result
+            camera_result = {
+                "camera_id": camera.serial_number,  # TODO: Use actual camera_id from DB
+                "serial_number": camera.serial_number,
+                "frames": frame_results
+            }
+            camera_results.append(camera_result)
+
+        # Build inference result with correct structure for backend
         inference_result = {
-            "recipe_id": first_camera.recipe_id,  # Add recipe_id from camera
-            "recipe_name": first_camera.recipe_name,  # Add recipe_name
-            "camera_serial": first_camera.serial_number,
-            "frame_count": len(results[first_camera.serial_number]['frames']),
-            "total_cameras": len(cameras),
-            "result": "PASS",  # Placeholder
-            "timestamp": time.time()
+            "recipe_id": first_camera.recipe_id,
+            "recipe_name": first_camera.recipe_name,
+            "product_pass_fail": inference_result_data,  # Overall result
+            "camera_results": camera_results,
+            "metadata": {
+                "total_cameras": len(cameras),
+                "total_frames": sum(len(r['frames']) for r in results.values()),
+                "inference_stats": {
+                    "confidence": confidence,
+                    "inliers": inliers,
+                    "total_matches": total_matches
+                }
+            }
         }
 
         # Step 4: Emit inference result
         self._emit_event("inference_result", inference_result)
 
-        logger.info(f"Inference complete: {inference_result['result']}")
+        logger.info(f"Inference complete: {inference_result['product_pass_fail']}")
+
+    def _init_inference_matcher(self, camera: Camera):
+        """
+        Initialize inference matcher using first camera's templates
+
+        Args:
+            camera: Camera object with templates loaded
+
+        Returns:
+            SuperPointMatcherTRT instance or None
+        """
+        try:
+            if not camera.templates:
+                logger.error(f"No templates found for camera {camera.serial_number}")
+                return None
+
+            # Get first template
+            template_data = camera.templates[0]
+            image_url = template_data.get("image_url")
+
+            if not image_url:
+                logger.error("No template image URL")
+                return None
+
+            # Copy template to temp directory
+            filename = image_url.split("/")[-1]
+            backend_dir = Path(__file__).parent.parent.parent / "backend"
+            source_path = backend_dir / "uploads" / "templates" / filename
+
+            if not source_path.exists():
+                logger.error(f"Template not found: {source_path}")
+                return None
+
+            temp_dir = Path("ocr_inference")
+            temp_dir.mkdir(exist_ok=True)
+            template_path = temp_dir / f"template_{camera.serial_number}.jpg"
+
+            import shutil
+            shutil.copy(source_path, template_path)
+
+            # Parse annotations
+            annotations = template_data.get("annotations", [])
+            template_bbox = None
+            other_bboxes = []
+
+            template_img = cv2.imread(str(template_path))
+            img_h, img_w = template_img.shape[:2]
+
+            for ann in annotations:
+                ann_type = ann.get("type", "")
+
+                if ann_type == "template":
+                    x, y = ann.get("x", 0), ann.get("y", 0)
+                    w, h = ann.get("width", 0), ann.get("height", 0)
+
+                    x1, y1 = int(x * img_w), int(y * img_h)
+                    x2, y2 = int((x + w) * img_w), int((y + h) * img_h)
+
+                    template_bbox = {
+                        "type": "template",
+                        "points": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+                    }
+
+                elif ann_type == "text" and ann.get("points"):
+                    pixel_points = [
+                        [int(pt[0] * img_w), int(pt[1] * img_h)]
+                        for pt in ann.get("points", [])
+                    ]
+                    other_bboxes.append({
+                        "type": ann_type,
+                        "text": ann.get("text", ""),
+                        "points": pixel_points
+                    })
+
+            if not template_bbox:
+                logger.error("No template bbox in annotations")
+                return None
+
+            # Create annotation file
+            import json
+            ann_json_path = temp_dir / f"annotations_manager.json"
+            ann_data = {
+                "_template_image": str(template_path),
+                str(template_path): [template_bbox] + other_bboxes
+            }
+
+            with open(ann_json_path, "w") as f:
+                json.dump(ann_data, f, indent=2)
+
+            # Initialize matcher
+            engine_path = "/home/demo/Source/ocr_datecode/weights/pipeline_fp16_small.engine"
+            matcher = SuperPointMatcherTRT(
+                json_path=str(ann_json_path),
+                engine_path=engine_path,
+                scale=1.0,
+                verbose=True
+            )
+
+            logger.info(f"Inference matcher initialized in CameraManager for camera {camera.serial_number}")
+            return matcher
+
+        except Exception as e:
+            logger.error(f"Error initializing inference matcher: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
     def shutdown(self):
         """Shutdown all cameras and stop trigger polling"""

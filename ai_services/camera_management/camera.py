@@ -18,18 +18,7 @@ from datetime import datetime, timezone
 import shutil
 import json
 
-# Import inference service
-try:
-    import sys
-    ai_services_path = Path(__file__).parent.parent
-    if str(ai_services_path) not in sys.path:
-        sys.path.insert(0, str(ai_services_path))
-    from inference_service import SuperPointMatcherTRT
-    INFERENCE_AVAILABLE = True
-except Exception as e:
-    logging.warning(f"Inference service not available: {e}")
-    INFERENCE_AVAILABLE = False
-    SuperPointMatcherTRT = None
+# Inference removed - now handled by CameraManager
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +86,6 @@ class Camera:
         self.recipe_id: Optional[str] = None
         self.recipe_name: Optional[str] = None
         self.templates: List[Dict[str, Any]] = []
-        self.inference_matcher: Optional[Any] = None
 
         # Frame tracking
         self.frame_idx = 0
@@ -535,13 +523,6 @@ class Camera:
                 logger.warning(f"No templates found for camera {self.serial_number}")
                 return False
 
-            # Initialize inference matcher
-            if INFERENCE_AVAILABLE and SuperPointMatcherTRT:
-                self.inference_matcher = self._init_inference_matcher(
-                    recipe_data,
-                    camera_id
-                )
-
             logger.info(
                 f"[{self.serial_number}] Recipe loaded: {self.recipe_name}, "
                 f"templates: {len(self.templates)}, "
@@ -580,107 +561,11 @@ class Camera:
             traceback.print_exc()
             return False
 
-    def _init_inference_matcher(
-        self,
-        recipe_data: Dict[str, Any],
-        camera_id: str,
-        engine_path: str = "/home/demo/Source/ocr_datecode/weights/pipeline_fp16_small.engine"
-    ):
-        """Initialize TensorRT inference matcher"""
-        try:
-            # Get first template (will support multi-template later)
-            template_data = self.templates[0]
-            image_url = template_data.get("image_url")
-
-            if not image_url:
-                logger.error("No template image URL")
-                return None
-
-            # Copy template to temp directory
-            filename = image_url.split("/")[-1]
-            backend_dir = Path(__file__).parent.parent.parent / "backend"
-            source_path = backend_dir / "uploads" / "templates" / filename
-
-            if not source_path.exists():
-                logger.error(f"Template not found: {source_path}")
-                return None
-
-            temp_dir = Path("ocr_inference")
-            temp_dir.mkdir(exist_ok=True)
-            template_path = temp_dir / f"template_{self.serial_number}.jpg"
-            shutil.copy(source_path, template_path)
-
-            # Parse annotations
-            annotations = template_data.get("annotations", [])
-            template_bbox = None
-            other_bboxes = []
-
-            template_img = cv2.imread(str(template_path))
-            img_h, img_w = template_img.shape[:2]
-
-            for ann in annotations:
-                ann_type = ann.get("type", "")
-
-                if ann_type == "template":
-                    x, y = ann.get("x", 0), ann.get("y", 0)
-                    w, h = ann.get("width", 0), ann.get("height", 0)
-
-                    x1, y1 = int(x * img_w), int(y * img_h)
-                    x2, y2 = int((x + w) * img_w), int((y + h) * img_h)
-
-                    template_bbox = {
-                        "type": "template",
-                        "points": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
-                    }
-
-                elif ann_type == "text" and ann.get("points"):
-                    pixel_points = [
-                        [int(pt[0] * img_w), int(pt[1] * img_h)]
-                        for pt in ann.get("points", [])
-                    ]
-                    other_bboxes.append({
-                        "type": ann_type,
-                        "text": ann.get("text", ""),
-                        "points": pixel_points
-                    })
-
-            if not template_bbox:
-                logger.error("No template bbox in annotations")
-                return None
-
-            # Create annotation file
-            ann_json_path = temp_dir / f"annotations_{self.serial_number}.json"
-            ann_data = {
-                "_template_image": str(template_path),
-                str(template_path): [template_bbox] + other_bboxes
-            }
-
-            with open(ann_json_path, "w") as f:
-                json.dump(ann_data, f, indent=2)
-
-            # Initialize matcher
-            matcher = SuperPointMatcherTRT(
-                json_path=str(ann_json_path),
-                engine_path=engine_path,
-                scale=1.0,
-                verbose=True
-            )
-
-            logger.info(f"[{self.serial_number}] Inference matcher initialized")
-            return matcher
-
-        except Exception as e:
-            logger.error(f"Error initializing matcher: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
-
     def stop_recipe(self):
         """Stop recipe and switch back to continuous mode"""
         self.recipe_id = None
         self.recipe_name = None
         self.templates = []
-        self.inference_matcher = None
         self.set_mode(CameraMode.CONTINUOUS)
 
         logger.info(f"[{self.serial_number}] Recipe stopped, mode set to CONTINUOUS")
