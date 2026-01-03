@@ -35,7 +35,7 @@ interface DashboardProps {
 
 type Section = 'dashboard' | 'users' | 'receipts' | 'realtime' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation' | 'system';
 
-type LoadingTemplate = 'camera-vision' | 'users' | 'receipts' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation' | 'spinner' | 'pulse' | 'radar' | 'grid' | 'circuit' | 'barcode' | 'ocr' | 'dots' | 'waves' | 'ocr-scanner' | 'barcode-scanner' | 'neural-network' | 'qr-detector' | 'industrial-factory' | 'ai-vision-pipeline' | 'neural-processing';
+type LoadingTemplate = 'camera-vision' | 'users' | 'receipts' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation' | 'spinner' | 'pulse' | 'radar' | 'grid' | 'circuit' | 'barcode' | 'ocr' | 'dots' | 'waves' | 'ocr-scanner' | 'barcode-scanner' | 'neural-network' | 'qr-detector' | 'industrial-factory' | 'ai-vision-pipeline' | 'neural-processing' | 'system-io';
 
 interface LoadingTemplates {
   dashboard: LoadingTemplate;
@@ -85,7 +85,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       logs: (localStorage.getItem('logsLoading') as LoadingTemplate) || 'logs',
       documentation: (localStorage.getItem('documentationLoading') as LoadingTemplate) || 'ocr',
       realtime: (localStorage.getItem('realtimeLoading') as LoadingTemplate) || 'realtime',
-      system: (localStorage.getItem('systemLoading') as LoadingTemplate) || 'settings'
+      system: (localStorage.getItem('systemLoading') as LoadingTemplate) || 'system-io'
     };
   });
   const [loadingBackground, setLoadingBackground] = useState<LoadingBackground>(() => {
@@ -508,6 +508,39 @@ export default function Dashboard({ onLogout }: DashboardProps) {
             <div className="loading-text-container">
               <div className="loading-title">DOCUMENTATION</div>
               <div className="loading-subtitle">LOADING GUIDES...</div>
+            </div>
+          </>
+        );
+
+      case 'system-io':
+        return (
+          <>
+            <div className="system-io-loader">
+              <div className="io-pins-container">
+                <div className="io-section">
+                  <div className="io-label">DI</div>
+                  <div className="io-pins">
+                    <div className="io-pin io-pin-active"></div>
+                    <div className="io-pin"></div>
+                    <div className="io-pin io-pin-active"></div>
+                    <div className="io-pin"></div>
+                  </div>
+                </div>
+                <div className="io-section">
+                  <div className="io-label">DO</div>
+                  <div className="io-pins">
+                    <div className="io-pin io-pin-output"></div>
+                    <div className="io-pin io-pin-output io-pin-active"></div>
+                    <div className="io-pin io-pin-output"></div>
+                    <div className="io-pin io-pin-output io-pin-active"></div>
+                  </div>
+                </div>
+              </div>
+              <div className="io-signal-wave"></div>
+            </div>
+            <div className="loading-text-container">
+              <div className="loading-title">SYSTEM I/O</div>
+              <div className="loading-subtitle">INITIALIZING PINS...</div>
             </div>
           </>
         );

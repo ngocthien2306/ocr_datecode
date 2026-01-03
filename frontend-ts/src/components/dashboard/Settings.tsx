@@ -20,6 +20,8 @@ interface SettingsState {
   historicalLoading: string;
   settingsLoading: string;
   logsLoading: string;
+  documentationLoading: string;
+  systemLoading: string;
 
   // Recipe Loading Template (for handleLoadReceipt animation)
   recipeLoadTemplate: string;
@@ -79,6 +81,8 @@ const Settings: React.FC = () => {
     historicalLoading: 'historical',
     settingsLoading: 'settings',
     logsLoading: 'logs',
+    documentationLoading: 'ocr',
+    systemLoading: 'system-io',
     recipeLoadTemplate: 'ocr-scanner',
     recipeLoadOverlayMode: 'fullscreen',
     pageLoadingOverlayMode: 'fullscreen',
@@ -104,7 +108,7 @@ const Settings: React.FC = () => {
   });
 
   useEffect(() => {
-    const tabKeys = ['dashboard', 'users', 'receipts', 'cameras', 'historical', 'settings', 'logs'];
+    const tabKeys = ['dashboard', 'users', 'receipts', 'cameras', 'historical', 'settings', 'logs', 'documentation', 'system'];
     const loadedSettings: Partial<SettingsState> = {};
 
     // Load login template
@@ -575,8 +579,8 @@ const Settings: React.FC = () => {
 
             <div className="setting-item">
               <label>Logs Loading</label>
-              <select 
-                value={settings.logsLoading} 
+              <select
+                value={settings.logsLoading}
                 onChange={(e) => handleChange('logsLoading', e.target.value)}
               >
                 <option value="camera-vision">Camera Vision System</option>
@@ -601,6 +605,35 @@ const Settings: React.FC = () => {
                 <option value="industrial-factory">Industrial Factory</option>
                 <option value="ai-vision-pipeline">AI Vision Pipeline</option>
                 <option value="neural-processing">Neural Processing</option>
+              </select>
+            </div>
+
+            <div className="setting-item">
+              <label>Documentation Loading</label>
+              <select
+                value={settings.documentationLoading}
+                onChange={(e) => handleChange('documentationLoading', e.target.value)}
+              >
+                <option value="ocr">OCR Document Scan</option>
+                <option value="spinner">Classic Spinner</option>
+                <option value="pulse">Pulse Wave</option>
+                <option value="ocr-scanner">OCR Scanner</option>
+                <option value="barcode-scanner">Barcode Scanner</option>
+                <option value="neural-network">Neural Network</option>
+              </select>
+            </div>
+
+            <div className="setting-item">
+              <label>System I/O Loading</label>
+              <select
+                value={settings.systemLoading}
+                onChange={(e) => handleChange('systemLoading', e.target.value)}
+              >
+                <option value="system-io">I/O Pins Animation</option>
+                <option value="circuit">Circuit Board</option>
+                <option value="grid">Grid Matrix</option>
+                <option value="pulse">Pulse Wave</option>
+                <option value="settings">Gear System</option>
               </select>
             </div>
           </div>

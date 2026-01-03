@@ -5529,3 +5529,138 @@ body.dark-mode .timeline-card {
   gap: 2rem;
 }
 
+
+
+/* ============================================
+   SYSTEM I/O LOADER
+   ============================================ */
+
+.system-io-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2rem;
+  padding: 2rem;
+}
+
+.io-pins-container {
+  display: flex;
+  gap: 4rem;
+  align-items: center;
+}
+
+.io-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.io-label {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #3b82f6;
+  letter-spacing: 3px;
+}
+
+.io-pins {
+  display: flex;
+  gap: 1rem;
+}
+
+.io-pin {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #e5e7eb;
+  border: 3px solid #9ca3af;
+  position: relative;
+  transition: all 0.3s ease;
+  animation: pinPulse 2s ease-in-out infinite;
+}
+
+.io-pin::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #9ca3af;
+}
+
+.io-pin-active {
+  background: #22c55e;
+  border-color: #16a34a;
+  box-shadow: 0 0 20px rgba(34, 197, 94, 0.5);
+}
+
+.io-pin-active::before {
+  background: #fff;
+}
+
+.io-pin-output {
+  border-color: #3b82f6;
+}
+
+.io-pin-output.io-pin-active {
+  background: #3b82f6;
+  border-color: #2563eb;
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
+}
+
+.io-signal-wave {
+  width: 200px;
+  height: 60px;
+  position: relative;
+  overflow: hidden;
+}
+
+.io-signal-wave::before {
+  content: "";
+  position: absolute;
+  width: 200%;
+  height: 100%;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent,
+    transparent 10px,
+    #3b82f6 10px,
+    #3b82f6 12px
+  );
+  animation: signalMove 2s linear infinite;
+}
+
+@keyframes pinPulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+}
+
+@keyframes signalMove {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+body.dark-mode .io-pin {
+  background: #374151;
+  border-color: #6b7280;
+}
+
+body.dark-mode .io-pin::before {
+  background: #6b7280;
+}
+
+body.dark-mode .io-label {
+  color: #60a5fa;
+}
+
