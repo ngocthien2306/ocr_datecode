@@ -282,12 +282,46 @@ class Camera:
         thread.start()
         logger.info(f"[{self.serial_number}] Camera loop thread started")
 
+    def set_exposure_time(self, exposure_time: float):
+        """
+        Set camera exposure time
+
+        Args:
+            exposure_time: Exposure time in microseconds
+        """
+        self.exposure_time = exposure_time
+
+        # Apply to camera if connected
+        if self.camera and self.camera.IsOpen():
+            try:
+                self.camera.ExposureTime.SetValue(exposure_time)
+                logger.info(f"[{self.serial_number}] Exposure time set to {exposure_time}μs")
+            except Exception as e:
+                logger.error(f"[{self.serial_number}] Failed to set exposure time: {e}")
+
+    def set_gain(self, gain: float):
+        """
+        Set camera gain
+
+        Args:
+            gain: Gain value
+        """
+        self.gain = gain
+
+        # Apply to camera if connected
+        if self.camera and self.camera.IsOpen():
+            try:
+                self.camera.Gain.SetValue(gain)
+                logger.info(f"[{self.serial_number}] Gain set to {gain}")
+            except Exception as e:
+                logger.error(f"[{self.serial_number}] Failed to set gain: {e}")
+
     def update_settings(self, settings: Dict[str, Any]):
         """Update camera settings from recipe"""
         if "exposure_time" in settings:
-            self.exposure_time = settings["exposure_time"]
+            self.set_exposure_time(settings["exposure_time"])
         if "gain" in settings:
-            self.gain = settings["gain"]
+            self.set_gain(settings["gain"])
         if "pixel_format" in settings:
             self.pixel_format = settings["pixel_format"]
         if "delay_trigger" in settings:
@@ -308,9 +342,9 @@ class Camera:
         if "trigger_source" in trigger_config:
             self.trigger_source = trigger_config["trigger_source"]
 
-        # Apply to camera if connected (skip pixel_format - can't change while grabbing)
-        if self.camera:
-            self._apply_settings(apply_pixel_format=False)
+        # Apply pixel format if needed (skip if grabbing)
+        if self.camera and "pixel_format" in settings:
+            self._apply_settings(apply_pixel_format=True)
 
         logger.info(f"[{self.serial_number}] Settings updated")
 
