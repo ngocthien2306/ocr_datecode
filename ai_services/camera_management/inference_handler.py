@@ -106,6 +106,7 @@ class InferenceHandler:
 
                 for ann in annotations:
                     ann_type = ann.get("type", "")
+                    shape = ann.get("shape", "rectangle")
 
                     if ann_type == "template":
                         x, y = ann.get("x", 0), ann.get("y", 0)
@@ -119,16 +120,32 @@ class InferenceHandler:
                             "points": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
                         }
 
-                    elif ann_type == "text" and ann.get("points"):
-                        pixel_points = [
-                            [int(pt[0] * img_w), int(pt[1] * img_h)]
-                            for pt in ann.get("points", [])
-                        ]
-                        other_bboxes.append({
-                            "type": ann_type,
-                            "text": ann.get("text", ""),
-                            "points": pixel_points
-                        })
+                    elif ann_type == "text":
+                        # Handle both polygon (with points) and rectangle (with x,y,width,height)
+                        pixel_points = []
+
+                        if ann.get("points"):
+                            # Polygon format
+                            pixel_points = [
+                                [int(pt[0] * img_w), int(pt[1] * img_h)]
+                                for pt in ann.get("points", [])
+                            ]
+                        elif shape == "rectangle" and ann.get("x") is not None:
+                            # Rectangle format - convert to polygon points
+                            x, y = ann.get("x", 0), ann.get("y", 0)
+                            w, h = ann.get("width", 0), ann.get("height", 0)
+
+                            x1, y1 = int(x * img_w), int(y * img_h)
+                            x2, y2 = int((x + w) * img_w), int((y + h) * img_h)
+
+                            pixel_points = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+
+                        if pixel_points:
+                            other_bboxes.append({
+                                "type": ann_type,
+                                "text": ann.get("text", ""),
+                                "points": pixel_points
+                            })
 
                 if not template_bbox:
                     logger.error(f"No template bbox for camera {serial_number}")

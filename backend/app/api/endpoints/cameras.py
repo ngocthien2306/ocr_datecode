@@ -465,7 +465,7 @@ async def get_camera_frame_metadata(
 )
 async def connect_camera(
     serial_number: str,
-    pixel_format: str = "Mono8",
+    pixel_format: str = "BGR8",
     db=Depends(get_database),
     current_user: dict = Depends(get_current_user)
 ):

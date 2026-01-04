@@ -352,7 +352,7 @@ async def process_inference_result(data: dict):
 # Utility functions for other endpoints to use
 
 
-async def send_connect_camera(serial_number: str, pixel_format: str = "Mono8") -> bool:
+async def send_connect_camera(serial_number: str, pixel_format: str = "BGR8") -> bool:
     """Send connect camera command to AI service"""
     return await camera_ws_manager.send_to_camera_service({
         "event": "connect_camera",

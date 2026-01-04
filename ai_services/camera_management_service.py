@@ -146,7 +146,7 @@ class CameraManagementService:
             if event == "connect_camera":
                 result = self.camera_manager.add_camera(
                     serial_number=data["serial_number"],
-                    pixel_format=data.get("pixel_format", "Mono8")
+                    pixel_format=data.get("pixel_format", "BGR8")
                 )
                 await self.ws_client.send_message({
                     "event": "connect_camera_response",

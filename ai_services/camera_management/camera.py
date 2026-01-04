@@ -522,6 +522,7 @@ class Camera:
             True if successful
         """
         try:
+            print(recipe_data)
             self.recipe_id = recipe_data.get("_id") or recipe_data.get("id")
             self.recipe_name = recipe_data.get("name", "Unknown")
 
