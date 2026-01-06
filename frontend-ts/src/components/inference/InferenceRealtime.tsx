@@ -267,21 +267,23 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                             : null;
 
                         return (
-                          <div key={frame.frame_idx} className="frame-item">
-                            {imageUrl ? (
-                              <img src={imageUrl} alt={`Frame ${frame.frame_idx}`} />
-                            ) : (
-                              <div className="frame-placeholder">
-                                <span>Frame {frame.frame_idx}</span>
+                          <div key={frame.frame_idx} className="frame-container">
+                            <div className="frame-aspect-wrapper">
+                              {imageUrl ? (
+                                <img src={imageUrl} alt={`Frame ${frame.frame_idx}`} className="frame-image" />
+                              ) : (
+                                <div className="frame-placeholder">
+                                  <span>Frame {frame.frame_idx}</span>
+                                </div>
+                              )}
+                              <div className="frame-overlay">
+                                <span className={`frame-badge ${frame.pass_fail.toLowerCase()}`}>
+                                  {frame.pass_fail}
+                                </span>
+                                <span className="frame-confidence">
+                                  {(frame.confidence * 100).toFixed(1)}%
+                                </span>
                               </div>
-                            )}
-                            <div className="frame-info">
-                              <span className={`frame-badge ${frame.pass_fail.toLowerCase()}`}>
-                                {frame.pass_fail}
-                              </span>
-                              <span className="frame-confidence">
-                                {(frame.confidence * 100).toFixed(1)}%
-                              </span>
                             </div>
                           </div>
                         );
@@ -289,32 +291,50 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                     </div>
 
                     {cameraStats && (
-                      <div className="camera-stats">
-                        <div className="stat-row">
-                          <span className="stat-label">Confidence:</span>
-                          <span className="stat-value">{(cameraStats.confidence * 100).toFixed(1)}%</span>
+                      <>
+                        <div className="camera-stats-compact">
+                          <div className="stat-item">
+                            <span className="stat-label">Confidence:</span>
+                            <span className="stat-value">{(cameraStats.confidence * 100).toFixed(1)}%</span>
+                          </div>
+                          <div className="stat-separator">|</div>
+                          <div className="stat-item">
+                            <span className="stat-label">Time:</span>
+                            <span className="stat-value">{cameraStats.timings.total?.toFixed(1) || 0}ms</span>
+                          </div>
+                          <button
+                            className="btn-details"
+                            onClick={(e) => {
+                              const details = e.currentTarget.parentElement?.nextElementSibling as HTMLElement;
+                              if (details) {
+                                const isHidden = details.style.display === 'none' || !details.style.display;
+                                details.style.display = isHidden ? 'block' : 'none';
+                                e.currentTarget.textContent = isHidden ? '▲' : '▼';
+                              }
+                            }}
+                          >
+                            ▼
+                          </button>
                         </div>
-                        <div className="stat-row">
-                          <span className="stat-label">Inliers:</span>
-                          <span className="stat-value">{cameraStats.inliers}/{cameraStats.total_matches}</span>
+                        <div className="stats-details" style={{ display: 'none' }}>
+                          <div className="detail-row">
+                            <span className="stat-label">├ TRT:</span>
+                            <span className="stat-value">{cameraStats.timings.trt_inference?.toFixed(1) || 0}ms</span>
+                          </div>
+                          <div className="detail-row">
+                            <span className="stat-label">├ Pre:</span>
+                            <span className="stat-value">{cameraStats.timings.preprocess?.toFixed(1) || 0}ms</span>
+                          </div>
+                          <div className="detail-row">
+                            <span className="stat-label">├ Post:</span>
+                            <span className="stat-value">{cameraStats.timings.postprocess?.toFixed(1) || 0}ms</span>
+                          </div>
+                          <div className="detail-row">
+                            <span className="stat-label">└ Inliers:</span>
+                            <span className="stat-value">{cameraStats.inliers}/{cameraStats.total_matches}</span>
+                          </div>
                         </div>
-                        <div className="stat-row">
-                          <span className="stat-label">Time:</span>
-                          <span className="stat-value">{cameraStats.timings.total?.toFixed(1) || 0}ms</span>
-                        </div>
-                        <div className="stat-row timing-breakdown">
-                          <span className="stat-label">├ TRT:</span>
-                          <span className="stat-value">{cameraStats.timings.trt_inference?.toFixed(1) || 0}ms</span>
-                        </div>
-                        <div className="stat-row timing-breakdown">
-                          <span className="stat-label">├ Pre:</span>
-                          <span className="stat-value">{cameraStats.timings.preprocess?.toFixed(1) || 0}ms</span>
-                        </div>
-                        <div className="stat-row timing-breakdown">
-                          <span className="stat-label">└ Post:</span>
-                          <span className="stat-value">{cameraStats.timings.postprocess?.toFixed(1) || 0}ms</span>
-                        </div>
-                      </div>
+                      </>
                     )}
                   </div>
                 );
