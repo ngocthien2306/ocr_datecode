@@ -511,6 +511,99 @@ class Camera:
                 'error': str(e)
             }
 
+    def execute_software_trigger_immediate(self) -> Dict[str, Any]:
+        """
+        Execute software trigger IMMEDIATELY without delay
+
+        Differences from execute_software_trigger():
+        - OLD: time.sleep(delay_trigger) before each frame
+        - NEW: NO sleep, capture immediately
+
+        This is called from Timer callback after delay has already passed
+
+        Returns:
+            Dict with success status and captured frames
+        """
+        if not self.camera or not self.camera.IsGrabbing():
+            return {'success': False, 'error': 'Camera not grabbing'}
+
+        if not self.templates:
+            return {'success': False, 'error': 'No templates loaded'}
+
+        self.captured_frames = []
+
+        try:
+            logger.info(
+                f"[{self.serial_number}] Capturing {len(self.templates)} frames "
+                f"IMMEDIATELY (no delay)"
+            )
+
+            for idx, template in enumerate(self.templates):
+                # ⭐ NO DELAY - Timer already handled it!
+
+                # Execute software trigger
+                self.camera.ExecuteSoftwareTrigger()
+
+                # Wait and retrieve frame
+                grab_result = self.camera.RetrieveResult(
+                    2000,  # 2s timeout
+                    pylon.TimeoutHandling_ThrowException
+                )
+
+                if not grab_result or not grab_result.GrabSucceeded():
+                    if grab_result:
+                        grab_result.Release()
+                    return {
+                        'success': False,
+                        'error': f'Failed to grab frame {idx}'
+                    }
+
+                img_array = grab_result.Array
+
+                # Convert Mono8 to BGR
+                if len(img_array.shape) == 2:
+                    img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
+
+                # Write to shared memory (Option B - write all frames)
+                metadata = {
+                    "timestamp": time.time(),
+                    "mode": self.mode.value,
+                    "shape": img_array.shape,
+                    "dtype": str(img_array.dtype),
+                    "frame_idx": idx,
+                    "trigger_event": True,
+                    "template_name": template.get('name', f'Template {idx+1}')
+                }
+                self._write_frame_to_shm(img_array, metadata)
+
+                # Store frame
+                self.captured_frames.append(img_array.copy())
+
+                grab_result.Release()
+
+                logger.debug(
+                    f"[{self.serial_number}] Captured frame {idx+1}/{len(self.templates)}"
+                )
+
+            logger.info(
+                f"[{self.serial_number}] ✅ Captured {len(self.captured_frames)} frames"
+            )
+
+            return {
+                'success': True,
+                'frames': self.captured_frames,
+                'frame_count': len(self.captured_frames)
+            }
+
+        except Exception as e:
+            logger.error(f"[{self.serial_number}] Error executing immediate trigger: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
     def load_recipe(self, recipe_data: Dict[str, Any]) -> bool:
         """
         Load recipe and initialize inference

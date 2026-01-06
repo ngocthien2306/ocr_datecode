@@ -50,6 +50,11 @@ class TriggerHandler:
             0: None, 1: None, 2: None, 3: None
         }
 
+        # Timer tracking for non-blocking trigger handling
+        self._active_timers: List[threading.Timer] = []
+        self._timer_counter = 0
+        self._timer_lock = threading.Lock()
+
     def build_di_camera_map(self):
         """
         Build DI → Cameras mapping from cameras with Software Trigger mode
@@ -105,12 +110,25 @@ class TriggerHandler:
             logger.info("Trigger polling started (100Hz)")
 
     def stop_polling(self):
-        """Stop DI polling thread"""
+        """Stop DI polling thread and cancel all pending timers"""
         with self._lock:
             if not self._polling:
                 return
 
             self._polling = False
+
+            # Cancel all pending timers
+            with self._timer_lock:
+                cancelled_count = 0
+                for timer in self._active_timers:
+                    if timer.is_alive():
+                        timer.cancel()
+                        cancelled_count += 1
+                        logger.debug(f"Cancelled timer: {timer.name}")
+                self._active_timers.clear()
+
+                if cancelled_count > 0:
+                    logger.info(f"Cancelled {cancelled_count} pending timer(s)")
 
             if self._polling_thread:
                 self._polling_thread.join(timeout=2.0)
@@ -171,69 +189,155 @@ class TriggerHandler:
 
     def trigger_cameras_group(self, cameras: List['Camera']):
         """
-        Trigger a group of cameras simultaneously (runs in polling thread)
-
         Args:
             cameras: List of Camera objects to trigger
 
         Flow:
-            1. Trigger all cameras in parallel (ThreadPoolExecutor)
-            2. Wait for all to complete capture
-            3. If any fails → emit error event
-            4. If all succeed → emit frames_captured event (inference runs in main thread)
+            1. Get delay_trigger from camera settings (dynamic from FE)
+            2. Create Timer thread to fire after delay
+            3. Return immediately (polling thread continues)
+            4. Timer callback executes capture when fired
         """
         if not cameras:
             logger.warning("trigger_cameras_group called with empty camera list")
             return
 
-        logger.info(f"Triggering {len(cameras)} camera(s) simultaneously")
+        # Get delay from first camera (all cameras in group should have same delay)
+        delay_ms = cameras[0].delay_trigger  # Dynamic value from FE (e.g. 2000, 3000)
+        delay_sec = delay_ms / 1000.0
 
-        # Step 1: Trigger all cameras in parallel
-        results = {}
+        # Generate unique timer ID
+        with self._timer_lock:
+            self._timer_counter += 1
+            timer_id = self._timer_counter
 
-        with ThreadPoolExecutor(max_workers=len(cameras)) as executor:
-            # Submit all camera triggers
-            future_to_camera = {
-                executor.submit(camera.execute_software_trigger): camera
-                for camera in cameras
-            }
+        logger.info(
+            f"[Trigger #{timer_id}] Scheduling capture for {len(cameras)} camera(s) "
+            f"in {delay_sec:.2f}s (delay_trigger={delay_ms}ms)"
+        )
 
-            # Wait for all to complete
-            for future in as_completed(future_to_camera):
-                camera = future_to_camera[future]
-                try:
-                    result = future.result(timeout=10.0)  # 10s timeout per camera
-                    results[camera.serial_number] = result
-                except Exception as e:
-                    logger.error(f"Exception triggering camera {camera.serial_number}: {e}")
-                    results[camera.serial_number] = {
-                        'success': False,
-                        'error': f'Exception: {str(e)}'
-                    }
+        # Create Timer thread
+        # Timer will automatically create its own thread and fire callback after delay_sec
+        timer = threading.Timer(
+            interval=delay_sec,
+            function=self._execute_capture_now,
+            args=(cameras, timer_id)
+        )
+        timer.daemon = True  # Daemon thread - auto cleanup when main exits
+        timer.name = f"TriggerTimer-{timer_id}"
 
-        # Step 2: Check if all cameras succeeded
-        failed_cameras = [sn for sn, res in results.items() if not res.get('success', False)]
+        # Track active timer
+        with self._timer_lock:
+            self._active_timers.append(timer)
 
-        if failed_cameras:
-            # Emit error, don't run inference
-            error_msg = f"Camera capture failed: {', '.join(failed_cameras)}"
-            logger.error(error_msg)
+        # Start timer
+        timer.start()
 
-            self.camera_manager._emit_event("trigger_error", {
-                "error": error_msg,
-                "failed_cameras": failed_cameras,
-                "results": results
-            })
-            return
+        # ⭐ RETURN IMMEDIATELY - Polling thread continues!
+        logger.debug(f"[Trigger #{timer_id}] Timer started, returning to polling loop")
 
-        # Step 3: All cameras succeeded - emit event for inference in main thread
-        logger.info(f"All {len(cameras)} cameras captured successfully")
+    def _execute_capture_now(self, cameras: List['Camera'], timer_id: int):
+        """
+        Timer callback - executed when timer fires
 
-        # Emit frames_captured event - inference will be handled in main thread
-        self.camera_manager._emit_event("frames_captured", {
-            "cameras": cameras,
-            "results": results
-        })
+        This runs in Timer's own thread, separate from polling thread
+
+        Args:
+            cameras: Cameras to capture
+            timer_id: Unique timer identifier
+        """
+        thread_name = threading.current_thread().name
+        logger.info(
+            f"[Trigger #{timer_id}] Timer FIRED! Executing capture NOW "
+            f"(Thread: {thread_name})"
+        )
+
+        try:
+            # Step 1: Capture all cameras in parallel
+            results = {}
+
+            with ThreadPoolExecutor(max_workers=len(cameras)) as executor:
+                # Submit capture jobs (IMMEDIATE capture, no delay inside!)
+                future_to_camera = {
+                    executor.submit(camera.execute_software_trigger_immediate): camera
+                    for camera in cameras
+                }
+
+                # Wait for all cameras to complete
+                for future in as_completed(future_to_camera):
+                    camera = future_to_camera[future]
+                    try:
+                        result = future.result(timeout=10.0)
+                        results[camera.serial_number] = result
+
+                        if result.get('success'):
+                            logger.info(
+                                f"[Trigger #{timer_id}] Camera {camera.serial_number} "
+                                f"captured {result.get('frame_count', 0)} frames"
+                            )
+                        else:
+                            logger.error(
+                                f"[Trigger #{timer_id}] Camera {camera.serial_number} "
+                                f"failed: {result.get('error')}"
+                            )
+
+                    except Exception as e:
+                        logger.error(
+                            f"[Trigger #{timer_id}] Exception capturing "
+                            f"camera {camera.serial_number}: {e}"
+                        )
+                        results[camera.serial_number] = {
+                            'success': False,
+                            'error': f'Exception: {str(e)}'
+                        }
+
+            # Step 2: Check results
+            failed_cameras = [
+                sn for sn, res in results.items()
+                if not res.get('success', False)
+            ]
+
+            if failed_cameras:
+                # Some cameras failed
+                error_msg = f"Camera capture failed: {', '.join(failed_cameras)}"
+                logger.error(f"[Trigger #{timer_id}] {error_msg}")
+
+                self.camera_manager._emit_event("trigger_error", {
+                    "trigger_id": timer_id,
+                    "error": error_msg,
+                    "failed_cameras": failed_cameras,
+                    "results": results
+                })
+            else:
+                # All cameras succeeded!
+                logger.info(
+                    f"[Trigger #{timer_id}] ✅ All {len(cameras)} cameras "
+                    f"captured successfully"
+                )
+
+                self.camera_manager._emit_event("frames_captured", {
+                    "trigger_id": timer_id,
+                    "cameras": cameras,
+                    "results": results
+                })
+
+        except Exception as e:
+            logger.error(f"[Trigger #{timer_id}] Error in capture callback: {e}")
+            import traceback
+            traceback.print_exc()
+
+        finally:
+            # Cleanup: Remove timer from active list
+            with self._timer_lock:
+                # Filter out completed timers
+                self._active_timers = [t for t in self._active_timers if t.is_alive()]
+
+    def get_active_timer_count(self) -> int:
+        """Get number of active timers (for monitoring)"""
+        with self._timer_lock:
+            # Clean up finished timers
+            self._active_timers = [t for t in self._active_timers if t.is_alive()]
+            return len(self._active_timers)
 
     def simulate_trigger(
         self,
