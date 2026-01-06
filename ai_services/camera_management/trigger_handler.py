@@ -55,6 +55,10 @@ class TriggerHandler:
         self._timer_counter = 0
         self._timer_lock = threading.Lock()
 
+        # Capture group tracking for multi-camera sync with different delays
+        self._capture_groups: Dict[int, Dict] = {}
+        self._group_lock = threading.Lock()
+
     def build_di_camera_map(self):
         """
         Build DI → Cameras mapping from cameras with Software Trigger mode
@@ -189,52 +193,232 @@ class TriggerHandler:
 
     def trigger_cameras_group(self, cameras: List['Camera']):
         """
+        Multi-camera synchronization with individual delays
+
         Args:
             cameras: List of Camera objects to trigger
 
         Flow:
-            1. Get delay_trigger from camera settings (dynamic from FE)
-            2. Create Timer thread to fire after delay
-            3. Return immediately (polling thread continues)
-            4. Timer callback executes capture when fired
+            1. Create capture group with unique ID
+            2. Each camera gets individual timer based on its delay_trigger
+            3. When timer fires, camera captures and registers result in group
+            4. Last camera to complete triggers batch inference
+            5. Return immediately (polling thread continues)
         """
         if not cameras:
             logger.warning("trigger_cameras_group called with empty camera list")
             return
 
-        # Get delay from first camera (all cameras in group should have same delay)
-        delay_ms = cameras[0].delay_trigger  # Dynamic value from FE (e.g. 2000, 3000)
-        delay_sec = delay_ms / 1000.0
-
-        # Generate unique timer ID
+        # Generate unique group ID
         with self._timer_lock:
             self._timer_counter += 1
-            timer_id = self._timer_counter
+            group_id = self._timer_counter
 
+        # Log camera delays
+        camera_delays = [(cam.serial_number, cam.delay_trigger) for cam in cameras]
         logger.info(
-            f"[Trigger #{timer_id}] Scheduling capture for {len(cameras)} camera(s) "
-            f"in {delay_sec:.2f}s (delay_trigger={delay_ms}ms)"
+            f"[Group #{group_id}] Creating capture group for {len(cameras)} camera(s): "
+            f"{camera_delays}"
         )
 
-        # Create Timer thread
-        # Timer will automatically create its own thread and fire callback after delay_sec
-        timer = threading.Timer(
-            interval=delay_sec,
-            function=self._execute_capture_now,
-            args=(cameras, timer_id)
-        )
-        timer.daemon = True  # Daemon thread - auto cleanup when main exits
-        timer.name = f"TriggerTimer-{timer_id}"
+        # Create capture group
+        with self._group_lock:
+            self._capture_groups[group_id] = {
+                'cameras': cameras,
+                'results': {},  # {serial_number: result_dict}
+                'expected_count': len(cameras),
+                'completed_count': 0,
+                'group_lock': threading.Lock(),
+                'created_at': time.time()
+            }
 
-        # Track active timer
+        # Schedule individual timer for each camera based on its delay_trigger
+        for camera in cameras:
+            delay_ms = camera.delay_trigger
+            delay_sec = delay_ms / 1000.0
+
+            logger.info(
+                f"[Group #{group_id}] Scheduling Camera {camera.serial_number} "
+                f"capture in {delay_sec:.2f}s"
+            )
+
+            # Create timer for this camera
+            timer = threading.Timer(
+                interval=delay_sec,
+                function=self._capture_and_register,
+                args=(camera, group_id)
+            )
+            timer.daemon = True
+            timer.name = f"CaptureTimer-{group_id}-{camera.serial_number}"
+
+            # Track active timer
+            with self._timer_lock:
+                self._active_timers.append(timer)
+
+            # Start timer
+            timer.start()
+
+        # Schedule timeout protection (max delay + 10 seconds buffer)
+        max_delay = max(cam.delay_trigger for cam in cameras) / 1000.0
+        timeout_sec = max_delay + 10.0
+
+        timeout_timer = threading.Timer(
+            interval=timeout_sec,
+            function=self._group_timeout,
+            args=(group_id,)
+        )
+        timeout_timer.daemon = True
+        timeout_timer.name = f"TimeoutTimer-{group_id}"
+
         with self._timer_lock:
-            self._active_timers.append(timer)
+            self._active_timers.append(timeout_timer)
 
-        # Start timer
-        timer.start()
+        timeout_timer.start()
 
-        # ⭐ RETURN IMMEDIATELY - Polling thread continues!
-        logger.debug(f"[Trigger #{timer_id}] Timer started, returning to polling loop")
+        logger.debug(
+            f"[Group #{group_id}] All timers scheduled, timeout in {timeout_sec:.1f}s. "
+            f"Returning to polling loop."
+        )
+
+    def _capture_and_register(self, camera: 'Camera', group_id: int):
+        """
+        Timer callback for single camera capture
+
+        This runs in Timer's own thread when the camera's delay expires.
+
+        Args:
+            camera: Camera to capture
+            group_id: Capture group ID
+        """
+        thread_name = threading.current_thread().name
+        logger.info(
+            f"[Group #{group_id}] Camera {camera.serial_number} timer FIRED! "
+            f"Capturing now (Thread: {thread_name})"
+        )
+
+        # Check if group still exists
+        with self._group_lock:
+            if group_id not in self._capture_groups:
+                logger.warning(
+                    f"[Group #{group_id}] Group not found (timeout or cancelled), "
+                    f"skipping Camera {camera.serial_number}"
+                )
+                return
+
+            group = self._capture_groups[group_id]
+
+        try:
+            # Execute immediate capture (no delay inside!)
+            result = camera.execute_software_trigger_immediate()
+
+            # Register result in group (thread-safe)
+            with group['group_lock']:
+                group['results'][camera.serial_number] = result
+                group['completed_count'] += 1
+                completed = group['completed_count']
+                expected = group['expected_count']
+
+                if result.get('success'):
+                    logger.info(
+                        f"[Group #{group_id}] Camera {camera.serial_number} captured "
+                        f"{result.get('frame_count', 0)} frames. "
+                        f"Progress: {completed}/{expected}"
+                    )
+                else:
+                    logger.error(
+                        f"[Group #{group_id}] Camera {camera.serial_number} failed: "
+                        f"{result.get('error')}. Progress: {completed}/{expected}"
+                    )
+
+                # Check if all cameras completed
+                if completed >= expected:
+                    logger.info(
+                        f"[Group #{group_id}] ✅ All {expected} cameras completed! "
+                        f"Triggering batch inference."
+                    )
+
+                    # Emit frames_captured event for batch inference
+                    cameras_list = group['cameras']
+                    results_dict = group['results']
+
+                    self.camera_manager._emit_event("frames_captured", {
+                        "group_id": group_id,
+                        "cameras": cameras_list,
+                        "results": results_dict
+                    })
+
+                    # Cleanup group
+                    with self._group_lock:
+                        if group_id in self._capture_groups:
+                            del self._capture_groups[group_id]
+                            logger.debug(f"[Group #{group_id}] Group cleaned up")
+
+        except Exception as e:
+            logger.error(
+                f"[Group #{group_id}] Exception capturing Camera {camera.serial_number}: {e}"
+            )
+            import traceback
+            traceback.print_exc()
+
+            # Register failure
+            with group['group_lock']:
+                group['results'][camera.serial_number] = {
+                    'success': False,
+                    'error': f'Exception: {str(e)}'
+                }
+                group['completed_count'] += 1
+
+        finally:
+            # Cleanup timer from active list
+            with self._timer_lock:
+                self._active_timers = [t for t in self._active_timers if t.is_alive()]
+
+    def _group_timeout(self, group_id: int):
+        """
+        Timeout handler for capture groups
+
+        If a group doesn't complete within timeout, emit error and cleanup.
+
+        Args:
+            group_id: Capture group ID
+        """
+        logger.warning(f"[Group #{group_id}] Timeout reached!")
+
+        with self._group_lock:
+            if group_id not in self._capture_groups:
+                logger.debug(f"[Group #{group_id}] Already completed, ignoring timeout")
+                return
+
+            group = self._capture_groups[group_id]
+
+            with group['group_lock']:
+                completed = group['completed_count']
+                expected = group['expected_count']
+                results = group['results']
+
+                # Find missing cameras
+                all_serials = {cam.serial_number for cam in group['cameras']}
+                completed_serials = set(results.keys())
+                missing_serials = all_serials - completed_serials
+
+                logger.error(
+                    f"[Group #{group_id}] Timeout! Only {completed}/{expected} completed. "
+                    f"Missing: {list(missing_serials)}"
+                )
+
+                # Emit error event
+                self.camera_manager._emit_event("trigger_error", {
+                    "group_id": group_id,
+                    "error": "Capture group timeout",
+                    "completed_count": completed,
+                    "expected_count": expected,
+                    "missing_cameras": list(missing_serials),
+                    "results": results
+                })
+
+            # Cleanup group
+            del self._capture_groups[group_id]
+            logger.debug(f"[Group #{group_id}] Timeout cleanup complete")
 
     def _execute_capture_now(self, cameras: List['Camera'], timer_id: int):
         """
