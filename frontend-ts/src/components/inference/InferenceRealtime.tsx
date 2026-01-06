@@ -3,6 +3,7 @@ import '@/styles/InferenceRealtime.css';
 import { socketService } from '@/services/socketio';
 import api from '@/services/api';
 import { receiptsAPI } from '@/services/recipes';
+import ConfirmDialog from '@/components/shared/ConfirmDialog';
 
 interface InferenceLog {
   id: string;
@@ -74,6 +75,14 @@ interface InferenceRealtimeProps {
   runningRecipeId: string | null;
 }
 
+interface ConfirmDialogState {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  type: 'warning' | 'danger' | 'info';
+  onConfirm: (() => void) | null;
+}
+
 export default function InferenceRealtime({ runningRecipeId }: InferenceRealtimeProps) {
   const [logs, setLogs] = useState<InferenceLog[]>([]);
   const [latestResults, setLatestResults] = useState<InferenceResult | null>(null);
@@ -82,6 +91,15 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
   const [isOnline, setIsOnline] = useState(true); // Inference mode: ONLINE/OFFLINE
   const [isStopping, setIsStopping] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
+
+  // Confirmation dialog state
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'warning',
+    onConfirm: null
+  });
 
   // Auto scroll to bottom
   const scrollToBottom = () => {
@@ -174,44 +192,46 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
     }
   };
 
-  const handleStopRecipe = async () => {
+  const handleStopRecipe = () => {
     if (!runningRecipeId || isStopping) return;
 
-    const confirmed = window.confirm(
-      `Stop recipe "${runningRecipe?.metadata?.name || 'Unknown'}"?\n\nThis will stop inference and set cameras to idle mode.`
-    );
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Stop Recipe',
+      message: `Stop recipe "${runningRecipe?.metadata?.name || 'Unknown'}"?\n\nThis will stop inference and set cameras to idle mode.`,
+      type: 'danger',
+      onConfirm: async () => {
+        setIsStopping(true);
 
-    if (!confirmed) return;
+        try {
+          await receiptsAPI.stopReceipt(runningRecipeId);
 
-    setIsStopping(true);
+          // Add log
+          const stopLog: InferenceLog = {
+            id: `stop-${Date.now()}`,
+            timestamp: new Date().toLocaleTimeString(),
+            result: 'PASS',
+            recipe_name: runningRecipe?.metadata?.name || 'Unknown',
+            product_code: runningRecipe?.metadata?.product_code || '',
+            message: '🛑 Recipe stopped'
+          };
+          setLogs(prev => [...prev, stopLog]);
 
-    try {
-      await receiptsAPI.stopReceipt(runningRecipeId);
-
-      // Add log
-      const stopLog: InferenceLog = {
-        id: `stop-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
-        result: 'PASS',
-        recipe_name: runningRecipe?.metadata?.name || 'Unknown',
-        product_code: runningRecipe?.metadata?.product_code || '',
-        message: '🛑 Recipe stopped'
-      };
-      setLogs(prev => [...prev, stopLog]);
-
-      // Redirect to Recipes page after 1 second
-      setTimeout(() => {
-        const recipesLink = document.querySelector('a[href="#receipts"]') as HTMLAnchorElement;
-        if (recipesLink) {
-          recipesLink.click();
+          // Redirect to Recipes page after 1 second
+          setTimeout(() => {
+            const recipesLink = document.querySelector('a[href="#receipts"]') as HTMLAnchorElement;
+            if (recipesLink) {
+              recipesLink.click();
+            }
+          }, 1000);
+        } catch (error: any) {
+          console.error('Error stopping recipe:', error);
+          alert(`Failed to stop recipe: ${error.response?.data?.detail || error.message}`);
+        } finally {
+          setIsStopping(false);
         }
-      }, 1000);
-    } catch (error: any) {
-      console.error('Error stopping recipe:', error);
-      alert(`Failed to stop recipe: ${error.response?.data?.detail || error.message}`);
-    } finally {
-      setIsStopping(false);
-    }
+      }
+    });
   };
 
   const handleToggleInferenceMode = async () => {
@@ -271,33 +291,41 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
           )}
         </div>
         <div className="header-actions">
-          {/* Online/Offline Toggle */}
-          <button
-            className={`btn-mode-toggle ${isOnline ? 'online' : 'offline'}`}
-            onClick={handleToggleInferenceMode}
-            title={isOnline ? 'Switch to OFFLINE mode' : 'Switch to ONLINE mode'}
-          >
-            {isOnline ? (
-              <>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
-                  <path d="M12 6v6l4 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                </svg>
-                ONLINE
-              </>
-            ) : (
-              <>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                  <rect x="6" y="6" width="12" height="12" stroke="currentColor" strokeWidth="2"/>
-                </svg>
-                OFFLINE
-              </>
-            )}
-          </button>
+          {/* Online/Offline Toggle Switch */}
+          <div className="mode-toggle-wrapper">
+            <span className="mode-label">Inference Mode:</span>
+            <button
+              className={`mode-toggle-switch ${isOnline ? 'online' : 'offline'}`}
+              onClick={handleToggleInferenceMode}
+              title={isOnline ? 'Click to switch to OFFLINE mode' : 'Click to switch to ONLINE mode'}
+            >
+              <span className="toggle-track">
+                <span className="toggle-thumb"></span>
+              </span>
+              <span className="toggle-label">
+                {isOnline ? (
+                  <>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+                      <path d="M12 6v6l4 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                    </svg>
+                    ONLINE
+                  </>
+                ) : (
+                  <>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                      <rect x="6" y="6" width="12" height="12" stroke="currentColor" strokeWidth="2"/>
+                    </svg>
+                    OFFLINE
+                  </>
+                )}
+              </span>
+            </button>
+          </div>
 
           {/* Simulate Trigger */}
           <button
-            className={`btn-trigger ${isSimulating ? 'simulating' : ''}`}
+            className={`btn-action btn-trigger ${isSimulating ? 'simulating' : ''}`}
             onClick={handleSimulateTrigger}
             disabled={isSimulating}
           >
@@ -309,12 +337,12 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
 
           {/* Stop Recipe */}
           <button
-            className={`btn-stop ${isStopping ? 'stopping' : ''}`}
+            className={`btn-action btn-stop ${isStopping ? 'stopping' : ''}`}
             onClick={handleStopRecipe}
             disabled={isStopping}
             title="Stop recipe and return to idle"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
               <rect x="6" y="6" width="12" height="12" fill="currentColor"/>
             </svg>
             {isStopping ? 'Stopping...' : 'Stop Recipe'}
@@ -482,6 +510,23 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
           </div>
         </div>
       </div>
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        onClose={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
+        onConfirm={() => {
+          if (confirmDialog.onConfirm) {
+            confirmDialog.onConfirm();
+          }
+          setConfirmDialog({ ...confirmDialog, isOpen: false });
+        }}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+        confirmText="Confirm"
+        cancelText="Cancel"
+      />
     </div>
   );
 }
