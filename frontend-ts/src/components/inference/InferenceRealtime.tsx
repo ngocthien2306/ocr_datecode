@@ -79,6 +79,8 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
   const [latestResults, setLatestResults] = useState<InferenceResult | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
   const [runningRecipe, setRunningRecipe] = useState<any>(null);
+  const [isOnline, setIsOnline] = useState(true); // Inference mode: ONLINE/OFFLINE
+  const [isStopping, setIsStopping] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   // Auto scroll to bottom
@@ -172,6 +174,71 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
     }
   };
 
+  const handleStopRecipe = async () => {
+    if (!runningRecipeId || isStopping) return;
+
+    const confirmed = window.confirm(
+      `Stop recipe "${runningRecipe?.metadata?.name || 'Unknown'}"?\n\nThis will stop inference and set cameras to idle mode.`
+    );
+
+    if (!confirmed) return;
+
+    setIsStopping(true);
+
+    try {
+      await receiptsAPI.stopReceipt(runningRecipeId);
+
+      // Add log
+      const stopLog: InferenceLog = {
+        id: `stop-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        result: 'PASS',
+        recipe_name: runningRecipe?.metadata?.name || 'Unknown',
+        product_code: runningRecipe?.metadata?.product_code || '',
+        message: '🛑 Recipe stopped'
+      };
+      setLogs(prev => [...prev, stopLog]);
+
+      // Redirect to Recipes page after 1 second
+      setTimeout(() => {
+        const recipesLink = document.querySelector('a[href="#receipts"]') as HTMLAnchorElement;
+        if (recipesLink) {
+          recipesLink.click();
+        }
+      }, 1000);
+    } catch (error: any) {
+      console.error('Error stopping recipe:', error);
+      alert(`Failed to stop recipe: ${error.response?.data?.detail || error.message}`);
+    } finally {
+      setIsStopping(false);
+    }
+  };
+
+  const handleToggleInferenceMode = async () => {
+    if (!runningRecipeId) return;
+
+    const newMode = !isOnline;
+
+    try {
+      await receiptsAPI.setInferenceMode(runningRecipeId, newMode);
+      setIsOnline(newMode);
+
+      // Add log
+      const modeLog: InferenceLog = {
+        id: `mode-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        result: 'PASS',
+        recipe_name: runningRecipe?.metadata?.name || 'Unknown',
+        product_code: runningRecipe?.metadata?.product_code || '',
+        message: newMode ? '🟢 Inference ONLINE' : '⏸️ Inference OFFLINE'
+      };
+      setLogs(prev => [...prev, modeLog]);
+    } catch (error: any) {
+      console.error('Error toggling inference mode:', error);
+      alert(`Failed to change mode: ${error.response?.data?.detail || error.message}`);
+    }
+  };
+
   if (!runningRecipeId) {
     return (
       <div className="inference-realtime-empty">
@@ -203,16 +270,56 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
             </div>
           )}
         </div>
-        <button
-          className={`btn-trigger ${isSimulating ? 'simulating' : ''}`}
-          onClick={handleSimulateTrigger}
-          disabled={isSimulating}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-            <path d="M13 2L3 14h8l-1 8 10-12h-8l1-8z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
-          </svg>
-          {isSimulating ? 'Triggering...' : 'Simulate Trigger'}
-        </button>
+        <div className="header-actions">
+          {/* Online/Offline Toggle */}
+          <button
+            className={`btn-mode-toggle ${isOnline ? 'online' : 'offline'}`}
+            onClick={handleToggleInferenceMode}
+            title={isOnline ? 'Switch to OFFLINE mode' : 'Switch to ONLINE mode'}
+          >
+            {isOnline ? (
+              <>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+                  <path d="M12 6v6l4 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                </svg>
+                ONLINE
+              </>
+            ) : (
+              <>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <rect x="6" y="6" width="12" height="12" stroke="currentColor" strokeWidth="2"/>
+                </svg>
+                OFFLINE
+              </>
+            )}
+          </button>
+
+          {/* Simulate Trigger */}
+          <button
+            className={`btn-trigger ${isSimulating ? 'simulating' : ''}`}
+            onClick={handleSimulateTrigger}
+            disabled={isSimulating}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M13 2L3 14h8l-1 8 10-12h-8l1-8z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+            </svg>
+            {isSimulating ? 'Triggering...' : 'Simulate Trigger'}
+          </button>
+
+          {/* Stop Recipe */}
+          <button
+            className={`btn-stop ${isStopping ? 'stopping' : ''}`}
+            onClick={handleStopRecipe}
+            disabled={isStopping}
+            title="Stop recipe and return to idle"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <rect x="6" y="6" width="12" height="12" fill="currentColor"/>
+            </svg>
+            {isStopping ? 'Stopping...' : 'Stop Recipe'}
+          </button>
+        </div>
       </div>
 
       <div className="realtime-content">

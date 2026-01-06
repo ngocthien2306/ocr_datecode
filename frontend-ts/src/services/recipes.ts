@@ -108,6 +108,15 @@ export const receiptsAPI = {
     return response.data;
   },
 
+  // Set inference mode (ONLINE/OFFLINE)
+  setInferenceMode: async (receiptId: string, enabled: boolean): Promise<{ success: boolean; mode: string; enabled: boolean }> => {
+    const response = await api.post<{ success: boolean; mode: string; enabled: boolean }>(
+      `/recipes/${receiptId}/set-inference-mode`,
+      { enabled }
+    );
+    return response.data;
+  },
+
   // Get latest loaded recipe
   getLatestLoadedRecipe: async (): Promise<any> => {
     try {

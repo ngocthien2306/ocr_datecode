@@ -34,7 +34,7 @@ from app.models.action_log import ActionLogCreate, ActionType
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from app.core.config import settings
-from app.api.websocket.camera_ws import send_load_recipe, send_stop_recipe, camera_ws_manager
+from app.api.websocket.camera_ws import send_load_recipe, send_stop_recipe, send_set_inference_mode, camera_ws_manager
 
 router = APIRouter()
 
@@ -828,6 +828,69 @@ async def stop_recipe(
         "success": True,
         "message": f"Recipe '{recipe.name}' stopped successfully",
         "recipe_id": recipe_id
+    }
+
+
+@router.post("/{recipe_id}/set-inference-mode")
+async def set_inference_mode(
+    recipe_id: str,
+    mode: dict,
+    current_user: UserInDB = Depends(get_current_user),
+    recipe_repo: RecipeRepository = Depends(get_recipe_repository)
+):
+    """
+    Set inference mode for a running recipe (ONLINE/OFFLINE)
+
+    - **ONLINE**: Inference runs when triggers occur
+    - **OFFLINE**: Triggers detected but inference skipped
+
+    Args:
+        recipe_id: Recipe ID
+        mode: {"enabled": true/false} or {"mode": "online"/"offline"}
+
+    Returns:
+        Status message
+    """
+    # Ensure recipe exists
+    recipe = await recipe_repo.get_by_id(recipe_id)
+    if not recipe:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recipe not found"
+        )
+
+    # Parse mode parameter
+    enabled = mode.get("enabled")
+    if enabled is None:
+        # Support both formats: {"enabled": bool} or {"mode": "online"/"offline"}
+        mode_str = mode.get("mode", "online")
+        enabled = mode_str.lower() == "online"
+
+    # Check if CameraManagement service is connected
+    if not camera_ws_manager.is_connected():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Camera Management service is not connected"
+        )
+
+    # Send command to Camera Service
+    success = await send_set_inference_mode(recipe_id, enabled)
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to send set inference mode command"
+        )
+
+    mode_name = "ONLINE" if enabled else "OFFLINE"
+    logger.info(f"✅ [INFERENCE MODE] Set to {mode_name} for recipe: {recipe.name}")
+
+    return {
+        "success": True,
+        "message": f"Inference mode set to {mode_name}",
+        "recipe_id": recipe_id,
+        "enabled": enabled,
+        "mode": mode_name
     }
 
 

@@ -11,6 +11,7 @@ Refactored to use separate handlers for better organization:
 import logging
 import threading
 from typing import Dict, Any, Optional, Callable
+from datetime import datetime
 from .camera import Camera, CameraMode
 from .trigger_handler import TriggerHandler
 from .inference_handler import InferenceHandler
@@ -46,6 +47,9 @@ class CameraManager:
         self.event_callback = event_callback
         self.event_loop = event_loop
         self._lock = threading.RLock()
+
+        # Inference mode flag (ONLINE/OFFLINE)
+        self.inference_enabled = True
 
         # Initialize handlers
         self.trigger_handler = TriggerHandler(self)
@@ -498,11 +502,44 @@ class CameraManager:
 
         Delegates to InferenceHandler with emit callback
         """
+        # Check if inference is enabled (ONLINE mode)
+        if not self.inference_enabled:
+            logger.info("⏸️ [INFERENCE OFFLINE] Trigger detected but inference skipped")
+            # Emit event to notify frontend
+            self._emit_event("inference_skipped", {
+                "reason": "Inference mode is OFFLINE",
+                "cameras": [cam.serial_number for cam in cameras],
+                "timestamp": str(datetime.now())
+            })
+            return
+
         self.inference_handler.process_inference(
             cameras=cameras,
             results=results,
             emit_callback=self._emit_event
         )
+
+    def set_inference_mode(self, enabled: bool) -> Dict[str, Any]:
+        """
+        Set inference mode (ONLINE/OFFLINE)
+
+        Args:
+            enabled: True for ONLINE, False for OFFLINE
+
+        Returns:
+            Result dict
+        """
+        with self._lock:
+            self.inference_enabled = enabled
+            mode_name = "ONLINE" if enabled else "OFFLINE"
+            logger.info(f"🔄 [INFERENCE MODE] Set to {mode_name}")
+
+            return {
+                "success": True,
+                "enabled": enabled,
+                "mode": mode_name,
+                "message": f"Inference mode set to {mode_name}"
+            }
 
     def shutdown(self):
         """Shutdown all cameras and stop polling"""

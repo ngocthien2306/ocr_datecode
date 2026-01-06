@@ -202,6 +202,18 @@ class CameraManagementService:
                     "data": status
                 })
 
+            elif event == "set_inference_mode":
+                # Set inference mode (ONLINE/OFFLINE)
+                recipe_id = data.get("recipe_id")
+                enabled = data.get("enabled", True)
+
+                result = self.camera_manager.set_inference_mode(enabled)
+
+                await self.ws_client.send_message({
+                    "event": "set_inference_mode_response",
+                    "data": result
+                })
+
             elif event == "simulate_trigger":
                 # Simulate hardware trigger
                 serial_number = data.get("serial_number")

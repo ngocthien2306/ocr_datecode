@@ -393,6 +393,17 @@ async def send_stop_recipe(recipe_id: str) -> bool:
     })
 
 
+async def send_set_inference_mode(recipe_id: str, enabled: bool) -> bool:
+    """Send set inference mode command to AI service"""
+    return await camera_ws_manager.send_to_camera_service({
+        "event": "set_inference_mode",
+        "data": {
+            "recipe_id": recipe_id,
+            "enabled": enabled
+        }
+    })
+
+
 async def send_set_camera_mode(serial_number: str, mode: str) -> bool:
     """Send set camera mode command to AI service"""
     return await camera_ws_manager.send_to_camera_service({

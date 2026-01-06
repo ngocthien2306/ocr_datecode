@@ -238,10 +238,10 @@ def save_and_encode_frame(
     """
     try:
         # Draw bboxes if provided (for inference frames)
-        img_to_save = frame_img
+        img_to_save = frame_img.copy()
         if transformed_bboxes and len(transformed_bboxes) > 0:
             img_to_save = draw_inference_bboxes(
-                frame_img,
+                img_to_save,
                 transformed_bboxes,
                 confidence,
                 inliers,
@@ -256,17 +256,20 @@ def save_and_encode_frame(
 
         # Generate filename with timestamp
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S%f")
-        filename = f"{pass_fail.lower()}_f{frame_idx}_{timestamp}.jpg"
-        full_path = storage_dir / filename
+        filename_viz = f"{pass_fail.lower()}_f{frame_idx}_{timestamp}_viz.jpg"
+        filename_org = f"{pass_fail.lower()}_f{frame_idx}_{timestamp}_org.jpg"
+        full_path_viz = storage_dir / filename_viz
+        full_path_org = storage_dir / filename_org
 
         # Get original dimensions
         h, w = img_to_save.shape[:2]
 
         # Save FULL resolution to permanent storage (with bboxes drawn if applicable)
-        cv2.imwrite(str(full_path), img_to_save, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        cv2.imwrite(str(full_path_viz), img_to_save, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        cv2.imwrite(str(full_path_org), frame_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
 
         # Relative path for DB and API (from uploads/)
-        relative_path = f"inference_results/{recipe_id}/{today}/{serial_number}/{filename}"
+        relative_path = f"inference_results/{recipe_id}/{today}/{serial_number}/{filename_viz}"
 
         # Create RESIZED + COMPRESSED version for realtime display (divide by 3)
         display_img = resize_for_display(img_to_save, scale_factor=3)
