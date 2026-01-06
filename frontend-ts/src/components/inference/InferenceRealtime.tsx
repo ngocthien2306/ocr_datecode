@@ -219,9 +219,9 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
         <div className="cameras-grid">
           <div className="panel-header">
             <h3>Latest Result</h3>
-            <span className="camera-count">
+            {/* <span className="camera-count">
               {latestResults ? `${latestResults.camera_results.length} camera(s)` : 'No results'}
-            </span>
+            </span> */}
           </div>
 
           {!latestResults ? (
@@ -242,8 +242,8 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                 );
 
                 return (
-                  <div key={cameraResult.serial_number} className="camera-card">
-                    <div className="camera-card-header">
+                  <div key={cameraResult.serial_number} className="camera-card-infer">
+                    {/* <div className="camera-card-header">
                       <div className="camera-info">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                           <rect x="2" y="7" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2"/>
@@ -256,7 +256,7 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                           {cameraStats.frame_stats.fail_count > 0 ? 'FAIL' : 'PASS'}
                         </span>
                       )}
-                    </div>
+                    </div> */}
 
                     <div className="camera-frames">
                       {cameraResult.frames.map((frame) => {
@@ -276,14 +276,14 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                                   <span>Frame {frame.frame_idx}</span>
                                 </div>
                               )}
-                              <div className="frame-overlay">
+                              {/* <div className="frame-overlay">
                                 <span className={`frame-badge ${frame.pass_fail.toLowerCase()}`}>
                                   {frame.pass_fail}
                                 </span>
                                 <span className="frame-confidence">
                                   {(frame.confidence * 100).toFixed(1)}%
                                 </span>
-                              </div>
+                              </div> */}
                             </div>
                           </div>
                         );
@@ -300,9 +300,14 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                           <div className="stat-separator">|</div>
                           <div className="stat-item">
                             <span className="stat-label">Time:</span>
-                            <span className="stat-value">{cameraStats.timings.total?.toFixed(1) || 0}ms</span>
+                            <span className="stat-value">
+                              {(
+                                (cameraStats.timings.trt_inference || 0) + 
+                                (cameraStats.timings.postprocess || 0)
+                              ).toFixed(1)} ms
+                            </span>
                           </div>
-                          <button
+                          {/* <button
                             className="btn-details"
                             onClick={(e) => {
                               const details = e.currentTarget.parentElement?.nextElementSibling as HTMLElement;
@@ -314,7 +319,7 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                             }}
                           >
                             ▼
-                          </button>
+                          </button> */}
                         </div>
                         <div className="stats-details" style={{ display: 'none' }}>
                           <div className="detail-row">
@@ -361,7 +366,7 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                     <span className={`log-badge ${log.result.toLowerCase()}`}>
                       {log.result}
                     </span>
-                    <span className="log-message">{log.message}</span>
+                    {/* <span className="log-message">{log.message}</span> */}
                   </div>
                 ))}
                 <div ref={logsEndRef} />

@@ -123,6 +123,8 @@ class CameraManager:
                 # Add to cameras dict
                 self.cameras[serial_number] = camera
 
+                camera.set_mode(CameraMode.CONTINUOUS)
+
                 # Note: Camera loop will start automatically when set_mode() is called
                 # (e.g., when loading recipe with trigger_mode)
 
