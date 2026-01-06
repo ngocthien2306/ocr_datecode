@@ -1067,9 +1067,10 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                 <option value="Mono8">Mono8</option>
                                 <option value="Mono12">Mono12</option>
                                 <option value="RGB8">RGB8</option>
+                                <option value="BGR8">BGR8</option>
                                 <option value="YUV422">YUV422</option>
                                 <option value="BayerRG8">BayerRG8</option>
-                              </select>
+                              </select> 
                             </div>
                           </div>
 

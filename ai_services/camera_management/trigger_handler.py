@@ -59,6 +59,21 @@ class TriggerHandler:
         self._capture_groups: Dict[int, Dict] = {}
         self._group_lock = threading.Lock()
 
+        # Statistics tracking
+        self._stats = {
+            'total_triggers': 0,          # Total trigger events detected
+            'total_groups_created': 0,    # Total capture groups created
+            'total_groups_completed': 0,  # Groups that completed successfully
+            'total_groups_timeout': 0,    # Groups that timed out
+            'total_inferences': 0,        # Total inference runs
+        }
+        self._stats_lock = threading.Lock()
+
+        # Statistics monitoring thread
+        self._monitoring = False
+        self._monitoring_thread: Optional[threading.Thread] = None
+        self._stats_interval = 10  # Log stats every 10 seconds
+
     def build_di_camera_map(self):
         """
         Build DI → Cameras mapping from cameras with Software Trigger mode
@@ -113,6 +128,9 @@ class TriggerHandler:
 
             logger.info("Trigger polling started (100Hz)")
 
+            # Start statistics monitoring
+            self.start_monitoring()
+
     def stop_polling(self):
         """Stop DI polling thread and cancel all pending timers"""
         with self._lock:
@@ -120,6 +138,9 @@ class TriggerHandler:
                 return
 
             self._polling = False
+
+            # Stop statistics monitoring
+            self.stop_monitoring()
 
             # Cancel all pending timers
             with self._timer_lock:
@@ -139,6 +160,134 @@ class TriggerHandler:
                 self._polling_thread = None
 
             logger.info("Trigger polling stopped")
+
+    def start_monitoring(self, interval: int = 10):
+        """
+        Start statistics monitoring thread
+
+        Args:
+            interval: Log interval in seconds (default: 10)
+        """
+        if self._monitoring:
+            logger.warning("Statistics monitoring already running")
+            return
+
+        self._stats_interval = interval
+        self._monitoring = True
+        self._monitoring_thread = threading.Thread(
+            target=self._monitoring_loop,
+            daemon=True,
+            name="StatsMonitoringThread"
+        )
+        self._monitoring_thread.start()
+
+        logger.info(f"Statistics monitoring started (interval: {interval}s)")
+
+    def stop_monitoring(self):
+        """Stop statistics monitoring thread"""
+        if not self._monitoring:
+            return
+
+        self._monitoring = False
+
+        if self._monitoring_thread:
+            self._monitoring_thread.join(timeout=2.0)
+            self._monitoring_thread = None
+
+        logger.info("Statistics monitoring stopped")
+
+    def _monitoring_loop(self):
+        """Monitoring loop - logs statistics every N seconds"""
+        import os
+
+        # Setup file logger
+        log_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, 'trigger_stats.log')
+
+        # Create file handler
+        file_handler = logging.FileHandler(log_file, mode='a')
+        file_handler.setLevel(logging.INFO)
+        file_formatter = logging.Formatter(
+            '%(asctime)s - STATS - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        file_handler.setFormatter(file_formatter)
+
+        # Create stats logger
+        stats_logger = logging.getLogger('trigger_stats')
+        stats_logger.setLevel(logging.INFO)
+        stats_logger.addHandler(file_handler)
+        stats_logger.propagate = False
+
+        logger.info(f"Statistics logging to: {log_file}")
+
+        try:
+            while self._monitoring:
+                time.sleep(self._stats_interval)
+
+                if not self._monitoring:
+                    break
+
+                # Collect current stats
+                with self._stats_lock:
+                    stats = self._stats.copy()
+
+                # Count active groups and collect details
+                with self._group_lock:
+                    active_groups = len(self._capture_groups)
+                    # Collect group details for debugging
+                    group_details = []
+                    current_time = time.time()
+                    for gid, group in self._capture_groups.items():
+                        age = current_time - group.get('created_at', current_time)
+                        completed_count = group.get('completed_count', 0)
+                        expected_count = group.get('expected_count', 0)
+                        group_details.append(
+                            f"G{gid}({completed_count}/{expected_count}, {age:.1f}s)"
+                        )
+
+                # Count active timers
+                with self._timer_lock:
+                    self._active_timers = [t for t in self._active_timers if t.is_alive()]
+                    active_timers = len(self._active_timers)
+
+                # Calculate success rate
+                total_groups = stats['total_groups_created']
+                completed = stats['total_groups_completed']
+                timeout = stats['total_groups_timeout']
+                success_rate = (completed / total_groups * 100) if total_groups > 0 else 0.0
+
+                # Log to file
+                stats_logger.info(
+                    f"Triggers: {stats['total_triggers']} | "
+                    f"Groups: {total_groups} created, {completed} completed, {timeout} timeout | "
+                    f"Success: {success_rate:.1f}% | "
+                    f"Inferences: {stats['total_inferences']} | "
+                    f"Active: {active_groups} groups, {active_timers} timers"
+                )
+
+                # If there are active groups, log details
+                if active_groups > 0:
+                    stats_logger.info(f"  Active groups detail: {', '.join(group_details)}")
+
+                # Also log to main logger (console)
+                logger.info(
+                    f"📊 [STATS] Triggers={stats['total_triggers']}, "
+                    f"Groups={completed}/{total_groups} ({success_rate:.1f}%), "
+                    f"Inferences={stats['total_inferences']}, "
+                    f"Active={active_groups}g/{active_timers}t"
+                )
+
+        except Exception as e:
+            logger.error(f"Error in monitoring loop: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            # Cleanup
+            stats_logger.removeHandler(file_handler)
+            file_handler.close()
+            logger.info("Monitoring loop stopped")
 
     def _polling_loop(self):
         """Main polling loop - runs at 100Hz"""
@@ -171,6 +320,10 @@ class TriggerHandler:
                                 f"DI{di_number} edge detected ({previous_value}→{current_value}), "
                                 f"triggering {len(cameras)} camera(s)"
                             )
+
+                            # Increment trigger counter
+                            with self._stats_lock:
+                                self._stats['total_triggers'] += 1
 
                             # Trigger all cameras on this DI pin simultaneously
                             camera_list = [cam for cam, _ in cameras]
@@ -221,6 +374,10 @@ class TriggerHandler:
             f"{camera_delays}"
         )
 
+        # Increment groups created counter
+        with self._stats_lock:
+            self._stats['total_groups_created'] += 1
+
         # Create capture group
         with self._group_lock:
             self._capture_groups[group_id] = {
@@ -229,7 +386,8 @@ class TriggerHandler:
                 'expected_count': len(cameras),
                 'completed_count': 0,
                 'group_lock': threading.Lock(),
-                'created_at': time.time()
+                'created_at': time.time(),
+                'timeout_timer': None  # Will be set after creation
             }
 
         # Schedule individual timer for each camera based on its delay_trigger
@@ -269,6 +427,11 @@ class TriggerHandler:
         )
         timeout_timer.daemon = True
         timeout_timer.name = f"TimeoutTimer-{group_id}"
+
+        # Store timeout timer in group for cancellation
+        with self._group_lock:
+            if group_id in self._capture_groups:
+                self._capture_groups[group_id]['timeout_timer'] = timeout_timer
 
         with self._timer_lock:
             self._active_timers.append(timeout_timer)
@@ -337,6 +500,11 @@ class TriggerHandler:
                         f"Triggering batch inference."
                     )
 
+                    # Increment stats counters
+                    with self._stats_lock:
+                        self._stats['total_groups_completed'] += 1
+                        self._stats['total_inferences'] += 1
+
                     # Emit frames_captured event for batch inference
                     cameras_list = group['cameras']
                     results_dict = group['results']
@@ -346,6 +514,12 @@ class TriggerHandler:
                         "cameras": cameras_list,
                         "results": results_dict
                     })
+
+                    # Cancel timeout timer before cleanup
+                    timeout_timer = group.get('timeout_timer')
+                    if timeout_timer and timeout_timer.is_alive():
+                        timeout_timer.cancel()
+                        logger.debug(f"[Group #{group_id}] Cancelled timeout timer")
 
                     # Cleanup group
                     with self._group_lock:
@@ -405,6 +579,10 @@ class TriggerHandler:
                     f"[Group #{group_id}] Timeout! Only {completed}/{expected} completed. "
                     f"Missing: {list(missing_serials)}"
                 )
+
+                # Increment timeout counter
+                with self._stats_lock:
+                    self._stats['total_groups_timeout'] += 1
 
                 # Emit error event
                 self.camera_manager._emit_event("trigger_error", {
