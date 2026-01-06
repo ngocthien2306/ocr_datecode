@@ -186,6 +186,7 @@ class SuperPointMatcherTRT:
         """Resize image to match engine input size"""
         h, w = img.shape
         target_h, target_w = self.input_shape[2:]
+        # target_h, target_w = 1080, 1920
 
         if h != target_h or w != target_w:
             resized = cv2.resize(img, (target_w, target_h))

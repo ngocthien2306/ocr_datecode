@@ -30,7 +30,7 @@ def test_dynamic_batch_engine():
     templates = []
     for i in range(3):
         # Create simple test image
-        img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        img = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
         cv2.putText(img, f"Template {i+1}", (200, 240),
                     cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 3)
         template_path = temp_dir / f"test_template_{i+1}.jpg"

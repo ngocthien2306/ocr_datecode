@@ -44,7 +44,7 @@ class InferenceHandler:
     def __init__(self):
         """Initialize InferenceHandler"""
         self.camera_matchers: Dict[str, Any] = {}  # Map serial_number -> matcher
-        self.engine_path = "/home/demo/Source/ocr_datecode/weights/pipeline_fp16_dynamic.engine"
+        self.engine_path = "/home/demo/Source/ocr_datecode/weights/pipeline_fp16_dynamic_480x640.engine"
         logger.info("InferenceHandler initialized with dynamic batch engine")
 
     def init_matchers(self, cameras: List['Camera']):
@@ -335,7 +335,7 @@ class InferenceHandler:
                                 timings = result.get('timings', {})
                                 transformed_bboxes = result.get('transformed_bboxes', [])
 
-                                if confidence > 0.5 and inliers >= 10:
+                                if confidence > 0.5 and inliers >= 2000:
                                     inference_result_data = "PASS"
                                 else:
                                     inference_result_data = "FAIL"
