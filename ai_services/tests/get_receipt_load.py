@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from typing import Tuple
 
-API_BASE = os.environ.get("API_BASE", "http://localhost:8000")
+API_BASE = os.environ.get("API_BASE", "https://suntech-vision-api.ngrok.app")
 
 
 def get_latest_json() -> dict:

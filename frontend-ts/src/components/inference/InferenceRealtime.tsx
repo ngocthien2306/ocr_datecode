@@ -501,7 +501,7 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                     <span className={`log-badge ${log.result.toLowerCase()}`}>
                       {log.result}
                     </span>
-                    {/* <span className="log-message">{log.message}</span> */}
+                    <span className="log-message">{log.message}</span>
                   </div>
                 ))}
                 <div ref={logsEndRef} />
