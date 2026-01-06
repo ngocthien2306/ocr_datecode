@@ -646,7 +646,8 @@ async def update_camera_settings(
             serial_number=serial_number,
             exposure_time=settings.exposure_time,
             gain=settings.gain,
-            trigger_config=settings.trigger_config
+            trigger_config=settings.trigger_config,
+            delay_trigger=settings.delay_trigger
         )
 
         # Send settings to camera via WebSocket (if camera is connected)

@@ -64,8 +64,15 @@ export const camerasAPI = {
     return response.data;
   },
 
-  updateCameraSettings: async (serialNumber: string, settings: { exposure_time?: number; gain?: number }): Promise<any> => {
+  updateCameraSettings: async (serialNumber: string, settings: { exposure_time?: number; gain?: number; delay_trigger?: number }): Promise<any> => {
     const response = await api.post(`/cameras/${serialNumber}/settings`, settings);
+    return response.data;
+  },
+
+  updateDelayTrigger: async (serialNumber: string, delayMs: number): Promise<any> => {
+    const response = await api.post(`/cameras/${serialNumber}/settings`, {
+      delay_trigger: delayMs
+    });
     return response.data;
   },
 

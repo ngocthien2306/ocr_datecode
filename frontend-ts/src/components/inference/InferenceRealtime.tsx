@@ -3,6 +3,7 @@ import '@/styles/InferenceRealtime.css';
 import { socketService } from '@/services/socketio';
 import api from '@/services/api';
 import { receiptsAPI } from '@/services/recipes';
+import { camerasAPI } from '@/services/cameras';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 
 interface InferenceLog {
@@ -28,6 +29,7 @@ interface FrameResult {
 interface CameraResult {
   camera_id: string;
   serial_number: string;
+  delay_trigger?: number;
   frames: FrameResult[];
 }
 
@@ -92,6 +94,10 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
   const [isStopping, setIsStopping] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
+  // Delay trigger management - track each camera's delay
+  const [cameraDelays, setCameraDelays] = useState<Record<string, number>>({});
+  const [updatingDelay, setUpdatingDelay] = useState<string | null>(null);
+
   // Confirmation dialog state
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>({
     isOpen: false,
@@ -154,6 +160,17 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
 
       // Store full inference result for multi-camera display
       setLatestResults(data as InferenceResult);
+
+      // Sync delay_trigger from result to local state
+      if (data.camera_results) {
+        const newDelays: Record<string, number> = {};
+        data.camera_results.forEach((camResult: CameraResult) => {
+          if (camResult.delay_trigger !== undefined) {
+            newDelays[camResult.serial_number] = camResult.delay_trigger;
+          }
+        });
+        setCameraDelays(prev => ({ ...prev, ...newDelays }));
+      }
     };
 
     socketService.subscribeToInferenceResults(handleNewResult);
@@ -256,6 +273,35 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
     } catch (error: any) {
       console.error('Error toggling inference mode:', error);
       alert(`Failed to change mode: ${error.response?.data?.detail || error.message}`);
+    }
+  };
+
+  const handleUpdateDelay = async (serialNumber: string, newDelay: number) => {
+    if (updatingDelay || newDelay < 0 || newDelay > 10000) return;
+
+    setUpdatingDelay(serialNumber);
+
+    try {
+      await camerasAPI.updateDelayTrigger(serialNumber, newDelay);
+
+      // Update local state
+      setCameraDelays(prev => ({ ...prev, [serialNumber]: newDelay }));
+
+      // Add success log
+      const delayLog: InferenceLog = {
+        id: `delay-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        result: 'PASS',
+        recipe_name: runningRecipe?.metadata?.name || 'Unknown',
+        product_code: '',
+        message: `⚙️ Camera ${serialNumber}: Delay updated to ${newDelay}ms`
+      };
+      setLogs(prev => [...prev, delayLog]);
+    } catch (error: any) {
+      console.error('Error updating delay:', error);
+      alert(`Failed to update delay: ${error.response?.data?.detail || error.message}`);
+    } finally {
+      setUpdatingDelay(null);
     }
   };
 
@@ -437,10 +483,45 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                             <span className="stat-label">Time:</span>
                             <span className="stat-value">
                               {(
-                                (cameraStats.timings.trt_inference || 0) + 
+                                (cameraStats.timings.trt_inference || 0) +
                                 (cameraStats.timings.postprocess || 0)
                               ).toFixed(1)} ms
                             </span>
+                          </div>
+                          <div className="stat-separator">|</div>
+                          <div className="stat-item delay-editor">
+                            <span className="stat-label">Delay:</span>
+                            <input
+                              type="number"
+                              className="delay-input"
+                              value={cameraDelays[cameraResult.serial_number] || cameraResult.delay_trigger || 0}
+                              onChange={(e) => {
+                                const value = parseInt(e.target.value) || 0;
+                                setCameraDelays(prev => ({ ...prev, [cameraResult.serial_number]: value }));
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  const value = cameraDelays[cameraResult.serial_number] || cameraResult.delay_trigger || 0;
+                                  handleUpdateDelay(cameraResult.serial_number, value);
+                                }
+                              }}
+                              min="0"
+                              max="10000"
+                              step="50"
+                              disabled={updatingDelay === cameraResult.serial_number}
+                            />
+                            <span className="stat-unit">ms</span>
+                            <button
+                              className="btn-update-delay"
+                              onClick={() => {
+                                const value = cameraDelays[cameraResult.serial_number] || cameraResult.delay_trigger || 0;
+                                handleUpdateDelay(cameraResult.serial_number, value);
+                              }}
+                              disabled={updatingDelay === cameraResult.serial_number}
+                              title="Update delay trigger"
+                            >
+                              {updatingDelay === cameraResult.serial_number ? '...' : '✓'}
+                            </button>
                           </div>
                           {/* <button
                             className="btn-details"

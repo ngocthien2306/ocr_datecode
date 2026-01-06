@@ -65,7 +65,8 @@ class CameraSettingsService:
         serial_number: str,
         exposure_time: Optional[int] = None,
         gain: Optional[float] = None,
-        trigger_config: Optional[Dict] = None
+        trigger_config: Optional[Dict] = None,
+        delay_trigger: Optional[float] = None
     ) -> Dict:
         """
         Update settings for a camera
@@ -113,6 +114,11 @@ class CameraSettingsService:
             settings['trigger_config'] = trigger_config
             trigger_mode = trigger_config.get('mode', 'continuous')
             changes.append(f"trigger_mode: {old_val.get('mode', 'N/A') if isinstance(old_val, dict) else 'N/A'} → {trigger_mode}")
+
+        if delay_trigger is not None:
+            old_val = settings.get('delay_trigger', 'None')
+            settings['delay_trigger'] = delay_trigger
+            changes.append(f"delay_trigger: {old_val} → {delay_trigger}ms")
 
         # Write settings to file
         try:

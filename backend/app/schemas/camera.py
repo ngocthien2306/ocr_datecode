@@ -70,3 +70,4 @@ class CameraSettingsUpdate(BaseModel):
     exposure_time: Optional[int] = Field(None, ge=100, le=1000000, description="Exposure time in microseconds (μs)")
     gain: Optional[float] = Field(None, ge=0.0, le=20.0, description="Camera gain value")
     trigger_config: Optional[Dict[str, Any]] = Field(None, description="Trigger configuration (mode, source, activation, di_number)")
+    delay_trigger: Optional[float] = Field(None, ge=0, le=10000, description="Delay trigger in milliseconds (ms)")

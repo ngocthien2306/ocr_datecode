@@ -497,6 +497,7 @@ class InferenceHandler:
             camera_result = {
                 "camera_id": camera.serial_number,  # TODO: Use actual camera_id from DB
                 "serial_number": camera.serial_number,
+                "delay_trigger": camera.delay_trigger,  # Add delay_trigger for frontend
                 "frames": frame_results
             }
             camera_results.append(camera_result)

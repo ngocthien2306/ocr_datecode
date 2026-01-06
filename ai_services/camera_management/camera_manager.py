@@ -449,6 +449,13 @@ class CameraManager:
                     camera.set_gain(gain)
                     updated.append("gain")
 
+                # Update delay trigger
+                if "delay_trigger" in settings:
+                    delay_ms = settings["delay_trigger"]
+                    camera.delay_trigger = delay_ms
+                    updated.append("delay_trigger")
+                    logger.info(f"Camera {serial_number} delay_trigger updated to {delay_ms}ms")
+
                 # Update pixel format (requires reconnect)
                 if "pixel_format" in settings:
                     # TODO: Implement pixel format change
