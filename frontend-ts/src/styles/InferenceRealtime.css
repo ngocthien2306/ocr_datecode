@@ -581,6 +581,20 @@
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+  transition: all 0.3s ease;
+}
+
+.delay-editor:hover {
+  background: white;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.delay-editor:hover .stat-label {
+  color: #667eea;
+}
+
+.delay-editor:hover .stat-unit {
+  color: #667eea;
 }
 
 .delay-editor .stat-label {
@@ -599,6 +613,10 @@
   font-weight: 700;
   text-align: center;
   transition: all 0.2s;
+}
+
+.delay-editor:hover .delay-input {
+  border-color: #667eea;
 }
 
 .delay-input:hover:not(:disabled) {
@@ -643,10 +661,22 @@
   backdrop-filter: blur(10px);
 }
 
+.delay-editor:hover .btn-update-delay {
+  background: #667eea;
+  border-color: #667eea;
+  color: white;
+}
+
 .btn-update-delay:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.3);
   border-color: rgba(255, 255, 255, 0.6);
   transform: scale(1.05);
+}
+
+.delay-editor:hover .btn-update-delay:hover:not(:disabled) {
+  background: #5568d3;
+  border-color: #5568d3;
+  transform: scale(1.08);
 }
 
 .btn-update-delay:active:not(:disabled) {
