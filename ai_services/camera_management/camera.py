@@ -250,29 +250,29 @@ class Camera:
 
             # Exposure (can be changed during grabbing) - try different node names
             try:
-                if hasattr(self.camera, 'ExposureTime') and self.camera.ExposureTime.IsWritable():
-                    self.camera.ExposureTime.SetValue(int(self.exposure_time))
-                    actual_exposure = self.camera.ExposureTime.GetValue()
-                    logger.info(f"[{self.serial_number}] Exposure: {actual_exposure} μs")
-                elif hasattr(self.camera, 'ExposureTimeAbs') and self.camera.ExposureTimeAbs.IsWritable():
+                self.camera.ExposureTime.SetValue(int(self.exposure_time))
+                actual_exposure = self.camera.ExposureTime.GetValue()
+                logger.info(f"[{self.serial_number}] Exposure: {actual_exposure} μs")
+            except:
+                try:
                     self.camera.ExposureTimeAbs.SetValue(float(self.exposure_time))
                     actual_exposure = self.camera.ExposureTimeAbs.GetValue()
                     logger.info(f"[{self.serial_number}] ExposureAbs: {actual_exposure} μs")
-            except Exception as e:
-                logger.warning(f"[{self.serial_number}] Could not set exposure time: {e}")
+                except Exception as e:
+                    logger.error(f"[{self.serial_number}] Failed to set exposure time: {e}")
 
             # Gain (can be changed during grabbing) - try different node names
             try:
-                if hasattr(self.camera, 'Gain') and self.camera.Gain.IsWritable():
-                    self.camera.Gain.SetValue(float(self.gain))
-                    actual_gain = self.camera.Gain.GetValue()
-                    logger.info(f"[{self.serial_number}] Gain: {actual_gain}")
-                elif hasattr(self.camera, 'GainRaw') and self.camera.GainRaw.IsWritable():
+                self.camera.Gain.SetValue(float(self.gain))
+                actual_gain = self.camera.Gain.GetValue()
+                logger.info(f"[{self.serial_number}] Gain: {actual_gain}")
+            except:
+                try:
                     self.camera.GainRaw.SetValue(int(self.gain))
                     actual_gain = self.camera.GainRaw.GetValue()
                     logger.info(f"[{self.serial_number}] GainRaw: {actual_gain}")
-            except Exception as e:
-                logger.warning(f"[{self.serial_number}] Could not set gain: {e}")
+                except Exception as e:
+                    logger.error(f"[{self.serial_number}] Failed to set gain: {e}")
 
         except Exception as e:
             logger.error(f"Error applying settings: {e}")
@@ -312,20 +312,14 @@ class Camera:
         # Apply to camera if connected
         if self.camera and self.camera.IsOpen():
             try:
-                # Try different exposure time node names (different Basler models)
-                if hasattr(self.camera, 'ExposureTime') and self.camera.ExposureTime.IsWritable():
-                    self.camera.ExposureTime.SetValue(exposure_time)
-                elif hasattr(self.camera, 'ExposureTimeAbs') and self.camera.ExposureTimeAbs.IsWritable():
-                    self.camera.ExposureTimeAbs.SetValue(exposure_time)
-                elif hasattr(self.camera, 'ExposureTimeRaw') and self.camera.ExposureTimeRaw.IsWritable():
-                    self.camera.ExposureTimeRaw.SetValue(int(exposure_time))
-                else:
-                    logger.warning(f"[{self.serial_number}] No writable exposure time node found")
-                    return
-
+                self.camera.ExposureTime.SetValue(int(exposure_time))
                 logger.info(f"[{self.serial_number}] Exposure time set to {exposure_time}μs")
-            except Exception as e:
-                logger.error(f"[{self.serial_number}] Failed to set exposure time: {e}")
+            except:
+                try:
+                    self.camera.ExposureTimeAbs.SetValue(float(exposure_time))
+                    logger.info(f"[{self.serial_number}] Exposure time set to {exposure_time}μs")
+                except Exception as e:
+                    logger.error(f"[{self.serial_number}] Failed to set exposure time: {e}")
 
     def set_gain(self, gain: float):
         """
@@ -339,18 +333,14 @@ class Camera:
         # Apply to camera if connected
         if self.camera and self.camera.IsOpen():
             try:
-                # Try different gain node names (different Basler models)
-                if hasattr(self.camera, 'Gain') and self.camera.Gain.IsWritable():
-                    self.camera.Gain.SetValue(gain)
-                elif hasattr(self.camera, 'GainRaw') and self.camera.GainRaw.IsWritable():
-                    self.camera.GainRaw.SetValue(int(gain))
-                else:
-                    logger.warning(f"[{self.serial_number}] No writable gain node found")
-                    return
-
+                self.camera.Gain.SetValue(float(gain))
                 logger.info(f"[{self.serial_number}] Gain set to {gain}")
-            except Exception as e:
-                logger.error(f"[{self.serial_number}] Failed to set gain: {e}")
+            except:
+                try:
+                    self.camera.GainRaw.SetValue(int(gain))
+                    logger.info(f"[{self.serial_number}] Gain set to {gain}")
+                except Exception as e:
+                    logger.error(f"[{self.serial_number}] Failed to set gain: {e}")
 
     def update_settings(self, settings: Dict[str, Any]):
         """Update camera settings from recipe"""
