@@ -687,7 +687,7 @@ class Camera:
 
                             if ann.get('type') == 'text':
                                 expected_text = ann.get('text', '')
-                                print("TESTTTTTTTTTTTT: ", expected_text)
+                                # print("TESTTTTTTTTTTTT: ", expected_text)
                                 if expected_text:
                                     self.expected_texts[idx] = expected_text
                                     logger.info(f"  - Expected text region {idx}: '{expected_text}'")

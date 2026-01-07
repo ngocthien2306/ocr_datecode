@@ -4,7 +4,7 @@ import json
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from pathlib import Path
 import numpy as np
-from .utils import save_and_encode_frame
+from .utils import save_and_encode_frame, encode_frame_for_display
 
 if TYPE_CHECKING:
     from .camera import Camera
@@ -24,14 +24,32 @@ except Exception as e:
     INFERENCE_AVAILABLE = False
     SuperPointMatcherTRT = None
 
-# Import text recognizer
+# Import text recognizers (both TensorRT and ONNX)
 try:
-    from .text_recognizer_trt import get_text_recognizer, TENSORRT_AVAILABLE as OCR_AVAILABLE
-    from .ocr_utils import crop_text_region, compare_texts
+    from .text_recognizer_trt import get_text_recognizer as get_text_recognizer_trt, TENSORRT_AVAILABLE
+    TRT_AVAILABLE = TENSORRT_AVAILABLE
 except Exception as e:
-    logging.warning(f"Text recognizer not available: {e}")
-    OCR_AVAILABLE = False
-    get_text_recognizer = None
+    logging.warning(f"TensorRT text recognizer not available: {e}")
+    TRT_AVAILABLE = False
+    get_text_recognizer_trt = None
+
+try:
+    from .text_recognizer import TextRecognizer as TextRecognizerONNX
+    ONNX_AVAILABLE = True
+except Exception as e:
+    logging.warning(f"ONNX text recognizer not available: {e}")
+    ONNX_AVAILABLE = False
+    TextRecognizerONNX = None
+
+try:
+    from .ocr_utils import crop_text_region, compare_texts
+    OCR_UTILS_AVAILABLE = True
+except Exception as e:
+    logging.warning(f"OCR utils not available: {e}")
+    OCR_UTILS_AVAILABLE = False
+
+# OCR is available if either backend is available
+OCR_AVAILABLE = TRT_AVAILABLE or ONNX_AVAILABLE
 
 
 class InferenceHandler:
@@ -43,19 +61,63 @@ class InferenceHandler:
 
         # Text recognizer for Check_Type_Product function
         self.text_recognizer = None
+        self.ocr_backend = None
+
         if OCR_AVAILABLE:
             try:
-                ocr_engine_path = "/home/demo/Source/ocr_datecode/languages/english/rec.engine"
-                ocr_dict_path = "/home/demo/Source/ocr_datecode/languages/english/dict.txt"
-                self.text_recognizer = get_text_recognizer(
-                    engine_path=ocr_engine_path,
-                    dict_path=ocr_dict_path,
-                    min_width=320,
-                    max_width=2000
-                )
-                logger.info("Text recognizer initialized for Check_Type_Product")
+                import os
+                # Get OCR backend from environment: "tensorrt", "onnx", or "auto" (default)
+                ocr_backend_choice = os.getenv("OCR_BACKEND", "auto").lower()
+
+                logger.info(f"OCR Backend availability - TensorRT: {TRT_AVAILABLE}, ONNX: {ONNX_AVAILABLE}")
+
+
+                ocr_backend_choice = "onnx"
+                # Initialize selected backend
+                if ocr_backend_choice == "tensorrt" and TRT_AVAILABLE:
+                    # Use TensorRT backend
+                    ocr_engine_path = "/home/demo/Source/ocr_datecode/languages/english/rec.engine"
+                    ocr_dict_path = "/home/demo/Source/ocr_datecode/languages/english/dict.txt"
+                    self.text_recognizer = get_text_recognizer_trt(
+                        engine_path=ocr_engine_path,
+                        dict_path=ocr_dict_path,
+                        min_width=320,
+                        max_width=2000
+                    )
+                    self.ocr_backend = "tensorrt"
+                    logger.info("✅ Text recognizer initialized with TensorRT backend")
+
+                elif ocr_backend_choice == "onnx" and ONNX_AVAILABLE:
+                    # Use ONNX backend
+                    import os
+                    ocr_model_path = "/home/demo/Source/ocr_datecode/languages/english/rec.onnx"
+                    ocr_dict_path = "/home/demo/Source/ocr_datecode/languages/english/dict.txt"
+
+                    # Check file existence
+                    if not os.path.exists(ocr_model_path):
+                        raise FileNotFoundError(f"ONNX model not found: {ocr_model_path}")
+                    if not os.path.exists(ocr_dict_path):
+                        raise FileNotFoundError(f"Dict file not found: {ocr_dict_path}")
+
+                    logger.info(f"Loading ONNX model from: {ocr_model_path}")
+                    self.text_recognizer = TextRecognizerONNX(
+                        model_path=ocr_model_path,
+                        dict_path=ocr_dict_path,
+                        use_gpu=True
+                    )
+                    self.ocr_backend = "onnx"
+                    logger.info("✅ Text recognizer initialized with ONNX backend")
+                    logger.info(f"   Model: {ocr_model_path}")
+                    logger.info(f"   Dict: {ocr_dict_path}")
+
+                else:
+                    logger.warning(f"Requested backend '{ocr_backend_choice}' not available")
+                    self.text_recognizer = None
+
             except Exception as e:
                 logger.warning(f"Failed to initialize text recognizer: {e}")
+                import traceback
+                traceback.print_exc()
                 self.text_recognizer = None
 
         logger.info("InferenceHandler initialized with dynamic batch engine")
@@ -82,7 +144,7 @@ class InferenceHandler:
                 # Get first template
                 
                 template_data = camera.templates[0]
-                print("TEMPLATE DATA: ", template_data)
+                # print("TEMPLATE DATA: ", template_data)
                 image_url = template_data.get("image_url")
 
                 if not image_url:
@@ -165,8 +227,9 @@ class InferenceHandler:
                             "points": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
                         }
 
-                    elif ann_type == "text":
-                        # Handle both polygon (with points) and rectangle (with x,y,width,height)
+                    elif ann_type in ["text", "barcode", "datecode"]:
+                        # Handle text, barcode, datecode with same logic
+                        # Support both polygon (with points) and rectangle (with x,y,width,height)
                         pixel_points = []
 
                         if ann.get("points"):
@@ -408,9 +471,12 @@ class InferenceHandler:
                 cropped_region = crop_text_region(frame_img, points)
                 path_save = "/home/demo/Source/ocr_datecode/ai_services/test_result"
                 cv2.imwrite(f"{path_save}/cropped_region_{camera.serial_number}_{region_idx}.png", cropped_region)
+
                 # Run OCR on cropped region
+                logger.debug(f"[{camera.serial_number}] Running OCR with {self.ocr_backend} backend...")
                 text, confidence = self.text_recognizer.recognize(cropped_region, return_confidence=True)
                 recognized_text = text.strip()
+                logger.debug(f"[{camera.serial_number}] OCR result: '{recognized_text}' (conf: {confidence:.2%})")
 
 
                 # Compare texts (case-insensitive, strip whitespace)
@@ -710,7 +776,7 @@ class InferenceHandler:
 
                                     # Determine PASS/FAIL based on text match
                                     if text_verification['all_match']:
-                                        inference_result_data = "FAIL"
+                                        inference_result_data = "PASS"
                                     else:
                                         inference_result_data = "FAIL"
                                         logger.warning(
@@ -721,14 +787,14 @@ class InferenceHandler:
                                 elif camera.function_type == 'OCR':
                                     # TODO: Implement OCR logic
                                     if confidence > 0.5 and inliers >= 2000:
-                                        inference_result_data = "FAIL"
+                                        inference_result_data = "PASS"
                                     else:
                                         inference_result_data = "FAIL"
 
                                 else:
                                     # Default: template matching
                                     if confidence > 0.5 and inliers >= 2000:
-                                        inference_result_data = "FAIL"
+                                        inference_result_data = "PASS"
                                     else:
                                         inference_result_data = "FAIL"
 
@@ -824,6 +890,10 @@ class InferenceHandler:
             camera_inference = camera_inference_results.get(serial_number, {})
             has_inference = bool(camera_inference)
 
+            # Get crop_area from matcher if available
+            matcher = self.camera_matchers.get(serial_number)
+            crop_area = getattr(matcher, 'crop_area', None) if matcher else None
+
             # Build frame results
             frame_results = []
             for idx, frame_img in enumerate(camera_frames):
@@ -846,13 +916,12 @@ class InferenceHandler:
                     frame_timings = None
                     frame_bboxes = None
 
-                # Only save/encode image if FAIL or ERROR (to save storage)
+                # Encode image for display
                 image_path = None
                 image_base64 = None
 
                 if frame_pass_fail == "FAIL" or frame_pass_fail == "ERROR":
-                    # Save directly to permanent storage with recipe_id
-                    # Pass bbox info for inference frames to draw on image
+                    # FAIL/ERROR: Save to disk + encode base64 for display
                     image_path, image_base64 = save_and_encode_frame(
                         frame_img=frame_img,
                         serial_number=camera.serial_number,
@@ -862,8 +931,20 @@ class InferenceHandler:
                         transformed_bboxes=frame_bboxes,
                         confidence=frame_confidence,
                         inliers=frame_inliers,
-                        total_matches=frame_total_matches
+                        total_matches=frame_total_matches,
+                        crop_area=crop_area
                     )
+                else:
+                    # PASS: Only encode base64 for display (no disk storage)
+                    image_base64 = encode_frame_for_display(
+                        frame_img=frame_img,
+                        transformed_bboxes=frame_bboxes,
+                        confidence=frame_confidence,
+                        inliers=frame_inliers,
+                        total_matches=frame_total_matches,
+                        crop_area=crop_area
+                    )
+                    # image_path remains None (not saved to disk)
 
                 # Build frame result
                 frame_result = {

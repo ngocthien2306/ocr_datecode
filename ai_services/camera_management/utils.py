@@ -131,7 +131,8 @@ def draw_inference_bboxes(
     transformed_bboxes: List[Dict[str, Any]],
     confidence: float,
     inliers: int,
-    total_matches: int
+    total_matches: int,
+    crop_area: Optional[Dict[str, int]] = None
 ) -> np.ndarray:
     """
     Draw inference bounding boxes on image
@@ -143,6 +144,7 @@ def draw_inference_bboxes(
         confidence: Confidence score (0-1)
         inliers: Number of inliers
         total_matches: Total matches
+        crop_area: Optional crop area dict {'x1', 'y1', 'x2', 'y2'} to visualize
 
     Returns:
         Image with bboxes drawn
@@ -156,7 +158,29 @@ def draw_inference_bboxes(
         'barcode': (255, 0, 255),      # Magenta
         'datecode': (0, 255, 255)      # Cyan
     }
+    logger.debug(f"Drawing {len(transformed_bboxes)} bboxes")
 
+    # Draw crop_area first (as background)
+    if crop_area:
+        # Draw as dotted yellow rectangle
+        cv2.rectangle(
+            result_img,
+            (crop_area['x1'], crop_area['y1']),
+            (crop_area['x2'], crop_area['y2']),
+            (0, 255, 255),  # Yellow
+            2,
+            cv2.LINE_4
+        )
+        # Add label
+        cv2.putText(
+            result_img,
+            "CROP AREA",
+            (crop_area['x1'] + 5, crop_area['y1'] + 25),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 255, 255),
+            2
+        )
     # Draw each bbox
     for bbox in transformed_bboxes:
         bbox_type = bbox.get('type', 'text')
@@ -203,6 +227,61 @@ def draw_inference_bboxes(
     return result_img
 
 
+def encode_frame_for_display(
+    frame_img: np.ndarray,
+    transformed_bboxes: Optional[List[Dict[str, Any]]] = None,
+    confidence: float = 0.0,
+    inliers: int = 0,
+    total_matches: int = 0,
+    crop_area: Optional[Dict[str, int]] = None,
+    scale_factor: int = 3,
+    quality: int = 70
+) -> Optional[str]:
+    """
+    Encode frame to base64 for display (without saving to disk)
+    Used for PASS frames to stream to UI without storing
+
+    Args:
+        frame_img: Input frame (numpy array)
+        transformed_bboxes: Optional list of bbox dicts to draw
+        confidence: Confidence score (for drawing)
+        inliers: Number of inliers (for drawing)
+        total_matches: Total matches (for drawing)
+        crop_area: Optional crop area to visualize
+        scale_factor: Division factor for resizing (default: 3)
+        quality: JPEG quality (default: 70)
+
+    Returns:
+        Base64 encoded string or None on error
+    """
+    try:
+        # Draw bboxes if provided
+        img_to_encode = frame_img.copy()
+        if transformed_bboxes and len(transformed_bboxes) > 0:
+            img_to_encode = draw_inference_bboxes(
+                img_to_encode,
+                transformed_bboxes,
+                confidence,
+                inliers,
+                total_matches,
+                crop_area
+            )
+
+        # Resize for display
+        display_img = resize_for_display(img_to_encode, scale_factor=scale_factor)
+
+        # Encode to base64
+        image_base64 = encode_image_to_base64(display_img, quality=quality)
+
+        return image_base64
+
+    except Exception as e:
+        logger.error(f"Error encoding frame for display: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 def save_and_encode_frame(
     frame_img,
     serial_number: str,
@@ -213,11 +292,12 @@ def save_and_encode_frame(
     transformed_bboxes: Optional[List[Dict[str, Any]]] = None,
     confidence: float = 0.0,
     inliers: int = 0,
-    total_matches: int = 0
+    total_matches: int = 0,
+    crop_area: Optional[Dict[str, int]] = None
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Save frame DIRECTLY to permanent storage and create resized version for display
-    Optionally draw inference bboxes on the image
+    Optionally draw inference bboxes and crop_area on the image
 
     Args:
         frame_img: Input frame (numpy array)
@@ -230,6 +310,7 @@ def save_and_encode_frame(
         confidence: Confidence score (for drawing)
         inliers: Number of inliers (for drawing)
         total_matches: Total matches (for drawing)
+        crop_area: Optional crop area dict to visualize
 
     Returns:
         Tuple of (relative_image_path, image_base64) or (None, None) on error
@@ -245,7 +326,8 @@ def save_and_encode_frame(
                 transformed_bboxes,
                 confidence,
                 inliers,
-                total_matches
+                total_matches,
+                crop_area  # Pass crop_area to visualization
             )
             logger.info(f"Drew {len(transformed_bboxes)} bboxes on frame")
 

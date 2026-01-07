@@ -13,8 +13,10 @@ class TextRecognizer:
         
         self.char_dict = self._load_dict(dict_path)
         self.char_list = ['blank'] + self.char_dict
-        
-        providers = ['TensorrtExecutionProvider', 'CPUExecutionProvider'] if use_gpu else ['CPUExecutionProvider']
+
+        # Use CUDAExecutionProvider instead of TensorrtExecutionProvider
+        # to avoid conflict with SuperPointMatcherTRT
+        providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if use_gpu else ['CPUExecutionProvider']
         self.session = ort.InferenceSession(model_path, providers=providers)
         
         self.input_name = self.session.get_inputs()[0].name
@@ -103,6 +105,7 @@ class TextRecognizer:
         return exp_x / np.sum(exp_x, axis=-1, keepdims=True)
     
     def recognize(self, image, return_confidence=True):
+        print("ONNX INFERENCE ...")
         tensor = self.preprocess(image)
         preds = self.session.run([self.output_name], {self.input_name: tensor})[0]
         
