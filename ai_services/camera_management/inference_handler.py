@@ -264,9 +264,9 @@ class InferenceHandler:
                 cropped_region = crop_text_region(frame_img, points)
 
                 # Run OCR on cropped region
-                ocr_result = self.text_recognizer.recognize(cropped_region, return_confidence=True)
-                recognized_text = ocr_result.get('text', '').strip()
-                confidence = ocr_result.get('confidence', 0.0)
+                text, confidence = self.text_recognizer.recognize(cropped_region, return_confidence=True)
+                recognized_text = text.strip()
+                
 
                 # Compare texts (case-insensitive, strip whitespace)
                 match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)

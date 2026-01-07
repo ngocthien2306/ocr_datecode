@@ -1,6 +1,7 @@
 """
 TensorRT-based Text Recognition for Camera Management
 Optimized for real-time inference in production environment
+Compatible with TensorRT 8.x, 9.x, and 10.x+
 """
 import cv2
 import numpy as np
@@ -25,9 +26,11 @@ class TextRecognizerTRT:
 
     Features:
     - Dynamic shape support (variable width text regions)
-    - CTC decoding
+    - CTC decoding with confidence scores
     - Batch processing support
     - High performance (~5-10ms per image)
+    - Compatible with TensorRT 8.x, 9.x, and 10.x+
+    - Auto-padding for character dictionary
     """
 
     def __init__(self, engine_path: str, dict_path: str, min_width: int = 320, max_width: int = 2000):
@@ -62,30 +65,65 @@ class TextRecognizerTRT:
         self.engine = self.runtime.deserialize_cuda_engine(engine_data)
         self.context = self.engine.create_execution_context()
 
+        # Detect TensorRT version and use appropriate API
+        self.use_new_api = hasattr(self.engine, 'num_io_tensors')
+        
         # Get input/output binding info
         self.input_name = None
         self.output_name = None
         self.input_shape = None
         self.output_shape = None
+        self.input_idx = 0
+        self.output_idx = 1
 
-        for i in range(self.engine.num_bindings):
-            name = self.engine.get_binding_name(i)
-            shape = self.engine.get_binding_shape(i)
-            is_input = self.engine.binding_is_input(i)
+        if self.use_new_api:
+            # TensorRT 10.x+ API
+            for i in range(self.engine.num_io_tensors):
+                name = self.engine.get_tensor_name(i)
+                shape = self.engine.get_tensor_shape(name)
+                mode = self.engine.get_tensor_mode(name)
+                
+                if mode == trt.TensorIOMode.INPUT:
+                    self.input_name = name
+                    self.input_shape = shape
+                    self.input_idx = i
+                else:
+                    self.output_name = name
+                    self.output_shape = shape
+                    self.output_idx = i
+        else:
+            # TensorRT 8.x/9.x API (legacy)
+            for i in range(self.engine.num_bindings):
+                name = self.engine.get_binding_name(i)
+                shape = self.engine.get_binding_shape(i)
+                is_input = self.engine.binding_is_input(i)
 
-            if is_input:
-                self.input_name = name
-                self.input_shape = shape
-            else:
-                self.output_name = name
-                self.output_shape = shape
+                if is_input:
+                    self.input_name = name
+                    self.input_shape = shape
+                    self.input_idx = i
+                else:
+                    self.output_name = name
+                    self.output_shape = shape
+                    self.output_idx = i
+
+        # Auto-pad character list if model expects more classes
+        expected_classes = self.output_shape[-1] if isinstance(self.output_shape[-1], int) else None
+        
+        if expected_classes and len(self.char_list) < expected_classes:
+            num_missing = expected_classes - len(self.char_list)
+            self.char_list.extend([' ' for i in range(num_missing)])
+            logger.warning(f"⚠️  Padded {num_missing} unknown tokens to match model output")
 
         # CUDA stream for async operations
         self.stream = cuda.Stream()
 
         logger.info(f"✅ TextRecognizerTRT initialized")
+        logger.info(f"   TensorRT API: {'10.x+' if self.use_new_api else '8.x/9.x'}")
         logger.info(f"   Engine: {Path(engine_path).name}")
         logger.info(f"   Dictionary: {len(self.char_dict)} characters")
+        logger.info(f"   char_list length: {len(self.char_list)}")
+        logger.info(f"   Model output classes: {expected_classes}")
         logger.info(f"   Input: {self.input_name} {self.input_shape}")
         logger.info(f"   Output: {self.output_name} {self.output_shape}")
         logger.info(f"   Width range: {min_width} - {max_width}px")
@@ -112,29 +150,53 @@ class TextRecognizerTRT:
         outputs = []
         bindings = []
 
-        # Set dynamic input shape
-        self.context.set_binding_shape(0, input_shape)
+        if self.use_new_api:
+            # TensorRT 10.x+ API
+            # Set dynamic input shape
+            self.context.set_input_shape(self.input_name, input_shape)
+            
+            # Allocate input buffer
+            input_dtype = trt.nptype(self.engine.get_tensor_dtype(self.input_name))
+            input_size = trt.volume(input_shape)
+            input_host = cuda.pagelocked_empty(input_size, input_dtype)
+            input_device = cuda.mem_alloc(input_host.nbytes)
+            inputs.append(HostDeviceMem(input_host, input_device))
+            self.context.set_tensor_address(self.input_name, int(input_device))
+            
+            # Allocate output buffer
+            output_shape = self.context.get_tensor_shape(self.output_name)
+            output_dtype = trt.nptype(self.engine.get_tensor_dtype(self.output_name))
+            output_size = trt.volume(output_shape)
+            output_host = cuda.pagelocked_empty(output_size, output_dtype)
+            output_device = cuda.mem_alloc(output_host.nbytes)
+            outputs.append(HostDeviceMem(output_host, output_device))
+            self.context.set_tensor_address(self.output_name, int(output_device))
+            
+        else:
+            # TensorRT 8.x/9.x API (legacy)
+            # Set dynamic input shape
+            self.context.set_binding_shape(0, input_shape)
 
-        for i in range(self.engine.num_bindings):
-            # Get binding shape (use execution context for dynamic shapes)
-            if self.engine.binding_is_input(i):
-                shape = input_shape
-            else:
-                shape = self.context.get_binding_shape(i)
+            for i in range(self.engine.num_bindings):
+                # Get binding shape (use execution context for dynamic shapes)
+                if self.engine.binding_is_input(i):
+                    shape = input_shape
+                else:
+                    shape = self.context.get_binding_shape(i)
 
-            dtype = trt.nptype(self.engine.get_binding_dtype(i))
-            size = trt.volume(shape)
+                dtype = trt.nptype(self.engine.get_binding_dtype(i))
+                size = trt.volume(shape)
 
-            # Allocate host and device buffers
-            host_mem = cuda.pagelocked_empty(size, dtype)
-            device_mem = cuda.mem_alloc(host_mem.nbytes)
+                # Allocate host and device buffers
+                host_mem = cuda.pagelocked_empty(size, dtype)
+                device_mem = cuda.mem_alloc(host_mem.nbytes)
 
-            bindings.append(int(device_mem))
+                bindings.append(int(device_mem))
 
-            if self.engine.binding_is_input(i):
-                inputs.append(HostDeviceMem(host_mem, device_mem))
-            else:
-                outputs.append(HostDeviceMem(host_mem, device_mem))
+                if self.engine.binding_is_input(i):
+                    inputs.append(HostDeviceMem(host_mem, device_mem))
+                else:
+                    outputs.append(HostDeviceMem(host_mem, device_mem))
 
         return inputs, outputs, bindings
 
@@ -158,9 +220,22 @@ class TextRecognizerTRT:
             max_width=self.max_width
         )
 
+    def _softmax(self, x: np.ndarray) -> np.ndarray:
+        """
+        Apply softmax to logits
+        
+        Args:
+            x: Logits array [..., num_classes]
+            
+        Returns:
+            Softmax probabilities
+        """
+        exp_x = np.exp(x - np.max(x, axis=-1, keepdims=True))
+        return exp_x / np.sum(exp_x, axis=-1, keepdims=True)
+
     def decode_ctc(self, preds: np.ndarray) -> str:
         """
-        Decode CTC output to text
+        Decode CTC output to text (basic version without confidence)
 
         Args:
             preds: Model output [batch_size, sequence_length, num_classes]
@@ -168,9 +243,53 @@ class TextRecognizerTRT:
         Returns:
             Decoded text string
         """
-        from .ocr_utils import decode_ctc_greedy
+        indices = np.argmax(preds, axis=2)[0]
+        
+        chars = []
+        prev_idx = -1
+        
+        for idx in indices:
+            if idx != 0 and idx != prev_idx:
+                if idx < len(self.char_list):
+                    chars.append(self.char_list[idx])
+            prev_idx = idx
+        
+        return ''.join(chars)
 
-        return decode_ctc_greedy(preds, self.char_list)
+    def decode_ctc_with_confidence(self, preds: np.ndarray) -> tuple:
+        """
+        Decode CTC output to text with confidence scores
+
+        Args:
+            preds: Model output [batch_size, sequence_length, num_classes]
+
+        Returns:
+            Tuple of (text, average_confidence)
+        """
+        pred = preds[0]
+        softmax_preds = self._softmax(pred)
+        best_path = np.argmax(softmax_preds, axis=-1)
+        
+        confidences = []
+        decoded_chars = []
+        prev_idx = -1
+        num_classes = softmax_preds.shape[-1]
+        
+        for t, char_idx in enumerate(best_path):
+            if char_idx != 0 and char_idx != prev_idx:
+                if char_idx < len(self.char_list):
+                    decoded_chars.append(self.char_list[char_idx])
+                    confidences.append(float(softmax_preds[t, char_idx]))
+                elif char_idx < num_classes:
+                    # Unknown character
+                    decoded_chars.append('�')
+                    confidences.append(float(softmax_preds[t, char_idx]))
+            prev_idx = char_idx
+        
+        text = ''.join(decoded_chars)
+        avg_confidence = np.mean(confidences) if confidences else 0.0
+        
+        return text, float(avg_confidence)
 
     def recognize(self, image: np.ndarray, return_confidence: bool = True):
         """
@@ -181,9 +300,8 @@ class TextRecognizerTRT:
             return_confidence: Return confidence score
 
         Returns:
-            dict with keys:
-                - text: Recognized text string
-                - confidence: Average confidence score (if return_confidence=True)
+            If return_confidence=True: tuple of (text, confidence)
+            If return_confidence=False: text string only
         """
         # Preprocess
         tensor = self.preprocess(image)
@@ -198,8 +316,12 @@ class TextRecognizerTRT:
         # Transfer input data to device
         cuda.memcpy_htod_async(inputs[0].device, inputs[0].host, self.stream)
 
-        # Run inference
-        self.context.execute_async_v2(bindings=bindings, stream_handle=self.stream.handle)
+        if self.use_new_api:
+            # TensorRT 10.x+ API
+            self.context.execute_async_v3(stream_handle=self.stream.handle)
+        else:
+            # TensorRT 8.x/9.x API (legacy)
+            self.context.execute_async_v2(bindings=bindings, stream_handle=self.stream.handle)
 
         # Transfer predictions back from device
         cuda.memcpy_dtoh_async(outputs[0].host, outputs[0].device, self.stream)
@@ -208,7 +330,10 @@ class TextRecognizerTRT:
         self.stream.synchronize()
 
         # Reshape output
-        output_shape = self.context.get_binding_shape(1)
+        if self.use_new_api:
+            output_shape = self.context.get_tensor_shape(self.output_name)
+        else:
+            output_shape = self.context.get_binding_shape(1)
 
         # Handle tuple output shape
         if isinstance(output_shape, tuple):
@@ -222,18 +347,13 @@ class TextRecognizerTRT:
             logger.error(f"Output shape: {output_shape}, Host buffer size: {outputs[0].host.shape}")
             raise
 
-        # Decode
-        text = self.decode_ctc(preds)
-
-        result = {'text': text}
-
+        # Decode with or without confidence
         if return_confidence:
-            # Calculate average confidence from softmax probabilities
-            from .ocr_utils import calculate_confidence
-            confidence = calculate_confidence(preds[0])
-            result['confidence'] = float(confidence)
-
-        return result
+            text, confidence = self.decode_ctc_with_confidence(preds)
+            return text, confidence
+        else:
+            text = self.decode_ctc(preds)
+            return text
 
     def recognize_batch(self, images: list) -> list:
         """
@@ -246,12 +366,12 @@ class TextRecognizerTRT:
             images: List of cropped images
 
         Returns:
-            List of result dicts with 'text' and 'confidence' keys
+            List of tuples: [(text, confidence), ...]
         """
         results = []
         for img in images:
-            result = self.recognize(img, return_confidence=True)
-            results.append(result)
+            text, confidence = self.recognize(img, return_confidence=True)
+            results.append((text, float(confidence)))
         return results
 
 
@@ -295,3 +415,45 @@ def get_text_recognizer(
         )
 
     return _text_recognizer_instance
+
+
+# Demo/Testing
+if __name__ == '__main__':
+    import sys
+    
+    if len(sys.argv) < 3:
+        print("Usage: python text_recognizer_trt.py <engine_path> <dict_path> [test_image]")
+        sys.exit(1)
+    
+    engine_path = sys.argv[1]
+    dict_path = sys.argv[2]
+    test_image_path = sys.argv[3] if len(sys.argv) > 3 else None
+    
+    # Initialize recognizer
+    recognizer = TextRecognizerTRT(
+        engine_path=engine_path,
+        dict_path=dict_path
+    )
+    
+    if test_image_path:
+        # Test with sample image
+        test_image = cv2.imread(test_image_path)
+        
+        if test_image is not None:
+            # Crop a region (example)
+            h, w = test_image.shape[:2]
+            cropped = test_image[h//4:h//2, w//4:3*w//4]
+            
+            # Recognize with confidence
+            text, confidence = recognizer.recognize(cropped, return_confidence=True)
+            print(f"\nRecognized: '{text}'")
+            print(f"Confidence: {confidence:.3f}")
+            
+            # Show result
+            cv2.imshow('Cropped Region', cropped)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+        else:
+            print(f"Could not load image: {test_image_path}")
+    else:
+        print("✅ Recognizer initialized successfully. Provide test image path to test.")
