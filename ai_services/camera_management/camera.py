@@ -86,6 +86,8 @@ class Camera:
         self.recipe_id: Optional[str] = None
         self.recipe_name: Optional[str] = None
         self.templates: List[Dict[str, Any]] = []
+        self.function_type: str = "OCR"  # Function type: OCR, Check_Type_Product, etc.
+        self.expected_texts: Dict[int, str] = {}  # Map region_idx -> expected_text
 
         # Frame tracking
         self.frame_idx = 0
@@ -631,25 +633,38 @@ class Camera:
                 logger.error(f"Camera {self.serial_number} not found in recipe")
                 return False
 
+            # Store function_type from camera config
+            self.function_type = camera_config.get('function_type', 'OCR')
+
             # Log camera config for debugging
-            function_type = camera_config.get('function_type', 'NOT SET')
             logger.info(f"[{self.serial_number}] Camera config from recipe:")
             logger.info(f"  - pixel_format: {camera_config.get('pixel_format', 'NOT SET')}")
-            logger.info(f"  - function_type: {function_type}")
+            logger.info(f"  - function_type: {self.function_type}")
             logger.info(f"  - exposure_time: {camera_config.get('exposure_time', 'NOT SET')}")
             logger.info(f"  - delay_trigger: {camera_config.get('delay_trigger', 'NOT SET')}")
-
 
             # Update settings
             self.update_settings(camera_config)
 
-            # Load templates
+            # Load templates and parse expected texts
             camera_templates = recipe_data.get("camera_templates", [])
             camera_id = camera_config.get("camera_id")
 
             for ct in camera_templates:
                 if ct.get("camera_id") == camera_id:
                     self.templates = ct.get("templates", [])
+
+                    # Parse expected texts from template annotations
+                    self.expected_texts = {}
+                    if self.templates:
+                        template = self.templates[0]  # Use first template
+                        annotations = template.get("annotations", [])
+                        for idx, ann in enumerate(annotations):
+                            if ann.get('type') == 'text':
+                                expected_text = ann.get('text', '')
+                                if expected_text:
+                                    self.expected_texts[idx] = expected_text
+                                    logger.info(f"  - Expected text region {idx}: '{expected_text}'")
                     break
 
             if not self.templates:

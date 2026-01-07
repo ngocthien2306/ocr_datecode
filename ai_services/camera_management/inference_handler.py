@@ -1,8 +1,3 @@
-"""
-Inference Handler Module
-Handles inference processing and result building
-"""
-
 import logging
 import cv2
 import json
@@ -29,35 +24,43 @@ except Exception as e:
     INFERENCE_AVAILABLE = False
     SuperPointMatcherTRT = None
 
+# Import text recognizer
+try:
+    from .text_recognizer_trt import get_text_recognizer, TENSORRT_AVAILABLE as OCR_AVAILABLE
+    from .ocr_utils import crop_text_region, compare_texts
+except Exception as e:
+    logging.warning(f"Text recognizer not available: {e}")
+    OCR_AVAILABLE = False
+    get_text_recognizer = None
+
 
 class InferenceHandler:
-    """
-    Handles inference processing and result building
-
-    Features:
-    - Initialize TensorRT matcher from camera templates
-    - Run inference on captured frames
-    - Build inference result structure for backend
-    - Image encoding and compression
-    """
 
     def __init__(self):
         """Initialize InferenceHandler"""
         self.camera_matchers: Dict[str, Any] = {}  # Map serial_number -> matcher
         self.engine_path = "/home/demo/Source/ocr_datecode/weights/pipeline_fp16_dynamic_480x640.engine"
+
+        # Text recognizer for Check_Type_Product function
+        self.text_recognizer = None
+        if OCR_AVAILABLE:
+            try:
+                ocr_engine_path = "/home/demo/Source/ocr_datecode/languages/english/rec.engine"
+                ocr_dict_path = "/home/demo/Source/ocr_datecode/languages/english/dict.txt"
+                self.text_recognizer = get_text_recognizer(
+                    engine_path=ocr_engine_path,
+                    dict_path=ocr_dict_path,
+                    min_width=320,
+                    max_width=2000
+                )
+                logger.info("Text recognizer initialized for Check_Type_Product")
+            except Exception as e:
+                logger.warning(f"Failed to initialize text recognizer: {e}")
+                self.text_recognizer = None
+
         logger.info("InferenceHandler initialized with dynamic batch engine")
 
     def init_matchers(self, cameras: List['Camera']):
-        """
-        Initialize inference matchers for all cameras with templates
-        Each camera gets its own matcher with its own template
-
-        Args:
-            cameras: List of Camera objects with templates loaded
-
-        Returns:
-            Number of matchers initialized
-        """
         try:
             if not INFERENCE_AVAILABLE or not SuperPointMatcherTRT:
                 logger.warning("Inference service not available")
@@ -187,23 +190,129 @@ class InferenceHandler:
         self.camera_matchers.clear()
         logger.info("All inference matchers cleared")
 
+    def verify_text_regions(
+        self,
+        frame_img: 'np.ndarray',
+        transformed_bboxes: List[Dict[str, Any]],
+        expected_texts: Dict[int, str],
+        camera: 'Camera'
+    ) -> Dict[str, Any]:
+        """
+        Verify text in transformed regions match expected texts
+
+        Args:
+            frame_img: Captured frame (numpy array)
+            transformed_bboxes: List of transformed bbox dicts from matcher
+            expected_texts: Dict mapping region_idx -> expected_text
+            camera: Camera object with function_type
+
+        Returns:
+            {
+                'all_match': bool,
+                'results': [
+                    {
+                        'region_idx': 0,
+                        'expected': '123',
+                        'recognized': '123',
+                        'match': True,
+                        'confidence': 0.95
+                    },
+                    ...
+                ]
+            }
+        """
+        if not self.text_recognizer or not OCR_AVAILABLE:
+            logger.warning("OCR model not available, skipping text verification")
+            return {'all_match': True, 'results': []}
+
+        verification_results = []
+        all_match = True
+
+        # Filter only text type bboxes
+        text_bboxes = [
+            (idx, bbox) for idx, bbox in enumerate(transformed_bboxes)
+            if bbox.get('type') == 'text'
+        ]
+
+        logger.info(f"[{camera.serial_number}] Verifying {len(text_bboxes)} text regions")
+
+        for region_idx, bbox in text_bboxes:
+            try:
+                # Get expected text for this region
+                expected_text = expected_texts.get(region_idx, '')
+
+                if not expected_text:
+                    logger.warning(f"[{camera.serial_number}] No expected text for region {region_idx}, skipping")
+                    continue
+
+                # Crop text region from frame
+                points = bbox.get('points', [])
+                if len(points) < 4:
+                    logger.warning(f"[{camera.serial_number}] Invalid points for region {region_idx}")
+                    all_match = False
+                    verification_results.append({
+                        'region_idx': region_idx,
+                        'expected': expected_text,
+                        'recognized': '',
+                        'match': False,
+                        'confidence': 0.0,
+                        'error': 'Invalid bbox points'
+                    })
+                    continue
+
+                # Crop using perspective transform
+                cropped_region = crop_text_region(frame_img, points)
+
+                # Run OCR on cropped region
+                ocr_result = self.text_recognizer.recognize(cropped_region, return_confidence=True)
+                recognized_text = ocr_result.get('text', '').strip()
+                confidence = ocr_result.get('confidence', 0.0)
+
+                # Compare texts (case-insensitive, strip whitespace)
+                match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
+
+                if not match:
+                    all_match = False
+
+                verification_results.append({
+                    'region_idx': region_idx,
+                    'expected': expected_text,
+                    'recognized': recognized_text,
+                    'match': match,
+                    'confidence': confidence
+                })
+
+                logger.info(
+                    f"[{camera.serial_number}] Region {region_idx}: "
+                    f"expected='{expected_text}', recognized='{recognized_text}', "
+                    f"match={match}, conf={confidence:.2%}"
+                )
+
+            except Exception as e:
+                logger.error(f"[{camera.serial_number}] Error verifying region {region_idx}: {e}")
+                import traceback
+                traceback.print_exc()
+                all_match = False
+                verification_results.append({
+                    'region_idx': region_idx,
+                    'expected': expected_texts.get(region_idx, ''),
+                    'recognized': '',
+                    'match': False,
+                    'confidence': 0.0,
+                    'error': str(e)
+                })
+
+        return {
+            'all_match': all_match,
+            'results': verification_results
+        }
+
     def process_inference(
         self,
         cameras: List['Camera'],
         results: Dict[str, Any],
         emit_callback
     ):
-        """
-        Process inference on captured frames (runs in main thread - has CUDA context)
-
-        Args:
-            cameras: List of cameras that captured frames
-            results: Capture results from trigger_cameras_group
-            emit_callback: Callback to emit events
-
-        This method is called from the event loop in main thread,
-        where CUDA context is available for TensorRT inference.
-        """
         try:
             # Process first frame of all cameras with matchers (up to 4)
             cameras_to_process = [c for c in cameras if c.serial_number in self.camera_matchers][:4]
@@ -247,13 +356,84 @@ class InferenceHandler:
                             timings = match_result.get('timings', {})
                             transformed_bboxes = match_result.get('transformed_bboxes', [])
 
-                            if confidence > 0.5 and inliers >= 10:
-                                inference_result_data = "PASS"
+                            # Check function_type for specialized logic
+                            text_verification = None
+                            if camera.function_type == 'Check_Type_Product':
+                                logger.info(f"Running text verification for {serial_number} (Check_Type_Product)")
+
+                                # Verify text regions
+                                text_verification = self.verify_text_regions(
+                                    frame_img=first_frame,
+                                    transformed_bboxes=transformed_bboxes,
+                                    expected_texts=camera.expected_texts,
+                                    camera=camera
+                                )
+
+                                # Determine PASS/FAIL based on text match
+                                if text_verification['all_match']:
+                                    inference_result_data = "PASS"
+                                else:
+                                    inference_result_data = "FAIL"
+                                    logger.warning(
+                                        f"Text verification FAILED for {serial_number}: "
+                                        f"{len([r for r in text_verification['results'] if not r['match']])} mismatches"
+                                    )
+
+                                # Store verification results
+                                camera_inference_results[serial_number] = {
+                                    "result": inference_result_data,
+                                    "confidence": confidence,
+                                    "inliers": inliers,
+                                    "total_matches": total_matches,
+                                    "timings": timings,
+                                    "transformed_bboxes": transformed_bboxes,
+                                    "text_verification": text_verification
+                                }
+
+                            elif camera.function_type == 'OCR':
+                                # TODO: Implement OCR logic later
+                                # For now, use standard template matching
+                                if confidence > 0.5 and inliers >= 10:
+                                    inference_result_data = "PASS"
+                                else:
+                                    inference_result_data = "FAIL"
+
+                                camera_inference_results[serial_number] = {
+                                    "result": inference_result_data,
+                                    "confidence": confidence,
+                                    "inliers": inliers,
+                                    "total_matches": total_matches,
+                                    "timings": timings,
+                                    "transformed_bboxes": transformed_bboxes
+                                }
+
                             else:
-                                inference_result_data = "FAIL"
+                                # Default: template matching logic
+                                if confidence > 0.5 and inliers >= 10:
+                                    inference_result_data = "PASS"
+                                else:
+                                    inference_result_data = "FAIL"
+
+                                camera_inference_results[serial_number] = {
+                                    "result": inference_result_data,
+                                    "confidence": confidence,
+                                    "inliers": inliers,
+                                    "total_matches": total_matches,
+                                    "timings": timings,
+                                    "transformed_bboxes": transformed_bboxes
+                                }
+
                         else:
                             inference_result_data = "FAIL"
                             timings = match_result.get('timings', {})
+                            camera_inference_results[serial_number] = {
+                                "result": inference_result_data,
+                                "confidence": 0.0,
+                                "inliers": 0,
+                                "total_matches": 0,
+                                "timings": timings,
+                                "transformed_bboxes": []
+                            }
 
                         logger.info(
                             f"Camera {serial_number} inference: {inference_result_data}, "
@@ -266,15 +446,14 @@ class InferenceHandler:
                         import traceback
                         traceback.print_exc()
                         inference_result_data = "ERROR"
-
-                camera_inference_results[serial_number] = {
-                    "result": inference_result_data,
-                    "confidence": confidence,
-                    "inliers": inliers,
-                    "total_matches": total_matches,
-                    "timings": timings,
-                    "transformed_bboxes": transformed_bboxes
-                }
+                        camera_inference_results[serial_number] = {
+                            "result": "ERROR",
+                            "confidence": 0.0,
+                            "inliers": 0,
+                            "total_matches": 0,
+                            "timings": {},
+                            "transformed_bboxes": []
+                        }
 
                 if inference_result_data in ["FAIL", "ERROR"]:
                     overall_pass_fail = inference_result_data
@@ -416,18 +595,6 @@ class InferenceHandler:
         camera_inference_results: Dict[str, Dict[str, Any]],
         overall_pass_fail: str
     ) -> Dict[str, Any]:
-        """
-        Build inference result structure for backend
-
-        Args:
-            cameras: List of cameras
-            results: Capture results
-            camera_inference_results: Dict mapping serial_number -> inference data
-            overall_pass_fail: Overall product pass/fail status
-
-        Returns:
-            Inference result dictionary
-        """
         # Build camera_results structure for backend
         camera_results = []
         for camera in cameras:
