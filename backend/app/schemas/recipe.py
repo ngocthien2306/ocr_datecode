@@ -29,6 +29,7 @@ class TemplateImage(BaseModel):
 class CameraTemplates(BaseModel):
     """Templates configuration for a camera"""
     camera_id: str = Field(..., description="Camera identifier")
+    function_type: Optional[str] = Field(default="OCR", description="Function type: OCR, Check_Type_Product, Check_Color, Check_Defect, Check_Position, Barcode_Detection, DateCode_Detection")
     templates: List[TemplateImage] = Field(default_factory=list, description="List of template images")
 
 
