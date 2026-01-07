@@ -357,7 +357,7 @@
 .camera-card-infer {
   background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
   border-radius: 12px;
-  border: 2px solid #dee2e6;
+  /* border: 2px solid #dee2e6; */
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -366,11 +366,18 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
-.camera-card-infer:hover {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-  border-color: var(--primary-color);
-  transform: translateY(-4px);
+/* PASS variant - light green */
+.camera-card-infer.pass {
+  background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+  border: 2px solid #9eeccd;
 }
+
+/* FAIL variant - light red */
+.camera-card-infer.fail {
+  background: linear-gradient(135deg, #fecaca 0%, #fca5a5 100%);
+  border: 2px solid #e19494;
+}
+
 
 .camera-card-header {
   display: flex;
@@ -429,6 +436,16 @@
   background: linear-gradient(180deg, #2d3748 0%, #1a202c 100%);
   position: relative;
   flex-shrink: 0;
+}
+
+/* camera-frames PASS variant - light green */
+.camera-frames.pass {
+  background: linear-gradient(180deg, #c7f3ce 0%, #a7ebae 100%);
+}
+
+/* camera-frames FAIL variant - light red */
+.camera-frames.fail {
+  background: linear-gradient(180deg, #e7c2c2 0%, #ee9595 100%);
 }
 
 .frame-container {

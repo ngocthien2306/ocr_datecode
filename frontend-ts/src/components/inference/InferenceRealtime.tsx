@@ -422,8 +422,11 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                   (s) => s.serial_number === cameraResult.serial_number
                 );
 
+                // Determine overall pass/fail status based on frames
+                const overallPassFail = cameraResult.frames.some(f => f.pass_fail.toLowerCase() === 'fail') ? 'fail' : 'pass';
+
                 return (
-                  <div key={cameraResult.serial_number} className="camera-card-infer">
+                  <div key={cameraResult.serial_number} className={`camera-card-infer ${overallPassFail}`}>
                     {/* <div className="camera-card-header">
                       <div className="camera-info">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
@@ -439,7 +442,7 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                       )}
                     </div> */}
 
-                    <div className="camera-frames">
+                    <div className={`camera-frames ${overallPassFail}`}>
                       {cameraResult.frames.map((frame) => {
                         const imageUrl = frame.image_base64
                           ? `data:image/jpeg;base64,${frame.image_base64}`
@@ -457,14 +460,14 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                                   <span>Frame {frame.frame_idx}</span>
                                 </div>
                               )}
-                              {/* <div className="frame-overlay">
+                              <div className="frame-overlay">
                                 <span className={`frame-badge ${frame.pass_fail.toLowerCase()}`}>
                                   {frame.pass_fail}
                                 </span>
-                                <span className="frame-confidence">
+                                {/* <span className="frame-confidence">
                                   {(frame.confidence * 100).toFixed(1)}%
-                                </span>
-                              </div> */}
+                                </span> */}
+                              </div>
                             </div>
                           </div>
                         );
