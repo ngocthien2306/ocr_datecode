@@ -3,7 +3,7 @@ import cv2
 import json
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from pathlib import Path
-
+import numpy as np
 from .utils import save_and_encode_frame
 
 if TYPE_CHECKING:
@@ -223,7 +223,7 @@ class InferenceHandler:
         """
         if not self.text_recognizer or not OCR_AVAILABLE:
             logger.warning("OCR model not available, skipping text verification")
-            return {'all_match': True, 'results': []}
+            return {'all_match': False, 'results': []}
 
         verification_results = []
         all_match = True
