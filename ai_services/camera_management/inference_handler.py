@@ -498,7 +498,9 @@ class InferenceHandler:
 
                         # Process results for each camera
                         for idx, serial_number in enumerate(serial_numbers):
+                            camera = cameras_to_process[idx]
                             result = batch_result['results'][idx]
+                            first_frame = results[serial_number]['frames'][0]
 
                             inference_result_data = "PASS"
                             confidence = 0.0
@@ -506,6 +508,7 @@ class InferenceHandler:
                             total_matches = 0
                             timings = {}
                             transformed_bboxes = []
+                            text_verification = None
 
                             if result.get('success', False):
                                 confidence = float(result.get('confidence', 0.0))
@@ -514,10 +517,42 @@ class InferenceHandler:
                                 timings = result.get('timings', {})
                                 transformed_bboxes = result.get('transformed_bboxes', [])
 
-                                if confidence > 0.5 and inliers >= 2000:
-                                    inference_result_data = "PASS"
+                                # Check function_type for specialized logic
+                                if camera.function_type == 'Check_Type_Product':
+                                    logger.info(f"Running text verification for {serial_number} (Check_Type_Product)")
+
+                                    # Verify text regions
+                                    text_verification = self.verify_text_regions(
+                                        frame_img=first_frame,
+                                        transformed_bboxes=transformed_bboxes,
+                                        expected_texts=camera.expected_texts,
+                                        camera=camera
+                                    )
+
+                                    # Determine PASS/FAIL based on text match
+                                    if text_verification['all_match']:
+                                        inference_result_data = "PASS"
+                                    else:
+                                        inference_result_data = "FAIL"
+                                        logger.warning(
+                                            f"Text verification FAILED for {serial_number}: "
+                                            f"{len([r for r in text_verification['results'] if not r['match']])} mismatches"
+                                        )
+
+                                elif camera.function_type == 'OCR':
+                                    # TODO: Implement OCR logic
+                                    if confidence > 0.5 and inliers >= 2000:
+                                        inference_result_data = "PASS"
+                                    else:
+                                        inference_result_data = "FAIL"
+
                                 else:
-                                    inference_result_data = "FAIL"
+                                    # Default: template matching
+                                    if confidence > 0.5 and inliers >= 2000:
+                                        inference_result_data = "PASS"
+                                    else:
+                                        inference_result_data = "FAIL"
+
                             else:
                                 inference_result_data = "FAIL"
                                 timings = result.get('timings', {})
@@ -528,6 +563,7 @@ class InferenceHandler:
                                 f"inliers: {inliers}/{total_matches}"
                             )
 
+                            # Store results
                             camera_inference_results[serial_number] = {
                                 "result": inference_result_data,
                                 "confidence": confidence,
@@ -536,6 +572,10 @@ class InferenceHandler:
                                 "timings": timings,
                                 "transformed_bboxes": transformed_bboxes
                             }
+
+                            # Add text verification if available
+                            if text_verification:
+                                camera_inference_results[serial_number]["text_verification"] = text_verification
 
                             if inference_result_data in ["FAIL", "ERROR"]:
                                 overall_pass_fail = inference_result_data

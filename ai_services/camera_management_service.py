@@ -117,7 +117,7 @@ class CameraManagementService:
                     for cr in log_data['camera_results']
                 ]}
 
-        # logger.info(f"Camera event: {event_type}, data: {log_data}")
+        logger.info(f"Camera event: {event_type}, data: {log_data}")
 
         # Forward event to backend via WebSocket (with full data including base64)
         await self.ws_client.send_message({
