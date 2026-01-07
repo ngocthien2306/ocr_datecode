@@ -206,6 +206,16 @@ class CameraManager:
                 recipe_id = recipe_data.get("_id") or recipe_data.get("id")
                 recipe_name = recipe_data.get("name", "Unknown")
 
+                # Log recipe data for debugging
+                logger.info(f"📥 Loading recipe: {recipe_name} (ID: {recipe_id})")
+                logger.info(f"📋 Recipe cameras config:")
+                for idx, cam in enumerate(recipe_data.get("cameras", [])):
+                    logger.info(f"  Camera {idx + 1}:")
+                    logger.info(f"    - camera_id: {cam.get('camera_id')}")
+                    logger.info(f"    - serial_number: {cam.get('serial_number')}")
+                    logger.info(f"    - function_type: {cam.get('function_type', 'NOT SET')} ⭐")
+                    logger.info(f"    - trigger_mode: {cam.get('trigger_mode')}")
+
                 # Find all cameras in recipe
                 recipe_cameras = recipe_data.get("cameras", [])
                 loaded_cameras = []

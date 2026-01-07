@@ -632,9 +632,14 @@ class Camera:
                 return False
 
             # Log camera config for debugging
-            logger.info(f"[{self.serial_number}] Camera config from recipe: pixel_format={camera_config.get('pixel_format', 'NOT SET')}")
+            function_type = camera_config.get('function_type', 'NOT SET')
+            logger.info(f"[{self.serial_number}] Camera config from recipe:")
+            logger.info(f"  - pixel_format: {camera_config.get('pixel_format', 'NOT SET')}")
+            logger.info(f"  - function_type: {function_type}")
+            logger.info(f"  - exposure_time: {camera_config.get('exposure_time', 'NOT SET')}")
+            logger.info(f"  - delay_trigger: {camera_config.get('delay_trigger', 'NOT SET')}")
 
-            
+
             # Update settings
             self.update_settings(camera_config)
 

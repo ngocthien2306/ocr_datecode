@@ -315,6 +315,15 @@ class CameraManagementService:
             recipe_data["_id"] = recipe_id
             recipe_data["id"] = recipe_id
 
+            # Log cameras config from latest load
+            logger.info(f"📋 Latest load - cameras config:")
+            for idx, cam in enumerate(recipe_data.get("cameras", [])):
+                logger.info(f"  Camera {idx + 1}:")
+                logger.info(f"    - camera_id: {cam.get('camera_id')}")
+                logger.info(f"    - serial_number: {cam.get('serial_number')}")
+                logger.info(f"    - function_type: {cam.get('function_type', 'NOT SET')} ⭐")
+                logger.info(f"    - trigger_mode: {cam.get('trigger_mode')}")
+
             # Connect cameras
             cameras = recipe_data.get("cameras", [])
 

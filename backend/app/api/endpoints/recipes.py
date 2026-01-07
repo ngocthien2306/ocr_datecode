@@ -258,6 +258,36 @@ def _to_primitive(obj):
     return str(obj)
 
 
+def _enrich_cameras_with_function_type(cameras_config, camera_templates_list):
+    """
+    Add function_type from camera_templates to each camera config.
+
+    Args:
+        cameras_config: List of camera configurations (primitives)
+        camera_templates_list: List of camera templates with function_type
+
+    Returns:
+        List of enriched camera configs with function_type added
+    """
+    # Create mapping: camera_id -> function_type
+    camera_function_map = {}
+    for cam_template in camera_templates_list:
+        if isinstance(cam_template, dict):
+            camera_function_map[cam_template.get('camera_id')] = cam_template.get('function_type', 'OCR')
+        else:
+            camera_function_map[getattr(cam_template, 'camera_id', None)] = getattr(cam_template, 'function_type', 'OCR')
+
+    # Enrich each camera config
+    enriched_cameras = []
+    for cam_config in cameras_config:
+        cam_dict = cam_config.copy() if isinstance(cam_config, dict) else cam_config
+        camera_id = cam_dict.get('camera_id')
+        cam_dict['function_type'] = camera_function_map.get(camera_id, 'OCR')
+        enriched_cameras.append(cam_dict)
+
+    return enriched_cameras
+
+
 @router.post("/", response_model=RecipeResponse, status_code=status.HTTP_201_CREATED)
 async def create_recipe(
     recipe: RecipeCreate,
@@ -657,6 +687,17 @@ async def load_recipe(
                 else:
                     logger.warning(f"Failed to send connect command for camera {serial_number}")
 
+    # Enrich cameras with function_type from camera_templates
+    cameras_config = getattr(recipe, 'cameras', [])
+    camera_templates_list = getattr(recipe, 'camera_templates', [])
+
+    # Convert to primitive and enrich with function_type
+    cameras_primitive = _to_primitive(cameras_config)
+    enriched_cameras = _enrich_cameras_with_function_type(
+        cameras_primitive,
+        camera_templates_list
+    )
+
     # Build metadata snapshot (will be used for both storage and inference)
     metadata = {
         'recipe_id': recipe_id,
@@ -664,18 +705,17 @@ async def load_recipe(
         'product_code': recipe.product_code,
         'camera_templates': _to_primitive(camera_templates),
         'model_thresholds': _to_primitive(getattr(recipe, 'model_thresholds', None)),
-        'cameras': _to_primitive(getattr(recipe, 'cameras', []))
+        'cameras': enriched_cameras  # Use enriched cameras with function_type
     }
 
     # Send load recipe command via WebSocket to CameraManagement service
     # Convert recipe to dict for WebSocket transmission
-    cameras_config = getattr(recipe, 'cameras', [])
     recipe_dict = {
         '_id': str(recipe.id) if hasattr(recipe, 'id') else recipe_id,
         'id': recipe_id,
         'name': recipe.name,
         'product_code': recipe.product_code,
-        'cameras': _to_primitive(cameras_config),
+        'cameras': enriched_cameras,  # Use enriched cameras with function_type
         'camera_templates': _to_primitive(camera_templates),
         'model_thresholds': _to_primitive(getattr(recipe, 'model_thresholds', None)),
         'camera_settings': _to_primitive(getattr(recipe, 'camera_settings', None)),
