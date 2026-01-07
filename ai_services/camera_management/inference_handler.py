@@ -80,7 +80,9 @@ class InferenceHandler:
                     continue
 
                 # Get first template
+                
                 template_data = camera.templates[0]
+                print("TEMPLATE DATA: ", template_data)
                 image_url = template_data.get("image_url")
 
                 if not image_url:
@@ -103,10 +105,50 @@ class InferenceHandler:
                 annotations = template_data.get("annotations", [])
                 template_bbox = None
                 other_bboxes = []
+                crop_area = None  # Will store crop_area info if exists
 
                 template_img = cv2.imread(str(template_path))
                 img_h, img_w = template_img.shape[:2]
 
+                # First pass: find crop_area annotation
+                for ann in annotations:
+                    if ann.get("type") == "crop_area":
+                        x, y = ann.get("x", 0), ann.get("y", 0)
+                        w, h = ann.get("width", 1), ann.get("height", 1)
+
+                        # Convert to pixel coordinates
+                        x1, y1 = int(x * img_w), int(y * img_h)
+                        x2, y2 = int((x + w) * img_w), int((y + h) * img_h)
+
+                        # Clamp to image boundaries
+                        x1 = max(0, x1)
+                        y1 = max(0, y1)
+                        x2 = min(img_w, x2)
+                        y2 = min(img_h, y2)
+
+                        # Validate crop area size
+                        crop_w = x2 - x1
+                        crop_h = y2 - y1
+                        if crop_w < 100 or crop_h < 100:
+                            logger.warning(
+                                f"[{serial_number}] crop_area too small ({crop_w}x{crop_h}), ignoring"
+                            )
+                            break
+
+                        crop_area = {
+                            "x1": x1, "y1": y1,
+                            "x2": x2, "y2": y2,
+                            "width": crop_w,
+                            "height": crop_h
+                        }
+
+                        logger.info(
+                            f"[{serial_number}] Found crop_area: ({x1}, {y1}) → ({x2}, {y2}), "
+                            f"size: {crop_w}x{crop_h}"
+                        )
+                        break  # Only use first crop_area
+
+                # Second pass: parse other annotations
                 for ann in annotations:
                     ann_type = ann.get("type", "")
                     shape = ann.get("shape", "rectangle")
@@ -154,11 +196,52 @@ class InferenceHandler:
                     logger.error(f"No template bbox for camera {serial_number}")
                     continue
 
+                # Process crop_area if exists
+                final_template_path = template_path
+                if crop_area:
+                    logger.info(f"[{serial_number}] Applying crop_area to template and annotations")
+
+                    # Crop template image
+                    template_img_cropped = template_img[
+                        crop_area["y1"]:crop_area["y2"],
+                        crop_area["x1"]:crop_area["x2"]
+                    ]
+
+                    # Save cropped template
+                    cropped_template_path = temp_dir / f"template_{serial_number}_cropped.jpg"
+                    cv2.imwrite(str(cropped_template_path), template_img_cropped)
+                    final_template_path = cropped_template_path
+
+                    logger.info(
+                        f"[{serial_number}] Cropped template saved: "
+                        f"{template_img_cropped.shape[1]}x{template_img_cropped.shape[0]}"
+                    )
+
+                    # Adjust template_bbox to cropped coordinates
+                    offset_x = crop_area["x1"]
+                    offset_y = crop_area["y1"]
+
+                    template_bbox["points"] = [
+                        [pt[0] - offset_x, pt[1] - offset_y]
+                        for pt in template_bbox["points"]
+                    ]
+
+                    # Adjust other_bboxes to cropped coordinates
+                    for bbox in other_bboxes:
+                        bbox["points"] = [
+                            [pt[0] - offset_x, pt[1] - offset_y]
+                            for pt in bbox["points"]
+                        ]
+
+                    logger.info(
+                        f"[{serial_number}] Adjusted {len(other_bboxes) + 1} bbox(es) to cropped coordinates"
+                    )
+
                 # Create annotation file for this camera
                 ann_json_path = temp_dir / f"annotations_{serial_number}.json"
                 ann_data = {
-                    "_template_image": str(template_path),
-                    str(template_path): [template_bbox] + other_bboxes
+                    "_template_image": str(final_template_path),
+                    str(final_template_path): [template_bbox] + other_bboxes
                 }
 
                 with open(ann_json_path, "w") as f:
@@ -171,6 +254,9 @@ class InferenceHandler:
                     scale=1.0,
                     verbose=(initialized_count == 0)  # Only verbose for first matcher
                 )
+
+                # Store crop_area metadata in matcher for use during inference
+                matcher.crop_area = crop_area
 
                 self.camera_matchers[serial_number] = matcher
                 initialized_count += 1
@@ -189,6 +275,68 @@ class InferenceHandler:
         """Clear all inference matchers"""
         self.camera_matchers.clear()
         logger.info("All inference matchers cleared")
+
+    def _crop_frame_if_needed(
+        self,
+        frame: 'np.ndarray',
+        crop_area: Optional[Dict[str, int]]
+    ) -> 'np.ndarray':
+        """
+        Crop frame if crop_area exists
+
+        Args:
+            frame: Input frame (full image)
+            crop_area: Crop area dict with x1, y1, x2, y2
+
+        Returns:
+            Cropped frame or original frame if no crop_area
+        """
+        if crop_area is None:
+            return frame
+
+        return frame[
+            crop_area["y1"]:crop_area["y2"],
+            crop_area["x1"]:crop_area["x2"]
+        ]
+
+    def _transform_results_to_full_image(
+        self,
+        match_result: Dict[str, Any],
+        crop_area: Optional[Dict[str, int]]
+    ) -> Dict[str, Any]:
+        """
+        Transform inference results from cropped coordinates to full image coordinates
+
+        Args:
+            match_result: Result from matcher (with cropped coordinates)
+            crop_area: Crop area dict with x1, y1 offsets
+
+        Returns:
+            Transformed result with full image coordinates
+        """
+        if crop_area is None:
+            return match_result
+
+        offset_x = crop_area["x1"]
+        offset_y = crop_area["y1"]
+
+        # Transform matched_bbox if exists
+        if "matched_bbox" in match_result and match_result["matched_bbox"]:
+            match_result["matched_bbox"]["points"] = [
+                [pt[0] + offset_x, pt[1] + offset_y]
+                for pt in match_result["matched_bbox"]["points"]
+            ]
+
+        # Transform transformed_bboxes (text regions, etc.)
+        if "transformed_bboxes" in match_result:
+            for bbox in match_result["transformed_bboxes"]:
+                if "points" in bbox and bbox["points"]:
+                    bbox["points"] = [
+                        [pt[0] + offset_x, pt[1] + offset_y]
+                        for pt in bbox["points"]
+                    ]
+
+        return match_result
 
     def verify_text_regions(
         self,
@@ -340,11 +488,27 @@ class InferenceHandler:
                 matcher = self.camera_matchers.get(serial_number)
                 if matcher:
                     try:
+                        # Get crop_area from matcher metadata
+                        crop_area = getattr(matcher, 'crop_area', None)
+
+                        # Crop frame if needed
+                        frame_for_inference = self._crop_frame_if_needed(first_frame, crop_area)
+
+                        if crop_area:
+                            logger.info(
+                                f"[{serial_number}] Using cropped frame: "
+                                f"{frame_for_inference.shape[1]}x{frame_for_inference.shape[0]}"
+                            )
+
+                        # Run inference on (possibly cropped) frame
                         match_result = matcher.match_array(
-                            target_img_array=first_frame,
+                            target_img_array=frame_for_inference,
                             score_threshold=0.3,
                             ransac_threshold=5.0
                         )
+
+                        # Transform results back to full image coordinates
+                        match_result = self._transform_results_to_full_image(match_result, crop_area)
 
                         if match_result.get('success', False):
                             confidence = float(match_result.get('confidence', 0.0))
@@ -463,6 +627,7 @@ class InferenceHandler:
                 target_imgs = []
                 matchers = []
                 serial_numbers = []
+                crop_areas = []  # Store crop_area for each camera
 
                 for camera in cameras_to_process:
                     serial_number = camera.serial_number
@@ -470,9 +635,22 @@ class InferenceHandler:
                     matcher = self.camera_matchers.get(serial_number)
 
                     if matcher:
-                        target_imgs.append(first_frame)
+                        # Get crop_area from matcher
+                        crop_area = getattr(matcher, 'crop_area', None)
+
+                        # Crop frame if needed
+                        frame_for_inference = self._crop_frame_if_needed(first_frame, crop_area)
+
+                        if crop_area:
+                            logger.info(
+                                f"[{serial_number}] Using cropped frame: "
+                                f"{frame_for_inference.shape[1]}x{frame_for_inference.shape[0]}"
+                            )
+
+                        target_imgs.append(frame_for_inference)
                         matchers.append(matcher)
                         serial_numbers.append(serial_number)
+                        crop_areas.append(crop_area)
 
                 # Run batch inference (single TRT call for all cameras)
                 try:
@@ -498,6 +676,10 @@ class InferenceHandler:
                             camera = cameras_to_process[idx]
                             result = batch_result['results'][idx]
                             first_frame = results[serial_number]['frames'][0]
+                            crop_area = crop_areas[idx]  # Get corresponding crop_area
+
+                            # Transform result back to full image coordinates
+                            result = self._transform_results_to_full_image(result, crop_area)
 
                             inference_result_data = "PASS"
                             confidence = 0.0
