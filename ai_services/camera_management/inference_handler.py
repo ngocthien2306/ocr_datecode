@@ -235,15 +235,11 @@ class InferenceHandler:
         ]
 
         logger.info(f"[{camera.serial_number}] Verifying {len(text_bboxes)} text regions")
-
+        # print("TEST BOXXXXXXXXXXXXXXX: ",text_bboxes)
+        # print("EXPECTED TEXTS: ", expected_texts)
         for region_idx, bbox in text_bboxes:
             try:
-                # Get expected text for this region
-                expected_text = expected_texts.get(region_idx, '')
 
-                if not expected_text:
-                    logger.warning(f"[{camera.serial_number}] No expected text for region {region_idx}, skipping")
-                    continue
 
                 # Crop text region from frame
                 points = bbox.get('points', [])
@@ -252,7 +248,7 @@ class InferenceHandler:
                     all_match = False
                     verification_results.append({
                         'region_idx': region_idx,
-                        'expected': expected_text,
+                        'expected': bbox.get('text', ''),
                         'recognized': '',
                         'match': False,
                         'confidence': 0.0,
@@ -262,21 +258,22 @@ class InferenceHandler:
 
                 # Crop using perspective transform
                 cropped_region = crop_text_region(frame_img, points)
-
+                path_save = "/home/demo/Source/ocr_datecode/ai_services/test_result"
+                cv2.imwrite(f"{path_save}/cropped_region_{camera.serial_number}_{region_idx}.png", cropped_region)
                 # Run OCR on cropped region
                 text, confidence = self.text_recognizer.recognize(cropped_region, return_confidence=True)
                 recognized_text = text.strip()
-                
+
 
                 # Compare texts (case-insensitive, strip whitespace)
-                match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
+                match = compare_texts(recognized_text, bbox.get('text', ''), case_sensitive=False, strip=True)
 
                 if not match:
                     all_match = False
 
                 verification_results.append({
                     'region_idx': region_idx,
-                    'expected': expected_text,
+                    'expected': bbox.get('text', ''),
                     'recognized': recognized_text,
                     'match': match,
                     'confidence': confidence
@@ -284,7 +281,7 @@ class InferenceHandler:
 
                 logger.info(
                     f"[{camera.serial_number}] Region {region_idx}: "
-                    f"expected='{expected_text}', recognized='{recognized_text}', "
+                    f"expected='{bbox.get('text', '')}', recognized='{recognized_text}', "
                     f"match={match}, conf={confidence:.2%}"
                 )
 
@@ -531,7 +528,7 @@ class InferenceHandler:
 
                                     # Determine PASS/FAIL based on text match
                                     if text_verification['all_match']:
-                                        inference_result_data = "PASS"
+                                        inference_result_data = "FAIL"
                                     else:
                                         inference_result_data = "FAIL"
                                         logger.warning(
@@ -542,14 +539,14 @@ class InferenceHandler:
                                 elif camera.function_type == 'OCR':
                                     # TODO: Implement OCR logic
                                     if confidence > 0.5 and inliers >= 2000:
-                                        inference_result_data = "PASS"
+                                        inference_result_data = "FAIL"
                                     else:
                                         inference_result_data = "FAIL"
 
                                 else:
                                     # Default: template matching
                                     if confidence > 0.5 and inliers >= 2000:
-                                        inference_result_data = "PASS"
+                                        inference_result_data = "FAIL"
                                     else:
                                         inference_result_data = "FAIL"
 

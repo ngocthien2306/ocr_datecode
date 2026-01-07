@@ -4,7 +4,7 @@ import cv2
 from pathlib import Path
 
 # Load image - thay đổi path này
-img_path = "/home/demo/Source/ocr_datecode/desktop/tests/debug_ocr_3.png"  # <-- Thay path của bạn ở đây
+img_path = "/home/demo/Source/ocr_datecode/ai_services/test_result/cropped_region_40733814_1.png"  # <-- Thay path của bạn ở đây
 img = cv2.imread(img_path)
 
 if img is None:

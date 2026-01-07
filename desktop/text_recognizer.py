@@ -1,18 +1,20 @@
+import time
 import cv2
 import numpy as np
 import onnxruntime as ort
 from pathlib import Path
 
-
+print("ONNX Runtime version:", ort.__version__)
+print("Available providers:", ort.get_available_providers())
 class TextRecognizer:
-    def __init__(self, model_path, dict_path, use_gpu=False):
+    def __init__(self, model_path, dict_path, use_gpu=True):
         self.model_path = model_path
         self.dict_path = dict_path
         
         self.char_dict = self._load_dict(dict_path)
         self.char_list = ['blank'] + self.char_dict
         
-        providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if use_gpu else ['CPUExecutionProvider']
+        providers = ['TensorrtExecutionProvider', 'CPUExecutionProvider'] if use_gpu else ['CPUExecutionProvider']
         self.session = ort.InferenceSession(model_path, providers=providers)
         
         self.input_name = self.session.get_inputs()[0].name
@@ -147,20 +149,33 @@ if __name__ == '__main__':
     )
     
     # Test with sample image
-    test_image = cv2.imread('../images/1.jpg')
+    test_image = cv2.imread('/home/demo/Source/ocr_datecode/desktop/tests/debug_ocr_0.png')
     
     if test_image is not None:
-        # Crop a region (example)
-        cropped = test_image[100:150, 100:400]
         
+        start_time = time.time()
         # Recognize
-        text, confidence = recognizer.recognize(cropped)
+        text, confidence = recognizer.recognize(test_image)
+        end_time = time.time()
+        print(f"Processing time: {(end_time - start_time)*1000:.3f}  ms")
         print(f"\nRecognized: '{text}'")
         print(f"Confidence: {confidence:.3f}")
         
-        # Show result
-        cv2.imshow('Cropped Region', cropped)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
     else:
         print("Please provide a test image")
+
+
+# import cv2
+# from pathlib import Path
+
+# recognizer = TextRecognizer('../languages/english/rec.onnx', 
+#                            '../languages/english/dict.txt', 
+#                            use_gpu=True)
+
+# images = [cv2.imread(str(p)) for p in sorted(Path('tests').glob('debug_ocr_*.png'))]
+# start_time = time.time()
+# results = recognizer.recognize_batch(images)
+# end_time = time.time()
+# print(f"Processing time for {len(images)} images: {(end_time - start_time)*1000:.3f} ms")
+# for i, (text, conf) in enumerate(results):
+#     print(f"{i}: '{text}' ({conf:.3f})")
