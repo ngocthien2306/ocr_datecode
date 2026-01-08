@@ -1121,3 +1121,72 @@
     padding: 0.5rem 0.75rem;
   }
 }
+
+/* ===== Recipe Time Info Styles ===== */
+
+.recipe-time-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.time-item {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.time-item svg {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.time-label {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 500;
+}
+
+.time-value {
+  font-size: 0.8125rem;
+  color: white;
+  font-weight: 600;
+  font-family: 'Courier New', monospace;
+}
+
+.time-value.duration {
+  color: #22c55e;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.time-separator {
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 0.75rem;
+}
+
+/* Responsive: Mobile */
+@media (max-width: 768px) {
+  .recipe-time-info {
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: flex-start;
+  }
+
+  .time-separator {
+    display: none;
+  }
+
+  .time-item {
+    gap: 0.25rem;
+  }
+
+  .time-label,
+  .time-value {
+    font-size: 0.7rem;
+  }
+}

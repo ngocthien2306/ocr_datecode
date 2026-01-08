@@ -108,6 +108,8 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
   const [isOnline, setIsOnline] = useState(true); // Inference mode: ONLINE/OFFLINE
   const [isStopping, setIsStopping] = useState(false);
   const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
+  const [recipeStartTime, setRecipeStartTime] = useState<Date | null>(null);
+  const [currentDuration, setCurrentDuration] = useState<string>('00:00:00');
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   // Delay trigger management - track each camera's delay
@@ -132,11 +134,110 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
     scrollToBottom();
   }, [logs]);
 
+  // Load persisted state from localStorage on mount
+  useEffect(() => {
+    try {
+      const savedLatestLog = localStorage.getItem('inference_latest_log');
+      const savedResults = localStorage.getItem('inference_latest_results');
+      const savedExpandedLogs = localStorage.getItem('inference_expanded_logs');
+      const savedStartTime = localStorage.getItem('inference_start_time');
+
+      if (savedLatestLog) {
+        const parsedLog = JSON.parse(savedLatestLog);
+        // console.log('[InferenceRealtime] Restored latest log from localStorage');
+        setLogs([parsedLog]); // Only restore the latest log
+      }
+      if (savedResults) {
+        const parsedResults = JSON.parse(savedResults);
+        console.log('[InferenceRealtime] Restored latest results from localStorage');
+        setLatestResults(parsedResults);
+      }
+      if (savedExpandedLogs) {
+        const parsedExpanded = new Set(JSON.parse(savedExpandedLogs));
+        // console.log(`[InferenceRealtime] Restored ${parsedExpanded.size} expanded logs`);
+        setExpandedLogs(parsedExpanded);
+      }
+      if (savedStartTime) {
+        // Parse ISO string (already in correct format with timezone)
+        const startTime = new Date(savedStartTime);
+        // console.log(`[InferenceRealtime] Restored start time: ${startTime.toLocaleString()}`);
+        setRecipeStartTime(startTime);
+      }
+    } catch (error) {
+      console.error('Error loading persisted state:', error);
+    }
+  }, []);
+
+  // Persist state to localStorage when it changes
+  useEffect(() => {
+    try {
+      // Only save the latest log (with image_base64 intact)
+      if (logs.length > 0) {
+        const latestLog = logs[logs.length - 1];
+        localStorage.setItem('inference_latest_log', JSON.stringify(latestLog));
+        console.log('[InferenceRealtime] Saved latest log to localStorage');
+      }
+    } catch (error) {
+      console.error('Error saving latest log:', error);
+      // If still fails, try clearing old data
+      if (error instanceof DOMException && error.name === 'QuotaExceededError') {
+        console.warn('localStorage quota exceeded, clearing old inference data');
+        localStorage.removeItem('inference_latest_log');
+        localStorage.removeItem('inference_latest_results');
+      }
+    }
+  }, [logs]);
+
+  useEffect(() => {
+    try {
+      if (latestResults) {
+        // Save with image_base64 (only latest result, so size is manageable)
+        localStorage.setItem('inference_latest_results', JSON.stringify(latestResults));
+        console.log('[InferenceRealtime] Saved latest results to localStorage');
+      }
+    } catch (error) {
+      console.error('Error saving latest results:', error);
+      if (error instanceof DOMException && error.name === 'QuotaExceededError') {
+        console.warn('localStorage quota exceeded for latest results');
+        localStorage.removeItem('inference_latest_results');
+      }
+    }
+  }, [latestResults]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('inference_expanded_logs', JSON.stringify(Array.from(expandedLogs)));
+    } catch (error) {
+      console.error('Error saving expanded logs:', error);
+    }
+  }, [expandedLogs]);
+
+  // Update duration every second
+  useEffect(() => {
+    if (!recipeStartTime) return;
+
+    const interval = setInterval(() => {
+      const now = new Date();
+      const diff = now.getTime() - recipeStartTime.getTime();
+      const hours = Math.floor(diff / (1000 * 60 * 60));
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+      setCurrentDuration(
+        `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+      );
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [recipeStartTime]);
+
   // Load running recipe info
   useEffect(() => {
     const loadRunningRecipe = async () => {
       if (!runningRecipeId) {
         setRunningRecipe(null);
+        setRecipeStartTime(null);
+        localStorage.removeItem('inference_start_time');
         return;
       }
 
@@ -144,6 +245,25 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
         const latest = await receiptsAPI.getLatestLoadedRecipe();
         if (latest && latest.recipe_id === runningRecipeId) {
           setRunningRecipe(latest);
+
+          // Set start time from loaded_at_local (Vietnam time) or loaded_at (UTC)
+          const loadedAtStr = latest.loaded_at_local || latest.loaded_at;
+          if (loadedAtStr) {
+            // If using loaded_at (UTC without 'Z'), add 'Z' to parse correctly
+            let startTime: Date;
+            if (latest.loaded_at_local) {
+              // Has timezone info, parse directly
+              startTime = new Date(latest.loaded_at_local);
+            } else if (typeof latest.loaded_at === 'string' && !latest.loaded_at.endsWith('Z')) {
+              // UTC time without 'Z', add it to parse as UTC
+              startTime = new Date(latest.loaded_at + 'Z');
+            } else {
+              startTime = new Date(latest.loaded_at);
+            }
+
+            setRecipeStartTime(startTime);
+            localStorage.setItem('inference_start_time', startTime.toISOString());
+          }
         }
       } catch (error) {
         console.error('Error loading running recipe:', error);
@@ -262,6 +382,12 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
             message: '🛑 Recipe stopped'
           };
           setLogs(prev => [...prev, stopLog]);
+
+          // Clear persisted state when recipe stops
+          localStorage.removeItem('inference_latest_log');
+          localStorage.removeItem('inference_latest_results');
+          localStorage.removeItem('inference_expanded_logs');
+          localStorage.removeItem('inference_start_time');
 
           // Redirect to Recipes page after 1 second
           setTimeout(() => {
@@ -463,6 +589,28 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
               </span>
               <span className="recipe-name">{runningRecipe.metadata?.name || 'Unknown Recipe'}</span>
               <span className="product-code">({runningRecipe.metadata?.product_code || 'N/A'})</span>
+              <div className="recipe-time-info">
+                {recipeStartTime && (
+                  <>
+                    <div className="time-item">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+                        <path d="M12 6v6l4 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                      </svg>
+                      <span className="time-label">Started:</span>
+                      <span className="time-value">{recipeStartTime.toLocaleTimeString()}</span>
+                    </div>
+                    <div className="time-separator">•</div>
+                    <div className="time-item">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                        <path d="M12 2v20M17 12H7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                      </svg>
+                      <span className="time-label">Duration:</span>
+                      <span className="time-value duration">{currentDuration}</span>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           )}
         </div>
