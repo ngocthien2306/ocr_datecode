@@ -166,3 +166,4 @@ desktop/__pycache__/type_dialog.cpython-311.pyc
 desktop/__pycache__/template_matcher.cpython-311.pyc
 ocr_inference
 backend/camera_settings
+ai_services/test_result

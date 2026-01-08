@@ -6,6 +6,19 @@ import { receiptsAPI } from '@/services/recipes';
 import { camerasAPI } from '@/services/cameras';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 
+interface TextVerificationResult {
+  region_idx: number;
+  expected: string;
+  recognized: string;
+  match: boolean;
+  confidence: number;
+}
+
+interface TextVerification {
+  all_match: boolean;
+  results: TextVerificationResult[];
+}
+
 interface InferenceLog {
   id: string;
   timestamp: string;
@@ -13,6 +26,7 @@ interface InferenceLog {
   recipe_name: string;
   product_code: string;
   message: string;
+  inferenceResult?: InferenceResult;
 }
 
 interface FrameResult {
@@ -24,6 +38,7 @@ interface FrameResult {
   template_name: string;
   timings?: any;
   detected_regions?: any[];
+  text_verification?: TextVerification;
 }
 
 interface CameraResult {
@@ -92,6 +107,7 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
   const [runningRecipe, setRunningRecipe] = useState<any>(null);
   const [isOnline, setIsOnline] = useState(true); // Inference mode: ONLINE/OFFLINE
   const [isStopping, setIsStopping] = useState(false);
+  const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   // Delay trigger management - track each camera's delay
@@ -146,6 +162,8 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
     const handleNewResult = (data: any) => {
       console.log('New inference result:', data);
 
+      const fullResult = data as InferenceResult;
+
       // Add to logs
       const newLog: InferenceLog = {
         id: data.id || `log-${Date.now()}`,
@@ -153,13 +171,24 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
         result: data.product_pass_fail || 'FAIL',
         recipe_name: data.recipe_name || 'Unknown',
         product_code: data.product_code || 'Unknown',
-        message: `${data.recipe_name} - ${data.product_pass_fail}`
+        message: `${data.recipe_name} - ${data.product_pass_fail}`,
+        inferenceResult: fullResult
       };
 
       setLogs(prev => [...prev, newLog].slice(-100)); // Keep last 100 logs
 
+      // Auto-expand if FAIL and has text verification
+      if (data.product_pass_fail === 'FAIL') {
+        const hasTextVerification = data.camera_results?.some((cam: CameraResult) =>
+          cam.frames.some((frame: FrameResult) => frame.text_verification)
+        );
+        if (hasTextVerification) {
+          setExpandedLogs(prev => new Set(prev).add(newLog.id));
+        }
+      }
+
       // Store full inference result for multi-camera display
-      setLatestResults(data as InferenceResult);
+      setLatestResults(fullResult);
 
       // Sync delay_trigger from result to local state
       if (data.camera_results) {
@@ -303,6 +332,107 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
     } finally {
       setUpdatingDelay(null);
     }
+  };
+
+  // Helper: Check if log entry has text verification data
+  const hasTextVerification = (log: InferenceLog): boolean => {
+    return log.inferenceResult?.camera_results?.some((cam) =>
+      cam.frames.some((frame) => frame.text_verification)
+    ) || false;
+  };
+
+  // Helper: Toggle log expansion
+  const toggleLogExpansion = (logId: string) => {
+    setExpandedLogs(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(logId)) {
+        newSet.delete(logId);
+      } else {
+        newSet.add(logId);
+      }
+      return newSet;
+    });
+  };
+
+  // Helper: Get confidence color class
+  const getConfidenceClass = (confidence: number): string => {
+    if (confidence > 0.8) return 'high';
+    if (confidence > 0.5) return 'medium';
+    return 'low';
+  };
+
+  // Render text verification table for a camera
+  const renderTextVerificationTable = (cameraResult: CameraResult) => {
+    // Get text verification from first frame (assumption: only first frame has it)
+    const frameWithVerification = cameraResult.frames.find(f => f.text_verification);
+    if (!frameWithVerification?.text_verification) {
+      return (
+        <div className="camera-verification-card">
+          <div className="camera-verification-header">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <rect x="2" y="7" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2"/>
+              <circle cx="12" cy="14" r="3" stroke="currentColor" strokeWidth="2"/>
+            </svg>
+            <span className="camera-serial">{cameraResult.serial_number}</span>
+          </div>
+          <div className="no-verification-data">No text verification data</div>
+        </div>
+      );
+    }
+
+    const verification = frameWithVerification.text_verification;
+    const matchCount = verification.results.filter(r => r.match).length;
+    const totalCount = verification.results.length;
+    const allMatch = verification.all_match;
+
+    return (
+      <div className="camera-verification-card">
+        <div className="camera-verification-header">
+          <div className="camera-info">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <rect x="2" y="7" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2"/>
+              <circle cx="12" cy="14" r="3" stroke="currentColor" strokeWidth="2"/>
+            </svg>
+            <span className="camera-serial">{cameraResult.serial_number}</span>
+          </div>
+          <span className={`match-summary ${allMatch ? 'all-match' : 'has-mismatch'}`}>
+            {matchCount}/{totalCount} Match {allMatch ? '✓' : '✗'}
+          </span>
+        </div>
+        <div className="verification-table-wrapper">
+          <table className="verification-table">
+            <thead>
+              <tr>
+                <th className="col-region">#</th>
+                <th className="col-expected">Expected</th>
+                <th className="col-recognized">Recognized</th>
+                <th className="col-match">Match</th>
+                <th className="col-confidence">Conf</th>
+              </tr>
+            </thead>
+            <tbody>
+              {verification.results.map((result) => (
+                <tr key={result.region_idx} className={result.match ? '' : 'mismatch-row'}>
+                  <td className="col-region">{result.region_idx}</td>
+                  <td className="col-expected">{result.expected || '—'}</td>
+                  <td className="col-recognized">{result.recognized || '—'}</td>
+                  <td className="col-match">
+                    <span className={`match-icon ${result.match ? 'match' : 'no-match'}`}>
+                      {result.match ? '✓' : '✗'}
+                    </span>
+                  </td>
+                  <td className="col-confidence">
+                    <span className={`confidence-value ${getConfidenceClass(result.confidence)}`}>
+                      {(result.confidence * 100).toFixed(1)}%
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
   };
 
   if (!runningRecipeId) {
@@ -478,7 +608,7 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                       <>
                         <div className="camera-stats-compact">
                           <div className="stat-item">
-                            <span className="stat-label">Confidence:</span>
+                            <span className="stat-label">Score:</span>
                             <span className="stat-value">{(cameraStats.confidence * 100).toFixed(1)}%</span>
                           </div>
                           <div className="stat-separator">|</div>
@@ -579,15 +709,44 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
               </div>
             ) : (
               <div className="log-list">
-                {logs.map((log) => (
-                  <div key={log.id} className={`inference-log-entry ${log.result.toLowerCase()}`}>
-                    <span className="log-timestamp">{log.timestamp}</span>
-                    <span className={`log-badge ${log.result.toLowerCase()}`}>
-                      {log.result}
-                    </span>
-                    <span className="log-message">{log.message}</span>
-                  </div>
-                ))}
+                {logs.map((log) => {
+                  const hasVerification = hasTextVerification(log);
+                  const isExpanded = expandedLogs.has(log.id);
+
+                  return (
+                    <div
+                      key={log.id}
+                      className={`inference-log-entry ${log.result.toLowerCase()} ${hasVerification ? 'expandable' : ''} ${isExpanded ? 'expanded' : ''}`}
+                    >
+                      <div
+                        className="log-entry-header"
+                        onClick={() => hasVerification && toggleLogExpansion(log.id)}
+                      >
+                        <span className="log-timestamp">{log.timestamp}</span>
+                        <span className={`log-badge ${log.result.toLowerCase()}`}>
+                          {log.result}
+                        </span>
+                        <span className="log-message">{log.message}</span>
+                        {hasVerification && (
+                          <span className="log-expand-icon">
+                            {isExpanded ? '▲' : '▼'}
+                          </span>
+                        )}
+                      </div>
+
+                      {hasVerification && isExpanded && log.inferenceResult && (
+                        <div className="text-verification-section">
+                          <div className="verification-label">Text Verification Details:</div>
+                          {log.inferenceResult.camera_results.map((cameraResult) => (
+                            <div key={cameraResult.serial_number}>
+                              {renderTextVerificationTable(cameraResult)}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
                 <div ref={logsEndRef} />
               </div>
             )}

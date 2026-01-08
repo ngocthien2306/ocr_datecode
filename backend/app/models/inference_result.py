@@ -53,6 +53,10 @@ class FrameResult(BaseModel):
         None,
         description="Inference timing breakdown (ms)"
     )
+    text_verification: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Text verification results for Check_Type_Product function"
+    )
     # NOTE: image_base64 is NOT stored in DB - only used for realtime SocketIO emission
 
 

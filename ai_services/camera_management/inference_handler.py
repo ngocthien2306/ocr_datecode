@@ -908,6 +908,7 @@ class InferenceHandler:
                     frame_total_matches = camera_inference["total_matches"]
                     frame_timings = camera_inference["timings"]
                     frame_bboxes = camera_inference["transformed_bboxes"]
+                    frame_text_verification = camera_inference.get("text_verification")
                 else:
                     frame_pass_fail = "PASS"
                     frame_confidence = 0.0
@@ -915,6 +916,7 @@ class InferenceHandler:
                     frame_total_matches = 0
                     frame_timings = None
                     frame_bboxes = None
+                    frame_text_verification = None
 
                 # Encode image for display
                 image_path = None
@@ -955,7 +957,8 @@ class InferenceHandler:
                     "detected_regions": frame_bboxes,
                     "image_path": image_path,
                     "image_base64": image_base64,
-                    "timings": frame_timings
+                    "timings": frame_timings,
+                    "text_verification": frame_text_verification
                 }
 
                 frame_results.append(frame_result)
@@ -1033,5 +1036,6 @@ class InferenceHandler:
                 }
             }
         }
+        
 
         return inference_result
