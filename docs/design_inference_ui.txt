@@ -1,0 +1,108 @@
+Tab 1: Inspection Results (Chi tiết từng lần kiểm tra)
+
+  - Table hiển thị từng inference result với filters
+  - Expandable rows để xem chi tiết camera, text verification, images
+  - Dành cho QC operators debug lỗi FAIL
+
+  Tab 2: Production Analytics (Tổng hợp thống kê)
+
+  - Summary cards (total, avg, best camera, pass rate)
+  - Chart xu hướng (TODO later)
+  - Daily production table
+  - Dành cho managers xem overview
+
+trả lời: tôi muốn tab nào cũng có Summary cards (total, avg, best camera, pass rate)
+bên dưới cái này mới cho hiện 2 tab 
+
+  ---
+  Câu hỏi cần làm rõ:
+
+  1. Backend API cho Tab 2 - Daily Stats
+
+  Document nói cần endpoint mới: GET /api/inference-results/stats/daily
+
+  Câu hỏi:
+  - Bạn có muốn tôi implement backend endpoint này trước khi làm frontend không?
+  trả lời: ko cần, để sau 
+  - Hay tạm thời Tab 2 sẽ aggregate data ở frontend từ API hiện tại /api/inference-results/?
+  trả lời: để sau
+
+  2. Expandable Row Detail - Images
+
+  Design show 4 camera images khi expand row.
+
+  Câu hỏi:
+  - Hiện tại image_path chỉ được lưu khi FAIL (line 926 inference_handler.py). Khi PASS thì image_path = None.
+  - Vậy khi expand row PASS, có hiển thị gì không? Hay chỉ show images cho FAIL cases?
+  trả lời: có hiện thị giống fail case, nhưng nếu có đường dẫn thì mới show ảnh, nếu ko thì thôi
+  - Bạn có muốn thay đổi logic để lưu images cho cả PASS không? (hiện tại chỉ FAIL được save vào disk)
+  trả lời: hiện tại chưa cần 
+  3. Text Verification Display
+
+  Design show rất chi tiết text verification với expected/got/confidence.
+
+  Câu hỏi:
+  - Có phải tất cả recipes đều có text verification không? Hay chỉ function_type = 'Check_Type_Product'?
+  trả lời: tất cả type đều có, nhưng field đó ko có thì ko show
+  - Khi không có text verification (OCR function hoặc template matching), hiển thị gì trong cột "Text Verify"? (Design nói "N/A")
+  trả lời: đúng để N/A
+  4. Export Functionality
+
+  Design đề cập export CSV/Excel cho:
+  - Single result export
+  - Bulk export selected rows
+  - Export whole daily table (Tab 2)
+
+  Câu hỏi:
+  - Bạn muốn implement export ngay Phase 1-2, hay để sau Phase 4 (Polish)?
+  - Format ưu tiên: CSV hay Excel? (CSV đơn giản hơn, Excel cần thư viện thêm)
+  trả lời: to do để sau 
+  5. Date Range Presets
+
+  Design có presets: "Last 7 Days", "Today", "Yesterday", "This Week"
+
+  Câu hỏi:
+  - Bạn có muốn thêm presets khác không? (Last 30 days, This Month, Last Month?)
+  trả lời: có 
+  - Default khi mở page là "Last 7 Days" đúng không?
+  trả lời: đúng 
+
+  6. Real-time Updates
+
+  Document nói "Optional auto-refresh for Tab 1"
+
+  Câu hỏi:
+  - Bạn có muốn Tab 1 tự động refresh mỗi X giây để show kết quả mới nhất không?
+  - Hay chỉ manual refresh bằng button?
+
+  trả lời: không cần, manual refresh bằng button
+
+  7. Permissions & Roles
+
+  Design có "Delete (admin only)"
+
+  Câu hỏi:
+  - Hiện tại auth system có role nào? (admin, operator, viewer?)
+  trả lời: admin, operator, supervisor, viewer
+  - User thường có được xem historical data không? Hay chỉ được xem realtime?
+  trả lời: ai cũng có quyền coi page này, nhưng chỉ có admin, supervisor mới được xoá record trong page này
+  8. Implementation Priority
+
+  Document có 4 phases rõ ràng.
+
+  Câu hỏi:
+  - Bạn muốn tôi làm đến phase nào?
+    - Phase 1-2: Core functionality với Tab 1 đầy đủ?
+    - Phase 3: Cả 2 tabs hoàn chỉnh?
+    - Phase 4: Polish với export, responsive?
+
+  trả lời: 
+  1. Tạo structure 2 tabs
+  2. Implement Tab 1 với table, pagination, filters cơ bản
+  3. Expandable rows với camera details & text verification
+
+  4. tab 2 này copy hiện tại qua 
+  Production Trends
+  và Daily Production Records
+
+

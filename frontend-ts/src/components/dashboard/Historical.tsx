@@ -1,134 +1,141 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
+import { inferenceResultsAPI, type InferenceResultResponse } from '@/services/inferenceResults';
+import InspectionResultsTab from './historical/InspectionResultsTab';
+import ProductionAnalyticsTab from './historical/ProductionAnalyticsTab';
+import '@/styles/Historical.css';
 
-type DayRecord = { date: string; camera1: number; camera2: number; camera3: number };
+interface SummaryStats {
+  total: number;
+  pass: number;
+  fail: number;
+  passRate: number;
+}
 
 const Historical: React.FC = () => {
-  const chartRef = useRef<HTMLCanvasElement | null>(null);
+  const [activeTab, setActiveTab] = useState<'inspection' | 'analytics'>('inspection');
+  const [summaryStats, setSummaryStats] = useState<SummaryStats>({
+    total: 0,
+    pass: 0,
+    fail: 0,
+    passRate: 0
+  });
   const [dateRange, setDateRange] = useState('7days');
-  const [selectedCamera, setSelectedCamera] = useState('all');
+  const [loading, setLoading] = useState(false);
 
-  const historicalData: DayRecord[] = [
-    { date: '2024-01-09', camera1: 445, camera2: 412, camera3: 355 },
-    { date: '2024-01-10', camera1: 438, camera2: 420, camera3: 362 },
-    { date: '2024-01-11', camera1: 452, camera2: 415, camera3: 358 },
-    { date: '2024-01-12', camera1: 448, camera2: 425, camera3: 365 },
-    { date: '2024-01-13', camera1: 455, camera2: 418, camera3: 360 },
-    { date: '2024-01-14', camera1: 445, camera2: 412, camera3: 355 },
-    { date: '2024-01-15', camera1: 456, camera2: 423, camera3: 368 },
-  ];
-
+  // Fetch summary stats based on date range
   useEffect(() => {
-    drawChart();
-  }, [dateRange, selectedCamera]);
+    fetchSummaryStats();
+  }, [dateRange]);
 
-  const drawChart = () => {
-    if (!chartRef.current) return;
+  const fetchSummaryStats = async () => {
+    try {
+      setLoading(true);
 
-    const canvas = chartRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+      // Calculate date range
+      const { start_date, end_date } = getDateRange(dateRange);
 
-    const width = canvas.width;
-    const height = canvas.height;
+      // Fetch all results for the date range (no pagination, just for count)
+      const results = await inferenceResultsAPI.getResults({
+        start_date,
+        end_date,
+        limit: 10000 // Get all for stats
+      });
 
-    ctx.clearRect(0, 0, width, height);
+      // Calculate stats
+      const total = results.length;
+      const pass = results.filter(r => r.product_pass_fail === 'PASS').length;
+      const fail = results.filter(r => r.product_pass_fail === 'FAIL').length;
+      const passRate = total > 0 ? (pass / total) * 100 : 0;
 
-    const padding = 60;
-    const chartWidth = width - padding * 2;
-    const chartHeight = height - padding * 2;
-
-    // Draw grid
-    ctx.strokeStyle = '#e5e7eb';
-    ctx.lineWidth = 1;
-
-    for (let i = 0; i <= 5; i++) {
-      const y = padding + (chartHeight / 5) * i;
-      ctx.beginPath();
-      ctx.moveTo(padding, y);
-      ctx.lineTo(width - padding, y);
-      ctx.stroke();
+      setSummaryStats({
+        total,
+        pass,
+        fail,
+        passRate: Math.round(passRate * 10) / 10 // Round to 1 decimal
+      });
+    } catch (error) {
+      console.error('Error fetching summary stats:', error);
+    } finally {
+      setLoading(false);
     }
-
-    // Draw data
-    const cameras = selectedCamera === 'all'
-      ? ['camera1', 'camera2', 'camera3']
-      : [selectedCamera];
-
-    const colors: Record<string, string> = {
-      camera1: '#6366f1',
-      camera2: '#3b82f6',
-      camera3: '#8b5cf6'
-    };
-
-    cameras.forEach((camera) => {
-      const data = historicalData.map(d => (d as any)[camera] as number);
-      const maxValue = Math.max(...data);
-      const minValue = Math.min(...data);
-      const valueRange = maxValue - minValue || 1;
-
-      ctx.strokeStyle = colors[camera] || '#6366f1';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-
-      data.forEach((value, index) => {
-        const x = padding + (index / (data.length - 1)) * chartWidth;
-        const y = padding + chartHeight - ((value - minValue) / valueRange) * chartHeight;
-
-        if (index === 0) {
-          ctx.moveTo(x, y);
-        } else {
-          ctx.lineTo(x, y);
-        }
-      });
-
-      ctx.stroke();
-
-      // Draw points
-      ctx.fillStyle = colors[camera] || '#6366f1';
-      data.forEach((value, index) => {
-        const x = padding + (index / (data.length - 1)) * chartWidth;
-        const y = padding + chartHeight - ((value - minValue) / valueRange) * chartHeight;
-
-        ctx.beginPath();
-        ctx.arc(x, y, 5, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      });
-    });
-
-    // Draw labels
-    ctx.fillStyle = '#6b7280';
-    ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    ctx.textAlign = 'center';
-
-    historicalData.forEach((item, index) => {
-      const x = padding + (index / (historicalData.length - 1)) * chartWidth;
-      const dateLabel = new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      ctx.fillText(dateLabel, x, height - 20);
-    });
   };
 
-  // Keep some computed stats for the cards
-  const reversedData = [...historicalData].reverse();
+  const getDateRange = (range: string): { start_date: string; end_date: string } => {
+    const now = new Date();
+    const end = new Date(now);
+    let start = new Date(now);
+
+    switch (range) {
+      case 'today':
+        start.setHours(0, 0, 0, 0);
+        break;
+      case 'yesterday':
+        start.setDate(now.getDate() - 1);
+        start.setHours(0, 0, 0, 0);
+        end.setDate(now.getDate() - 1);
+        end.setHours(23, 59, 59, 999);
+        break;
+      case '7days':
+        start.setDate(now.getDate() - 7);
+        break;
+      case 'thisweek':
+        const dayOfWeek = now.getDay();
+        start.setDate(now.getDate() - dayOfWeek);
+        start.setHours(0, 0, 0, 0);
+        break;
+      case '30days':
+        start.setDate(now.getDate() - 30);
+        break;
+      case 'thismonth':
+        start.setDate(1);
+        start.setHours(0, 0, 0, 0);
+        break;
+      case 'lastmonth':
+        start.setMonth(now.getMonth() - 1);
+        start.setDate(1);
+        start.setHours(0, 0, 0, 0);
+        end.setMonth(now.getMonth());
+        end.setDate(0);
+        end.setHours(23, 59, 59, 999);
+        break;
+      default:
+        start.setDate(now.getDate() - 7);
+    }
+
+    return {
+      start_date: start.toISOString(),
+      end_date: end.toISOString()
+    };
+  };
 
   return (
     <div className="historical-page">
+      {/* Header */}
       <div className="section-header">
         <h1>Historical Data</h1>
-        <button className="dashboard-btn">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-            <path d="M21 15V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            <polyline points="7,10 12,15 17,10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            <line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          Export Data
-        </button>
+        <div className="header-controls">
+          <div className="control-group">
+            <label>Date Range:</label>
+            <select value={dateRange} onChange={(e) => setDateRange(e.target.value)}>
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="7days">Last 7 Days</option>
+              <option value="thisweek">This Week</option>
+              <option value="30days">Last 30 Days</option>
+              <option value="thismonth">This Month</option>
+              <option value="lastmonth">Last Month</option>
+            </select>
+          </div>
+          <button className="dashboard-btn" onClick={fetchSummaryStats}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M21.5 2V6M21.5 6H17.5M21.5 6L18.5 3C16.8 1.5 14.5 0.5 12 0.5C5.5 0.5 0.5 5.5 0.5 12C0.5 18.5 5.5 23.5 12 23.5C17.5 23.5 22 19.5 23 14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Refresh
+          </button>
+        </div>
       </div>
 
-      {/* Stats Overview */}
+      {/* Summary Cards */}
       <div className="summary-cards">
         <div className="summary-card">
           <div className="card-icon products">
@@ -140,134 +147,105 @@ const Historical: React.FC = () => {
             </svg>
           </div>
           <div className="card-info">
-            <h3>Total Products (7 days)</h3>
-            <div className="card-value">8,687</div>
-            <span className="card-status increase">+15% vs prev week</span>
+            <h3>Total Inspections</h3>
+            <div className="card-value">{loading ? '...' : summaryStats.total.toLocaleString()}</div>
+            <span className="card-status normal">
+              {dateRange === 'today' ? 'Today' :
+               dateRange === 'yesterday' ? 'Yesterday' :
+               dateRange === '7days' ? 'Last 7 days' :
+               dateRange === 'thisweek' ? 'This week' :
+               dateRange === '30days' ? 'Last 30 days' :
+               dateRange === 'thismonth' ? 'This month' :
+               dateRange === 'lastmonth' ? 'Last month' : 'Period'}
+            </span>
           </div>
         </div>
 
         <div className="summary-card">
           <div className="card-icon success">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <polyline points="22,12 18,12 15,21 9,3 6,12 2,12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M22 11.08V12C21.9988 14.1564 21.3005 16.2547 20.0093 17.9818C18.7182 19.7088 16.9033 20.9725 14.8354 21.5839C12.7674 22.1953 10.5573 22.1219 8.53447 21.3746C6.51168 20.6273 4.78465 19.2461 3.61096 17.4371C2.43727 15.628 1.87979 13.4881 2.02168 11.3363C2.16356 9.18455 2.99721 7.13631 4.39828 5.49706C5.79935 3.85781 7.69279 2.71537 9.79619 2.24013C11.8996 1.7649 14.1003 1.98232 16.07 2.85999" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M22 4L12 14.01L9 11.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
           <div className="card-info">
-            <h3>Average Daily Output</h3>
-            <div className="card-value">1,241</div>
-            <span className="card-status normal">Per day</span>
+            <h3>PASS</h3>
+            <div className="card-value">{loading ? '...' : summaryStats.pass.toLocaleString()}</div>
+            <span className="card-status success">
+              {summaryStats.total > 0 ? `${Math.round((summaryStats.pass / summaryStats.total) * 100)}%` : '0%'} of total
+            </span>
+          </div>
+        </div>
+
+        <div className="summary-card">
+          <div className="card-icon error">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+              <line x1="15" y1="9" x2="9" y2="15" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              <line x1="9" y1="9" x2="15" y2="15" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+          </div>
+          <div className="card-info">
+            <h3>FAIL</h3>
+            <div className="card-value">{loading ? '...' : summaryStats.fail.toLocaleString()}</div>
+            <span className="card-status error">
+              {summaryStats.total > 0 ? `${Math.round((summaryStats.fail / summaryStats.total) * 100)}%` : '0%'} of total
+            </span>
           </div>
         </div>
 
         <div className="summary-card">
           <div className="card-icon camera">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <path d="M23 19C23 19.5304 22.7893 20.0391 22.4142 20.4142C22.0391 20.7893 21.5304 21 21 21H3C2.46957 21 1.96086 20.7893 1.58579 20.4142C1.21071 20.0391 1 19.5304 1 19V8C1 7.46957 1.21071 6.96086 1.58579 6.58579C1.96086 6.21071 2.46957 6 3 6H7L9 3H15L17 6H21C21.5304 6 22.0391 6.21071 22.4142 6.58579C22.7893 6.96086 23 7.46957 23 8V19Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <circle cx="12" cy="13" r="4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <polyline points="22,12 18,12 15,21 9,3 6,12 2,12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
           <div className="card-info">
-            <h3>Best Performing Camera</h3>
-            <div className="card-value">Camera 1</div>
-            <span className="card-status success">3,189 products</span>
+            <h3>Pass Rate</h3>
+            <div className="card-value">{loading ? '...' : `${summaryStats.passRate}%`}</div>
+            <span className={`card-status ${summaryStats.passRate >= 90 ? 'success' : summaryStats.passRate >= 70 ? 'normal' : 'error'}`}>
+              {summaryStats.passRate >= 90 ? 'Excellent' : summaryStats.passRate >= 70 ? 'Good' : 'Needs attention'}
+            </span>
           </div>
         </div>
       </div>
 
-      {/* Chart Controls */}
-      <div className="chart-controls">
-        <div className="control-group">
-          <label>Date Range:</label>
-          <select value={dateRange} onChange={(e) => setDateRange(e.target.value)}>
-            <option value="7days">Last 7 Days</option>
-            <option value="30days">Last 30 Days</option>
-            <option value="90days">Last 90 Days</option>
-          </select>
+      {/* Tabs */}
+      <div className="tabs-container">
+        <div className="tabs-header">
+          <button
+            className={`tab-button ${activeTab === 'inspection' ? 'active' : ''}`}
+            onClick={() => setActiveTab('inspection')}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <polyline points="14,2 14,8 20,8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <line x1="16" y1="13" x2="8" y2="13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <line x1="16" y1="17" x2="8" y2="17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <polyline points="10,9 9,9 8,9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Inspection Results
+          </button>
+          <button
+            className={`tab-button ${activeTab === 'analytics' ? 'active' : ''}`}
+            onClick={() => setActiveTab('analytics')}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <line x1="12" y1="20" x2="12" y2="10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <line x1="18" y1="20" x2="18" y2="4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <line x1="6" y1="20" x2="6" y2="16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Production Analytics
+          </button>
         </div>
-        <div className="control-group">
-          <label>Camera:</label>
-          <select value={selectedCamera} onChange={(e) => setSelectedCamera(e.target.value)}>
-            <option value="all">All Cameras</option>
-            <option value="camera1">Camera 1 - Line A</option>
-            <option value="camera2">Camera 2 - Line B</option>
-            <option value="camera3">Camera 3 - QC</option>
-          </select>
+
+        <div className="tab-content">
+          {activeTab === 'inspection' ? (
+            <InspectionResultsTab dateRange={dateRange} />
+          ) : (
+            <ProductionAnalyticsTab />
+          )}
         </div>
-      </div>
-
-      {/* Historical Chart */}
-      <div className="historical-chart-container">
-        <h3>Production Trends</h3>
-        <div className="chart-legend">
-          <div className="legend-item">
-            <span className="legend-color" style={{ backgroundColor: '#6366f1' }}></span>
-            Camera 1 - Line A
-          </div>
-          <div className="legend-item">
-            <span className="legend-color" style={{ backgroundColor: '#3b82f6' }}></span>
-            Camera 2 - Line B
-          </div>
-          <div className="legend-item">
-            <span className="legend-color" style={{ backgroundColor: '#8b5cf6' }}></span>
-            Camera 3 - QC
-          </div>
-        </div>
-        <canvas ref={chartRef} width={1200} height={400}></canvas>
-      </div>
-
-      {/* Data Table */}
-      <div className="data-table-container" style={{ marginTop: '32px' }}>
-        <h3>Daily Production Records</h3>
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Camera 1 - Line A</th>
-              <th>Camera 2 - Line B</th>
-              <th>Camera 3 - QC</th>
-              <th>Total</th>
-              <th>Trend</th>
-            </tr>
-          </thead>
-          <tbody>
-            {reversedData.map((record, index) => {
-              const total = record.camera1 + record.camera2 + record.camera3;
-              const prev = index < reversedData.length - 1
-                ? reversedData[index + 1]!.camera1 + reversedData[index + 1]!.camera2 + reversedData[index + 1]!.camera3
-                : total;
-              const trend = total - prev;
-
-              return (
-                <tr key={record.date}>
-                  <td><strong>{record.date}</strong></td>
-                  <td>{record.camera1}</td>
-                  <td>{record.camera2}</td>
-                  <td>{record.camera3}</td>
-                  <td><strong>{total}</strong></td>
-                  <td>
-                    {trend > 0 ? (
-                      <span className="trend-badge up">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                          <polyline points="18,15 12,9 6,15" stroke="currentColor" strokeWidth="2"/>
-                        </svg>
-                        +{trend}
-                      </span>
-                    ) : trend < 0 ? (
-                      <span className="trend-badge down">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                          <polyline points="6,9 12,15 18,9" stroke="currentColor" strokeWidth="2"/>
-                        </svg>
-                        {trend}
-                      </span>
-                    ) : (
-                      <span className="trend-badge neutral">—</span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
       </div>
     </div>
   );

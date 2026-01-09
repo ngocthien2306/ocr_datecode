@@ -79,10 +79,14 @@ export const inferenceResultsAPI = {
    * Get inference results with filters and pagination
    */
   getResults: async (filters: InferenceResultFilters = {}): Promise<InferenceResultResponse[]> => {
-    const response = await api.get<InferenceResultResponse[]>('/inference-results/', {
+    const response = await api.get<any[]>('/inference-results/', {
       params: filters
     });
-    return response.data;
+    // Map _id to id for frontend consistency
+    return response.data.map((item: any) => ({
+      ...item,
+      id: item._id || item.id
+    }));
   },
 
   /**
@@ -102,8 +106,12 @@ export const inferenceResultsAPI = {
    * Get inference result by ID
    */
   getById: async (id: string): Promise<InferenceResultResponse> => {
-    const response = await api.get<InferenceResultResponse>(`/inference-results/${id}`);
-    return response.data;
+    const response = await api.get<any>(`/inference-results/${id}`);
+    // Map _id to id for frontend consistency
+    return {
+      ...response.data,
+      id: response.data._id || response.data.id
+    };
   },
 
   /**

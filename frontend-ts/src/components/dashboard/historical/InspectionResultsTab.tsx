@@ -1,0 +1,509 @@
+import React, { useState, useEffect } from 'react';
+import DatePicker from 'react-datepicker';
+import 'react-datepicker/dist/react-datepicker.css';
+import { inferenceResultsAPI, type InferenceResultResponse } from '@/services/inferenceResults';
+import { recipesAPI } from '@/services/api';
+import type { Recipe } from '@/types';
+import InspectionResultRow from './InspectionResultRow';
+
+interface InspectionResultsTabProps {
+  dateRange: string;
+}
+
+const InspectionResultsTab: React.FC<InspectionResultsTabProps> = ({ dateRange }) => {
+  const [results, setResults] = useState<InferenceResultResponse[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [totalCount, setTotalCount] = useState(0);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+
+  // Recipes for filter dropdown
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+
+  // Filters
+  const [selectedRecipe, setSelectedRecipe] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'PASS' | 'FAIL'>('all');
+  const [customStartDate, setCustomStartDate] = useState<Date | null>(null);
+  const [customEndDate, setCustomEndDate] = useState<Date | null>(null);
+  const [useCustomDateRange, setUseCustomDateRange] = useState(false);
+
+  // Fetch recipes on mount
+  useEffect(() => {
+    fetchRecipes();
+  }, []);
+
+  // Fetch results when filters change
+  useEffect(() => {
+    fetchResults();
+  }, [dateRange, currentPage, pageSize, selectedRecipe, statusFilter, useCustomDateRange, customStartDate, customEndDate]);
+
+  const fetchRecipes = async () => {
+    try {
+      // Fetch all active recipes
+      const data = await recipesAPI.getAllRecipes(0, 100, true);
+      setRecipes(data);
+    } catch (error) {
+      console.error('Error fetching recipes:', error);
+    }
+  };
+
+  const fetchResults = async () => {
+    try {
+      setLoading(true);
+
+      // Calculate date range
+      const { start_date, end_date } = getDateRange(dateRange);
+
+      // Build filters
+      const filters: any = {
+        skip: (currentPage - 1) * pageSize,
+        limit: pageSize,
+        start_date,
+        end_date
+      };
+
+      if (selectedRecipe !== 'all') {
+        filters.recipe_id = selectedRecipe;
+      }
+
+      if (statusFilter !== 'all') {
+        filters.pass_fail = statusFilter;
+      }
+
+      // Fetch results
+      const data = await inferenceResultsAPI.getResults(filters);
+
+      // Debug: Check if IDs are unique
+      console.log('Fetched results:', data.length);
+      console.log('Unique IDs:', new Set(data.map(r => r.id)).size);
+      console.log('First few IDs:', data.slice(0, 3).map(r => ({ id: r.id, recipe: r.recipe_name })));
+
+      setResults(data);
+
+      // Fetch count for pagination
+      const countFilters: any = { start_date, end_date };
+      if (selectedRecipe !== 'all') countFilters.recipe_id = selectedRecipe;
+      if (statusFilter !== 'all') countFilters.pass_fail = statusFilter;
+
+      const countData = await inferenceResultsAPI.getCount(countFilters);
+      setTotalCount(countData.count);
+
+    } catch (error) {
+      console.error('Error fetching inspection results:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getDateRange = (range: string): { start_date: string; end_date: string } => {
+    // Use custom date range if enabled
+    if (useCustomDateRange && customStartDate && customEndDate) {
+      const start = new Date(customStartDate);
+      const end = new Date(customEndDate);
+
+      return {
+        start_date: start.toISOString(),
+        end_date: end.toISOString()
+      };
+    }
+
+    const now = new Date();
+    const end = new Date(now);
+    let start = new Date(now);
+
+    switch (range) {
+      case 'today':
+        start.setHours(0, 0, 0, 0);
+        break;
+      case 'yesterday':
+        start.setDate(now.getDate() - 1);
+        start.setHours(0, 0, 0, 0);
+        end.setDate(now.getDate() - 1);
+        end.setHours(23, 59, 59, 999);
+        break;
+      case '7days':
+        start.setDate(now.getDate() - 7);
+        break;
+      case 'thisweek':
+        const dayOfWeek = now.getDay();
+        start.setDate(now.getDate() - dayOfWeek);
+        start.setHours(0, 0, 0, 0);
+        break;
+      case '30days':
+        start.setDate(now.getDate() - 30);
+        break;
+      case 'thismonth':
+        start.setDate(1);
+        start.setHours(0, 0, 0, 0);
+        break;
+      case 'lastmonth':
+        start.setMonth(now.getMonth() - 1);
+        start.setDate(1);
+        start.setHours(0, 0, 0, 0);
+        end.setMonth(now.getMonth());
+        end.setDate(0);
+        end.setHours(23, 59, 59, 999);
+        break;
+      default:
+        start.setDate(now.getDate() - 7);
+    }
+
+    return {
+      start_date: start.toISOString(),
+      end_date: end.toISOString()
+    };
+  };
+
+  const toggleRowExpanded = (id: string) => {
+    console.log('Toggle expand for ID:', id);
+    const newExpanded = new Set(expandedRows);
+    if (newExpanded.has(id)) {
+      newExpanded.delete(id);
+      console.log('Collapsed:', id);
+    } else {
+      newExpanded.add(id);
+      console.log('Expanded:', id);
+    }
+    console.log('All expanded IDs:', Array.from(newExpanded));
+    setExpandedRows(newExpanded);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this inspection result?')) {
+      return;
+    }
+
+    try {
+      await inferenceResultsAPI.delete(id);
+      // Refresh results
+      fetchResults();
+    } catch (error) {
+      console.error('Error deleting result:', error);
+      alert('Failed to delete result');
+    }
+  };
+
+  const toggleRowSelected = (id: string) => {
+    console.log('Toggle select for ID:', id);
+    const newSelected = new Set(selectedRows);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+      console.log('Deselected:', id);
+    } else {
+      newSelected.add(id);
+      console.log('Selected:', id);
+    }
+    console.log('All selected IDs:', Array.from(newSelected));
+    setSelectedRows(newSelected);
+  };
+
+  const toggleAllRows = () => {
+    if (selectedRows.size === results.length) {
+      setSelectedRows(new Set());
+    } else {
+      setSelectedRows(new Set(results.map(r => r.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedRows.size === 0) {
+      alert('Please select at least one result to delete');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to delete ${selectedRows.size} inspection result(s)?`)) {
+      return;
+    }
+
+    try {
+      // Delete all selected rows
+      await Promise.all(Array.from(selectedRows).map(id => inferenceResultsAPI.delete(id)));
+
+      // Clear selection and refresh
+      setSelectedRows(new Set());
+      fetchResults();
+    } catch (error) {
+      console.error('Error bulk deleting results:', error);
+      alert('Failed to delete some results');
+    }
+  };
+
+  // Get user role for permissions
+  const getUserRole = (): string => {
+    try {
+      const userStr = localStorage.getItem('user');
+      if (userStr) {
+        const user = JSON.parse(userStr);
+        return user.role || 'viewer';
+      }
+    } catch (error) {
+      console.error('Error getting user role:', error);
+    }
+    return 'viewer';
+  };
+
+  const userRole = getUserRole();
+  const canDelete = userRole === 'admin' || userRole === 'supervisor';
+
+  // Pagination helpers
+  const totalPages = Math.ceil(totalCount / pageSize);
+  const startIndex = (currentPage - 1) * pageSize + 1;
+  const endIndex = Math.min(currentPage * pageSize, totalCount);
+
+  const goToPage = (page: number) => {
+    if (page >= 1 && page <= totalPages) {
+      setCurrentPage(page);
+    }
+  };
+
+  return (
+    <div className="inspection-results-tab">
+      {/* Bulk Actions Bar */}
+      {canDelete && selectedRows.size > 0 && (
+        <div className="bulk-actions-bar">
+          <span className="selected-count">
+            {selectedRows.size} item(s) selected
+          </span>
+          <button className="bulk-delete-btn" onClick={handleBulkDelete}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <polyline points="3,6 5,6 21,6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Delete Selected
+          </button>
+          <button className="bulk-clear-btn" onClick={() => setSelectedRows(new Set())}>
+            Clear Selection
+          </button>
+        </div>
+      )}
+
+      {/* Filters */}
+      <div className="filters-bar">
+        <div className="filter-group">
+          <label>Recipe:</label>
+          <select value={selectedRecipe} onChange={(e) => {
+            setSelectedRecipe(e.target.value);
+            setCurrentPage(1); // Reset to first page
+          }}>
+            <option value="all">All Recipes</option>
+            {recipes.map((recipe) => (
+              <option key={recipe.id} value={recipe.id}>
+                {recipe.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="filter-group">
+          <label>Status:</label>
+          <select value={statusFilter} onChange={(e) => {
+            setStatusFilter(e.target.value as 'all' | 'PASS' | 'FAIL');
+            setCurrentPage(1);
+          }}>
+            <option value="all">All</option>
+            <option value="PASS">PASS</option>
+            <option value="FAIL">FAIL</option>
+          </select>
+        </div>
+
+        <div className="filter-group-divider"></div>
+
+        <div className="filter-group">
+          <label>
+            <input
+              type="checkbox"
+              checked={useCustomDateRange}
+              onChange={(e) => {
+                setUseCustomDateRange(e.target.checked);
+                setCurrentPage(1);
+              }}
+              className="custom-date-checkbox"
+            />
+            Custom Date Range:
+          </label>
+        </div>
+
+        {useCustomDateRange && (
+          <>
+            <div className="filter-group">
+              <label>From:</label>
+              <DatePicker
+                selected={customStartDate}
+                onChange={(date: Date | null) => {
+                  setCustomStartDate(date);
+                  setCurrentPage(1);
+                }}
+                showTimeSelect
+                timeFormat="HH:mm"
+                timeIntervals={15}
+                dateFormat="dd/MM/yyyy HH:mm"
+                placeholderText="Select start date & time"
+                className="custom-datepicker-input"
+                calendarClassName="custom-datepicker-calendar"
+              />
+            </div>
+
+            <div className="filter-group">
+              <label>To:</label>
+              <DatePicker
+                selected={customEndDate}
+                onChange={(date: Date | null) => {
+                  setCustomEndDate(date);
+                  setCurrentPage(1);
+                }}
+                showTimeSelect
+                timeFormat="HH:mm"
+                timeIntervals={15}
+                dateFormat="dd/MM/yyyy HH:mm"
+                placeholderText="Select end date & time"
+                className="custom-datepicker-input"
+                calendarClassName="custom-datepicker-calendar"
+                minDate={customStartDate || undefined}
+              />
+            </div>
+          </>
+        )}
+
+        <button className="dashboard-btn" onClick={fetchResults}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path d="M21.5 2V6M21.5 6H17.5M21.5 6L18.5 3C16.8 1.5 14.5 0.5 12 0.5C5.5 0.5 0.5 5.5 0.5 12C0.5 18.5 5.5 23.5 12 23.5C17.5 23.5 22 19.5 23 14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          Apply Filter
+        </button>
+      </div>
+
+      {/* Results Table */}
+      <div className="results-table-container">
+        {loading ? (
+          <div className="loading-state">Loading...</div>
+        ) : results.length === 0 ? (
+          <div className="empty-state">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+              <line x1="12" y1="8" x2="12" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              <circle cx="12" cy="16" r="0.5" fill="currentColor"/>
+            </svg>
+            <p>No inspection results found</p>
+          </div>
+        ) : (
+          <>
+            <table className="results-table">
+              <thead>
+                <tr>
+                  {canDelete && (
+                    <th style={{ width: '50px' }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedRows.size === results.length && results.length > 0}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          toggleAllRows();
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="row-checkbox"
+                      />
+                    </th>
+                  )}
+                  <th style={{ width: '50px' }}></th>
+                  <th style={{ width: '150px' }}>Time</th>
+                  <th style={{ width: '200px' }}>Recipe</th>
+                  <th style={{ width: '100px' }}>Result</th>
+                  <th style={{ width: '100px' }}>Cameras</th>
+                  <th style={{ width: '120px' }}>Text Verify</th>
+                  <th style={{ width: '100px' }}>Confidence</th>
+                  <th style={{ width: '150px' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {results.map((result) => (
+                  <InspectionResultRow
+                    key={result.id}
+                    result={result}
+                    isExpanded={expandedRows.has(result.id)}
+                    isSelected={selectedRows.has(result.id)}
+                    onToggleExpand={() => toggleRowExpanded(result.id)}
+                    onToggleSelect={() => toggleRowSelected(result.id)}
+                    onDelete={() => handleDelete(result.id)}
+                    canDelete={canDelete}
+                  />
+                ))}
+              </tbody>
+            </table>
+
+            {/* Pagination */}
+            <div className="pagination-controls">
+              <div className="pagination-info">
+                Showing {startIndex}-{endIndex} of {totalCount} results
+              </div>
+
+              <div className="pagination-buttons">
+                <button
+                  className="pagination-btn"
+                  onClick={() => goToPage(1)}
+                  disabled={currentPage === 1}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <polyline points="11,17 6,12 11,7" stroke="currentColor" strokeWidth="2"/>
+                    <polyline points="18,17 13,12 18,7" stroke="currentColor" strokeWidth="2"/>
+                  </svg>
+                </button>
+
+                <button
+                  className="pagination-btn"
+                  onClick={() => goToPage(currentPage - 1)}
+                  disabled={currentPage === 1}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <polyline points="15,18 9,12 15,6" stroke="currentColor" strokeWidth="2"/>
+                  </svg>
+                </button>
+
+                <span className="page-indicator">
+                  Page {currentPage} of {totalPages}
+                </span>
+
+                <button
+                  className="pagination-btn"
+                  onClick={() => goToPage(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <polyline points="9,18 15,12 9,6" stroke="currentColor" strokeWidth="2"/>
+                  </svg>
+                </button>
+
+                <button
+                  className="pagination-btn"
+                  onClick={() => goToPage(totalPages)}
+                  disabled={currentPage === totalPages}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <polyline points="13,17 18,12 13,7" stroke="currentColor" strokeWidth="2"/>
+                    <polyline points="6,17 11,12 6,7" stroke="currentColor" strokeWidth="2"/>
+                  </svg>
+                </button>
+              </div>
+
+              <div className="page-size-selector">
+                <label>Per page:</label>
+                <select value={pageSize} onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setCurrentPage(1);
+                }}>
+                  <option value="10">10</option>
+                  <option value="25">25</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default InspectionResultsTab;
