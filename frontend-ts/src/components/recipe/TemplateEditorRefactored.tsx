@@ -1024,7 +1024,12 @@ export default function TemplateEditor({
               </div>
 
               <div className="cvat-canvas-hints-block">
-                <strong>✏️ Drawing & Navigation</strong>
+                <strong>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ marginRight: '6px', verticalAlign: 'middle' }}>
+                    <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  Drawing & Navigation
+                </strong>
                 <ul>
                   <li>Pan: Click and drag to move canvas</li>
                   <li>Rectangle: Click and drag to draw</li>

@@ -97,6 +97,12 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   const [pageLoadingOverlayMode, setPageLoadingOverlayMode] = useState<'fullscreen' | 'dashboard-main'>(() => {
     return (localStorage.getItem('pageLoadingOverlayMode') as 'fullscreen' | 'dashboard-main') || 'fullscreen';
   });
+  const [sidebarPosition, setSidebarPosition] = useState<'left' | 'right' | 'top' | 'bottom'>(() => {
+    return (localStorage.getItem('sidebarPosition') as 'left' | 'right' | 'top' | 'bottom') || 'left';
+  });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    return localStorage.getItem('sidebarCollapsed') === 'true';
+  });
   const [darkMode, setDarkMode] = useState(() => {
     const savedMode = localStorage.getItem('appThemeMode');
     const isDark = savedMode === 'dark';
@@ -622,14 +628,21 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       setPageLoadingOverlayMode(mode);
     };
 
+    const handleSidebarPositionChange = (event: any) => {
+      const { position } = event.detail;
+      setSidebarPosition(position);
+    };
+
     window.addEventListener('tabLoadingChanged', handleTemplateChange);
     window.addEventListener('loadingBackgroundChanged', handleBackgroundChange);
     window.addEventListener('pageLoadingOverlayModeChanged', handlePageOverlayModeChange);
+    window.addEventListener('sidebarPositionChanged', handleSidebarPositionChange);
 
     return () => {
       window.removeEventListener('tabLoadingChanged', handleTemplateChange);
       window.removeEventListener('loadingBackgroundChanged', handleBackgroundChange);
       window.removeEventListener('pageLoadingOverlayModeChanged', handlePageOverlayModeChange);
+      window.removeEventListener('sidebarPositionChanged', handleSidebarPositionChange);
     };
   }, []);
 
@@ -1036,9 +1049,43 @@ export default function Dashboard({ onLogout }: DashboardProps) {
         </div>
       </header>
 
-      <div className="main-content-wrapper">
+      <div className={`main-content-wrapper sidebar-${sidebarPosition} ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
         {/* Sidebar */}
         <aside className="sidebar">
+          {/* Toggle button for left/right sidebar */}
+          {(sidebarPosition === 'left' || sidebarPosition === 'right') && (
+            <button
+              className="sidebar-toggle"
+              onClick={() => {
+                const newState = !sidebarCollapsed;
+                setSidebarCollapsed(newState);
+                localStorage.setItem('sidebarCollapsed', String(newState));
+              }}
+              title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              {sidebarCollapsed ? (
+                sidebarPosition === 'left' ? (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                    <path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                ) : (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                    <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )
+              ) : (
+                sidebarPosition === 'left' ? (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                    <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                ) : (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                    <path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )
+              )}
+            </button>
+          )}
           <h3>Menu</h3>
           <nav className="nav-menu">
             <a

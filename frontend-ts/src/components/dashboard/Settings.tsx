@@ -56,6 +56,9 @@ interface SettingsState {
   smsNotifications: boolean;
   alertThreshold: number;
   dailyReport: boolean;
+
+  // UI Settings
+  sidebarPosition: 'left' | 'right' | 'top' | 'bottom';
 }
 
 const Settings: React.FC = () => {
@@ -97,6 +100,7 @@ const Settings: React.FC = () => {
     camera3Enabled: true,
     camera3Fps: 30,
     camera3Resolution: '1920x1080',
+    sidebarPosition: (localStorage.getItem('sidebarPosition') as 'left' | 'right' | 'top' | 'bottom') || 'left',
     detectionThreshold: 0.85,
     maxProcessingTime: 5,
     autoReject: true,
@@ -191,6 +195,13 @@ const Settings: React.FC = () => {
       }));
     }
 
+    if (key === 'sidebarPosition') {
+      localStorage.setItem('sidebarPosition', value as string);
+      window.dispatchEvent(new CustomEvent('sidebarPositionChanged', {
+        detail: { position: value }
+      }));
+    }
+
     if (key === 'loadingBackground' || key === 'loadingBackgroundOpacity') {
       localStorage.setItem(key, String(value));
       window.dispatchEvent(new CustomEvent('loadingBackgroundChanged', {
@@ -282,6 +293,37 @@ const Settings: React.FC = () => {
                 <option value="UTC+8">UTC+8 (Singapore, Beijing)</option>
                 <option value="UTC+9">UTC+9 (Tokyo, Seoul)</option>
               </select>
+            </div>
+          </div>
+        </div>
+
+        {/* UI Customization */}
+        <div className="settings-section">
+          <h2>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/>
+              <path d="M9 3v18M3 9h18M3 15h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+            UI Customization
+          </h2>
+          <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '20px' }}>
+            Customize the layout and appearance of the interface
+          </p>
+          <div className="settings-grid">
+            <div className="setting-item">
+              <label>Sidebar Position</label>
+              <select
+                value={settings.sidebarPosition}
+                onChange={(e) => handleChange('sidebarPosition', e.target.value as 'left' | 'right' | 'top' | 'bottom')}
+              >
+                <option value="left">Left - Sidebar on the left side</option>
+                <option value="right">Right - Sidebar on the right side</option>
+                <option value="top">Top - Sidebar on the top</option>
+                <option value="bottom">Bottom - Sidebar on the bottom</option>
+              </select>
+              <p style={{ fontSize: '12px', color: '#9ca3af', marginTop: '8px', fontStyle: 'italic' }}>
+                Changes apply immediately
+              </p>
             </div>
           </div>
         </div>

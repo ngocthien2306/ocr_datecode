@@ -169,7 +169,14 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
 
               {/* Camera Results */}
               <div className="camera-results-section">
-                <h5>📷 Camera Results:</h5>
+                <h5>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ marginRight: '6px', verticalAlign: 'middle' }}>
+                    <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" strokeWidth="2"/>
+                    <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
+                    <path d="M7 4V2M17 4V2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>
+                  Camera Results:
+                </h5>
                 {result.camera_results.map((cameraResult, idx) => (
                   <div key={idx} className="camera-result-card">
                     <div className="camera-header">
