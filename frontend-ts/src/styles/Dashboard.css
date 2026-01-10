@@ -1827,7 +1827,11 @@ body.dark-mode .settings-page {
   color: #f9fafb;
 }
 
-body.dark-mode .search-box,
+body.dark-mode .search-box {
+  background: #1f2937 !important;
+  border-color: #4b5563 !important;
+}
+
 body.dark-mode .filter-btn,
 body.dark-mode .filter-select,
 body.dark-mode .data-table-container,
@@ -1843,28 +1847,43 @@ body.dark-mode .pagination-number {
 
 /* Dark mode for search input */
 body.dark-mode .search-box input {
-  color: #f9fafb;
+  background: #1f2937 !important;
+  color: #f9fafb !important;
+  caret-color: #60a5fa;
 }
 
 body.dark-mode .search-box input::placeholder {
-  color: #6b7280;
+  color: #6b7280 !important;
 }
 
 body.dark-mode .search-box svg {
-  color: #9ca3af;
+  color: #9ca3af !important;
+}
+
+body.dark-mode .search-box:hover {
+  border-color: #6b7280;
+}
+
+body.dark-mode .search-box:focus-within {
+  border-color: #2788dd;
+  box-shadow: 0 0 0 3px rgba(39, 136, 221, 0.1);
 }
 
 body.dark-mode .data-table thead {
-  background: #111827;
+  background: #111827 !important;
+}
+
+body.dark-mode .data-table thead tr {
+  background: #111827 !important;
 }
 
 /* Dark mode zebra striping */
 body.dark-mode .data-table tbody tr:nth-child(even) {
-  background: #1f2937;
+  background: #1f2937 !important;
 }
 
 body.dark-mode .data-table tbody tr:nth-child(odd) {
-  background: #111827;
+  background: #111827 !important;
 }
 
 body.dark-mode .data-table tbody tr:hover {
@@ -1872,13 +1891,14 @@ body.dark-mode .data-table tbody tr:hover {
 }
 
 body.dark-mode .data-table th {
-  color: #9ca3af;
-  border-color: #374151;
+  color: #9ca3af !important;
+  border-color: #374151 !important;
+  background: #111827 !important;
 }
 
 body.dark-mode .data-table td {
-  color: #d1d5db;
-  border-color: #374151;
+  color: #d1d5db !important;
+  border-color: #374151 !important;
 }
 
 /* Dark mode for table strong text (Receipt ID, etc.) */
@@ -1965,6 +1985,32 @@ body.dark-mode .action-btn.load-btn:hover {
 body.dark-mode .camera-settings-group {
   background: #111827;
   border-color: #374151;
+}
+
+/* Dark mode for card icons - Receipts page */
+body.dark-mode .card-icon.receipts {
+  background: #1e3a5f;
+  color: #60a5fa;
+}
+
+body.dark-mode .card-icon.products {
+  background: #312e81;
+  color: #818cf8;
+}
+
+body.dark-mode .card-icon.success {
+  background: #064e3b;
+  color: #6ee7b7;
+}
+
+/* Dark mode for inline Search button in Receipts */
+body.dark-mode .search-box button {
+  background-color: #2563eb !important;
+  color: white !important;
+}
+
+body.dark-mode .search-box button:hover {
+  background-color: #1d4ed8 !important;
 }
 
 body.dark-mode .action-btn {

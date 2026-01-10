@@ -643,42 +643,45 @@ const CameraManagement: React.FC = () => {
       </div>
 
       {/* Statistics Cards */}
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div className="stat-icon" style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
+      <div className="summary-cards">
+        <div className="summary-card">
+          <div className="card-icon camera">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <rect x="2" y="4" width="20" height="16" rx="2" stroke="white" strokeWidth="2"/>
-              <circle cx="12" cy="12" r="3" stroke="white" strokeWidth="2"/>
+              <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" strokeWidth="2"/>
+              <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
             </svg>
           </div>
-          <div className="stat-content">
-            <div className="stat-label">Total Cameras</div>
-            <div className="stat-value">{statistics.total}</div>
+          <div className="card-info">
+            <h3>Total Cameras</h3>
+            <div className="card-value">{statistics.total}</div>
+            <span className="card-status normal">All cameras</span>
           </div>
         </div>
 
-        <div className="stat-card">
-          <div className="stat-icon" style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)' }}>
+        <div className="summary-card">
+          <div className="card-icon success">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="10" stroke="white" strokeWidth="2"/>
-              <path d="M8 12l2 2 4-4" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+              <path d="M8 12l2 2 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
             </svg>
           </div>
-          <div className="stat-content">
-            <div className="stat-label">Connected</div>
-            <div className="stat-value">{statistics.connected}</div>
+          <div className="card-info">
+            <h3>Connected</h3>
+            <div className="card-value">{statistics.connected}</div>
+            <span className="card-status online">Online now</span>
           </div>
         </div>
 
-        <div className="stat-card">
-          <div className="stat-icon" style={{ background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)' }}>
+        <div className="summary-card">
+          <div className="card-icon processing">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
-          <div className="stat-content">
-            <div className="stat-label">Active</div>
-            <div className="stat-value">{statistics.active}</div>
+          <div className="card-info">
+            <h3>Active</h3>
+            <div className="card-value">{statistics.active}</div>
+            <span className="card-status increase">Processing</span>
           </div>
         </div>
       </div>
