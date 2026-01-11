@@ -1,0 +1,127 @@
+"""
+Base Tool Class
+Utilities for creating LangChain tools
+"""
+
+from typing import Any, Callable, Optional, Dict, List
+from pydantic import BaseModel, Field
+from langchain_core.tools import StructuredTool
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class ToolMetadata(BaseModel):
+    """Metadata for tool registration"""
+    name: str = Field(description="Tool name (unique identifier)")
+    description: str = Field(description="What this tool does")
+    category: str = Field(description="Tool category (service, camera, recipe, etc.)")
+    requires_approval: bool = Field(
+        default=False,
+        description="Whether tool requires human approval before execution"
+    )
+
+
+class BaseTool:
+    """
+    Utility class for creating LangChain tools
+
+    Simplifies tool creation with consistent interface
+    """
+
+    @staticmethod
+    def create_tool(
+        func: Callable,
+        metadata: ToolMetadata,
+        args_schema: Optional[BaseModel] = None
+    ) -> StructuredTool:
+        """
+        Create a LangChain StructuredTool from a function
+
+        Args:
+            func: Python function to wrap
+            metadata: Tool metadata
+            args_schema: Pydantic model for function arguments
+
+        Returns:
+            StructuredTool ready to use with LangChain
+
+        Example:
+            def my_func(param: str) -> str:
+                return f"Result: {param}"
+
+            class MyFuncArgs(BaseModel):
+                param: str = Field(description="Input parameter")
+
+            tool = BaseTool.create_tool(
+                func=my_func,
+                metadata=ToolMetadata(
+                    name="my_tool",
+                    description="Does something useful",
+                    category="utility"
+                ),
+                args_schema=MyFuncArgs
+            )
+        """
+        logger.debug(f"Creating tool: {metadata.name}")
+
+        return StructuredTool(
+            name=metadata.name,
+            description=metadata.description,
+            func=func,
+            args_schema=args_schema,
+            metadata={
+                "category": metadata.category,
+                "requires_approval": metadata.requires_approval
+            }
+        )
+
+
+class ToolRegistry:
+    """
+    Global registry for all tools
+
+    Allows tools to be shared across multiple agents
+    """
+
+    _tools: Dict[str, StructuredTool] = {}
+
+    @classmethod
+    def register(cls, tool: StructuredTool):
+        """Register a tool globally"""
+        if tool.name in cls._tools:
+            logger.warning(f"Tool '{tool.name}' already registered, overwriting")
+
+        cls._tools[tool.name] = tool
+        logger.info(f"✅ Registered tool: {tool.name}")
+
+    @classmethod
+    def get_tool(cls, name: str) -> Optional[StructuredTool]:
+        """Get a tool by name"""
+        return cls._tools.get(name)
+
+    @classmethod
+    def get_tools_by_category(cls, category: str) -> List[StructuredTool]:
+        """Get all tools in a category"""
+        return [
+            tool for tool in cls._tools.values()
+            if tool.metadata.get("category") == category
+        ]
+
+    @classmethod
+    def get_all_tools(cls) -> List[StructuredTool]:
+        """Get all registered tools"""
+        return list(cls._tools.values())
+
+    @classmethod
+    def list_tools(cls) -> List[Dict[str, Any]]:
+        """List all tools with metadata"""
+        return [
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "category": tool.metadata.get("category"),
+                "requires_approval": tool.metadata.get("requires_approval", False)
+            }
+            for tool in cls._tools.values()
+        ]

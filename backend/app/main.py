@@ -10,7 +10,7 @@ from app.repositories.action_log_repository import ActionLogRepository
 import logging
 from pathlib import Path
 
-from app.api.endpoints import auth, users, recipes, cameras, upload, action_logs, inference_results, trigger_simulator
+from app.api.endpoints import auth, users, recipes, cameras, upload, action_logs, inference_results, trigger_simulator, agent
 from app.api.websocket import camera_ws
 from app.services.socketio_service import socket_app
 
@@ -53,6 +53,13 @@ async def lifespan(app: FastAPI):
 
     print("✅ Database indexes created")
 
+    # Initialize AI Agent system
+    try:
+        from app.agent.agents.service_agent import ServiceManagementAgent
+        print("✅ AI Agent system initialized")
+    except Exception as e:
+        print(f"⚠️ Warning: AI Agent system failed to initialize: {e}")
+
     yield
 
     await close_mongo_connection()
@@ -81,6 +88,7 @@ app.include_router(upload.router, prefix="/api/upload", tags=["Upload"])
 app.include_router(action_logs.router, prefix="/api/action-logs", tags=["Action Logs"])
 app.include_router(inference_results.router, prefix="/api", tags=["Inference Results"])
 app.include_router(trigger_simulator.router, prefix="/api", tags=["Trigger Simulator"])
+app.include_router(agent.router, prefix="/api", tags=["AI Agent"])
 
 # WebSocket endpoints
 app.include_router(camera_ws.router, tags=["WebSocket"])

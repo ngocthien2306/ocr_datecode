@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # Default to Vietnam (Ho Chi Minh) as requested; change via .env if needed
     TIMEZONE: str = "Asia/Ho_Chi_Minh"
 
+    OPENAI_API_KEY: str = ""
     class Config:
         env_file = ".env"
         case_sensitive = True
