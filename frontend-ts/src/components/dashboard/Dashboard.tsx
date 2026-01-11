@@ -17,6 +17,7 @@ import { receiptsAPI } from '@/services/recipes';
 import { API_BASE_URL } from '@/config/api';
 import { useUser } from '@/contexts/UserContext';
 import type { Camera as BaseCamera, ReceiptLoad } from '@/types';
+import { AgentChatWidget } from '../agent';
 
 interface DashboardCamera extends Omit<BaseCamera, 'status'> {
   is_connected: boolean;
@@ -1589,6 +1590,9 @@ export default function Dashboard({ onLogout }: DashboardProps) {
         message={confirmDialog.message}
         type={confirmDialog.type}
       />
+
+      {/* AI Agent Chat Widget */}
+      <AgentChatWidget />
     </div>
   );
 }
