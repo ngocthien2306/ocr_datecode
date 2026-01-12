@@ -75,7 +75,7 @@ class InferenceHandler:
 
         # Async inference executor
         self._inference_executor = ThreadPoolExecutor(
-            max_workers=2,  # Max 2 concurrent inferences
+            max_workers=1,  # Max 2 concurrent inferences
             thread_name_prefix="InferenceWorker"
         )
 
@@ -1069,7 +1069,7 @@ class InferenceHandler:
                     T_capture_complete=T_capture_complete,
                     inference_time=inference_time,
                     delay_reject=delay_reject,
-                    do_reject_number=do_reject_number
+                    do_number=do_reject_number
                 )
 
                 if success:
@@ -1247,7 +1247,10 @@ class InferenceHandler:
             "camera_results": camera_results,
             "metadata": {
                 "total_cameras": len(cameras),
-                "total_frames": sum(len(r['frames']) for r in results.values()),
+                "total_frames": sum(
+                    len(r['frames']) for r in results.values()
+                    if isinstance(r, dict) and 'frames' in r
+                ),
                 "inference_stats": {
                     "avg_confidence": sum(all_confidences) / len(all_confidences) if all_confidences else 0.0,
                     "total_inliers": sum(all_inliers),

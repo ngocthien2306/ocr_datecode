@@ -109,6 +109,10 @@ def write_do_value(do_number: int, value: int) -> bool:
     Example:
         sudo dio_out 2 1  # Set DO2 = HIGH
         sudo dio_out 2 0  # Set DO2 = LOW
+
+    Note:
+        Advantech DIO returns returncode=255 with "Completion code = 0xFFFFFFFF"
+        when trying to set same value twice. We check the output message instead.
     """
     try:
         result = subprocess.run(
@@ -118,11 +122,28 @@ def write_do_value(do_number: int, value: int) -> bool:
             timeout=1.0
         )
 
-        if result.returncode == 0:
+        # Check output for success indicator
+        # Success: "Completion code = 0x00"
+        # Failure: "Completion code = 0xFFFFFFFF"
+        if "Completion code = 0x00" in result.stdout or "Completion code = 0x00" in result.stderr:
             logger.debug(f"DO{do_number} = {value}")
             return True
+        elif "Completion code = 0xFFFFFFFF" in result.stdout or "Completion code = 0xFFFFFFFF" in result.stderr:
+            # This happens when setting same value twice - treat as warning, not error
+            logger.warning(
+                f"DO{do_number} already at {value} (Advantech driver quirk). "
+                f"returncode={result.returncode}, output={result.stdout.strip()}"
+            )
+            return True  # Treat as success since pin is already at desired state
+        elif result.returncode == 0:
+            # Fallback: if returncode is 0, assume success
+            logger.debug(f"DO{do_number} = {value} (returncode=0)")
+            return True
         else:
-            logger.error(f"Failed to set DO{do_number}: {result.stderr.strip()}")
+            logger.error(
+                f"Failed to set DO{do_number}: returncode={result.returncode}, "
+                f"stdout={result.stdout.strip()}, stderr={result.stderr.strip()}"
+            )
             return False
 
     except subprocess.TimeoutExpired:
@@ -135,7 +156,7 @@ def write_do_value(do_number: int, value: int) -> bool:
 
 def trigger_reject_pulse(do_number: int, pulse_ms: int = 100):
     """
-    Trigger reject pulse on DO pin
+    Trigger reject pulse on DO pin (ACTIVE LOW logic)
 
     Args:
         do_number: DO pin number (typically 2 for reject)
@@ -144,26 +165,41 @@ def trigger_reject_pulse(do_number: int, pulse_ms: int = 100):
     Raises:
         RuntimeError: If DO control fails
 
+    Hardware Logic (ACTIVE LOW):
+        - Idle state: DO = HIGH (1)
+        - Active state: DO = LOW (0) → Solenoid activates → Product rejected
+
     Timing:
-        t=0ms: DO = HIGH (activate solenoid)
-        t=pulse_ms: DO = LOW (deactivate)
+        t=0ms: DO = HIGH (ensure idle state)
+        t=1ms: DO = LOW (activate solenoid - REJECT!)
+        t=pulse_ms: DO = HIGH (deactivate - return to idle)
 
     Example:
-        trigger_reject_pulse(2, 100)  # 100ms pulse on DO2
-    """
-    # Set HIGH
-    if not write_do_value(do_number, 1):
-        raise RuntimeError(f"Failed to set DO{do_number} HIGH")
+        trigger_reject_pulse(2, 100)  # 100ms LOW pulse on DO2
 
-    # Hold pulse
+    Note:
+        Advantech DIO driver may return error if setting same value twice.
+        We ensure HIGH state first to avoid this issue.
+    """
     import time
+
+    # Ensure HIGH state first (idle state)
+    # Ignore error if already HIGH (Advantech driver quirk)
+    write_do_value(do_number, 1)
+    time.sleep(0.001)  # 1ms delay to ensure state change
+
+    # Set LOW (ACTIVATE REJECT!)
+    if not write_do_value(do_number, 0):
+        raise RuntimeError(f"Failed to set DO{do_number} LOW (activate reject)")
+
+    # Hold pulse (reject active)
     time.sleep(pulse_ms / 1000.0)
 
-    # Set LOW
-    if not write_do_value(do_number, 0):
-        raise RuntimeError(f"Failed to set DO{do_number} LOW")
+    # Set HIGH (deactivate - return to idle)
+    if not write_do_value(do_number, 1):
+        raise RuntimeError(f"Failed to set DO{do_number} HIGH (deactivate reject)")
 
-    logger.info(f"DO{do_number} pulse complete ({pulse_ms}ms)")
+    logger.info(f"DO{do_number} pulse complete ({pulse_ms}ms, active LOW)")
 
 
 # ============= Image Processing Utilities =============
