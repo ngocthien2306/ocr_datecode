@@ -530,11 +530,18 @@ class CameraManager:
             })
             return
 
-        self.inference_handler.process_inference(
+        # Submit async inference job (non-blocking)
+        # Extract group_id from results if available
+        group_id = results.get('group_id') if isinstance(results, dict) and 'group_id' in results else None
+
+        job_id = self.inference_handler.process_inference_async(
             cameras=cameras,
             results=results,
-            emit_callback=self._emit_event
+            emit_callback=self._emit_event,
+            group_id=group_id
         )
+
+        logger.debug(f"Submitted inference job #{job_id} for {len(cameras)} camera(s)")
 
     def set_inference_mode(self, enabled: bool) -> Dict[str, Any]:
         """
@@ -574,7 +581,7 @@ class CameraManager:
                 except Exception as e:
                     logger.error(f"Error shutting down camera {serial_number}: {e}")
 
-            # Clear inference matchers
-            self.inference_handler.clear_matchers()
+            # Shutdown inference handler (waits for pending jobs)
+            self.inference_handler.shutdown()
 
             logger.info("CameraManager shutdown complete")

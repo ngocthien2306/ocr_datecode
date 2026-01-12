@@ -94,14 +94,21 @@ class CameraManagementService:
         - frames_captured (triggers inference in main thread)
         - inference_result
         """
-        # Special handling for frames_captured event - run inference in main thread
+        # Special handling for frames_captured event - submit async inference
         if event_type == "frames_captured":
-            logger.info("Frames captured, running inference in main thread...")
             cameras = data.get("cameras", [])
-            results = data.get("results", {})
+            results_with_metadata = {
+                'group_id': data.get('group_id'),
+                **data.get("results", {})
+            }
 
-            # Call process_inference in main thread (has CUDA context)
-            self.camera_manager.process_inference(cameras, results)
+            logger.info(
+                f"Frames captured (Group #{data.get('group_id')}), "
+                f"submitting async inference for {len(cameras)} camera(s)..."
+            )
+
+            # Submit async inference job (non-blocking)
+            self.camera_manager.process_inference(cameras, results_with_metadata)
             return  # Don't forward frames_captured to backend
 
         # Hide base64 in logs (too long)

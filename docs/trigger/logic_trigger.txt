@@ -1,0 +1,390 @@
+> /home/demo/Source/ocr_datecode/ai_services/camera_management\
+/home/demo/Source/ocr_datecode/ai_services/camera_management_service.py\\
+hãy phân tích luồng hoạt động khi bật file camera_management_service.py và luồng trigger sản phẩm \
+tôi sẽ mô tả 1 tí, sensor cách camera khoảng N giây, khi sản phẩm đi qua sensor (bằng cách đọc chân DI để biết) khi 0->1 ta nhận event trigger. delay n giây 
+sau ta sẽ chụp ảnh. và ta có 3 camera để chụp ảnh, mỗi camera có khoảng cách khác nhau nên set delay khác nhau. Giả sử 3 camera lần lượt delay là 1.5s 1.5s 
+1.6s và có 5 sản phẩm đi qua sensor tại t= 2s, 2.1s 2.2s, 2.4s, 2.5s vậy thì luồng sẽ như thế nào, liệu có vấn đề gì khi chạy không hãy kiểm tra thêm code và 
+phân tích 
+
+
+ Read(ai_services/camera_management_service.py)
+  ⎿  Read 483 lines
+
+● Search(pattern: "**/*camera*.py", path: "ai_services/camera_management")
+  ⎿  Found 2 files (ctrl+o to expand)
+
+● Read(ai_services/camera_management/camera_manager.py)
+  ⎿  Read 581 lines
+
+● Read(ai_services/camera_management/camera.py)
+  ⎿  Read 919 lines
+
+● Bây giờ tôi cần đọc thêm file trigger_handler.py để hiểu luồng trigger:
+
+● Read(ai_services/camera_management/trigger_handler.py)
+  ⎿  Read 799 lines
+
+● Tuyệt vời! Bây giờ tôi đã hiểu rõ luồng hoạt động. Để phân tích chi tiết hơn, hãy để tôi tạo một phân tích đầy đủ về luồng hoạt động và các vấn đề tiềm ẩn với ví dụ cụ thể của bạn.
+
+  PHÂN TÍCH LUỒNG HOẠT ĐỘNG CAMERA MANAGEMENT SERVICE
+
+  1. LUỒNG KHỞI ĐỘNG (camera_management_service.py)
+
+  Khi bật file camera_management_service.py:
+
+  main() → CameraManagementService.__init__() → service.start()
+    ├── CameraManager khởi tạo
+    ├── WebSocket client khởi tạo
+    ├── Kết nối WebSocket
+    └── _check_running_recipes()
+         ├── Lấy recipe đang chạy từ API
+         ├── Connect các camera theo serial_number
+         └── load_recipe() → trigger_handler.start_polling()
+
+  File: camera_management_service.py:362-383
+
+  ---
+  2. LUỒNG LOAD RECIPE & KHỞI TẠO TRIGGER
+
+  CameraManager.load_recipe() (camera_manager.py:194-283):
+
+  1. Load thông tin recipe và template cho từng camera
+  2. Khởi tạo inference matchers (line 254-260)
+  3. Build DI camera map (line 263) - mapping DI pin → danh sách cameras
+  4. Start polling (line 266) - bật DI polling thread ở tần số 100Hz
+
+  TriggerHandler.build_di_camera_map() (trigger_handler.py:77-105):
+  - Scan tất cả cameras có mode = "software_trigger"
+  - Map DI number → [(camera, trigger_activation), ...]
+  - Ví dụ: DI0 → [Camera1, Camera2, Camera3]
+
+  TriggerHandler.start_polling() (trigger_handler.py:107-132):
+  - Tạo thread DIPollingThread chạy _polling_loop()
+  - Tần số: 100Hz (10ms/lần)
+  - Bật statistics monitoring (log stats mỗi 10s)
+
+  ---
+  3. LUỒNG TRIGGER SẢN PHẨM (CHI TIẾT QUAN TRỌNG)
+
+  3.1. DI Polling Loop (trigger_handler.py:292-345)
+
+  Chạy liên tục ở 100Hz:
+
+  while self._polling:
+      for di_number in [0, 1, 2, 3]:
+          current_value = read_di_value(di_number)
+
+          # Phát hiện edge (0→1 hoặc 1→0)
+          if check_trigger_edge(current_value, previous_value, trigger_activation):
+              # TRIGGER DETECTED!
+              logger.info(f"DI{di_number} edge detected ({previous_value}→{current_value})")
+
+              # Lấy danh sách cameras mapped với DI này
+              camera_list = [cam for cam, _ in di_camera_map[di_number]]
+
+              # Trigger tất cả cameras cùng lúc
+              trigger_cameras_group(camera_list)
+
+  Điểm quan trọng: Khi phát hiện edge (0→1), TẤT CẢ cameras cùng DI được trigger đồng thời!
+
+  ---
+  3.2. Trigger Cameras Group (trigger_handler.py:347-444)
+
+  Đây là mechanism chính xử lý multi-camera với delays khác nhau:
+
+  def trigger_cameras_group(cameras):
+      # Tạo group ID duy nhất
+      group_id = self._timer_counter += 1
+
+      # Tạo capture group để track progress
+      self._capture_groups[group_id] = {
+          'cameras': cameras,
+          'results': {},
+          'expected_count': len(cameras),
+          'completed_count': 0,
+          'created_at': time.time()
+      }
+
+      # Schedule timer cho TỪNG camera với delay riêng
+      for camera in cameras:
+          delay_sec = camera.delay_trigger / 1000.0
+
+          timer = threading.Timer(
+              interval=delay_sec,
+              function=_capture_and_register,
+              args=(camera, group_id)
+          )
+          timer.start()
+
+      # Schedule timeout timer (max_delay + 10s buffer)
+      timeout_timer = threading.Timer(
+          interval=max_delay + 10.0,
+          function=_group_timeout,
+          args=(group_id,)
+      )
+      timeout_timer.start()
+
+      # RETURN NGAY - Không block polling thread!
+
+  Cơ chế hoạt động:
+  1. Mỗi camera có Timer riêng với delay riêng (camera.delay_trigger)
+  2. Timers chạy song song, không đợi nhau
+  3. Polling thread return ngay lập tức, không bị block
+  4. Khi timer của 1 camera fire → gọi _capture_and_register()
+
+  ---
+  3.3. Capture And Register (trigger_handler.py:446-548)
+
+  Chạy trong Timer thread khi delay hết:
+
+  def _capture_and_register(camera, group_id):
+      logger.info(f"[Group #{group_id}] Camera {camera.serial_number} timer FIRED!")
+
+      # Capture IMMEDIATELY (no delay inside!)
+      result = camera.execute_software_trigger_immediate()
+
+      # Register result vào group (thread-safe)
+      with group['group_lock']:
+          group['results'][camera.serial_number] = result
+          group['completed_count'] += 1
+
+          # Kiểm tra nếu TẤT CẢ cameras đã complete
+          if group['completed_count'] >= group['expected_count']:
+              # TRIGGER INFERENCE!
+              logger.info(f"[Group #{group_id}] ✅ All cameras completed!")
+
+              # Emit event để trigger inference
+              camera_manager._emit_event("frames_captured", {
+                  "group_id": group_id,
+                  "cameras": group['cameras'],
+                  "results": group['results']
+              })
+
+              # Cleanup group
+              del self._capture_groups[group_id]
+
+  Điểm quan trọng:
+  - Chỉ camera CUỐI CÙNG hoàn thành mới trigger inference
+  - Inference xử lý TẤT CẢ frames của tất cả cameras cùng lúc (batch processing)
+
+  ---
+  3.4. Camera Execute Immediate (camera.py:540-631)
+
+  def execute_software_trigger_immediate():
+      for idx, template in enumerate(self.templates):
+          # ⭐ NO DELAY - Timer đã xử lý delay rồi!
+
+          # Execute software trigger
+          camera.ExecuteSoftwareTrigger()
+
+          # Retrieve frame
+          grab_result = camera.RetrieveResult(2000, TimeoutHandling)
+
+          # Convert & store
+          img_array = grab_result.Array
+          captured_frames.append(img_array.copy())
+
+      return {
+          'success': True,
+          'frames': captured_frames,
+          'frame_count': len(captured_frames)
+      }
+
+  ---
+  4. VÍ DỤ CỤ THỂ CỦA BẠN
+
+  Cấu hình:
+  - 3 cameras: Camera1, Camera2, Camera3
+  - Delays: 1.5s, 1.5s, 1.6s
+  - 5 sản phẩm qua sensor tại: t=2s, 2.1s, 2.2s, 2.4s, 2.5s
+  - Khoảng cách sensor → camera: N giây
+
+  Timeline Chi Tiết:
+
+  t=2.0s:   Sensor trigger #1 (0→1)
+            → DI polling phát hiện edge
+            → Tạo Group #1
+            → Schedule timers:
+                - Camera1: fire tại t=3.5s (2.0 + 1.5)
+                - Camera2: fire tại t=3.5s (2.0 + 1.5)
+                - Camera3: fire tại t=3.6s (2.0 + 1.6)
+            → Polling thread return ngay, tiếp tục poll
+
+  t=2.1s:   Sensor trigger #2 (0→1)
+            → Tạo Group #2
+            → Schedule timers:
+                - Camera1: fire tại t=3.6s (2.1 + 1.5)
+                - Camera2: fire tại t=3.6s (2.1 + 1.5)
+                - Camera3: fire tại t=3.7s (2.1 + 1.6)
+
+  t=2.2s:   Sensor trigger #3
+            → Tạo Group #3
+            → Timers: t=3.7s, 3.7s, 3.8s
+
+  t=2.4s:   Sensor trigger #4
+            → Tạo Group #4
+            → Timers: t=3.9s, 3.9s, 4.0s
+
+  t=2.5s:   Sensor trigger #5
+            → Tạo Group #5
+            → Timers: t=4.0s, 4.0s, 4.1s
+
+  --- Lúc này có 15 timers đang chạy song song! ---
+
+  t=3.5s:   Group #1 - Camera1 & Camera2 fire → capture
+  t=3.6s:   Group #1 - Camera3 fire → capture → ALL DONE → Inference #1
+            Group #2 - Camera1 & Camera2 fire → capture
+  t=3.7s:   Group #2 - Camera3 fire → ALL DONE → Inference #2
+            Group #3 - Camera1 & Camera2 fire → capture
+  t=3.8s:   Group #3 - Camera3 fire → ALL DONE → Inference #3
+  t=3.9s:   Group #4 - Camera1 & Camera2 fire → capture
+  t=4.0s:   Group #4 - Camera3 fire → ALL DONE → Inference #4
+            Group #5 - Camera1 & Camera2 fire → capture
+  t=4.1s:   Group #5 - Camera3 fire → ALL DONE → Inference #5
+
+  ---
+  5. CÁC VẤN ĐỀ TIỀM ẨN
+
+  ⚠️ VẤN ĐỀ 1: CAMERA BANDWIDTH OVERLOAD
+
+  Mô tả: Nếu nhiều timers fire cùng lúc, nhiều cameras cùng gọi ExecuteSoftwareTrigger() đồng thời
+
+  Trong ví dụ của bạn:
+  - t=3.6s: Camera1, Camera2 (Group #1) + Camera3 (Group #2) = 3 cameras cùng lúc
+  - t=3.7s: Camera1, Camera2 (Group #2) + Camera3 (Group #3) = 3 cameras cùng lúc
+  - t=4.0s: Camera1, Camera2 (Group #4) + Camera3 (Group #5) = 3 cameras cùng lúc
+
+  Hậu quả:
+  - USB bandwidth có thể bị quá tải (Basler cameras thường dùng USB3 ~400MB/s)
+  - Camera có thể drop frames hoặc timeout khi RetrieveResult()
+  - Ảnh hưởng: capture thất bại → group timeout → mất dữ liệu
+
+  Kiểm tra trong code: camera.py:486-489
+  grab_result = self.camera.RetrieveResult(
+      2000,  # 2s timeout
+      pylon.TimeoutHandling_ThrowException
+  )
+  Nếu camera bận, có thể throw exception!
+
+  ---
+  ⚠️ VẤN ĐỀ 2: THREADING RACE CONDITIONS
+
+  Mô tả: 15 Timer threads chạy đồng thời, tất cả truy cập _capture_groups dict
+
+  Bảo vệ hiện tại (trigger_handler.py:478-481):
+  with group['group_lock']:  # ✅ Lock riêng cho mỗi group
+      group['results'][camera.serial_number] = result
+      group['completed_count'] += 1
+
+  OK: Mỗi group có lock riêng → các groups khác nhau không block nhau ✅
+
+  Nhưng: Access self._capture_groups dict cần self._group_lock (trigger_handler.py:463-471)
+
+  ---
+  ⚠️ VẤN ĐỀ 3: INFERENCE QUEUE BUILDUP
+
+  Mô tả: 5 inferences chạy trong khoảng 0.6s (từ t=3.6s → t=4.1s)
+
+  Kiểm tra: camera_management_service.py:98-105
+  if event_type == "frames_captured":
+      # Inference runs in MAIN THREAD (has CUDA context)
+      self.camera_manager.process_inference(cameras, results)
+      return
+
+  Vấn đề: Nếu 1 inference mất >0.1s, các inference sau sẽ bị queue lại!
+
+  Ví dụ: Nếu inference mất 0.5s mỗi lần:
+  - Inference #1 (t=3.6s) → hoàn thành t=4.1s
+  - Inference #2 (t=3.7s) → chờ đến t=4.1s → hoàn thành t=4.6s
+  - ... Delay tích lũy!
+
+  ---
+  ⚠️ VẤN ĐỀ 4: TIMEOUT PROTECTION
+
+  Cơ chế hiện tại (trigger_handler.py:419-439):
+  max_delay = max(cam.delay_trigger for cam in cameras) / 1000.0
+  timeout_sec = max_delay + 10.0  # 10s buffer
+
+  Trong ví dụ của bạn: max_delay = 1.6s → timeout = 11.6s
+
+  OK cho normal case ✅
+
+  Nhưng: Nếu camera bị stuck vì bandwidth issue, 10s buffer có thể không đủ khi nhiều triggers xảy ra liên tục!
+
+  ---
+  ⚠️ VẤN ĐỀ 5: MEMORY & RESOURCE LEAK
+
+  Active timers tracking (trigger_handler.py:54):
+  self._active_timers: List[threading.Timer] = []
+
+  Cleanup (trigger_handler.py:547-548):
+  with self._timer_lock:
+      self._active_timers = [t for t in self._active_timers if t.is_alive()]
+
+  OK: Cleanup sau mỗi capture ✅
+
+  Nhưng: Nếu có nhiều triggers liên tục, danh sách có thể dài trước khi cleanup!
+
+  ---
+  6. STATISTICS MONITORING
+
+  File: trigger_handler.py:199-290
+
+  Metrics được track:
+  - total_triggers: Tổng số trigger events
+  - total_groups_created: Tổng số groups tạo
+  - total_groups_completed: Groups hoàn thành thành công
+  - total_groups_timeout: Groups bị timeout
+  - total_inferences: Tổng số inferences
+
+  Log mẫu (mỗi 10s):
+  📊 [STATS] Triggers=5, Groups=5/5 (100.0%), Inferences=5, Active=0g/0t
+
+  Hữu ích để monitor: Nếu total_groups_timeout tăng → có vấn đề!
+
+  ---
+  7. KẾT LUẬN & KHUYẾN NGHỊ
+
+  ✅ NHỮNG ĐIỂM TỐT:
+
+  1. Non-blocking design: Polling thread không bị block, có thể xử lý triggers liên tục
+  2. Per-camera delays: Mỗi camera có delay riêng, linh hoạt
+  3. Thread-safe: Sử dụng locks đúng cách cho shared data
+  4. Timeout protection: Có cơ chế timeout để cleanup groups bị stuck
+  5. Statistics tracking: Monitor được hiệu suất hệ thống
+
+  ⚠️ RỦI RO VỚI VÍ DỤ CỦA BẠN:
+
+  Với 5 sản phẩm trong 0.5s:
+
+  1. Camera bandwidth: RỦI RO TRUNG BÌNH
+    - 3 cameras không đồng thời quá nhiều
+    - Nhưng phụ thuộc resolution & pixel format
+    - Khuyến nghị: Monitor log để xem có RetrieveResult timeout không
+  2. Inference queue: RỦI RO CAO
+    - 5 inferences trong 0.6s
+    - Nếu inference >0.1s/lần → delay tích lũy
+    - Khuyến nghị:
+        - Optimize inference speed
+      - Hoặc chuyển inference sang async (ThreadPoolExecutor)
+  3. Threading overhead: RỦI RO THẤP
+    - 15 timers OK, Python threading handle được
+    - Locks được sử dụng đúng
+
+  💡 KHUYẾN NGHỊ:
+
+  1. Test với load cao:
+  # Simulate nhiều triggers liên tục
+  simulate_trigger_sequence(count=10, interval_ms=100)
+  2. Monitor logs:
+    - Check trigger_stats.log để xem timeout rate
+    - Check camera logs để xem capture failures
+  3. Điều chỉnh nếu cần:
+    - Nếu bandwidth issue: Tăng delay giữa các cameras (1.5→2.0, 1.6→2.2)
+    - Nếu inference slow: Chuyển inference sang async hoặc optimize model
+    - Nếu timeout nhiều: Tăng timeout buffer (10s → 15s)
+  4. Kiểm tra thực tế:
+  # Trong ví dụ của bạn, nếu sản phẩm đi qua sensor ở 2.0, 2.1, 2.2, 2.4, 2.5s
+  # Hệ thống sẽ tạo 5 groups độc lập, mỗi group track riêng
+  # Inference sẽ chạy lần lượt: 3.6s, 3.7s, 3.8s, 3.9s, 4.1s
+  # ✅ Logic đúng, nhưng cần đảm bảo inference đủ nhanh!

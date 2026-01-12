@@ -1,6 +1,8 @@
 import logging
 import cv2
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from pathlib import Path
 import numpy as np
@@ -62,6 +64,26 @@ class InferenceHandler:
         # Text recognizer for Check_Type_Product function
         self.text_recognizer = None
         self.ocr_backend = None
+
+        # Async inference executor
+        self._inference_executor = ThreadPoolExecutor(
+            max_workers=2,  # Max 2 concurrent inferences
+            thread_name_prefix="InferenceWorker"
+        )
+
+        # Job tracking
+        self._active_jobs = {}  # Map job_id -> Future
+        self._job_counter = 0
+        self._job_lock = threading.Lock()
+
+        # Statistics
+        self._inference_stats = {
+            'total_submitted': 0,
+            'total_completed': 0,
+            'total_failed': 0,
+            'max_queue_depth': 0
+        }
+        self._stats_lock = threading.Lock()
 
         if OCR_AVAILABLE:
             try:
@@ -339,6 +361,27 @@ class InferenceHandler:
         self.camera_matchers.clear()
         logger.info("All inference matchers cleared")
 
+    def shutdown(self):
+        """Shutdown inference handler and cleanup resources"""
+        logger.info("Shutting down InferenceHandler...")
+
+        # Shutdown executor (wait for pending jobs)
+        self._inference_executor.shutdown(wait=True, cancel_futures=False)
+
+        # Clear matchers
+        self.clear_matchers()
+
+        # Log final stats
+        with self._stats_lock:
+            logger.info(
+                f"📊 [INFERENCE STATS] Total: {self._inference_stats['total_submitted']}, "
+                f"Completed: {self._inference_stats['total_completed']}, "
+                f"Failed: {self._inference_stats['total_failed']}, "
+                f"Max Queue: {self._inference_stats['max_queue_depth']}"
+            )
+
+        logger.info("InferenceHandler shutdown complete")
+
     def _crop_frame_if_needed(
         self,
         frame: 'np.ndarray',
@@ -518,12 +561,95 @@ class InferenceHandler:
             'results': verification_results
         }
 
-    def process_inference(
+    def process_inference_async(
         self,
         cameras: List['Camera'],
         results: Dict[str, Any],
-        emit_callback
+        emit_callback,
+        group_id: int = None
     ):
+        """
+        Submit inference job to thread pool (non-blocking)
+
+        Args:
+            cameras: List of cameras that captured frames
+            results: Capture results from trigger
+            emit_callback: Callback to emit inference result
+            group_id: Optional group ID for tracking
+
+        Returns:
+            job_id: Unique job identifier
+        """
+        # Generate job ID
+        with self._job_lock:
+            self._job_counter += 1
+            job_id = self._job_counter
+
+        # Update stats
+        with self._stats_lock:
+            self._inference_stats['total_submitted'] += 1
+            queue_depth = len(self._active_jobs)
+            if queue_depth > self._inference_stats['max_queue_depth']:
+                self._inference_stats['max_queue_depth'] = queue_depth
+
+        logger.info(
+            f"[Job #{job_id}] Submitting inference for {len(cameras)} camera(s) "
+            f"(queue depth: {queue_depth})"
+        )
+
+        # Submit job to executor
+        future = self._inference_executor.submit(
+            self._do_inference_sync,
+            job_id=job_id,
+            cameras=cameras,
+            results=results,
+            emit_callback=emit_callback,
+            group_id=group_id
+        )
+
+        # Track active job
+        with self._job_lock:
+            self._active_jobs[job_id] = future
+
+        # Add callback to cleanup when done
+        future.add_done_callback(lambda f: self._cleanup_job(job_id, f))
+
+        return job_id
+
+    def _cleanup_job(self, job_id: int, future):
+        """Cleanup completed job"""
+        with self._job_lock:
+            if job_id in self._active_jobs:
+                del self._active_jobs[job_id]
+
+        # Update stats
+        with self._stats_lock:
+            if future.exception():
+                self._inference_stats['total_failed'] += 1
+                logger.error(f"[Job #{job_id}] Failed with exception: {future.exception()}")
+            else:
+                self._inference_stats['total_completed'] += 1
+                logger.info(f"[Job #{job_id}] Completed successfully")
+
+    def _do_inference_sync(
+        self,
+        job_id: int,
+        cameras: List['Camera'],
+        results: Dict[str, Any],
+        emit_callback,
+        group_id: int = None
+    ):
+        """
+        Synchronous inference worker (runs in thread pool)
+
+        This is the blocking function that does actual inference work.
+        """
+        thread_name = threading.current_thread().name
+        logger.info(
+            f"[Job #{job_id}] Starting inference in {thread_name} "
+            f"(group_id: {group_id})"
+        )
+
         try:
             # Process first frame of all cameras with matchers (up to 4)
             cameras_to_process = [c for c in cameras if c.serial_number in self.camera_matchers][:4]
@@ -532,7 +658,7 @@ class InferenceHandler:
             camera_inference_results = {}
             overall_pass_fail = "PASS"  # Default
 
-            logger.info(f"Running BATCH inference on {len(cameras_to_process)} cameras")
+            logger.info(f"[Job #{job_id}] Running BATCH inference on {len(cameras_to_process)} cameras")
 
             if len(cameras_to_process) == 0:
                 logger.warning("No cameras to process")
@@ -871,7 +997,12 @@ class InferenceHandler:
         except Exception as e:
             logger.error(f"Error in process_inference: {e}")
             import traceback
+
+        except Exception as e:
+            logger.error(f"[Job #{job_id}] Error in inference worker: {e}")
+            import traceback
             traceback.print_exc()
+            raise
 
     def _build_inference_result(
         self,
