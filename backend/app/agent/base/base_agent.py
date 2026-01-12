@@ -56,8 +56,9 @@ class BaseAgent(ABC):
         self.graph = None
         self.compiled_graph = None
 
-        # Get tools from subclass
+        # Get tools and system prompt from subclass
         self.tools = self.get_tools()
+        self.system_prompt = self.get_system_prompt()
 
         logger.info(f"✅ Initialized {self.__class__.__name__} with {len(self.tools)} tools")
 
@@ -92,9 +93,19 @@ class BaseAgent(ABC):
     def compile(self):
         """Compile the graph (cache for performance)"""
         if not self.compiled_graph:
-            self.graph = self.build_graph()
-            self.compiled_graph = self.graph.compile()
-            logger.debug(f"Compiled graph for {self.agent_id}")
+            result = self.build_graph()
+
+            # Check if build_graph() already returned compiled graph
+            # (some agents compile in build_graph, others return StateGraph)
+            if hasattr(result, 'invoke') and not hasattr(result, 'compile'):
+                # Already compiled (CompiledStateGraph)
+                self.compiled_graph = result
+                logger.debug(f"Using pre-compiled graph for {self.agent_id}")
+            else:
+                # Not compiled yet (StateGraph), compile it
+                self.graph = result
+                self.compiled_graph = self.graph.compile()
+                logger.debug(f"Compiled graph for {self.agent_id}")
         return self.compiled_graph
 
     async def ainvoke(self, state: AgentState) -> AgentState:

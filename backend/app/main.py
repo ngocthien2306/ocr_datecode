@@ -55,8 +55,10 @@ async def lifespan(app: FastAPI):
 
     # Initialize AI Agent system
     try:
+        from app.agent.agents.orchestrator_agent import OrchestratorAgent
         from app.agent.agents.service_agent import ServiceManagementAgent
-        print("✅ AI Agent system initialized")
+        from app.agent.agents.historical_agent import HistoricalAnalyticsAgent
+        print("✅ AI Agent system initialized (3 agents registered: orchestrator, service_management, historical_analytics)")
     except Exception as e:
         print(f"⚠️ Warning: AI Agent system failed to initialize: {e}")
 
