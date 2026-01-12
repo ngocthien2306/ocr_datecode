@@ -8,9 +8,10 @@ import { Message } from '../../types/agent';
 
 interface MessageBubbleProps {
   message: Message;
+  onActionClick?: (message: string) => void;
 }
 
-export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
+export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onActionClick }) => {
   const formatTime = (date: Date) => {
     return new Date(date).toLocaleTimeString('vi-VN', {
       hour: '2-digit',
@@ -45,6 +46,25 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
               <span>{tool.tool}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {message.suggestedActions && message.suggestedActions.length > 0 && (
+        <div className="message-suggested-actions">
+          <div className="suggested-actions-label">
+            💡 Gợi ý:
+          </div>
+          <div className="suggested-actions-buttons">
+            {message.suggestedActions.map((action, index) => (
+              <button
+                key={index}
+                className="suggested-action-btn"
+                onClick={() => onActionClick?.(action.message)}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

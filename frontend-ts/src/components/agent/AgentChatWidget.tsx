@@ -9,6 +9,7 @@ import { agentService } from '../../services/agentService';
 import { MessageBubble, TypingIndicator } from './MessageBubble';
 import { ServiceStatusBar } from './ServiceStatusBar';
 import ConfirmDialog from '../shared/ConfirmDialog';
+import { parseSuggestedActions } from '../../utils/agentUtils';
 import {
   BotIcon,
   TrashIcon,
@@ -29,23 +30,6 @@ interface AgentChatWidgetProps {
   initialOpen?: boolean;
 }
 
-const QUICK_ACTIONS: QuickAction[] = [
-  {
-    label: 'Check Status',
-    icon: 'search',
-    message: 'Camera service có đang chạy không?'
-  },
-  {
-    label: 'View Logs',
-    icon: 'document',
-    message: 'Cho tôi xem logs của camera service (50 dòng cuối)'
-  },
-  {
-    label: 'Help',
-    icon: 'help',
-    message: 'Tôi cần giúp đỡ về camera service'
-  }
-];
 
 export const AgentChatWidget: React.FC<AgentChatWidgetProps> = ({ initialOpen = false }) => {
   const [isOpen, setIsOpen] = useState(initialOpen);
@@ -55,7 +39,7 @@ export const AgentChatWidget: React.FC<AgentChatWidgetProps> = ({ initialOpen = 
     {
       id: 'welcome',
       role: 'assistant',
-      content: 'Xin chào! 👋 Tôi là Service Management Assistant.\n\nTôi có thể giúp bạn:\n• Kiểm tra trạng thái services\n• Start/Stop camera service\n• Xem và phân tích logs\n• Troubleshoot các vấn đề\n\nBạn cần giúp gì?',
+      content: 'Xin chào! 👋 Tôi là AI Assistant.\n\nTôi có thể giúp bạn:\n• 🔧 Kiểm tra và quản lý services\n• 📊 Xem thống kê và phân tích dữ liệu\n• 📝 Phân tích logs và troubleshoot\n• 📜 Lịch sử load recipes\n\nBạn cần giúp gì?',
       timestamp: new Date(),
       status: 'success'
     }
@@ -103,9 +87,12 @@ export const AgentChatWidget: React.FC<AgentChatWidgetProps> = ({ initialOpen = 
     try {
       const response = await agentService.chat({
         message: userMessage.content,
-        agent_id: 'service_management',
+        agent_id: 'orchestrator', // Always use orchestrator for auto-routing
         session_id: sessionId.current
       });
+
+      // Parse suggested actions from response
+      const suggestedActions = parseSuggestedActions(response.response);
 
       const assistantMessage: Message = {
         id: `assistant_${Date.now()}`,
@@ -113,7 +100,8 @@ export const AgentChatWidget: React.FC<AgentChatWidgetProps> = ({ initialOpen = 
         content: response.response,
         timestamp: new Date(response.timestamp),
         toolCalls: response.tool_calls,
-        status: 'success'
+        status: 'success',
+        suggestedActions: suggestedActions.length > 0 ? suggestedActions : undefined
       };
 
       setMessages(prev => [...prev, assistantMessage]);
@@ -138,6 +126,17 @@ export const AgentChatWidget: React.FC<AgentChatWidgetProps> = ({ initialOpen = 
   const handleQuickAction = (action: QuickAction) => {
     setInputValue(action.message);
     textareaRef.current?.focus();
+  };
+
+  const handleSuggestedActionClick = (message: string) => {
+    setInputValue(message);
+    // Auto-send suggested action
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.value = message;
+      }
+      handleSend();
+    }, 100);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -174,7 +173,7 @@ export const AgentChatWidget: React.FC<AgentChatWidgetProps> = ({ initialOpen = 
       setMessages([{
         id: 'welcome',
         role: 'assistant',
-        content: 'Xin chào! 👋 Tôi là Service Management Assistant.\n\nTôi có thể giúp bạn:\n• Kiểm tra trạng thái services\n• Start/Stop camera service\n• Xem và phân tích logs\n• Troubleshoot các vấn đề\n\nBạn cần giúp gì?',
+        content: 'Xin chào! 👋 Tôi là AI Assistant.\n\nTôi có thể giúp bạn:\n• 🔧 Kiểm tra và quản lý services\n• 📊 Xem thống kê và phân tích dữ liệu\n• 📝 Phân tích logs và troubleshoot\n• 📜 Lịch sử load recipes\n\nBạn cần giúp gì?',
         timestamp: new Date(),
         status: 'success'
       }]);
@@ -208,6 +207,30 @@ export const AgentChatWidget: React.FC<AgentChatWidgetProps> = ({ initialOpen = 
     }
   };
 
+  // Combined quick actions from all agents
+  const allQuickActions: QuickAction[] = [
+    {
+      label: 'Check Status',
+      icon: 'search',
+      message: 'Camera service có đang chạy không?'
+    },
+    {
+      label: 'Today Stats',
+      icon: 'search',
+      message: 'Hôm nay có bao nhiêu sản phẩm pass/fail?'
+    },
+    {
+      label: 'View Logs',
+      icon: 'document',
+      message: 'Cho tôi xem logs của camera service (50 dòng cuối)'
+    },
+    {
+      label: '7-day Trend',
+      icon: 'document',
+      message: 'Pass rate 7 ngày qua thế nào?'
+    }
+  ];
+
   if (!isOpen) {
     return (
       <button className="agent-toggle-btn" onClick={toggleOpen} title="Open AI Assistant">
@@ -226,8 +249,8 @@ export const AgentChatWidget: React.FC<AgentChatWidgetProps> = ({ initialOpen = 
             <BotIcon size={24} />
           </span>
           <div className="agent-title-text">
-            <h3>Service Assistant</h3>
-            {!isMinimized && <p>AI-powered service management</p>}
+            <h3>AI Assistant</h3>
+            {!isMinimized && <p>Auto-routing to specialized agents</p>}
           </div>
         </div>
 
@@ -274,7 +297,11 @@ export const AgentChatWidget: React.FC<AgentChatWidgetProps> = ({ initialOpen = 
           {/* Messages Area */}
           <div className="agent-messages">
             {messages.map(message => (
-              <MessageBubble key={message.id} message={message} />
+              <MessageBubble
+                key={message.id}
+                message={message}
+                onActionClick={handleSuggestedActionClick}
+              />
             ))}
 
             {isTyping && <TypingIndicator />}
@@ -284,7 +311,7 @@ export const AgentChatWidget: React.FC<AgentChatWidgetProps> = ({ initialOpen = 
 
           {/* Quick Actions */}
           <div className="agent-quick-actions">
-            {QUICK_ACTIONS.map((action, index) => (
+            {allQuickActions.map((action, index) => (
               <button
                 key={index}
                 className="quick-action-btn"

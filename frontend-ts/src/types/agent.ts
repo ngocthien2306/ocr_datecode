@@ -2,6 +2,11 @@
  * AI Agent Types
  */
 
+export interface SuggestedAction {
+  label: string;
+  message: string;
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -9,6 +14,7 @@ export interface Message {
   timestamp: Date;
   toolCalls?: ToolCall[];
   status?: 'pending' | 'success' | 'error';
+  suggestedActions?: SuggestedAction[];
 }
 
 export interface ToolCall {
