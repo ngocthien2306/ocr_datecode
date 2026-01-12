@@ -195,3 +195,6 @@ Tôi có 1 câu hỏi: bạn sẽ đề xuất như nào để lấy frame của
     trả lời: không cần 
   - Heartbeat interval bao nhiêu giây?
     trả lời: bạn đề xuất 
+
+
+

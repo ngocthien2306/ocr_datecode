@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
-# ============= GPIO/DI Utilities =============
+# ============= GPIO/DI/DO Utilities =============
 
 def read_di_value(di_number: int) -> int:
     """
@@ -90,6 +90,80 @@ def check_trigger_edge(current: int, previous: Optional[int], activation: str) -
     else:
         logger.warning(f"Unknown trigger activation: {activation}")
         return False
+
+
+def write_do_value(do_number: int, value: int) -> bool:
+    """
+    Set Digital Output pin value
+
+    Args:
+        do_number: DO pin number (0-7)
+        value: Pin value (0 or 1)
+
+    Returns:
+        True if success, False on error
+
+    Command format:
+        sudo dio_out <do_number> <value>
+
+    Example:
+        sudo dio_out 2 1  # Set DO2 = HIGH
+        sudo dio_out 2 0  # Set DO2 = LOW
+    """
+    try:
+        result = subprocess.run(
+            ["sudo", "dio_out", str(do_number), str(value)],
+            capture_output=True,
+            text=True,
+            timeout=1.0
+        )
+
+        if result.returncode == 0:
+            logger.debug(f"DO{do_number} = {value}")
+            return True
+        else:
+            logger.error(f"Failed to set DO{do_number}: {result.stderr.strip()}")
+            return False
+
+    except subprocess.TimeoutExpired:
+        logger.error(f"Timeout setting DO{do_number}")
+        return False
+    except Exception as e:
+        logger.error(f"Error setting DO{do_number}: {e}")
+        return False
+
+
+def trigger_reject_pulse(do_number: int, pulse_ms: int = 100):
+    """
+    Trigger reject pulse on DO pin
+
+    Args:
+        do_number: DO pin number (typically 2 for reject)
+        pulse_ms: Pulse duration in milliseconds (default: 100ms)
+
+    Raises:
+        RuntimeError: If DO control fails
+
+    Timing:
+        t=0ms: DO = HIGH (activate solenoid)
+        t=pulse_ms: DO = LOW (deactivate)
+
+    Example:
+        trigger_reject_pulse(2, 100)  # 100ms pulse on DO2
+    """
+    # Set HIGH
+    if not write_do_value(do_number, 1):
+        raise RuntimeError(f"Failed to set DO{do_number} HIGH")
+
+    # Hold pulse
+    import time
+    time.sleep(pulse_ms / 1000.0)
+
+    # Set LOW
+    if not write_do_value(do_number, 0):
+        raise RuntimeError(f"Failed to set DO{do_number} LOW")
+
+    logger.info(f"DO{do_number} pulse complete ({pulse_ms}ms)")
 
 
 # ============= Image Processing Utilities =============

@@ -99,6 +99,7 @@ class CameraManagementService:
             cameras = data.get("cameras", [])
             results_with_metadata = {
                 'group_id': data.get('group_id'),
+                'T_capture_complete': data.get('T_capture_complete'),  # For reject timing
                 **data.get("results", {})
             }
 

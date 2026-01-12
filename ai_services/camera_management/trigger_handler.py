@@ -495,6 +495,9 @@ class TriggerHandler:
 
                 # Check if all cameras completed
                 if completed >= expected:
+                    # Record capture completion time (for reject timing calculation)
+                    T_capture_complete = time.time()
+
                     logger.info(
                         f"[Group #{group_id}] ✅ All {expected} cameras completed! "
                         f"Triggering batch inference."
@@ -512,7 +515,8 @@ class TriggerHandler:
                     self.camera_manager._emit_event("frames_captured", {
                         "group_id": group_id,
                         "cameras": cameras_list,
-                        "results": results_dict
+                        "results": results_dict,
+                        "T_capture_complete": T_capture_complete  # ← NEW! For reject timing
                     })
 
                     # Cancel timeout timer before cleanup

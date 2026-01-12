@@ -75,6 +75,10 @@ class Camera:
         self.pixel_format = pixel_format  # From DB config
         self.delay_trigger = 100  # ms
 
+        # Reject config (from recipe)
+        self.delay_reject = 4000  # ms (default: 4s from camera to reject station)
+        self.do_reject_number = 2  # DO pin number for reject (default: DO2)
+
         # Trigger config (per-camera)
         self.trigger_mode = "continuous"  # "continuous", "software_trigger", "hardware_trigger"
         self.trigger_selector = "FrameStart"  # "FrameStart", "ExposureStart", "FrameBurstStart"
@@ -645,6 +649,10 @@ class Camera:
             self.recipe_id = recipe_data.get("_id") or recipe_data.get("id")
             self.recipe_name = recipe_data.get("name", "Unknown")
 
+            # Load reject config from recipe (recipe level, not camera level)
+            self.delay_reject = recipe_data.get("delay_reject", 4000)  # ms, default 4s
+            self.do_reject_number = recipe_data.get("do_reject_number", 2)  # DO2 default
+
             # Find camera config in recipe
             cameras = recipe_data.get("cameras", [])
             camera_config = None
@@ -666,6 +674,8 @@ class Camera:
             logger.info(f"  - function_type: {self.function_type}")
             logger.info(f"  - exposure_time: {camera_config.get('exposure_time', 'NOT SET')}")
             logger.info(f"  - delay_trigger: {camera_config.get('delay_trigger', 'NOT SET')}")
+            logger.info(f"  - delay_reject: {self.delay_reject}ms (recipe level)")
+            logger.info(f"  - do_reject_number: DO{self.do_reject_number} (recipe level)")
 
             # Update settings
             self.update_settings(camera_config)

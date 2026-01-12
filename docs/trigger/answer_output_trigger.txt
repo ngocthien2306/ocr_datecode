@@ -1,0 +1,41 @@
+  1. N giây được config như thế nào? Có sẵn trong recipe/camera settings chưa?
+  trả lời: đã được setting rồi hãy tham khảo hàm async def load_recipe() file /home/demo/Source/ocr_datecode/backend/app/api/endpoints/recipes.py có gửi 2 field 
+        'delay_reject': recipe.delay_reject,
+        'do_reject_number': recipe.do_reject_number,
+    ngay cả api     url = f"{API_BASE}/api/recipes/loads/latest" cũng có trả về 2 field này 
+
+Latest load event:
+{
+  "_id": "6964902dc751a16da97440d8",
+  "recipe_id": "694850c56beac57d01bdf65c",
+  "loaded_by": "69484e532896716a31a96f5b",
+  "loaded_by_full_name": "System Administrator",
+  "loaded_at": "2026-01-12T06:09:49.949000",
+  "loaded_at_local": "2026-01-12T13:09:49.949789+07:00",
+  "metadata": {
+    "recipe_id": "694850c56beac57d01bdf65c",
+    "name": "Black Pepper 400 gram",
+    "delay_reject": 1.0,
+    "do_reject_number": 2,
+    "product_code": "Black Pepper 400",
+    "camera_templates": [
+      {
+        "camera_id": "CAM001",
+        "function_type": "Check_Type_Product",
+        "templates": [
+          {
+
+  2. Multi-camera logic: ANY FAIL → reject hay ALL FAIL → reject?
+  trả lời: any fail, nhưng chờ inference xong group đó với bắt đầu out reject
+
+  3. Reject station position: Tính từ đâu? Camera nào?
+  trả lời: ta bắt đầu tính thời gian khi group frames/ camera đó được chụp xong. Từ vùng camera đến reject khoảng 4 giây, giá trị của delay_reject đang là ms
+  5. Edge case handling: Inference quá chậm thì làm sao?
+  trả lời: vì thời gian từ vùng camera đến bộ reject khá lâu thường 3-4 giây, đủ xong 1 inference
+  6. Existing code: Có code control DO (Advantech) rồi chưa? Hay cần implement từ đầu?
+  trả lời: tham khảo code DI in (read_di_value)
+
+    Set one DO Value: sudo dio_out #DO_Num # Value
+    Get one DI Value: sudo dio_in #DO_Num
+    Get all DO Value: sudo dio_out
+    Get all DI Value: sudo dio_in

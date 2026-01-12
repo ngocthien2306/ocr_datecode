@@ -56,14 +56,22 @@ OCR_AVAILABLE = TRT_AVAILABLE or ONNX_AVAILABLE
 
 class InferenceHandler:
 
-    def __init__(self):
-        """Initialize InferenceHandler"""
+    def __init__(self, reject_scheduler=None):
+        """
+        Initialize InferenceHandler
+
+        Args:
+            reject_scheduler: RejectScheduler instance for scheduling reject actions
+        """
         self.camera_matchers: Dict[str, Any] = {}  # Map serial_number -> matcher
         self.engine_path = "/home/demo/Source/ocr_datecode/weights/pipeline_fp16_dynamic_480x640.engine"
 
         # Text recognizer for Check_Type_Product function
         self.text_recognizer = None
         self.ocr_backend = None
+
+        # Reject scheduler reference
+        self.reject_scheduler = reject_scheduler
 
         # Async inference executor
         self._inference_executor = ThreadPoolExecutor(
@@ -566,7 +574,8 @@ class InferenceHandler:
         cameras: List['Camera'],
         results: Dict[str, Any],
         emit_callback,
-        group_id: int = None
+        group_id: int = None,
+        T_capture_complete: float = None
     ):
         """
         Submit inference job to thread pool (non-blocking)
@@ -576,6 +585,7 @@ class InferenceHandler:
             results: Capture results from trigger
             emit_callback: Callback to emit inference result
             group_id: Optional group ID for tracking
+            T_capture_complete: Time when cameras finished capturing (for reject timing)
 
         Returns:
             job_id: Unique job identifier
@@ -604,7 +614,8 @@ class InferenceHandler:
             cameras=cameras,
             results=results,
             emit_callback=emit_callback,
-            group_id=group_id
+            group_id=group_id,
+            T_capture_complete=T_capture_complete
         )
 
         # Track active job
@@ -637,18 +648,24 @@ class InferenceHandler:
         cameras: List['Camera'],
         results: Dict[str, Any],
         emit_callback,
-        group_id: int = None
+        group_id: int = None,
+        T_capture_complete: float = None
     ):
         """
         Synchronous inference worker (runs in thread pool)
 
         This is the blocking function that does actual inference work.
         """
+        import time
+
         thread_name = threading.current_thread().name
         logger.info(
             f"[Job #{job_id}] Starting inference in {thread_name} "
             f"(group_id: {group_id})"
         )
+
+        # Record inference start time
+        T_inference_start = time.time()
 
         try:
             # Process first frame of all cameras with matchers (up to 4)
@@ -989,20 +1006,93 @@ class InferenceHandler:
                 overall_pass_fail=overall_pass_fail
             )
 
+            # Calculate inference time
+            T_inference_done = time.time()
+            inference_time = T_inference_done - T_inference_start
+
+            logger.info(
+                f"[Job #{job_id}] Inference complete: {inference_result['product_pass_fail']}, "
+                f"time: {inference_time:.3f}s"
+            )
+
+            # Schedule or cancel reject based on result
+            if group_id and T_capture_complete and self.reject_scheduler:
+                self._handle_reject_decision(
+                    group_id=group_id,
+                    overall_pass_fail=overall_pass_fail,
+                    T_capture_complete=T_capture_complete,
+                    inference_time=inference_time,
+                    cameras=cameras
+                )
+
             # Emit inference result to backend
             emit_callback("inference_result", inference_result)
-
-            logger.info(f"Inference complete: {inference_result['product_pass_fail']}")
-
-        except Exception as e:
-            logger.error(f"Error in process_inference: {e}")
-            import traceback
 
         except Exception as e:
             logger.error(f"[Job #{job_id}] Error in inference worker: {e}")
             import traceback
             traceback.print_exc()
             raise
+
+    def _handle_reject_decision(
+        self,
+        group_id: int,
+        overall_pass_fail: str,
+        T_capture_complete: float,
+        inference_time: float,
+        cameras: List['Camera']
+    ):
+        """
+        Handle reject scheduling/cancellation based on inference result
+
+        Args:
+            group_id: Group ID for tracking
+            overall_pass_fail: Overall inference result (PASS/FAIL/ERROR)
+            T_capture_complete: Time when cameras finished capturing
+            inference_time: Inference duration in seconds
+            cameras: List of cameras (to get reject config)
+        """
+        try:
+            if overall_pass_fail == "FAIL" or overall_pass_fail == "ERROR":
+                # Get reject config from first camera (recipe-level config)
+                if not cameras:
+                    logger.warning(f"[Group #{group_id}] No cameras available for reject config")
+                    return
+
+                camera = cameras[0]
+                delay_reject = camera.delay_reject  # ms
+                do_reject_number = camera.do_reject_number
+
+                # Schedule reject
+                success = self.reject_scheduler.schedule_reject(
+                    group_id=group_id,
+                    T_capture_complete=T_capture_complete,
+                    inference_time=inference_time,
+                    delay_reject=delay_reject,
+                    do_reject_number=do_reject_number
+                )
+
+                if success:
+                    logger.info(
+                        f"[Group #{group_id}] Reject scheduled "
+                        f"(delay_reject={delay_reject}ms, DO{do_reject_number})"
+                    )
+                else:
+                    logger.error(
+                        f"[Group #{group_id}] Failed to schedule reject "
+                        f"(inference too slow: {inference_time:.3f}s)"
+                    )
+
+            else:  # PASS
+                # Cancel reject if scheduled
+                cancelled = self.reject_scheduler.cancel_reject(group_id)
+                if cancelled:
+                    logger.info(f"[Group #{group_id}] Reject cancelled (result: PASS)")
+
+        except Exception as e:
+            logger.error(f"[Group #{group_id}] Error handling reject decision: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _build_inference_result(
         self,

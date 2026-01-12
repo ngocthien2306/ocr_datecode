@@ -702,6 +702,8 @@ async def load_recipe(
     metadata = {
         'recipe_id': recipe_id,
         'name': recipe.name,
+        'delay_reject': recipe.delay_reject,
+        'do_reject_number': recipe.do_reject_number,
         'product_code': recipe.product_code,
         'camera_templates': _to_primitive(camera_templates),
         'model_thresholds': _to_primitive(getattr(recipe, 'model_thresholds', None)),
@@ -715,6 +717,8 @@ async def load_recipe(
         'id': recipe_id,
         'name': recipe.name,
         'product_code': recipe.product_code,
+        'delay_reject': recipe.delay_reject,
+        'do_reject_number': recipe.do_reject_number,
         'cameras': enriched_cameras,  # Use enriched cameras with function_type
         'camera_templates': _to_primitive(camera_templates),
         'model_thresholds': _to_primitive(getattr(recipe, 'model_thresholds', None)),

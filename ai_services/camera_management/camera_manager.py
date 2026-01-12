@@ -15,6 +15,7 @@ from datetime import datetime
 from .camera import Camera, CameraMode
 from .trigger_handler import TriggerHandler
 from .inference_handler import InferenceHandler
+from .reject_scheduler import RejectScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,8 @@ class CameraManager:
 
         # Initialize handlers
         self.trigger_handler = TriggerHandler(self)
-        self.inference_handler = InferenceHandler()
+        self.reject_scheduler = RejectScheduler()
+        self.inference_handler = InferenceHandler(reject_scheduler=self.reject_scheduler)
 
         logger.info("CameraManager initialized with handlers")
 
@@ -264,6 +266,9 @@ class CameraManager:
 
                 # Start trigger polling if any cameras use Software Trigger
                 self.trigger_handler.start_polling()
+
+                # Start reject scheduler (if not already running)
+                self.reject_scheduler.start()
 
                 return {
                     "success": success,
@@ -531,14 +536,16 @@ class CameraManager:
             return
 
         # Submit async inference job (non-blocking)
-        # Extract group_id from results if available
+        # Extract metadata from results if available
         group_id = results.get('group_id') if isinstance(results, dict) and 'group_id' in results else None
+        T_capture_complete = results.get('T_capture_complete') if isinstance(results, dict) else None
 
         job_id = self.inference_handler.process_inference_async(
             cameras=cameras,
             results=results,
             emit_callback=self._emit_event,
-            group_id=group_id
+            group_id=group_id,
+            T_capture_complete=T_capture_complete
         )
 
         logger.debug(f"Submitted inference job #{job_id} for {len(cameras)} camera(s)")
@@ -572,6 +579,9 @@ class CameraManager:
 
             # Stop trigger polling first
             self.trigger_handler.stop_polling()
+
+            # Stop reject scheduler
+            self.reject_scheduler.stop()
 
             # Stop all cameras
             serial_numbers = list(self.cameras.keys())
