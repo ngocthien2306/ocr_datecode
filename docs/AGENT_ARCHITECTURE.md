@@ -17,53 +17,103 @@ Document này mô tả kiến trúc AI Agent system cho OCR Datecode project, s�
 
 ## 🏗️ Kiến trúc tổng thể
 
+### Orchestrator Pattern (Industry Standard)
+
+System sử dụng **Orchestrator Pattern** - user không cần chọn agent, hệ thống tự động routing dựa trên intent analysis.
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    Frontend Layer                            │
-│  - AgentChat.tsx (UI component)                             │
+│  - AgentChatWidget.tsx (Single chat interface)              │
 │  - agentService.ts (API client)                             │
+│  - No manual agent selection - transparent routing!         │
 └─────────────────────────────────────────────────────────────┘
-                          ↓ HTTP/WebSocket
+                          ↓ HTTP
 ┌─────────────────────────────────────────────────────────────┐
 │                    API Layer (FastAPI)                       │
-│  - /api/agent/chat                                          │
-│  - /api/agent/{agent_id}/chat                               │
-│  - /ws/agent/stream                                         │
+│  - POST /api/agent/chat (always uses orchestrator)          │
+│  - GET  /api/agent/service/status (health check)            │
 └─────────────────────────────────────────────────────────────┘
                           ↓
 ┌─────────────────────────────────────────────────────────────┐
-│                Agent Orchestrator Layer                      │
+│              🎯 Orchestrator Agent (Master)                  │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │         AgentRegistry                                 │  │
-│  │  - Register agents                                    │  │
-│  │  - Route requests to appropriate agent                │  │
-│  │  - Manage agent lifecycle                             │  │
+│  │  1. Analyze user intent with LLM                      │  │
+│  │  2. Route to specialized agent OR ask clarification   │  │
+│  │  3. Return result transparently to user               │  │
+│  │                                                        │  │
+│  │  Available routing targets:                           │  │
+│  │  • service_management (service status, logs, etc.)    │  │
+│  │  • historical_analytics (statistics, trends, etc.)    │  │
+│  │  • (future agents...)                                 │  │
 │  └───────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
-                          ↓
+                    ↓                      ↓
+      ┌─────────────────────┐    ┌─────────────────────┐
+      │  Service Management │    │ Historical Analytics│
+      │       Agent         │    │       Agent         │
+      │                     │    │                     │
+      │ Tools:              │    │ Tools:              │
+      │ • check_status      │    │ • get_pass_fail_    │
+      │ • start_service     │    │   stats             │
+      │ • stop_service      │    │ • get_production_   │
+      │ • get_logs          │    │   summary           │
+      │                     │    │ • get_recipe_load_  │
+      │                     │    │   history           │
+      └─────────────────────┘    └─────────────────────┘
+                    ↓                      ↓
 ┌─────────────────────────────────────────────────────────────┐
-│                Individual Agents (LangGraph)                 │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │   Service    │  │   Recipe     │  │  Analytics   │      │
-│  │  Management  │  │ Optimization │  │    Agent     │      │
-│  │    Agent     │  │    Agent     │  │              │      │
-│  └──────────────┘  └──────────────┘  └──────────────┘      │
-│         ↓                 ↓                   ↓              │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │              Shared Tools Registry                    │  │
-│  │  - Service tools                                     │  │
-│  │  - Camera tools                                      │  │
-│  │  - Recipe tools                                      │  │
-│  │  - Analytics tools                                   │  │
-│  └──────────────────────────────────────────────────────┘  │
+│              Shared Tools & Data Access                      │
+│  - MongoDB (inference_results, recipe_loads, conversations) │
+│  - WebSocket Manager (service connections)                  │
+│  - psutil (process management)                              │
 └─────────────────────────────────────────────────────────────┘
                           ↓
 ┌─────────────────────────────────────────────────────────────┐
 │                   External Services                          │
-│  - OpenAI API (GPT-4o-mini)                                 │
-│  - MongoDB (Memory & State)                                 │
-│  - Internal APIs (Cameras, Recipes, etc.)                   │
+│  - OpenAI API (GPT-4o-mini for LLM reasoning)               │
+│  - MongoDB (persistent storage)                             │
+│  - Camera Management Service (WebSocket)                    │
 └─────────────────────────────────────────────────────────────┘
+```
+
+### Intent Routing Flow
+
+```
+User: "Hôm nay có bao nhiêu sản phẩm fail?"
+   ↓
+Orchestrator analyzes:
+   {
+     "agent_id": "historical_analytics",
+     "confidence": 0.95,
+     "reason": "User asking for pass/fail statistics"
+   }
+   ↓
+Routes to HistoricalAnalyticsAgent
+   ↓
+Agent calls get_pass_fail_stats(start_date=today, end_date=today)
+   ↓
+Returns: "Hôm nay có 150 sản phẩm, trong đó 142 pass và 8 fail (94.67% pass rate)"
+   ↓
+User sees seamless response (doesn't know routing happened)
+```
+
+### Multi-Intent Handling
+
+```
+User: "Service có đang chạy không? Và hôm nay có bao nhiêu fail?"
+   ↓
+Orchestrator detects multi-intent:
+   {
+     "agent_id": "service_management",
+     "confidence": 0.85,
+     "reason": "Multi-intent: prioritize service status (primary)"
+   }
+   ↓
+Routes to ServiceManagementAgent first
+   ↓
+After response, user can ask follow-up about statistics
+   → Orchestrator will route to HistoricalAnalyticsAgent
 ```
 
 ---
@@ -88,10 +138,11 @@ backend/app/
 │   │
 │   ├── agents/
 │   │   ├── __init__.py
+│   │   ├── orchestrator_agent.py   # 🎯 Master routing agent
 │   │   ├── service_agent.py        # Service management agent
-│   │   ├── recipe_agent.py         # Recipe optimization agent
-│   │   ├── analytics_agent.py      # Analytics agent
-│   │   └── general_agent.py        # General purpose agent
+│   │   ├── historical_agent.py     # Historical analytics agent
+│   │   ├── recipe_agent.py         # Recipe optimization agent (future)
+│   │   └── general_agent.py        # General purpose agent (future)
 │   │
 │   ├── tools/
 │   │   ├── __init__.py
@@ -109,7 +160,9 @@ backend/app/
 │   │
 │   ├── prompts/
 │   │   ├── __init__.py
-│   │   ├── system_prompts.py       # System prompts
+│   │   ├── orchestrator_prompts.py # Orchestrator routing logic
+│   │   ├── service_prompts.py      # Service management prompts
+│   │   ├── historical_prompts.py   # Analytics prompts
 │   │   └── few_shot_examples.py    # Example conversations
 │   │
 │   └── utils/
@@ -805,17 +858,35 @@ class RecipeOptimizationAgent(BaseAgent):
         pass
 ```
 
-### Example 3: Multi-Agent Collaboration
+### Example 3: Orchestrator Auto-Routing
 
 ```python
-# Future: Agent Orchestrator
-# User: "Tối ưu recipe cho camera 1"
+# User doesn't specify agent - system auto-routes
 
-# Orchestrator routes to:
-1. ServiceAgent: Check if camera is connected
-2. RecipeAgent: Analyze current recipe
-3. AnalyticsAgent: Get historical data
-4. RecipeAgent: Suggest optimizations
+# Example 1: Service query
+User: "Camera service có đang chạy không?"
+→ Orchestrator routes to service_management
+→ Response: "Service đang chạy ✅ (PID: 12345, WebSocket: Connected)"
+
+# Example 2: Analytics query
+User: "Hôm nay có bao nhiêu fail?"
+→ Orchestrator routes to historical_analytics
+→ Response: "Hôm nay có 8/150 sản phẩm fail (94.67% pass rate)"
+
+# Example 3: Ambiguous query
+User: "Cho tôi xem"
+→ Orchestrator asks for clarification
+→ Response: "Bạn muốn xem gì?
+   1. 📊 Thống kê sản xuất
+   2. 🔧 Trạng thái services
+   3. 📝 Logs
+   4. 📜 Lịch sử recipes"
+
+# Example 4: Context switch
+User: "Service đang chạy không?"
+→ service_management
+User: "Còn hôm nay có bao nhiêu sản phẩm?"
+→ Orchestrator detects context switch → historical_analytics
 ```
 
 ---
@@ -889,17 +960,18 @@ async def test_service_agent_check_status():
 - ✅ Basic chat API
 - ✅ Simple frontend UI
 
-### Phase 2: Enhanced (Week 3-4)
-- ⬜ Recipe Optimization Agent
-- ⬜ Analytics Agent
-- ⬜ Memory & conversation history
-- ⬜ WebSocket streaming
+### Phase 2: Enhanced (Week 3-4) ✅ COMPLETED
+- ✅ Historical Analytics Agent
+- ✅ Memory & conversation history (MongoDB)
+- ✅ Orchestrator Agent with intent routing
+- ✅ Auto-routing (no manual agent selection)
 
 ### Phase 3: Advanced (Week 5-6)
-- ⬜ Multi-agent orchestration
-- ⬜ Human-in-the-loop approvals
-- ⬜ Advanced analytics
+- ⬜ Recipe Optimization Agent
+- ⬜ Human-in-the-loop approvals for critical actions
+- ⬜ Advanced analytics & visualization
 - ⬜ Voice interface
+- ⬜ Multi-agent collaboration (agents working together)
 
 ---
 
