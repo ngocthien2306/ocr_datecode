@@ -8,6 +8,7 @@ import subprocess
 import logging
 import base64
 import numpy as np
+import threading
 from typing import Optional, Tuple, List, Dict, Any
 from pathlib import Path
 from datetime import datetime, timezone
@@ -16,6 +17,10 @@ logger = logging.getLogger(__name__)
 
 
 # ============= GPIO/DI/DO Utilities =============
+
+# Global lock to prevent concurrent DI/DO operations
+# Advantech driver conflicts when multiple processes access it simultaneously
+_gpio_lock = threading.Lock()
 
 def read_di_value(di_number: int) -> int:
     """
@@ -26,44 +31,49 @@ def read_di_value(di_number: int) -> int:
 
     Returns:
         Pin value (0 or 1), or 0 on error
+
+    Note:
+        Uses global lock to prevent conflicts with DO operations.
+        Advantech driver returns errors when DI read and DO write happen simultaneously.
     """
-    try:
-        result = subprocess.run(
-            ["sudo", "dio_in", str(di_number)],
-            capture_output=True,
-            text=True,
-            timeout=0.5
-        )
+    with _gpio_lock:  # Prevent conflict with DO operations
+        try:
+            result = subprocess.run(
+                ["sudo", "dio_in", str(di_number)],
+                capture_output=True,
+                text=True,
+                timeout=0.5
+            )
 
-        if result.returncode == 0:
-            # Parse output format: "The id-X input gpio status = Y\nCompletion code = 0x00"
-            output = result.stdout.strip()
+            if result.returncode == 0:
+                # Parse output format: "The id-X input gpio status = Y\nCompletion code = 0x00"
+                output = result.stdout.strip()
 
-            # Extract value from "status = Y" line
-            for line in output.split('\n'):
-                if 'status' in line and '=' in line:
-                    # Extract the value after '='
-                    value_str = line.split('=')[-1].strip()
-                    try:
-                        value = int(value_str)
-                        return value
-                    except ValueError:
-                        logger.warning(f"Failed to parse DI{di_number} value: {value_str}")
-                        return 0
+                # Extract value from "status = Y" line
+                for line in output.split('\n'):
+                    if 'status' in line and '=' in line:
+                        # Extract the value after '='
+                        value_str = line.split('=')[-1].strip()
+                        try:
+                            value = int(value_str)
+                            return value
+                        except ValueError:
+                            logger.warning(f"Failed to parse DI{di_number} value: {value_str}")
+                            return 0
 
-            # Fallback: couldn't find status line
-            logger.warning(f"Unexpected DI{di_number} output format: {output}")
+                # Fallback: couldn't find status line
+                logger.warning(f"Unexpected DI{di_number} output format: {output}")
+                return 0
+            else:
+                logger.warning(f"Failed to read DI{di_number}: {result.stderr.strip()}")
+                return 0
+
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Timeout reading DI{di_number}")
             return 0
-        else:
-            logger.warning(f"Failed to read DI{di_number}: {result.stderr.strip()}")
+        except Exception as e:
+            logger.error(f"Error reading DI{di_number}: {e}")
             return 0
-
-    except subprocess.TimeoutExpired:
-        logger.warning(f"Timeout reading DI{di_number}")
-        return 0
-    except Exception as e:
-        logger.error(f"Error reading DI{di_number}: {e}")
-        return 0
 
 
 def check_trigger_edge(current: int, previous: Optional[int], activation: str) -> bool:
@@ -111,47 +121,49 @@ def write_do_value(do_number: int, value: int) -> bool:
         sudo dio_out 2 0  # Set DO2 = LOW
 
     Note:
-        Advantech DIO returns returncode=255 with "Completion code = 0xFFFFFFFF"
+        Uses global lock to prevent conflicts with DI operations.
+        Advantech driver returns errors when DI read and DO write happen simultaneously.
+        Also returns returncode=255 with "Completion code = 0xFFFFFFFF"
         when trying to set same value twice. We check the output message instead.
     """
-    try:
-        result = subprocess.run(
-            ["sudo", "dio_out", str(do_number), str(value)],
-            capture_output=True,
-            text=True,
-            timeout=1.0
-        )
+    with _gpio_lock:  # Prevent conflict with DI operations
+        try:
+            result = subprocess.run(
+                ["sudo", "dio_out", str(do_number), str(value)],
+                capture_output=True,
+                text=True,
+                timeout=1.0
+            )
 
-        # Check output for success indicator
-        # Success: "Completion code = 0x00"
-        # Failure: "Completion code = 0xFFFFFFFF"
-        if "Completion code = 0x00" in result.stdout or "Completion code = 0x00" in result.stderr:
-            logger.debug(f"DO{do_number} = {value}")
-            return True
-        elif "Completion code = 0xFFFFFFFF" in result.stdout or "Completion code = 0xFFFFFFFF" in result.stderr:
-            # This happens when setting same value twice - treat as warning, not error
-            logger.warning(
-                f"DO{do_number} already at {value} (Advantech driver quirk). "
-                f"returncode={result.returncode}, output={result.stdout.strip()}"
-            )
-            return True  # Treat as success since pin is already at desired state
-        elif result.returncode == 0:
-            # Fallback: if returncode is 0, assume success
-            logger.debug(f"DO{do_number} = {value} (returncode=0)")
-            return True
-        else:
-            logger.error(
-                f"Failed to set DO{do_number}: returncode={result.returncode}, "
-                f"stdout={result.stdout.strip()}, stderr={result.stderr.strip()}"
-            )
+            # Check output for success indicator
+            # Success: "Completion code = 0x00"
+            # Failure: "Completion code = 0xFFFFFFFF"
+            if "Completion code = 0x00" in result.stdout or "Completion code = 0x00" in result.stderr:
+                logger.debug(f"DO{do_number} = {value}")
+                return True
+            elif "Completion code = 0xFFFFFFFF" in result.stdout or "Completion code = 0xFFFFFFFF" in result.stderr:
+                # This happens when setting same value twice - treat as warning, not error
+                logger.debug(
+                    f"DO{do_number} already at {value} (Advantech driver quirk)"
+                )
+                return True  # Treat as success since pin is already at desired state
+            elif result.returncode == 0:
+                # Fallback: if returncode is 0, assume success
+                logger.debug(f"DO{do_number} = {value} (returncode=0)")
+                return True
+            else:
+                logger.error(
+                    f"Failed to set DO{do_number}: returncode={result.returncode}, "
+                    f"stdout={result.stdout.strip()}, stderr={result.stderr.strip()}"
+                )
+                return False
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"Timeout setting DO{do_number}")
             return False
-
-    except subprocess.TimeoutExpired:
-        logger.error(f"Timeout setting DO{do_number}")
-        return False
-    except Exception as e:
-        logger.error(f"Error setting DO{do_number}: {e}")
-        return False
+        except Exception as e:
+            logger.error(f"Error setting DO{do_number}: {e}")
+            return False
 
 
 def trigger_reject_pulse(do_number: int, pulse_ms: int = 100):

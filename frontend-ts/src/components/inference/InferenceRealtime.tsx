@@ -489,9 +489,10 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
 
   // Render text verification table for a camera
   const renderTextVerificationTable = (cameraResult: CameraResult) => {
-    // Get text verification from first frame (assumption: only first frame has it)
-    const frameWithVerification = cameraResult.frames.find(f => f.text_verification);
-    if (!frameWithVerification?.text_verification) {
+    // Get ALL frames with text verification (multi-template support)
+    const framesWithVerification = cameraResult.frames.filter(f => f.text_verification);
+
+    if (framesWithVerification.length === 0) {
       return (
         <div className="camera-verification-card">
           <div className="camera-verification-header">
@@ -506,11 +507,7 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
       );
     }
 
-    const verification = frameWithVerification.text_verification;
-    const matchCount = verification.results.filter(r => r.match).length;
-    const totalCount = verification.results.length;
-    const allMatch = verification.all_match;
-
+    // Render a table for each frame with verification
     return (
       <div className="camera-verification-card">
         <div className="camera-verification-header">
@@ -521,42 +518,59 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
             </svg>
             <span className="camera-serial">{cameraResult.serial_number}</span>
           </div>
-          <span className={`match-summary ${allMatch ? 'all-match' : 'has-mismatch'}`}>
-            {matchCount}/{totalCount} Match {allMatch ? '✓' : '✗'}
-          </span>
         </div>
-        <div className="verification-table-wrapper">
-          <table className="verification-table">
-            <thead>
-              <tr>
-                <th className="col-region">#</th>
-                <th className="col-expected">Expected</th>
-                <th className="col-recognized">Recognized</th>
-                <th className="col-match">Match</th>
-                <th className="col-confidence">Conf</th>
-              </tr>
-            </thead>
-            <tbody>
-              {verification.results.map((result) => (
-                <tr key={result.region_idx} className={result.match ? '' : 'mismatch-row'}>
-                  <td className="col-region">{result.region_idx}</td>
-                  <td className="col-expected">{result.expected || '—'}</td>
-                  <td className="col-recognized">{result.recognized || '—'}</td>
-                  <td className="col-match">
-                    <span className={`match-icon ${result.match ? 'match' : 'no-match'}`}>
-                      {result.match ? '✓' : '✗'}
-                    </span>
-                  </td>
-                  <td className="col-confidence">
-                    <span className={`confidence-value ${getConfidenceClass(result.confidence)}`}>
-                      {(result.confidence * 100).toFixed(1)}%
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+
+        {framesWithVerification.map((frame) => {
+          const verification = frame.text_verification!;
+          const matchCount = verification.results.filter(r => r.match).length;
+          const totalCount = verification.results.length;
+          const allMatch = verification.all_match;
+
+          return (
+            <div key={frame.frame_idx} className="frame-verification-section">
+              <div className="frame-verification-header">
+                <span className="frame-label">
+                  {frame.template_name || `Frame ${frame.frame_idx}`}
+                </span>
+                <span className={`match-summary ${allMatch ? 'all-match' : 'has-mismatch'}`}>
+                  {matchCount}/{totalCount} Match {allMatch ? '✓' : '✗'}
+                </span>
+              </div>
+              <div className="verification-table-wrapper">
+                <table className="verification-table">
+                  <thead>
+                    <tr>
+                      <th className="col-region">#</th>
+                      <th className="col-expected">Expected</th>
+                      <th className="col-recognized">Recognized</th>
+                      <th className="col-match">Match</th>
+                      <th className="col-confidence">Conf</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {verification.results.map((result) => (
+                      <tr key={result.region_idx} className={result.match ? '' : 'mismatch-row'}>
+                        <td className="col-region">{result.region_idx}</td>
+                        <td className="col-expected">{result.expected || '—'}</td>
+                        <td className="col-recognized">{result.recognized || '—'}</td>
+                        <td className="col-match">
+                          <span className={`match-icon ${result.match ? 'match' : 'no-match'}`}>
+                            {result.match ? '✓' : '✗'}
+                          </span>
+                        </td>
+                        <td className="col-confidence">
+                          <span className={`confidence-value ${getConfidenceClass(result.confidence)}`}>
+                            {(result.confidence * 100).toFixed(1)}%
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })}
       </div>
     );
   };
