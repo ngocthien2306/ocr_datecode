@@ -247,8 +247,8 @@ class InferenceHandler:
                     )
                     break
 
-            # Second pass: parse other annotations
-            for ann in annotations:
+            # Second pass: parse other annotations (keep original index for expected_texts lookup)
+            for ann_idx, ann in enumerate(annotations):
                 ann_type = ann.get("type", "")
                 shape = ann.get("shape", "rectangle")
 
@@ -261,7 +261,8 @@ class InferenceHandler:
 
                     template_bbox = {
                         "type": "template",
-                        "points": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+                        "points": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]],
+                        "annotation_index": ann_idx  # Keep original index
                     }
 
                 elif ann_type in ["text", "barcode", "datecode"]:
@@ -285,7 +286,8 @@ class InferenceHandler:
                         other_bboxes.append({
                             "type": ann_type,
                             "text": ann.get("text", ""),
-                            "points": pixel_points
+                            "points": pixel_points,
+                            "annotation_index": ann_idx  # Keep original index for expected_texts lookup
                         })
 
             if not template_bbox:
@@ -584,26 +586,38 @@ class InferenceHandler:
         all_match = True
 
         # Filter only text type bboxes
+        # Use annotation_index from bbox metadata (preserves original annotation index)
         text_bboxes = [
-            (idx, bbox) for idx, bbox in enumerate(transformed_bboxes)
+            bbox for bbox in transformed_bboxes
             if bbox.get('type') == 'text'
         ]
 
         logger.info(f"[{camera.serial_number}] Verifying {len(text_bboxes)} text regions")
-        # print("TEST BOXXXXXXXXXXXXXXX: ",text_bboxes)
-        # print("EXPECTED TEXTS: ", expected_texts)
-        for region_idx, bbox in text_bboxes:
-            try:
+        logger.info(f"[{camera.serial_number}] Expected texts dict: {expected_texts}")
+        logger.info(f"[{camera.serial_number}] Text bbox annotation indices: {[bbox.get('annotation_index') for bbox in text_bboxes]}")
 
+        for bbox in text_bboxes:
+            try:
+                # Get annotation_index from bbox (this is the original index in annotations list)
+                annotation_idx = bbox.get('annotation_index')
+                if annotation_idx is None:
+                    logger.warning(f"[{camera.serial_number}] Bbox missing annotation_index, skipping")
+                    continue
+
+                # Get expected text using annotation_index
+                expected_text = expected_texts.get(annotation_idx, '')
+                logger.info(
+                    f"[{camera.serial_number}] Processing annotation {annotation_idx}: expected_text='{expected_text}'"
+                )
 
                 # Crop text region from frame
                 points = bbox.get('points', [])
                 if len(points) < 4:
-                    logger.warning(f"[{camera.serial_number}] Invalid points for region {region_idx}")
+                    logger.warning(f"[{camera.serial_number}] Invalid points for annotation {annotation_idx}")
                     all_match = False
                     verification_results.append({
-                        'region_idx': region_idx,
-                        'expected': bbox.get('text', ''),
+                        'annotation_idx': annotation_idx,
+                        'expected': expected_text,
                         'recognized': '',
                         'match': False,
                         'confidence': 0.0,
@@ -614,7 +628,7 @@ class InferenceHandler:
                 # Crop using perspective transform
                 cropped_region = crop_text_region(frame_img, points)
                 path_save = "/home/demo/Source/ocr_datecode/ai_services/test_result"
-                cv2.imwrite(f"{path_save}/cropped_region_{camera.serial_number}_{region_idx}.png", cropped_region)
+                cv2.imwrite(f"{path_save}/cropped_region_{camera.serial_number}_{annotation_idx}.png", cropped_region)
 
                 # Run OCR on cropped region
                 logger.debug(f"[{camera.serial_number}] Running OCR with {self.ocr_backend} backend...")
@@ -622,35 +636,34 @@ class InferenceHandler:
                 recognized_text = text.strip()
                 logger.debug(f"[{camera.serial_number}] OCR result: '{recognized_text}' (conf: {confidence:.2%})")
 
-
                 # Compare texts (case-insensitive, strip whitespace)
-                match = compare_texts(recognized_text, bbox.get('text', ''), case_sensitive=False, strip=True)
+                match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
 
                 if not match:
                     all_match = False
 
                 verification_results.append({
-                    'region_idx': region_idx,
-                    'expected': bbox.get('text', ''),
+                    'annotation_idx': annotation_idx,
+                    'expected': expected_text,
                     'recognized': recognized_text,
                     'match': match,
                     'confidence': confidence
                 })
 
                 logger.info(
-                    f"[{camera.serial_number}] Region {region_idx}: "
-                    f"expected='{bbox.get('text', '')}', recognized='{recognized_text}', "
+                    f"[{camera.serial_number}] Annotation {annotation_idx}: "
+                    f"expected='{expected_text}', recognized='{recognized_text}', "
                     f"match={match}, conf={confidence:.2%}"
                 )
 
             except Exception as e:
-                logger.error(f"[{camera.serial_number}] Error verifying region {region_idx}: {e}")
+                logger.error(f"[{camera.serial_number}] Error verifying annotation {annotation_idx}: {e}")
                 import traceback
                 traceback.print_exc()
                 all_match = False
                 verification_results.append({
-                    'region_idx': region_idx,
-                    'expected': expected_texts.get(region_idx, ''),
+                    'annotation_idx': annotation_idx,
+                    'expected': expected_text,
                     'recognized': '',
                     'match': False,
                     'confidence': 0.0,
@@ -895,7 +908,13 @@ class InferenceHandler:
                                             )
 
                                             # Get expected_texts for this specific template
+                                            logger.info(
+                                                f"[Frame {frame_idx}] camera.expected_texts structure: {camera.expected_texts}"
+                                            )
                                             frame_expected_texts = camera.expected_texts.get(frame_idx, {})
+                                            logger.info(
+                                                f"[Frame {frame_idx}] Retrieved expected_texts: {frame_expected_texts}"
+                                            )
 
                                             if not frame_expected_texts:
                                                 logger.warning(
@@ -1028,7 +1047,13 @@ class InferenceHandler:
                                     logger.info(f"Running text verification for {serial_number}")
 
                                     # Get expected_texts for first template (template 0)
+                                    logger.info(
+                                        f"[{serial_number}] camera.expected_texts structure: {camera.expected_texts}"
+                                    )
                                     frame_expected_texts = camera.expected_texts.get(0, {})
+                                    logger.info(
+                                        f"[{serial_number}] Retrieved expected_texts for template 0: {frame_expected_texts}"
+                                    )
 
                                     if not frame_expected_texts:
                                         logger.warning(
@@ -1168,7 +1193,13 @@ class InferenceHandler:
 
                                     # Get expected_texts for first template (template 0)
                                     # In multi-camera batch, each camera uses first template only
+                                    logger.info(
+                                        f"[{serial_number}] camera.expected_texts structure: {camera.expected_texts}"
+                                    )
                                     frame_expected_texts = camera.expected_texts.get(0, {})
+                                    logger.info(
+                                        f"[{serial_number}] Retrieved expected_texts for template 0: {frame_expected_texts}"
+                                    )
 
                                     if not frame_expected_texts:
                                         logger.warning(

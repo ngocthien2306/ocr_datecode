@@ -708,18 +708,21 @@ class Camera:
                     self.templates = ct.get("templates", [])
 
                     # Parse expected texts from ALL templates
+                    # IMPORTANT: region_idx here matches the annotation index in the original annotations list
+                    # This must match how transformed_bboxes are indexed during inference
                     self.expected_texts = {}
                     for template_idx, template in enumerate(self.templates):
                         annotations = template.get("annotations", [])
                         template_expected_texts = {}
 
-                        for region_idx, ann in enumerate(annotations):
+                        for ann_idx, ann in enumerate(annotations):
                             if ann.get('type') == 'text':
                                 expected_text = ann.get('text', '')
                                 if expected_text:
-                                    template_expected_texts[region_idx] = expected_text
+                                    # Use ann_idx (annotation index) as the key
+                                    template_expected_texts[ann_idx] = expected_text
                                     logger.info(
-                                        f"  - Template {template_idx}, Region {region_idx}: '{expected_text}'"
+                                        f"  - Template {template_idx}, Annotation {ann_idx} (text): '{expected_text}'"
                                     )
 
                         if template_expected_texts:

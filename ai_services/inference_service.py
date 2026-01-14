@@ -524,7 +524,8 @@ class SuperPointMatcherTRT:
             transformed_bboxes.append({
                 'type': bbox['type'],
                 'points': pts_transformed.reshape(-1, 2).tolist(),
-                'text': bbox.get('text', '')
+                'text': bbox.get('text', ''),
+                'annotation_index': bbox.get('annotation_index')  # Preserve original annotation index
             })
 
         return {
@@ -688,7 +689,9 @@ class SuperPointMatcherTRT:
             pts_transformed = cv2.perspectiveTransform(pts, H_full)
             transformed_bboxes.append({
                 'type': bbox['type'],
-                'points': pts_transformed.reshape(-1, 2).tolist()
+                'points': pts_transformed.reshape(-1, 2).tolist(),
+                'text': bbox.get('text', ''),
+                'annotation_index': bbox.get('annotation_index')  # Preserve original annotation index
             })
         timings['transform_bboxes'] = (time.time() - t0) * 1000
 

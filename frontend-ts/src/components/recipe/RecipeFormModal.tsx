@@ -86,7 +86,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     product_code: '',
     description: '',
     delay_reject: 100.0,
-    do_reject_number: 0,
+    do_reject_number: 2,
     is_active: true,
     cameras: [],
     camera_settings: {
@@ -261,7 +261,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         product_code: '',
         description: '',
         delay_reject: 100.0,
-        do_reject_number: 0,
+        do_reject_number: 2,
         is_active: true,
         cameras: [],
         camera_settings: {
