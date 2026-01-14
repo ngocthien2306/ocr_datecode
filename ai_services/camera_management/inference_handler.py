@@ -894,10 +894,18 @@ class InferenceHandler:
                                                 f"[Frame {frame_idx}] Running text verification (Check_Type_Product)"
                                             )
 
+                                            # Get expected_texts for this specific template
+                                            frame_expected_texts = camera.expected_texts.get(frame_idx, {})
+
+                                            if not frame_expected_texts:
+                                                logger.warning(
+                                                    f"[Frame {frame_idx}] No expected_texts found for template {frame_idx}"
+                                                )
+
                                             text_verification = self.verify_text_regions(
                                                 frame_img=frame,
                                                 transformed_bboxes=transformed_bboxes,
-                                                expected_texts=camera.expected_texts,
+                                                expected_texts=frame_expected_texts,
                                                 camera=camera
                                             )
 
@@ -1019,10 +1027,18 @@ class InferenceHandler:
                                 if camera.function_type == 'Check_Type_Product':
                                     logger.info(f"Running text verification for {serial_number}")
 
+                                    # Get expected_texts for first template (template 0)
+                                    frame_expected_texts = camera.expected_texts.get(0, {})
+
+                                    if not frame_expected_texts:
+                                        logger.warning(
+                                            f"[{serial_number}] No expected_texts found for template 0"
+                                        )
+
                                     text_verification = self.verify_text_regions(
                                         frame_img=first_frame,
                                         transformed_bboxes=transformed_bboxes,
-                                        expected_texts=camera.expected_texts,
+                                        expected_texts=frame_expected_texts,
                                         camera=camera
                                     )
 
@@ -1150,11 +1166,20 @@ class InferenceHandler:
                                 if camera.function_type == 'Check_Type_Product':
                                     logger.info(f"Running text verification for {serial_number} (Check_Type_Product)")
 
+                                    # Get expected_texts for first template (template 0)
+                                    # In multi-camera batch, each camera uses first template only
+                                    frame_expected_texts = camera.expected_texts.get(0, {})
+
+                                    if not frame_expected_texts:
+                                        logger.warning(
+                                            f"[{serial_number}] No expected_texts found for template 0"
+                                        )
+
                                     # Verify text regions
                                     text_verification = self.verify_text_regions(
                                         frame_img=first_frame,
                                         transformed_bboxes=transformed_bboxes,
-                                        expected_texts=camera.expected_texts,
+                                        expected_texts=frame_expected_texts,
                                         camera=camera
                                     )
 
@@ -1365,34 +1390,42 @@ class InferenceHandler:
 
             # Build frame results
             frame_results = []
-            for idx, frame_img in enumerate(camera_frames):
+
+            # Determine how many frames to process
+            if is_multi_frame:
+                # Multi-template: Only process frames that have inference results
+                num_frames_to_process = len(camera_inference['frames'])
+            else:
+                # Single template: Process only the number of templates (usually 1)
+                num_frames_to_process = len(camera.templates)
+
+            # Ensure we don't exceed available frames
+            num_frames_to_process = min(num_frames_to_process, len(camera_frames))
+
+            logger.debug(
+                f"[{serial_number}] Processing {num_frames_to_process} frames "
+                f"(total captured: {len(camera_frames)}, templates: {len(camera.templates)})"
+            )
+
+            for idx in range(num_frames_to_process):
+                frame_img = camera_frames[idx]
+
                 # Get inference data for this frame
                 if is_multi_frame:
                     # ✅ NEW: Multi-template scenario
-                    if idx < len(camera_inference['frames']):
-                        frame_data = camera_inference['frames'][idx]
-                        frame_pass_fail = frame_data['result']
-                        frame_confidence = frame_data['confidence']
-                        frame_inliers = frame_data['inliers']
-                        frame_total_matches = frame_data['total_matches']
-                        frame_timings = frame_data['timings']
-                        frame_bboxes = frame_data['transformed_bboxes']
-                        frame_text_verification = frame_data.get('text_verification')
+                    frame_data = camera_inference['frames'][idx]
+                    frame_pass_fail = frame_data['result']
+                    frame_confidence = frame_data['confidence']
+                    frame_inliers = frame_data['inliers']
+                    frame_total_matches = frame_data['total_matches']
+                    frame_timings = frame_data['timings']
+                    frame_bboxes = frame_data['transformed_bboxes']
+                    frame_text_verification = frame_data.get('text_verification')
 
-                        # Get crop_area for this frame
-                        if isinstance(matcher, list) and idx < len(matcher):
-                            frame_crop_area = getattr(matcher[idx], 'crop_area', None)
-                        else:
-                            frame_crop_area = None
+                    # Get crop_area for this frame
+                    if isinstance(matcher, list) and idx < len(matcher):
+                        frame_crop_area = getattr(matcher[idx], 'crop_area', None)
                     else:
-                        # Frame without inference result
-                        frame_pass_fail = "PASS"
-                        frame_confidence = 0.0
-                        frame_inliers = 0
-                        frame_total_matches = 0
-                        frame_timings = None
-                        frame_bboxes = None
-                        frame_text_verification = None
                         frame_crop_area = None
 
                 else:

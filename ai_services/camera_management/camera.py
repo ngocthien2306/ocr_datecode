@@ -92,7 +92,7 @@ class Camera:
         self.recipe_name: Optional[str] = None
         self.templates: List[Dict[str, Any]] = []
         self.function_type: str = "OCR"  # Function type: OCR, Check_Type_Product, etc.
-        self.expected_texts: Dict[int, str] = {}  # Map region_idx -> expected_text
+        self.expected_texts: Dict[int, Dict[int, str]] = {}  # Map template_idx -> {region_idx -> expected_text}
 
         # Frame tracking
         self.frame_idx = 0
@@ -707,19 +707,27 @@ class Camera:
                 if ct.get("camera_id") == camera_id:
                     self.templates = ct.get("templates", [])
 
-                    # Parse expected texts from template annotations
+                    # Parse expected texts from ALL templates
                     self.expected_texts = {}
-                    if self.templates:
-                        template = self.templates[0]  # Use first template
+                    for template_idx, template in enumerate(self.templates):
                         annotations = template.get("annotations", [])
-                        for idx, ann in enumerate(annotations):
+                        template_expected_texts = {}
 
+                        for region_idx, ann in enumerate(annotations):
                             if ann.get('type') == 'text':
                                 expected_text = ann.get('text', '')
-                                # print("TESTTTTTTTTTTTT: ", expected_text)
                                 if expected_text:
-                                    self.expected_texts[idx] = expected_text
-                                    logger.info(f"  - Expected text region {idx}: '{expected_text}'")
+                                    template_expected_texts[region_idx] = expected_text
+                                    logger.info(
+                                        f"  - Template {template_idx}, Region {region_idx}: '{expected_text}'"
+                                    )
+
+                        if template_expected_texts:
+                            self.expected_texts[template_idx] = template_expected_texts
+
+                    logger.info(
+                        f"[{self.serial_number}] Loaded expected_texts for {len(self.expected_texts)} templates"
+                    )
                     break
 
             if not self.templates:
