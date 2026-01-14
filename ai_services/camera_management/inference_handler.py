@@ -152,6 +152,216 @@ class InferenceHandler:
 
         logger.info("InferenceHandler initialized with dynamic batch engine")
 
+    def _create_single_matcher(
+        self,
+        camera: 'Camera',
+        template_data: Dict[str, Any],
+        template_idx: int,
+        temp_dir: Path,
+        backend_dir: Path,
+        verbose: bool = False
+    ) -> Optional[Any]:
+        """
+        Create a single matcher for one template
+
+        Args:
+            camera: Camera instance
+            template_data: Template data dict (from camera.templates[idx])
+            template_idx: Template index
+            temp_dir: Temporary directory for matcher files
+            backend_dir: Backend directory path
+            verbose: Verbose logging
+
+        Returns:
+            SuperPointMatcherTRT instance or None if failed
+        """
+        try:
+            serial_number = camera.serial_number
+
+            if not template_data:
+                logger.error(f"[{serial_number}] Template {template_idx}: No template data")
+                return None
+
+            image_url = template_data.get("image_url")
+
+            if not image_url:
+                logger.error(f"[{serial_number}] Template {template_idx}: No image_url")
+                return None
+
+            # Copy template to temp directory
+            filename = image_url.split("/")[-1]
+            source_path = backend_dir / "uploads" / "templates" / filename
+
+            if not source_path.exists():
+                logger.error(f"[{serial_number}] Template {template_idx}: Not found at {source_path}")
+                return None
+
+            template_path = temp_dir / f"template_{serial_number}_t{template_idx}.jpg"
+            import shutil
+            shutil.copy(source_path, template_path)
+
+            # Parse annotations
+            annotations = template_data.get("annotations", [])
+            template_bbox = None
+            other_bboxes = []
+            crop_area = None
+
+            template_img = cv2.imread(str(template_path))
+            img_h, img_w = template_img.shape[:2]
+
+            # First pass: find crop_area annotation
+            for ann in annotations:
+                if ann.get("type") == "crop_area":
+                    x, y = ann.get("x", 0), ann.get("y", 0)
+                    w, h = ann.get("width", 1), ann.get("height", 1)
+
+                    # Convert to pixel coordinates
+                    x1, y1 = int(x * img_w), int(y * img_h)
+                    x2, y2 = int((x + w) * img_w), int((y + h) * img_h)
+
+                    # Clamp to image boundaries
+                    x1 = max(0, x1)
+                    y1 = max(0, y1)
+                    x2 = min(img_w, x2)
+                    y2 = min(img_h, y2)
+
+                    # Validate crop area size
+                    crop_w = x2 - x1
+                    crop_h = y2 - y1
+                    if crop_w < 100 or crop_h < 100:
+                        logger.warning(
+                            f"[{serial_number}] Template {template_idx}: crop_area too small ({crop_w}x{crop_h}), ignoring"
+                        )
+                        break
+
+                    crop_area = {
+                        "x1": x1, "y1": y1,
+                        "x2": x2, "y2": y2,
+                        "width": crop_w,
+                        "height": crop_h
+                    }
+
+                    logger.info(
+                        f"[{serial_number}] Template {template_idx}: Found crop_area: "
+                        f"({x1}, {y1}) → ({x2}, {y2}), size: {crop_w}x{crop_h}"
+                    )
+                    break
+
+            # Second pass: parse other annotations
+            for ann in annotations:
+                ann_type = ann.get("type", "")
+                shape = ann.get("shape", "rectangle")
+
+                if ann_type == "template":
+                    x, y = ann.get("x", 0), ann.get("y", 0)
+                    w, h = ann.get("width", 0), ann.get("height", 0)
+
+                    x1, y1 = int(x * img_w), int(y * img_h)
+                    x2, y2 = int((x + w) * img_w), int((y + h) * img_h)
+
+                    template_bbox = {
+                        "type": "template",
+                        "points": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+                    }
+
+                elif ann_type in ["text", "barcode", "datecode"]:
+                    pixel_points = []
+
+                    if ann.get("points"):
+                        pixel_points = [
+                            [int(pt[0] * img_w), int(pt[1] * img_h)]
+                            for pt in ann.get("points", [])
+                        ]
+                    elif shape == "rectangle" and ann.get("x") is not None:
+                        x, y = ann.get("x", 0), ann.get("y", 0)
+                        w, h = ann.get("width", 0), ann.get("height", 0)
+
+                        x1, y1 = int(x * img_w), int(y * img_h)
+                        x2, y2 = int((x + w) * img_w), int((y + h) * img_h)
+
+                        pixel_points = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+
+                    if pixel_points:
+                        other_bboxes.append({
+                            "type": ann_type,
+                            "text": ann.get("text", ""),
+                            "points": pixel_points
+                        })
+
+            if not template_bbox:
+                logger.error(f"[{serial_number}] Template {template_idx}: No template bbox")
+                return None
+
+            # Process crop_area if exists
+            final_template_path = template_path
+            if crop_area:
+                logger.info(f"[{serial_number}] Template {template_idx}: Applying crop_area")
+
+                # Crop template image
+                template_img_cropped = template_img[
+                    crop_area["y1"]:crop_area["y2"],
+                    crop_area["x1"]:crop_area["x2"]
+                ]
+
+                # Save cropped template
+                cropped_template_path = temp_dir / f"template_{serial_number}_t{template_idx}_cropped.jpg"
+                cv2.imwrite(str(cropped_template_path), template_img_cropped)
+                final_template_path = cropped_template_path
+
+                logger.info(
+                    f"[{serial_number}] Template {template_idx}: Cropped template saved: "
+                    f"{template_img_cropped.shape[1]}x{template_img_cropped.shape[0]}"
+                )
+
+                # Adjust bboxes to cropped coordinates
+                offset_x = crop_area["x1"]
+                offset_y = crop_area["y1"]
+
+                template_bbox["points"] = [
+                    [pt[0] - offset_x, pt[1] - offset_y]
+                    for pt in template_bbox["points"]
+                ]
+
+                for bbox in other_bboxes:
+                    bbox["points"] = [
+                        [pt[0] - offset_x, pt[1] - offset_y]
+                        for pt in bbox["points"]
+                    ]
+
+                logger.info(
+                    f"[{serial_number}] Template {template_idx}: "
+                    f"Adjusted {len(other_bboxes) + 1} bbox(es) to cropped coordinates"
+                )
+
+            # Create annotation file for this template
+            ann_json_path = temp_dir / f"annotations_{serial_number}_t{template_idx}.json"
+            ann_data = {
+                "_template_image": str(final_template_path),
+                str(final_template_path): [template_bbox] + other_bboxes
+            }
+
+            with open(ann_json_path, "w") as f:
+                json.dump(ann_data, f, indent=2)
+
+            # Initialize matcher
+            matcher = SuperPointMatcherTRT(
+                json_path=str(ann_json_path),
+                engine_path=self.engine_path,
+                scale=1.0,
+                verbose=verbose
+            )
+
+            # Store crop_area metadata
+            matcher.crop_area = crop_area
+
+            return matcher
+
+        except Exception as e:
+            logger.error(f"Error creating matcher for template {template_idx}: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
     def init_matchers(self, cameras: List['Camera']):
         try:
             if not INFERENCE_AVAILABLE or not SuperPointMatcherTRT:
@@ -163,197 +373,80 @@ class InferenceHandler:
             backend_dir = Path(__file__).parent.parent.parent / "backend"
 
             initialized_count = 0
+            is_single_camera = len(cameras) == 1
 
             for camera in cameras:
                 serial_number = camera.serial_number
+                num_templates = len(camera.templates)
 
                 if not camera.templates:
                     logger.warning(f"No templates for camera {serial_number}, skipping")
                     continue
 
-                # Get first template
-                
-                template_data = camera.templates[0]
-                # print("TEMPLATE DATA: ", template_data)
-                image_url = template_data.get("image_url")
+                # Detect scenario: single camera with multiple templates
+                if is_single_camera and num_templates > 1:
+                    # Single camera, multiple templates → create matcher for EACH template
+                    logger.info(
+                        f"[{serial_number}] Single camera scenario: "
+                        f"{num_templates} templates → creating {num_templates} matchers"
+                    )
 
-                if not image_url:
-                    logger.error(f"No template image URL for camera {serial_number}")
-                    continue
-
-                # Copy template to temp directory
-                filename = image_url.split("/")[-1]
-                source_path = backend_dir / "uploads" / "templates" / filename
-
-                if not source_path.exists():
-                    logger.error(f"Template not found: {source_path}")
-                    continue
-
-                template_path = temp_dir / f"template_{serial_number}.jpg"
-                import shutil
-                shutil.copy(source_path, template_path)
-
-                # Parse annotations
-                annotations = template_data.get("annotations", [])
-                template_bbox = None
-                other_bboxes = []
-                crop_area = None  # Will store crop_area info if exists
-
-                template_img = cv2.imread(str(template_path))
-                img_h, img_w = template_img.shape[:2]
-
-                # First pass: find crop_area annotation
-                for ann in annotations:
-                    if ann.get("type") == "crop_area":
-                        x, y = ann.get("x", 0), ann.get("y", 0)
-                        w, h = ann.get("width", 1), ann.get("height", 1)
-
-                        # Convert to pixel coordinates
-                        x1, y1 = int(x * img_w), int(y * img_h)
-                        x2, y2 = int((x + w) * img_w), int((y + h) * img_h)
-
-                        # Clamp to image boundaries
-                        x1 = max(0, x1)
-                        y1 = max(0, y1)
-                        x2 = min(img_w, x2)
-                        y2 = min(img_h, y2)
-
-                        # Validate crop area size
-                        crop_w = x2 - x1
-                        crop_h = y2 - y1
-                        if crop_w < 100 or crop_h < 100:
-                            logger.warning(
-                                f"[{serial_number}] crop_area too small ({crop_w}x{crop_h}), ignoring"
-                            )
-                            break
-
-                        crop_area = {
-                            "x1": x1, "y1": y1,
-                            "x2": x2, "y2": y2,
-                            "width": crop_w,
-                            "height": crop_h
-                        }
-
-                        logger.info(
-                            f"[{serial_number}] Found crop_area: ({x1}, {y1}) → ({x2}, {y2}), "
-                            f"size: {crop_w}x{crop_h}"
+                    matchers_list = []
+                    for template_idx, template_data in enumerate(camera.templates):
+                        verbose = (template_idx == 0)  # Only verbose for first template
+                        matcher = self._create_single_matcher(
+                            camera=camera,
+                            template_data=template_data,
+                            template_idx=template_idx,
+                            temp_dir=temp_dir,
+                            backend_dir=backend_dir,
+                            verbose=verbose
                         )
-                        break  # Only use first crop_area
 
-                # Second pass: parse other annotations
-                for ann in annotations:
-                    ann_type = ann.get("type", "")
-                    shape = ann.get("shape", "rectangle")
+                        if matcher:
+                            matchers_list.append(matcher)
+                            logger.info(
+                                f"✅ [{serial_number}] Matcher {template_idx + 1}/{num_templates} initialized"
+                            )
+                        else:
+                            logger.error(
+                                f"❌ [{serial_number}] Failed to create matcher {template_idx + 1}/{num_templates}"
+                            )
 
-                    if ann_type == "template":
-                        x, y = ann.get("x", 0), ann.get("y", 0)
-                        w, h = ann.get("width", 0), ann.get("height", 0)
+                    if matchers_list:
+                        # Store as list for single camera multi-template
+                        self.camera_matchers[serial_number] = matchers_list
+                        initialized_count += len(matchers_list)
+                        logger.info(
+                            f"[{serial_number}] ✅ {len(matchers_list)}/{num_templates} matchers initialized"
+                        )
+                    else:
+                        logger.error(f"[{serial_number}] Failed to initialize any matchers")
 
-                        x1, y1 = int(x * img_w), int(y * img_h)
-                        x2, y2 = int((x + w) * img_w), int((y + h) * img_h)
-
-                        template_bbox = {
-                            "type": "template",
-                            "points": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
-                        }
-
-                    elif ann_type in ["text", "barcode", "datecode"]:
-                        # Handle text, barcode, datecode with same logic
-                        # Support both polygon (with points) and rectangle (with x,y,width,height)
-                        pixel_points = []
-
-                        if ann.get("points"):
-                            # Polygon format
-                            pixel_points = [
-                                [int(pt[0] * img_w), int(pt[1] * img_h)]
-                                for pt in ann.get("points", [])
-                            ]
-                        elif shape == "rectangle" and ann.get("x") is not None:
-                            # Rectangle format - convert to polygon points
-                            x, y = ann.get("x", 0), ann.get("y", 0)
-                            w, h = ann.get("width", 0), ann.get("height", 0)
-
-                            x1, y1 = int(x * img_w), int(y * img_h)
-                            x2, y2 = int((x + w) * img_w), int((y + h) * img_h)
-
-                            pixel_points = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
-
-                        if pixel_points:
-                            other_bboxes.append({
-                                "type": ann_type,
-                                "text": ann.get("text", ""),
-                                "points": pixel_points
-                            })
-
-                if not template_bbox:
-                    logger.error(f"No template bbox for camera {serial_number}")
-                    continue
-
-                # Process crop_area if exists
-                final_template_path = template_path
-                if crop_area:
-                    logger.info(f"[{serial_number}] Applying crop_area to template and annotations")
-
-                    # Crop template image
-                    template_img_cropped = template_img[
-                        crop_area["y1"]:crop_area["y2"],
-                        crop_area["x1"]:crop_area["x2"]
-                    ]
-
-                    # Save cropped template
-                    cropped_template_path = temp_dir / f"template_{serial_number}_cropped.jpg"
-                    cv2.imwrite(str(cropped_template_path), template_img_cropped)
-                    final_template_path = cropped_template_path
-
+                else:
+                    # Multiple cameras OR single camera with single template
+                    # Use first template only (existing logic)
                     logger.info(
-                        f"[{serial_number}] Cropped template saved: "
-                        f"{template_img_cropped.shape[1]}x{template_img_cropped.shape[0]}"
+                        f"[{serial_number}] Standard scenario: using first template only"
                     )
 
-                    # Adjust template_bbox to cropped coordinates
-                    offset_x = crop_area["x1"]
-                    offset_y = crop_area["y1"]
+                    template_data = camera.templates[0]
+                    verbose = (initialized_count == 0)  # Only verbose for first matcher
 
-                    template_bbox["points"] = [
-                        [pt[0] - offset_x, pt[1] - offset_y]
-                        for pt in template_bbox["points"]
-                    ]
-
-                    # Adjust other_bboxes to cropped coordinates
-                    for bbox in other_bboxes:
-                        bbox["points"] = [
-                            [pt[0] - offset_x, pt[1] - offset_y]
-                            for pt in bbox["points"]
-                        ]
-
-                    logger.info(
-                        f"[{serial_number}] Adjusted {len(other_bboxes) + 1} bbox(es) to cropped coordinates"
+                    matcher = self._create_single_matcher(
+                        camera=camera,
+                        template_data=template_data,
+                        template_idx=0,
+                        temp_dir=temp_dir,
+                        backend_dir=backend_dir,
+                        verbose=verbose
                     )
 
-                # Create annotation file for this camera
-                ann_json_path = temp_dir / f"annotations_{serial_number}.json"
-                ann_data = {
-                    "_template_image": str(final_template_path),
-                    str(final_template_path): [template_bbox] + other_bboxes
-                }
-
-                with open(ann_json_path, "w") as f:
-                    json.dump(ann_data, f, indent=2)
-
-                # Initialize matcher for this camera
-                matcher = SuperPointMatcherTRT(
-                    json_path=str(ann_json_path),
-                    engine_path=self.engine_path,
-                    scale=1.0,
-                    verbose=(initialized_count == 0)  # Only verbose for first matcher
-                )
-
-                # Store crop_area metadata in matcher for use during inference
-                matcher.crop_area = crop_area
-
-                self.camera_matchers[serial_number] = matcher
-                initialized_count += 1
-                logger.info(f"✅ Matcher {initialized_count} initialized for camera {serial_number}")
+                    if matcher:
+                        # Store as single matcher (backward compatible)
+                        self.camera_matchers[serial_number] = matcher
+                        initialized_count += 1
+                        logger.info(f"✅ [{serial_number}] Matcher initialized (first template)")
 
             logger.info(f"Initialized {initialized_count} matchers using dynamic batch engine")
             return initialized_count
@@ -680,153 +773,301 @@ class InferenceHandler:
             if len(cameras_to_process) == 0:
                 logger.warning("No cameras to process")
             elif len(cameras_to_process) == 1:
-                # Single camera - use original match_array (no batch overhead)
+                # Single camera - check if multi-template or single template
                 camera = cameras_to_process[0]
                 serial_number = camera.serial_number
-                first_frame = results[serial_number]['frames'][0]
+                camera_frames = results[serial_number]['frames']
 
-                logger.info(f"Running single-camera inference on {serial_number}")
+                matcher_or_list = self.camera_matchers.get(serial_number)
 
-                inference_result_data = "PASS"
-                confidence = 0.0
-                inliers = 0
-                total_matches = 0
-                timings = {}
-                transformed_bboxes = []
+                if isinstance(matcher_or_list, list):
+                    # ✅ SINGLE CAMERA, MULTIPLE TEMPLATES - USE BATCH INFERENCE
+                    matchers_list = matcher_or_list
+                    num_frames = len(camera_frames)
+                    num_matchers = len(matchers_list)
 
-                matcher = self.camera_matchers.get(serial_number)
-                if matcher:
-                    try:
-                        # Get crop_area from matcher metadata
-                        crop_area = getattr(matcher, 'crop_area', None)
+                    logger.info(
+                        f"[Job #{job_id}] Single camera BATCH inference: "
+                        f"{num_frames} frames with {num_matchers} templates"
+                    )
 
-                        # Crop frame if needed
-                        frame_for_inference = self._crop_frame_if_needed(first_frame, crop_area)
-
-                        if crop_area:
-                            logger.info(
-                                f"[{serial_number}] Using cropped frame: "
-                                f"{frame_for_inference.shape[1]}x{frame_for_inference.shape[0]}"
-                            )
-
-                        # Run inference on (possibly cropped) frame
-                        match_result = matcher.match_array(
-                            target_img_array=frame_for_inference,
-                            score_threshold=0.3,
-                            ransac_threshold=5.0
+                    if num_frames != num_matchers:
+                        logger.error(
+                            f"[Job #{job_id}] Frame/template mismatch: "
+                            f"{num_frames} frames vs {num_matchers} templates"
                         )
+                        overall_pass_fail = "ERROR"
+                        camera_inference_results[serial_number] = {
+                            'overall_result': 'ERROR',
+                            'frames': [{
+                                'frame_idx': idx,
+                                'result': 'ERROR',
+                                'error': 'Frame/template count mismatch',
+                                'confidence': 0.0,
+                                'inliers': 0,
+                                'total_matches': 0,
+                                'timings': {},
+                                'transformed_bboxes': [],
+                                'text_verification': None
+                            } for idx in range(num_frames)]
+                        }
+                    else:
+                        # Prepare batch inputs
+                        target_imgs = []
+                        crop_areas = []
 
-                        # Transform results back to full image coordinates
-                        match_result = self._transform_results_to_full_image(match_result, crop_area)
+                        for frame_idx, (frame, matcher) in enumerate(zip(camera_frames, matchers_list)):
+                            crop_area = getattr(matcher, 'crop_area', None)
+                            frame_for_inference = self._crop_frame_if_needed(frame, crop_area)
+                            target_imgs.append(frame_for_inference)
+                            crop_areas.append(crop_area)
 
-                        if match_result.get('success', False):
-                            confidence = float(match_result.get('confidence', 0.0))
-                            inliers = int(match_result.get('inliers', 0))
-                            total_matches = int(match_result.get('total_matches', 0))
-                            timings = match_result.get('timings', {})
-                            transformed_bboxes = match_result.get('transformed_bboxes', [])
-
-                            # Check function_type for specialized logic
-                            text_verification = None
-                            if camera.function_type == 'Check_Type_Product':
-                                logger.info(f"Running text verification for {serial_number} (Check_Type_Product)")
-
-                                # Verify text regions
-                                text_verification = self.verify_text_regions(
-                                    frame_img=first_frame,
-                                    transformed_bboxes=transformed_bboxes,
-                                    expected_texts=camera.expected_texts,
-                                    camera=camera
+                            if crop_area:
+                                logger.debug(
+                                    f"[Frame {frame_idx}] Using cropped frame: "
+                                    f"{frame_for_inference.shape[1]}x{frame_for_inference.shape[0]}"
                                 )
 
-                                # Determine PASS/FAIL based on text match
-                                if text_verification['all_match']:
+                        try:
+                            # ⭐ RUN BATCH INFERENCE (SINGLE TRT CALL!)
+                            batch_result = matchers_list[0].match_batch(
+                                target_imgs=target_imgs,
+                                templates=matchers_list,
+                                score_threshold=0.3,
+                                ransac_threshold=5.0
+                            )
+
+                            if not batch_result.get('success', False):
+                                logger.error(f"Batch inference failed: {batch_result.get('error')}")
+                                overall_pass_fail = "ERROR"
+                                camera_inference_results[serial_number] = {
+                                    'overall_result': 'ERROR',
+                                    'frames': [{
+                                        'frame_idx': idx,
+                                        'result': 'ERROR',
+                                        'error': batch_result.get('error', 'Unknown error'),
+                                        'confidence': 0.0,
+                                        'inliers': 0,
+                                        'total_matches': 0,
+                                        'timings': {},
+                                        'transformed_bboxes': [],
+                                        'text_verification': None
+                                    } for idx in range(num_frames)]
+                                }
+                            else:
+                                logger.info(
+                                    f"[Job #{job_id}] Batch inference complete: "
+                                    f"total={batch_result['batch_timings']['total']:.1f}ms, "
+                                    f"trt={batch_result['batch_timings']['trt_inference']:.1f}ms"
+                                )
+
+                                # Process results for each frame
+                                frame_results = []
+                                overall_pass_fail = "PASS"  # Default
+
+                                for frame_idx, result in enumerate(batch_result['results']):
+                                    frame = camera_frames[frame_idx]
+                                    crop_area = crop_areas[frame_idx]
+
+                                    # Transform back to full image coordinates
+                                    result = self._transform_results_to_full_image(result, crop_area)
+
+                                    # Determine pass/fail for this frame
                                     inference_result_data = "PASS"
-                                else:
-                                    inference_result_data = "FAIL"
-                                    logger.warning(
-                                        f"Text verification FAILED for {serial_number}: "
-                                        f"{len([r for r in text_verification['results'] if not r['match']])} mismatches"
+                                    confidence = 0.0
+                                    inliers = 0
+                                    total_matches = 0
+                                    timings = {}
+                                    transformed_bboxes = []
+                                    text_verification = None
+
+                                    if result.get('success', False):
+                                        confidence = float(result.get('confidence', 0.0))
+                                        inliers = int(result.get('inliers', 0))
+                                        total_matches = int(result.get('total_matches', 0))
+                                        timings = result.get('timings', {})
+                                        transformed_bboxes = result.get('transformed_bboxes', [])
+
+                                        # Check function_type for text verification
+                                        if camera.function_type == 'Check_Type_Product':
+                                            logger.info(
+                                                f"[Frame {frame_idx}] Running text verification (Check_Type_Product)"
+                                            )
+
+                                            text_verification = self.verify_text_regions(
+                                                frame_img=frame,
+                                                transformed_bboxes=transformed_bboxes,
+                                                expected_texts=camera.expected_texts,
+                                                camera=camera
+                                            )
+
+                                            # PASS/FAIL based on text match
+                                            if text_verification['all_match']:
+                                                inference_result_data = "PASS"
+                                            else:
+                                                inference_result_data = "FAIL"
+
+                                        else:
+                                            # Default: template matching
+                                            if confidence > 0.5 and inliers >= 10:
+                                                inference_result_data = "PASS"
+                                            else:
+                                                inference_result_data = "FAIL"
+
+                                    else:
+                                        inference_result_data = "FAIL"
+                                        timings = result.get('timings', {})
+
+                                    logger.info(
+                                        f"[Frame {frame_idx}] result: {inference_result_data}, "
+                                        f"confidence: {confidence:.2%}, inliers: {inliers}/{total_matches}"
                                     )
 
-                                # Store verification results
+                                    # Store frame result
+                                    frame_results.append({
+                                        'frame_idx': frame_idx,
+                                        'result': inference_result_data,
+                                        'confidence': confidence,
+                                        'inliers': inliers,
+                                        'total_matches': total_matches,
+                                        'timings': timings,
+                                        'transformed_bboxes': transformed_bboxes,
+                                        'text_verification': text_verification
+                                    })
+
+                                    # Update overall result (Option A: All must PASS)
+                                    if inference_result_data in ["FAIL", "ERROR"]:
+                                        overall_pass_fail = inference_result_data
+
+                                # Store structured results
                                 camera_inference_results[serial_number] = {
-                                    "result": inference_result_data,
-                                    "confidence": confidence,
-                                    "inliers": inliers,
-                                    "total_matches": total_matches,
-                                    "timings": timings,
-                                    "transformed_bboxes": transformed_bboxes,
-                                    "text_verification": text_verification
+                                    'overall_result': overall_pass_fail,
+                                    'frames': frame_results
                                 }
 
-                            elif camera.function_type == 'OCR':
-                                # TODO: Implement OCR logic later
-                                # For now, use standard template matching
-                                if confidence > 0.5 and inliers >= 10:
-                                    inference_result_data = "PASS"
-                                else:
-                                    inference_result_data = "FAIL"
+                                logger.info(
+                                    f"[Job #{job_id}] Single camera inference complete: {overall_pass_fail}"
+                                )
 
-                                camera_inference_results[serial_number] = {
-                                    "result": inference_result_data,
-                                    "confidence": confidence,
-                                    "inliers": inliers,
-                                    "total_matches": total_matches,
-                                    "timings": timings,
-                                    "transformed_bboxes": transformed_bboxes
-                                }
-
-                            else:
-                                # Default: template matching logic
-                                if confidence > 0.5 and inliers >= 10:
-                                    inference_result_data = "PASS"
-                                else:
-                                    inference_result_data = "FAIL"
-
-                                camera_inference_results[serial_number] = {
-                                    "result": inference_result_data,
-                                    "confidence": confidence,
-                                    "inliers": inliers,
-                                    "total_matches": total_matches,
-                                    "timings": timings,
-                                    "transformed_bboxes": transformed_bboxes
-                                }
-
-                        else:
-                            inference_result_data = "FAIL"
-                            timings = match_result.get('timings', {})
+                        except Exception as e:
+                            logger.error(f"Error running batch inference: {e}")
+                            import traceback
+                            traceback.print_exc()
+                            overall_pass_fail = "ERROR"
                             camera_inference_results[serial_number] = {
-                                "result": inference_result_data,
-                                "confidence": 0.0,
-                                "inliers": 0,
-                                "total_matches": 0,
-                                "timings": timings,
-                                "transformed_bboxes": []
+                                'overall_result': 'ERROR',
+                                'frames': [{
+                                    'frame_idx': idx,
+                                    'result': 'ERROR',
+                                    'error': str(e),
+                                    'confidence': 0.0,
+                                    'inliers': 0,
+                                    'total_matches': 0,
+                                    'timings': {},
+                                    'transformed_bboxes': [],
+                                    'text_verification': None
+                                } for idx in range(num_frames)]
                             }
 
-                        logger.info(
-                            f"Camera {serial_number} inference: {inference_result_data}, "
-                            f"confidence: {confidence:.2%}, "
-                            f"inliers: {inliers}/{total_matches}, "
-                            f"time: {timings.get('total', 0):.1f}ms"
-                        )
-                    except Exception as e:
-                        logger.error(f"Error running inference: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        inference_result_data = "ERROR"
+                else:
+                    # ✅ SINGLE CAMERA, SINGLE TEMPLATE (EXISTING LOGIC)
+                    matcher = matcher_or_list
+                    first_frame = camera_frames[0]
+
+                    logger.info(f"[Job #{job_id}] Running single-camera inference on {serial_number}")
+
+                    inference_result_data = "PASS"
+                    confidence = 0.0
+                    inliers = 0
+                    total_matches = 0
+                    timings = {}
+                    transformed_bboxes = []
+                    text_verification = None
+
+                    if matcher:
+                        try:
+                            # Get crop_area from matcher metadata
+                            crop_area = getattr(matcher, 'crop_area', None)
+
+                            # Crop frame if needed
+                            frame_for_inference = self._crop_frame_if_needed(first_frame, crop_area)
+
+                            if crop_area:
+                                logger.info(
+                                    f"[{serial_number}] Using cropped frame: "
+                                    f"{frame_for_inference.shape[1]}x{frame_for_inference.shape[0]}"
+                                )
+
+                            # Run inference
+                            match_result = matcher.match_array(
+                                target_img_array=frame_for_inference,
+                                score_threshold=0.3,
+                                ransac_threshold=5.0
+                            )
+
+                            # Transform results back to full image coordinates
+                            match_result = self._transform_results_to_full_image(match_result, crop_area)
+
+                            if match_result.get('success', False):
+                                confidence = float(match_result.get('confidence', 0.0))
+                                inliers = int(match_result.get('inliers', 0))
+                                total_matches = int(match_result.get('total_matches', 0))
+                                timings = match_result.get('timings', {})
+                                transformed_bboxes = match_result.get('transformed_bboxes', [])
+
+                                # Check function_type
+                                if camera.function_type == 'Check_Type_Product':
+                                    logger.info(f"Running text verification for {serial_number}")
+
+                                    text_verification = self.verify_text_regions(
+                                        frame_img=first_frame,
+                                        transformed_bboxes=transformed_bboxes,
+                                        expected_texts=camera.expected_texts,
+                                        camera=camera
+                                    )
+
+                                    if text_verification['all_match']:
+                                        inference_result_data = "PASS"
+                                    else:
+                                        inference_result_data = "FAIL"
+
+                                else:
+                                    # Default: template matching
+                                    if confidence > 0.5 and inliers >= 10:
+                                        inference_result_data = "PASS"
+                                    else:
+                                        inference_result_data = "FAIL"
+
+                            else:
+                                inference_result_data = "FAIL"
+                                timings = match_result.get('timings', {})
+
+                            logger.info(
+                                f"Camera {serial_number} inference: {inference_result_data}, "
+                                f"confidence: {confidence:.2%}, "
+                                f"inliers: {inliers}/{total_matches}, "
+                                f"time: {timings.get('total', 0):.1f}ms"
+                            )
+
+                        except Exception as e:
+                            logger.error(f"Error running inference: {e}")
+                            import traceback
+                            traceback.print_exc()
+                            inference_result_data = "ERROR"
+
+                        # Store result (backward compatible structure)
                         camera_inference_results[serial_number] = {
-                            "result": "ERROR",
-                            "confidence": 0.0,
-                            "inliers": 0,
-                            "total_matches": 0,
-                            "timings": {},
-                            "transformed_bboxes": []
+                            "result": inference_result_data,
+                            "confidence": confidence,
+                            "inliers": inliers,
+                            "total_matches": total_matches,
+                            "timings": timings,
+                            "transformed_bboxes": transformed_bboxes,
+                            "text_verification": text_verification
                         }
 
-                if inference_result_data in ["FAIL", "ERROR"]:
-                    overall_pass_fail = inference_result_data
+                    if inference_result_data in ["FAIL", "ERROR"]:
+                        overall_pass_fail = inference_result_data
 
             else:
                 # Multiple cameras - use batch inference
@@ -1111,33 +1352,71 @@ class InferenceHandler:
             camera_inference = camera_inference_results.get(serial_number, {})
             has_inference = bool(camera_inference)
 
+            # Detect structure type
+            is_multi_frame = 'frames' in camera_inference  # NEW structure for multi-template
+
             # Get crop_area from matcher if available
             matcher = self.camera_matchers.get(serial_number)
-            crop_area = getattr(matcher, 'crop_area', None) if matcher else None
+            if isinstance(matcher, list):
+                # Multi-template: no single crop_area
+                crop_area = None
+            else:
+                crop_area = getattr(matcher, 'crop_area', None) if matcher else None
 
             # Build frame results
             frame_results = []
             for idx, frame_img in enumerate(camera_frames):
-                # Determine if this is the first frame of a camera with inference results
-                is_inference_frame = (has_inference and idx == 0)
-
                 # Get inference data for this frame
-                if is_inference_frame:
-                    frame_pass_fail = camera_inference["result"]
-                    frame_confidence = camera_inference["confidence"]
-                    frame_inliers = camera_inference["inliers"]
-                    frame_total_matches = camera_inference["total_matches"]
-                    frame_timings = camera_inference["timings"]
-                    frame_bboxes = camera_inference["transformed_bboxes"]
-                    frame_text_verification = camera_inference.get("text_verification")
+                if is_multi_frame:
+                    # ✅ NEW: Multi-template scenario
+                    if idx < len(camera_inference['frames']):
+                        frame_data = camera_inference['frames'][idx]
+                        frame_pass_fail = frame_data['result']
+                        frame_confidence = frame_data['confidence']
+                        frame_inliers = frame_data['inliers']
+                        frame_total_matches = frame_data['total_matches']
+                        frame_timings = frame_data['timings']
+                        frame_bboxes = frame_data['transformed_bboxes']
+                        frame_text_verification = frame_data.get('text_verification')
+
+                        # Get crop_area for this frame
+                        if isinstance(matcher, list) and idx < len(matcher):
+                            frame_crop_area = getattr(matcher[idx], 'crop_area', None)
+                        else:
+                            frame_crop_area = None
+                    else:
+                        # Frame without inference result
+                        frame_pass_fail = "PASS"
+                        frame_confidence = 0.0
+                        frame_inliers = 0
+                        frame_total_matches = 0
+                        frame_timings = None
+                        frame_bboxes = None
+                        frame_text_verification = None
+                        frame_crop_area = None
+
                 else:
-                    frame_pass_fail = "PASS"
-                    frame_confidence = 0.0
-                    frame_inliers = 0
-                    frame_total_matches = 0
-                    frame_timings = None
-                    frame_bboxes = None
-                    frame_text_verification = None
+                    # ✅ EXISTING: Single template scenario
+                    is_inference_frame = (has_inference and idx == 0)
+
+                    if is_inference_frame:
+                        frame_pass_fail = camera_inference["result"]
+                        frame_confidence = camera_inference["confidence"]
+                        frame_inliers = camera_inference["inliers"]
+                        frame_total_matches = camera_inference["total_matches"]
+                        frame_timings = camera_inference["timings"]
+                        frame_bboxes = camera_inference["transformed_bboxes"]
+                        frame_text_verification = camera_inference.get("text_verification")
+                    else:
+                        frame_pass_fail = "PASS"
+                        frame_confidence = 0.0
+                        frame_inliers = 0
+                        frame_total_matches = 0
+                        frame_timings = None
+                        frame_bboxes = None
+                        frame_text_verification = None
+
+                    frame_crop_area = crop_area
 
                 # Encode image for display
                 image_path = None
@@ -1155,7 +1434,7 @@ class InferenceHandler:
                         confidence=frame_confidence,
                         inliers=frame_inliers,
                         total_matches=frame_total_matches,
-                        crop_area=crop_area
+                        crop_area=frame_crop_area
                     )
                 else:
                     # PASS: Only encode base64 for display (no disk storage)
@@ -1165,7 +1444,7 @@ class InferenceHandler:
                         confidence=frame_confidence,
                         inliers=frame_inliers,
                         total_matches=frame_total_matches,
-                        crop_area=crop_area
+                        crop_area=frame_crop_area
                     )
                     # image_path remains None (not saved to disk)
 
@@ -1202,13 +1481,39 @@ class InferenceHandler:
         # Build detailed per-camera stats
         per_camera_detailed_stats = []
         for serial_number, camera_inference in camera_inference_results.items():
-            all_confidences.append(camera_inference["confidence"])
-            all_inliers.append(camera_inference["inliers"])
-            all_total_matches.append(camera_inference["total_matches"])
+            # Check if multi-frame structure
+            if 'frames' in camera_inference:
+                # Multi-template: aggregate from frames
+                frame_results = camera_inference['frames']
+                frame_confidences = [f['confidence'] for f in frame_results]
+                frame_inliers = [f['inliers'] for f in frame_results]
+                frame_total_matches = [f['total_matches'] for f in frame_results]
 
-            # Collect timing from each camera
-            if not all_timings and camera_inference["timings"]:
-                all_timings = camera_inference["timings"]
+                avg_confidence = sum(frame_confidences) / len(frame_confidences) if frame_confidences else 0.0
+                total_inliers = sum(frame_inliers)
+                total_matches = sum(frame_total_matches)
+
+                all_confidences.extend(frame_confidences)
+                all_inliers.extend(frame_inliers)
+                all_total_matches.extend(frame_total_matches)
+
+                # Collect timing from first frame
+                if not all_timings and frame_results and frame_results[0]["timings"]:
+                    all_timings = frame_results[0]["timings"]
+
+            else:
+                # Single template: use values directly
+                all_confidences.append(camera_inference["confidence"])
+                all_inliers.append(camera_inference["inliers"])
+                all_total_matches.append(camera_inference["total_matches"])
+
+                avg_confidence = camera_inference["confidence"]
+                total_inliers = camera_inference["inliers"]
+                total_matches = camera_inference["total_matches"]
+
+                # Collect timing from each camera
+                if not all_timings and camera_inference["timings"]:
+                    all_timings = camera_inference["timings"]
 
             # Find this camera's result to get frame stats
             camera_result = next((cr for cr in camera_results if cr["serial_number"] == serial_number), None)
@@ -1220,15 +1525,15 @@ class InferenceHandler:
                 error_count = sum(1 for f in frames if f["pass_fail"] == "ERROR")
 
                 # Calculate average confidence for all frames of this camera
-                frame_confidences = [f["confidence"] for f in frames if f["confidence"] > 0]
-                avg_frame_confidence = sum(frame_confidences) / len(frame_confidences) if frame_confidences else camera_inference["confidence"]
+                frame_confidences_list = [f["confidence"] for f in frames if f["confidence"] > 0]
+                avg_frame_confidence = sum(frame_confidences_list) / len(frame_confidences_list) if frame_confidences_list else avg_confidence
 
                 per_camera_detailed_stats.append({
                     "serial_number": serial_number,
-                    "confidence": camera_inference["confidence"],
-                    "inliers": camera_inference["inliers"],
-                    "total_matches": camera_inference["total_matches"],
-                    "timings": camera_inference["timings"],  # Per-camera timing
+                    "confidence": avg_confidence,
+                    "inliers": total_inliers,
+                    "total_matches": total_matches,
+                    "timings": all_timings if all_timings else {},  # Per-camera timing
                     "frame_stats": {
                         "total_frames": len(frames),
                         "pass_count": pass_count,

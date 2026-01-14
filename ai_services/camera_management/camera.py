@@ -73,7 +73,8 @@ class Camera:
         self.exposure_time = 500  # μs (default 500μs = 0.5ms)
         self.gain = 1.0
         self.pixel_format = pixel_format  # From DB config
-        self.delay_trigger = 100  # ms
+        self.delay_trigger = 100  # ms (delay from sensor to first frame)
+        self.delay_interval = 500  # ms (delay between frames for multi-template)
 
         # Reject config (from recipe)
         self.delay_reject = 4000  # ms (default: 4s from camera to reject station)
@@ -356,6 +357,8 @@ class Camera:
             self.pixel_format = settings["pixel_format"]
         if "delay_trigger" in settings:
             self.delay_trigger = settings["delay_trigger"]
+        if "delay_interval" in settings:
+            self.delay_interval = settings["delay_interval"]
 
         # Trigger mode
         if "trigger_mode" in settings:
@@ -543,13 +546,17 @@ class Camera:
 
     def execute_software_trigger_immediate(self) -> Dict[str, Any]:
         """
-        Execute software trigger IMMEDIATELY without delay
+        Execute software trigger IMMEDIATELY without delay_trigger
 
         Differences from execute_software_trigger():
         - OLD: time.sleep(delay_trigger) before each frame
-        - NEW: NO sleep, capture immediately
+        - NEW: NO delay_trigger, but APPLY delay_interval between frames
 
-        This is called from Timer callback after delay has already passed
+        This is called from Timer callback after delay_trigger has already passed
+
+        For multi-template capture:
+        - Frame 0: Capture immediately (no delay)
+        - Frame 1+: Apply delay_interval before capture
 
         Returns:
             Dict with success status and captured frames
@@ -561,15 +568,27 @@ class Camera:
             return {'success': False, 'error': 'No templates loaded'}
 
         self.captured_frames = []
+        num_templates = len(self.templates)
 
         try:
-            logger.info(
-                f"[{self.serial_number}] Capturing {len(self.templates)} frames "
-                f"IMMEDIATELY (no delay)"
-            )
+            if num_templates > 1:
+                logger.info(
+                    f"[{self.serial_number}] Capturing {num_templates} frames "
+                    f"with delay_interval={self.delay_interval}ms between frames"
+                )
+            else:
+                logger.info(
+                    f"[{self.serial_number}] Capturing 1 frame IMMEDIATELY"
+                )
 
             for idx, template in enumerate(self.templates):
-                # ⭐ NO DELAY - Timer already handled it!
+                # Apply delay_interval between frames (skip for first frame)
+                if idx > 0:
+                    time.sleep(self.delay_interval / 1000.0)
+                    logger.debug(
+                        f"[{self.serial_number}] Delayed {self.delay_interval}ms "
+                        f"before frame {idx+1}"
+                    )
 
                 # Execute software trigger
                 self.camera.ExecuteSoftwareTrigger()
@@ -594,7 +613,7 @@ class Camera:
                 if len(img_array.shape) == 2:
                     img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
 
-                # Write to shared memory (Option B - write all frames)
+                # Write to shared memory
                 metadata = {
                     "timestamp": time.time(),
                     "mode": self.mode.value,
@@ -612,7 +631,7 @@ class Camera:
                 grab_result.Release()
 
                 logger.debug(
-                    f"[{self.serial_number}] Captured frame {idx+1}/{len(self.templates)}"
+                    f"[{self.serial_number}] Captured frame {idx+1}/{num_templates}"
                 )
 
             logger.info(

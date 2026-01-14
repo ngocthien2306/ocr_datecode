@@ -335,13 +335,13 @@ stateDiagram-v2
 
 ## 🔧 Component Interaction Matrix
 
-| Component | Triggers | Inference | Reject | Camera | Utils |
-|-----------|----------|-----------|--------|--------|-------|
-| **TriggerHandler** | - | ✓ Emit event | - | ✓ Capture | ✓ DI read |
-| **InferenceHandler** | - | - | ✓ Schedule/Cancel | ✓ Read config | - |
-| **RejectScheduler** | - | - | - | - | ✓ DO write |
-| **CameraManager** | ✓ Build map | ✓ Process | ✓ Init/Shutdown | ✓ Manage pool | - |
-| **Camera** | ✓ Execute trigger | - | - | - | - |
+| Component                  | Triggers           | Inference     | Reject             | Camera         | Utils       |
+| -------------------------- | ------------------ | ------------- | ------------------ | -------------- | ----------- |
+| **TriggerHandler**   | -                  | ✓ Emit event | -                  | ✓ Capture     | ✓ DI read  |
+| **InferenceHandler** | -                  | -             | ✓ Schedule/Cancel | ✓ Read config | -           |
+| **RejectScheduler**  | -                  | -             | -                  | -              | ✓ DO write |
+| **CameraManager**    | ✓ Build map       | ✓ Process    | ✓ Init/Shutdown   | ✓ Manage pool | -           |
+| **Camera**           | ✓ Execute trigger | -             | -                  | -              | -           |
 
 ---
 
@@ -437,6 +437,7 @@ graph TB
 ```
 
 **Thread Summary:**
+
 - **Main Thread (1):** Event loop, CUDA context, camera management
 - **DI Polling Thread (1):** 100Hz polling, edge detection
 - **Inference Workers (2):** Parallel inference execution
@@ -483,6 +484,7 @@ graph TB
 ```
 
 **Lock Hierarchy:**
+
 1. `CameraManager._lock` (RLock) - Highest level, camera pool operations
 2. `TriggerHandler._group_lock` - Capture group operations
 3. `InferenceHandler._job_lock` - Job tracking
@@ -499,44 +501,33 @@ graph TB
 flowchart TD
     A[DI Edge Event] -->|T_sensor| B[Create Capture Group]
     B --> C[Schedule 3 Camera Timers]
-    C --> D1[Camera1 Capture<br/>delay=1.5s]
-    C --> D2[Camera2 Capture<br/>delay=1.5s]
-    C --> D3[Camera3 Capture<br/>delay=1.6s]
-
+    C --> D1["Camera1 Capture<br/>delay=1.5s"]
+    C --> D2["Camera2 Capture<br/>delay=1.5s"]
+    C --> D3["Camera3 Capture<br/>delay=1.6s"]
     D1 --> E[All Cameras Complete]
     D2 --> E
     D3 --> E
-
     E -->|T_capture_complete| F[Emit frames_captured Event]
-
     F --> G[Submit Async Inference Job]
-
     G --> H{Queue Depth?}
-    H -->|< 2| I[Start Immediately]
-    H -->|≥ 2| J[Queue for Next Worker]
-
+    H -->|"< 2"| I[Start Immediately]
+    H -->|">= 2"| J[Queue for Next Worker]
     I --> K[Run TensorRT Inference]
     J --> K
-
-    K -->|inference_time| L{Result?}
-
+    K --> L{Result?}
     L -->|FAIL/ERROR| M[Calculate Reject Timing]
     L -->|PASS| N[Cancel Reject if Scheduled]
-
     M --> O[Schedule Reject Timer]
     O --> P[Add to Priority Queue]
-
-    P --> Q{T_now ≥ T_reject?}
+    P --> Q{"T_now >= T_reject?"}
     Q -->|No| R[Sleep until ready]
     R --> Q
     Q -->|Yes| S[Trigger DO Pulse]
-
-    S --> T[DO2 = HIGH]
-    T --> U[Sleep 100ms]
-    U --> V[DO2 = LOW]
-    V --> W[Product Rejected! 🔴]
-
-    N --> X[Product Continues ✓]
+    S --> T["DO2 = HIGH"]
+    T --> U["Sleep 100ms"]
+    U --> V["DO2 = LOW"]
+    V --> W[Product Rejected]
+    N --> X[Product Continues]
 ```
 
 ---
@@ -544,6 +535,7 @@ flowchart TD
 ## 🎨 Design Patterns Used
 
 ### **1. Observer Pattern**
+
 ```
 CameraManager (Subject)
     ↓ _emit_event()
@@ -552,6 +544,7 @@ CameraManagementService (Observer)
 ```
 
 ### **2. Producer-Consumer Pattern**
+
 ```
 TriggerHandler (Producer)
     → frames_captured events
@@ -560,6 +553,7 @@ InferenceHandler (Consumer)
 ```
 
 ### **3. Priority Queue Pattern**
+
 ```
 RejectScheduler
     → heapq-based priority queue
@@ -567,6 +561,7 @@ RejectScheduler
 ```
 
 ### **4. Thread Pool Pattern**
+
 ```
 InferenceHandler
     → ThreadPoolExecutor (2 workers)
@@ -574,6 +569,7 @@ InferenceHandler
 ```
 
 ### **5. Strategy Pattern**
+
 ```
 Camera.function_type
     → "OCR" strategy
@@ -585,29 +581,29 @@ Camera.function_type
 
 ## 📊 Memory Footprint Estimate
 
-| Component | Memory Usage | Notes |
-|-----------|--------------|-------|
-| Camera (Pylon) | ~50MB each | 3 cameras = 150MB |
-| TensorRT Engine | ~200MB | Shared across jobs |
-| Frame Buffers | ~10MB each | 3 cameras × N frames |
-| Text Recognizer | ~100MB | ONNX model |
-| ThreadPool | ~20MB | 2 workers |
-| Reject Queue | ~1KB | Minimal overhead |
-| **Total Estimate** | **~500-600MB** | Under normal load |
+| Component                | Memory Usage         | Notes                 |
+| ------------------------ | -------------------- | --------------------- |
+| Camera (Pylon)           | ~50MB each           | 3 cameras = 150MB     |
+| TensorRT Engine          | ~200MB               | Shared across jobs    |
+| Frame Buffers            | ~10MB each           | 3 cameras × N frames |
+| Text Recognizer          | ~100MB               | ONNX model            |
+| ThreadPool               | ~20MB                | 2 workers             |
+| Reject Queue             | ~1KB                 | Minimal overhead      |
+| **Total Estimate** | **~500-600MB** | Under normal load     |
 
 ---
 
 ## 🔍 Key Metrics
 
-| Metric | Value | Target |
-|--------|-------|--------|
-| DI Polling Rate | 100Hz | ±10% |
-| Inference Latency | 400-600ms | <800ms |
-| Reject Timing Accuracy | ±50ms | ±100ms acceptable |
-| Throughput | 10 products/min | Scalable to 20+ |
-| Memory Usage | 500-600MB | <1GB |
-| CPU Usage | 20-40% | <60% |
-| GPU Usage | 30-50% | <80% |
+| Metric                 | Value           | Target             |
+| ---------------------- | --------------- | ------------------ |
+| DI Polling Rate        | 100Hz           | ±10%              |
+| Inference Latency      | 400-600ms       | <800ms             |
+| Reject Timing Accuracy | ±50ms          | ±100ms acceptable |
+| Throughput             | 10 products/min | Scalable to 20+    |
+| Memory Usage           | 500-600MB       | <1GB               |
+| CPU Usage              | 20-40%          | <60%               |
+| GPU Usage              | 30-50%          | <80%               |
 
 ---
 
@@ -616,17 +612,20 @@ Camera.function_type
 ### **🐛 BUG: Incorrect Reject Timing Calculation**
 
 **Current Implementation (WRONG):**
+
 ```python
 # In reject_scheduler.py:
 T_reject = T_capture_complete + (delay_reject / 1000.0)
 ```
 
 **Issue:**
+
 - `delay_reject` is measured from **SENSOR** to reject station
 - NOT from camera to reject station!
 - Products arrive at reject BEFORE reject pulse fires
 
 **Correct Implementation:**
+
 ```python
 # Should be:
 T_reject = T_sensor + (delay_reject / 1000.0)
@@ -634,10 +633,12 @@ delay_needed = T_reject - T_inference_done
 ```
 
 **Impact:**
+
 - Products pass reject station before DO pulse
 - 100% reject miss rate!
 
 **Fix Required:**
+
 1. Track `T_sensor` in `TriggerHandler.trigger_cameras_group()`
 2. Pass `T_sensor` through event chain
 3. Update `RejectScheduler.schedule_reject()` to use `T_sensor`
