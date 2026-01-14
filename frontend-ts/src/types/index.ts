@@ -40,6 +40,7 @@ export interface CameraSettings {
   width?: number;
   height?: number;
   delay_trigger?: number;
+  delay_interval?: number;
 }
 
 export interface Camera {

@@ -24,6 +24,7 @@ interface RecipeCamera {
   location: string;
   exposure_time: number;
   delay_trigger: number;
+  delay_interval: number;
   gain: number;
   pixel_format: string;
   trigger_mode: string;  // 'continuous', 'software_trigger', 'hardware_trigger'
@@ -46,6 +47,7 @@ interface FormDataType {
   camera_settings: {
     exposure_time: number;
     delay_trigger: number;
+    delay_interval: number;
     gain: number;
     brightness: number;
     contrast: number;
@@ -90,6 +92,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     camera_settings: {
       exposure_time: 50.0,
       delay_trigger: 100.0,
+      delay_interval: 500.0,
       gain: 1.0,
       brightness: 0.5,
       contrast: 1.0
@@ -151,6 +154,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           location: cam.location || '',
           exposure_time: cam.exposure_time || 50.0,
           delay_trigger: cam.delay_trigger || 100.0,
+          delay_interval: cam.delay_interval || 500.0,
           gain: cam.gain || 1.0,
           pixel_format: cam.pixel_format || 'Mono8',
           trigger_mode: cam.trigger_mode || 'continuous',
@@ -361,6 +365,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       location: camera.location || '',
       exposure_time: 50.0,
       delay_trigger: 100.0,
+      delay_interval: 500.0,
       gain: 1.0,
       pixel_format: 'Mono8',
       trigger_mode: 'continuous',
@@ -1042,13 +1047,25 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                             </div>
                             <div className="form-group">
                               <label>Delay Trigger (ms) <span className="required">*</span></label>
-                              <input 
-                                type="number" 
+                              <input
+                                type="number"
                                 value={camera.delay_trigger}
                                 onChange={(e) => handleCameraConfigChange(camera.camera_id, 'delay_trigger', e.target.value)}
-                                step="0.1" 
-                                min="0" 
+                                step="0.1"
+                                min="0"
                               />
+                            </div>
+                            <div className="form-group">
+                              <label>Delay Interval (ms)</label>
+                              <input
+                                type="number"
+                                value={camera.delay_interval}
+                                onChange={(e) => handleCameraConfigChange(camera.camera_id, 'delay_interval', e.target.value)}
+                                step="10"
+                                min="0"
+                                placeholder="500"
+                              />
+                              <small className="form-help-text">Delay between frames (for multi-template)</small>
                             </div>
                             <div className="form-group">
                               <label>Gain <span className="required">*</span></label>

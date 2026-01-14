@@ -52,7 +52,8 @@ class CameraConfiguration(BaseModel):
 
     # Camera-specific settings for this recipe
     exposure_time: float = Field(..., description="Exposure time in milliseconds")
-    delay_trigger: float = Field(..., description="Delay trigger in milliseconds")
+    delay_trigger: float = Field(..., description="Delay trigger in milliseconds (sensor to first frame)")
+    delay_interval: float = Field(default=500.0, description="Delay between frames in milliseconds (for multi-template)")
     gain: float = Field(default=1.0, description="Camera gain")
 
     # Trigger mode and configuration
@@ -67,6 +68,7 @@ class CameraSettings(BaseModel):
     """Camera configuration settings (deprecated, kept for backward compatibility)"""
     exposure_time: float = Field(..., description="Exposure time in milliseconds")
     delay_trigger: float = Field(..., description="Delay trigger in milliseconds")
+    delay_interval: Optional[float] = Field(default=500.0, description="Delay between frames in milliseconds (for multi-template)")
     # Additional camera settings can be added here
     gain: Optional[float] = None
     brightness: Optional[float] = None
