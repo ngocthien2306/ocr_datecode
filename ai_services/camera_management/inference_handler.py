@@ -591,7 +591,9 @@ class InferenceHandler:
             bbox for bbox in transformed_bboxes
             if bbox.get('type') == 'text'
         ]
-
+        
+        print("transformed_bboxes: ", transformed_bboxes)
+        
         logger.info(f"[{camera.serial_number}] Verifying {len(text_bboxes)} text regions")
         logger.info(f"[{camera.serial_number}] Expected texts dict: {expected_texts}")
         logger.info(f"[{camera.serial_number}] Text bbox annotation indices: {[bbox.get('annotation_index') for bbox in text_bboxes]}")
@@ -674,6 +676,150 @@ class InferenceHandler:
             'all_match': all_match,
             'results': verification_results
         }
+
+    def verify_template_regions(
+        self,
+        frame_img: 'np.ndarray',
+        template_img: 'np.ndarray',
+        transformed_bboxes: List[Dict[str, Any]],
+        original_template_bbox: Dict[str, Any],
+        camera: 'Camera',
+        similarity_threshold: float = 0.85,
+        method: int = cv2.TM_CCOEFF_NORMED
+    ) -> Dict[str, Any]:
+
+        try:
+            # Filter only template type bboxes
+            template_bboxes = [
+                bbox for bbox in transformed_bboxes
+                if bbox.get('type') == 'template'
+            ]
+
+            logger.info(f"[{camera.serial_number}] Verifying {len(template_bboxes)} template regions")
+
+            if not template_bboxes:
+                logger.warning(f"[{camera.serial_number}] No template bbox found in transformed_bboxes")
+                return {
+                    'match': False,
+                    'similarity': 0.0,
+                    'threshold': similarity_threshold,
+                    'method': 'TM_CCOEFF_NORMED',
+                    'template_bbox': None,
+                    'error': 'No template bbox found'
+                }
+
+            # Get the transformed template bbox (for target crop)
+            transformed_template_bbox = template_bboxes[0]
+            transformed_points = transformed_template_bbox.get('points', [])
+
+            if len(transformed_points) < 4:
+                logger.warning(f"[{camera.serial_number}] Invalid transformed template bbox points")
+                return {
+                    'match': False,
+                    'similarity': 0.0,
+                    'threshold': similarity_threshold,
+                    'method': 'TM_CCOEFF_NORMED',
+                    'template_bbox': transformed_template_bbox,
+                    'error': 'Invalid transformed bbox points'
+                }
+
+            # Get original template bbox points (for template crop)
+            original_points = original_template_bbox.get('points', [])
+            if len(original_points) < 4:
+                logger.warning(f"[{camera.serial_number}] Invalid original template bbox points")
+                return {
+                    'match': False,
+                    'similarity': 0.0,
+                    'threshold': similarity_threshold,
+                    'method': 'TM_CCOEFF_NORMED',
+                    'template_bbox': transformed_template_bbox,
+                    'error': 'Invalid original bbox points'
+                }
+
+            # Crop template region from both images using perspective transform
+            # IMPORTANT:
+            # - Template crop: Use ORIGINAL bbox points from template image
+            # - Target crop: Use TRANSFORMED bbox points (after homography) from target image
+            from camera_management.ocr_utils import crop_text_region
+
+            cropped_template = crop_text_region(template_img, original_points)
+            cropped_target = crop_text_region(frame_img, transformed_points)
+
+            # Save debug images
+            path_save = "/home/demo/Source/ocr_datecode/ai_services/test_result"
+            cv2.imwrite(f"{path_save}/template_crop_{camera.serial_number}.png", cropped_template)
+            cv2.imwrite(f"{path_save}/target_crop_{camera.serial_number}.png", cropped_target)
+
+            # Ensure both crops are the same size
+            if cropped_template.shape != cropped_target.shape:
+                logger.warning(
+                    f"[{camera.serial_number}] Template and target crop size mismatch: "
+                    f"{cropped_template.shape} vs {cropped_target.shape}"
+                )
+                # Resize target to match template
+                cropped_target = cv2.resize(
+                    cropped_target,
+                    (cropped_template.shape[1], cropped_template.shape[0])
+                )
+
+            # Convert to grayscale for template matching (more robust)
+            if len(cropped_template.shape) == 3:
+                template_gray = cv2.cvtColor(cropped_template, cv2.COLOR_BGR2GRAY)
+            else:
+                template_gray = cropped_template
+
+            if len(cropped_target.shape) == 3:
+                target_gray = cv2.cvtColor(cropped_target, cv2.COLOR_BGR2GRAY)
+            else:
+                target_gray = cropped_target
+
+            # Use cv2.matchTemplate for pixel-level comparison
+            # Since both images are the same size, result will be a single value
+            result = cv2.matchTemplate(target_gray, template_gray, method)
+
+            # Get similarity score
+            if method == cv2.TM_SQDIFF_NORMED:
+                # For SQDIFF, lower is better, so invert: similarity = 1 - score
+                similarity_score = 1.0 - result[0, 0]
+            else:
+                # For CCOEFF_NORMED and CCORR_NORMED, higher is better
+                similarity_score = result[0, 0]
+
+            # Determine if it matches threshold
+            match = similarity_score >= similarity_threshold
+
+            method_name = {
+                cv2.TM_CCOEFF_NORMED: 'TM_CCOEFF_NORMED',
+                cv2.TM_CCORR_NORMED: 'TM_CCORR_NORMED',
+                cv2.TM_SQDIFF_NORMED: 'TM_SQDIFF_NORMED'
+            }.get(method, 'UNKNOWN')
+
+            logger.info(
+                f"[{camera.serial_number}] Template verification: "
+                f"similarity={similarity_score:.4f}, threshold={similarity_threshold}, "
+                f"match={match}, method={method_name}"
+            )
+
+            return {
+                'match': match,
+                'similarity': float(similarity_score),
+                'threshold': similarity_threshold,
+                'method': method_name,
+                'template_bbox': transformed_template_bbox
+            }
+
+        except Exception as e:
+            logger.error(f"[{camera.serial_number}] Error verifying template region: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'match': False,
+                'similarity': 0.0,
+                'threshold': similarity_threshold,
+                'method': 'FAIL',
+                'template_bbox': None,
+                'error': str(e)
+            }
 
     def process_inference_async(
         self,
@@ -809,19 +955,20 @@ class InferenceHandler:
                             f"[Job #{job_id}] Frame/template mismatch: "
                             f"{num_frames} frames vs {num_matchers} templates"
                         )
-                        overall_pass_fail = "ERROR"
+                        overall_pass_fail = "FAIL"
                         camera_inference_results[serial_number] = {
-                            'overall_result': 'ERROR',
+                            'overall_result': 'FAIL',
                             'frames': [{
                                 'frame_idx': idx,
-                                'result': 'ERROR',
+                                'result': 'FAIL',
                                 'error': 'Frame/template count mismatch',
                                 'confidence': 0.0,
                                 'inliers': 0,
                                 'total_matches': 0,
                                 'timings': {},
                                 'transformed_bboxes': [],
-                                'text_verification': None
+                                'text_verification': None,
+                                'template_verification': None
                             } for idx in range(num_frames)]
                         }
                     else:
@@ -852,19 +999,20 @@ class InferenceHandler:
 
                             if not batch_result.get('success', False):
                                 logger.error(f"Batch inference failed: {batch_result.get('error')}")
-                                overall_pass_fail = "ERROR"
+                                overall_pass_fail = "FAIL"
                                 camera_inference_results[serial_number] = {
-                                    'overall_result': 'ERROR',
+                                    'overall_result': 'FAIL',
                                     'frames': [{
                                         'frame_idx': idx,
-                                        'result': 'ERROR',
+                                        'result': 'FAIL',
                                         'error': batch_result.get('error', 'Unknown error'),
                                         'confidence': 0.0,
                                         'inliers': 0,
                                         'total_matches': 0,
                                         'timings': {},
                                         'transformed_bboxes': [],
-                                        'text_verification': None
+                                        'text_verification': None,
+                                        'template_verification': None
                                     } for idx in range(num_frames)]
                                 }
                             else:
@@ -902,6 +1050,7 @@ class InferenceHandler:
                                         transformed_bboxes = result.get('transformed_bboxes', [])
 
                                         # Check function_type for text verification
+                                        template_verification = None
                                         if camera.function_type == 'Check_Type_Product':
                                             logger.info(
                                                 f"[Frame {frame_idx}] Running text verification (Check_Type_Product)"
@@ -928,11 +1077,38 @@ class InferenceHandler:
                                                 camera=camera
                                             )
 
-                                            # PASS/FAIL based on text match
-                                            if text_verification['all_match']:
+                                            # Also verify template similarity
+                                            matcher = matchers_list[frame_idx]
+                                            if hasattr(matcher, 'template_img') and hasattr(matcher, 'template_bbox'):
+                                                logger.info(
+                                                    f"[Frame {frame_idx}] Running template verification"
+                                                )
+                                                template_verification = self.verify_template_regions(
+                                                    frame_img=frame,
+                                                    template_img=matcher.template_img,
+                                                    transformed_bboxes=transformed_bboxes,
+                                                    original_template_bbox=matcher.template_bbox,
+                                                    camera=camera,
+                                                    similarity_threshold=0.85
+                                                )
+                                            else:
+                                                logger.warning(
+                                                    f"[Frame {frame_idx}] Matcher missing template_img or template_bbox attribute"
+                                                )
+
+                                            # PASS/FAIL based on BOTH text match AND template similarity
+                                            if text_verification['all_match'] and (template_verification is None or template_verification['match']):
                                                 inference_result_data = "PASS"
                                             else:
                                                 inference_result_data = "FAIL"
+                                                if not text_verification['all_match']:
+                                                    logger.info(f"[Frame {frame_idx}] FAIL reason: text verification failed")
+                                                if template_verification and not template_verification['match']:
+                                                    logger.info(
+                                                        f"[Frame {frame_idx}] FAIL reason: template similarity "
+                                                        f"({template_verification['similarity']:.4f}) below threshold "
+                                                        f"({template_verification['threshold']})"
+                                                    )
 
                                         else:
                                             # Default: template matching
@@ -959,7 +1135,8 @@ class InferenceHandler:
                                         'total_matches': total_matches,
                                         'timings': timings,
                                         'transformed_bboxes': transformed_bboxes,
-                                        'text_verification': text_verification
+                                        'text_verification': text_verification,
+                                        'template_verification': template_verification
                                     })
 
                                     # Update overall result (Option A: All must PASS)
@@ -980,19 +1157,20 @@ class InferenceHandler:
                             logger.error(f"Error running batch inference: {e}")
                             import traceback
                             traceback.print_exc()
-                            overall_pass_fail = "ERROR"
+                            overall_pass_fail = "FAIL"
                             camera_inference_results[serial_number] = {
-                                'overall_result': 'ERROR',
+                                'overall_result': 'FAIL',
                                 'frames': [{
                                     'frame_idx': idx,
-                                    'result': 'ERROR',
+                                    'result': 'FAIL',
                                     'error': str(e),
                                     'confidence': 0.0,
                                     'inliers': 0,
                                     'total_matches': 0,
                                     'timings': {},
                                     'transformed_bboxes': [],
-                                    'text_verification': None
+                                    'text_verification': None,
+                                    'template_verification': None
                                 } for idx in range(num_frames)]
                             }
 
@@ -1043,6 +1221,7 @@ class InferenceHandler:
                                 transformed_bboxes = match_result.get('transformed_bboxes', [])
 
                                 # Check function_type
+                                template_verification = None
                                 if camera.function_type == 'Check_Type_Product':
                                     logger.info(f"Running text verification for {serial_number}")
 
@@ -1067,10 +1246,33 @@ class InferenceHandler:
                                         camera=camera
                                     )
 
-                                    if text_verification['all_match']:
+                                    # Also verify template similarity
+                                    if hasattr(matcher, 'template_img') and hasattr(matcher, 'template_bbox'):
+                                        logger.info(f"[{serial_number}] Running template verification")
+                                        template_verification = self.verify_template_regions(
+                                            frame_img=first_frame,
+                                            template_img=matcher.template_img,
+                                            transformed_bboxes=transformed_bboxes,
+                                            original_template_bbox=matcher.template_bbox,
+                                            camera=camera,
+                                            similarity_threshold=0.85
+                                        )
+                                    else:
+                                        logger.warning(f"[{serial_number}] Matcher missing template_img or template_bbox attribute")
+
+                                    # PASS/FAIL based on BOTH text match AND template similarity
+                                    if text_verification['all_match'] and (template_verification is None or template_verification['match']):
                                         inference_result_data = "PASS"
                                     else:
                                         inference_result_data = "FAIL"
+                                        if not text_verification['all_match']:
+                                            logger.info(f"[{serial_number}] FAIL reason: text verification failed")
+                                        if template_verification and not template_verification['match']:
+                                            logger.info(
+                                                f"[{serial_number}] FAIL reason: template similarity "
+                                                f"({template_verification['similarity']:.4f}) below threshold "
+                                                f"({template_verification['threshold']})"
+                                            )
 
                                 else:
                                     # Default: template matching
@@ -1094,7 +1296,7 @@ class InferenceHandler:
                             logger.error(f"Error running inference: {e}")
                             import traceback
                             traceback.print_exc()
-                            inference_result_data = "ERROR"
+                            inference_result_data = "FAIL"
 
                         # Store result (backward compatible structure)
                         camera_inference_results[serial_number] = {
@@ -1104,7 +1306,8 @@ class InferenceHandler:
                             "total_matches": total_matches,
                             "timings": timings,
                             "transformed_bboxes": transformed_bboxes,
-                            "text_verification": text_verification
+                            "text_verification": text_verification,
+                            "template_verification": template_verification
                         }
 
                     if inference_result_data in ["FAIL", "ERROR"]:
@@ -1179,6 +1382,7 @@ class InferenceHandler:
                             timings = {}
                             transformed_bboxes = []
                             text_verification = None
+                            template_verification = None
 
                             if result.get('success', False):
                                 confidence = float(result.get('confidence', 0.0))
@@ -1214,11 +1418,34 @@ class InferenceHandler:
                                         camera=camera
                                     )
 
-                                    # Determine PASS/FAIL based on text match
-                                    if text_verification['all_match']:
+                                    # Also verify template similarity
+                                    matcher = matchers[idx]
+                                    if hasattr(matcher, 'template_img') and hasattr(matcher, 'template_bbox'):
+                                        logger.info(f"[{serial_number}] Running template verification")
+                                        template_verification = self.verify_template_regions(
+                                            frame_img=first_frame,
+                                            template_img=matcher.template_img,
+                                            transformed_bboxes=transformed_bboxes,
+                                            original_template_bbox=matcher.template_bbox,
+                                            camera=camera,
+                                            similarity_threshold=0.85
+                                        )
+                                    else:
+                                        logger.warning(f"[{serial_number}] Matcher missing template_img or template_bbox attribute")
+
+                                    # Determine PASS/FAIL based on BOTH text match AND template similarity
+                                    if text_verification['all_match'] and (template_verification is None or template_verification['match']):
                                         inference_result_data = "PASS"
                                     else:
                                         inference_result_data = "FAIL"
+                                        if not text_verification['all_match']:
+                                            logger.info(f"[{serial_number}] FAIL reason: text verification failed")
+                                        if template_verification and not template_verification['match']:
+                                            logger.info(
+                                                f"[{serial_number}] FAIL reason: template similarity "
+                                                f"({template_verification['similarity']:.4f}) below threshold "
+                                                f"({template_verification['threshold']})"
+                                            )
                                         logger.warning(
                                             f"Text verification FAILED for {serial_number}: "
                                             f"{len([r for r in text_verification['results'] if not r['match']])} mismatches"
@@ -1262,6 +1489,10 @@ class InferenceHandler:
                             if text_verification:
                                 camera_inference_results[serial_number]["text_verification"] = text_verification
 
+                            # Add template verification if available
+                            if template_verification:
+                                camera_inference_results[serial_number]["template_verification"] = template_verification
+
                             if inference_result_data in ["FAIL", "ERROR"]:
                                 overall_pass_fail = inference_result_data
 
@@ -1270,14 +1501,14 @@ class InferenceHandler:
                         # Fall back to sequential for all cameras
                         for serial_number in serial_numbers:
                             camera_inference_results[serial_number] = {
-                                "result": "ERROR",
+                                "result": "FAIL",
                                 "confidence": 0.0,
                                 "inliers": 0,
                                 "total_matches": 0,
                                 "timings": {},
                                 "transformed_bboxes": []
                             }
-                        overall_pass_fail = "ERROR"
+                        overall_pass_fail = "FAIL"
 
                 except Exception as e:
                     logger.error(f"Error in batch inference: {e}")
@@ -1286,7 +1517,7 @@ class InferenceHandler:
                     # Mark all as ERROR
                     for serial_number in serial_numbers:
                         camera_inference_results[serial_number] = {
-                            "result": "ERROR",
+                            "result": "FAIL",
                             "confidence": 0.0,
                             "inliers": 0,
                             "total_matches": 0,
@@ -1452,6 +1683,7 @@ class InferenceHandler:
                     frame_timings = frame_data['timings']
                     frame_bboxes = frame_data['transformed_bboxes']
                     frame_text_verification = frame_data.get('text_verification')
+                    frame_template_verification = frame_data.get('template_verification')
 
                     # Get crop_area for this frame
                     if isinstance(matcher, list) and idx < len(matcher):
@@ -1471,6 +1703,7 @@ class InferenceHandler:
                         frame_timings = camera_inference["timings"]
                         frame_bboxes = camera_inference["transformed_bboxes"]
                         frame_text_verification = camera_inference.get("text_verification")
+                        frame_template_verification = camera_inference.get("template_verification")
                     else:
                         frame_pass_fail = "PASS"
                         frame_confidence = 0.0
@@ -1479,6 +1712,7 @@ class InferenceHandler:
                         frame_timings = None
                         frame_bboxes = None
                         frame_text_verification = None
+                        frame_template_verification = None
 
                     frame_crop_area = crop_area
 
@@ -1522,7 +1756,8 @@ class InferenceHandler:
                     "image_path": image_path,
                     "image_base64": image_base64,
                     "timings": frame_timings,
-                    "text_verification": frame_text_verification
+                    "text_verification": frame_text_verification,
+                    "template_verification": frame_template_verification
                 }
 
                 frame_results.append(frame_result)

@@ -338,16 +338,16 @@ class RejectScheduler:
         try:
             logger.info(
                 f"[Group #{entry.group_id}] 🔴 REJECTING! "
-                f"DO{entry.do_number} pulse (100ms)"
+                f"DO{entry.do_number} pulse (300ms)"
             )
 
             # Trigger DO pulse
             if self._do_control_callback:
-                self._do_control_callback(entry.do_number, pulse_ms=100)
+                self._do_control_callback(entry.do_number, pulse_ms=300)
             else:
                 # Use default implementation
                 from .utils import trigger_reject_pulse
-                trigger_reject_pulse(entry.do_number, pulse_ms=100)
+                trigger_reject_pulse(entry.do_number, pulse_ms=300)
 
             # Update stats
             with self._stats_lock:
