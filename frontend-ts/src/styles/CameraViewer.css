@@ -372,6 +372,27 @@
   accent-color: #667eea;
 }
 
+.checkbox-label-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.checkbox-label-with-icon svg {
+  flex-shrink: 0;
+}
+
+.setting-info {
+  margin-top: 0.5rem;
+  padding-left: 1.75rem;
+}
+
+.setting-info small {
+  color: #6b7280;
+  font-size: 0.8125rem;
+  font-style: italic;
+}
+
 /* Apply Settings Button */
 .apply-settings-btn {
   width: 100%;
