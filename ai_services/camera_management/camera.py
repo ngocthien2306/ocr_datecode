@@ -574,20 +574,26 @@ class Camera:
             if num_templates > 1:
                 logger.info(
                     f"[{self.serial_number}] Capturing {num_templates} frames "
-                    f"with delay_interval={self.delay_interval}ms between frames"
+                    f"with delay_interval={self.delay_interval}ms between frames (REVERSED order)"
                 )
             else:
                 logger.info(
                     f"[{self.serial_number}] Capturing 1 frame IMMEDIATELY"
                 )
 
-            for idx, template in enumerate(self.templates):
+            # IMPORTANT: Reverse template order to match physical product movement
+            # Product moves with Template 2 appearance first, then Template 1
+            # We capture in reverse order but store in a dict to maintain template_idx mapping
+            reversed_templates = list(reversed(list(enumerate(self.templates))))
+            frames_dict = {}  # {template_idx: frame_array}
+
+            for capture_idx, (template_idx, template) in enumerate(reversed_templates):
                 # Apply delay_interval between frames (skip for first frame)
-                if idx > 0:
+                if capture_idx > 0:
                     time.sleep(self.delay_interval / 1000.0)
                     logger.debug(
                         f"[{self.serial_number}] Delayed {self.delay_interval}ms "
-                        f"before frame {idx+1}"
+                        f"before capture {capture_idx+1}"
                     )
 
                 # Execute software trigger
@@ -614,28 +620,34 @@ class Camera:
                     img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
 
                 # Write to shared memory
+                # Use template_idx (original index) for proper verification mapping
                 metadata = {
                     "timestamp": time.time(),
                     "mode": self.mode.value,
                     "shape": img_array.shape,
                     "dtype": str(img_array.dtype),
-                    "frame_idx": idx,
+                    "frame_idx": template_idx,  # Use original template index
                     "trigger_event": True,
-                    "template_name": template.get('name', f'Template {idx+1}')
+                    "template_name": template.get('name', f'Template {template_idx+1}')
                 }
                 self._write_frame_to_shm(img_array, metadata)
 
-                # Store frame
-                self.captured_frames.append(img_array.copy())
+                # Store frame in dict with template_idx as key
+                frames_dict[template_idx] = img_array.copy()
 
                 grab_result.Release()
 
                 logger.debug(
-                    f"[{self.serial_number}] Captured frame {idx+1}/{num_templates}"
+                    f"[{self.serial_number}] Captured template {template_idx} "
+                    f"(capture order: {capture_idx+1}/{num_templates})"
                 )
 
+            # Rebuild captured_frames in ORIGINAL template order (0, 1, 2, ...)
+            # This ensures inference gets frames in correct order matching expected_texts
+            self.captured_frames = [frames_dict[i] for i in range(num_templates)]
+
             logger.info(
-                f"[{self.serial_number}] ✅ Captured {len(self.captured_frames)} frames"
+                f"[{self.serial_number}] ✅ Captured {len(self.captured_frames)} frames (reordered to match templates)"
             )
 
             return {
