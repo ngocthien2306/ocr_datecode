@@ -189,3 +189,11 @@ Q_FINAL_1: UI "Copy to All Cameras" Button
   Option C: Retry Camera 2 một lần
 
   Trả lời: Option B: Emit error event, không inference
+
+
+
+tôi cần bổ sung /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src/components/recipe/RecipeFormModal.tsx
+tab Model <h3>Model Thresholds</h3> bổ sung thêm 1 threshold là matching threshold 
+bên API create/update recipe cũng phải có field này lúc load recipe 
+similarity_threshold=0.85 bên /Users/ngocthien.ai/Source/Projects/ocr_datecode/ai_services/camera_management/inference_handler.py
+là từ model_thresholds.matching_threshold

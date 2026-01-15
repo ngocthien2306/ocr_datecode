@@ -93,6 +93,7 @@ class Camera:
         self.templates: List[Dict[str, Any]] = []
         self.function_type: str = "OCR"  # Function type: OCR, Check_Type_Product, etc.
         self.expected_texts: Dict[int, Dict[int, str]] = {}  # Map template_idx -> {region_idx -> expected_text}
+        self.matching_threshold: float = 0.85  # Template matching similarity threshold
 
         # Frame tracking
         self.frame_idx = 0
@@ -610,7 +611,7 @@ class Camera:
                         grab_result.Release()
                     return {
                         'success': False,
-                        'error': f'Failed to grab frame {idx}'
+                        'error': f'Failed to grab frame {capture_idx}'
                     }
 
                 img_array = grab_result.Array
@@ -683,6 +684,11 @@ class Camera:
             # Load reject config from recipe (recipe level, not camera level)
             self.delay_reject = recipe_data.get("delay_reject", 4000)  # ms, default 4s
             self.do_reject_number = recipe_data.get("do_reject_number", 2)  # DO2 default
+
+            # Load model thresholds from recipe
+            model_thresholds = recipe_data.get("model_thresholds", {})
+            self.matching_threshold = model_thresholds.get("matching_threshold", 0.85)
+            logger.info(f"[{self.serial_number}] Loaded matching_threshold: {self.matching_threshold}")
 
             # Find camera config in recipe
             cameras = recipe_data.get("cameras", [])

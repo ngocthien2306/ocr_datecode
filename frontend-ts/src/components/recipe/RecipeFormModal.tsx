@@ -55,6 +55,7 @@ interface FormDataType {
   model_thresholds: {
     detection_threshold: number;
     recognition_threshold: number;
+    matching_threshold: number;
     min_text_size: number;
     max_text_size: number;
   };
@@ -100,6 +101,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     model_thresholds: {
       detection_threshold: 0.5,
       recognition_threshold: 0.5,
+      matching_threshold: 0.85,
       min_text_size: 10,
       max_text_size: 200
     },
@@ -269,11 +271,13 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           delay_trigger: 100.0,
           gain: 1.0,
           brightness: 0.5,
-          contrast: 1.0
+          contrast: 1.0,
+          delay_interval: 500.0,
         },
         model_thresholds: {
           detection_threshold: 0.5,
           recognition_threshold: 0.5,
+          matching_threshold: 0.85,
           min_text_size: 10,
           max_text_size: 200
         },
@@ -1203,6 +1207,16 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                            onChange={(e) => handleModelThresholdChange('recognition_threshold', e.target.value)}
                            step="0.01" min="0" max="1" className={errors.recognition_threshold ? 'error' : ''} />
                     {errors.recognition_threshold && <span className="error-message">{errors.recognition_threshold}</span>}
+                  </div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Matching Threshold <span className="required">*</span> <span className="hint">(0.0 - 1.0)</span></label>
+                    <input type="number" value={formData.model_thresholds.matching_threshold}
+                           onChange={(e) => handleModelThresholdChange('matching_threshold', e.target.value)}
+                           step="0.01" min="0" max="1" className={errors.matching_threshold ? 'error' : ''} />
+                    {errors.matching_threshold && <span className="error-message">{errors.matching_threshold}</span>}
+                    <small className="field-description">Template similarity threshold for verification (default: 0.85)</small>
                   </div>
                 </div>
                 <div className="form-row">

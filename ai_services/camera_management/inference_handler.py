@@ -780,13 +780,13 @@ class InferenceHandler:
             # Get similarity score
             if method == cv2.TM_SQDIFF_NORMED:
                 # For SQDIFF, lower is better, so invert: similarity = 1 - score
-                similarity_score = 1.0 - result[0, 0]
+                similarity_score = float(1.0 - result[0, 0])
             else:
                 # For CCOEFF_NORMED and CCORR_NORMED, higher is better
-                similarity_score = result[0, 0]
+                similarity_score = float(result[0, 0])
 
             # Determine if it matches threshold
-            match = similarity_score >= similarity_threshold
+            match = bool(similarity_score >= similarity_threshold)
 
             method_name = {
                 cv2.TM_CCOEFF_NORMED: 'TM_CCOEFF_NORMED',
@@ -802,7 +802,7 @@ class InferenceHandler:
 
             return {
                 'match': match,
-                'similarity': float(similarity_score),
+                'similarity': similarity_score,
                 'threshold': similarity_threshold,
                 'method': method_name,
                 'template_bbox': transformed_template_bbox
@@ -1041,6 +1041,7 @@ class InferenceHandler:
                                     timings = {}
                                     transformed_bboxes = []
                                     text_verification = None
+                                    template_verification = None
 
                                     if result.get('success', False):
                                         confidence = float(result.get('confidence', 0.0))
@@ -1050,7 +1051,6 @@ class InferenceHandler:
                                         transformed_bboxes = result.get('transformed_bboxes', [])
 
                                         # Check function_type for text verification
-                                        template_verification = None
                                         if camera.function_type == 'Check_Type_Product':
                                             logger.info(
                                                 f"[Frame {frame_idx}] Running text verification (Check_Type_Product)"
@@ -1089,7 +1089,7 @@ class InferenceHandler:
                                                     transformed_bboxes=transformed_bboxes,
                                                     original_template_bbox=matcher.template_bbox,
                                                     camera=camera,
-                                                    similarity_threshold=0.85
+                                                    similarity_threshold=getattr(camera, 'matching_threshold', 0.85)
                                                 )
                                             else:
                                                 logger.warning(
@@ -1255,7 +1255,7 @@ class InferenceHandler:
                                             transformed_bboxes=transformed_bboxes,
                                             original_template_bbox=matcher.template_bbox,
                                             camera=camera,
-                                            similarity_threshold=0.85
+                                            similarity_threshold=getattr(camera, 'matching_threshold', 0.85)
                                         )
                                     else:
                                         logger.warning(f"[{serial_number}] Matcher missing template_img or template_bbox attribute")
@@ -1428,7 +1428,7 @@ class InferenceHandler:
                                             transformed_bboxes=transformed_bboxes,
                                             original_template_bbox=matcher.template_bbox,
                                             camera=camera,
-                                            similarity_threshold=0.85
+                                            similarity_threshold=getattr(camera, 'matching_threshold', 0.85)
                                         )
                                     else:
                                         logger.warning(f"[{serial_number}] Matcher missing template_img or template_bbox attribute")
