@@ -54,9 +54,9 @@ export const camerasAPI = {
     return response.data;
   },
 
-  getCameraFrame: (serialNumber: string, quality: number = 85): string => {
+  getCameraFrame: (serialNumber: string, quality: number = 85, saveToDisk: boolean = false): string => {
     const token = localStorage.getItem('access_token');
-    return `${api.defaults.baseURL}/cameras/${serialNumber}/frame?quality=${quality}&token=${token}`;
+    return `${api.defaults.baseURL}/cameras/${serialNumber}/frame?quality=${quality}&save_to_disk=${saveToDisk}&token=${token}`;
   },
 
   getCameraStatus: async (serialNumber: string): Promise<any> => {

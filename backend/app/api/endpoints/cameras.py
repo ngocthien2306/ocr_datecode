@@ -6,6 +6,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 import io
+import logging
 
 from app.db.mongodb import get_database
 from app.repositories.camera_repository import CameraRepository
@@ -32,6 +33,8 @@ from app.api.websocket.camera_ws import (
 )
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
+
+logger = logging.getLogger(__name__)
 
 
 @router.post(
@@ -372,6 +375,7 @@ async def get_camera_count(
 async def get_camera_frame(
     serial_number: str,
     quality: int = 85,
+    save_to_disk: bool = False,
     db=Depends(get_database),
     current_user: dict = Depends(get_current_user_from_query)
 ):
@@ -380,6 +384,7 @@ async def get_camera_frame(
 
     - **serial_number**: Serial number của camera
     - **quality**: JPEG quality (0-100), mặc định 85
+    - **save_to_disk**: Save frame to disk if True (default: False)
 
     Returns: JPEG image
     """
@@ -394,17 +399,33 @@ async def get_camera_frame(
         )
 
     # Đọc frame từ shared memory (new architecture)
-    jpeg_bytes = shared_memory_service.read_frame_as_jpeg(serial_number, quality)
+    result = shared_memory_service.read_frame(serial_number)
 
-    if jpeg_bytes is None:
+    if result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Camera '{serial_number}' is not streaming. Please ensure camera is connected."
         )
 
-    # Get metadata for headers
-    result = shared_memory_service.read_frame(serial_number)
-    metadata = result[1] if result else {}
+    frame_array, metadata = result
+
+    # Save to disk if requested
+    if save_to_disk and frame_array is not None:
+        from app.utils.frame_saver import save_frame_to_disk
+        saved_path = save_frame_to_disk(serial_number, frame_array, quality=95)
+        if saved_path:
+            logger.info(f"Saved frame to disk: {saved_path}")
+        else:
+            logger.warning(f"Failed to save frame to disk for {serial_number}")
+
+    # Encode frame to JPEG for response
+    jpeg_bytes = shared_memory_service.read_frame_as_jpeg(serial_number, quality)
+
+    if jpeg_bytes is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Failed to encode frame for camera '{serial_number}'"
+        )
 
     # Return image as streaming response
     return StreamingResponse(
@@ -413,7 +434,8 @@ async def get_camera_frame(
         headers={
             "X-Frame-Index": str(metadata.get('frame_idx', 0)),
             "X-Timestamp": str(metadata.get('timestamp', 0)),
-            "X-Camera-Model": metadata.get('model_name', 'Unknown')
+            "X-Camera-Model": metadata.get('model_name', 'Unknown'),
+            "X-Saved-To-Disk": str(save_to_disk)
         }
     )
 

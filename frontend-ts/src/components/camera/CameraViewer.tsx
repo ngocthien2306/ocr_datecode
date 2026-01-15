@@ -16,6 +16,7 @@ interface CameraSettings {
   quality: number;
   autoRefresh: boolean;
   refreshInterval: number;
+  saveFrames: boolean;
 }
 
 const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
@@ -28,7 +29,8 @@ const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
     gain: 1.0,
     quality: 85,
     autoRefresh: false,
-    refreshInterval: 100
+    refreshInterval: 100,
+    saveFrames: false
   });
   const [isApplyingSettings, setIsApplyingSettings] = useState(false);
   const [hasUnsavedSettings, setHasUnsavedSettings] = useState(false);
@@ -121,8 +123,8 @@ const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
       socketService.subscribeToCameraFrames(handleCameraFrame);
       console.log('[Camera Stream] Subscribed to camera frames');
 
-      socketService.startCameraStream(serialNumber, 10); // 10 FPS
-      console.log('[Camera Stream] Sent start_camera_stream command');
+      socketService.startCameraStream(serialNumber, 10, settings.saveFrames); // 10 FPS
+      console.log('[Camera Stream] Sent start_camera_stream command with save_enabled=' + settings.saveFrames);
 
       return () => {
         console.log('[Camera Stream] Cleaning up, stopping stream for:', serialNumber);
@@ -142,17 +144,21 @@ const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
         }
       };
     }
-  }, [isLiveMode, settings.autoRefresh, settings.refreshInterval, settings.quality, serialNumber]);
+  }, [isLiveMode, settings.autoRefresh, settings.refreshInterval, settings.quality, settings.saveFrames, serialNumber]);
 
   const captureFrame = async (silent: boolean = false) => {
     try {
-      const url = camerasAPI.getCameraFrame(serialNumber, settings.quality);
+      const url = camerasAPI.getCameraFrame(serialNumber, settings.quality, settings.saveFrames);
       // Add timestamp to prevent caching
       setFrameUrl(`${url}&t=${Date.now()}`);
       setLastCapture(new Date());
 
       if (!silent) {
-        toast.success('Frame captured successfully!');
+        if (settings.saveFrames) {
+          toast.success('Frame captured and saved to server!');
+        } else {
+          toast.success('Frame captured successfully!');
+        }
       }
     } catch (err) {
       console.error('Error capturing frame:', err);
@@ -419,6 +425,22 @@ const CameraViewer: React.FC<CameraViewerProps> = ({ camera, onBack }) => {
                 />
                 <span>Auto Refresh</span>
               </label>
+            </div>
+
+            <div className="setting-group checkbox">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={settings.saveFrames}
+                  onChange={(e) => handleSettingChange('saveFrames', e.target.checked)}
+                />
+                <span>💾 Save Frames to Server</span>
+              </label>
+              {settings.saveFrames && (
+                <div className="setting-info">
+                  <small>Frames will be saved to /uploads/save_frame/{serialNumber}/</small>
+                </div>
+              )}
             </div>
 
             <div className="camera-metadata">

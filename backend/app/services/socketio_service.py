@@ -88,17 +88,25 @@ async def start_camera_stream(sid, data):
     try:
         serial_number = data.get('serial_number')
         frame_rate = data.get('frame_rate', 10)
+        save_enabled = data.get('save_enabled', False)
 
-        logger.info(f"Client {sid} requesting camera stream for {serial_number}")
+        logger.info(f"Client {sid} requesting camera stream for {serial_number} (save_enabled={save_enabled})")
 
         # Add subscriber
         camera_stream_service.add_subscriber(serial_number, sid)
 
         # Start streaming if not already active
         if serial_number not in camera_stream_service.active_streams:
-            await camera_stream_service.start_streaming(serial_number, frame_rate)
+            await camera_stream_service.start_streaming(serial_number, frame_rate, save_enabled)
+        else:
+            # Update save_enabled flag for existing stream
+            camera_stream_service.save_enabled[serial_number] = save_enabled
+            logger.info(f"Updated save_enabled={save_enabled} for existing stream {serial_number}")
 
-        await sio.emit('camera_stream_started', {'serial_number': serial_number}, room=sid)
+        await sio.emit('camera_stream_started', {
+            'serial_number': serial_number,
+            'save_enabled': save_enabled
+        }, room=sid)
 
     except Exception as e:
         logger.error(f"Error starting camera stream: {e}")

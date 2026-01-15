@@ -31,6 +31,7 @@ class CameraStreamService:
         """Initialize stream service"""
         self.active_streams: Dict[str, asyncio.Task] = {}  # {serial_number: task}
         self.stream_subscribers: Dict[str, Set[str]] = {}  # {serial_number: set(sid)}
+        self.save_enabled: Dict[str, bool] = {}  # {serial_number: save_enabled}
 
     def add_subscriber(self, serial_number: str, sid: str):
         """Add client subscription to camera stream"""
@@ -58,25 +59,29 @@ class CameraStreamService:
         """Get list of subscriber SIDs for a camera"""
         return self.stream_subscribers.get(serial_number, set())
 
-    async def start_streaming(self, serial_number: str, frame_rate: int = 10):
+    async def start_streaming(self, serial_number: str, frame_rate: int = 10, save_enabled: bool = False):
         """
         Start streaming frames from shared memory
 
         Args:
             serial_number: Camera serial number
             frame_rate: Target frame rate (FPS)
+            save_enabled: Save frames to disk if True
         """
         # Check if already streaming
         if serial_number in self.active_streams:
             logger.warning(f"Stream already active for {serial_number}")
             return
 
+        # Store save_enabled flag
+        self.save_enabled[serial_number] = save_enabled
+
         # Create streaming task
         task = asyncio.create_task(
             self._stream_loop(serial_number, frame_rate)
         )
         self.active_streams[serial_number] = task
-        logger.info(f"Started streaming for {serial_number} at {frame_rate} FPS")
+        logger.info(f"Started streaming for {serial_number} at {frame_rate} FPS (save_enabled={save_enabled})")
 
     async def stop_streaming(self, serial_number: str):
         """Stop streaming for a camera"""
@@ -90,6 +95,11 @@ class CameraStreamService:
                 pass
 
             del self.active_streams[serial_number]
+
+            # Clear save_enabled flag
+            if serial_number in self.save_enabled:
+                del self.save_enabled[serial_number]
+
             logger.info(f"Stopped streaming for {serial_number}")
 
     async def _stream_loop(self, serial_number: str, frame_rate: int):
@@ -121,6 +131,13 @@ class CameraStreamService:
                     frame_data = self._read_frame_from_shm(shm)
 
                     if frame_data is not None:
+                        # Save to disk if enabled
+                        if self.save_enabled.get(serial_number, False):
+                            from app.utils.frame_saver import save_frame_to_disk
+                            saved_path = save_frame_to_disk(serial_number, frame_data['image'], quality=95)
+                            if saved_path:
+                                logger.debug(f"Saved frame to disk: {saved_path}")
+
                         # Downscale and encode
                         frame_base64 = self._encode_frame(frame_data['image'])
 

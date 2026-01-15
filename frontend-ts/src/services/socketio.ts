@@ -141,16 +141,17 @@ class SocketIOService {
   /**
    * Start camera stream
    */
-  startCameraStream(serialNumber: string, frameRate: number = 10): void {
+  startCameraStream(serialNumber: string, frameRate: number = 10, saveEnabled: boolean = false): void {
     if (!this.socket) {
       console.error('[SocketIO] Socket not connected');
       return;
     }
 
-    console.log(`[SocketIO] Emitting start_camera_stream for ${serialNumber} at ${frameRate} FPS`);
+    console.log(`[SocketIO] Emitting start_camera_stream for ${serialNumber} at ${frameRate} FPS (save_enabled=${saveEnabled})`);
     this.socket.emit('start_camera_stream', {
       serial_number: serialNumber,
-      frame_rate: frameRate
+      frame_rate: frameRate,
+      save_enabled: saveEnabled
     });
 
     console.log(`[SocketIO] Emitted start_camera_stream command`);
