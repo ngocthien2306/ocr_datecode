@@ -553,6 +553,7 @@ class CameraManager:
     def set_inference_mode(self, enabled: bool) -> Dict[str, Any]:
         """
         Set inference mode (ONLINE/OFFLINE)
+        Also sets DO2 output: ONLINE=1, OFFLINE=0
 
         Args:
             enabled: True for ONLINE, False for OFFLINE
@@ -563,12 +564,23 @@ class CameraManager:
         with self._lock:
             self.inference_enabled = enabled
             mode_name = "ONLINE" if enabled else "OFFLINE"
-            logger.info(f"🔄 [INFERENCE MODE] Set to {mode_name}")
+
+            # Set DO2: ONLINE=1, OFFLINE=0
+            from .utils import write_do_value
+            do_value = 1 if enabled else 0
+            do_success = write_do_value(2, do_value)  # DO2
+
+            if do_success:
+                logger.info(f"🔄 [INFERENCE MODE] Set to {mode_name}, DO2={do_value}")
+            else:
+                logger.warning(f"🔄 [INFERENCE MODE] Set to {mode_name}, but failed to set DO2={do_value}")
 
             return {
                 "success": True,
                 "enabled": enabled,
                 "mode": mode_name,
+                "do2_value": do_value,
+                "do2_success": do_success,
                 "message": f"Inference mode set to {mode_name}"
             }
 
