@@ -81,6 +81,7 @@ class ModelThresholds(BaseModel):
 
     detection_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     recognition_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    matching_threshold: float = Field(default=0.85, ge=0.0, le=1.0, description="Template matching similarity threshold")
     # Additional thresholds
     min_text_size: Optional[int] = None
     max_text_size: Optional[int] = None

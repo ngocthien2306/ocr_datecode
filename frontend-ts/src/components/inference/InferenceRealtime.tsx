@@ -29,6 +29,14 @@ interface InferenceLog {
   inferenceResult?: InferenceResult;
 }
 
+interface TemplateVerification {
+  match: boolean;
+  similarity: number;
+  threshold: number;
+  method: string;
+  template_bbox?: any;
+}
+
 interface FrameResult {
   frame_idx: number;
   pass_fail: string;
@@ -39,6 +47,7 @@ interface FrameResult {
   timings?: any;
   detected_regions?: any[];
   text_verification?: TextVerification;
+  template_verification?: TemplateVerification;
 }
 
 interface CameraResult {
@@ -575,6 +584,72 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
     );
   };
 
+  // Render template verification info for a camera
+  const renderTemplateVerificationInfo = (cameraResult: CameraResult) => {
+    // Get frames with template verification
+    const framesWithTemplateVerification = cameraResult.frames.filter(f => f.template_verification);
+
+    if (framesWithTemplateVerification.length === 0) {
+      return null;
+    }
+
+    return (
+      <div className="camera-verification-card template-verification">
+        <div className="camera-verification-header">
+          <div className="camera-info">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/>
+              <path d="M9 12l2 2 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+            <span className="camera-serial">{cameraResult.serial_number}</span>
+            <span className="verification-type">Template Matching</span>
+          </div>
+        </div>
+
+        {framesWithTemplateVerification.map((frame) => {
+          const verification = frame.template_verification!;
+          const similarityPercent = (verification.similarity * 100).toFixed(2);
+          const thresholdPercent = (verification.threshold * 100).toFixed(0);
+          const isMatch = verification.match;
+
+          return (
+            <div key={frame.frame_idx} className="frame-verification-section template-frame">
+              <div className="frame-verification-header">
+                <span className="frame-label">
+                  {frame.template_name || `Frame ${frame.frame_idx}`}
+                </span>
+                <span className={`match-summary ${isMatch ? 'all-match' : 'has-mismatch'}`}>
+                  {isMatch ? 'MATCH ✓' : 'NO MATCH ✗'}
+                </span>
+              </div>
+              <div className="template-verification-details">
+                <div className="verification-row">
+                  <span className="label">Similarity:</span>
+                  <span className={`value similarity ${isMatch ? 'high' : 'low'}`}>
+                    {similarityPercent}%
+                  </span>
+                </div>
+                <div className="verification-row">
+                  <span className="label">Threshold:</span>
+                  <span className="value threshold">{thresholdPercent}%</span>
+                </div>
+                {!isMatch && (
+                  <div className="verification-warning">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+                      <path d="M12 8v4m0 4h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                    </svg>
+                    <span>Template similarity below threshold ({similarityPercent}% &lt; {thresholdPercent}%)</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   if (!runningRecipeId) {
     return (
       <div className="inference-realtime-empty">
@@ -897,13 +972,23 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                       </div>
 
                       {hasVerification && isExpanded && log.inferenceResult && (
-                        <div className="text-verification-section">
-                          <div className="verification-label">Text Verification Details:</div>
-                          {log.inferenceResult.camera_results.map((cameraResult) => (
-                            <div key={cameraResult.serial_number}>
-                              {renderTextVerificationTable(cameraResult)}
-                            </div>
-                          ))}
+                        <div className="verification-sections">
+                          <div className="text-verification-section">
+                            <div className="verification-label">Text Verification Details:</div>
+                            {log.inferenceResult.camera_results.map((cameraResult) => (
+                              <div key={cameraResult.serial_number}>
+                                {renderTextVerificationTable(cameraResult)}
+                              </div>
+                            ))}
+                          </div>
+                          <div className="template-verification-section">
+                            <div className="verification-label">Template Matching Details:</div>
+                            {log.inferenceResult.camera_results.map((cameraResult) => (
+                              <div key={cameraResult.serial_number}>
+                                {renderTemplateVerificationInfo(cameraResult)}
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>
