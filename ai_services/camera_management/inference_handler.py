@@ -552,7 +552,8 @@ class InferenceHandler:
         frame_img: 'np.ndarray',
         transformed_bboxes: List[Dict[str, Any]],
         expected_texts: Dict[int, str],
-        camera: 'Camera'
+        camera: 'Camera',
+        recognition_threshold: float = 0.5
     ) -> Dict[str, Any]:
         """
         Verify text in transformed regions match expected texts
@@ -562,6 +563,7 @@ class InferenceHandler:
             transformed_bboxes: List of transformed bbox dicts from matcher
             expected_texts: Dict mapping region_idx -> expected_text
             camera: Camera object with function_type
+            recognition_threshold: Minimum OCR confidence threshold (default: 0.5)
 
         Returns:
             {
@@ -623,6 +625,7 @@ class InferenceHandler:
                         'recognized': '',
                         'match': False,
                         'confidence': 0.0,
+                        'threshold': recognition_threshold,
                         'error': 'Invalid bbox points'
                     })
                     continue
@@ -635,11 +638,20 @@ class InferenceHandler:
                 # Run OCR on cropped region
                 logger.debug(f"[{camera.serial_number}] Running OCR with {self.ocr_backend} backend...")
                 text, confidence = self.text_recognizer.recognize(cropped_region, return_confidence=True)
+
                 recognized_text = text.strip()
                 logger.debug(f"[{camera.serial_number}] OCR result: '{recognized_text}' (conf: {confidence:.2%})")
 
-                # Compare texts (case-insensitive, strip whitespace)
-                match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
+                # Check if confidence meets threshold first
+                if confidence < recognition_threshold:
+                    logger.warning(
+                        f"[{camera.serial_number}] Annotation {annotation_idx}: "
+                        f"Low confidence {confidence:.2%} < threshold {recognition_threshold:.2%}, treating as NO MATCH"
+                    )
+                    match = False
+                else:
+                    # Compare texts (case-insensitive, strip whitespace)
+                    match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
 
                 if not match:
                     all_match = False
@@ -649,7 +661,9 @@ class InferenceHandler:
                     'expected': expected_text,
                     'recognized': recognized_text,
                     'match': match,
-                    'confidence': confidence
+                    'confidence': confidence,
+                    'threshold': recognition_threshold,
+
                 })
 
                 logger.info(
@@ -669,6 +683,7 @@ class InferenceHandler:
                     'recognized': '',
                     'match': False,
                     'confidence': 0.0,
+                    'threshold': recognition_threshold,
                     'error': str(e)
                 })
 
@@ -1070,14 +1085,15 @@ class InferenceHandler:
                                                     f"[Frame {frame_idx}] No expected_texts found for template {frame_idx}"
                                                 )
 
+                                            # Verify text with recognition threshold
                                             text_verification = self.verify_text_regions(
                                                 frame_img=frame,
                                                 transformed_bboxes=transformed_bboxes,
                                                 expected_texts=frame_expected_texts,
-                                                camera=camera
+                                                camera=camera,
+                                                recognition_threshold=getattr(camera, 'recognition_threshold', 0.5)
                                             )
-                                            print("RECOGNIZE THERSHOLD: ", getattr(camera, 'recognition_threshold', 0.85))
-                                            
+      
                                             # Also verify template similarity
                                             matcher = matchers_list[frame_idx]
                                             if hasattr(matcher, 'template_img') and hasattr(matcher, 'template_bbox'):
@@ -1244,7 +1260,8 @@ class InferenceHandler:
                                         frame_img=first_frame,
                                         transformed_bboxes=transformed_bboxes,
                                         expected_texts=frame_expected_texts,
-                                        camera=camera
+                                        camera=camera,
+                                        recognition_threshold=getattr(camera, 'recognition_threshold', 0.5)
                                     )
 
                                     # Also verify template similarity
@@ -1416,7 +1433,8 @@ class InferenceHandler:
                                         frame_img=first_frame,
                                         transformed_bboxes=transformed_bboxes,
                                         expected_texts=frame_expected_texts,
-                                        camera=camera
+                                        camera=camera,
+                                        recognition_threshold=getattr(camera, 'recognition_threshold', 0.5)
                                     )
 
                                     # Also verify template similarity

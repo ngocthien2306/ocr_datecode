@@ -94,6 +94,7 @@ class Camera:
         self.function_type: str = "OCR"  # Function type: OCR, Check_Type_Product, etc.
         self.expected_texts: Dict[int, Dict[int, str]] = {}  # Map template_idx -> {region_idx -> expected_text}
         self.matching_threshold: float = 0.85  # Template matching similarity threshold
+        self.recognition_threshold: float = 0.5  # OCR recognition confidence threshold
 
         # Frame tracking
         self.frame_idx = 0
@@ -688,7 +689,11 @@ class Camera:
             # Load model thresholds from recipe
             model_thresholds = recipe_data.get("model_thresholds", {})
             self.matching_threshold = model_thresholds.get("matching_threshold", 0.85)
-            logger.info(f"[{self.serial_number}] Loaded matching_threshold: {self.matching_threshold}")
+            self.recognition_threshold = model_thresholds.get("recognition_threshold", 0.5)
+            logger.info(
+                f"[{self.serial_number}] Loaded thresholds: "
+                f"matching={self.matching_threshold}, recognition={self.recognition_threshold}"
+            )
 
             # Find camera config in recipe
             cameras = recipe_data.get("cameras", [])

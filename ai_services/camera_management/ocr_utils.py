@@ -174,7 +174,7 @@ def crop_text_region(frame_img: np.ndarray, points: list) -> np.ndarray:
     return warped
 
 
-def compare_texts(text1: str, text2: str, case_sensitive: bool = False, strip: bool = True) -> bool:
+def compare_texts(text1: str, text2: str, case_sensitive: bool = False, strip: bool = True, space: bool = True) -> bool:
     """
     Compare two text strings with flexible matching
 
@@ -191,9 +191,15 @@ def compare_texts(text1: str, text2: str, case_sensitive: bool = False, strip: b
         text1 = text1.strip()
         text2 = text2.strip()
 
+    if space:
+        text1 = text1.replace(" ", "")
+        text2 = text2.replace(" ", "")
+        
     if not case_sensitive:
         text1 = text1.upper()
         text2 = text2.upper()
+
+
 
     return text1 == text2
 
