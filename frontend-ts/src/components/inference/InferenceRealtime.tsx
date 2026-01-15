@@ -114,7 +114,13 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
   const [latestResults, setLatestResults] = useState<InferenceResult | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
   const [runningRecipe, setRunningRecipe] = useState<any>(null);
-  const [isOnline, setIsOnline] = useState(true); // Inference mode: ONLINE/OFFLINE
+
+  // Initialize isOnline from localStorage (default to false/OFFLINE for safety)
+  const [isOnline, setIsOnline] = useState(() => {
+    const saved = localStorage.getItem('inference_mode_online');
+    return saved === 'true'; // Default to false (OFFLINE) if not set
+  });
+
   const [isStopping, setIsStopping] = useState(false);
   const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
   const [recipeStartTime, setRecipeStartTime] = useState<Date | null>(null);
@@ -162,7 +168,7 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
         setLatestResults(parsedResults);
       }
       if (savedExpandedLogs) {
-        const parsedExpanded = new Set(JSON.parse(savedExpandedLogs));
+        const parsedExpanded = new Set<string>(JSON.parse(savedExpandedLogs));
         // console.log(`[InferenceRealtime] Restored ${parsedExpanded.size} expanded logs`);
         setExpandedLogs(parsedExpanded);
       }
@@ -397,6 +403,7 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
           localStorage.removeItem('inference_latest_results');
           localStorage.removeItem('inference_expanded_logs');
           localStorage.removeItem('inference_start_time');
+          localStorage.removeItem('inference_mode_online'); // Clear inference mode state
 
           // Redirect to Recipes page after 1 second
           setTimeout(() => {
@@ -423,6 +430,10 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
     try {
       await receiptsAPI.setInferenceMode(runningRecipeId, newMode);
       setIsOnline(newMode);
+
+      // Save to localStorage for persistence
+      localStorage.setItem('inference_mode_online', newMode.toString());
+      console.log(`[InferenceMode] Toggled to ${newMode ? 'ONLINE' : 'OFFLINE'}, saved to localStorage`);
 
       // Add log
       const modeLog: InferenceLog = {

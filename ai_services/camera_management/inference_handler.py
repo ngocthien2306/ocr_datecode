@@ -1076,7 +1076,8 @@ class InferenceHandler:
                                                 expected_texts=frame_expected_texts,
                                                 camera=camera
                                             )
-
+                                            print("RECOGNIZE THERSHOLD: ", getattr(camera, 'recognition_threshold', 0.85))
+                                            
                                             # Also verify template similarity
                                             matcher = matchers_list[frame_idx]
                                             if hasattr(matcher, 'template_img') and hasattr(matcher, 'template_bbox'):

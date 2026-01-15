@@ -329,11 +329,21 @@ export default function Receipts() {
             });
           }, 50);
 
-          setTimeout(() => {
+          setTimeout(async () => {
             clearInterval(progressInterval);
             setShowLoadingAnimation(false);
             setLoadingProgress(0);
             setRunningRecipeId(receipt.id); // Set running recipe
+
+            // Set inference mode to OFFLINE by default when loading recipe
+            try {
+              await receiptsAPI.setInferenceMode(receipt.id, false);
+              // Save OFFLINE state to localStorage for UI persistence
+              localStorage.setItem('inference_mode_online', 'false');
+              console.log('[LoadRecipe] Set inference mode to OFFLINE and saved to localStorage');
+            } catch (error) {
+              console.error('[LoadRecipe] Failed to set inference mode to OFFLINE:', error);
+            }
 
             // Redirect to Realtime tab
             const realtimeLink = document.querySelector('a[href="#realtime"]') as HTMLAnchorElement;

@@ -74,32 +74,30 @@ class TextRecognizer:
             prev_idx = idx
         
         return ''.join(chars)
-    
-    def decode_ctc_with_confidence(self, preds):
-        pred = preds[0]
-        softmax_preds = self._softmax(pred)
-        best_path = np.argmax(softmax_preds, axis=-1)
         
-        confidences = []
+    def decode_ctc_with_confidence(self, preds):
+        pred = preds[0]  # Shape: (timesteps, num_classes)
+        
+        best_path = np.argmax(pred, axis=-1)
+        
+        all_confidences = []
+        for t, char_idx in enumerate(best_path):
+            all_confidences.append(float(pred[t, char_idx]))
+        
+        # Decode text như cũ
         decoded_chars = []
         prev_idx = -1
-        num_classes = softmax_preds.shape[-1]
-        
-        for t, char_idx in enumerate(best_path):
+        for char_idx in best_path:
             if char_idx != 0 and char_idx != prev_idx:
                 if char_idx < len(self.char_list):
                     decoded_chars.append(self.char_list[char_idx])
-                    confidences.append(float(softmax_preds[t, char_idx]))
-                elif char_idx < num_classes:
-                    decoded_chars.append('�')
-                    confidences.append(float(softmax_preds[t, char_idx]))
             prev_idx = char_idx
         
         text = ''.join(decoded_chars)
-        avg_confidence = np.mean(confidences) if confidences else 0.0
+        avg_confidence = np.mean(all_confidences) if all_confidences else 0.0
         
         return text, float(avg_confidence)
-    
+
     def _softmax(self, x):
         exp_x = np.exp(x - np.max(x, axis=-1, keepdims=True))
         return exp_x / np.sum(exp_x, axis=-1, keepdims=True)
@@ -168,17 +166,17 @@ if __name__ == '__main__':
         print("Please provide a test image")
 
 
-# import cv2
-# from pathlib import Path
+import cv2
+from pathlib import Path
 
-# recognizer = TextRecognizer('../languages/english/rec.onnx', 
-#                            '../languages/english/dict.txt', 
-#                            use_gpu=True)
+recognizer = TextRecognizer('../languages/english/rec.onnx', 
+                           '../languages/english/dict.txt', 
+                           use_gpu=True)
 
-# images = [cv2.imread(str(p)) for p in sorted(Path('tests').glob('debug_ocr_*.png'))]
-# start_time = time.time()
-# results = recognizer.recognize_batch(images)
-# end_time = time.time()
-# print(f"Processing time for {len(images)} images: {(end_time - start_time)*1000:.3f} ms")
-# for i, (text, conf) in enumerate(results):
-#     print(f"{i}: '{text}' ({conf:.3f})")
+images = [cv2.imread(str(p)) for p in sorted(Path('/Users/ngocthien.ai/Source/Projects/ocr_datecode/desktop/results').glob('cropped_text_*.jpg'))]
+start_time = time.time()
+results = recognizer.recognize_batch(images)
+end_time = time.time()
+print(f"Processing time for {len(images)} images: {(end_time - start_time)*1000:.3f} ms")
+for i, (text, conf) in enumerate(results):
+    print(f"{i}: '{text}' ({conf:.3f})")
