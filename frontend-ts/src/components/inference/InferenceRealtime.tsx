@@ -12,6 +12,7 @@ interface TextVerificationResult {
   recognized: string;
   match: boolean;
   confidence: number;
+  threshold: number;
 }
 
 interface TextVerification {
@@ -565,6 +566,7 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                       <th className="col-recognized">Recognized</th>
                       <th className="col-match">Match</th>
                       <th className="col-confidence">Conf</th>
+                      <th className="col-threshold-ocr">Conf</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -581,6 +583,11 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                         <td className="col-confidence">
                           <span className={`confidence-value ${getConfidenceClass(result.confidence)}`}>
                             {(result.confidence * 100).toFixed(1)}%
+                          </span>
+                        </td>
+                        <td className="col-threshold-ocr"> 
+                            <span className={`confidence-value ${getConfidenceClass(result.threshold)}`}>
+                            {(result.threshold * 100).toFixed(1)}%
                           </span>
                         </td>
                       </tr>
