@@ -449,6 +449,138 @@ async def list_all_loads(
     }
 
 
+@router.get("/loads/template-images")
+async def get_template_images_by_timestamp(
+    recipe_id: str = Query(..., description="Recipe ID"),
+    timestamp: str = Query(..., description="Inference timestamp in ISO format (UTC)"),
+    serial_number: Optional[str] = Query(None, description="Camera serial number to filter"),
+    load_repo: ReceiptLoadRepository = Depends(get_receipt_load_repository),
+):
+    """
+    Get template images for a recipe at a specific timestamp.
+
+    This endpoint finds the recipe load that was active at the given inference timestamp
+    and returns the template images and metadata.
+
+    **Permission**: Public (no auth required for historical data access)
+
+    Returns:
+        {
+            "recipe_load_id": "...",
+            "loaded_at": "...",
+            "templates": [
+                {
+                    "camera_id": "CAM004",
+                    "serial_number": "40272812",
+                    "function_type": "Check_Type_Product",
+                    "templates": [
+                        {
+                            "name": "Template 1",
+                            "image_url": "/api/recipes/templates/images/xxx.jpeg",
+                            "visualization_url": "/api/recipes/templates/visualizations/xxx.png"
+                        }
+                    ]
+                }
+            ]
+        }
+    """
+    # Parse timestamp
+    try:
+        from dateutil import parser
+        ts = parser.isoparse(timestamp)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid timestamp format: {str(e)}"
+        )
+
+    # Get recipe load at the timestamp
+    load_doc = await load_repo.get_template_images_at_timestamp(
+        recipe_id=recipe_id,
+        timestamp=ts,
+        serial_number=serial_number
+    )
+
+    if not load_doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No recipe load found for the given recipe_id and timestamp"
+        )
+
+    # Extract template data from metadata
+    metadata = load_doc.get('metadata') or {}
+    camera_templates = metadata.get('camera_templates') or []
+
+    # Filter by serial_number if provided
+    if serial_number:
+        camera_templates = [
+            ct for ct in camera_templates
+            if metadata.get('cameras', [])
+            and any(
+                cam.get('serial_number') == serial_number
+                for cam in metadata.get('cameras', [])
+                if cam.get('camera_id') == ct.get('camera_id')
+            )
+        ]
+
+    # Enrich each template with camera serial_number and generate visualization URLs
+    templates_output = []
+    cameras = metadata.get('cameras') or []
+
+    for cam_template in camera_templates:
+        camera_id = cam_template.get('camera_id')
+
+        # Find matching camera config to get serial_number
+        cam_config = next((c for c in cameras if c.get('camera_id') == camera_id), None)
+        cam_serial = cam_config.get('serial_number') if cam_config else None
+
+        templates_list = cam_template.get('templates') or []
+
+        # Generate visualization URLs for each template
+        enriched_templates = []
+        for tpl in templates_list:
+            image_url = tpl.get('image_url')
+            viz_url = None
+
+            if image_url:
+                filename = image_url.split('/')[-1]
+                src_path = TEMPLATE_UPLOAD_DIR / filename
+
+                if src_path.exists():
+                    annotations = tpl.get('annotations') or []
+                    if annotations:
+                        try:
+                            viz_url = _draw_template_visualization(
+                                src_path,
+                                annotations,
+                                loaded_at=load_doc.get('loaded_at')
+                            )
+                        except Exception:
+                            traceback.print_exc()
+                            viz_url = image_url  # Fallback to raw image
+                    else:
+                        viz_url = image_url  # No annotations, use raw image
+
+            enriched_templates.append({
+                'name': tpl.get('name'),
+                'image_url': image_url,
+                'visualization_url': viz_url
+            })
+
+        templates_output.append({
+            'camera_id': camera_id,
+            'serial_number': cam_serial,
+            'function_type': cam_template.get('function_type'),
+            'templates': enriched_templates
+        })
+
+    return {
+        'recipe_load_id': load_doc.get('id'),
+        'loaded_at': load_doc.get('loaded_at'),
+        'templates': templates_output
+    }
+
+
 @router.get("/{recipe_id}/loads")
 async def list_recipe_loads(
     recipe_id: str,

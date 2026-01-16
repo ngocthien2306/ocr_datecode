@@ -147,3 +147,46 @@ class ReceiptLoadRepository:
         doc['_id'] = str(doc['_id'])
         doc['id'] = doc['_id']
         return doc
+
+    async def get_template_images_at_timestamp(
+        self,
+        recipe_id: str,
+        timestamp: datetime,
+        serial_number: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get template images for a recipe at a specific timestamp.
+
+        Finds the recipe load that was active at the given timestamp:
+        - loaded_at <= timestamp
+        - (stopped_at is None) OR (stopped_at > timestamp)
+
+        Returns the recipe load metadata with camera templates.
+        """
+        # Build query: recipe_id matches and loaded_at <= timestamp
+        query = {
+            'recipe_id': recipe_id,
+            'loaded_at': {'$lte': timestamp}
+        }
+
+        # Find the latest load before or at the timestamp
+        # Sort by loaded_at descending to get the most recent
+        doc = await self.collection.find_one(
+            query,
+            sort=[('loaded_at', -1)]
+        )
+
+        if not doc:
+            return None
+
+        # Verify this load was still active at the given timestamp
+        stopped_at = doc.get('stopped_at')
+        if stopped_at is not None and stopped_at <= timestamp:
+            # This load was already stopped before the timestamp
+            return None
+
+        # Normalize IDs
+        doc['_id'] = str(doc['_id'])
+        doc['id'] = doc['_id']
+
+        return doc

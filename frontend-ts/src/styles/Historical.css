@@ -2305,3 +2305,60 @@ body.dark-mode .no-image {
 body.dark-mode .camera-serial {
   color: #6b7280 !important;
 }
+
+/* ==================== Image Comparison Grid ==================== */
+
+.image-comparison-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+  margin-top: 12px;
+}
+
+.comparison-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.comparison-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4b5563;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 6px 12px;
+  background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
+  border-radius: 6px;
+  text-align: center;
+  border-left: 3px solid #6366f1;
+}
+
+.comparison-item:first-child .comparison-label {
+  border-left-color: #f59e0b;
+}
+
+.comparison-item:last-child .comparison-label {
+  border-left-color: #10b981;
+}
+
+/* Responsive: Stack on smaller screens */
+@media (max-width: 1400px) {
+  .image-comparison-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Dark mode support */
+body.dark-mode .comparison-label {
+  color: #e5e7eb;
+  background: linear-gradient(135deg, #374151 0%, #1f2937 100%);
+}
+
+body.dark-mode .comparison-item:first-child .comparison-label {
+  border-left-color: #fbbf24;
+}
+
+body.dark-mode .comparison-item:last-child .comparison-label {
+  border-left-color: #34d399;
+}

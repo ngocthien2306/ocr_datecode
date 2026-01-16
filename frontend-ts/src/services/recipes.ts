@@ -145,6 +145,36 @@ export const receiptsAPI = {
     });
     return response.data;
   },
+
+  // Get template images for a recipe at a specific timestamp
+  getTemplateImagesAtTimestamp: async (
+    recipeId: string,
+    timestamp: string,
+    serialNumber?: string
+  ): Promise<{
+    recipe_load_id: string;
+    loaded_at: string;
+    templates: Array<{
+      camera_id: string;
+      serial_number: string;
+      function_type: string;
+      templates: Array<{
+        name: string;
+        image_url: string;
+        visualization_url: string;
+      }>;
+    }>;
+  }> => {
+    const params: Record<string, string> = {
+      recipe_id: recipeId,
+      timestamp: timestamp,
+    };
+    if (serialNumber) {
+      params.serial_number = serialNumber;
+    }
+    const response = await api.get('/recipes/loads/template-images', { params });
+    return response.data;
+  },
 };
 
 export default recipesAPI;

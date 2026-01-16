@@ -4,6 +4,7 @@ import { formatTimestamp } from '@/utils/timezone';
 import { API_BASE_URL } from '@/config/api';
 import ImageModal from '@/components/shared/ImageModal';
 import { camerasAPI } from '@/services/api';
+import { receiptsAPI } from '@/services/recipes';
 import type { Camera } from '@/types';
 
 interface InspectionResultRowProps {
@@ -31,7 +32,10 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
   // Camera lookup map
   const [cameraMap, setCameraMap] = useState<Map<string, Camera>>(new Map());
 
-  // Fetch cameras on mount
+  // Template images from recipe load
+  const [templateImages, setTemplateImages] = useState<Map<string, string>>(new Map());
+
+  // Fetch cameras and template images when expanded
   useEffect(() => {
     const fetchCameras = async () => {
       try {
@@ -48,10 +52,42 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
       }
     };
 
+    const fetchTemplateImages = async () => {
+      try {
+        // Fetch template images for each camera
+        const templateMap = new Map<string, string>();
+
+        for (const cameraResult of result.camera_results) {
+          try {
+            const response = await receiptsAPI.getTemplateImagesAtTimestamp(
+              result.recipe_id,
+              result.timestamp,
+              cameraResult.serial_number
+            );
+
+            // Map template name to visualization URL
+            for (const camTemplate of response.templates) {
+              for (const template of camTemplate.templates) {
+                const key = `${cameraResult.serial_number}_${template.name}`;
+                templateMap.set(key, template.visualization_url);
+              }
+            }
+          } catch (error) {
+            console.error(`Error fetching template images for camera ${cameraResult.serial_number}:`, error);
+          }
+        }
+
+        setTemplateImages(templateMap);
+      } catch (error) {
+        console.error('Error fetching template images:', error);
+      }
+    };
+
     if (isExpanded) {
       fetchCameras();
+      fetchTemplateImages();
     }
-  }, [isExpanded]);
+  }, [isExpanded, result.recipe_id, result.timestamp, result.camera_results]);
 
   // Format timestamp using timezone utility
   const formatTime = (timestamp: string) => {
@@ -353,30 +389,70 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
                             </div>
                           )}
 
-                          {/* Image Display */}
+                          {/* Image Comparison */}
                           <div className="inspection-image-section">
-                            <div className="section-title">📷 Inspection Image:</div>
-                            {frame.image_path ? (
-                              <div className="image-container">
-                                <img
-                                  src={`${API_BASE_URL}/api/uploads/${frame.image_path}`}
-                                  alt={`Frame ${frameIdx}`}
-                                  className="inspection-thumbnail"
-                                  onClick={() => handleImageClick(frame.image_path!, frameIdx, frame.template_name)}
-                                  onError={(e) => {
-                                    e.currentTarget.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect fill="%23ddd" width="400" height="300"/><text x="50%" y="50%" text-anchor="middle" fill="%23999">Image not found</text></svg>';
-                                  }}
-                                />
-                                <div className="image-overlay">
-                                  <span>Click to view full size</span>
-                                </div>
-                                {/* <div className="image-caption">{frame.image_path}</div> */}
+                            <div className="section-title">📷 Image Comparison:</div>
+                            <div className="image-comparison-grid">
+                              {/* Template Image */}
+                              <div className="comparison-item">
+                                <div className="comparison-label">Original Template</div>
+                                {(() => {
+                                  const templateKey = `${cameraResult.serial_number}_${frame.template_name}`;
+                                  const templateUrl = templateImages.get(templateKey);
+
+                                  return templateUrl ? (
+                                    <div className="image-container">
+                                      <img
+                                        src={`${API_BASE_URL}${templateUrl}`}
+                                        alt={`Template: ${frame.template_name}`}
+                                        className="inspection-thumbnail"
+                                        onClick={() => {
+                                          setModalImage({
+                                            src: `${API_BASE_URL}${templateUrl}`,
+                                            alt: `Template: ${frame.template_name}`
+                                          });
+                                        }}
+                                        onError={(e) => {
+                                          e.currentTarget.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect fill="%23ddd" width="400" height="300"/><text x="50%" y="50%" text-anchor="middle" fill="%23999">Template not found</text></svg>';
+                                        }}
+                                      />
+                                      <div className="image-overlay">
+                                        <span>Click to view full size</span>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="no-image">
+                                      Loading template...
+                                    </div>
+                                  );
+                                })()}
                               </div>
-                            ) : (
-                              <div className="no-image">
-                                N/A ({frame.pass_fail} - no image saved)
+
+                              {/* Inspection Result Image */}
+                              <div className="comparison-item">
+                                <div className="comparison-label">Inspection Result</div>
+                                {frame.image_path ? (
+                                  <div className="image-container">
+                                    <img
+                                      src={`${API_BASE_URL}/api/uploads/${frame.image_path}`}
+                                      alt={`Frame ${frameIdx}`}
+                                      className="inspection-thumbnail"
+                                      onClick={() => handleImageClick(frame.image_path!, frameIdx, frame.template_name)}
+                                      onError={(e) => {
+                                        e.currentTarget.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect fill="%23ddd" width="400" height="300"/><text x="50%" y="50%" text-anchor="middle" fill="%23999">Image not found</text></svg>';
+                                      }}
+                                    />
+                                    <div className="image-overlay">
+                                      <span>Click to view full size</span>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="no-image">
+                                    N/A ({frame.pass_fail} - no image saved)
+                                  </div>
+                                )}
                               </div>
-                            )}
+                            </div>
                           </div>
                         </div>
                       </div>
