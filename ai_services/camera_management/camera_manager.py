@@ -567,7 +567,7 @@ class CameraManager:
 
             # Set DO2: ONLINE=1, OFFLINE=0
             from .utils import write_do_value
-            do_value = 1 if enabled else 0
+            do_value = 0 if enabled else 1
             do_success = write_do_value(2, do_value)  # DO2
 
             if do_success:

@@ -344,10 +344,12 @@ class RejectScheduler:
             # Trigger DO pulse
             if self._do_control_callback:
                 self._do_control_callback(entry.do_number, pulse_ms=300)
+                self._do_control_callback(3, pulse_ms=300)
             else:
                 # Use default implementation
                 from .utils import trigger_reject_pulse
                 trigger_reject_pulse(entry.do_number, pulse_ms=300)
+                trigger_reject_pulse(3, pulse_ms=300)
 
             # Update stats
             with self._stats_lock:
