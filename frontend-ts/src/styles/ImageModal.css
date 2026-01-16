@@ -1,0 +1,234 @@
+/* Image Modal Overlay */
+.image-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(4px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Modal Container */
+.image-modal-container {
+  background: #1a1a1a;
+  border-radius: 12px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  max-width: 95vw;
+  max-height: 95vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Header */
+.image-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #2d3748 0%, #1a202c 100%);
+  border-bottom: 1px solid #4a5568;
+}
+
+.image-modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.modal-close-btn {
+  background: transparent;
+  border: none;
+  color: #cbd5e0;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.modal-close-btn:hover {
+  background: #4a5568;
+  color: #fff;
+}
+
+/* Toolbar */
+.image-modal-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  background: #2d3748;
+  border-bottom: 1px solid #4a5568;
+}
+
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolbar-btn {
+  background: #4a5568;
+  border: 1px solid #718096;
+  color: #e2e8f0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.toolbar-btn:hover:not(:disabled) {
+  background: #718096;
+  border-color: #a0aec0;
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.toolbar-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.toolbar-btn svg {
+  flex-shrink: 0;
+}
+
+.zoom-indicator {
+  min-width: 50px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+  padding: 4px 8px;
+  background: #1a202c;
+  border-radius: 4px;
+}
+
+.download-btn {
+  background: linear-gradient(135deg, #3182ce 0%, #2c5282 100%);
+  border-color: #2c5282;
+}
+
+.download-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #4299e1 0%, #3182ce 100%);
+  border-color: #3182ce;
+}
+
+/* Image Content */
+.image-modal-content {
+  flex: 1;
+  overflow: auto;
+  background: #0f0f0f;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+  max-height: calc(95vh - 200px);
+}
+
+.image-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.image-wrapper img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+  transform-origin: center;
+}
+
+/* Footer */
+.image-modal-footer {
+  padding: 12px 20px;
+  background: #2d3748;
+  border-top: 1px solid #4a5568;
+}
+
+.image-path {
+  font-size: 12px;
+  color: #a0aec0;
+  font-family: 'Courier New', monospace;
+  word-break: break-all;
+}
+
+/* Scrollbar Styling */
+.image-modal-content::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.image-modal-content::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+.image-modal-content::-webkit-scrollbar-thumb {
+  background: #4a5568;
+  border-radius: 4px;
+}
+
+.image-modal-content::-webkit-scrollbar-thumb:hover {
+  background: #718096;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .image-modal-toolbar {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .zoom-controls {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .download-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}

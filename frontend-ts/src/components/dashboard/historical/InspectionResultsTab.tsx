@@ -5,6 +5,7 @@ import { inferenceResultsAPI, type InferenceResultResponse } from '@/services/in
 import { recipesAPI } from '@/services/api';
 import type { Recipe } from '@/types';
 import InspectionResultRow from './InspectionResultRow';
+import { getDateRangeUTC, convertLocalToUTC, getTimezoneOffset, getTimezoneDisplay } from '@/utils/timezone';
 
 interface InspectionResultsTabProps {
   dateRange: string;
@@ -100,60 +101,32 @@ const InspectionResultsTab: React.FC<InspectionResultsTabProps> = ({ dateRange }
   const getDateRange = (range: string): { start_date: string; end_date: string } => {
     // Use custom date range if enabled
     if (useCustomDateRange && customStartDate && customEndDate) {
-      const start = new Date(customStartDate);
-      const end = new Date(customEndDate);
+      const offset = getTimezoneOffset();
+
+      console.log('[Timezone Debug] Custom Date Range:');
+      console.log('  User selected START:', customStartDate.toString());
+      console.log('  User selected END:', customEndDate.toString());
+      console.log('  Timezone offset (minutes):', offset);
+
+      // User picks date/time thinking it's in local timezone (e.g., Vietnam time)
+      // We need to convert: Local time → UTC
+      // Example: User picks "17/01/2026 02:00" VN → "16/01/2026 19:00" UTC
+      const startUTC = convertLocalToUTC(customStartDate, offset);
+      const endUTC = convertLocalToUTC(customEndDate, offset);
+
+      console.log('  Converted START UTC:', startUTC.toISOString());
+      console.log('  Converted END UTC:', endUTC.toISOString());
 
       return {
-        start_date: start.toISOString(),
-        end_date: end.toISOString()
+        start_date: startUTC.toISOString(),
+        end_date: endUTC.toISOString()
       };
     }
 
-    const now = new Date();
-    const end = new Date(now);
-    let start = new Date(now);
-
-    switch (range) {
-      case 'today':
-        start.setHours(0, 0, 0, 0);
-        break;
-      case 'yesterday':
-        start.setDate(now.getDate() - 1);
-        start.setHours(0, 0, 0, 0);
-        end.setDate(now.getDate() - 1);
-        end.setHours(23, 59, 59, 999);
-        break;
-      case '7days':
-        start.setDate(now.getDate() - 7);
-        break;
-      case 'thisweek':
-        const dayOfWeek = now.getDay();
-        start.setDate(now.getDate() - dayOfWeek);
-        start.setHours(0, 0, 0, 0);
-        break;
-      case '30days':
-        start.setDate(now.getDate() - 30);
-        break;
-      case 'thismonth':
-        start.setDate(1);
-        start.setHours(0, 0, 0, 0);
-        break;
-      case 'lastmonth':
-        start.setMonth(now.getMonth() - 1);
-        start.setDate(1);
-        start.setHours(0, 0, 0, 0);
-        end.setMonth(now.getMonth());
-        end.setDate(0);
-        end.setHours(23, 59, 59, 999);
-        break;
-      default:
-        start.setDate(now.getDate() - 7);
-    }
-
-    return {
-      start_date: start.toISOString(),
-      end_date: end.toISOString()
-    };
+    // Use preset range with proper timezone handling
+    const result = getDateRangeUTC(range);
+    console.log(`[Timezone Debug] Preset Range "${range}":`, result);
+    return result;
   };
 
   const toggleRowExpanded = (id: string) => {
@@ -321,7 +294,7 @@ const InspectionResultsTab: React.FC<InspectionResultsTabProps> = ({ dateRange }
               }}
               className="custom-date-checkbox"
             />
-            Custom Date Range:
+            Custom Date Range ({getTimezoneDisplay()}):
           </label>
         </div>
 

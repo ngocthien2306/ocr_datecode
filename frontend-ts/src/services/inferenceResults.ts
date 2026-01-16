@@ -1,16 +1,26 @@
 import api from './api';
 
 export interface TextVerificationResult {
-  region_idx: number;
+  region_idx?: number;
+  annotation_idx?: number;
   expected: string;
   recognized: string;
   match: boolean;
   confidence: number;
+  threshold?: number;
 }
 
 export interface TextVerification {
   all_match: boolean;
   results: TextVerificationResult[];
+}
+
+export interface TemplateVerification {
+  match: boolean;
+  similarity: number;
+  threshold: number;
+  method?: string;
+  template_bbox?: any;
 }
 
 export interface FrameResult {
@@ -19,9 +29,11 @@ export interface FrameResult {
   confidence: number;
   image_path?: string;
   template_name: string;
+  template_id?: string | null;
   timings?: any;
   detected_regions?: any[];
   text_verification?: TextVerification;
+  template_verification?: TemplateVerification;
 }
 
 export interface CameraResult {

@@ -1,5 +1,10 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { type InferenceResultResponse } from '@/services/inferenceResults';
+import { formatTimestamp } from '@/utils/timezone';
+import { API_BASE_URL } from '@/config/api';
+import ImageModal from '@/components/shared/ImageModal';
+import { camerasAPI } from '@/services/api';
+import type { Camera } from '@/types';
 
 interface InspectionResultRowProps {
   result: InferenceResultResponse;
@@ -20,15 +25,72 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
   onDelete,
   canDelete
 }) => {
-  // Format timestamp
+  // Image modal state
+  const [modalImage, setModalImage] = useState<{ src: string; alt: string } | null>(null);
+
+  // Camera lookup map
+  const [cameraMap, setCameraMap] = useState<Map<string, Camera>>(new Map());
+
+  // Fetch cameras on mount
+  useEffect(() => {
+    const fetchCameras = async () => {
+      try {
+        const cameras = await camerasAPI.getAllCameras(0, 20);
+        const map = new Map<string, Camera>();
+        cameras.forEach(camera => {
+          if (camera.serial_number) {
+            map.set(camera.serial_number, camera);
+          }
+        });
+        setCameraMap(map);
+      } catch (error) {
+        console.error('Error fetching cameras:', error);
+      }
+    };
+
+    if (isExpanded) {
+      fetchCameras();
+    }
+  }, [isExpanded]);
+
+  // Format timestamp using timezone utility
   const formatTime = (timestamp: string) => {
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return formatTimestamp(timestamp, 'time');
   };
 
   const formatDate = (timestamp: string) => {
-    const date = new Date(timestamp);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return formatTimestamp(timestamp, 'date');
+  };
+
+  // Open image modal
+  const handleImageClick = (imagePath: string, frameIdx: number, templateName: string) => {
+    const imageUrl = `${API_BASE_URL}/api/uploads/${imagePath}`;
+    const alt = `Frame ${frameIdx + 1}: ${templateName} - Inspection Image`;
+    setModalImage({ src: imageUrl, alt });
+  };
+
+  // Close image modal
+  const closeModal = () => {
+    setModalImage(null);
+  };
+
+  // Get camera display name
+  const getCameraDisplayName = (serialNumber: string): string => {
+    const camera = cameraMap.get(serialNumber);
+    if (!camera) {
+      return serialNumber; // Fallback to serial number
+    }
+
+    // Show name and location if available
+    const parts: string[] = [];
+    if (camera.name) {
+      parts.push(camera.name);
+    }
+    if (camera.location) {
+      parts.push(`${camera.location}`);
+    }
+
+    return parts.length > 0 ? parts.join(' ') : serialNumber;
   };
 
   // Calculate camera stats
@@ -169,19 +231,22 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
 
               {/* Camera Results */}
               <div className="camera-results-section">
-                <h5>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ marginRight: '6px', verticalAlign: 'middle' }}>
+                <h5 style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                     <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" strokeWidth="2"/>
                     <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
                     <path d="M7 4V2M17 4V2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
                   </svg>
-                  Camera Results:
+                  <span>Camera Results:</span>
                 </h5>
                 {result.camera_results.map((cameraResult, idx) => (
                   <div key={idx} className="camera-result-card">
                     <div className="camera-header">
                       <span className="camera-name">
-                        {cameraResult.serial_number}
+                        {getCameraDisplayName(cameraResult.serial_number)}
+                      </span>
+                      <span className="camera-serial" style={{ fontSize: '12px', color: '#9ca3af', marginLeft: '8px' }}>
+                        SN: {cameraResult.serial_number}
                       </span>
                       {/* <span className={`camera-status ${cameraResult.frames[0]?.pass_fail.toLowerCase()}`}>
                         {cameraResult.frames[0]?.pass_fail}
@@ -195,60 +260,125 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
 
                     {/* Frames */}
                     {cameraResult.frames.map((frame, frameIdx) => (
-                      <div key={frameIdx} className="frame-details">
-                        {/* Timings */}
-                        {frame.timings && (
-                          <div className="timing-info">
-                            <span>⏱️ Processing: {frame.timings.total?.toFixed(0) || 0}ms</span>
-                            {frame.timings.trt_inference && (
-                              <span>(TRT: {frame.timings.trt_inference.toFixed(0)}ms)</span>
+                      <div key={frameIdx} className="frame-card">
+                        {/* Frame Header */}
+                        <div className={`frame-header ${frame.pass_fail.toLowerCase()}`}>
+                          <span className="frame-title">
+                            📸 Frame {frameIdx}: {frame.template_name}
+                          </span>
+                          <span className={`frame-status ${frame.pass_fail.toLowerCase()}`}>
+                            {frame.pass_fail === 'PASS' ? '✓' : '✗'} {frame.pass_fail}
+                          </span>
+                        </div>
+
+                        <div className="frame-body">
+                          {/* Detailed Timings */}
+                          {frame.timings && (
+                            <div className="timing-section">
+                              <span className="timing-icon">⏱️</span>
+                              <span className="timing-details">
+                                Processing: <strong>{frame.timings.total?.toFixed(0) || 0}ms</strong>
+                                {frame.timings.trt_inference && (
+                                  <> (TRT: {frame.timings.trt_inference.toFixed(0)}ms</>
+                                )}
+                                {frame.timings.preprocess && (
+                                  <> | Pre: {frame.timings.preprocess.toFixed(0)}ms</>
+                                )}
+                                {frame.timings.postprocess && (
+                                  <> | Post: {frame.timings.postprocess.toFixed(0)}ms</>
+                                )}
+                                {frame.timings.trt_inference && <>)</>}
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Template Verification */}
+                          {frame.template_verification && (
+                            <div className="template-verification-section">
+                              <div className="section-title">🎯 Template Verification:</div>
+                              <div className="template-info">
+                                <span className={`template-match ${frame.template_verification.match ? 'success' : 'error'}`}>
+                                  {frame.template_verification.match ? '✓' : '✗'} Match: {(frame.template_verification.similarity * 100).toFixed(1)}%
+                                </span>
+                                <span className="template-threshold">
+                                  Threshold: {(frame.template_verification.threshold * 100).toFixed(1)}%
+                                </span>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Text Verification */}
+                          {frame.text_verification && frame.text_verification.results && frame.text_verification.results.length > 0 && (
+                            <div className="text-verification-section-v2">
+                              <div className="section-title">
+                                📝 Text Verification:
+                                <span className={`verification-summary ${frame.text_verification.all_match ? 'success' : 'error'}`}>
+                                  {frame.text_verification.results.filter(r => r.match).length}/{frame.text_verification.results.length}
+                                  {frame.text_verification.all_match ? ' ✓' : ' ✗'}
+                                </span>
+                              </div>
+                              <div
+                                className="text-results-grid"
+                                style={{
+                                  display: 'grid',
+                                  gridTemplateColumns: 'repeat(2, 1fr)',
+                                  gap: '12px',
+                                  marginTop: '12px'
+                                }}
+                              >
+                                {frame.text_verification.results.map((textResult, textIdx) => (
+                                  <div
+                                    key={textIdx}
+                                    className={`text-result-card ${textResult.match ? 'match' : 'mismatch'}`}
+                                  >
+                                    <div className="text-result-header-v2">
+                                      <span className="region-label">Region {textResult.annotation_idx}:</span>
+                                      <span className={`match-badge ${textResult.match ? 'success' : 'error'}`}>
+                                        {textResult.match ? '✓' : '✗'} {(textResult.confidence * 100).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                    <div className="text-comparison-v2">
+                                      <div className="text-line">
+                                        <span className="text-label">Expected:</span>
+                                        <span className="text-value">"{textResult.expected}"</span>
+                                      </div>
+                                      <div className="text-line">
+                                        <span className="text-label">Recognized:</span>
+                                        <span className="text-value">"{textResult.recognized || '(empty)'}"</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Image Display */}
+                          <div className="inspection-image-section">
+                            <div className="section-title">📷 Inspection Image:</div>
+                            {frame.image_path ? (
+                              <div className="image-container">
+                                <img
+                                  src={`${API_BASE_URL}/api/uploads/${frame.image_path}`}
+                                  alt={`Frame ${frameIdx}`}
+                                  className="inspection-thumbnail"
+                                  onClick={() => handleImageClick(frame.image_path!, frameIdx, frame.template_name)}
+                                  onError={(e) => {
+                                    e.currentTarget.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect fill="%23ddd" width="400" height="300"/><text x="50%" y="50%" text-anchor="middle" fill="%23999">Image not found</text></svg>';
+                                  }}
+                                />
+                                <div className="image-overlay">
+                                  <span>Click to view full size</span>
+                                </div>
+                                {/* <div className="image-caption">{frame.image_path}</div> */}
+                              </div>
+                            ) : (
+                              <div className="no-image">
+                                N/A ({frame.pass_fail} - no image saved)
+                              </div>
                             )}
                           </div>
-                        )}
-
-                        {/* Text Verification */}
-                        {frame.text_verification && frame.text_verification.results && frame.text_verification.results.length > 0 && (
-                          <div className="text-verification-section">
-                            <h6>Text Verification:</h6>
-                            {frame.text_verification.results.map((textResult, textIdx) => (
-                              <div
-                                key={textIdx}
-                                className={`text-result ${textResult.match ? 'match' : 'mismatch'}`}
-                              >
-                                <div className="text-result-header">
-                                  <span className="region-label">Region {textResult.region_idx}:</span>
-                                  <span className={`match-badge ${textResult.match ? 'success' : 'error'}`}>
-                                    {textResult.match ? '✓' : '✗'}
-                                  </span>
-                                  <span className="confidence-badge">
-                                    {(textResult.confidence * 100).toFixed(1)}%
-                                  </span>
-                                </div>
-                                <div className="text-comparison">
-                                  <div className="expected">
-                                    <strong>Expected:</strong> "{textResult.expected}"
-                                  </div>
-                                  <div className="recognized">
-                                    <strong>Got:</strong> "{textResult.recognized || '(empty)'}"
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Image */}
-                        {frame.image_path && (
-                          <div className="frame-image">
-                            <img
-                              src={`/api/uploads/${frame.image_path}`}
-                              alt={`Frame ${frameIdx}`}
-                              onError={(e) => {
-                                e.currentTarget.style.display = 'none';
-                              }}
-                            />
-                          </div>
-                        )}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -288,6 +418,16 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
             </div>
           </td>
         </tr>
+      )}
+
+      {/* Image Modal */}
+      {modalImage && (
+        <ImageModal
+          isOpen={!!modalImage}
+          imageSrc={modalImage.src}
+          imageAlt={modalImage.alt}
+          onClose={closeModal}
+        />
       )}
     </>
   );

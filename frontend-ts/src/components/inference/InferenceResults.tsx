@@ -3,6 +3,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { API_BASE_URL } from '@/config/api';
 import socketService from '@/services/socketio';
 import '@/styles/InferenceResults.css';
+import { formatTimestamp } from '@/utils/timezone';
 
 interface InferenceFrame {
   template_name: string;
@@ -162,14 +163,7 @@ export default function InferenceResults() {
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    });
+    return formatTimestamp(dateString, 'datetime');
   };
 
   return (

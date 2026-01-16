@@ -152,6 +152,19 @@ const Settings: React.FC = () => {
       loadedSettings.loadingBackgroundOpacity = parseFloat(savedOpacity);
     }
 
+    // Load timezone from appSettings
+    try {
+      const appSettingsStr = localStorage.getItem('appSettings');
+      if (appSettingsStr) {
+        const appSettings = JSON.parse(appSettingsStr);
+        if (appSettings.timezone) {
+          loadedSettings.timezone = appSettings.timezone;
+        }
+      }
+    } catch (error) {
+      console.error('Error loading timezone from appSettings:', error);
+    }
+
     if (Object.keys(loadedSettings).length > 0) {
       setSettings(prev => ({ ...prev, ...loadedSettings }));
     }
@@ -202,6 +215,26 @@ const Settings: React.FC = () => {
       }));
     }
 
+    // Save timezone to appSettings for timezone utility to use
+    if (key === 'timezone') {
+      try {
+        let appSettings = { timezone: value as string };
+        const existingStr = localStorage.getItem('appSettings');
+        if (existingStr) {
+          const existing = JSON.parse(existingStr);
+          appSettings = { ...existing, timezone: value as string };
+        }
+        localStorage.setItem('appSettings', JSON.stringify(appSettings));
+        console.log('Timezone saved to appSettings:', value);
+        // Dispatch event to notify other components
+        window.dispatchEvent(new CustomEvent('timezoneChanged', {
+          detail: { timezone: value }
+        }));
+      } catch (error) {
+        console.error('Error saving timezone to appSettings:', error);
+      }
+    }
+
     if (key === 'loadingBackground' || key === 'loadingBackgroundOpacity') {
       localStorage.setItem(key, String(value));
       window.dispatchEvent(new CustomEvent('loadingBackgroundChanged', {
@@ -215,6 +248,20 @@ const Settings: React.FC = () => {
 
   const handleSave = () => {
     console.log('Saving settings:', settings);
+
+    // Save timezone and other critical settings to appSettings
+    try {
+      let appSettings = { timezone: settings.timezone };
+      const existingStr = localStorage.getItem('appSettings');
+      if (existingStr) {
+        const existing = JSON.parse(existingStr);
+        appSettings = { ...existing, timezone: settings.timezone };
+      }
+      localStorage.setItem('appSettings', JSON.stringify(appSettings));
+    } catch (error) {
+      console.error('Error saving settings:', error);
+    }
+
     toast.success('Settings saved successfully!');
   };
 
