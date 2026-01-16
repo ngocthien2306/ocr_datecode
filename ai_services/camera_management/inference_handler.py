@@ -692,6 +692,38 @@ class InferenceHandler:
             'results': verification_results
         }
 
+    def _update_bboxes_with_recognized_text(
+        self,
+        transformed_bboxes: List[Dict[str, Any]],
+        text_verification: Dict[str, Any]
+    ) -> None:
+        """
+        Update transformed_bboxes with recognized text from text_verification.
+        This modifies transformed_bboxes in-place to replace expected text with OCR result.
+
+        Args:
+            transformed_bboxes: List of bbox dicts (modified in-place)
+            text_verification: Result from verify_text_regions containing recognized texts
+        """
+        if not text_verification or not text_verification.get('results'):
+            return
+
+        # Create lookup map: annotation_idx -> recognized_text
+        recognized_map = {}
+        for text_result in text_verification['results']:
+            annotation_idx = text_result.get('annotation_idx')
+            recognized_text = text_result.get('recognized', '')
+            if annotation_idx is not None:
+                recognized_map[annotation_idx] = recognized_text
+
+        # Update text bboxes with recognized text
+        for bbox in transformed_bboxes:
+            if bbox.get('type') == 'text':
+                annotation_idx = bbox.get('annotation_index')
+                if annotation_idx is not None and annotation_idx in recognized_map:
+                    # Replace expected text with recognized text
+                    bbox['text'] = recognized_map[annotation_idx]
+
     def verify_template_regions(
         self,
         frame_img: 'np.ndarray',
@@ -1093,7 +1125,12 @@ class InferenceHandler:
                                                 camera=camera,
                                                 recognition_threshold=getattr(camera, 'recognition_threshold', 0.5)
                                             )
-      
+
+                                            # Update bboxes with recognized text for visualization
+                                            self._update_bboxes_with_recognized_text(
+                                                transformed_bboxes, text_verification
+                                            )
+
                                             # Also verify template similarity
                                             matcher = matchers_list[frame_idx]
                                             if hasattr(matcher, 'template_img') and hasattr(matcher, 'template_bbox'):
@@ -1262,6 +1299,11 @@ class InferenceHandler:
                                         expected_texts=frame_expected_texts,
                                         camera=camera,
                                         recognition_threshold=getattr(camera, 'recognition_threshold', 0.5)
+                                    )
+
+                                    # Update bboxes with recognized text for visualization
+                                    self._update_bboxes_with_recognized_text(
+                                        transformed_bboxes, text_verification
                                     )
 
                                     # Also verify template similarity
@@ -1435,6 +1477,11 @@ class InferenceHandler:
                                         expected_texts=frame_expected_texts,
                                         camera=camera,
                                         recognition_threshold=getattr(camera, 'recognition_threshold', 0.5)
+                                    )
+
+                                    # Update bboxes with recognized text for visualization
+                                    self._update_bboxes_with_recognized_text(
+                                        transformed_bboxes, text_verification
                                     )
 
                                     # Also verify template similarity

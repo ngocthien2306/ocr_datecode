@@ -194,10 +194,10 @@ def compare_texts(text1: str, text2: str, case_sensitive: bool = False, strip: b
     if space:
         text1 = text1.replace(" ", "")
         text2 = text2.replace(" ", "")
-        
-    if not case_sensitive:
-        text1 = text1.upper()
-        text2 = text2.upper()
+
+    # if not case_sensitive:
+    text1 = text1.upper()
+    text2 = text2.upper()
 
 
 
