@@ -257,7 +257,7 @@ def draw_inference_bboxes(
     crop_area: Optional[Dict[str, int]] = None
 ) -> np.ndarray:
     """
-    Draw inference bounding boxes on image
+    Draw inference bounding boxes on image with styled labels
 
     Args:
         img: Input image (numpy array)
@@ -272,37 +272,58 @@ def draw_inference_bboxes(
         Image with bboxes drawn
     """
     result_img = img.copy()
+    height, width = img.shape[:2]
 
-    # Define colors for different bbox types
+    # Calculate dynamic sizes based on image dimensions
+    font_scale = max(0.5, min(2.0, width / 2000))  # Adaptive font size
+    line_thickness = max(2, int(width / 800))       # Adaptive line thickness
+    text_thickness = max(1, int(width / 1200))      # Adaptive text thickness
+
+    # Define colors for different bbox types (BGR format)
     colors = {
         'template': (0, 255, 0),      # Green
-        'text': (255, 165, 0),         # Orange
+        'text': (0, 165, 255),         # Orange
         'barcode': (255, 0, 255),      # Magenta
-        'datecode': (0, 255, 255)      # Cyan
+        'datecode': (255, 255, 0)      # Cyan
     }
     logger.debug(f"Drawing {len(transformed_bboxes)} bboxes")
 
     # Draw crop_area first (as background)
     if crop_area:
-        # Draw as dotted yellow rectangle
         cv2.rectangle(
             result_img,
             (crop_area['x1'], crop_area['y1']),
             (crop_area['x2'], crop_area['y2']),
             (0, 255, 255),  # Yellow
-            2,
-            cv2.LINE_4
+            line_thickness,
+            cv2.LINE_AA
         )
-        # Add label
+        # Add label with background
+        label_text = "CROP AREA"
+        (label_w, label_h), baseline = cv2.getTextSize(
+            label_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.7, text_thickness
+        )
+        label_x, label_y = crop_area['x1'] + 5, crop_area['y1'] + 5
+        # Draw background rectangle
+        cv2.rectangle(
+            result_img,
+            (label_x, label_y),
+            (label_x + label_w + 6, label_y + label_h + baseline + 4),
+            (0, 255, 255),
+            -1
+        )
+        # Draw text
         cv2.putText(
             result_img,
-            "CROP AREA",
-            (crop_area['x1'] + 5, crop_area['y1'] + 25),
+            label_text,
+            (label_x + 3, label_y + label_h + 2),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 255, 255),
-            2
+            font_scale * 0.7,
+            (0, 0, 0),  # Black text on yellow background
+            text_thickness,
+            cv2.LINE_AA
         )
+
     # Draw each bbox
     for bbox in transformed_bboxes:
         bbox_type = bbox.get('type', 'text')
@@ -318,32 +339,78 @@ def draw_inference_bboxes(
         # Convert points to numpy array
         pts = np.array(points, dtype=np.int32)
 
-        # Draw polygon
-        cv2.polylines(result_img, [pts], isClosed=True, color=color, thickness=3)
+        # Draw polygon with anti-aliasing
+        cv2.polylines(result_img, [pts], isClosed=True, color=color,
+                     thickness=line_thickness, lineType=cv2.LINE_AA)
 
-        # Draw label if available
+        # Draw label with background box if available
         if text_label and len(points) > 0:
-            label_pos = (int(points[0][0]), int(points[0][1]) - 10)
+            # Get text size
+            (text_w, text_h), baseline = cv2.getTextSize(
+                text_label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, text_thickness
+            )
+
+            # Calculate label position (above the bbox, left-aligned)
+            label_x = int(points[0][0])
+            label_y = int(points[0][1]) - text_h - 6
+
+            # Ensure label stays within image bounds
+            if label_y < 0:
+                label_y = int(points[0][1]) + text_h + 6
+            if label_x + text_w + 6 > width:
+                label_x = width - text_w - 6
+            if label_x < 0:
+                label_x = 0
+
+            # Draw background rectangle with padding
+            cv2.rectangle(
+                result_img,
+                (label_x, label_y - text_h - 4),
+                (label_x + text_w + 6, label_y + baseline),
+                color,
+                -1  # Filled rectangle
+            )
+
+            # Draw text in white on colored background
             cv2.putText(
                 result_img,
                 text_label,
-                label_pos,
+                (label_x + 3, label_y - 2),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                color,
-                2
+                font_scale,
+                (255, 255, 255),  # White text
+                text_thickness,
+                cv2.LINE_AA
             )
 
-    # Draw inference stats at top-left
+    # Draw inference stats at top-left with background
     stats_text = f"Conf: {confidence:.1%} | Inliers: {inliers}/{total_matches}"
+    (stats_w, stats_h), baseline = cv2.getTextSize(
+        stats_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, text_thickness
+    )
+
+    # Choose color based on confidence
+    stats_color = (0, 255, 0) if confidence > 0.5 else (0, 0, 255)
+
+    # Draw background rectangle
+    cv2.rectangle(
+        result_img,
+        (5, 5),
+        (15 + stats_w, 10 + stats_h + baseline),
+        stats_color,
+        -1
+    )
+
+    # Draw stats text
     cv2.putText(
         result_img,
         stats_text,
-        (10, 30),
+        (10, 10 + stats_h),
         cv2.FONT_HERSHEY_SIMPLEX,
-        1.0,
-        (0, 255, 0) if confidence > 0.5 else (0, 0, 255),
-        2
+        font_scale,
+        (255, 255, 255),  # White text
+        text_thickness,
+        cv2.LINE_AA
     )
 
     return result_img
