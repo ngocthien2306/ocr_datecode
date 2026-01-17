@@ -89,15 +89,15 @@ async def create_camera(
         username=current_user.username,
         action_type=ActionType.CREATE_CAMERA,
         resource_type="camera",
-        resource_id=result.camera_id,
-        description=f"Created camera '{result.camera_id}' with model '{result.model_name}'",
+        resource_id=result["camera_id"],
+        description=f"Created camera '{result['camera_id']}' with model '{result['model_name']}'",
         new_value={
-            "camera_id": result.camera_id,
-            "model_name": result.model_name,
-            "serial_number": result.serial_number,
-            "resolution_width": result.resolution_width,
-            "resolution_height": result.resolution_height,
-            "is_active": result.is_active
+            "camera_id": result["camera_id"],
+            "model_name": result["model_name"],
+            "serial_number": result["serial_number"],
+            "resolution_width": result["resolution_width"],
+            "resolution_height": result["resolution_height"],
+            "is_active": result["is_active"]
         },
         ip_address=client_ip,
         user_agent=user_agent
