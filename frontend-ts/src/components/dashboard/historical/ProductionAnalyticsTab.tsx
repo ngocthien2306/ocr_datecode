@@ -63,6 +63,10 @@ const ProductionAnalyticsTab: React.FC = () => {
     let start = new Date(now);
 
     switch (range) {
+      case 'today':
+        // Today: 00:00:00 to now
+        start.setHours(0, 0, 0, 0);
+        break;
       case '1h':
         start.setHours(now.getHours() - 1);
         break;
@@ -92,8 +96,9 @@ const ProductionAnalyticsTab: React.FC = () => {
     switch (range) {
       case '1h':
         return 'minute'; // 1 hour: group by minute
+      case 'today':
       case '8h':
-        return 'hour'; // 8 hours: group by hour
+        return 'hour'; // Today/8 hours: group by hour
       case '1d':
       case '7d':
       case '30d':
@@ -154,24 +159,33 @@ const ProductionAnalyticsTab: React.FC = () => {
     // Extract labels (timestamps) - format based on granularity
     const labels = timeseriesData.data.map(point => {
       const date = new Date(point.timestamp);
+      // Add 7 hours for VN timezone
+      const vnDate = new Date(date.getTime() + 7 * 60 * 60 * 1000);
 
       if (timeseriesData.granularity === 'minute') {
         // For minute: "10:35"
-        return date.toLocaleTimeString('en-US', {
+        return vnDate.toLocaleTimeString('en-US', {
           hour: '2-digit',
           minute: '2-digit'
         });
       } else if (timeseriesData.granularity === 'hour') {
-        // For hourly: "Jan 17, 10:00"
-        return date.toLocaleString('en-US', {
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        });
+        // For hourly: "10:00 AM" (today) or "Jan 17, 10:00" (other days)
+        if (dateRange === 'today') {
+          return vnDate.toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+        } else {
+          return vnDate.toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+        }
       } else {
         // For daily: "Jan 17"
-        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        return vnDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       }
     });
 
@@ -305,24 +319,33 @@ const ProductionAnalyticsTab: React.FC = () => {
     // Extract labels (timestamps) - format based on granularity
     const labels = timeseriesData.data.map(point => {
       const date = new Date(point.timestamp);
+      // Add 7 hours for VN timezone
+      const vnDate = new Date(date.getTime() + 7 * 60 * 60 * 1000);
 
       if (timeseriesData.granularity === 'minute') {
         // For minute: "10:35"
-        return date.toLocaleTimeString('en-US', {
+        return vnDate.toLocaleTimeString('en-US', {
           hour: '2-digit',
           minute: '2-digit'
         });
       } else if (timeseriesData.granularity === 'hour') {
-        // For hourly: "Jan 17, 10:00"
-        return date.toLocaleString('en-US', {
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        });
+        // For hourly: "10:00 AM" (today) or "Jan 17, 10:00" (other days)
+        if (dateRange === 'today') {
+          return vnDate.toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+        } else {
+          return vnDate.toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+        }
       } else {
         // For daily: "Jan 17"
-        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        return vnDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       }
     });
 
@@ -503,6 +526,7 @@ const ProductionAnalyticsTab: React.FC = () => {
         <div className="control-group">
           <label style={{ display: 'block', marginBottom: '5px', fontWeight: 500 }}>Date Range:</label>
           <select value={dateRange} onChange={(e) => setDateRange(e.target.value)} style={{ width: '150px', padding: '8px', borderRadius: '4px', border: '1px solid #d1d5db' }}>
+            <option value="today">Today (24h)</option>
             <option value="1h">Last 1 Hour</option>
             <option value="8h">Last 8 Hours</option>
             <option value="1d">Last 1 Day</option>

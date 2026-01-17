@@ -627,12 +627,25 @@ export default function Dashboard({ onLogout }: DashboardProps) {
         // Today (24 hours - hourly data): 00:00:00 to now VN time
         const todayStart = new Date(now);
         todayStart.setHours(0, 0, 0, 0);
+
+        console.log('=== Dashboard Recipe Charts ===');
+        console.log('Now:', now);
+        console.log('Today Start (VN 00:00):', todayStart);
+        console.log('Start ISO:', todayStart.toISOString());
+        console.log('End ISO:', now.toISOString());
+
         const todayStats = await inferenceResultsAPI.getTimeseriesStatistics({
           start_date: todayStart.toISOString(),
           end_date: now.toISOString(),
           granularity: 'hour',
           recipe_ids: recipe.id
         });
+
+        console.log('Response data points:', todayStats.data?.length || 0);
+        if (todayStats.data && todayStats.data.length > 0) {
+          console.log('First timestamp:', todayStats.data[0]!.timestamp);
+          console.log('Last timestamp:', todayStats.data[todayStats.data.length - 1]!.timestamp);
+        }
 
         // Month (30 days - daily data): last 30 days VN time
         const monthStart = new Date(now);
