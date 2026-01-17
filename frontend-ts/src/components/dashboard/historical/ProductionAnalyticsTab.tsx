@@ -1,12 +1,32 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { inferenceResultsAPI, type TimeseriesStatistics } from '@/services/inferenceResults';
 import { recipesAPI } from '@/services/recipes';
 import type { Recipe } from '@/types';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+} from 'chart.js';
+import { Line } from 'react-chartjs-2';
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+);
 
 const ProductionAnalyticsTab: React.FC = () => {
-  const chartRef = useRef<HTMLCanvasElement | null>(null);
-  const tooltipRef = useRef<HTMLDivElement | null>(null);
-
   // State
   const [dateRange, setDateRange] = useState('7d');
   const [selectedRecipes, setSelectedRecipes] = useState<string[]>([]);
@@ -25,13 +45,6 @@ const ProductionAnalyticsTab: React.FC = () => {
   useEffect(() => {
     fetchTimeseriesData();
   }, [dateRange, selectedRecipes]);
-
-  // Draw chart when data changes
-  useEffect(() => {
-    if (timeseriesData && timeseriesData.data.length > 0) {
-      drawChart();
-    }
-  }, [timeseriesData]);
 
   const fetchRecipes = async () => {
     try {
@@ -109,169 +122,121 @@ const ProductionAnalyticsTab: React.FC = () => {
     }
   };
 
-  const drawChart = () => {
-    if (!chartRef.current || !timeseriesData || timeseriesData.data.length === 0) return;
-
-    const canvas = chartRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const width = canvas.width;
-    const height = canvas.height;
-
-    ctx.clearRect(0, 0, width, height);
-
-    const padding = 60;
-    const chartWidth = width - padding * 2;
-    const chartHeight = height - padding * 2;
-
-    // Plot recipes
-    const items = timeseriesData.data[0]?.by_recipe || [];
-
-    if (items.length === 0) return;
-
-    // Calculate max value for Y-axis
-    const allValues: number[] = [];
-    timeseriesData.data.forEach(point => {
-      point.by_recipe.forEach(item => allValues.push(item.total));
-    });
-    const maxValue = Math.max(...allValues, 100);
-
-    // Draw grid and Y-axis labels
-    ctx.strokeStyle = '#e5e7eb';
-    ctx.lineWidth = 1;
-    ctx.fillStyle = '#6b7280';
-    ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    ctx.textAlign = 'right';
-
-    for (let i = 0; i <= 5; i++) {
-      const y = padding + (chartHeight / 5) * i;
-      const value = Math.round(maxValue - (maxValue / 5) * i);
-
-      ctx.beginPath();
-      ctx.moveTo(padding, y);
-      ctx.lineTo(width - padding, y);
-      ctx.stroke();
-
-      ctx.fillText(value.toString(), padding - 10, y + 4);
+  const getChartData = () => {
+    if (!timeseriesData || timeseriesData.data.length === 0) {
+      return { labels: [], datasets: [] };
     }
 
-    // Draw data lines
-    const colors = ['#6366f1', '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b'];
+    // Extract labels (timestamps)
+    const labels = timeseriesData.data.map(point => {
+      const date = new Date(point.timestamp);
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    });
 
-    items.forEach((item, index) => {
-      const itemKey = (item as any).recipe_id;
+    // Get all unique recipes from the first data point
+    const recipes = timeseriesData.data[0]?.by_recipe || [];
+
+    // Color palette
+    const colors = [
+      '#6366f1', '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b',
+      '#10b981', '#ef4444', '#06b6d4', '#f97316', '#84cc16'
+    ];
+
+    // Create datasets for each recipe
+    const datasets = recipes.map((recipe, index) => {
       const data = timeseriesData.data.map(point => {
-        const found = point.by_recipe.find(d => (d as any).recipe_id === itemKey);
+        const found = point.by_recipe.find(r => r.recipe_id === recipe.recipe_id);
         return found ? found.total : 0;
       });
 
       const color = colors[index % colors.length] || '#6366f1';
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
 
-      data.forEach((value, idx) => {
-        const x = padding + (idx / Math.max(data.length - 1, 1)) * chartWidth;
-        const y = padding + chartHeight - (value / maxValue) * chartHeight;
+      return {
+        label: recipe.recipe_name,
+        data: data,
+        borderColor: color,
+        backgroundColor: color + '20', // 20 = 12% opacity
+        borderWidth: 3,
+        pointRadius: 5,
+        pointHoverRadius: 7,
+        tension: 0.3, // Smooth curves
+        fill: false
+      };
+    });
 
-        if (idx === 0) {
-          ctx.moveTo(x, y);
-        } else {
-          ctx.lineTo(x, y);
+    return { labels, datasets };
+  };
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      mode: 'index' as const,
+      intersect: false,
+    },
+    plugins: {
+      legend: {
+        position: 'top' as const,
+        labels: {
+          usePointStyle: true,
+          padding: 15,
+          font: {
+            size: 12
+          }
         }
-      });
-
-      ctx.stroke();
-
-      // Draw points
-      ctx.fillStyle = color;
-      data.forEach((value, idx) => {
-        const x = padding + (idx / Math.max(data.length - 1, 1)) * chartWidth;
-        const y = padding + chartHeight - (value / maxValue) * chartHeight;
-
-        ctx.beginPath();
-        ctx.arc(x, y, 5, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      });
-    });
-
-    // Draw X-axis labels
-    ctx.fillStyle = '#6b7280';
-    ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    ctx.textAlign = 'center';
-
-    timeseriesData.data.forEach((point, idx) => {
-      const x = padding + (idx / Math.max(timeseriesData.data.length - 1, 1)) * chartWidth;
-      const date = new Date(point.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      ctx.fillText(date, x, height - 20);
-    });
-  };
-
-  const handleChartMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!chartRef.current || !tooltipRef.current || !timeseriesData || timeseriesData.data.length === 0) return;
-
-    const canvas = chartRef.current;
-    const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    const padding = 60;
-    const chartWidth = canvas.width - padding * 2;
-
-    // Check if mouse is within chart area
-    if (mouseX < padding || mouseX > canvas.width - padding ||
-        mouseY < padding || mouseY > canvas.height - padding) {
-      tooltipRef.current.style.display = 'none';
-      return;
-    }
-
-    // Find nearest data point
-    const dataPointWidth = chartWidth / Math.max(timeseriesData.data.length - 1, 1);
-    const nearestIndex = Math.round((mouseX - padding) / dataPointWidth);
-
-    if (nearestIndex < 0 || nearestIndex >= timeseriesData.data.length) {
-      tooltipRef.current.style.display = 'none';
-      return;
-    }
-
-    const point = timeseriesData.data[nearestIndex];
-    if (!point) {
-      tooltipRef.current.style.display = 'none';
-      return;
-    }
-
-    const items = point.by_recipe;
-
-    // Build tooltip content
-    const date = new Date(point.timestamp).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
-
-    let tooltipHTML = `<div style="font-weight: bold; margin-bottom: 8px;">${date}</div>`;
-
-    items.forEach(item => {
-      const label = (item as any).recipe_name;
-      tooltipHTML += `<div style="margin-bottom: 4px;">${label}: <strong>${item.total}</strong></div>`;
-    });
-
-    tooltipHTML += `<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; font-weight: bold;">Total: ${point.total}</div>`;
-
-    tooltipRef.current.innerHTML = tooltipHTML;
-    tooltipRef.current.style.display = 'block';
-    tooltipRef.current.style.left = `${e.clientX + 15}px`;
-    tooltipRef.current.style.top = `${e.clientY - 15}px`;
-  };
-
-  const handleChartMouseLeave = () => {
-    if (tooltipRef.current) {
-      tooltipRef.current.style.display = 'none';
+      },
+      tooltip: {
+        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+        padding: 12,
+        titleFont: {
+          size: 14,
+          weight: 'bold' as const
+        },
+        bodyFont: {
+          size: 13
+        },
+        callbacks: {
+          footer: (tooltipItems: any[]) => {
+            const total = tooltipItems.reduce((sum, item) => sum + item.parsed.y, 0);
+            return `\nTotal: ${total}`;
+          }
+        }
+      }
+    },
+    scales: {
+      x: {
+        grid: {
+          color: '#e5e7eb',
+          drawBorder: false
+        },
+        ticks: {
+          font: {
+            size: 12
+          },
+          color: '#6b7280'
+        }
+      },
+      y: {
+        grid: {
+          color: '#e5e7eb',
+          drawBorder: false
+        },
+        ticks: {
+          font: {
+            size: 12
+          },
+          color: '#6b7280'
+        },
+        title: {
+          display: true,
+          text: 'Total Inspections',
+          font: {
+            size: 13,
+            weight: 'bold' as const
+          },
+          color: '#374151'
+        }
+      }
     }
   };
 
@@ -296,7 +261,7 @@ const ProductionAnalyticsTab: React.FC = () => {
         {/* Date Range */}
         <div className="control-group">
           <label style={{ display: 'block', marginBottom: '5px', fontWeight: 500 }}>Date Range:</label>
-          <select value={dateRange} onChange={(e) => setDateRange(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #d1d5db' }}>
+          <select value={dateRange} onChange={(e) => setDateRange(e.target.value)} style={{ width: '150px', padding: '8px', borderRadius: '4px', border: '1px solid #d1d5db' }}>
             <option value="1h">Last 1 Hour</option>
             <option value="8h">Last 8 Hours</option>
             <option value="1d">Last 1 Day</option>
@@ -341,30 +306,8 @@ const ProductionAnalyticsTab: React.FC = () => {
         <h3>Production Trends by Recipe</h3>
         {loading && <p>Loading...</p>}
         {!loading && timeseriesData && timeseriesData.data.length > 0 && (
-          <div style={{ position: 'relative' }}>
-            <canvas
-              ref={chartRef}
-              width={1200}
-              height={400}
-              onMouseMove={handleChartMouseMove}
-              onMouseLeave={handleChartMouseLeave}
-              style={{ cursor: 'crosshair', maxWidth: '100%', height: 'auto' }}
-            />
-            <div
-              ref={tooltipRef}
-              style={{
-                display: 'none',
-                position: 'fixed',
-                background: 'rgba(0, 0, 0, 0.8)',
-                color: 'white',
-                padding: '12px',
-                borderRadius: '4px',
-                fontSize: '14px',
-                pointerEvents: 'none',
-                zIndex: 1000,
-                maxWidth: '300px'
-              }}
-            />
+          <div style={{ height: '500px', position: 'relative' }}>
+            <Line data={getChartData()} options={chartOptions} />
           </div>
         )}
         {!loading && (!timeseriesData || timeseriesData.data.length === 0) && (

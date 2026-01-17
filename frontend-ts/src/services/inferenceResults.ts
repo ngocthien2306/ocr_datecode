@@ -153,7 +153,6 @@ export interface TimeseriesRecipeData {
   pass: number;
   fail: number;
   pass_rate: number;
-  by_camera: CameraBreakdown[];
 }
 
 export interface TimeseriesDataPoint {
@@ -162,13 +161,11 @@ export interface TimeseriesDataPoint {
   pass: number;
   fail: number;
   pass_rate: number;
-  by_camera: TimeseriesCameraData[];
   by_recipe: TimeseriesRecipeData[];
 }
 
 export interface TimeseriesStatistics {
   granularity: 'hour' | 'day';
-  group_by: 'camera' | 'recipe';
   period: PeriodInfo;
   data: TimeseriesDataPoint[];
 }
@@ -181,9 +178,7 @@ export interface StatisticsFilters {
 
 export interface TimeseriesFilters extends StatisticsFilters {
   granularity?: 'hour' | 'day';
-  camera_ids?: string;  // Comma-separated
   recipe_ids?: string;  // Comma-separated
-  group_by?: 'camera' | 'recipe';
 }
 
 export const inferenceResultsAPI = {
