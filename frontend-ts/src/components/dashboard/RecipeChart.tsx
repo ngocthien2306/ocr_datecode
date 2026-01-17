@@ -10,7 +10,7 @@ import {
   Legend,
   Filler
 } from 'chart.js';
-import { Bar } from 'react-chartjs-2';
+import { Line, Bar } from 'react-chartjs-2';
 
 ChartJS.register(
   CategoryScale,
@@ -38,16 +38,99 @@ export default function RecipeChart({ recipeName, timeRange, labels, totalData, 
   const getTimeRangeLabel = (range: string) => {
     switch (range) {
       case 'today': return 'Today (24h)';
-      // case 'week': return 'Last 7 Days';
       case 'month': return 'Last 30 Days';
-      // case 'year': return 'Last Year';
       default: return range;
     }
   };
 
   const total = totalData.reduce((sum, val) => sum + val, 0);
 
-  // Bar chart data for Pass/Fail breakdown (for today and month)
+  // Line chart data for trend
+  const lineChartData = {
+    labels,
+    datasets: [
+      {
+        label: 'Total',
+        data: totalData,
+        borderColor: '#6366f1',
+        backgroundColor: '#6366f120',
+        borderWidth: 3,
+        pointRadius: 5,
+        pointHoverRadius: 7,
+        tension: 0.3,
+        fill: false
+      }
+    ]
+  };
+
+  const lineChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      mode: 'index' as const,
+      intersect: false,
+    },
+    plugins: {
+      legend: {
+        position: 'top' as const,
+        labels: {
+          usePointStyle: true,
+          padding: 15,
+          font: {
+            size: 12
+          }
+        }
+      },
+      tooltip: {
+        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+        padding: 12,
+        titleFont: {
+          size: 14,
+          weight: 'bold' as const
+        },
+        bodyFont: {
+          size: 13
+        }
+      }
+    },
+    scales: {
+      x: {
+        grid: {
+          color: '#e5e7eb',
+          drawBorder: false
+        },
+        ticks: {
+          font: {
+            size: 11
+          },
+          color: '#6b7280'
+        }
+      },
+      y: {
+        grid: {
+          color: '#e5e7eb',
+          drawBorder: false
+        },
+        ticks: {
+          font: {
+            size: 12
+          },
+          color: '#6b7280'
+        },
+        title: {
+          display: true,
+          text: 'Total Inspections',
+          font: {
+            size: 12,
+            weight: 'bold' as const
+          }
+        },
+        beginAtZero: true
+      }
+    }
+  };
+
+  // Bar chart data for Pass/Fail breakdown
   const barChartData = {
     labels,
     datasets: [
@@ -158,6 +241,12 @@ export default function RecipeChart({ recipeName, timeRange, labels, totalData, 
         </div>
       </div>
       <div className="camera-card-body">
+        {/* Line Chart - Trend */}
+        <div className="camera-chart" style={{ height: '300px', marginBottom: '1.5rem' }}>
+          <Line data={lineChartData} options={lineChartOptions} />
+        </div>
+
+        {/* Bar Chart - Pass/Fail Breakdown */}
         <div className="camera-chart" style={{ height: '300px' }}>
           <Bar data={barChartData} options={barChartOptions} />
         </div>
