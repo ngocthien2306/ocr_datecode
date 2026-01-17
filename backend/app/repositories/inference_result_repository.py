@@ -241,16 +241,17 @@ class InferenceResultRepository:
         Get summary statistics with breakdown by camera and recipe
 
         Args:
-            start_date: Start date (VN timezone)
-            end_date: End date (VN timezone)
+            start_date: Start date (already in UTC from ISO string parse)
+            end_date: End date (already in UTC from ISO string parse)
             recipe_id: Filter by recipe ID
 
         Returns:
             Summary statistics
         """
-        # Convert VN time to UTC for DB query
-        start_utc = self._convert_vn_to_utc(start_date) if start_date else None
-        end_utc = self._convert_vn_to_utc(end_date) if end_date else None
+        # start_date and end_date are already UTC from FastAPI's datetime parsing
+        # No conversion needed for DB query
+        start_utc = start_date
+        end_utc = end_date
 
         # Build match filter
         match_filter: Dict[str, Any] = {}
@@ -397,17 +398,18 @@ class InferenceResultRepository:
         Get timeseries statistics grouped by recipe
 
         Args:
-            start_date: Start date (VN timezone)
-            end_date: End date (VN timezone)
+            start_date: Start date (already in UTC from ISO string parse)
+            end_date: End date (already in UTC from ISO string parse)
             granularity: Time granularity (minute, hour or day)
             recipe_ids: Filter by recipes (list)
 
         Returns:
             Timeseries statistics
         """
-        # Convert VN time to UTC for DB query
-        start_utc = self._convert_vn_to_utc(start_date) if start_date else None
-        end_utc = self._convert_vn_to_utc(end_date) if end_date else None
+        # start_date and end_date are already UTC from FastAPI's datetime parsing
+        # No conversion needed for DB query
+        start_utc = start_date
+        end_utc = end_date
 
         # Build match filter
         match_filter: Dict[str, Any] = {}

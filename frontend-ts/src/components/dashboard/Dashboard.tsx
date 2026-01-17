@@ -600,7 +600,10 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     try {
       // Get active recipes from today's stats
       const now = new Date();
-      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+
+      // Today: 00:00:00 to now (VN time)
+      const startOfToday = new Date(now);
+      startOfToday.setHours(0, 0, 0, 0);
 
       const todayData = await inferenceResultsAPI.getSummaryStatistics({
         start_date: startOfToday.toISOString(),
@@ -621,7 +624,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
       // Fetch charts for each recipe
       const chartsData = await Promise.all(recipes.map(async (recipe) => {
-        // Today (24 hours - hourly data)
+        // Today (24 hours - hourly data): 00:00:00 to now VN time
         const todayStart = new Date(now);
         todayStart.setHours(0, 0, 0, 0);
         const todayStats = await inferenceResultsAPI.getTimeseriesStatistics({
@@ -631,9 +634,10 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           recipe_ids: recipe.id
         });
 
-        // Month (30 days - daily data)
+        // Month (30 days - daily data): last 30 days VN time
         const monthStart = new Date(now);
         monthStart.setDate(now.getDate() - 30);
+        monthStart.setHours(0, 0, 0, 0);
         const monthStats = await inferenceResultsAPI.getTimeseriesStatistics({
           start_date: monthStart.toISOString(),
           end_date: now.toISOString(),
@@ -641,17 +645,29 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           recipe_ids: recipe.id
         });
 
+        // Helper to convert UTC timestamp to VN time (+7 hours)
+        const convertToVNTime = (utcTimestamp: string): Date => {
+          const utcDate = new Date(utcTimestamp);
+          return new Date(utcDate.getTime() + 7 * 60 * 60 * 1000); // Add 7 hours
+        };
+
         return {
           recipeId: recipe.id,
           recipeName: recipe.name,
           today: {
-            labels: todayStats.data.map(d => new Date(d.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })),
+            labels: todayStats.data.map(d => {
+              const vnDate = convertToVNTime(d.timestamp);
+              return vnDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+            }),
             totalData: todayStats.data.map(d => d.total),
             passData: todayStats.data.map(d => d.pass),
             failData: todayStats.data.map(d => d.fail)
           },
           month: {
-            labels: monthStats.data.map(d => new Date(d.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })),
+            labels: monthStats.data.map(d => {
+              const vnDate = convertToVNTime(d.timestamp);
+              return vnDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            }),
             totalData: monthStats.data.map(d => d.total),
             passData: monthStats.data.map(d => d.pass),
             failData: monthStats.data.map(d => d.fail)
@@ -668,15 +684,22 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   // Fetch today's statistics
   const fetchTodayStatistics = async () => {
     try {
+      // Use VN timezone - backend will handle UTC conversion
       const now = new Date();
-      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-      const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
 
-      // Get yesterday for comparison
-      const startOfYesterday = new Date(startOfToday);
-      startOfYesterday.setDate(startOfToday.getDate() - 1);
-      const endOfYesterday = new Date(endOfToday);
-      endOfYesterday.setDate(endOfToday.getDate() - 1);
+      // Today: 00:00:00 to 23:59:59 VN time
+      const startOfToday = new Date(now);
+      startOfToday.setHours(0, 0, 0, 0);
+      const endOfToday = new Date(now);
+      endOfToday.setHours(23, 59, 59, 999);
+
+      // Yesterday: 00:00:00 to 23:59:59 VN time
+      const startOfYesterday = new Date(now);
+      startOfYesterday.setDate(now.getDate() - 1);
+      startOfYesterday.setHours(0, 0, 0, 0);
+      const endOfYesterday = new Date(now);
+      endOfYesterday.setDate(now.getDate() - 1);
+      endOfYesterday.setHours(23, 59, 59, 999);
 
       // Fetch today's stats
       const todayData = await inferenceResultsAPI.getSummaryStatistics({
