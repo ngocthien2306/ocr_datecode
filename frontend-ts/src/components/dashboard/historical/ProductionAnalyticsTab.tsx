@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from 'react';
-import Plot from 'react-plotly.js';
+import React, { useEffect, useRef, useState } from 'react';
 import { inferenceResultsAPI, type TimeseriesStatistics } from '@/services/inferenceResults';
 import { recipesAPI } from '@/services/recipes';
 import type { Recipe } from '@/types';
 
 const ProductionAnalyticsTab: React.FC = () => {
+  const chartRef = useRef<HTMLCanvasElement | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+
   // State
   const [dateRange, setDateRange] = useState('7d');
   const [selectedRecipes, setSelectedRecipes] = useState<string[]>([]);
@@ -23,6 +25,13 @@ const ProductionAnalyticsTab: React.FC = () => {
   useEffect(() => {
     fetchTimeseriesData();
   }, [dateRange, selectedRecipes]);
+
+  // Draw chart when data changes
+  useEffect(() => {
+    if (timeseriesData && timeseriesData.data.length > 0) {
+      drawChart();
+    }
+  }, [timeseriesData]);
 
   const fetchRecipes = async () => {
     try {
@@ -100,42 +109,170 @@ const ProductionAnalyticsTab: React.FC = () => {
     }
   };
 
-  // Prepare Plotly data
-  const getPlotlyData = () => {
-    if (!timeseriesData || timeseriesData.data.length === 0) return [];
+  const drawChart = () => {
+    if (!chartRef.current || !timeseriesData || timeseriesData.data.length === 0) return;
 
-    // Get all unique recipes
-    const allRecipes = timeseriesData.data[0]?.by_recipe || [];
+    const canvas = chartRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-    const colors = ['#6366f1', '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#f97316', '#8b5cf6'];
+    const width = canvas.width;
+    const height = canvas.height;
 
-    return allRecipes.map((recipe, index) => {
-      const recipeId = (recipe as any).recipe_id;
-      const recipeName = (recipe as any).recipe_name;
+    ctx.clearRect(0, 0, width, height);
 
-      // Extract data for this recipe across all timepoints
-      const xData = timeseriesData.data.map(point => new Date(point.timestamp));
-      const yData = timeseriesData.data.map(point => {
-        const found = point.by_recipe.find(r => (r as any).recipe_id === recipeId);
+    const padding = 60;
+    const chartWidth = width - padding * 2;
+    const chartHeight = height - padding * 2;
+
+    // Plot recipes
+    const items = timeseriesData.data[0]?.by_recipe || [];
+
+    if (items.length === 0) return;
+
+    // Calculate max value for Y-axis
+    const allValues: number[] = [];
+    timeseriesData.data.forEach(point => {
+      point.by_recipe.forEach(item => allValues.push(item.total));
+    });
+    const maxValue = Math.max(...allValues, 100);
+
+    // Draw grid and Y-axis labels
+    ctx.strokeStyle = '#e5e7eb';
+    ctx.lineWidth = 1;
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.textAlign = 'right';
+
+    for (let i = 0; i <= 5; i++) {
+      const y = padding + (chartHeight / 5) * i;
+      const value = Math.round(maxValue - (maxValue / 5) * i);
+
+      ctx.beginPath();
+      ctx.moveTo(padding, y);
+      ctx.lineTo(width - padding, y);
+      ctx.stroke();
+
+      ctx.fillText(value.toString(), padding - 10, y + 4);
+    }
+
+    // Draw data lines
+    const colors = ['#6366f1', '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b'];
+
+    items.forEach((item, index) => {
+      const itemKey = (item as any).recipe_id;
+      const data = timeseriesData.data.map(point => {
+        const found = point.by_recipe.find(d => (d as any).recipe_id === itemKey);
         return found ? found.total : 0;
       });
 
-      return {
-        x: xData,
-        y: yData,
-        type: 'scatter' as const,
-        mode: 'lines+markers' as const,
-        name: recipeName,
-        line: {
-          color: colors[index % colors.length],
-          width: 3
-        },
-        marker: {
-          size: 8,
-          color: colors[index % colors.length]
+      const color = colors[index % colors.length] || '#6366f1';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+
+      data.forEach((value, idx) => {
+        const x = padding + (idx / Math.max(data.length - 1, 1)) * chartWidth;
+        const y = padding + chartHeight - (value / maxValue) * chartHeight;
+
+        if (idx === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
         }
-      };
+      });
+
+      ctx.stroke();
+
+      // Draw points
+      ctx.fillStyle = color;
+      data.forEach((value, idx) => {
+        const x = padding + (idx / Math.max(data.length - 1, 1)) * chartWidth;
+        const y = padding + chartHeight - (value / maxValue) * chartHeight;
+
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      });
     });
+
+    // Draw X-axis labels
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.textAlign = 'center';
+
+    timeseriesData.data.forEach((point, idx) => {
+      const x = padding + (idx / Math.max(timeseriesData.data.length - 1, 1)) * chartWidth;
+      const date = new Date(point.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      ctx.fillText(date, x, height - 20);
+    });
+  };
+
+  const handleChartMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!chartRef.current || !tooltipRef.current || !timeseriesData || timeseriesData.data.length === 0) return;
+
+    const canvas = chartRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const padding = 60;
+    const chartWidth = canvas.width - padding * 2;
+
+    // Check if mouse is within chart area
+    if (mouseX < padding || mouseX > canvas.width - padding ||
+        mouseY < padding || mouseY > canvas.height - padding) {
+      tooltipRef.current.style.display = 'none';
+      return;
+    }
+
+    // Find nearest data point
+    const dataPointWidth = chartWidth / Math.max(timeseriesData.data.length - 1, 1);
+    const nearestIndex = Math.round((mouseX - padding) / dataPointWidth);
+
+    if (nearestIndex < 0 || nearestIndex >= timeseriesData.data.length) {
+      tooltipRef.current.style.display = 'none';
+      return;
+    }
+
+    const point = timeseriesData.data[nearestIndex];
+    if (!point) {
+      tooltipRef.current.style.display = 'none';
+      return;
+    }
+
+    const items = point.by_recipe;
+
+    // Build tooltip content
+    const date = new Date(point.timestamp).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
+
+    let tooltipHTML = `<div style="font-weight: bold; margin-bottom: 8px;">${date}</div>`;
+
+    items.forEach(item => {
+      const label = (item as any).recipe_name;
+      tooltipHTML += `<div style="margin-bottom: 4px;">${label}: <strong>${item.total}</strong></div>`;
+    });
+
+    tooltipHTML += `<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; font-weight: bold;">Total: ${point.total}</div>`;
+
+    tooltipRef.current.innerHTML = tooltipHTML;
+    tooltipRef.current.style.display = 'block';
+    tooltipRef.current.style.left = `${e.clientX + 15}px`;
+    tooltipRef.current.style.top = `${e.clientY - 15}px`;
+  };
+
+  const handleChartMouseLeave = () => {
+    if (tooltipRef.current) {
+      tooltipRef.current.style.display = 'none';
+    }
   };
 
   // Multi-select handlers
@@ -204,45 +341,31 @@ const ProductionAnalyticsTab: React.FC = () => {
         <h3>Production Trends by Recipe</h3>
         {loading && <p>Loading...</p>}
         {!loading && timeseriesData && timeseriesData.data.length > 0 && (
-          <Plot
-            data={getPlotlyData()}
-            layout={{
-              autosize: true,
-              height: 500,
-              title: '',
-              xaxis: {
-                title: 'Time',
-                showgrid: true,
-                gridcolor: '#e5e7eb'
-              },
-              yaxis: {
-                title: 'Total Inspections',
-                showgrid: true,
-                gridcolor: '#e5e7eb'
-              },
-              hovermode: 'x unified',
-              showlegend: true,
-              legend: {
-                orientation: 'h',
-                yanchor: 'bottom',
-                y: 1.02,
-                xanchor: 'right',
-                x: 1
-              },
-              margin: {
-                l: 60,
-                r: 40,
-                t: 40,
-                b: 60
-              }
-            }}
-            config={{
-              responsive: true,
-              displayModeBar: true,
-              displaylogo: false
-            }}
-            style={{ width: '100%' }}
-          />
+          <div style={{ position: 'relative' }}>
+            <canvas
+              ref={chartRef}
+              width={1200}
+              height={400}
+              onMouseMove={handleChartMouseMove}
+              onMouseLeave={handleChartMouseLeave}
+              style={{ cursor: 'crosshair', maxWidth: '100%', height: 'auto' }}
+            />
+            <div
+              ref={tooltipRef}
+              style={{
+                display: 'none',
+                position: 'fixed',
+                background: 'rgba(0, 0, 0, 0.8)',
+                color: 'white',
+                padding: '12px',
+                borderRadius: '4px',
+                fontSize: '14px',
+                pointerEvents: 'none',
+                zIndex: 1000,
+                maxWidth: '300px'
+              }}
+            />
+          </div>
         )}
         {!loading && (!timeseriesData || timeseriesData.data.length === 0) && (
           <p>No data available</p>

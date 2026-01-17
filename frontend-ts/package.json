@@ -15,11 +15,9 @@
     "@types/react-datepicker": "^6.2.0",
     "axios": "^1.13.2",
     "fabric": "^6.9.0",
-    "plotly.js": "^3.3.1",
     "react": "^19.2.0",
     "react-datepicker": "^9.1.0",
     "react-dom": "^19.2.0",
-    "react-plotly.js": "^2.6.0",
     "socket.io-client": "^4.7.2"
   },
   "devDependencies": {
