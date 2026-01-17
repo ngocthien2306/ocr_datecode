@@ -629,13 +629,13 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
       // Fetch charts for each recipe
       const chartsData = await Promise.all(recipes.map(async (recipe) => {
-        // 1 Hour (hourly data): last 1 hour VN time
+        // 1 Hour (minute data): last 1 hour VN time
         const oneHourStart = new Date(now);
         oneHourStart.setHours(now.getHours() - 1);
         const oneHourStats = await inferenceResultsAPI.getTimeseriesStatistics({
           start_date: oneHourStart.toISOString(),
           end_date: now.toISOString(),
-          granularity: 'hour',
+          granularity: 'minute',
           recipe_ids: recipe.id
         });
 

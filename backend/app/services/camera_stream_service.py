@@ -153,7 +153,7 @@ class CameraStreamService:
                                 'frame_idx': frame_idx
                             })
 
-                            logger.debug(f"Emitted frame {frame_idx} for {serial_number}, base64_len={len(frame_base64)}")
+                            # logger.debug(f"Emitted frame {frame_idx} for {serial_number}, base64_len={len(frame_base64)}")
                         else:
                             logger.warning(f"Failed to encode frame for {serial_number}")
                     else:
