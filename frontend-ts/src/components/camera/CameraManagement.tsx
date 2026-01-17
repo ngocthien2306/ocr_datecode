@@ -396,6 +396,8 @@ const CameraManagement: React.FC = () => {
         await camerasAPI.createCamera({
           name: formData.model_name,
           camera_id: formData.camera_id,
+          model_name: formData.model_name,
+          serial_number: formData.serial_number,
           ip_address: formData.ip_address,
           is_active: formData.is_active,
           resolution_width: formData.resolution_width,

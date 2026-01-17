@@ -1645,6 +1645,41 @@ body.dark-mode .status-badge.inactive {
   color: #9ca3af;
 }
 
+body.dark-mode .status-badge.success {
+  background: #064e3b;
+  color: #6ee7b7;
+}
+
+body.dark-mode .status-badge.error {
+  background: #7f1d1d;
+  color: #fca5a5;
+}
+
+body.dark-mode .status-badge.info {
+  background: #1e3a8a;
+  color: #93c5fd;
+}
+
+body.dark-mode .status-badge.online {
+  background: #064e3b;
+  color: #6ee7b7;
+}
+
+body.dark-mode .status-badge.increase {
+  background: #78350f;
+  color: #fcd34d;
+}
+
+body.dark-mode .status-badge.processing {
+  background: #312e81;
+  color: #c7d2fe;
+}
+
+body.dark-mode .status-badge.normal {
+  background: #374151;
+  color: #9ca3af;
+}
+
 .status-badge.inactive {
   background: #fee2e2;
   color: #991b1b;
@@ -1653,6 +1688,78 @@ body.dark-mode .status-badge.inactive {
 .status-badge.completed {
   background: #d1fae5;
   color: #065f46;
+}
+
+.status-badge.success {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.status-badge.error {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.status-badge.info {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.status-badge.online {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.status-badge.increase {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.status-badge.processing {
+  background: #e0e7ff;
+  color: #4338ca;
+}
+
+.status-badge.normal {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+/* Camera Status Badges - Distinct colors */
+.camera-management .status-badge.success {
+  background: #10b981;
+  color: white;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(16, 185, 129, 0.2);
+}
+
+.camera-management .status-badge.error {
+  background: #ef4444;
+  color: white;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(239, 68, 68, 0.2);
+}
+
+.camera-management .status-badge.info {
+  background: #3b82f6;
+  color: white;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(59, 130, 246, 0.2);
+}
+
+body.dark-mode .camera-management .status-badge.success {
+  background: #059669;
+  color: white;
+}
+
+body.dark-mode .camera-management .status-badge.error {
+  background: #dc2626;
+  color: white;
+}
+
+body.dark-mode .camera-management .status-badge.info {
+  background: #2563eb;
+  color: white;
 }
 
 /* Action Buttons */
