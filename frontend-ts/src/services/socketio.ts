@@ -335,6 +335,69 @@ class SocketIOService {
   }
 
   /**
+   * Subscribe to Jetson system monitoring
+   */
+  subscribeToJetsonMonitoring(): void {
+    if (!this.socket) {
+      console.error('[SocketIO] Socket not connected');
+      return;
+    }
+
+    this.socket.emit('subscribe_jetson_monitoring');
+    console.log('[SocketIO] Subscribed to Jetson monitoring');
+  }
+
+  /**
+   * Unsubscribe from Jetson system monitoring
+   */
+  unsubscribeFromJetsonMonitoring(): void {
+    if (!this.socket) return;
+
+    this.socket.emit('unsubscribe_jetson_monitoring');
+    console.log('[SocketIO] Unsubscribed from Jetson monitoring');
+  }
+
+  /**
+   * Listen for Jetson system metrics updates
+   */
+  onJetsonMetrics(callback: (data: any) => void): void {
+    if (!this.socket) return;
+    this.socket.on('jetson_metrics', callback);
+  }
+
+  /**
+   * Stop listening for Jetson metrics
+   */
+  offJetsonMetrics(callback?: (data: any) => void): void {
+    if (!this.socket) return;
+    if (callback) {
+      this.socket.off('jetson_metrics', callback);
+    } else {
+      this.socket.off('jetson_metrics');
+    }
+  }
+
+  /**
+   * Listen for Jetson alerts
+   */
+  onJetsonAlerts(callback: (data: any) => void): void {
+    if (!this.socket) return;
+    this.socket.on('jetson_alerts', callback);
+  }
+
+  /**
+   * Stop listening for Jetson alerts
+   */
+  offJetsonAlerts(callback?: (data: any) => void): void {
+    if (!this.socket) return;
+    if (callback) {
+      this.socket.off('jetson_alerts', callback);
+    } else {
+      this.socket.off('jetson_alerts');
+    }
+  }
+
+  /**
    * Check if connected
    */
   isConnected(): boolean {
