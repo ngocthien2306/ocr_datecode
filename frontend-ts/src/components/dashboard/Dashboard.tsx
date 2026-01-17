@@ -11,9 +11,11 @@ import System from '../../pages/System';
 import CameraManagement from '../camera/CameraManagement';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import RecipeLoadingTemplates from '../shared/RecipeLoadingTemplates';
+import RecipeChart from './RecipeChart';
 import { camerasAPI } from '@/services/api';
 import { actionLogsAPI, usersAPI } from '@/services/api';
 import { receiptsAPI } from '@/services/recipes';
+import { inferenceResultsAPI } from '@/services/inferenceResults';
 import { API_BASE_URL } from '@/config/api';
 import { useUser } from '@/contexts/UserContext';
 import type { Camera as BaseCamera, ReceiptLoad } from '@/types';
@@ -116,7 +118,15 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     return isDark;
   });
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [totalProductsToday, setTotalProductsToday] = useState(1247);
+  const [totalProductsToday, setTotalProductsToday] = useState(0);
+  const [todayStats, setTodayStats] = useState({
+    total: 0,
+    pass: 0,
+    fail: 0,
+    passRate: 0,
+    yesterdayTotal: 0,
+    changePercent: 0
+  });
   const [cameras, setCameras] = useState<DashboardCamera[]>([]);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>({
     isOpen: false,
@@ -135,15 +145,17 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   const [recentMembers, setRecentMembers] = useState<{username: string; full_name?: string; last_seen?: string; avatar_url?: string | null}[]>([]);
   const [runningRecipeId, setRunningRecipeId] = useState<string | null>(null);
 
-  const camera1ChartRef = useRef<HTMLCanvasElement>(null);
-  const camera2ChartRef = useRef<HTMLCanvasElement>(null);
-  const camera3ChartRef = useRef<HTMLCanvasElement>(null);
-
-  const [camera1Data, setCamera1Data] = useState([45, 52, 48, 65, 58, 72, 68, 75, 82, 78, 85, 92, 88, 95, 91, 98, 102, 96, 105, 110, 108, 115, 112, 120]);
-  const [camera2Data, setCamera2Data] = useState([38, 42, 45, 52, 48, 58, 62, 68, 65, 72, 75, 80, 76, 83, 79, 86, 90, 85, 92, 95, 98, 102, 99, 105]);
-  const [camera3Data, setCamera3Data] = useState([32, 35, 38, 42, 45, 48, 52, 55, 58, 62, 65, 68, 64, 70, 67, 73, 76, 72, 78, 82, 79, 85, 88, 90]);
-
-  const hours = ['00:00', '01:00', '02:00', '03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00', '23:00'];
+  // Recipe charts data
+  interface RecipeChartData {
+    recipeId: string;
+    recipeName: string;
+    today: { labels: string[]; data: number[] };
+    week: { labels: string[]; data: number[] };
+    month: { labels: string[]; data: number[] };
+    year: { labels: string[]; data: number[] };
+  }
+  const [recipeCharts, setRecipeCharts] = useState<RecipeChartData[]>([]);
+  const [activeRecipes, setActiveRecipes] = useState<{id: string; name: string}[]>([]);
 
   // Helper function to render loading template
   const renderLoadingTemplate = (template: LoadingTemplate) => {
@@ -585,11 +597,162 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     }
   };
 
+  // Fetch recipe charts data
+  const fetchRecipeCharts = async () => {
+    try {
+      // Get active recipes from today's stats
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+
+      const todayData = await inferenceResultsAPI.getSummaryStatistics({
+        start_date: startOfToday.toISOString(),
+        end_date: now.toISOString()
+      });
+
+      // Get unique recipes from today
+      const recipes = todayData.by_recipe.map(r => ({
+        id: r.recipe_id,
+        name: r.recipe_name
+      }));
+      setActiveRecipes(recipes);
+
+      if (recipes.length === 0) {
+        setRecipeCharts([]);
+        return;
+      }
+
+      // Fetch charts for each recipe
+      const chartsData = await Promise.all(recipes.map(async (recipe) => {
+        // Today (24 hours - hourly data)
+        const todayStart = new Date(now);
+        todayStart.setHours(0, 0, 0, 0);
+        const todayStats = await inferenceResultsAPI.getTimeseriesStatistics({
+          start_date: todayStart.toISOString(),
+          end_date: now.toISOString(),
+          granularity: 'hour',
+          recipe_ids: recipe.id
+        });
+
+        // Week (7 days - daily data)
+        const weekStart = new Date(now);
+        weekStart.setDate(now.getDate() - 7);
+        const weekStats = await inferenceResultsAPI.getTimeseriesStatistics({
+          start_date: weekStart.toISOString(),
+          end_date: now.toISOString(),
+          granularity: 'day',
+          recipe_ids: recipe.id
+        });
+
+        // Month (30 days - daily data)
+        const monthStart = new Date(now);
+        monthStart.setDate(now.getDate() - 30);
+        const monthStats = await inferenceResultsAPI.getTimeseriesStatistics({
+          start_date: monthStart.toISOString(),
+          end_date: now.toISOString(),
+          granularity: 'day',
+          recipe_ids: recipe.id
+        });
+
+        // Year (12 months - monthly aggregation)
+        const yearStart = new Date(now);
+        yearStart.setFullYear(now.getFullYear() - 1);
+        const yearStats = await inferenceResultsAPI.getTimeseriesStatistics({
+          start_date: yearStart.toISOString(),
+          end_date: now.toISOString(),
+          granularity: 'day',
+          recipe_ids: recipe.id
+        });
+
+        return {
+          recipeId: recipe.id,
+          recipeName: recipe.name,
+          today: {
+            labels: todayStats.data.map(d => new Date(d.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })),
+            data: todayStats.data.map(d => d.total)
+          },
+          week: {
+            labels: weekStats.data.map(d => new Date(d.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })),
+            data: weekStats.data.map(d => d.total)
+          },
+          month: {
+            labels: monthStats.data.map(d => new Date(d.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })),
+            data: monthStats.data.map(d => d.total)
+          },
+          year: {
+            labels: yearStats.data.map(d => new Date(d.timestamp).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })),
+            data: yearStats.data.map(d => d.total)
+          }
+        };
+      }));
+
+      setRecipeCharts(chartsData);
+    } catch (error) {
+      console.error('Error fetching recipe charts:', error);
+    }
+  };
+
+  // Fetch today's statistics
+  const fetchTodayStatistics = async () => {
+    try {
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+      const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+
+      // Get yesterday for comparison
+      const startOfYesterday = new Date(startOfToday);
+      startOfYesterday.setDate(startOfToday.getDate() - 1);
+      const endOfYesterday = new Date(endOfToday);
+      endOfYesterday.setDate(endOfToday.getDate() - 1);
+
+      // Fetch today's stats
+      const todayData = await inferenceResultsAPI.getSummaryStatistics({
+        start_date: startOfToday.toISOString(),
+        end_date: endOfToday.toISOString()
+      });
+
+      // Fetch yesterday's stats for comparison
+      const yesterdayData = await inferenceResultsAPI.getSummaryStatistics({
+        start_date: startOfYesterday.toISOString(),
+        end_date: endOfYesterday.toISOString()
+      });
+
+      // Calculate change percentage
+      const changePercent = yesterdayData.total > 0
+        ? ((todayData.total - yesterdayData.total) / yesterdayData.total) * 100
+        : 0;
+
+      setTodayStats({
+        total: todayData.total,
+        pass: todayData.pass,
+        fail: todayData.fail,
+        passRate: todayData.pass_rate,
+        yesterdayTotal: yesterdayData.total,
+        changePercent: Math.round(changePercent * 10) / 10 // Round to 1 decimal
+      });
+
+      setTotalProductsToday(todayData.total);
+    } catch (error) {
+      console.error('Error fetching today statistics:', error);
+    }
+  };
+
   // Fetch cameras on component mount
   useEffect(() => {
     fetchCameras();
     fetchRecentLoads();
     fetchRecentMembers();
+    fetchTodayStatistics();
+    fetchRecipeCharts();
+  }, []);
+
+  // Auto-refresh today stats and charts every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchTodayStatistics();
+      fetchRecipeCharts();
+    }, 30000); // 30 seconds
+
+    return () => clearInterval(interval);
   }, []);
 
   // Load current user info
@@ -830,137 +993,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     return () => clearInterval(timer);
   }, []);
 
-  // Draw charts
-  useEffect(() => {
-    drawLineChart(camera1ChartRef.current, camera1Data, '#6366f1');
-    drawLineChart(camera2ChartRef.current, camera2Data, '#3b82f6');
-    drawLineChart(camera3ChartRef.current, camera3Data, '#8b5cf6');
-  }, [camera1Data, camera2Data, camera3Data, darkMode]);
-
-  // Simulate data updates
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTotalProductsToday(prev => prev + Math.floor(Math.random() * 5));
-
-      setCamera1Data(prev => {
-        const newData = [...prev];
-        newData.shift();
-        newData.push(Math.floor(Math.random() * 40) + 60);
-        return newData;
-      });
-
-      setCamera2Data(prev => {
-        const newData = [...prev];
-        newData.shift();
-        newData.push(Math.floor(Math.random() * 35) + 55);
-        return newData;
-      });
-
-      setCamera3Data(prev => {
-        const newData = [...prev];
-        newData.shift();
-        newData.push(Math.floor(Math.random() * 30) + 45);
-        return newData;
-      });
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  const drawLineChart = (canvas: HTMLCanvasElement | null, data: number[], color: string) => {
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const width = canvas.width;
-    const height = canvas.height;
-
-    ctx.clearRect(0, 0, width, height);
-
-    const padding = 40;
-    const chartWidth = width - padding * 2;
-    const chartHeight = height - padding * 2;
-
-    const maxValue = Math.max(...data);
-    const minValue = Math.min(...data);
-    const valueRange = maxValue - minValue || 1;
-
-    // Draw grid lines
-    ctx.strokeStyle = darkMode ? '#374151' : '#e5e7eb';
-    ctx.lineWidth = 1;
-
-    for (let i = 0; i <= 4; i++) {
-      const y = padding + (chartHeight / 4) * i;
-      ctx.beginPath();
-      ctx.moveTo(padding, y);
-      ctx.lineTo(width - padding, y);
-      ctx.stroke();
-    }
-
-    // Draw line
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-
-    data.forEach((value, index) => {
-      const x = padding + (index / (data.length - 1)) * chartWidth;
-      const y = padding + chartHeight - ((value - minValue) / valueRange) * chartHeight;
-
-      if (index === 0) {
-        ctx.moveTo(x, y);
-      } else {
-        ctx.lineTo(x, y);
-      }
-    });
-
-    ctx.stroke();
-
-    // Draw area under line
-    ctx.lineTo(padding + chartWidth, padding + chartHeight);
-    ctx.lineTo(padding, padding + chartHeight);
-    ctx.closePath();
-
-    const gradient = ctx.createLinearGradient(0, padding, 0, padding + chartHeight);
-    gradient.addColorStop(0, color + '40');
-    gradient.addColorStop(1, color + '00');
-    ctx.fillStyle = gradient;
-    ctx.fill();
-
-    // Draw points
-    ctx.fillStyle = color;
-    data.forEach((value, index) => {
-      const x = padding + (index / (data.length - 1)) * chartWidth;
-      const y = padding + chartHeight - ((value - minValue) / valueRange) * chartHeight;
-
-      ctx.beginPath();
-      ctx.arc(x, y, 4, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    });
-
-    // Draw labels
-    ctx.fillStyle = '#6b7280';
-    ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    ctx.textAlign = 'center';
-
-    const labelStep = Math.ceil(hours.length / 6);
-    hours.forEach((hour, index) => {
-      if (index % labelStep === 0 || index === hours.length - 1) {
-        const x = padding + (index / (data.length - 1)) * chartWidth;
-        ctx.fillText(hour, x, height - 15);
-      }
-    });
-
-    ctx.textAlign = 'right';
-    for (let i = 0; i <= 4; i++) {
-      const value = minValue + (valueRange / 4) * (4 - i);
-      const y = padding + (chartHeight / 4) * i + 5;
-      ctx.fillText(Math.round(value).toString(), padding - 10, y);
-    }
-  };
 
   const handleLogout = () => {
     setConfirmDialog({
@@ -1323,7 +1355,9 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                   <div className="card-info">
                     <h3>Products Today</h3>
                     <div className="card-value">{totalProductsToday.toLocaleString()}</div>
-                    <span className="card-status increase">+12% vs yesterday</span>
+                    <span className={`card-status ${todayStats.changePercent >= 0 ? 'increase' : 'decrease'}`}>
+                      {todayStats.changePercent >= 0 ? '+' : ''}{todayStats.changePercent}% vs yesterday
+                    </span>
                   </div>
                 </div>
 
@@ -1335,9 +1369,9 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                     </svg>
                   </div>
                   <div className="card-info">
-                    <h3>Avg Processing Time</h3>
-                    <div className="card-value">2.3s</div>
-                    <span className="card-status normal">Per product</span>
+                    <h3>Pass Count</h3>
+                    <div className="card-value">{todayStats.pass.toLocaleString()}</div>
+                    <span className="card-status success">{todayStats.total > 0 ? `${Math.round(todayStats.pass / todayStats.total * 100)}%` : '0%'} of total</span>
                   </div>
                 </div>
 
@@ -1349,8 +1383,10 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                   </div>
                   <div className="card-info">
                     <h3>Success Rate</h3>
-                    <div className="card-value">98.5%</div>
-                    <span className="card-status success">Excellent</span>
+                    <div className="card-value">{todayStats.passRate.toFixed(1)}%</div>
+                    <span className={`card-status ${todayStats.passRate >= 90 ? 'success' : todayStats.passRate >= 70 ? 'normal' : 'offline'}`}>
+                      {todayStats.passRate >= 90 ? 'Excellent' : todayStats.passRate >= 70 ? 'Good' : 'Needs attention'}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1402,60 +1438,51 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                   </div>
                 </div>
 
-                {/* Center Section - Camera Statistics Charts */}
+                {/* Center Section - Recipe Statistics Charts */}
                 <div className="dashboard-center">
                   <div className="camera-stats">
-                    {cameras.slice(0, 3).map((camera, index) => {
-                      const chartRef = index === 0 ? camera1ChartRef : index === 1 ? camera2ChartRef : camera3ChartRef;
-                      return (
-                        <div key={camera.camera_id} className="camera-card">
-                          <div className="camera-card-header">
-                            <div className="camera-title">
-                              <div className={`camera-status ${camera.is_connected ? 'active' : 'inactive'}`}></div>
-                              <h3>{camera.camera_id} - {camera.location || camera.model_name}</h3>
-                            </div>
-                            <select className="time-filter">
-                              <option>Today</option>
-                              <option>Last 7 days</option>
-                              <option>Last 30 days</option>
-                            </select>
+                    {recipeCharts.length > 0 ? (
+                      <>
+                        {recipeCharts.map((recipeChart) => (
+                          <div key={recipeChart.recipeId}>
+                            <RecipeChart
+                              recipeId={recipeChart.recipeId}
+                              recipeName={recipeChart.recipeName}
+                              timeRange="today"
+                              labels={recipeChart.today.labels}
+                              data={recipeChart.today.data}
+                            />
+                            <RecipeChart
+                              recipeId={recipeChart.recipeId}
+                              recipeName={recipeChart.recipeName}
+                              timeRange="week"
+                              labels={recipeChart.week.labels}
+                              data={recipeChart.week.data}
+                            />
+                            <RecipeChart
+                              recipeId={recipeChart.recipeId}
+                              recipeName={recipeChart.recipeName}
+                              timeRange="month"
+                              labels={recipeChart.month.labels}
+                              data={recipeChart.month.data}
+                            />
+                            <RecipeChart
+                              recipeId={recipeChart.recipeId}
+                              recipeName={recipeChart.recipeName}
+                              timeRange="year"
+                              labels={recipeChart.year.labels}
+                              data={recipeChart.year.data}
+                            />
                           </div>
-                          <div className="camera-card-body">
-                            <div className="camera-metrics">
-                              <div className="metric">
-                                <span className="metric-label">Model</span>
-                                <span className="metric-value" style={{ fontSize: '14px' }}>{camera.model_name}</span>
-                              </div>
-                              <div className="metric">
-                                <span className="metric-label">Serial</span>
-                                <span className="metric-value" style={{ fontSize: '14px' }}>{camera.serial_number}</span>
-                              </div>
-                              <div className="metric success">
-                                <span className="metric-label">Status</span>
-                                <span className="metric-value" style={{ fontSize: '14px' }}>
-                                  {camera.is_connected ? 'Connected' : 'Disconnected'}
-                                </span>
-                              </div>
-                              <div className="metric">
-                                <span className="metric-label">FPS</span>
-                                <span className="metric-value">{camera.max_frame_rate || 'N/A'}</span>
-                              </div>
-                            </div>
-                            <div className="camera-chart">
-                              <canvas ref={chartRef} width="1000" height="250"></canvas>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {cameras.length === 0 && (
+                        ))}
+                      </>
+                    ) : (
                       <div style={{ padding: '3rem', textAlign: 'center', color: '#6b7280', background: 'white', borderRadius: '12px' }}>
                         <svg width="64" height="64" viewBox="0 0 24 24" fill="none" style={{ margin: '0 auto 1rem', opacity: 0.3 }}>
-                          <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" strokeWidth="2"/>
-                          <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
+                          <path d="M21 16V8C20.9996 7.64927 20.9071 7.30481 20.7315 7.00116C20.556 6.69751 20.3037 6.44536 20 6.27L13 2.27C12.696 2.09446 12.3511 2.00205 12 2.00205C11.6489 2.00205 11.304 2.09446 11 2.27L4 6.27C3.69626 6.44536 3.44398 6.69751 3.26846 7.00116C3.09294 7.30481 3.00036 7.64927 3 8V16C3.00036 16.3507 3.09294 16.6952 3.26846 16.9988C3.44398 17.3025 3.69626 17.5546 4 17.73L11 21.73C11.304 21.9055 11.6489 21.998 12 21.998C12.3511 21.998 12.696 21.9055 13 21.73L20 17.73C20.3037 17.5546 20.556 17.3025 20.7315 16.9988C20.9071 16.6952 20.9996 16.3507 21 16Z" stroke="currentColor" strokeWidth="2"/>
                         </svg>
-                        <p>No cameras available</p>
-                        <p style={{ fontSize: '14px', marginTop: '0.5rem' }}>Add cameras in Camera Management to see statistics</p>
+                        <p>No products processed today</p>
+                        <p style={{ fontSize: '14px', marginTop: '0.5rem' }}>Charts will appear once products are inspected</p>
                       </div>
                     )}
                   </div>
