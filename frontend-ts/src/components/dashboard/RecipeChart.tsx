@@ -1,122 +1,150 @@
-import { useEffect, useRef } from 'react';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+} from 'chart.js';
+import { Bar } from 'react-chartjs-2';
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+);
 
 interface RecipeChartProps {
   recipeId: string;
   recipeName: string;
   timeRange: 'today' | 'week' | 'month' | 'year';
   labels: string[];
-  data: number[];
+  totalData: number[];
+  passData: number[];
+  failData: number[];
 }
 
-export default function RecipeChart({ recipeName, timeRange, labels, data }: RecipeChartProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
+export default function RecipeChart({ recipeName, timeRange, labels, totalData, passData, failData }: RecipeChartProps) {
   const getTimeRangeLabel = (range: string) => {
     switch (range) {
       case 'today': return 'Today (24h)';
-      case 'week': return 'Last 7 Days';
+      // case 'week': return 'Last 7 Days';
       case 'month': return 'Last 30 Days';
-      case 'year': return 'Last Year';
+      // case 'year': return 'Last Year';
       default: return range;
     }
   };
 
-  useEffect(() => {
-    if (!canvasRef.current || labels.length === 0) return;
+  const total = totalData.reduce((sum, val) => sum + val, 0);
 
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const width = canvas.width;
-    const height = canvas.height;
-    const padding = { top: 40, right: 40, bottom: 60, left: 60 };
-    const chartWidth = width - padding.left - padding.right;
-    const chartHeight = height - padding.top - padding.bottom;
-
-    // Clear canvas
-    ctx.clearRect(0, 0, width, height);
-
-    // Calculate max value for Y-axis
-    const maxValue = Math.max(...data, 10);
-    const ySteps = 5;
-
-    // Draw Y-axis grid and labels
-    ctx.strokeStyle = '#e5e7eb';
-    ctx.lineWidth = 1;
-    ctx.fillStyle = '#6b7280';
-    ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-
-    for (let i = 0; i <= ySteps; i++) {
-      const y = padding.top + (chartHeight / ySteps) * i;
-      const value = Math.round(maxValue * (1 - i / ySteps));
-
-      // Grid line
-      ctx.beginPath();
-      ctx.moveTo(padding.left, y);
-      ctx.lineTo(width - padding.right, y);
-      ctx.stroke();
-
-      // Y-axis label
-      ctx.fillText(value.toString(), padding.left - 10, y);
-    }
-
-    // Draw line chart
-    if (data.length > 0) {
-      ctx.strokeStyle = '#6366f1';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-
-      data.forEach((value, index) => {
-        const x = padding.left + (index / Math.max(data.length - 1, 1)) * chartWidth;
-        const y = padding.top + chartHeight - (value / maxValue) * chartHeight;
-
-        if (index === 0) {
-          ctx.moveTo(x, y);
-        } else {
-          ctx.lineTo(x, y);
-        }
-      });
-
-      ctx.stroke();
-
-      // Draw points
-      ctx.fillStyle = '#6366f1';
-      data.forEach((value, index) => {
-        const x = padding.left + (index / Math.max(data.length - 1, 1)) * chartWidth;
-        const y = padding.top + chartHeight - (value / maxValue) * chartHeight;
-
-        ctx.beginPath();
-        ctx.arc(x, y, 4, 0, Math.PI * 2);
-        ctx.fill();
-
-        // White border
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      });
-    }
-
-    // Draw X-axis labels (sample some labels to avoid crowding)
-    ctx.fillStyle = '#6b7280';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-
-    const maxLabels = 8;
-    const labelStep = Math.ceil(labels.length / maxLabels);
-
-    labels.forEach((label, index) => {
-      if (index % labelStep === 0 || index === labels.length - 1) {
-        const x = padding.left + (index / Math.max(labels.length - 1, 1)) * chartWidth;
-        ctx.fillText(label, x, height - padding.bottom + 10);
+  // Bar chart data for Pass/Fail breakdown (for today and month)
+  const barChartData = {
+    labels,
+    datasets: [
+      {
+        label: 'Pass',
+        data: passData,
+        backgroundColor: '#10b981CC', // Green with 80% opacity
+        borderColor: '#10b981',
+        borderWidth: 1,
+        barPercentage: 0.8,
+        categoryPercentage: 0.9
+      },
+      {
+        label: 'Fail',
+        data: failData,
+        backgroundColor: '#ef444466', // Red with 40% opacity
+        borderColor: '#ef4444',
+        borderWidth: 1,
+        barPercentage: 0.8,
+        categoryPercentage: 0.9
       }
-    });
+    ]
+  };
 
-  }, [labels, data]);
-
-  const total = data.reduce((sum, val) => sum + val, 0);
+  const barChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      mode: 'index' as const,
+      intersect: false,
+    },
+    plugins: {
+      legend: {
+        position: 'top' as const,
+        labels: {
+          padding: 15,
+          font: {
+            size: 12
+          }
+        }
+      },
+      tooltip: {
+        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+        padding: 12,
+        titleFont: {
+          size: 14,
+          weight: 'bold' as const
+        },
+        bodyFont: {
+          size: 13
+        },
+        callbacks: {
+          footer: (tooltipItems: any[]) => {
+            const total = tooltipItems.reduce((sum, item) => sum + item.parsed.y, 0);
+            return `\nTotal: ${total}`;
+          }
+        }
+      }
+    },
+    scales: {
+      x: {
+        stacked: true,
+        grid: {
+          color: '#e5e7eb',
+          drawBorder: false
+        },
+        ticks: {
+          font: {
+            size: 11
+          },
+          color: '#6b7280'
+        }
+      },
+      y: {
+        stacked: true,
+        grid: {
+          color: '#e5e7eb',
+          drawBorder: false
+        },
+        ticks: {
+          font: {
+            size: 12
+          },
+          color: '#6b7280'
+        },
+        title: {
+          display: true,
+          text: 'Inspections',
+          font: {
+            size: 12,
+            weight: 'bold' as const
+          }
+        },
+        beginAtZero: true
+      }
+    }
+  };
 
   return (
     <div className="camera-card" style={{ marginBottom: '1.5rem' }}>
@@ -130,8 +158,8 @@ export default function RecipeChart({ recipeName, timeRange, labels, data }: Rec
         </div>
       </div>
       <div className="camera-card-body">
-        <div className="camera-chart">
-          <canvas ref={canvasRef} width="1000" height="250"></canvas>
+        <div className="camera-chart" style={{ height: '300px' }}>
+          <Bar data={barChartData} options={barChartOptions} />
         </div>
       </div>
     </div>

@@ -149,10 +149,8 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   interface RecipeChartData {
     recipeId: string;
     recipeName: string;
-    today: { labels: string[]; data: number[] };
-    week: { labels: string[]; data: number[] };
-    month: { labels: string[]; data: number[] };
-    year: { labels: string[]; data: number[] };
+    today: { labels: string[]; totalData: number[]; passData: number[]; failData: number[] };
+    month: { labels: string[]; totalData: number[]; passData: number[]; failData: number[] };
   }
   const [recipeCharts, setRecipeCharts] = useState<RecipeChartData[]>([]);
   const [activeRecipes, setActiveRecipes] = useState<{id: string; name: string}[]>([]);
@@ -633,16 +631,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           recipe_ids: recipe.id
         });
 
-        // Week (7 days - daily data)
-        const weekStart = new Date(now);
-        weekStart.setDate(now.getDate() - 7);
-        const weekStats = await inferenceResultsAPI.getTimeseriesStatistics({
-          start_date: weekStart.toISOString(),
-          end_date: now.toISOString(),
-          granularity: 'day',
-          recipe_ids: recipe.id
-        });
-
         // Month (30 days - daily data)
         const monthStart = new Date(now);
         monthStart.setDate(now.getDate() - 30);
@@ -653,34 +641,20 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           recipe_ids: recipe.id
         });
 
-        // Year (12 months - monthly aggregation)
-        const yearStart = new Date(now);
-        yearStart.setFullYear(now.getFullYear() - 1);
-        const yearStats = await inferenceResultsAPI.getTimeseriesStatistics({
-          start_date: yearStart.toISOString(),
-          end_date: now.toISOString(),
-          granularity: 'day',
-          recipe_ids: recipe.id
-        });
-
         return {
           recipeId: recipe.id,
           recipeName: recipe.name,
           today: {
             labels: todayStats.data.map(d => new Date(d.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })),
-            data: todayStats.data.map(d => d.total)
-          },
-          week: {
-            labels: weekStats.data.map(d => new Date(d.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })),
-            data: weekStats.data.map(d => d.total)
+            totalData: todayStats.data.map(d => d.total),
+            passData: todayStats.data.map(d => d.pass),
+            failData: todayStats.data.map(d => d.fail)
           },
           month: {
             labels: monthStats.data.map(d => new Date(d.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })),
-            data: monthStats.data.map(d => d.total)
-          },
-          year: {
-            labels: yearStats.data.map(d => new Date(d.timestamp).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })),
-            data: yearStats.data.map(d => d.total)
+            totalData: monthStats.data.map(d => d.total),
+            passData: monthStats.data.map(d => d.pass),
+            failData: monthStats.data.map(d => d.fail)
           }
         };
       }));
@@ -1450,28 +1424,18 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                               recipeName={recipeChart.recipeName}
                               timeRange="today"
                               labels={recipeChart.today.labels}
-                              data={recipeChart.today.data}
-                            />
-                            <RecipeChart
-                              recipeId={recipeChart.recipeId}
-                              recipeName={recipeChart.recipeName}
-                              timeRange="week"
-                              labels={recipeChart.week.labels}
-                              data={recipeChart.week.data}
+                              totalData={recipeChart.today.totalData}
+                              passData={recipeChart.today.passData}
+                              failData={recipeChart.today.failData}
                             />
                             <RecipeChart
                               recipeId={recipeChart.recipeId}
                               recipeName={recipeChart.recipeName}
                               timeRange="month"
                               labels={recipeChart.month.labels}
-                              data={recipeChart.month.data}
-                            />
-                            <RecipeChart
-                              recipeId={recipeChart.recipeId}
-                              recipeName={recipeChart.recipeName}
-                              timeRange="year"
-                              labels={recipeChart.year.labels}
-                              data={recipeChart.year.data}
+                              totalData={recipeChart.month.totalData}
+                              passData={recipeChart.month.passData}
+                              failData={recipeChart.month.failData}
                             />
                           </div>
                         ))}
