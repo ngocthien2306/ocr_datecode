@@ -8,18 +8,20 @@ import {
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
   Title,
   Tooltip,
   Legend,
   Filler
 } from 'chart.js';
-import { Line } from 'react-chartjs-2';
+import { Line, Bar } from 'react-chartjs-2';
 
 ChartJS.register(
   CategoryScale,
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
   Title,
   Tooltip,
   Legend,
@@ -86,22 +88,43 @@ const ProductionAnalyticsTab: React.FC = () => {
     };
   };
 
+  const getGranularity = (range: string): 'minute' | 'hour' | 'day' => {
+    switch (range) {
+      case '1h':
+        return 'minute'; // 1 hour: group by minute
+      case '8h':
+        return 'hour'; // 8 hours: group by hour
+      case '1d':
+      case '7d':
+      case '30d':
+      default:
+        return 'day'; // Default: group by day
+    }
+  };
+
   const fetchTimeseriesData = async () => {
     try {
       setLoading(true);
 
       const { start_date, end_date } = getDateRange(dateRange);
+      const granularity = getGranularity(dateRange);
 
       const recipe_ids = selectedRecipes.length > 0 ? selectedRecipes.join(',') : undefined;
 
       console.log('=== Fetch Timeseries ===');
-      console.log('Selected recipes:', selectedRecipes);
-      console.log('recipe_ids param:', recipe_ids);
+      console.log('Date range:', dateRange);
+      console.log('Granularity:', granularity);
+      console.log('Selected recipe IDs:', selectedRecipes);
+      console.log('Selected recipe names:', selectedRecipes.map(id => {
+        const recipe = recipes.find(r => r.id === id);
+        return recipe ? recipe.name : 'Unknown';
+      }));
+      console.log('API recipe_ids param:', recipe_ids);
 
       const stats = await inferenceResultsAPI.getTimeseriesStatistics({
         start_date,
         end_date,
-        granularity: 'day',
+        granularity,
         recipe_ids
       });
 
@@ -110,7 +133,8 @@ const ProductionAnalyticsTab: React.FC = () => {
       if (stats.data.length > 0) {
         console.log('First data point:', stats.data[0]);
         console.log('Number of recipes in response:', stats.data[0]!.by_recipe.length);
-        console.log('Recipes:', stats.data[0]!.by_recipe.map((r: any) => r.recipe_id));
+        console.log('Recipe IDs in response:', stats.data[0]!.by_recipe.map((r: any) => r.recipe_id));
+        console.log('Recipe names in response:', stats.data[0]!.by_recipe.map((r: any) => r.recipe_name));
       }
 
       setTimeseriesData(stats);
@@ -127,14 +151,47 @@ const ProductionAnalyticsTab: React.FC = () => {
       return { labels: [], datasets: [] };
     }
 
-    // Extract labels (timestamps)
+    // Extract labels (timestamps) - format based on granularity
     const labels = timeseriesData.data.map(point => {
       const date = new Date(point.timestamp);
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+      if (timeseriesData.granularity === 'minute') {
+        // For minute: "10:35"
+        return date.toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+      } else if (timeseriesData.granularity === 'hour') {
+        // For hourly: "Jan 17, 10:00"
+        return date.toLocaleString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+      } else {
+        // For daily: "Jan 17"
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      }
     });
 
-    // Get all unique recipes from the first data point
-    const recipes = timeseriesData.data[0]?.by_recipe || [];
+    // Get all unique recipes from ALL data points (not just first one)
+    const recipeMap = new Map<string, { recipe_id: string; recipe_name: string }>();
+    timeseriesData.data.forEach(point => {
+      point.by_recipe.forEach(recipe => {
+        if (!recipeMap.has(recipe.recipe_id)) {
+          recipeMap.set(recipe.recipe_id, {
+            recipe_id: recipe.recipe_id,
+            recipe_name: recipe.recipe_name
+          });
+        }
+      });
+    });
+    const uniqueRecipes = Array.from(recipeMap.values());
+
+    console.log('=== Chart Data ===');
+    console.log('Total unique recipes:', uniqueRecipes.length);
+    console.log('Recipes:', uniqueRecipes.map(r => r.recipe_name));
 
     // Color palette
     const colors = [
@@ -143,7 +200,7 @@ const ProductionAnalyticsTab: React.FC = () => {
     ];
 
     // Create datasets for each recipe
-    const datasets = recipes.map((recipe, index) => {
+    const datasets = uniqueRecipes.map((recipe, index) => {
       const data = timeseriesData.data.map(point => {
         const found = point.by_recipe.find(r => r.recipe_id === recipe.recipe_id);
         return found ? found.total : 0;
@@ -240,6 +297,190 @@ const ProductionAnalyticsTab: React.FC = () => {
     }
   };
 
+  const getBarChartData = () => {
+    if (!timeseriesData || timeseriesData.data.length === 0) {
+      return { labels: [], datasets: [] };
+    }
+
+    // Extract labels (timestamps) - format based on granularity
+    const labels = timeseriesData.data.map(point => {
+      const date = new Date(point.timestamp);
+
+      if (timeseriesData.granularity === 'minute') {
+        // For minute: "10:35"
+        return date.toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+      } else if (timeseriesData.granularity === 'hour') {
+        // For hourly: "Jan 17, 10:00"
+        return date.toLocaleString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+      } else {
+        // For daily: "Jan 17"
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      }
+    });
+
+    // Get all unique recipes
+    const recipeMap = new Map<string, { recipe_id: string; recipe_name: string }>();
+    timeseriesData.data.forEach(point => {
+      point.by_recipe.forEach(recipe => {
+        if (!recipeMap.has(recipe.recipe_id)) {
+          recipeMap.set(recipe.recipe_id, {
+            recipe_id: recipe.recipe_id,
+            recipe_name: recipe.recipe_name
+          });
+        }
+      });
+    });
+    const uniqueRecipes = Array.from(recipeMap.values());
+
+    // Color palette for recipes (same as line chart)
+    const recipeColors = [
+      '#6366f1', '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b',
+      '#10b981', '#ef4444', '#06b6d4', '#f97316', '#84cc16'
+    ];
+
+    // Create datasets: For each recipe, create Pass and Fail datasets
+    const datasets: any[] = [];
+
+    uniqueRecipes.forEach((recipe, index) => {
+      const baseColor = recipeColors[index % recipeColors.length];
+
+      // Pass dataset
+      const passData = timeseriesData.data.map(point => {
+        const found = point.by_recipe.find(r => r.recipe_id === recipe.recipe_id);
+        return found ? found.pass : 0;
+      });
+
+      // Fail dataset
+      const failData = timeseriesData.data.map(point => {
+        const found = point.by_recipe.find(r => r.recipe_id === recipe.recipe_id);
+        return found ? found.fail : 0;
+      });
+
+      // Convert hex to rgba with opacity for Pass (lighter)
+      const passColor = baseColor + 'CC'; // 80% opacity
+      const failColor = baseColor + '66'; // 40% opacity (darker/muted)
+
+      // Add Pass dataset
+      datasets.push({
+        label: `${recipe.recipe_name} (Pass)`,
+        data: passData,
+        backgroundColor: passColor,
+        borderColor: baseColor,
+        borderWidth: 1,
+        stack: `recipe-${index}`,
+        barPercentage: 0.8,
+        categoryPercentage: 0.9
+      });
+
+      // Add Fail dataset
+      datasets.push({
+        label: `${recipe.recipe_name} (Fail)`,
+        data: failData,
+        backgroundColor: failColor,
+        borderColor: baseColor,
+        borderWidth: 1,
+        stack: `recipe-${index}`,
+        barPercentage: 0.8,
+        categoryPercentage: 0.9
+      });
+    });
+
+    return { labels, datasets };
+  };
+
+  const barChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      mode: 'index' as const,
+      intersect: false,
+    },
+    plugins: {
+      legend: {
+        position: 'top' as const,
+        labels: {
+          padding: 15,
+          font: {
+            size: 12
+          }
+        }
+      },
+      tooltip: {
+        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+        padding: 12,
+        titleFont: {
+          size: 14,
+          weight: 'bold' as const
+        },
+        bodyFont: {
+          size: 13
+        },
+        callbacks: {
+          footer: (tooltipItems: any[]) => {
+            // Group by stack to show total per recipe
+            const stacks: Record<string, number> = {};
+            tooltipItems.forEach((item: any) => {
+              const stack = item.dataset.stack;
+              if (!stacks[stack]) stacks[stack] = 0;
+              stacks[stack] += item.parsed.y;
+            });
+
+            let footer = '\n';
+            Object.entries(stacks).forEach(([, total]) => {
+              footer += `Total: ${total}\n`;
+            });
+            return footer;
+          }
+        }
+      }
+    },
+    scales: {
+      x: {
+        stacked: true,
+        grid: {
+          color: '#e5e7eb',
+          drawBorder: false
+        },
+        ticks: {
+          font: {
+            size: 12
+          },
+          color: '#6b7280'
+        }
+      },
+      y: {
+        stacked: true,
+        grid: {
+          color: '#e5e7eb',
+          drawBorder: false
+        },
+        ticks: {
+          font: {
+            size: 12
+          },
+          color: '#6b7280'
+        },
+        title: {
+          display: true,
+          text: 'Total Inspections',
+          font: {
+            size: 13,
+            weight: 'bold' as const
+          },
+          color: '#374151'
+        }
+      }
+    }
+  };
+
   // Multi-select handlers
   const toggleRecipe = (id: string) => {
     setSelectedRecipes(prev => {
@@ -301,13 +542,27 @@ const ProductionAnalyticsTab: React.FC = () => {
         </div>
       </div>
 
-      {/* Chart */}
-      <div className="historical-chart-container" style={{ position: 'relative' }}>
+      {/* Line Chart */}
+      <div className="historical-chart-container" style={{ position: 'relative', marginBottom: '40px' }}>
         <h3>Production Trends by Recipe</h3>
         {loading && <p>Loading...</p>}
         {!loading && timeseriesData && timeseriesData.data.length > 0 && (
           <div style={{ height: '500px', position: 'relative' }}>
             <Line data={getChartData()} options={chartOptions} />
+          </div>
+        )}
+        {!loading && (!timeseriesData || timeseriesData.data.length === 0) && (
+          <p>No data available</p>
+        )}
+      </div>
+
+      {/* Stacked Bar Chart for Pass/Fail */}
+      <div className="historical-chart-container" style={{ position: 'relative' }}>
+        <h3>Pass/Fail Breakdown by Recipe</h3>
+        {loading && <p>Loading...</p>}
+        {!loading && timeseriesData && timeseriesData.data.length > 0 && (
+          <div style={{ height: '500px', position: 'relative' }}>
+            <Bar data={getBarChartData()} options={barChartOptions} />
           </div>
         )}
         {!loading && (!timeseriesData || timeseriesData.data.length === 0) && (

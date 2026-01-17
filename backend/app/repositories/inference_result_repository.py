@@ -390,7 +390,7 @@ class InferenceResultRepository:
         self,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
-        granularity: Literal["hour", "day"] = "day",
+        granularity: Literal["minute", "hour", "day"] = "day",
         recipe_ids: Optional[List[str]] = None
     ) -> TimeseriesStatisticsResponse:
         """
@@ -399,7 +399,7 @@ class InferenceResultRepository:
         Args:
             start_date: Start date (VN timezone)
             end_date: End date (VN timezone)
-            granularity: Time granularity (hour or day)
+            granularity: Time granularity (minute, hour or day)
             recipe_ids: Filter by recipes (list)
 
         Returns:

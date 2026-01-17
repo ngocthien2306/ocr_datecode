@@ -228,7 +228,7 @@ async def get_summary_statistics(
 async def get_timeseries_statistics(
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
-    granularity: str = Query("day", regex="^(hour|day)$"),
+    granularity: str = Query("day", regex="^(minute|hour|day)$"),
     recipe_ids: Optional[str] = None,
     db=Depends(get_database),
     current_user: dict = Depends(get_current_user)
@@ -238,7 +238,7 @@ async def get_timeseries_statistics(
 
     - **start_date**: Start date (VN timezone, ISO format)
     - **end_date**: End date (VN timezone, ISO format)
-    - **granularity**: Time granularity - "hour" or "day" (default: "day")
+    - **granularity**: Time granularity - "minute", "hour" or "day" (default: "day")
     - **recipe_ids**: Optional filter by recipes (comma-separated IDs, e.g. "recipe1,recipe2")
 
     Returns timeseries data with:

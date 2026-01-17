@@ -165,7 +165,7 @@ export interface TimeseriesDataPoint {
 }
 
 export interface TimeseriesStatistics {
-  granularity: 'hour' | 'day';
+  granularity: 'minute' | 'hour' | 'day';
   period: PeriodInfo;
   data: TimeseriesDataPoint[];
 }
@@ -177,7 +177,7 @@ export interface StatisticsFilters {
 }
 
 export interface TimeseriesFilters extends StatisticsFilters {
-  granularity?: 'hour' | 'day';
+  granularity?: 'minute' | 'hour' | 'day';
   recipe_ids?: string;  // Comma-separated
 }
 
