@@ -17,13 +17,9 @@ from app.models.inference_result import (
 from app.models.statistics import (
     SummaryStatisticsResponse,
     TimeseriesStatisticsResponse,
-    CameraStats,
     RecipeStats,
     TimeseriesDataPoint,
-    TimeseriesCameraData,
     TimeseriesRecipeData,
-    RecipeBreakdown,
-    CameraBreakdown,
     PeriodInfo
 )
 
@@ -301,36 +297,6 @@ class InferenceResultRepository:
                             }
                         }
                     ],
-                    # Stats by camera
-                    "by_camera": [
-                        {"$unwind": "$camera_results"},
-                        {
-                            "$group": {
-                                "_id": "$camera_results.camera_id",
-                                "serial_number": {"$first": "$camera_results.serial_number"},
-                                "total": {"$sum": 1},
-                                "pass": {
-                                    "$sum": {
-                                        "$cond": [
-                                            {"$eq": ["$product_pass_fail", "PASS"]},
-                                            1,
-                                            0
-                                        ]
-                                    }
-                                },
-                                "fail": {
-                                    "$sum": {
-                                        "$cond": [
-                                            {"$eq": ["$product_pass_fail", "FAIL"]},
-                                            1,
-                                            0
-                                        ]
-                                    }
-                                }
-                            }
-                        },
-                        {"$sort": {"_id": 1}}
-                    ],
                     # Stats by recipe
                     "by_recipe": [
                         {
@@ -377,7 +343,6 @@ class InferenceResultRepository:
                     start_date=start_date or datetime.utcnow(),
                     end_date=end_date or datetime.utcnow()
                 ),
-                by_camera=[],
                 by_recipe=[]
             )
 
@@ -391,23 +356,6 @@ class InferenceResultRepository:
         pass_count = overall["pass"]
         fail_count = overall["fail"]
         pass_rate = (pass_count / total * 100) if total > 0 else 0.0
-
-        # Parse camera stats
-        camera_stats = []
-        for cam in data["by_camera"]:
-            cam_total = cam["total"]
-            cam_pass = cam.get("pass", 0)
-            cam_fail = cam.get("fail", 0)
-            cam_pass_rate = (cam_pass / cam_total * 100) if cam_total > 0 else 0.0
-
-            camera_stats.append(CameraStats(
-                camera_id=cam["_id"],
-                serial_number=cam["serial_number"],
-                total=cam_total,
-                **{"pass": cam_pass},  # Use dict unpacking with "pass" key
-                fail=cam_fail,
-                pass_rate=round(cam_pass_rate, 1)
-            ))
 
         # Parse recipe stats
         recipe_stats = []
@@ -435,7 +383,6 @@ class InferenceResultRepository:
                 start_date=start_date or datetime.utcnow(),
                 end_date=end_date or datetime.utcnow()
             ),
-            by_camera=camera_stats,
             by_recipe=recipe_stats
         )
 
@@ -444,20 +391,16 @@ class InferenceResultRepository:
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         granularity: Literal["hour", "day"] = "day",
-        camera_ids: Optional[List[str]] = None,
-        recipe_ids: Optional[List[str]] = None,
-        group_by: Literal["camera", "recipe"] = "camera"
+        recipe_ids: Optional[List[str]] = None
     ) -> TimeseriesStatisticsResponse:
         """
-        Get timeseries statistics with grouping and breakdowns
+        Get timeseries statistics grouped by recipe
 
         Args:
             start_date: Start date (VN timezone)
             end_date: End date (VN timezone)
             granularity: Time granularity (hour or day)
-            camera_ids: Filter by specific cameras (list)
             recipe_ids: Filter by recipes (list)
-            group_by: Group by "camera" or "recipe"
 
         Returns:
             Timeseries statistics
@@ -479,34 +422,9 @@ class InferenceResultRepository:
         if recipe_ids and len(recipe_ids) > 0:
             match_filter["recipe_id"] = {"$in": recipe_ids}
 
-        if camera_ids and len(camera_ids) > 0:
-            match_filter["camera_results.camera_id"] = {"$in": camera_ids}
-
-        # Route to appropriate aggregation method based on group_by
-        if group_by == "camera":
-            return await self._get_timeseries_by_camera(
-                match_filter, granularity, start_date, end_date, camera_ids
-            )
-        else:  # group_by == "recipe"
-            return await self._get_timeseries_by_recipe(
-                match_filter, granularity, start_date, end_date, recipe_ids, camera_ids
-            )
-
-    async def _get_timeseries_by_camera(
-        self,
-        match_filter: Dict[str, Any],
-        granularity: str,
-        start_date: Optional[datetime],
-        end_date: Optional[datetime],
-        camera_ids: Optional[List[str]] = None
-    ) -> TimeseriesStatisticsResponse:
-        """Get timeseries grouped by camera with recipe breakdown"""
-
-        # Separate camera filter from main match filter
-        main_match_filter = {k: v for k, v in match_filter.items() if k != "camera_results.camera_id"}
-
+        # Aggregation pipeline
         pipeline = [
-            {"$match": main_match_filter} if main_match_filter else {"$match": {}},
+            {"$match": match_filter} if match_filter else {"$match": {}},
             # Convert created_at to VN time
             {
                 "$addFields": {
@@ -519,20 +437,7 @@ class InferenceResultRepository:
                     }
                 }
             },
-            # Unwind camera results
-            {"$unwind": "$camera_results"},
-        ]
-
-        # Filter by specific cameras after unwind
-        if camera_ids and len(camera_ids) > 0:
-            pipeline.append({
-                "$match": {
-                    "camera_results.camera_id": {"$in": camera_ids}
-                }
-            })
-
-        pipeline.extend([
-            # Group by time + camera + recipe for detailed breakdown
+            # Group by time + recipe
             {
                 "$group": {
                     "_id": {
@@ -542,10 +447,8 @@ class InferenceResultRepository:
                                 "unit": granularity
                             }
                         },
-                        "camera_id": "$camera_results.camera_id",
                         "recipe_id": "$recipe_id"
                     },
-                    "serial_number": {"$first": "$camera_results.serial_number"},
                     "recipe_name": {"$first": "$recipe_name"},
                     "total": {"$sum": 1},
                     "pass": {
@@ -556,202 +459,6 @@ class InferenceResultRepository:
                     "fail": {
                         "$sum": {
                             "$cond": [{"$eq": ["$product_pass_fail", "FAIL"]}, 1, 0]
-                        }
-                    }
-                }
-            },
-            # Group by time + camera to aggregate recipes
-            {
-                "$group": {
-                    "_id": {
-                        "timestamp": "$_id.timestamp",
-                        "camera_id": "$_id.camera_id"
-                    },
-                    "serial_number": {"$first": "$serial_number"},
-                    "total": {"$sum": "$total"},
-                    "pass": {"$sum": "$pass"},
-                    "fail": {"$sum": "$fail"},
-                    "recipes": {
-                        "$push": {
-                            "recipe_id": "$_id.recipe_id",
-                            "recipe_name": "$recipe_name",
-                            "total": "$total",
-                            "pass": "$pass",
-                            "fail": "$fail"
-                        }
-                    }
-                }
-            },
-            # Group by timestamp to aggregate cameras
-            {
-                "$group": {
-                    "_id": "$_id.timestamp",
-                    "cameras": {
-                        "$push": {
-                            "camera_id": "$_id.camera_id",
-                            "serial_number": "$serial_number",
-                            "total": "$total",
-                            "pass": "$pass",
-                            "fail": "$fail",
-                            "recipes": "$recipes"
-                        }
-                    },
-                    "total": {"$sum": "$total"},
-                    "pass": {"$sum": "$pass"},
-                    "fail": {"$sum": "$fail"}
-                }
-            },
-            {"$sort": {"_id": 1}}
-        ])
-
-        cursor = self.collection.aggregate(pipeline)
-        results = await cursor.to_list(length=None)
-
-        # Parse results
-        data_points = []
-        for doc in results:
-            timestamp_vn = doc["_id"]
-            total = doc["total"]
-            pass_count = doc["pass"]
-            fail_count = doc["fail"]
-            pass_rate = (pass_count / total * 100) if total > 0 else 0.0
-
-            # Parse camera data with recipe breakdown
-            camera_data = []
-            for cam in doc["cameras"]:
-                cam_total = cam["total"]
-                cam_pass = cam.get("pass", 0)
-                cam_fail = cam.get("fail", 0)
-                cam_pass_rate = (cam_pass / cam_total * 100) if cam_total > 0 else 0.0
-
-                # Parse recipe breakdown
-                recipe_breakdown = []
-                for recipe in cam.get("recipes", []):
-                    recipe_breakdown.append(RecipeBreakdown(
-                        recipe_id=recipe["recipe_id"],
-                        recipe_name=recipe["recipe_name"],
-                        total=recipe["total"],
-                        **{"pass": recipe.get("pass", 0)},
-                        fail=recipe.get("fail", 0)
-                    ))
-
-                camera_data.append(TimeseriesCameraData(
-                    camera_id=cam["camera_id"],
-                    serial_number=cam["serial_number"],
-                    total=cam_total,
-                    **{"pass": cam_pass},
-                    fail=cam_fail,
-                    pass_rate=round(cam_pass_rate, 1),
-                    by_recipe=recipe_breakdown
-                ))
-
-            data_points.append(TimeseriesDataPoint(
-                timestamp=timestamp_vn,
-                total=total,
-                **{"pass": pass_count},
-                fail=fail_count,
-                pass_rate=round(pass_rate, 1),
-                by_camera=camera_data,
-                by_recipe=[]  # Empty for camera grouping
-            ))
-
-        return TimeseriesStatisticsResponse(
-            granularity=granularity,
-            group_by="camera",
-            period=PeriodInfo(
-                start_date=start_date or datetime.now(timezone.utc),
-                end_date=end_date or datetime.now(timezone.utc)
-            ),
-            data=data_points
-        )
-
-    async def _get_timeseries_by_recipe(
-        self,
-        match_filter: Dict[str, Any],
-        granularity: str,
-        start_date: Optional[datetime],
-        end_date: Optional[datetime],
-        recipe_ids: Optional[List[str]] = None,
-        camera_ids: Optional[List[str]] = None
-    ) -> TimeseriesStatisticsResponse:
-        """Get timeseries grouped by recipe with camera breakdown"""
-
-        # Separate camera filter from main match filter
-        main_match_filter = {k: v for k, v in match_filter.items() if k != "camera_results.camera_id"}
-
-        pipeline = [
-            {"$match": main_match_filter} if main_match_filter else {"$match": {}},
-            # Convert created_at to VN time
-            {
-                "$addFields": {
-                    "created_at_vn": {
-                        "$dateAdd": {
-                            "startDate": "$created_at",
-                            "unit": "hour",
-                            "amount": VIETNAM_TIMEZONE_OFFSET_HOURS
-                        }
-                    }
-                }
-            },
-            # Unwind camera results
-            {"$unwind": "$camera_results"},
-        ]
-
-        # Filter by specific cameras after unwind
-        if camera_ids and len(camera_ids) > 0:
-            pipeline.append({
-                "$match": {
-                    "camera_results.camera_id": {"$in": camera_ids}
-                }
-            })
-
-        pipeline.extend([
-            # Group by time + recipe + camera for detailed breakdown
-            {
-                "$group": {
-                    "_id": {
-                        "timestamp": {
-                            "$dateTrunc": {
-                                "date": "$created_at_vn",
-                                "unit": granularity
-                            }
-                        },
-                        "recipe_id": "$recipe_id",
-                        "camera_id": "$camera_results.camera_id"
-                    },
-                    "recipe_name": {"$first": "$recipe_name"},
-                    "serial_number": {"$first": "$camera_results.serial_number"},
-                    "total": {"$sum": 1},
-                    "pass": {
-                        "$sum": {
-                            "$cond": [{"$eq": ["$product_pass_fail", "PASS"]}, 1, 0]
-                        }
-                    },
-                    "fail": {
-                        "$sum": {
-                            "$cond": [{"$eq": ["$product_pass_fail", "FAIL"]}, 1, 0]
-                        }
-                    }
-                }
-            },
-            # Group by time + recipe to aggregate cameras
-            {
-                "$group": {
-                    "_id": {
-                        "timestamp": "$_id.timestamp",
-                        "recipe_id": "$_id.recipe_id"
-                    },
-                    "recipe_name": {"$first": "$recipe_name"},
-                    "total": {"$sum": "$total"},
-                    "pass": {"$sum": "$pass"},
-                    "fail": {"$sum": "$fail"},
-                    "cameras": {
-                        "$push": {
-                            "camera_id": "$_id.camera_id",
-                            "serial_number": "$serial_number",
-                            "total": "$total",
-                            "pass": "$pass",
-                            "fail": "$fail"
                         }
                     }
                 }
@@ -760,54 +467,41 @@ class InferenceResultRepository:
             {
                 "$group": {
                     "_id": "$_id.timestamp",
+                    "total": {"$sum": "$total"},
+                    "pass": {"$sum": "$pass"},
+                    "fail": {"$sum": "$fail"},
                     "recipes": {
                         "$push": {
                             "recipe_id": "$_id.recipe_id",
                             "recipe_name": "$recipe_name",
                             "total": "$total",
                             "pass": "$pass",
-                            "fail": "$fail",
-                            "cameras": "$cameras"
+                            "fail": "$fail"
                         }
-                    },
-                    "total": {"$sum": "$total"},
-                    "pass": {"$sum": "$pass"},
-                    "fail": {"$sum": "$fail"}
+                    }
                 }
             },
             {"$sort": {"_id": 1}}
-        ])
+        ]
 
-        cursor = self.collection.aggregate(pipeline)
-        results = await cursor.to_list(length=None)
+        results = await self.collection.aggregate(pipeline).to_list(length=None)
 
-        # Parse results
+        # Build timeseries data points
         data_points = []
-        for doc in results:
-            timestamp_vn = doc["_id"]
-            total = doc["total"]
-            pass_count = doc["pass"]
-            fail_count = doc["fail"]
+        for item in results:
+            timestamp_vn = item["_id"]
+            total = item["total"]
+            pass_count = item["pass"]
+            fail_count = item["fail"]
             pass_rate = (pass_count / total * 100) if total > 0 else 0.0
 
-            # Parse recipe data with camera breakdown
+            # Build recipe data
             recipe_data = []
-            for recipe in doc["recipes"]:
+            for recipe in item["recipes"]:
                 recipe_total = recipe["total"]
-                recipe_pass = recipe.get("pass", 0)
-                recipe_fail = recipe.get("fail", 0)
+                recipe_pass = recipe["pass"]
+                recipe_fail = recipe["fail"]
                 recipe_pass_rate = (recipe_pass / recipe_total * 100) if recipe_total > 0 else 0.0
-
-                # Parse camera breakdown
-                camera_breakdown = []
-                for cam in recipe.get("cameras", []):
-                    camera_breakdown.append(CameraBreakdown(
-                        camera_id=cam["camera_id"],
-                        serial_number=cam["serial_number"],
-                        total=cam["total"],
-                        **{"pass": cam.get("pass", 0)},
-                        fail=cam.get("fail", 0)
-                    ))
 
                 recipe_data.append(TimeseriesRecipeData(
                     recipe_id=recipe["recipe_id"],
@@ -815,8 +509,7 @@ class InferenceResultRepository:
                     total=recipe_total,
                     **{"pass": recipe_pass},
                     fail=recipe_fail,
-                    pass_rate=round(recipe_pass_rate, 1),
-                    by_camera=camera_breakdown
+                    pass_rate=round(recipe_pass_rate, 1)
                 ))
 
             data_points.append(TimeseriesDataPoint(
@@ -825,16 +518,14 @@ class InferenceResultRepository:
                 **{"pass": pass_count},
                 fail=fail_count,
                 pass_rate=round(pass_rate, 1),
-                by_camera=[],  # Empty for recipe grouping
                 by_recipe=recipe_data
             ))
 
         return TimeseriesStatisticsResponse(
             granularity=granularity,
-            group_by="recipe",
             period=PeriodInfo(
-                start_date=start_date or datetime.now(timezone.utc),
-                end_date=end_date or datetime.now(timezone.utc)
+                start_date=start_date or datetime.utcnow(),
+                end_date=end_date or datetime.utcnow()
             ),
             data=data_points
         )

@@ -229,29 +229,24 @@ async def get_timeseries_statistics(
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     granularity: str = Query("day", regex="^(hour|day)$"),
-    camera_ids: Optional[str] = None,
     recipe_ids: Optional[str] = None,
-    group_by: str = Query("camera", regex="^(camera|recipe)$"),
     db=Depends(get_database),
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Get timeseries statistics with flexible grouping and filtering.
+    Get timeseries statistics by recipe.
 
     - **start_date**: Start date (VN timezone, ISO format)
     - **end_date**: End date (VN timezone, ISO format)
     - **granularity**: Time granularity - "hour" or "day" (default: "day")
-    - **camera_ids**: Optional filter by cameras (comma-separated IDs, e.g. "cam1,cam2")
     - **recipe_ids**: Optional filter by recipes (comma-separated IDs, e.g. "recipe1,recipe2")
-    - **group_by**: Group by "camera" or "recipe" (default: "camera")
 
     Returns timeseries data with:
     - Timestamp (VN timezone)
     - Total, pass, fail counts and pass rate for each time point
-    - Breakdown by camera/recipe (depending on group_by) with nested breakdown
+    - Breakdown by recipe
     """
     # Parse comma-separated IDs
-    camera_id_list = [id.strip() for id in camera_ids.split(",")] if camera_ids else None
     recipe_id_list = [id.strip() for id in recipe_ids.split(",")] if recipe_ids else None
 
     # Validate recipe count (max 30)
@@ -266,9 +261,7 @@ async def get_timeseries_statistics(
         "start_date": start_date.isoformat() if start_date else None,
         "end_date": end_date.isoformat() if end_date else None,
         "granularity": granularity,
-        "camera_ids": camera_ids,
-        "recipe_ids": recipe_ids,
-        "group_by": group_by
+        "recipe_ids": recipe_ids
     }
     cache_key = generate_cache_key("stats:timeseries", cache_params)
 
@@ -284,14 +277,12 @@ async def get_timeseries_statistics(
         start_date=start_date,
         end_date=end_date,
         granularity=granularity,  # type: ignore
-        camera_ids=camera_id_list,
-        recipe_ids=recipe_id_list,
-        group_by=group_by  # type: ignore
+        recipe_ids=recipe_id_list
     )
 
     # Cache the result
     ttl = get_cache_ttl(end_date)
     await set_cached_data(cache_key, result.model_dump(by_alias=True), ttl)
 
-    logger.info(f"📈 Timeseries statistics: {len(result.data)} data points ({granularity}, group_by={group_by})")
+    logger.info(f"📈 Timeseries statistics: {len(result.data)} data points ({granularity})")
     return result

@@ -1,0 +1,662 @@
+tôi collection inference_results 
+có field product_pass_fail để mô tả pass/fail của record đó 
+có camera_results chứa các kết quả pass/fail theo camera, tôi muốn thống kê kết quả pass/fail theo recipe_id chứ ko theo camera nữa
+recipe_id tương ứng với 1 product
+tôi muốn trả kết quả thống kê summary và timeseries để vẽ chart theo thời gian
+cho phép chọn các option time range như là 1h, 8h, 1d, 7d, 30d or custom (cho nhập, from-to) cho chart Production Trends 
+
+ {/* Summary Cards */} /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src/components/dashboard/Historical.tsx 
+ này cho phép thống kê tất cả sản phẩm (tất cả recipe) theo 1d, 3d, 7d, yesterday, this week, last week, ... or custom, ...
+
+với chart ta cho select recipe (sản phẩm), ví dụ select 1 recipe -> show 1 line trên đồ thị, select 2 -> show 2 line, theo thời gian đã chọn, nếu recipe nào
+không có trong thời gian đó thì không show. Có select all -> show tất cả lên.
+
+Hãy xem code hiện tại và thay đổi phù hợp với yêu cầu của tôi, có thể dùng thư viện plotly bên FE để vẽ cho đẹp không?
+
+tôi có 2 endpoint này để thống kê sản phẩm 
+@router.get(
+    "/statistics/summary",
+    response_model=SummaryStatisticsResponse,
+    summary="Get summary statistics"
+)
+
+@router.get(
+    "/statistics/timeseries",
+    response_model=TimeseriesStatisticsResponse,
+    summary="Get timeseries statistics"
+)
+
+còn phần Daily Production Records, tạm thời hãy xoá nó đi luôn
+
+data mẫu:
+
+ [
+  {
+    "_id": "696b2acc32a71aa01283ed0d",
+    "recipe_id": "694850c56beac57d01bdf65b",
+    "recipe_name": "Minced Onion",
+    "product_pass_fail": "PASS",
+    "camera_results": [
+      {
+        "camera_id": "40272812",
+        "serial_number": "40272812",
+        "frames": [
+          {
+            "template_id": null,
+            "template_name": "Template 1",
+            "frame_idx": 0,
+            "pass_fail": "PASS",
+            "confidence": 0.5494505494505495,
+            "image_path": null,
+            "detected_regions": [
+              {
+                "type": "template",
+                "points": [
+                  [
+                    773.8617248535156,
+                    869.4357299804688
+                  ],
+                  [
+                    1366.8247680664062,
+                    871.4989013671875
+                  ],
+                  [
+                    1361.9469604492188,
+                    1326.51220703125
+                  ],
+                  [
+                    766.5610046386719,
+                    1325.1731567382812
+                  ]
+                ]
+              },
+              {
+                "type": "text",
+                "points": [
+                  [
+                    1359.4042358398438,
+                    934.7454223632812
+                  ],
+                  [
+                    2739.325439453125,
+                    939.3106689453125
+                  ],
+                  [
+                    2739.804931640625,
+                    1249.796142578125
+                  ],
+                  [
+                    1356.0446166992188,
+                    1246.38427734375
+                  ]
+                ],
+                "text": "Minced Onion",
+                "annotation_index": 1
+              },
+              {
+                "type": "text",
+                "points": [
+                  [
+                    1898.358154296875,
+                    1688.6334228515625
+                  ],
+                  [
+                    2697.169677734375,
+                    1689.6492919921875
+                  ],
+                  [
+                    2697.291259765625,
+                    1794.355712890625
+                  ],
+                  [
+                    1897.7362060546875,
+                    1793.5660400390625
+                  ]
+                ],
+                "text": "10078742259168",
+                "annotation_index": 2
+              }
+            ],
+            "timings": {
+              "total": 351.9580364227295,
+              "trt_inference": 241.8217658996582,
+              "preprocess": 3.8416385650634766,
+              "postprocess": 50.490379333496094
+            },
+            "text_verification": {
+              "all_match": true,
+              "results": [
+                {
+                  "annotation_idx": 1,
+                  "expected": "Minced Onion",
+                  "recognized": "Minced Onion",
+                  "match": true,
+                  "confidence": 0.9766531380323263,
+                  "threshold": 0.84
+                },
+                {
+                  "annotation_idx": 2,
+                  "expected": "10078742259168",
+                  "recognized": "10078742259168",
+                  "match": true,
+                  "confidence": 0.9937920504146152,
+                  "threshold": 0.84
+                }
+              ]
+            },
+            "template_verification": {
+              "match": true,
+              "similarity": 0.9848558306694031,
+              "threshold": 0.23,
+              "method": "TM_CCOEFF_NORMED",
+              "template_bbox": {
+                "type": "template",
+                "points": [
+                  [
+                    773.8617248535156,
+                    869.4357299804688
+                  ],
+                  [
+                    1366.8247680664062,
+                    871.4989013671875
+                  ],
+                  [
+                    1361.9469604492188,
+                    1326.51220703125
+                  ],
+                  [
+                    766.5610046386719,
+                    1325.1731567382812
+                  ]
+                ]
+              }
+            }
+          },
+          {
+            "template_id": null,
+            "template_name": "Template 2",
+            "frame_idx": 1,
+            "pass_fail": "PASS",
+            "confidence": 0.4268292682926829,
+            "image_path": null,
+            "detected_regions": [
+              {
+                "type": "template",
+                "points": [
+                  [
+                    1561.8453979492188,
+                    1263.6838989257812
+                  ],
+                  [
+                    2314.4298095703125,
+                    1257.02880859375
+                  ],
+                  [
+                    2312.78564453125,
+                    1460.7556762695312
+                  ],
+                  [
+                    1561.92041015625,
+                    1468.5823974609375
+                  ]
+                ]
+              },
+              {
+                "type": "text",
+                "points": [
+                  [
+                    1526.3826293945312,
+                    1303.6759033203125
+                  ],
+                  [
+                    2929.66552734375,
+                    1290.8372802734375
+                  ],
+                  [
+                    2927.1148681640625,
+                    1461.1918334960938
+                  ],
+                  [
+                    1526.51416015625,
+                    1475.8659057617188
+                  ]
+                ],
+                "text": "BEST If Used By JAN 17 2028",
+                "annotation_index": 1
+              },
+              {
+                "type": "text",
+                "points": [
+                  [
+                    1550.1034545898438,
+                    1438.0773315429688
+                  ],
+                  [
+                    2392.9927978515625,
+                    1429.490478515625
+                  ],
+                  [
+                    2391.8934326171875,
+                    1552.0729370117188
+                  ],
+                  [
+                    1550.1649780273438,
+                    1561.448974609375
+                  ]
+                ],
+                "text": "LOT PL26060104",
+                "annotation_index": 2
+              }
+            ],
+            "timings": {
+              "total": 351.9580364227295,
+              "trt_inference": 241.8217658996582,
+              "preprocess": 2.986907958984375,
+              "postprocess": 51.83219909667969
+            },
+            "text_verification": {
+              "all_match": true,
+              "results": [
+                {
+                  "annotation_idx": 1,
+                  "expected": "BEST If Used By JAN 17 2028",
+                  "recognized": "BEST If Used By JAN 17 2028",
+                  "match": true,
+                  "confidence": 0.9332006944550408,
+                  "threshold": 0.84
+                },
+                {
+                  "annotation_idx": 2,
+                  "expected": "LOT PL26060104",
+                  "recognized": "LOT PL26060104",
+                  "match": true,
+                  "confidence": 0.972664077030985,
+                  "threshold": 0.84
+                }
+              ]
+            },
+            "template_verification": {
+              "match": true,
+              "similarity": 0.9182935953140259,
+              "threshold": 0.23,
+              "method": "TM_CCOEFF_NORMED",
+              "template_bbox": {
+                "type": "template",
+                "points": [
+                  [
+                    1561.8453979492188,
+                    1263.6838989257812
+                  ],
+                  [
+                    2314.4298095703125,
+                    1257.02880859375
+                  ],
+                  [
+                    2312.78564453125,
+                    1460.7556762695312
+                  ],
+                  [
+                    1561.92041015625,
+                    1468.5823974609375
+                  ]
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "metadata": {
+      "total_cameras": 1,
+      "total_frames": 2,
+      "inference_stats": {
+        "avg_confidence": 0.4881399088716162,
+        "total_inliers": 440,
+        "total_matches": 874,
+        "per_camera_stats": [
+          {
+            "serial_number": "40272812",
+            "confidence": 0.4881399088716162,
+            "inliers": 440,
+            "total_matches": 874,
+            "timings": {
+              "total": 351.9580364227295,
+              "trt_inference": 241.8217658996582,
+              "preprocess": 3.8416385650634766,
+              "postprocess": 50.490379333496094
+            },
+            "frame_stats": {
+              "total_frames": 2,
+              "pass_count": 2,
+              "fail_count": 0,
+              "error_count": 0,
+              "avg_confidence": 0.4881399088716162
+            }
+          }
+        ],
+        "overall_timings": {
+          "total": 351.9580364227295,
+          "trt_inference": 241.8217658996582,
+          "preprocess": 3.8416385650634766,
+          "postprocess": 50.490379333496094
+        }
+      }
+    },
+    "timestamp": "2026-01-17T06:23:08.060000",
+    "created_at": "2026-01-17T06:23:08.060000"
+  },
+  {
+    "_id": "696b2ac332a71aa01283ed0c",
+    "recipe_id": "694850c56beac57d01bdf65b",
+    "recipe_name": "Minced Onion",
+    "product_pass_fail": "PASS",
+    "camera_results": [
+      {
+        "camera_id": "40272812",
+        "serial_number": "40272812",
+        "frames": [
+          {
+            "template_id": null,
+            "template_name": "Template 1",
+            "frame_idx": 0,
+            "pass_fail": "PASS",
+            "confidence": 0.47601476014760147,
+            "image_path": null,
+            "detected_regions": [
+              {
+                "type": "template",
+                "points": [
+                  [
+                    832.8359985351562,
+                    863.7608642578125
+                  ],
+                  [
+                    1436.206298828125,
+                    867.7318725585938
+                  ],
+                  [
+                    1431.707763671875,
+                    1325.91943359375
+                  ],
+                  [
+                    827.0872497558594,
+                    1325.012451171875
+                  ]
+                ]
+              },
+              {
+                "type": "text",
+                "points": [
+                  [
+                    1428.7552490234375,
+                    931.5146484375
+                  ],
+                  [
+                    2809.334716796875,
+                    939.6235961914062
+                  ],
+                  [
+                    2808.1611328125,
+                    1248.677734375
+                  ],
+                  [
+                    1425.664306640625,
+                    1245.3692016601562
+                  ]
+                ],
+                "text": "Minced Onion",
+                "annotation_index": 1
+              },
+              {
+                "type": "text",
+                "points": [
+                  [
+                    1970.6785888671875,
+                    1687.1708984375
+                  ],
+                  [
+                    2763.80126953125,
+                    1685.17138671875
+                  ],
+                  [
+                    2763.38818359375,
+                    1788.820068359375
+                  ],
+                  [
+                    1969.899658203125,
+                    1791.7462158203125
+                  ]
+                ],
+                "text": "10078742259168",
+                "annotation_index": 2
+              }
+            ],
+            "timings": {
+              "total": 385.3156566619873,
+              "trt_inference": 272.1209526062012,
+              "preprocess": 3.4825801849365234,
+              "postprocess": 51.7427921295166
+            },
+            "text_verification": {
+              "all_match": true,
+              "results": [
+                {
+                  "annotation_idx": 1,
+                  "expected": "Minced Onion",
+                  "recognized": "Minced Onion",
+                  "match": true,
+                  "confidence": 0.9634816715350518,
+                  "threshold": 0.84
+                },
+                {
+                  "annotation_idx": 2,
+                  "expected": "10078742259168",
+                  "recognized": "10078742259168",
+                  "match": true,
+                  "confidence": 0.9896860623901541,
+                  "threshold": 0.84
+                }
+              ]
+            },
+            "template_verification": {
+              "match": true,
+              "similarity": 0.9840598702430725,
+              "threshold": 0.23,
+              "method": "TM_CCOEFF_NORMED",
+              "template_bbox": {
+                "type": "template",
+                "points": [
+                  [
+                    832.8359985351562,
+                    863.7608642578125
+                  ],
+                  [
+                    1436.206298828125,
+                    867.7318725585938
+                  ],
+                  [
+                    1431.707763671875,
+                    1325.91943359375
+                  ],
+                  [
+                    827.0872497558594,
+                    1325.012451171875
+                  ]
+                ]
+              }
+            }
+          },
+          {
+            "template_id": null,
+            "template_name": "Template 2",
+            "frame_idx": 1,
+            "pass_fail": "PASS",
+            "confidence": 0.47633136094674555,
+            "image_path": null,
+            "detected_regions": [
+              {
+                "type": "template",
+                "points": [
+                  [
+                    1650.8832397460938,
+                    1260.1228637695312
+                  ],
+                  [
+                    2399.512939453125,
+                    1258.10546875
+                  ],
+                  [
+                    2398.415283203125,
+                    1463.9869384765625
+                  ],
+                  [
+                    1647.6837768554688,
+                    1468.0988159179688
+                  ]
+                ]
+              },
+              {
+                "type": "text",
+                "points": [
+                  [
+                    1614.7830810546875,
+                    1300.3357543945312
+                  ],
+                  [
+                    3007.510986328125,
+                    1295.8355102539062
+                  ],
+                  [
+                    3007.997314453125,
+                    1467.572509765625
+                  ],
+                  [
+                    1612.00732421875,
+                    1475.3502807617188
+                  ]
+                ],
+                "text": "BEST If Used By JAN 17 2028",
+                "annotation_index": 1
+              },
+              {
+                "type": "text",
+                "points": [
+                  [
+                    1636.3179931640625,
+                    1436.9386596679688
+                  ],
+                  [
+                    2478.0889892578125,
+                    1432.6797485351562
+                  ],
+                  [
+                    2477.5572509765625,
+                    1557.3180541992188
+                  ],
+                  [
+                    1634.3585815429688,
+                    1563.0060424804688
+                  ]
+                ],
+                "text": "LOT PL26060104",
+                "annotation_index": 2
+              }
+            ],
+            "timings": {
+              "total": 385.3156566619873,
+              "trt_inference": 272.1209526062012,
+              "preprocess": 3.076791763305664,
+              "postprocess": 54.02398109436035
+            },
+            "text_verification": {
+              "all_match": true,
+              "results": [
+                {
+                  "annotation_idx": 1,
+                  "expected": "BEST If Used By JAN 17 2028",
+                  "recognized": "BEST If Used By JAN 17 2028",
+                  "match": true,
+                  "confidence": 0.9201627684676129,
+                  "threshold": 0.84
+                },
+                {
+                  "annotation_idx": 2,
+                  "expected": "LOT PL26060104",
+                  "recognized": "LOT PL26060104",
+                  "match": true,
+                  "confidence": 0.9644376008134139,
+                  "threshold": 0.84
+                }
+              ]
+            },
+            "template_verification": {
+              "match": true,
+              "similarity": 0.9357780814170837,
+              "threshold": 0.23,
+              "method": "TM_CCOEFF_NORMED",
+              "template_bbox": {
+                "type": "template",
+                "points": [
+                  [
+                    1650.8832397460938,
+                    1260.1228637695312
+                  ],
+                  [
+                    2399.512939453125,
+                    1258.10546875
+                  ],
+                  [
+                    2398.415283203125,
+                    1463.9869384765625
+                  ],
+                  [
+                    1647.6837768554688,
+                    1468.0988159179688
+                  ]
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "metadata": {
+      "total_cameras": 1,
+      "total_frames": 2,
+      "inference_stats": {
+        "avg_confidence": 0.4761730605471735,
+        "total_inliers": 419,
+        "total_matches": 880,
+        "per_camera_stats": [
+          {
+            "serial_number": "40272812",
+            "confidence": 0.4761730605471735,
+            "inliers": 419,
+            "total_matches": 880,
+            "timings": {
+              "total": 385.3156566619873,
+              "trt_inference": 272.1209526062012,
+              "preprocess": 3.4825801849365234,
+              "postprocess": 51.7427921295166
+            },
+            "frame_stats": {
+              "total_frames": 2,
+              "pass_count": 2,
+              "fail_count": 0,
+              "error_count": 0,
+              "avg_confidence": 0.4761730605471735
+            }
+          }
+        ],
+        "overall_timings": {
+          "total": 385.3156566619873,
+          "trt_inference": 272.1209526062012,
+          "preprocess": 3.4825801849365234,
+          "postprocess": 51.7427921295166
+        }
+      }
+    },
+    "timestamp": "2026-01-17T06:22:59.155000",
+    "created_at": "2026-01-17T06:22:59.155000"
+  }
+]

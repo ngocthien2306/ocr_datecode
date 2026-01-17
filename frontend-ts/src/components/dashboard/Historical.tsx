@@ -68,6 +68,12 @@ const Historical: React.FC = () => {
         end.setDate(now.getDate() - 1);
         end.setHours(23, 59, 59, 999);
         break;
+      case '1days':
+        start.setDate(now.getDate() - 1);
+        break;
+      case '3days':
+        start.setDate(now.getDate() - 3);
+        break;
       case '7days':
         start.setDate(now.getDate() - 7);
         break;
@@ -75,6 +81,13 @@ const Historical: React.FC = () => {
         const dayOfWeek = now.getDay();
         start.setDate(now.getDate() - dayOfWeek);
         start.setHours(0, 0, 0, 0);
+        break;
+      case 'lastweek':
+        const lastWeekDay = now.getDay();
+        start.setDate(now.getDate() - lastWeekDay - 7);
+        start.setHours(0, 0, 0, 0);
+        end.setDate(now.getDate() - lastWeekDay - 1);
+        end.setHours(23, 59, 59, 999);
         break;
       case '30days':
         start.setDate(now.getDate() - 30);
@@ -112,8 +125,11 @@ const Historical: React.FC = () => {
             <select value={dateRange} onChange={(e) => setDateRange(e.target.value)}>
               <option value="today">Today</option>
               <option value="yesterday">Yesterday</option>
+              <option value="1days">Last 1 Day</option>
+              <option value="3days">Last 3 Days</option>
               <option value="7days">Last 7 Days</option>
               <option value="thisweek">This Week</option>
+              <option value="lastweek">Last Week</option>
               <option value="30days">Last 30 Days</option>
               <option value="thismonth">This Month</option>
               <option value="lastmonth">Last Month</option>
@@ -145,8 +161,11 @@ const Historical: React.FC = () => {
             <span className="card-status normal">
               {dateRange === 'today' ? 'Today' :
                dateRange === 'yesterday' ? 'Yesterday' :
+               dateRange === '1days' ? 'Last 1 day' :
+               dateRange === '3days' ? 'Last 3 days' :
                dateRange === '7days' ? 'Last 7 days' :
                dateRange === 'thisweek' ? 'This week' :
+               dateRange === 'lastweek' ? 'Last week' :
                dateRange === '30days' ? 'Last 30 days' :
                dateRange === 'thismonth' ? 'This month' :
                dateRange === 'lastmonth' ? 'Last month' : 'Period'}
