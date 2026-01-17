@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import SystemMonitor from '@/components/SystemMonitor';
 import IOMonitor from '@/components/IOMonitor';
+import StorageManager from '@/components/StorageManager';
 import '@/styles/System.css';
 
-type TabType = 'system' | 'io';
+type TabType = 'system' | 'io' | 'storage';
 
 const System: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('system');
@@ -32,11 +33,19 @@ const System: React.FC = () => {
         >
           I/O Monitor
         </button>
+        <button
+          className={`tab-btn ${activeTab === 'storage' ? 'active' : ''}`}
+          onClick={() => setActiveTab('storage')}
+        >
+          Storage
+        </button>
       </div>
 
       {/* Tab Content */}
       <div className="tab-content">
-        {activeTab === 'system' ? <SystemMonitor /> : <IOMonitor />}
+        {activeTab === 'system' && <SystemMonitor />}
+        {activeTab === 'io' && <IOMonitor />}
+        {activeTab === 'storage' && <StorageManager />}
       </div>
     </div>
   );

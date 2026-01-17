@@ -10,7 +10,7 @@ from app.repositories.action_log_repository import ActionLogRepository
 import logging
 from pathlib import Path
 
-from app.api.endpoints import auth, users, recipes, cameras, upload, action_logs, inference_results, trigger_simulator, agent, jetson_monitoring
+from app.api.endpoints import auth, users, recipes, cameras, upload, action_logs, inference_results, trigger_simulator, agent, jetson_monitoring, storage
 from app.api.websocket import camera_ws
 from app.services.socketio_service import socket_app
 
@@ -108,6 +108,7 @@ app.include_router(inference_results.router, prefix="/api", tags=["Inference Res
 app.include_router(trigger_simulator.router, prefix="/api", tags=["Trigger Simulator"])
 app.include_router(agent.router, prefix="/api", tags=["AI Agent"])
 app.include_router(jetson_monitoring.router, prefix="/api", tags=["Jetson Monitoring"])
+app.include_router(storage.router, prefix="/api", tags=["Storage Management"])
 
 # WebSocket endpoints
 app.include_router(camera_ws.router, tags=["WebSocket"])

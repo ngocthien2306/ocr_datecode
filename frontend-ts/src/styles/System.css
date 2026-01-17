@@ -640,6 +640,251 @@ input:disabled + .toggle-slider {
   animation: fadeIn 0.3s;
 }
 
+/* ==================== Storage Manager ==================== */
+
+.storage-manager {
+  animation: fadeIn 0.3s;
+}
+
+.storage-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: #6b7280;
+}
+
+.storage-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24px;
+}
+
+.storage-header h2 {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0 0 4px 0;
+  color: #1f2937;
+}
+
+.storage-header p {
+  color: #6b7280;
+  margin: 0;
+}
+
+.storage-manager .refresh-btn {
+  padding: 8px 16px;
+  background-color: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.storage-manager .refresh-btn:hover {
+  background-color: #2563eb;
+}
+
+/* Storage Stats Card */
+.storage-stats-card {
+  display: flex;
+  gap: 16px;
+  padding: 20px;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  margin-bottom: 24px;
+}
+
+.storage-stats-card .stat-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background-color: #f9fafb;
+  border-radius: 6px;
+}
+
+.storage-stats-card .stat-label {
+  font-size: 12px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.storage-stats-card .stat-value {
+  font-size: 24px;
+  font-weight: bold;
+  color: #1f2937;
+}
+
+/* Storage Tree Card */
+.storage-tree-card {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 24px;
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.storage-tree-card h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 16px 0;
+  color: #1f2937;
+}
+
+.storage-tree {
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+}
+
+/* Folder Item */
+.storage-folder-item {
+  margin-bottom: 4px;
+}
+
+.folder-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.folder-row:hover {
+  background-color: #f9fafb;
+}
+
+.folder-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.expand-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #6b7280;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.expand-btn:hover {
+  color: #1f2937;
+}
+
+.expand-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.no-expand {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+  flex-shrink: 0;
+}
+
+.folder-icon {
+  color: #f59e0b;
+  flex-shrink: 0;
+}
+
+.folder-name {
+  color: #1f2937;
+  font-weight: 500;
+}
+
+.folder-size {
+  color: #6b7280;
+  font-size: 12px;
+  margin-left: 12px;
+}
+
+.file-count {
+  color: #9ca3af;
+  font-size: 11px;
+  margin-left: 8px;
+}
+
+.folder-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.storage-manager .delete-btn {
+  padding: 6px;
+  background-color: #fee2e2;
+  color: #dc2626;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.storage-manager .delete-btn:hover {
+  background-color: #fecaca;
+  transform: scale(1.05);
+}
+
+.storage-manager .delete-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.storage-manager .delete-btn svg {
+  display: block;
+}
+
+.folder-children {
+  margin-top: 4px;
+}
+
+/* Storage Info Card */
+.storage-info-card {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.storage-info-card h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 12px 0;
+  color: #1f2937;
+}
+
+.storage-info-card ul {
+  margin: 0;
+  padding-left: 20px;
+  color: #6b7280;
+  line-height: 1.8;
+  font-size: 14px;
+}
+
 .io-header {
   display: flex;
   justify-content: space-between;
@@ -827,6 +1072,81 @@ body.dark-mode .system-monitor .nvp-badge {
 }
 
 body.dark-mode .system-monitor .uptime {
+  color: #9ca3af;
+}
+
+/* Dark mode - Storage Manager */
+body.dark-mode .storage-header h2 {
+  color: #f9fafb;
+}
+
+body.dark-mode .storage-header p {
+  color: #9ca3af;
+}
+
+body.dark-mode .storage-manager .refresh-btn {
+  background-color: #2563eb;
+}
+
+body.dark-mode .storage-manager .refresh-btn:hover {
+  background-color: #1d4ed8;
+}
+
+body.dark-mode .storage-stats-card,
+body.dark-mode .storage-tree-card,
+body.dark-mode .storage-info-card {
+  background-color: #1f2937;
+  border-color: #374151;
+}
+
+body.dark-mode .storage-stats-card .stat-item {
+  background-color: #111827;
+}
+
+body.dark-mode .storage-stats-card .stat-label {
+  color: #9ca3af;
+}
+
+body.dark-mode .storage-stats-card .stat-value,
+body.dark-mode .storage-tree-card h3,
+body.dark-mode .storage-info-card h3 {
+  color: #f9fafb;
+}
+
+body.dark-mode .folder-row:hover {
+  background-color: #374151;
+}
+
+body.dark-mode .folder-name {
+  color: #f9fafb;
+}
+
+body.dark-mode .folder-size {
+  color: #9ca3af;
+}
+
+body.dark-mode .file-count {
+  color: #6b7280;
+}
+
+body.dark-mode .expand-btn:hover {
+  color: #f9fafb;
+}
+
+body.dark-mode .folder-icon {
+  color: #fbbf24;
+}
+
+body.dark-mode .storage-manager .delete-btn {
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+}
+
+body.dark-mode .storage-manager .delete-btn:hover {
+  background-color: rgba(239, 68, 68, 0.3);
+}
+
+body.dark-mode .storage-info-card ul {
   color: #9ca3af;
 }
 
