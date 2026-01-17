@@ -86,6 +86,106 @@ export interface InferenceResultFilters {
   end_date?: string;
 }
 
+// Statistics interfaces
+export interface CameraStats {
+  camera_id: string;
+  serial_number: string;
+  total: number;
+  pass: number;
+  fail: number;
+  pass_rate: number;
+}
+
+export interface RecipeStats {
+  recipe_id: string;
+  recipe_name: string;
+  total: number;
+  pass: number;
+  fail: number;
+  pass_rate: number;
+}
+
+export interface PeriodInfo {
+  start_date: string;
+  end_date: string;
+}
+
+export interface SummaryStatistics {
+  total: number;
+  pass: number;
+  fail: number;
+  pass_rate: number;
+  period: PeriodInfo;
+  by_camera: CameraStats[];
+  by_recipe: RecipeStats[];
+}
+
+export interface RecipeBreakdown {
+  recipe_id: string;
+  recipe_name: string;
+  total: number;
+  pass: number;
+  fail: number;
+}
+
+export interface CameraBreakdown {
+  camera_id: string;
+  serial_number: string;
+  total: number;
+  pass: number;
+  fail: number;
+}
+
+export interface TimeseriesCameraData {
+  camera_id: string;
+  serial_number: string;
+  total: number;
+  pass: number;
+  fail: number;
+  pass_rate: number;
+  by_recipe: RecipeBreakdown[];
+}
+
+export interface TimeseriesRecipeData {
+  recipe_id: string;
+  recipe_name: string;
+  total: number;
+  pass: number;
+  fail: number;
+  pass_rate: number;
+  by_camera: CameraBreakdown[];
+}
+
+export interface TimeseriesDataPoint {
+  timestamp: string;
+  total: number;
+  pass: number;
+  fail: number;
+  pass_rate: number;
+  by_camera: TimeseriesCameraData[];
+  by_recipe: TimeseriesRecipeData[];
+}
+
+export interface TimeseriesStatistics {
+  granularity: 'hour' | 'day';
+  group_by: 'camera' | 'recipe';
+  period: PeriodInfo;
+  data: TimeseriesDataPoint[];
+}
+
+export interface StatisticsFilters {
+  start_date?: string;
+  end_date?: string;
+  recipe_id?: string;
+}
+
+export interface TimeseriesFilters extends StatisticsFilters {
+  granularity?: 'hour' | 'day';
+  camera_ids?: string;  // Comma-separated
+  recipe_ids?: string;  // Comma-separated
+  group_by?: 'camera' | 'recipe';
+}
+
 export const inferenceResultsAPI = {
   /**
    * Get inference results with filters and pagination
@@ -131,6 +231,26 @@ export const inferenceResultsAPI = {
    */
   delete: async (id: string): Promise<{ success: boolean; message: string }> => {
     const response = await api.delete(`/inference-results/${id}`);
+    return response.data;
+  },
+
+  /**
+   * Get summary statistics
+   */
+  getSummaryStatistics: async (filters: StatisticsFilters = {}): Promise<SummaryStatistics> => {
+    const response = await api.get<SummaryStatistics>('/inference-results/statistics/summary', {
+      params: filters
+    });
+    return response.data;
+  },
+
+  /**
+   * Get timeseries statistics
+   */
+  getTimeseriesStatistics: async (filters: TimeseriesFilters = {}): Promise<TimeseriesStatistics> => {
+    const response = await api.get<TimeseriesStatistics>('/inference-results/statistics/timeseries', {
+      params: filters
+    });
     return response.data;
   }
 };

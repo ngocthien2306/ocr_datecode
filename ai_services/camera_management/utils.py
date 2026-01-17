@@ -256,21 +256,6 @@ def draw_inference_bboxes(
     total_matches: int,
     crop_area: Optional[Dict[str, int]] = None
 ) -> np.ndarray:
-    """
-    Draw inference bounding boxes on image with styled labels
-
-    Args:
-        img: Input image (numpy array)
-        transformed_bboxes: List of transformed bbox dicts from inference
-            Each bbox: {'type': str, 'points': [[x,y], ...], 'text': str (optional)}
-        confidence: Confidence score (0-1)
-        inliers: Number of inliers
-        total_matches: Total matches
-        crop_area: Optional crop area dict {'x1', 'y1', 'x2', 'y2'} to visualize
-
-    Returns:
-        Image with bboxes drawn
-    """
     result_img = img.copy()
     height, width = img.shape[:2]
 
@@ -362,26 +347,26 @@ def draw_inference_bboxes(
             if label_x < 0:
                 label_x = 0
 
-            # Draw background rectangle with padding
-            cv2.rectangle(
-                result_img,
-                (label_x, label_y - text_h - 4),
-                (label_x + text_w + 6, label_y + baseline),
-                color,
-                -1  # Filled rectangle
-            )
+            # # Draw background rectangle with padding
+            # cv2.rectangle(
+            #     result_img,
+            #     (label_x, label_y - text_h - 4),
+            #     (label_x + text_w + 6, label_y + baseline),
+            #     color,
+            #     -1  # Filled rectangle
+            # )
 
-            # Draw text in white on colored background
-            cv2.putText(
-                result_img,
-                text_label,
-                (label_x + 3, label_y - 2),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                font_scale,
-                (255, 255, 255),  # White text
-                text_thickness,
-                cv2.LINE_AA
-            )
+            # # Draw text in white on colored background
+            # cv2.putText(
+            #     result_img,
+            #     text_label,
+            #     (label_x + 3, label_y - 2),
+            #     cv2.FONT_HERSHEY_SIMPLEX,
+            #     font_scale,
+            #     (255, 255, 255),  # White text
+            #     text_thickness,
+            #     cv2.LINE_AA
+            # )
 
     # Draw inference stats at top-left with background
     stats_text = f"Conf: {confidence:.1%} | Inliers: {inliers}/{total_matches}"
@@ -426,23 +411,6 @@ def encode_frame_for_display(
     scale_factor: int = 3,
     quality: int = 70
 ) -> Optional[str]:
-    """
-    Encode frame to base64 for display (without saving to disk)
-    Used for PASS frames to stream to UI without storing
-
-    Args:
-        frame_img: Input frame (numpy array)
-        transformed_bboxes: Optional list of bbox dicts to draw
-        confidence: Confidence score (for drawing)
-        inliers: Number of inliers (for drawing)
-        total_matches: Total matches (for drawing)
-        crop_area: Optional crop area to visualize
-        scale_factor: Division factor for resizing (default: 3)
-        quality: JPEG quality (default: 70)
-
-    Returns:
-        Base64 encoded string or None on error
-    """
     try:
         # Draw bboxes if provided
         img_to_encode = frame_img.copy()

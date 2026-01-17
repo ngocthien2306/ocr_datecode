@@ -10,7 +10,14 @@ import logging
 from app.db.mongodb import get_database
 from app.repositories.inference_result_repository import InferenceResultRepository
 from app.models.inference_result import InferenceResultResponse
+from app.models.statistics import SummaryStatisticsResponse, TimeseriesStatisticsResponse
 from app.api.dependencies.auth import get_current_user
+from app.db.redis import (
+    get_cached_data,
+    set_cached_data,
+    generate_cache_key,
+    get_cache_ttl
+)
 
 logger = logging.getLogger(__name__)
 
@@ -157,3 +164,134 @@ async def delete_inference_result(
         "success": True,
         "message": f"Inference result '{result_id}' deleted successfully"
     }
+
+
+@router.get(
+    "/statistics/summary",
+    response_model=SummaryStatisticsResponse,
+    summary="Get summary statistics"
+)
+async def get_summary_statistics(
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    recipe_id: Optional[str] = None,
+    db=Depends(get_database),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get summary statistics with breakdown by camera and recipe.
+
+    - **start_date**: Start date (VN timezone, ISO format)
+    - **end_date**: End date (VN timezone, ISO format)
+    - **recipe_id**: Optional filter by recipe ID
+
+    Returns summary with:
+    - Overall total, pass, fail counts and pass rate
+    - Breakdown by camera (camera_id, serial_number, counts, pass rate)
+    - Breakdown by recipe (recipe_id, recipe_name, counts, pass rate)
+    """
+    # Generate cache key
+    cache_params = {
+        "start_date": start_date.isoformat() if start_date else None,
+        "end_date": end_date.isoformat() if end_date else None,
+        "recipe_id": recipe_id
+    }
+    cache_key = generate_cache_key("stats:summary", cache_params)
+
+    # Try to get from cache
+    cached = await get_cached_data(cache_key)
+    if cached:
+        logger.info("✅ Returning cached summary statistics")
+        return SummaryStatisticsResponse(**cached)
+
+    # Get from database
+    repo = InferenceResultRepository(db)
+    result = await repo.get_summary_statistics(
+        start_date=start_date,
+        end_date=end_date,
+        recipe_id=recipe_id
+    )
+
+    # Cache the result
+    ttl = get_cache_ttl(end_date)
+    await set_cached_data(cache_key, result.model_dump(by_alias=True), ttl)
+
+    logger.info(f"📊 Summary statistics: {result.total} total, {result.pass_rate}% pass rate")
+    return result
+
+
+@router.get(
+    "/statistics/timeseries",
+    response_model=TimeseriesStatisticsResponse,
+    summary="Get timeseries statistics"
+)
+async def get_timeseries_statistics(
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    granularity: str = Query("day", regex="^(hour|day)$"),
+    camera_ids: Optional[str] = None,
+    recipe_ids: Optional[str] = None,
+    group_by: str = Query("camera", regex="^(camera|recipe)$"),
+    db=Depends(get_database),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get timeseries statistics with flexible grouping and filtering.
+
+    - **start_date**: Start date (VN timezone, ISO format)
+    - **end_date**: End date (VN timezone, ISO format)
+    - **granularity**: Time granularity - "hour" or "day" (default: "day")
+    - **camera_ids**: Optional filter by cameras (comma-separated IDs, e.g. "cam1,cam2")
+    - **recipe_ids**: Optional filter by recipes (comma-separated IDs, e.g. "recipe1,recipe2")
+    - **group_by**: Group by "camera" or "recipe" (default: "camera")
+
+    Returns timeseries data with:
+    - Timestamp (VN timezone)
+    - Total, pass, fail counts and pass rate for each time point
+    - Breakdown by camera/recipe (depending on group_by) with nested breakdown
+    """
+    # Parse comma-separated IDs
+    camera_id_list = [id.strip() for id in camera_ids.split(",")] if camera_ids else None
+    recipe_id_list = [id.strip() for id in recipe_ids.split(",")] if recipe_ids else None
+
+    # Validate recipe count (max 30)
+    if recipe_id_list and len(recipe_id_list) > 30:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Maximum 30 recipes can be selected"
+        )
+
+    # Generate cache key
+    cache_params = {
+        "start_date": start_date.isoformat() if start_date else None,
+        "end_date": end_date.isoformat() if end_date else None,
+        "granularity": granularity,
+        "camera_ids": camera_ids,
+        "recipe_ids": recipe_ids,
+        "group_by": group_by
+    }
+    cache_key = generate_cache_key("stats:timeseries", cache_params)
+
+    # Try to get from cache
+    cached = await get_cached_data(cache_key)
+    if cached:
+        logger.info("✅ Returning cached timeseries statistics")
+        return TimeseriesStatisticsResponse(**cached)
+
+    # Get from database
+    repo = InferenceResultRepository(db)
+    result = await repo.get_timeseries_statistics(
+        start_date=start_date,
+        end_date=end_date,
+        granularity=granularity,  # type: ignore
+        camera_ids=camera_id_list,
+        recipe_ids=recipe_id_list,
+        group_by=group_by  # type: ignore
+    )
+
+    # Cache the result
+    ttl = get_cache_ttl(end_date)
+    await set_cached_data(cache_key, result.model_dump(by_alias=True), ttl)
+
+    logger.info(f"📈 Timeseries statistics: {len(result.data)} data points ({granularity}, group_by={group_by})")
+    return result

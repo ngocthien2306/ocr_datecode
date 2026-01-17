@@ -1,0 +1,501 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { inferenceResultsAPI, type TimeseriesStatistics } from '@/services/inferenceResults';
+import { camerasAPI } from '@/services/cameras';
+import { recipesAPI } from '@/services/recipes';
+import type { Camera, Recipe } from '@/types';
+
+const ProductionAnalyticsTab: React.FC = () => {
+  const chartRef = useRef<HTMLCanvasElement | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+
+  // State
+  const [dateRange, setDateRange] = useState('7days');
+  const [groupBy, setGroupBy] = useState<'camera' | 'recipe'>('camera');
+  const [selectedCameras, setSelectedCameras] = useState<string[]>([]);
+  const [selectedRecipes, setSelectedRecipes] = useState<string[]>([]);
+  const [timeseriesData, setTimeseriesData] = useState<TimeseriesStatistics | null>(null);
+  const [cameras, setCameras] = useState<Camera[]>([]);
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+
+  // Fetch cameras and recipes on mount
+  useEffect(() => {
+    fetchCameras();
+    fetchRecipes();
+  }, []);
+
+  // Fetch data when filters change
+  useEffect(() => {
+    fetchTimeseriesData();
+  }, [dateRange, groupBy, selectedCameras, selectedRecipes]);
+
+  // Redraw chart when data changes
+  useEffect(() => {
+    if (timeseriesData && timeseriesData.data.length > 0) {
+      drawChart();
+    }
+  }, [timeseriesData]);
+
+  const fetchCameras = async () => {
+    try {
+      const cameraList = await camerasAPI.getAllCameras();
+      setCameras(cameraList);
+    } catch (error) {
+      console.error('Error fetching cameras:', error);
+    }
+  };
+
+  const fetchRecipes = async () => {
+    try {
+      const recipeList = await recipesAPI.getAllRecipes(0, 100, true); // Active recipes only
+      setRecipes(recipeList);
+    } catch (error) {
+      console.error('Error fetching recipes:', error);
+    }
+  };
+
+  const getDateRange = (range: string): { start_date: string; end_date: string } => {
+    const now = new Date();
+    const end = new Date(now);
+    let start = new Date(now);
+
+    switch (range) {
+      case '7days':
+        start.setDate(now.getDate() - 7);
+        break;
+      case '30days':
+        start.setDate(now.getDate() - 30);
+        break;
+      case '90days':
+        start.setDate(now.getDate() - 90);
+        break;
+      default:
+        start.setDate(now.getDate() - 7);
+    }
+
+    return {
+      start_date: start.toISOString(),
+      end_date: end.toISOString()
+    };
+  };
+
+  const fetchTimeseriesData = async () => {
+    try {
+      setLoading(true);
+
+      const { start_date, end_date } = getDateRange(dateRange);
+
+      // Build camera_ids and recipe_ids comma-separated strings
+      const camera_ids = selectedCameras.length > 0
+        ? selectedCameras.join(',')
+        : undefined;
+
+      const recipe_ids = selectedRecipes.length > 0
+        ? selectedRecipes.join(',')
+        : undefined;
+
+      const stats = await inferenceResultsAPI.getTimeseriesStatistics({
+        start_date,
+        end_date,
+        granularity: 'day',
+        camera_ids,
+        recipe_ids,
+        group_by: groupBy
+      });
+
+      setTimeseriesData(stats);
+    } catch (error) {
+      console.error('Error fetching timeseries data:', error);
+      setTimeseriesData(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Multi-select handlers
+  const handleCameraToggle = (cameraSerial: string) => {
+    setSelectedCameras(prev => {
+      if (prev.includes(cameraSerial)) {
+        return prev.filter(s => s !== cameraSerial);
+      } else {
+        return [...prev, cameraSerial];
+      }
+    });
+  };
+
+  const handleRecipeToggle = (recipeId: string) => {
+    setSelectedRecipes(prev => {
+      if (prev.includes(recipeId)) {
+        return prev.filter(r => r !== recipeId);
+      } else {
+        if (prev.length >= 30) {
+          alert('Maximum 30 recipes can be selected');
+          return prev;
+        }
+        return [...prev, recipeId];
+      }
+    });
+  };
+
+  const toggleAllCameras = () => {
+    if (selectedCameras.length === cameras.length) {
+      setSelectedCameras([]);
+    } else {
+      setSelectedCameras(cameras.map(c => c.serial_number));
+    }
+  };
+
+  const toggleAllRecipes = () => {
+    if (selectedRecipes.length === recipes.length) {
+      setSelectedRecipes([]);
+    } else {
+      const allRecipeIds = recipes.map(r => r._id).slice(0, 30); // Max 30
+      setSelectedRecipes(allRecipeIds);
+    }
+  };
+
+  const drawChart = () => {
+    if (!chartRef.current || !timeseriesData || timeseriesData.data.length === 0) return;
+
+    const canvas = chartRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const width = canvas.width;
+    const height = canvas.height;
+
+    ctx.clearRect(0, 0, width, height);
+
+    const padding = 60;
+    const chartWidth = width - padding * 2;
+    const chartHeight = height - padding * 2;
+
+    // Get unique camera serial numbers
+    const cameraSerialNumbers = Array.from(
+      new Set(
+        historicalData.flatMap(record =>
+          Object.keys(record).filter(key => key !== 'date')
+        )
+      )
+    );
+
+    // Calculate global max value for Y-axis
+    const allValues: number[] = [];
+    historicalData.forEach(record => {
+      cameraSerialNumbers.forEach(serial => {
+        const value = record[serial] as number;
+        if (value) allValues.push(value);
+      });
+    });
+    const maxValue = allValues.length > 0 ? Math.max(...allValues) : 100;
+    const minValue = 0;
+    const valueRange = maxValue - minValue || 1;
+
+    // Draw grid and Y-axis labels
+    ctx.strokeStyle = '#e5e7eb';
+    ctx.lineWidth = 1;
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.textAlign = 'right';
+
+    for (let i = 0; i <= 5; i++) {
+      const y = padding + (chartHeight / 5) * i;
+      const value = Math.round(maxValue - (maxValue / 5) * i);
+
+      // Draw grid line
+      ctx.beginPath();
+      ctx.moveTo(padding, y);
+      ctx.lineTo(width - padding, y);
+      ctx.stroke();
+
+      // Draw Y-axis label
+      ctx.fillText(value.toString(), padding - 10, y + 4);
+    }
+
+    // Draw data lines
+    const camerasToPlot = selectedCamera === 'all'
+      ? cameraSerialNumbers
+      : [selectedCamera];
+
+    const colors = ['#6366f1', '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b'];
+
+    camerasToPlot.forEach((cameraSerial, cameraIndex) => {
+      const data = historicalData.map(d => (d[cameraSerial] as number) || 0);
+
+      if (data.every(v => v === 0)) return; // Skip if no data
+
+      ctx.strokeStyle = colors[cameraIndex % colors.length] || '#6366f1';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+
+      data.forEach((value, index) => {
+        const x = padding + (index / Math.max(data.length - 1, 1)) * chartWidth;
+        const y = padding + chartHeight - ((value - minValue) / valueRange) * chartHeight;
+
+        if (index === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      });
+
+      ctx.stroke();
+
+      // Draw points
+      ctx.fillStyle = colors[cameraIndex % colors.length] || '#6366f1';
+      data.forEach((value, index) => {
+        const x = padding + (index / Math.max(data.length - 1, 1)) * chartWidth;
+        const y = padding + chartHeight - ((value - minValue) / valueRange) * chartHeight;
+
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      });
+    });
+
+    // Draw X-axis labels
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.textAlign = 'center';
+
+    historicalData.forEach((item, index) => {
+      const x = padding + (index / Math.max(historicalData.length - 1, 1)) * chartWidth;
+      const dateLabel = new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      ctx.fillText(dateLabel, x, height - 20);
+    });
+  };
+
+  const handleChartMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!chartRef.current || !tooltipRef.current || historicalData.length === 0) return;
+
+    const canvas = chartRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const padding = 60;
+    const chartWidth = canvas.width - padding * 2;
+    const chartHeight = canvas.height - padding * 2;
+
+    // Check if mouse is within chart area
+    if (mouseX < padding || mouseX > canvas.width - padding ||
+        mouseY < padding || mouseY > canvas.height - padding) {
+      tooltipRef.current.style.display = 'none';
+      return;
+    }
+
+    // Find nearest data point
+    const dataPointWidth = chartWidth / Math.max(historicalData.length - 1, 1);
+    const nearestIndex = Math.round((mouseX - padding) / dataPointWidth);
+
+    if (nearestIndex < 0 || nearestIndex >= historicalData.length) {
+      tooltipRef.current.style.display = 'none';
+      return;
+    }
+
+    const record = historicalData[nearestIndex];
+
+    // Get unique camera serial numbers
+    const cameraSerialNumbers = Array.from(
+      new Set(
+        historicalData.flatMap(r =>
+          Object.keys(r).filter(key => key !== 'date')
+        )
+      )
+    );
+
+    const camerasToShow = selectedCamera === 'all'
+      ? cameraSerialNumbers
+      : [selectedCamera];
+
+    // Build tooltip content
+    const date = new Date(record.date).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
+
+    let tooltipHTML = `<div style="font-weight: bold; margin-bottom: 8px;">${date}</div>`;
+
+    camerasToShow.forEach(serial => {
+      const value = (record[serial] as number) || 0;
+      const camera = cameras.find(c => c.serial_number === serial);
+      const label = camera ? camera.location : serial;
+      tooltipHTML += `<div style="margin-bottom: 4px;">${label}: <strong>${value}</strong></div>`;
+    });
+
+    const total = camerasToShow.reduce((sum, serial) => sum + ((record[serial] as number) || 0), 0);
+    tooltipHTML += `<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; font-weight: bold;">Total: ${total}</div>`;
+
+    tooltipRef.current.innerHTML = tooltipHTML;
+    tooltipRef.current.style.display = 'block';
+    tooltipRef.current.style.left = `${e.clientX + 15}px`;
+    tooltipRef.current.style.top = `${e.clientY - 15}px`;
+  };
+
+  const handleChartMouseLeave = () => {
+    if (tooltipRef.current) {
+      tooltipRef.current.style.display = 'none';
+    }
+  };
+
+  const reversedData = [...historicalData].reverse();
+
+  // Get camera info from cameras list
+  const getCameraInfo = (serialNumber: string) => {
+    const camera = cameras.find(c => c.serial_number === serialNumber);
+    return camera ? `${camera.location}` : serialNumber;
+  };
+
+  // Get unique camera serial numbers
+  const cameraSerialNumbers = Array.from(
+    new Set(
+      historicalData.flatMap(record =>
+        Object.keys(record).filter(key => key !== 'date')
+      )
+    )
+  );
+
+  const colors = ['#6366f1', '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b'];
+
+  return (
+    <div className="production-analytics-tab">
+      {/* Chart Controls */}
+      <div className="chart-controls">
+        <div className="control-group">
+          <label>Date Range:</label>
+          <select value={dateRange} onChange={(e) => setDateRange(e.target.value)}>
+            <option value="7days">Last 7 Days</option>
+            <option value="30days">Last 30 Days</option>
+            <option value="90days">Last 90 Days</option>
+          </select>
+        </div>
+        <div className="control-group">
+          <label>Camera:</label>
+          <select value={selectedCamera} onChange={(e) => setSelectedCamera(e.target.value)}>
+            <option value="all">All Cameras</option>
+            {cameraSerialNumbers.map(serial => (
+              <option key={serial} value={serial}>
+                {getCameraInfo(serial)}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* Production Trends Chart */}
+      <div className="historical-chart-container" style={{ position: 'relative' }}>
+        <h3>Production Trends</h3>
+        {loading && <p>Loading data...</p>}
+        {!loading && historicalData.length === 0 && <p>No data available for this period</p>}
+        {!loading && historicalData.length > 0 && (
+          <>
+            <div className="chart-legend">
+              {cameraSerialNumbers.map((serial, index) => (
+                <div key={serial} className="legend-item">
+                  <span className="legend-color" style={{ backgroundColor: colors[index % colors.length] }}></span>
+                  {getCameraInfo(serial)}
+                </div>
+              ))}
+            </div>
+            <canvas
+              ref={chartRef}
+              width={1200}
+              height={400}
+              onMouseMove={handleChartMouseMove}
+              onMouseLeave={handleChartMouseLeave}
+              style={{ cursor: 'crosshair' }}
+            ></canvas>
+            <div
+              ref={tooltipRef}
+              style={{
+                display: 'none',
+                position: 'fixed',
+                backgroundColor: 'rgba(0, 0, 0, 0.9)',
+                color: 'white',
+                padding: '12px',
+                borderRadius: '6px',
+                fontSize: '13px',
+                pointerEvents: 'none',
+                zIndex: 1000,
+                minWidth: '150px',
+                boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
+              }}
+            />
+          </>
+        )}
+      </div>
+
+      {/* Daily Production Records Table */}
+      <div className="data-table-container" style={{ marginTop: '32px' }}>
+        <h3>Daily Production Records</h3>
+        {!loading && historicalData.length > 0 && (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                {cameraSerialNumbers.map(serial => (
+                  <th key={serial}>{getCameraInfo(serial)}</th>
+                ))}
+                <th>Total</th>
+                <th>Trend</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reversedData.map((record, index) => {
+                const total = cameraSerialNumbers.reduce(
+                  (sum, serial) => sum + ((record[serial] as number) || 0),
+                  0
+                );
+                const prevRecord = reversedData[index + 1];
+                const prev = prevRecord
+                  ? cameraSerialNumbers.reduce(
+                      (sum, serial) => sum + ((prevRecord[serial] as number) || 0),
+                      0
+                    )
+                  : total;
+                const trend = total - prev;
+
+                return (
+                  <tr key={record.date}>
+                    <td><strong>{record.date}</strong></td>
+                    {cameraSerialNumbers.map(serial => (
+                      <td key={serial}>{(record[serial] as number) || 0}</td>
+                    ))}
+                    <td><strong>{total}</strong></td>
+                    <td>
+                      {trend > 0 ? (
+                        <span className="trend-badge up">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                            <polyline points="18,15 12,9 6,15" stroke="currentColor" strokeWidth="2"/>
+                          </svg>
+                          +{trend}
+                        </span>
+                      ) : trend < 0 ? (
+                        <span className="trend-badge down">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                            <polyline points="6,9 12,15 18,9" stroke="currentColor" strokeWidth="2"/>
+                          </svg>
+                          {trend}
+                        </span>
+                      ) : (
+                        <span className="trend-badge neutral">—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default ProductionAnalyticsTab;

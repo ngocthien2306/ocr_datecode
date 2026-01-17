@@ -6,7 +6,6 @@ import type { Camera, Recipe } from '@/types';
 
 const ProductionAnalyticsTab: React.FC = () => {
   const chartRef = useRef<HTMLCanvasElement | null>(null);
-  const tooltipRef = useRef<HTMLDivElement | null>(null);
 
   // State
   const [dateRange, setDateRange] = useState('7days');
@@ -91,13 +90,6 @@ const ProductionAnalyticsTab: React.FC = () => {
       const camera_ids = selectedCameras.length > 0 ? selectedCameras.join(',') : undefined;
       const recipe_ids = selectedRecipes.length > 0 ? selectedRecipes.join(',') : undefined;
 
-      console.log('=== Fetch Timeseries ===');
-      console.log('Selected cameras:', selectedCameras);
-      console.log('Selected recipes:', selectedRecipes);
-      console.log('camera_ids param:', camera_ids);
-      console.log('recipe_ids param:', recipe_ids);
-      console.log('group_by:', groupBy);
-
       const stats = await inferenceResultsAPI.getTimeseriesStatistics({
         start_date,
         end_date,
@@ -106,19 +98,6 @@ const ProductionAnalyticsTab: React.FC = () => {
         recipe_ids,
         group_by: groupBy
       });
-
-      console.log('=== API Response ===');
-      console.log('Total data points:', stats.data.length);
-      if (stats.data.length > 0) {
-        console.log('First data point:', stats.data[0]);
-        if (groupBy === 'camera') {
-          console.log('Number of cameras in response:', stats.data[0].by_camera.length);
-          console.log('Cameras:', stats.data[0].by_camera.map((c: any) => c.serial_number));
-        } else {
-          console.log('Number of recipes in response:', stats.data[0].by_recipe.length);
-          console.log('Recipes:', stats.data[0].by_recipe.map((r: any) => r.recipe_id));
-        }
-      }
 
       setTimeseriesData(stats);
     } catch (error) {
@@ -150,10 +129,6 @@ const ProductionAnalyticsTab: React.FC = () => {
       ? timeseriesData.data[0]?.by_camera || []
       : timeseriesData.data[0]?.by_recipe || [];
 
-    console.log('=== Draw Chart ===');
-    console.log('Number of items to plot:', items.length);
-    console.log('Items:', items);
-
     if (items.length === 0) return;
 
     // Calculate max value for Y-axis
@@ -168,7 +143,7 @@ const ProductionAnalyticsTab: React.FC = () => {
     ctx.strokeStyle = '#e5e7eb';
     ctx.lineWidth = 1;
     ctx.fillStyle = '#6b7280';
-    ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.font = '12px sans-serif';
     ctx.textAlign = 'right';
 
     for (let i = 0; i <= 5; i++) {
@@ -187,21 +162,18 @@ const ProductionAnalyticsTab: React.FC = () => {
     const colors = ['#6366f1', '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b'];
 
     items.forEach((item, index) => {
-      const itemKey = groupBy === 'camera'
-        ? (item as any).serial_number
-        : (item as any).recipe_id;
+      const itemKey = groupBy === 'camera' ? item.serial_number : item.recipe_id;
       const data = timeseriesData.data.map(point => {
         const dataItems = groupBy === 'camera' ? point.by_camera : point.by_recipe;
         const found = dataItems.find(d =>
           groupBy === 'camera'
-            ? (d as any).serial_number === itemKey
-            : (d as any).recipe_id === itemKey
+            ? d.serial_number === itemKey
+            : d.recipe_id === itemKey
         );
         return found ? found.total : 0;
       });
 
-      const color = colors[index % colors.length] || '#6366f1';
-      ctx.strokeStyle = color;
+      ctx.strokeStyle = colors[index % colors.length];
       ctx.lineWidth = 3;
       ctx.beginPath();
 
@@ -219,7 +191,7 @@ const ProductionAnalyticsTab: React.FC = () => {
       ctx.stroke();
 
       // Draw points
-      ctx.fillStyle = color;
+      ctx.fillStyle = colors[index % colors.length];
       data.forEach((value, idx) => {
         const x = padding + (idx / Math.max(data.length - 1, 1)) * chartWidth;
         const y = padding + chartHeight - (value / maxValue) * chartHeight;
@@ -236,7 +208,7 @@ const ProductionAnalyticsTab: React.FC = () => {
 
     // Draw X-axis labels
     ctx.fillStyle = '#6b7280';
-    ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.font = '12px sans-serif';
     ctx.textAlign = 'center';
 
     timeseriesData.data.forEach((point, idx) => {
@@ -244,71 +216,6 @@ const ProductionAnalyticsTab: React.FC = () => {
       const date = new Date(point.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       ctx.fillText(date, x, height - 20);
     });
-  };
-
-  const handleChartMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!chartRef.current || !tooltipRef.current || !timeseriesData || timeseriesData.data.length === 0) return;
-
-    const canvas = chartRef.current;
-    const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    const padding = 60;
-    const chartWidth = canvas.width - padding * 2;
-
-    // Check if mouse is within chart area
-    if (mouseX < padding || mouseX > canvas.width - padding ||
-        mouseY < padding || mouseY > canvas.height - padding) {
-      tooltipRef.current.style.display = 'none';
-      return;
-    }
-
-    // Find nearest data point
-    const dataPointWidth = chartWidth / Math.max(timeseriesData.data.length - 1, 1);
-    const nearestIndex = Math.round((mouseX - padding) / dataPointWidth);
-
-    if (nearestIndex < 0 || nearestIndex >= timeseriesData.data.length) {
-      tooltipRef.current.style.display = 'none';
-      return;
-    }
-
-    const point = timeseriesData.data[nearestIndex];
-    if (!point) {
-      tooltipRef.current.style.display = 'none';
-      return;
-    }
-
-    const items = groupBy === 'camera' ? point.by_camera : point.by_recipe;
-
-    // Build tooltip content
-    const date = new Date(point.timestamp).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
-
-    let tooltipHTML = `<div style="font-weight: bold; margin-bottom: 8px;">${date}</div>`;
-
-    items.forEach(item => {
-      const label = groupBy === 'camera'
-        ? getCameraLabel((item as any).serial_number)
-        : (item as any).recipe_name;
-      tooltipHTML += `<div style="margin-bottom: 4px;">${label}: <strong>${item.total}</strong></div>`;
-    });
-
-    tooltipHTML += `<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; font-weight: bold;">Total: ${point.total}</div>`;
-
-    tooltipRef.current.innerHTML = tooltipHTML;
-    tooltipRef.current.style.display = 'block';
-    tooltipRef.current.style.left = `${e.clientX + 15}px`;
-    tooltipRef.current.style.top = `${e.clientY - 15}px`;
-  };
-
-  const handleChartMouseLeave = () => {
-    if (tooltipRef.current) {
-      tooltipRef.current.style.display = 'none';
-    }
   };
 
   // Multi-select handlers
@@ -336,7 +243,10 @@ const ProductionAnalyticsTab: React.FC = () => {
     return cam ? cam.location : serial;
   };
 
-  const colors = ['#6366f1', '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b'];
+  const getRecipeName = (id: string) => {
+    const recipe = recipes.find(r => r._id === id);
+    return recipe ? recipe.name : id;
+  };
 
   return (
     <div className="production-analytics-tab">
@@ -380,14 +290,14 @@ const ProductionAnalyticsTab: React.FC = () => {
             <div style={{ position: 'absolute', top: '100%', left: 0, background: 'white', border: '1px solid #d1d5db', borderRadius: '4px', padding: '10px', zIndex: 1000, minWidth: '200px', maxHeight: '300px', overflow: 'auto', marginTop: '4px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
               <div style={{ marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px solid #e5e7eb' }}>
                 <button onClick={() => setSelectedCameras([])} style={{ marginRight: '8px', padding: '4px 8px', fontSize: '12px', border: '1px solid #d1d5db', borderRadius: '3px', background: 'white', cursor: 'pointer' }}>Clear All</button>
-                <button onClick={() => setSelectedCameras(cameras.map(c => c.serial_number).filter((s): s is string => s !== undefined))} style={{ padding: '4px 8px', fontSize: '12px', border: '1px solid #d1d5db', borderRadius: '3px', background: 'white', cursor: 'pointer' }}>Select All</button>
+                <button onClick={() => setSelectedCameras(cameras.map(c => c.serial_number))} style={{ padding: '4px 8px', fontSize: '12px', border: '1px solid #d1d5db', borderRadius: '3px', background: 'white', cursor: 'pointer' }}>Select All</button>
               </div>
               {cameras.map(cam => (
-                <label key={cam.serial_number || cam.id} style={{ display: 'block', padding: '6px 0', cursor: 'pointer' }}>
+                <label key={cam.serial_number} style={{ display: 'block', padding: '6px 0', cursor: 'pointer' }}>
                   <input
                     type="checkbox"
-                    checked={selectedCameras.includes(cam.serial_number || '')}
-                    onChange={() => cam.serial_number && toggleCamera(cam.serial_number)}
+                    checked={selectedCameras.includes(cam.serial_number)}
+                    onChange={() => toggleCamera(cam.serial_number)}
                     style={{ marginRight: '8px' }}
                   />
                   {cam.location}
@@ -410,14 +320,14 @@ const ProductionAnalyticsTab: React.FC = () => {
             <div style={{ position: 'absolute', top: '100%', left: 0, background: 'white', border: '1px solid #d1d5db', borderRadius: '4px', padding: '10px', zIndex: 1000, minWidth: '200px', maxHeight: '300px', overflow: 'auto', marginTop: '4px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
               <div style={{ marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px solid #e5e7eb' }}>
                 <button onClick={() => setSelectedRecipes([])} style={{ marginRight: '8px', padding: '4px 8px', fontSize: '12px', border: '1px solid #d1d5db', borderRadius: '3px', background: 'white', cursor: 'pointer' }}>Clear All</button>
-                <button onClick={() => setSelectedRecipes(recipes.slice(0, 30).map(r => r.id))} style={{ padding: '4px 8px', fontSize: '12px', border: '1px solid #d1d5db', borderRadius: '3px', background: 'white', cursor: 'pointer' }}>Select All</button>
+                <button onClick={() => setSelectedRecipes(recipes.slice(0, 30).map(r => r._id))} style={{ padding: '4px 8px', fontSize: '12px', border: '1px solid #d1d5db', borderRadius: '3px', background: 'white', cursor: 'pointer' }}>Select All</button>
               </div>
               {recipes.map(recipe => (
-                <label key={recipe.id} style={{ display: 'block', padding: '6px 0', cursor: 'pointer' }}>
+                <label key={recipe._id} style={{ display: 'block', padding: '6px 0', cursor: 'pointer' }}>
                   <input
                     type="checkbox"
-                    checked={selectedRecipes.includes(recipe.id)}
-                    onChange={() => toggleRecipe(recipe.id)}
+                    checked={selectedRecipes.includes(recipe._id)}
+                    onChange={() => toggleRecipe(recipe._id)}
                     style={{ marginRight: '8px' }}
                   />
                   {recipe.name}
@@ -429,46 +339,11 @@ const ProductionAnalyticsTab: React.FC = () => {
       </div>
 
       {/* Chart */}
-      <div className="historical-chart-container" style={{ position: 'relative' }}>
+      <div className="historical-chart-container">
         <h3>Production Trends ({groupBy === 'camera' ? 'By Camera' : 'By Recipe'})</h3>
         {loading && <p>Loading...</p>}
         {!loading && timeseriesData && timeseriesData.data.length > 0 && (
-          <>
-            <div className="chart-legend" style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '16px' }}>
-              {(groupBy === 'camera' ? timeseriesData.data[0]?.by_camera || [] : timeseriesData.data[0]?.by_recipe || []).map((item, index) => (
-                <div key={groupBy === 'camera' ? (item as any).serial_number : (item as any).recipe_id} className="legend-item" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span className="legend-color" style={{ width: '16px', height: '16px', borderRadius: '50%', backgroundColor: colors[index % colors.length] }}></span>
-                  <span style={{ fontSize: '13px' }}>
-                    {groupBy === 'camera' ? getCameraLabel((item as any).serial_number) : (item as any).recipe_name}
-                  </span>
-                </div>
-              ))}
-            </div>
-            <canvas
-              ref={chartRef}
-              width={1200}
-              height={400}
-              onMouseMove={handleChartMouseMove}
-              onMouseLeave={handleChartMouseLeave}
-              style={{ cursor: 'crosshair' }}
-            ></canvas>
-            <div
-              ref={tooltipRef}
-              style={{
-                display: 'none',
-                position: 'fixed',
-                backgroundColor: 'rgba(0, 0, 0, 0.9)',
-                color: 'white',
-                padding: '12px',
-                borderRadius: '6px',
-                fontSize: '13px',
-                pointerEvents: 'none',
-                zIndex: 1000,
-                minWidth: '150px',
-                boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
-              }}
-            />
-          </>
+          <canvas ref={chartRef} width={1200} height={400}></canvas>
         )}
         {!loading && (!timeseriesData || timeseriesData.data.length === 0) && (
           <p>No data available</p>
@@ -484,11 +359,11 @@ const ProductionAnalyticsTab: React.FC = () => {
               <tr>
                 <th>Date</th>
                 {groupBy === 'camera'
-                  ? (timeseriesData.data[0]?.by_camera || []).map(cam => (
-                      <th key={(cam as any).serial_number}>{getCameraLabel((cam as any).serial_number)}</th>
+                  ? timeseriesData.data[0].by_camera.map(cam => (
+                      <th key={cam.serial_number}>{getCameraLabel(cam.serial_number)}</th>
                     ))
-                  : (timeseriesData.data[0]?.by_recipe || []).map(recipe => (
-                      <th key={(recipe as any).recipe_id}>{(recipe as any).recipe_name}</th>
+                  : timeseriesData.data[0].by_recipe.map(recipe => (
+                      <th key={recipe.recipe_id}>{recipe.recipe_name}</th>
                     ))
                 }
                 <th>Total</th>
@@ -499,15 +374,13 @@ const ProductionAnalyticsTab: React.FC = () => {
                 <tr key={point.timestamp}>
                   <td><strong>{new Date(point.timestamp).toLocaleDateString()}</strong></td>
                   {groupBy === 'camera'
-                    ? (timeseriesData.data[0]?.by_camera || []).map(cam => {
-                        const camSerial = (cam as any).serial_number;
-                        const data = point.by_camera.find(c => (c as any).serial_number === camSerial);
-                        return <td key={camSerial}>{data?.total || 0}</td>;
+                    ? timeseriesData.data[0].by_camera.map(cam => {
+                        const data = point.by_camera.find(c => c.serial_number === cam.serial_number);
+                        return <td key={cam.serial_number}>{data?.total || 0}</td>;
                       })
-                    : (timeseriesData.data[0]?.by_recipe || []).map(recipe => {
-                        const recipeId = (recipe as any).recipe_id;
-                        const data = point.by_recipe.find(r => (r as any).recipe_id === recipeId);
-                        return <td key={recipeId}>{data?.total || 0}</td>;
+                    : timeseriesData.data[0].by_recipe.map(recipe => {
+                        const data = point.by_recipe.find(r => r.recipe_id === recipe.recipe_id);
+                        return <td key={recipe.recipe_id}>{data?.total || 0}</td>;
                       })
                   }
                   <td><strong>{point.total}</strong></td>

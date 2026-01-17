@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { inferenceResultsAPI, type InferenceResultResponse } from '@/services/inferenceResults';
+import { inferenceResultsAPI } from '@/services/inferenceResults';
 import InspectionResultsTab from './historical/InspectionResultsTab';
 import ProductionAnalyticsTab from './historical/ProductionAnalyticsTab';
 import '@/styles/Historical.css';
@@ -34,24 +34,17 @@ const Historical: React.FC = () => {
       // Calculate date range
       const { start_date, end_date } = getDateRange(dateRange);
 
-      // Fetch all results for the date range (no pagination, just for count)
-      const results = await inferenceResultsAPI.getResults({
+      // Fetch summary statistics from new API
+      const stats = await inferenceResultsAPI.getSummaryStatistics({
         start_date,
-        end_date,
-        limit: 10000 // Get all for stats
+        end_date
       });
 
-      // Calculate stats
-      const total = results.length;
-      const pass = results.filter(r => r.product_pass_fail === 'PASS').length;
-      const fail = results.filter(r => r.product_pass_fail === 'FAIL').length;
-      const passRate = total > 0 ? (pass / total) * 100 : 0;
-
       setSummaryStats({
-        total,
-        pass,
-        fail,
-        passRate: Math.round(passRate * 10) / 10 // Round to 1 decimal
+        total: stats.total,
+        pass: stats.pass,
+        fail: stats.fail,
+        passRate: stats.pass_rate
       });
     } catch (error) {
       console.error('Error fetching summary stats:', error);

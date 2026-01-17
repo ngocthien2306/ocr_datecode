@@ -7,6 +7,11 @@ class Settings(BaseSettings):
     MONGODB_URL: str = "mongodb://localhost:27017"
     DATABASE_NAME: str = "ocr_datecode_db"
 
+    # Redis
+    REDIS_URL: str = "redis://localhost:6379"
+    REDIS_CACHE_TTL_RECENT: int = 60  # 1 minute for recent data
+    REDIS_CACHE_TTL_HISTORICAL: int = 300  # 5 minutes for historical data
+
     # JWT
     SECRET_KEY: str = "your-secret-key-change-this-in-production"
     ALGORITHM: str = "HS256"
