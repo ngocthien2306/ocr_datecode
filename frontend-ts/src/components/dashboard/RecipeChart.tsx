@@ -27,7 +27,7 @@ ChartJS.register(
 interface RecipeChartProps {
   recipeId: string;
   recipeName: string;
-  timeRange: 'today' | 'week' | 'month' | 'year';
+  timeRange: '1h' | 'today' | 'week' | 'month' | 'year';
   labels: string[];
   totalData: number[];
   passData: number[];
@@ -37,6 +37,7 @@ interface RecipeChartProps {
 export default function RecipeChart({ recipeName, timeRange, labels, totalData, passData, failData }: RecipeChartProps) {
   const getTimeRangeLabel = (range: string) => {
     switch (range) {
+      case '1h': return 'Last 1 Hour';
       case 'today': return 'Today (24h)';
       case 'month': return 'Last 30 Days';
       default: return range;

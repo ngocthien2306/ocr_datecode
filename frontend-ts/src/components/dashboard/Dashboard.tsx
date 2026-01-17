@@ -16,6 +16,7 @@ import { camerasAPI } from '@/services/api';
 import { actionLogsAPI, usersAPI } from '@/services/api';
 import { receiptsAPI } from '@/services/recipes';
 import { inferenceResultsAPI } from '@/services/inferenceResults';
+import { socketService } from '@/services/socketio';
 import { API_BASE_URL } from '@/config/api';
 import { useUser } from '@/contexts/UserContext';
 import type { Camera as BaseCamera, ReceiptLoad } from '@/types';
@@ -149,11 +150,15 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   interface RecipeChartData {
     recipeId: string;
     recipeName: string;
+    oneHour: { labels: string[]; totalData: number[]; passData: number[]; failData: number[] };
     today: { labels: string[]; totalData: number[]; passData: number[]; failData: number[] };
     month: { labels: string[]; totalData: number[]; passData: number[]; failData: number[] };
   }
   const [recipeCharts, setRecipeCharts] = useState<RecipeChartData[]>([]);
   const [activeRecipes, setActiveRecipes] = useState<{id: string; name: string}[]>([]);
+
+  // Camera frames state
+  const [cameraFrames, setCameraFrames] = useState<Record<string, string>>({});
 
   // Helper function to render loading template
   const renderLoadingTemplate = (template: LoadingTemplate) => {
@@ -624,6 +629,16 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
       // Fetch charts for each recipe
       const chartsData = await Promise.all(recipes.map(async (recipe) => {
+        // 1 Hour (hourly data): last 1 hour VN time
+        const oneHourStart = new Date(now);
+        oneHourStart.setHours(now.getHours() - 1);
+        const oneHourStats = await inferenceResultsAPI.getTimeseriesStatistics({
+          start_date: oneHourStart.toISOString(),
+          end_date: now.toISOString(),
+          granularity: 'hour',
+          recipe_ids: recipe.id
+        });
+
         // Today (24 hours - hourly data): 00:00:00 to now VN time
         const todayStart = new Date(now);
         todayStart.setHours(0, 0, 0, 0);
@@ -662,6 +677,15 @@ export default function Dashboard({ onLogout }: DashboardProps) {
         return {
           recipeId: recipe.id,
           recipeName: recipe.name,
+          oneHour: {
+            labels: oneHourStats.data.map(d => {
+              const date = new Date(d.timestamp);
+              return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+            }),
+            totalData: oneHourStats.data.map(d => d.total),
+            passData: oneHourStats.data.map(d => d.pass),
+            failData: oneHourStats.data.map(d => d.fail)
+          },
           today: {
             labels: todayStats.data.map(d => {
               const date = new Date(d.timestamp);
@@ -759,6 +783,47 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
     return () => clearInterval(interval);
   }, []);
+
+  // Setup socket connection for camera streams
+  useEffect(() => {
+    if (currentSection !== 'dashboard') return;
+
+    // Connect socket
+    socketService.connect();
+
+    // Subscribe to camera frames
+    const handleCameraFrame = (data: any) => {
+      const { serial_number, frame_base64 } = data;
+      if (frame_base64) {
+        setCameraFrames(prev => ({
+          ...prev,
+          [serial_number]: `data:image/jpeg;base64,${frame_base64}`
+        }));
+      }
+    };
+
+    socketService.subscribeToCameraFrames(handleCameraFrame);
+
+    // Start streams for all connected cameras with low quality (resize 5x)
+    cameras.forEach(camera => {
+      if (camera.is_connected) {
+        const serialNumber = camera.serial_number || camera.camera_id;
+        // Low FPS for dashboard preview, resize 5x for low quality
+        socketService.startCameraStream(serialNumber, 15, false); // 2 FPS, no save
+      }
+    });
+
+    return () => {
+      // Stop all streams on unmount
+      cameras.forEach(camera => {
+        if (camera.is_connected) {
+          const serialNumber = camera.serial_number || camera.camera_id;
+          socketService.stopCameraStream(serialNumber);
+        }
+      });
+      socketService.unsubscribeFromCameraFrames(handleCameraFrame);
+    };
+  }, [currentSection, cameras]);
 
   // Load current user info
   useEffect(() => {
@@ -884,7 +949,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     
     try {
       const [allCameras, countData] = await Promise.all([
-        camerasAPI.getAllCameras(0, 100),
+        camerasAPI.getAllCameras(0, 20),
         camerasAPI.getCamerasCount()
       ]);
       
@@ -1400,7 +1465,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                 {/* Left Section - Camera Previews */}
                 <div className="dashboard-left">
                   <div className="camera-previews">
-                    {cameras.slice(0, 3).map((camera, index) => (
+                    {cameras.map((camera, index) => (
                       <div key={camera.camera_id} className="camera-preview-card">
                         <div className="camera-preview-header">
                           <div className="camera-preview-title">
@@ -1410,14 +1475,34 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                           {camera.is_connected && <span className="live-badge">LIVE</span>}
                         </div>
                         <div className="camera-preview-frame">
-                          <img 
-                            src={
-                              index === 0 ? 'https://images.pexels.com/photos/1267338/pexels-photo-1267338.jpeg?auto=compress&cs=tinysrgb&w=800' :
-                              index === 1 ? 'https://images.pexels.com/photos/3862130/pexels-photo-3862130.jpeg?auto=compress&cs=tinysrgb&w=800' :
-                              'https://images.pexels.com/photos/5022849/pexels-photo-5022849.jpeg?auto=compress&cs=tinysrgb&w=800'
+                          {(() => {
+                            const serialNumber = camera.serial_number || camera.camera_id;
+                            const frameUrl = cameraFrames[serialNumber];
+
+                            if (!camera.is_connected || !frameUrl) {
+                              return (
+                                <div style={{
+                                  width: '100%',
+                                  height: '100%',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  background: '#1f2937',
+                                  color: '#9ca3af'
+                                }}>
+                                  No Display
+                                </div>
+                              );
                             }
-                            alt={`${camera.camera_id} Feed`} 
-                          />
+
+                            return (
+                              <img
+                                src={frameUrl}
+                                alt={`${camera.camera_id} Feed`}
+                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                              />
+                            );
+                          })()}
                           <div className="camera-overlay-info">
                             <div className="overlay-stat">
                               <span className="overlay-label">FPS:</span>
@@ -1450,6 +1535,15 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                       <>
                         {recipeCharts.map((recipeChart) => (
                           <div key={recipeChart.recipeId}>
+                            <RecipeChart
+                              recipeId={recipeChart.recipeId}
+                              recipeName={recipeChart.recipeName}
+                              timeRange="1h"
+                              labels={recipeChart.oneHour.labels}
+                              totalData={recipeChart.oneHour.totalData}
+                              passData={recipeChart.oneHour.passData}
+                              failData={recipeChart.oneHour.failData}
+                            />
                             <RecipeChart
                               recipeId={recipeChart.recipeId}
                               recipeName={recipeChart.recipeName}
