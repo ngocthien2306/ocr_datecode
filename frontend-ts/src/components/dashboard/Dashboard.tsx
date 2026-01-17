@@ -658,19 +658,14 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           recipe_ids: recipe.id
         });
 
-        // Helper to convert UTC timestamp to VN time (+7 hours)
-        const convertToVNTime = (utcTimestamp: string): Date => {
-          const utcDate = new Date(utcTimestamp);
-          return new Date(utcDate.getTime() + 7 * 60 * 60 * 1000); // Add 7 hours
-        };
-
+        // Note: Backend already returns VN timezone, no conversion needed
         return {
           recipeId: recipe.id,
           recipeName: recipe.name,
           today: {
             labels: todayStats.data.map(d => {
-              const vnDate = convertToVNTime(d.timestamp);
-              return vnDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+              const date = new Date(d.timestamp);
+              return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
             }),
             totalData: todayStats.data.map(d => d.total),
             passData: todayStats.data.map(d => d.pass),
@@ -678,8 +673,8 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           },
           month: {
             labels: monthStats.data.map(d => {
-              const vnDate = convertToVNTime(d.timestamp);
-              return vnDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+              const date = new Date(d.timestamp);
+              return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
             }),
             totalData: monthStats.data.map(d => d.total),
             passData: monthStats.data.map(d => d.pass),

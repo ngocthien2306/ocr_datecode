@@ -98,8 +98,8 @@ const ProductionAnalyticsTab: React.FC = () => {
         return 'minute'; // 1 hour: group by minute
       case 'today':
       case '8h':
-        return 'hour'; // Today/8 hours: group by hour
       case '1d':
+        return 'hour'; // Today/8h/1d: group by hour
       case '7d':
       case '30d':
       default:
@@ -157,26 +157,25 @@ const ProductionAnalyticsTab: React.FC = () => {
     }
 
     // Extract labels (timestamps) - format based on granularity
+    // Note: Backend already returns VN timezone, no conversion needed
     const labels = timeseriesData.data.map(point => {
       const date = new Date(point.timestamp);
-      // Add 7 hours for VN timezone
-      const vnDate = new Date(date.getTime() + 7 * 60 * 60 * 1000);
 
       if (timeseriesData.granularity === 'minute') {
         // For minute: "10:35"
-        return vnDate.toLocaleTimeString('en-US', {
+        return date.toLocaleTimeString('en-US', {
           hour: '2-digit',
           minute: '2-digit'
         });
       } else if (timeseriesData.granularity === 'hour') {
-        // For hourly: "10:00 AM" (today) or "Jan 17, 10:00" (other days)
-        if (dateRange === 'today') {
-          return vnDate.toLocaleTimeString('en-US', {
+        // For hourly: "10:00 AM" (today/1d) or "Jan 17, 10:00" (other days)
+        if (dateRange === 'today' || dateRange === '1d') {
+          return date.toLocaleTimeString('en-US', {
             hour: '2-digit',
             minute: '2-digit'
           });
         } else {
-          return vnDate.toLocaleString('en-US', {
+          return date.toLocaleString('en-US', {
             month: 'short',
             day: 'numeric',
             hour: '2-digit',
@@ -185,7 +184,7 @@ const ProductionAnalyticsTab: React.FC = () => {
         }
       } else {
         // For daily: "Jan 17"
-        return vnDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       }
     });
 
@@ -317,26 +316,25 @@ const ProductionAnalyticsTab: React.FC = () => {
     }
 
     // Extract labels (timestamps) - format based on granularity
+    // Note: Backend already returns VN timezone, no conversion needed
     const labels = timeseriesData.data.map(point => {
       const date = new Date(point.timestamp);
-      // Add 7 hours for VN timezone
-      const vnDate = new Date(date.getTime() + 7 * 60 * 60 * 1000);
 
       if (timeseriesData.granularity === 'minute') {
         // For minute: "10:35"
-        return vnDate.toLocaleTimeString('en-US', {
+        return date.toLocaleTimeString('en-US', {
           hour: '2-digit',
           minute: '2-digit'
         });
       } else if (timeseriesData.granularity === 'hour') {
-        // For hourly: "10:00 AM" (today) or "Jan 17, 10:00" (other days)
-        if (dateRange === 'today') {
-          return vnDate.toLocaleTimeString('en-US', {
+        // For hourly: "10:00 AM" (today/1d) or "Jan 17, 10:00" (other days)
+        if (dateRange === 'today' || dateRange === '1d') {
+          return date.toLocaleTimeString('en-US', {
             hour: '2-digit',
             minute: '2-digit'
           });
         } else {
-          return vnDate.toLocaleString('en-US', {
+          return date.toLocaleString('en-US', {
             month: 'short',
             day: 'numeric',
             hour: '2-digit',
@@ -345,7 +343,7 @@ const ProductionAnalyticsTab: React.FC = () => {
         }
       } else {
         // For daily: "Jan 17"
-        return vnDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       }
     });
 
