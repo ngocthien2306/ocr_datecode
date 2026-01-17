@@ -21,6 +21,10 @@ socket_app = socketio.ASGIApp(sio)
 # Import camera stream service
 from app.services.camera_stream_service import camera_stream_service
 
+# Import and initialize Jetson monitoring service
+from app.services.jetson_monitoring_service import jetson_monitoring_service
+jetson_monitoring_service.set_socketio(sio)
+
 
 @sio.event
 async def connect(sid, environ, auth):
@@ -299,11 +303,27 @@ async def emit_io_status_update(io_data: dict):
         logger.error(f"Error emitting I/O status update: {e}")
 
 
+@sio.event
+async def subscribe_jetson_monitoring(sid, data=None):
+    """Client subscribes to Jetson monitoring updates"""
+    logger.info(f"Client {sid} subscribed to jetson_monitoring")
+    await sio.enter_room(sid, 'jetson_monitoring')
+    await sio.emit('subscribed', {'channel': 'jetson_monitoring'}, room=sid)
+
+
+@sio.event
+async def unsubscribe_jetson_monitoring(sid, data=None):
+    """Client unsubscribes from Jetson monitoring updates"""
+    logger.info(f"Client {sid} unsubscribed from jetson_monitoring")
+    await sio.leave_room(sid, 'jetson_monitoring')
+
+
 # Export sio instance for use in other modules
 __all__ = [
     'sio',
     'socket_app',
     'emit_inference_result',
     'emit_recipe_status_change',
-    'emit_io_status_update'
+    'emit_io_status_update',
+    'jetson_monitoring_service'
 ]

@@ -22,5 +22,6 @@ langchain-mongodb
 # Additional utilities
 tiktoken==0.7.0
 psutil==5.9.8
+jetson-stats
 
 

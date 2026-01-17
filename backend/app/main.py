@@ -10,7 +10,7 @@ from app.repositories.action_log_repository import ActionLogRepository
 import logging
 from pathlib import Path
 
-from app.api.endpoints import auth, users, recipes, cameras, upload, action_logs, inference_results, trigger_simulator, agent
+from app.api.endpoints import auth, users, recipes, cameras, upload, action_logs, inference_results, trigger_simulator, agent, jetson_monitoring
 from app.api.websocket import camera_ws
 from app.services.socketio_service import socket_app
 
@@ -62,7 +62,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Warning: AI Agent system failed to initialize: {e}")
 
+    # Start Jetson monitoring service
+    try:
+        from app.services.jetson_monitoring_service import jetson_monitoring_service
+        await jetson_monitoring_service.start_monitoring()
+        print("✅ Jetson monitoring service started")
+    except Exception as e:
+        print(f"⚠️ Warning: Jetson monitoring service failed to start: {e}")
+
     yield
+
+    # Stop Jetson monitoring service
+    try:
+        from app.services.jetson_monitoring_service import jetson_monitoring_service
+        await jetson_monitoring_service.stop_monitoring()
+        print("🛑 Jetson monitoring service stopped")
+    except Exception:
+        pass
 
     await close_mongo_connection()
 
@@ -91,6 +107,7 @@ app.include_router(action_logs.router, prefix="/api/action-logs", tags=["Action 
 app.include_router(inference_results.router, prefix="/api", tags=["Inference Results"])
 app.include_router(trigger_simulator.router, prefix="/api", tags=["Trigger Simulator"])
 app.include_router(agent.router, prefix="/api", tags=["AI Agent"])
+app.include_router(jetson_monitoring.router, prefix="/api", tags=["Jetson Monitoring"])
 
 # WebSocket endpoints
 app.include_router(camera_ws.router, tags=["WebSocket"])
