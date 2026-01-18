@@ -15,7 +15,7 @@ from app.api.websocket import camera_ws
 from app.services.socketio_service import socket_app
 
 # Setup logging to file
-LOGS_DIR = Path(__file__).parent.parent.parent / "backend" / "logs"
+LOGS_DIR = Path(settings.LOGS_PATH)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
@@ -114,7 +114,7 @@ app.include_router(storage.router, prefix="/api", tags=["Storage Management"])
 app.include_router(camera_ws.router, tags=["WebSocket"])
 
 # Mount static files for serving inference result images
-UPLOADS_DIR = Path(__file__).parent.parent / "uploads"
+UPLOADS_DIR = Path(settings.UPLOADS_BASE_PATH)
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/api/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 

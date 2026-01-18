@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = True
 
+    # API Server
+    API_HOST: str = "0.0.0.0"
+    API_PORT: int = 8000
+
     # API Base URL (for generating full URLs in responses)
     # Default to localhost, override with env var for production/ngrok
     API_BASE_URL: str = "http://localhost:8000"
@@ -40,7 +44,31 @@ class Settings(BaseSettings):
     # Default to Vietnam (Ho Chi Minh) as requested; change via .env if needed
     TIMEZONE: str = "Asia/Ho_Chi_Minh"
 
+    # Storage Paths
+    BACKEND_BASE_PATH: str = "/home/demo/Source/ocr_datecode/backend"
+    UPLOADS_BASE_PATH: str = "/home/demo/Source/ocr_datecode/backend/uploads"
+    INFERENCE_RESULTS_PATH: str = "/home/demo/Source/ocr_datecode/backend/uploads/inference_results"
+    SAVE_FRAME_PATH: str = "/home/demo/Source/ocr_datecode/backend/uploads/save_frame"
+    TEMPLATE_UPLOAD_PATH: str = "/home/demo/Source/ocr_datecode/backend/uploads/templates"
+    TEMPLATE_VISUALIZE_PATH: str = "/home/demo/Source/ocr_datecode/backend/uploads/visualizations"
+    AVATAR_UPLOAD_PATH: str = "/home/demo/Source/ocr_datecode/backend/uploads/avatar"
+    LOGS_PATH: str = "/home/demo/Source/ocr_datecode/backend/logs"
+    CAMERA_SETTINGS_PATH: str = "/home/demo/Source/ocr_datecode/backend/camera_settings"
+    INFERENCE_STATE_PATH: str = "/home/demo/Source/ocr_datecode/backend/inference_state"
+
+    # AI Services
+    AI_SERVICES_PATH: str = "/home/demo/Source/ocr_datecode/ai_services"
+    CAMERA_SCRIPT_PATH: str = "/home/demo/Source/ocr_datecode/ai_services/camera_shm_producer.py"
+
+    # Image Processing
+    FRAME_SAVE_QUALITY: int = 95
+
+    # Trigger Configuration
+    TRIGGER_FILE_PATH: str = "/tmp"
+
+    # OpenAI
     OPENAI_API_KEY: str = ""
+
     class Config:
         env_file = ".env"
         case_sensitive = True

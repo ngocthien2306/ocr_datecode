@@ -5,13 +5,14 @@ from typing import Optional
 
 from ...models.storage import StorageItem, StorageStats
 from ...services.storage_service import StorageService
+from ...core.config import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 # Initialize storage service with uploads path
-UPLOADS_BASE = Path(__file__).parent.parent.parent.parent / "uploads" / "inference_results"
+UPLOADS_BASE = Path(settings.INFERENCE_RESULTS_PATH)
 storage_service = StorageService(str(UPLOADS_BASE))
 
 

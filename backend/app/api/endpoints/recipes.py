@@ -2,7 +2,6 @@ import traceback
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Request
 from fastapi.responses import FileResponse, Response
 from typing import List, Optional
-import os
 import uuid
 from pathlib import Path
 import base64
@@ -40,14 +39,14 @@ router = APIRouter()
 
 
 # Template image upload directory
-TEMPLATE_UPLOAD_DIR = Path("uploads/templates")
+TEMPLATE_UPLOAD_DIR = Path(settings.TEMPLATE_UPLOAD_PATH)
 TEMPLATE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-TEMPLATE_VISUALIZE_DIR = Path("uploads/visualizations")
+TEMPLATE_VISUALIZE_DIR = Path(settings.TEMPLATE_VISUALIZE_PATH)
 TEMPLATE_VISUALIZE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Base URL used when returning image/visualization links (frontend should use absolute URLs)
-TEMPLATE_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:8000').rstrip('/')
+TEMPLATE_BASE_URL = settings.API_BASE_URL.rstrip('/')
 
 
 def _coord(value, max_val: int) -> int:

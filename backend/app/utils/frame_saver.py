@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 import numpy as np
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +17,8 @@ logger = logging.getLogger(__name__)
 def save_frame_to_disk(
     serial_number: str,
     frame: np.ndarray,
-    base_dir: str = "/home/demo/Source/ocr_datecode/backend/uploads/save_frame",
-    quality: int = 95
+    base_dir: Optional[str] = None,
+    quality: Optional[int] = None
 ) -> Optional[str]:
     """
     Save camera frame to disk with organized directory structure
@@ -25,8 +26,8 @@ def save_frame_to_disk(
     Args:
         serial_number: Camera serial number
         frame: Frame image (numpy array)
-        base_dir: Base directory for saving frames
-        quality: JPEG quality (0-100)
+        base_dir: Base directory for saving frames (default: from settings)
+        quality: JPEG quality (0-100, default: from settings)
 
     Returns:
         Relative path to saved file or None on error
@@ -37,6 +38,12 @@ def save_frame_to_disk(
     Example:
         save_frame/24166352/2026_01_15/24166352_2026_01_15+11_04_30_123.jpg
     """
+    # Use settings defaults if not provided
+    if base_dir is None:
+        base_dir = settings.SAVE_FRAME_PATH
+    if quality is None:
+        quality = settings.FRAME_SAVE_QUALITY
+
     try:
         # Get current timestamp
         now = datetime.now()

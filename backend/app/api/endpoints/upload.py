@@ -7,6 +7,7 @@ import io
 
 from app.models.user import UserInDB
 from app.api.dependencies.auth import get_current_user
+from app.core.config import settings
 
 # Handle Pillow version compatibility
 try:
@@ -19,7 +20,7 @@ except AttributeError:
 router = APIRouter()
 
 # Avatar upload directory
-AVATAR_UPLOAD_DIR = Path("uploads/avatar")
+AVATAR_UPLOAD_DIR = Path(settings.AVATAR_UPLOAD_PATH)
 AVATAR_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 

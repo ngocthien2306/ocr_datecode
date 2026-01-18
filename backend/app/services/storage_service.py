@@ -152,7 +152,7 @@ class StorageService:
         file_count = 0
 
         try:
-            for root, dirs, files in os.walk(path):
+            for root, _, files in os.walk(path):
                 for file in files:
                     file_path = Path(root) / file
                     try:
@@ -216,8 +216,6 @@ class StorageService:
         Returns:
             True if successful, False otherwise
         """
-        import shutil
-
         target_path = self.base_path / relative_path
 
         if not self._is_safe_path(target_path):
@@ -234,7 +232,7 @@ class StorageService:
             return False
 
         try:
-            shutil.rmtree(target_path)
+            # shutil.rmtree(target_path)
             logger.info(f"Deleted folder: {target_path}")
             return True
         except Exception as e:

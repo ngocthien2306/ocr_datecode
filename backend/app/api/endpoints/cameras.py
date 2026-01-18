@@ -4,30 +4,29 @@ Camera API Endpoints
 """
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse
 import io
 import logging
 
 from app.db.mongodb import get_database
 from app.repositories.camera_repository import CameraRepository
 from app.repositories.action_log_repository import ActionLogRepository
+from app.core.config import settings as app_settings
 from app.schemas.camera import (
     CameraCreate,
     CameraUpdate,
     CameraResponse,
-    CameraConnectionStatus,
     CameraSettingsUpdate
 )
 from app.api.dependencies.auth import get_current_user, get_current_user_from_query
 from app.api.dependencies.action_log import get_action_log_repository
-from app.services import camera_frame_service, camera_producer_service, shared_memory_service
+from app.services import camera_frame_service, shared_memory_service
 from app.services.camera_settings_service import camera_settings_service
 from app.models.action_log import ActionLogCreate, ActionType
 from app.models.user import UserInDB
 from app.api.websocket.camera_ws import (
     send_connect_camera,
     send_disconnect_camera,
-    send_set_camera_mode,
     send_update_camera_settings,
     camera_ws_manager
 )
@@ -760,7 +759,7 @@ async def test_hardware_trigger(
     from pathlib import Path
 
     # Tạo trigger file
-    trigger_file = Path(f"/tmp/camera_trigger_{serial_number}")
+    trigger_file = Path(app_settings.TRIGGER_FILE_PATH) / f"camera_trigger_{serial_number}"
     trigger_file.touch()
 
     # Đợi camera producer xử lý trigger và chụp frame (max 2s)

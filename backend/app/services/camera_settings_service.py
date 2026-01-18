@@ -8,9 +8,10 @@ import logging
 from typing import Optional, Dict
 from pathlib import Path
 from datetime import datetime
+from app.core.config import settings as app_settings
 
 # Setup logging to file
-LOGS_DIR = Path("/home/demo/Source/ocr_datecode/backend/logs")
+LOGS_DIR = Path(app_settings.LOGS_PATH)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Configure file handler for settings service
@@ -26,7 +27,9 @@ logger.setLevel(logging.INFO)
 class CameraSettingsService:
     """Service to manage camera settings files"""
 
-    def __init__(self, settings_dir: str = "camera_settings"):
+    def __init__(self, settings_dir: Optional[str] = None):
+        if settings_dir is None:
+            settings_dir = app_settings.CAMERA_SETTINGS_PATH
         self.settings_dir = Path(settings_dir)
         self.settings_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"📁 [INIT] Camera settings directory: {self.settings_dir}")

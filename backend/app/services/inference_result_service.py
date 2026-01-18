@@ -11,6 +11,7 @@ import shutil
 
 from app.models.inference_result import InferenceResultCreate, InferenceResultResponse
 from app.repositories.inference_result_repository import InferenceResultRepository
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -28,16 +29,18 @@ class InferenceResultService:
     def __init__(
         self,
         result_repository: InferenceResultRepository,
-        upload_base_path: str = "/home/demo/Source/ocr_datecode/backend/uploads"
+        upload_base_path: Optional[str] = None
     ):
         """
         Initialize service
 
         Args:
             result_repository: Repository for database operations
-            upload_base_path: Base path for file uploads
+            upload_base_path: Base path for file uploads (default: from settings)
         """
         self.result_repo = result_repository
+        if upload_base_path is None:
+            upload_base_path = settings.UPLOADS_BASE_PATH
         self.upload_base_path = Path(upload_base_path)
         self.inference_results_path = self.upload_base_path / "inference_results"
 

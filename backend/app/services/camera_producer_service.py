@@ -3,10 +3,10 @@ Camera Producer Service
 Service to manage camera producer processes
 """
 import subprocess
-import psutil
 import logging
-from typing import Optional, Dict
+from typing import Dict
 import os
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ class CameraProducerService:
 
     def __init__(self):
         self._processes: Dict[str, subprocess.Popen] = {}
-        self._camera_script_path = "/home/demo/Source/ocr_datecode/ai_services/camera_shm_producer.py"
+        self._camera_script_path = settings.CAMERA_SCRIPT_PATH
 
     def start_camera(self, serial_number: str, device_index: int = 0) -> bool:
         """
