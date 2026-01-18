@@ -1,5 +1,7 @@
 // API Configuration
-export const API_BASE_URL = 'https://suntech-vision-api.ngrok.app';
+import { API_BASE_URL } from './env';
+
+export { API_BASE_URL };
 
 export const API_ENDPOINTS = {
   recipes: `${API_BASE_URL}/api/recipes`,

@@ -1,12 +1,12 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
+import { API_BASE_URL } from '@/config/env';
 
-const API_BASE_URL = 'https://suntech-vision-api.ngrok.app/api';
-// const API_BASE_URL = 'https://quiet-corners-lead.loca.lt/api';
-// const API_BASE_URL = 'http://localhost:8000/api';
+// Construct full API URL with /api suffix
+const API_URL = `${API_BASE_URL}/api`;
 
 // Create axios instance
 const api: AxiosInstance = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: API_URL,
   headers: {
     'Content-Type': 'application/json',
     'Bypass-Tunnel-Reminder': 'true',
