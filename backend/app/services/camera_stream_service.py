@@ -155,9 +155,11 @@ class CameraStreamService:
 
                             # logger.debug(f"Emitted frame {frame_idx} for {serial_number}, base64_len={len(frame_base64)}")
                         else:
-                            logger.warning(f"Failed to encode frame for {serial_number}")
+                            pass
+                            # logger.warning(f"Failed to encode frame for {serial_number}")
                     else:
-                        logger.debug(f"No frame data available for {serial_number}")
+                        pass
+                        # logger.debug(f"No frame data available for {serial_number}")
 
                 except Exception as e:
                     logger.error(f"Error reading frame from {serial_number}: {e}")
