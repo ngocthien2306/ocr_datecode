@@ -22,9 +22,9 @@ langchain-community
 langchain-mongodb
 
 # Image Processing
-opencv-python==4.12.0.88
-Pillow==9.0.1
-numpy==1.26.4
+# opencv-python==4.12.0.88
+# Pillow==9.0.1
+# numpy==1.26.4
 
 # Additional utilities
 tiktoken==0.7.0
