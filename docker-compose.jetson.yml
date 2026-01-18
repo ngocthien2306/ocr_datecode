@@ -1,0 +1,27 @@
+# ============================================
+# Docker Compose Override for Jetson Deployment
+# ============================================
+# Use this file when deploying on NVIDIA Jetson devices
+# to enable GPU monitoring with jetson-stats
+#
+# Usage:
+#   docker-compose -f docker-compose.yml -f docker-compose.jetson.yml up -d --build
+
+services:
+  backend:
+    # Mount jtop socket from host
+    volumes:
+      - /run/jtop.sock:/run/jtop.sock:ro
+
+    # Additional environment for Jetson
+    environment:
+      # Force install jetson-stats in container
+      INSTALL_JETSON_STATS: "true"
+
+    # Build with Jetson-specific requirements
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.jetson.ubuntu
+      network: host
+      args:
+        - INSTALL_JETSON_STATS=true

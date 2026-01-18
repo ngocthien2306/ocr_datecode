@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import Dashboard from './components/dashboard/Dashboard';
 import Login from './components/login/Login';
 import { ToastProvider } from './contexts/ToastContext';

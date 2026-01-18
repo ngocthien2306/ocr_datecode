@@ -1,0 +1,8 @@
+# ============================================
+# Additional requirements for NVIDIA Jetson
+# ============================================
+# Install on Jetson device:
+# pip install -r requirements.txt
+# pip install -r requirements-jetson.txt
+
+jetson-stats>=4.2.0

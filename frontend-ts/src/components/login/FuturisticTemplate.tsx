@@ -19,7 +19,7 @@ export default function FuturisticTemplate({
   rememberDevice,
   loginError,
   isLoading,
-  isLightMode,
+  isLightMode: _isLightMode,
   onUsernameChange,
   onPasswordChange,
   onRememberDeviceChange,

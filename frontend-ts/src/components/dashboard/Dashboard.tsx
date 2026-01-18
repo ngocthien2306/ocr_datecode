@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import '@/styles/Dashboard.css';
 import UserManagement from './UserManagement';
 import Receipts from '../recipe/Receipts';
@@ -155,7 +155,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     month: { labels: string[]; totalData: number[]; passData: number[]; failData: number[] };
   }
   const [recipeCharts, setRecipeCharts] = useState<RecipeChartData[]>([]);
-  const [activeRecipes, setActiveRecipes] = useState<{id: string; name: string}[]>([]);
+  const [_activeRecipes, setActiveRecipes] = useState<{id: string; name: string}[]>([]);
 
   // Camera frames state
   const [cameraFrames, setCameraFrames] = useState<Record<string, string>>({});
@@ -1465,7 +1465,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                 {/* Left Section - Camera Previews */}
                 <div className="dashboard-left">
                   <div className="camera-previews">
-                    {cameras.map((camera, index) => (
+                    {cameras.map((camera, _index) => (
                       <div key={camera.camera_id} className="camera-preview-card">
                         <div className="camera-preview-header">
                           <div className="camera-preview-title">

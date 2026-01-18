@@ -10,7 +10,6 @@ const StorageManager: React.FC = () => {
   const [stats, setStats] = useState<StorageStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
-  const [deletingPath, setDeletingPath] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
     item: StorageItem | null;
@@ -130,7 +129,7 @@ const StorageManager: React.FC = () => {
     const isExpanded = expandedFolders.has(item.path);
     const hasChildren = item.children && item.children.length > 0;
     const canExpand = item.children !== null;
-    const isDeleting = deletingPath === item.path;
+    const isDeleting = false; // Delete feature is disabled
 
     return (
       <div key={item.path} className="storage-folder-item" style={{ marginLeft: `${level * 20}px` }}>
