@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pylint:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(cd:*)",
+      "Bash(cd /home/demo/Source/ocr_datecode/backend && python -c \"import numpy; print\\('numpy:', numpy.__version__\\)\" 2>&1:*)"
+    ]
+  }
+}

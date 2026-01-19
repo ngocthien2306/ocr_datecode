@@ -1,3 +1,15 @@
 ngrok http --url=suntech-vision.ngrok.app 5173
 ngrok http --url=suntech-vision-api.ngrok.app 8000
+ngrok http --url=suntech-vision-db.ngrok.app 8081
+
+
 pip install onnxruntime-gpu==1.23.0 --extra-index-url https://pypi.jetson-ai-lab.io/jp6/cu126
+
+
+pip3 install --upgrade pip setuptools wheel packaging
+
+export CUDA_HOME=/usr/local/cuda
+export PATH=$CUDA_HOME/bin:$PATH
+export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+
+pip3 install pycuda --user

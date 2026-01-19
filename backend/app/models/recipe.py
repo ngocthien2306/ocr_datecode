@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
@@ -141,6 +141,12 @@ class RecipeInDB(RecipeBase):
     created_at: datetime
     updated_at: datetime
 
+    @field_validator('created_at', 'updated_at', mode='before')
+    @classmethod
+    def parse_datetime(cls, v):
+        if isinstance(v, dict) and '$date' in v:
+            return datetime.fromisoformat(v['$date'].replace('Z', '+00:00'))
+        return v
 
 class RecipeResponse(RecipeBase):
     """Schema for recipe response"""
