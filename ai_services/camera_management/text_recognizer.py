@@ -166,17 +166,17 @@ if __name__ == '__main__':
         print("Please provide a test image")
 
 
-import cv2
-from pathlib import Path
+# import cv2
+# from pathlib import Path
 
-recognizer = TextRecognizer('../languages/english/rec.onnx', 
-                           '../languages/english/dict.txt', 
-                           use_gpu=True)
+# recognizer = TextRecognizer('../languages/english/rec.onnx', 
+#                            '../languages/english/dict.txt', 
+#                            use_gpu=True)
 
-images = [cv2.imread(str(p)) for p in sorted(Path('/Users/ngocthien.ai/Source/Projects/ocr_datecode/desktop/results').glob('cropped_text_*.jpg'))]
-start_time = time.time()
-results = recognizer.recognize_batch(images)
-end_time = time.time()
-print(f"Processing time for {len(images)} images: {(end_time - start_time)*1000:.3f} ms")
-for i, (text, conf) in enumerate(results):
-    print(f"{i}: '{text}' ({conf:.3f})")
+# images = [cv2.imread(str(p)) for p in sorted(Path('/Users/ngocthien.ai/Source/Projects/ocr_datecode/desktop/results').glob('cropped_text_*.jpg'))]
+# start_time = time.time()
+# results = recognizer.recognize_batch(images)
+# end_time = time.time()
+# print(f"Processing time for {len(images)} images: {(end_time - start_time)*1000:.3f} ms")
+# for i, (text, conf) in enumerate(results):
+#     print(f"{i}: '{text}' ({conf:.3f})")

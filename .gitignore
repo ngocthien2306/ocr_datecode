@@ -167,3 +167,4 @@ desktop/__pycache__/template_matcher.cpython-311.pyc
 ocr_inference
 backend/camera_settings
 ai_services/test_result
+inference_data
