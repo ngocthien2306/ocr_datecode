@@ -59,7 +59,7 @@ DEBUG=True
 # API_PORT=8000
 API_BASE_URL=http://localhost:8000
 TIMEZONE=Asia/Ho_Chi_Minh
-OPENAI_API_KEY=sk-proj-xxxx-your-api-key-here
+OPENAI_API_KEY=sk-proj-xxxx
 '''
 
 # setup AI service
