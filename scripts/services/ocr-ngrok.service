@@ -1,0 +1,17 @@
+[Unit]
+Description=OCR Datecode Ngrok Tunnels
+After=network.target ocr-backend.service ocr-frontend.service
+Wants=ocr-backend.service ocr-frontend.service
+
+[Service]
+Type=simple
+User=demo
+Group=demo
+ExecStart=/usr/bin/ngrok start --config /home/demo/.config/ngrok/ngrok-ocr.yml --all
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

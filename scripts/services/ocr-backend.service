@@ -1,0 +1,19 @@
+[Unit]
+Description=OCR Datecode Backend API
+After=network.target mongodb.service
+Wants=mongodb.service
+
+[Service]
+Type=simple
+User=demo
+Group=demo
+WorkingDirectory=/home/demo/Source/ocr_datecode/backend
+Environment="PATH=/home/demo/.local/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/usr/bin/python3 -m uvicorn app.main:app --port 8000 --host 0.0.0.0
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
