@@ -1,0 +1,88 @@
+[
+  {
+    "_id": {
+      "$oid": "696e032ef0ebb6f7b4e242a3"
+    },
+    "camera_id": "CAM002",
+    "model_name": "Basler a2A1920-160ucBAS",
+    "serial_number": "40733814",
+    "resolution_width": 1920,
+    "resolution_height": 1200,
+    "is_connected": true,
+    "is_active": true,
+    "ip_address": "192.168.1.101",
+    "location": "Production Line 1 - Position B",
+    "description": "Secondary inspection camera for date code verification",
+    "max_frame_rate": 40,
+    "pixel_format": "RGB8",
+    "created_at": "2025-12-21T19:56:09.567Z",
+    "updated_at": {
+      "$date": "2026-01-19T10:46:02.533Z"
+    },
+    "created_by": "admin"
+  },
+  {
+    "_id": {
+      "$oid": "696e0345f0ebb6f7b4e242a5"
+    },
+    "camera_id": "CAM001",
+    "model_name": "Basler acA2440-35uc",
+    "serial_number": "24241268",
+    "resolution_width": 2464,
+    "resolution_height": 2056,
+    "is_connected": true,
+    "is_active": true,
+    "ip_address": "192.168.1.100",
+    "location": "Production Line 1 - Position A",
+    "description": "Main inspection camera for date code reading",
+    "max_frame_rate": 40,
+    "pixel_format": "BGR8",
+    "created_at": "2025-12-21T19:56:09.567Z",
+    "updated_at": {
+      "$date": "2026-01-19T10:46:05.713Z"
+    },
+    "created_by": "admin"
+  },
+  {
+    "_id": {
+      "$oid": "696e0355f0ebb6f7b4e242a7"
+    },
+    "camera_id": "CAM003",
+    "model_name": "Basler acA2500-14gm",
+    "serial_number": "23437169",
+    "resolution_width": 2592,
+    "resolution_height": 1944,
+    "is_connected": false,
+    "is_active": true,
+    "ip_address": "192.168.1.102",
+    "location": "Production Line 1 - Position C",
+    "description": "High resolution camera for detailed inspection",
+    "max_frame_rate": 13.7,
+    "pixel_format": "Mono8",
+    "created_at": "2025-12-21T19:56:09.567Z",
+    "updated_at": "2026-01-12T07:14:40.761Z",
+    "created_by": "admin"
+  },
+  {
+    "_id": {
+      "$oid": "696e0365f0ebb6f7b4e242a9"
+    },
+    "camera_id": "CAM004",
+    "model_name": "Basler acA4096-30uc",
+    "serial_number": "40272812",
+    "resolution_width": 4096,
+    "resolution_height": 2168,
+    "is_connected": false,
+    "is_active": true,
+    "ip_address": "192.168.1.104",
+    "location": "Line Carton",
+    "description": "High resolution camera for detailed inspection",
+    "max_frame_rate": 10,
+    "pixel_format": "BGR8",
+    "created_at": "2025-12-21T19:56:09.567Z",
+    "updated_at": {
+      "$date": "2026-01-19T10:20:34.645Z"
+    },
+    "created_by": "admin"
+  }
+]

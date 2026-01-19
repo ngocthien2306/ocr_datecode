@@ -1,0 +1,64 @@
+[
+  {
+    "_id": {
+      "$oid": "696e04cf20dac55626ef0a6f"
+    },
+    "username": "admin",
+    "email": "admin@suntech.com",
+    "full_name": "System Administrator",
+    "phone_number": null,
+    "avatar_url": "/api/upload/avatars/5dcb77db-5d25-4048-b491-21c77c20758a.png",
+    "role": "admin",
+    "is_active": true,
+    "hashed_password": "$2b$12$qpJ3EWVWz4F24AoahPw/cOWiCK1zdhU2mC1Ftr.UyV/cb61YRKTSa",
+    "created_at": {
+      "$date": "2026-01-19T10:17:51.706Z"
+    },
+    "updated_at": {
+      "$date": "2026-01-19T10:49:44.214Z"
+    },
+    "last_login": {
+      "$date": "2026-01-19T10:18:00.333Z"
+    }
+  },
+  {
+    "_id": {
+      "$oid": "696e04d020dac55626ef0a70"
+    },
+    "username": "operator",
+    "email": "operator@suntech.com",
+    "full_name": "Operator User",
+    "phone_number": null,
+    "avatar_url": null,
+    "role": "operator",
+    "is_active": true,
+    "hashed_password": "$2b$12$Et1P7HqEPlMu8SlvuZ5nEe/yNLJHSYGMQaosKIcLgGVe2yXEmR3cq",
+    "created_at": {
+      "$date": "2026-01-19T10:17:52.095Z"
+    },
+    "updated_at": {
+      "$date": "2026-01-19T10:17:52.095Z"
+    },
+    "last_login": null
+  },
+  {
+    "_id": {
+      "$oid": "696e04d020dac55626ef0a71"
+    },
+    "username": "supervisor",
+    "email": "supervisor@suntech.com",
+    "full_name": "Supervisor User",
+    "phone_number": null,
+    "avatar_url": null,
+    "role": "supervisor",
+    "is_active": true,
+    "hashed_password": "$2b$12$kB09SGWsAQGZgKp2UOFKuO2UH/6FaX5rBlXu7jb.xWyEBMvT7q8Ny",
+    "created_at": {
+      "$date": "2026-01-19T10:17:52.483Z"
+    },
+    "updated_at": {
+      "$date": "2026-01-19T10:17:52.483Z"
+    },
+    "last_login": null
+  }
+]

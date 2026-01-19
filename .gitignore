@@ -153,7 +153,12 @@ cython_debug/
 detection/
 results/
 library/
-weights/
+weights/build.sh
+weights/pipeline_fp16_batch6.engine
+weights/pipeline_fp16_dynamic.engine
+weights/pipeline_fp16_small.engine
+weights/superpoint_lightglue_pipeline.onnx
+
 pylon_env/
 data/
 cvat/

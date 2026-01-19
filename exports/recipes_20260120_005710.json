@@ -1,0 +1,404 @@
+[
+  {
+    "_id": {
+      "$oid": "696e08254ece55d93a36c0db"
+    },
+    "name": "Minced Onion",
+    "product_code": "N/A",
+    "description": "Minced Onion Carton",
+    "delay_reject": 2000,
+    "cameras": [
+      {
+        "camera_id": "CAM004",
+        "model_name": "Basler acA4096-30uc",
+        "serial_number": "40272812",
+        "location": "Line Carton",
+        "exposure_time": 1200,
+        "delay_trigger": 200,
+        "delay_interval": 200,
+        "gain": 8,
+        "trigger_mode": "software_trigger",
+        "trigger_config": {
+          "trigger_selector": "FrameStart",
+          "trigger_activation": "RisingEdge",
+          "di_number": 0,
+          "trigger_source": "Line0"
+        },
+        "pixel_format": "BGR8"
+      }
+    ],
+    "camera_templates": [
+      {
+        "camera_id": "CAM004",
+        "function_type": "Check_Type_Product",
+        "templates": [
+          {
+            "name": "Template 1",
+            "image_url": "/api/recipes/templates/images/5d92ba82-841a-43a0-a4ab-6d376c60754a.jpeg",
+            "image_width": 4096,
+            "image_height": 2168,
+            "annotations": [
+              {
+                "type": "template",
+                "shape": "rectangle",
+                "text": "",
+                "x": 0.16402084610652873,
+                "y": 0.38028335652426354,
+                "width": 0.15006818862591334,
+                "height": 0.21833425651296334
+              },
+              {
+                "type": "text",
+                "shape": "rectangle",
+                "text": "Minced Onion",
+                "x": 0.31240197448462936,
+                "y": 0.410794407312941,
+                "width": 0.35103088164232077,
+                "height": 0.14947964179993672
+              },
+              {
+                "type": "text",
+                "shape": "rectangle",
+                "text": "10078742259168",
+                "x": 0.4503500062066227,
+                "y": 0.7705749228128506,
+                "width": 0.20215234197194334,
+                "height": 0.04955256765106487
+              },
+              {
+                "type": "crop_area",
+                "shape": "rectangle",
+                "text": "",
+                "x": 0.08400324226196138,
+                "y": 0.1403351913968399,
+                "width": 0.8157643499010174,
+                "height": 0.7960943240144085
+              }
+            ]
+          },
+          {
+            "name": "Template 2",
+            "image_url": "/api/recipes/templates/images/0db47f7d-514c-4888-af24-346d6f386914.jpeg",
+            "image_width": 4096,
+            "image_height": 2168,
+            "annotations": [
+              {
+                "type": "template",
+                "shape": "rectangle",
+                "text": "",
+                "x": 0.33404832547553054,
+                "y": 0.5535167755729556,
+                "width": 0.2187982379117749,
+                "height": 0.09572092501789835
+              },
+              {
+                "type": "text",
+                "shape": "rectangle",
+                "text": "BEST If Used By JAN 17 2028",
+                "x": 0.3238048023488594,
+                "y": 0.572373492036393,
+                "width": 0.40993994393478456,
+                "height": 0.08007964436332314
+              },
+              {
+                "type": "text",
+                "shape": "rectangle",
+                "text": "LOT PL26060104",
+                "x": 0.33072694043725054,
+                "y": 0.635132339527434,
+                "width": 0.24566746351537846,
+                "height": 0.057581848508097645
+              },
+              {
+                "type": "crop_area",
+                "shape": "rectangle",
+                "text": "",
+                "x": 0.2404662228877717,
+                "y": 0.32427871140619163,
+                "width": 0.555329851400034,
+                "height": 0.5864695264926011
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "camera_settings": {
+      "exposure_time": 42,
+      "delay_trigger": 78,
+      "delay_interval": 500,
+      "gain": 1,
+      "brightness": 0.5,
+      "contrast": 1.1
+    },
+    "model_thresholds": {
+      "detection_threshold": 0.79,
+      "recognition_threshold": 0.84,
+      "matching_threshold": 0.23,
+      "min_text_size": 11,
+      "max_text_size": 175
+    },
+    "template_config": {
+      "template_type": "slim_can",
+      "roi": [
+        115,
+        98,
+        410,
+        295
+      ],
+      "rotation_tolerance": 3
+    },
+    "roi_config": {
+      "x": 115,
+      "y": 98,
+      "width": 410,
+      "height": 295
+    },
+    "is_active": true,
+    "created_by": "69484e532896716a31a96f5b",
+    "updated_by": "69484e532896716a31a96f5b",
+    "created_at": {
+      "$date": "2025-12-21T19:55:49.956Z"
+    },
+    "updated_at": {
+      "$date": "2026-01-17T12:12:09.629Z"
+    },
+    "do_reject_number": 3
+  },
+  {
+    "_id": {
+      "$oid": "696e084f4ece55d93a36c0dd"
+    },
+    "name": "Black Pepper 400 gram",
+    "product_code": "Black Pepper 400",
+    "description": "Black Pepper 400 gram",
+    "delay_reject": 4000.0,
+    "cameras": [
+      {
+        "camera_id": "CAM001",
+        "model_name": "Basler acA2440-35uc",
+        "serial_number": "24241268",
+        "location": "Production Line 1 - Position A",
+        "exposure_time": 500.0,
+        "delay_trigger": 1800.0,
+        "delay_interval": 600.0,
+        "gain": 5.0,
+        "trigger_mode": "software_trigger",
+        "trigger_config": {
+          "trigger_selector": "FrameStart",
+          "trigger_activation": "RisingEdge",
+          "di_number": 0,
+          "trigger_source": "Software"
+        },
+        "pixel_format": "BGR8"
+      },
+      {
+        "camera_id": "CAM002",
+        "model_name": "Basler a2A1920-160ucBAS",
+        "serial_number": "40733814",
+        "location": "Production Line 1 - Position B",
+        "exposure_time": 800.0,
+        "delay_trigger": 1700.0,
+        "delay_interval": 500.0,
+        "gain": 8.0,
+        "trigger_mode": "software_trigger",
+        "trigger_config": {
+          "trigger_selector": "FrameStart",
+          "trigger_activation": "RisingEdge",
+          "di_number": 0,
+          "trigger_source": "Line0"
+        },
+        "pixel_format": "BGR8"
+      }
+    ],
+    "camera_templates": [
+      {
+        "camera_id": "CAM001",
+        "function_type": "Check_Type_Product",
+        "templates": [
+          {
+            "name": "Frame 2",
+            "image_url": "/api/recipes/templates/images/79f8da6b-8401-4363-b878-6d25a184b0d4.jpg",
+            "image_width": 2464,
+            "image_height": 2056,
+            "annotations": [
+              {
+                "type": "template",
+                "shape": "rectangle",
+                "text": "",
+                "x": 0.4097939277477962,
+                "y": 0.06843780835179565,
+                "width": 0.09822438978573313,
+                "height": 0.06027404911287768
+              },
+              {
+                "type": "text",
+                "shape": "rectangle",
+                "text": "Table Grind",
+                "x": 0.443510852302731,
+                "y": 0.13933978964510763,
+                "width": 0.11517785114558868,
+                "height": 0.02977694437102463
+              },
+              {
+                "type": "text",
+                "shape": "rectangle",
+                "text": "Black Pepper",
+                "x": 0.43560984765392463,
+                "y": 0.16275066765903784,
+                "width": 0.1215830934374733,
+                "height": 0.03354717653928553
+              },
+              {
+                "type": "crop_area",
+                "shape": "rectangle",
+                "text": "",
+                "x": 0.2133222048166178,
+                "y": 0.04632758121328141,
+                "width": 0.6063852634731483,
+                "height": 0.9489105140248137
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "camera_id": "CAM002",
+        "function_type": "Check_Type_Product",
+        "templates": [
+          {
+            "name": "Frame 2",
+            "image_url": "/api/recipes/templates/images/bcae49d1-1b6f-48df-a537-10d961067a55.jpg",
+            "image_width": 1920,
+            "image_height": 1200,
+            "annotations": [
+              {
+                "type": "template",
+                "shape": "rectangle",
+                "text": "",
+                "x": 0.3521870029889718,
+                "y": 0.1302648351940879,
+                "width": 0.1388148854537509,
+                "height": 0.12178944837814216
+              },
+              {
+                "type": "text",
+                "shape": "rectangle",
+                "text": "Table Grind ",
+                "x": 0.3851018727357377,
+                "y": 0.2566501118129147,
+                "width": 0.14818912012377877,
+                "height": 0.05297022556333127
+              },
+              {
+                "type": "crop_area",
+                "shape": "rectangle",
+                "text": "",
+                "x": 0.1130146293005922,
+                "y": -6.799452016843064e-17,
+                "width": 0.6646243974154685,
+                "height": 0.9984767783230226
+              },
+              {
+                "type": "text",
+                "shape": "rectangle",
+                "text": "Black Pepper",
+                "x": 0.3627699298178086,
+                "y": 0.3006223550307031,
+                "width": 0.18037415506651686,
+                "height": 0.04779375737949934
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "camera_id": "CAM003",
+        "function_type": "Check_Type_Product",
+        "templates": [
+          {
+            "name": "Frame 2",
+            "image_url": "/api/recipes/templates/images/10fec06f-569d-4fc6-b092-b45e0344732e.jpg",
+            "image_width": 2592,
+            "image_height": 1944,
+            "annotations": [
+              {
+                "type": "template",
+                "shape": "rectangle",
+                "text": "",
+                "x": 0.304166941026107,
+                "y": 0.3571340378361906,
+                "width": 0.3118906773147321,
+                "height": 0.1734376352876787
+              },
+              {
+                "type": "text",
+                "shape": "polygon",
+                "text": "2028.15.06",
+                "points": [
+                  [
+                    0.4873242105495387,
+                    0.5270261477007501
+                  ],
+                  [
+                    0.612373008139822,
+                    0.5214105014958693
+                  ],
+                  [
+                    0.6144746686035242,
+                    0.5635278480324744
+                  ],
+                  [
+                    0.490476701245092,
+                    0.5733552288910153
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "camera_settings": {
+      "exposure_time": 58.0,
+      "delay_trigger": 105.0,
+      "delay_interval": 500.0,
+      "gain": 1.18,
+      "brightness": 0.57,
+      "contrast": 1.13
+    },
+    "model_thresholds": {
+      "detection_threshold": 0.69,
+      "recognition_threshold": 0.74,
+      "matching_threshold": 0.85,
+      "min_text_size": 12,
+      "max_text_size": 165
+    },
+    "template_config": {
+      "template_type": "small_box",
+      "roi": [
+        95,
+        100,
+        370,
+        290
+      ],
+      "rotation_tolerance": 8
+    },
+    "roi_config": {
+      "x": 95,
+      "y": 100,
+      "width": 370,
+      "height": 290
+    },
+    "is_active": true,
+    "created_by": "69484e532896716a31a96f5b",
+    "updated_by": "696e04cf20dac55626ef0a6f",
+    "created_at": {
+      "$date": "2025-12-21T19:55:49.957Z"
+    },
+    "updated_at": {
+      "$date": "2026-01-19T10:45:18.717Z"
+    },
+    "do_reject_number": 2
+  }
+]

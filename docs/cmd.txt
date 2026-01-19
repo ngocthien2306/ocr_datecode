@@ -1,0 +1,32 @@
+# Engine 1: Small (480x640)
+/usr/src/tensorrt/bin/trtexec \
+    --onnx=superpoint_lightglue_pipeline.onnx \
+    --saveEngine=pipeline_fp16_small.engine \
+    --fp16 \
+    --shapes=images:2x1x480x640 \
+    --memPoolSize=workspace:4096
+
+# Engine 2: Medium (1920x2560) 
+/usr/src/tensorrt/bin/trtexec \
+    --onnx=superpoint_lightglue_pipeline.onnx \
+    --saveEngine=pipeline_fp16_medium.engine \
+    --fp16 \
+    --shapes=images:2x1x1920x2560 \
+    --memPoolSize=workspace:4096
+
+# Engine 3: Large (2592x1944)
+/usr/src/tensorrt/bin/trtexec \
+    --onnx=superpoint_lightglue_pipeline.onnx \
+    --saveEngine=pipeline_fp16_large.engine \
+    --fp16 \
+    --shapes=images:2x1x1920x2592 \
+    --memPoolSize=workspace:4096
+
+
+Set one DO Value: sudo dio_out #DO_Num # Value
+Get one DI Value: sudo dio_in #DO_Num
+Get all DO Value: sudo dio_out
+Get all DI Value: sudo dio_in
+
+
+

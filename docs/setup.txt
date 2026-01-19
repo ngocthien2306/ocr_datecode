@@ -1,0 +1,133 @@
+sudo apt update
+sudo apt install -y python3-dev
+
+
+
+
+# setup $HOME/Source
+
+tại home tạo folder Source, sau đó clone source về
+
+# clone source git clone https://github.com/ngocthien2306/ocr_datecode.git
+git checkout release_v1
+
+# setup get i/o 
+sudo chmod +x $Home/Source/ocr_datecode/scripts/setup_dio_sudoers.sh
+
+setup_dio_sudoers.sh
+
+# Step 1 install mongodb:
+kiểm tra lại file setup_mongodb.sh kiểm tra data có lưu tại folder $HOME/Source/mongodb
+
+sudo chmod +x $Home/Source/ocr_datecode/setup_mongodb.sh
+
+./setup_mongodb.sh
+
+cd $HOME/Source/ocr_datecode
+python3 tests/migration_data.py
+
+
+# setup BE
+
+cd $HOME/Source/ocr_datecode/backend
+pip install -r requirements.txt
+pip install langgraph
+pip install langchain
+pip install langchain-openai
+pip install langchain-core
+pip install langchain-mongodb
+pip install langchain-community
+sudo pip3 install -U jetson-stats
+pip install numpy==1.26.4 --upgrade
+
+
+tạo file .env trong folder backend 
+'''
+MONGODB_URL=mongodb://admin:password@localhost:27017/
+DATABASE_NAME=ocr_datecode_db
+REDIS_URL=redis://localhost:6379
+REDIS_CACHE_TTL_RECENT=60
+REDIS_CACHE_TTL_HISTORICAL=300
+SECRET_KEY=your-secret-key-here-change-this-in-production
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=43200
+CORS_ORIGINS=["http://localhost:3000","http://localhost:5173","https://suntech-vision.ngrok.app"]
+APP_NAME="OCR Datecode API"
+APP_VERSION="1.0.0"
+DEBUG=True
+# API_HOST=0.0.0.0
+# API_PORT=8000
+API_BASE_URL=http://localhost:8000
+TIMEZONE=Asia/Ho_Chi_Minh
+OPENAI_API_KEY=sk-proj-xxxx-your-api-key-here
+'''
+
+# setup AI service
+cd $HOME/Source/ocr_datecode/ai_services
+
+pip install onnxruntime-gpu==1.23.0 --extra-index-url https://pypi.jetson-ai-lab.io/jp6/cu126
+
+pip3 install --upgrade pip setuptools wheel packaging
+
+export CUDA_HOME=/usr/local/cuda
+export PATH=$CUDA_HOME/bin:$PATH
+export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+pip3 install pycuda --user
+
+pip install pypylon
+
+
+
+# FE setup
+
+
+cd cd $HOME/Source/ocr_datecode/frontend-ts
+
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+
+sudo npm install -g yarn
+
+yarn install 
+
+
+# ngrok setup
+
+
+curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+  | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null \
+  && echo "deb https://ngrok-agent.s3.amazonaws.com bookworm main" \
+  | sudo tee /etc/apt/sources.list.d/ngrok.list \
+  && sudo apt update \
+  && sudo apt install ngrok
+
+ngrok config add-authtoken 33yUJysiQWcjRrgGr3deROsRSW2_2YJcWaoSo8nEDvzoYSJRq
+
+ngrok tcp --region=ap --remote-addr=1.tcp.ap.ngrok.io:23838 22
+
+# tạo .service run dự án 
+
+cd $HOME/Source/ocr_datecode/backend
+python3 -m uvicorn app.main:app --reload --port 8000 --host 0.0.0.0
+
+delay 2s
+
+cd $HOME/Source/ocr_datecode/frontend-ts
+yarn dev --port 5000 --host 0.0.0.0
+
+delay 2s
+
+cd $HOME/Source/ocr_datecode/ai_services
+python3 camera_management_service.py
+
+delay 2s
+
+ngrok http --url=suntech-vision.ngrok.app 5000
+delay 2s
+
+ngrok http --url=suntech-vision-api.ngrok.app 8000
+delay 2s
+
+ngrok http --url=suntech-vision-db.ngrok.app 8081
+
+

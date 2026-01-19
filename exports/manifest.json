@@ -1,0 +1,22 @@
+{
+  "export_time": "2026-01-20T00:57:10.089411",
+  "mongodb_url": "mongodb://admin:password@localhost:27017/",
+  "database": "ocr_datecode_db_new",
+  "collections": [
+    {
+      "collection": "recipes",
+      "count": 2,
+      "file": "recipes_20260120_005710.json"
+    },
+    {
+      "collection": "users",
+      "count": 3,
+      "file": "users_20260120_005710.json"
+    },
+    {
+      "collection": "cameras",
+      "count": 4,
+      "file": "cameras_20260120_005710.json"
+    }
+  ]
+}

@@ -13,12 +13,12 @@ python-socketio==5.11.0
 redis==5.0.1
 python-dateutil==2.8.2
 
-langgraph
-langchain
-langchain-core
-langchain-openai
-langchain-community
-langchain-mongodb
+# langgraph
+# langchain
+# langchain-core
+# langchain-openai
+# langchain-community
+# langchain-mongodb
 # Additional utilities
 tiktoken==0.7.0
 psutil==5.9.8
