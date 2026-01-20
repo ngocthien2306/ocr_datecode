@@ -14,7 +14,7 @@ import RecipeLoadingTemplates from '../shared/RecipeLoadingTemplates';
 import RecipeChart from './RecipeChart';
 import { camerasAPI } from '@/services/api';
 import { actionLogsAPI, usersAPI } from '@/services/api';
-import { receiptsAPI } from '@/services/recipes';
+import { receiptsAPI, recipesAPI } from '@/services/recipes';
 import { inferenceResultsAPI } from '@/services/inferenceResults';
 import { socketService } from '@/services/socketio';
 import { API_BASE_URL } from '@/config/api';
@@ -156,6 +156,8 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   }
   const [recipeCharts, setRecipeCharts] = useState<RecipeChartData[]>([]);
   const [activeRecipes, setActiveRecipes] = useState<{id: string; name: string}[]>([]);
+  const [selectedChartRecipeId, setSelectedChartRecipeId] = useState<string | null>(null);
+  const [availableChartRecipes, setAvailableChartRecipes] = useState<{id: string; name: string; isLoaded?: boolean}[]>([]);
 
   // Camera frames state
   const [cameraFrames, setCameraFrames] = useState<Record<string, string>>({});
@@ -600,116 +602,168 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     }
   };
 
-  // Fetch recipe charts data
-  const fetchRecipeCharts = async () => {
+  // Fetch chart data for a specific recipe
+  const fetchChartDataForRecipe = async (recipe: {id: string; name: string}): Promise<RecipeChartData> => {
+    const now = new Date();
+
+    // 1 Hour (minute data): last 1 hour VN time
+    const oneHourStart = new Date(now);
+    oneHourStart.setHours(now.getHours() - 1);
+    const oneHourStats = await inferenceResultsAPI.getTimeseriesStatistics({
+      start_date: oneHourStart.toISOString(),
+      end_date: now.toISOString(),
+      granularity: 'minute',
+      recipe_ids: recipe.id
+    });
+
+    // Today (24 hours - hourly data): 00:00:00 to now VN time
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+
+    const todayStats = await inferenceResultsAPI.getTimeseriesStatistics({
+      start_date: todayStart.toISOString(),
+      end_date: now.toISOString(),
+      granularity: 'hour',
+      recipe_ids: recipe.id
+    });
+
+    // Month (30 days - daily data): last 30 days VN time
+    const monthStart = new Date(now);
+    monthStart.setDate(now.getDate() - 30);
+    monthStart.setHours(0, 0, 0, 0);
+    const monthStats = await inferenceResultsAPI.getTimeseriesStatistics({
+      start_date: monthStart.toISOString(),
+      end_date: now.toISOString(),
+      granularity: 'day',
+      recipe_ids: recipe.id
+    });
+
+    return {
+      recipeId: recipe.id,
+      recipeName: recipe.name,
+      oneHour: {
+        labels: oneHourStats.data.map(d => {
+          const date = new Date(d.timestamp);
+          return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        }),
+        totalData: oneHourStats.data.map(d => d.total),
+        passData: oneHourStats.data.map(d => d.pass),
+        failData: oneHourStats.data.map(d => d.fail)
+      },
+      today: {
+        labels: todayStats.data.map(d => {
+          const date = new Date(d.timestamp);
+          return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        }),
+        totalData: todayStats.data.map(d => d.total),
+        passData: todayStats.data.map(d => d.pass),
+        failData: todayStats.data.map(d => d.fail)
+      },
+      month: {
+        labels: monthStats.data.map(d => {
+          const date = new Date(d.timestamp);
+          return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        }),
+        totalData: monthStats.data.map(d => d.total),
+        passData: monthStats.data.map(d => d.pass),
+        failData: monthStats.data.map(d => d.fail)
+      }
+    };
+  };
+
+  // Fetch recipe charts data - now fetches only for selected recipe
+  const fetchRecipeCharts = async (targetRecipeId?: string) => {
     try {
-      // Get active recipes from today's stats
-      const now = new Date();
+      // 1. Get all recipes from API
+      const allRecipes = await recipesAPI.getAllRecipes(0, 100, true); // Only active recipes
 
-      // Today: 00:00:00 to now (VN time)
-      const startOfToday = new Date(now);
-      startOfToday.setHours(0, 0, 0, 0);
+      // 2. Get currently loaded/running recipe
+      let loadedRecipeId: string | null = null;
+      try {
+        const loadedRecipe = await receiptsAPI.getLatestLoadedRecipe();
+        if (loadedRecipe && loadedRecipe.recipe_id) {
+          loadedRecipeId = loadedRecipe.recipe_id;
+        }
+      } catch {
+        // No recipe loaded (404 is expected)
+      }
 
-      const todayData = await inferenceResultsAPI.getSummaryStatistics({
-        start_date: startOfToday.toISOString(),
-        end_date: now.toISOString()
-      });
-
-      // Get unique recipes from today
-      const recipes = todayData.by_recipe.map(r => ({
-        id: r.recipe_id,
-        name: r.recipe_name
+      // 3. Build available recipes list with isLoaded flag
+      let available = allRecipes.map(r => ({
+        id: r.id,
+        name: r.name,
+        isLoaded: r.id === loadedRecipeId
       }));
-      setActiveRecipes(recipes);
 
-      if (recipes.length === 0) {
+      // Sort to put loaded recipe first
+      available.sort((a, b) => (b.isLoaded ? 1 : 0) - (a.isLoaded ? 1 : 0));
+
+      setAvailableChartRecipes(available);
+      setActiveRecipes(available.map(r => ({ id: r.id, name: r.name })));
+
+      if (available.length === 0) {
+        setRecipeCharts([]);
+        setSelectedChartRecipeId(null);
+        return;
+      }
+
+      // 4. Determine which recipe to show chart for
+      // Priority on page load: loadedRecipeId > targetRecipeId > current selectedChartRecipeId > first available
+      let recipeToFetch: string | null = null;
+
+      // If targetRecipeId is provided (user selected), use it
+      if (targetRecipeId) {
+        recipeToFetch = targetRecipeId;
+      }
+      // If no target and no current selection, prioritize loaded recipe
+      else if (!selectedChartRecipeId) {
+        recipeToFetch = loadedRecipeId || available[0]!.id;
+      }
+      // Keep current selection if valid
+      else {
+        recipeToFetch = selectedChartRecipeId;
+      }
+
+      // Validate the recipe exists in available list
+      if (!recipeToFetch || !available.some(r => r.id === recipeToFetch)) {
+        recipeToFetch = loadedRecipeId || available[0]!.id;
+      }
+
+      // Update selected recipe if needed
+      if (recipeToFetch !== selectedChartRecipeId) {
+        setSelectedChartRecipeId(recipeToFetch);
+      }
+
+      // Find recipe info
+      const selectedRecipe = available.find(r => r.id === recipeToFetch);
+      if (!selectedRecipe) {
         setRecipeCharts([]);
         return;
       }
 
-      // Fetch charts for each recipe
-      const chartsData = await Promise.all(recipes.map(async (recipe) => {
-        // 1 Hour (minute data): last 1 hour VN time
-        const oneHourStart = new Date(now);
-        oneHourStart.setHours(now.getHours() - 1);
-        const oneHourStats = await inferenceResultsAPI.getTimeseriesStatistics({
-          start_date: oneHourStart.toISOString(),
-          end_date: now.toISOString(),
-          granularity: 'minute',
-          recipe_ids: recipe.id
-        });
+      // 5. Fetch chart data for the selected recipe only
+      const chartData = await fetchChartDataForRecipe({
+        id: selectedRecipe.id,
+        name: selectedRecipe.name
+      });
 
-        // Today (24 hours - hourly data): 00:00:00 to now VN time
-        const todayStart = new Date(now);
-        todayStart.setHours(0, 0, 0, 0);
-
-        console.log('=== Dashboard Recipe Charts ===');
-        console.log('Now:', now);
-        console.log('Today Start (VN 00:00):', todayStart);
-        console.log('Start ISO:', todayStart.toISOString());
-        console.log('End ISO:', now.toISOString());
-
-        const todayStats = await inferenceResultsAPI.getTimeseriesStatistics({
-          start_date: todayStart.toISOString(),
-          end_date: now.toISOString(),
-          granularity: 'hour',
-          recipe_ids: recipe.id
-        });
-
-        console.log('Response data points:', todayStats.data?.length || 0);
-        if (todayStats.data && todayStats.data.length > 0) {
-          console.log('First timestamp:', todayStats.data[0]!.timestamp);
-          console.log('Last timestamp:', todayStats.data[todayStats.data.length - 1]!.timestamp);
-        }
-
-        // Month (30 days - daily data): last 30 days VN time
-        const monthStart = new Date(now);
-        monthStart.setDate(now.getDate() - 30);
-        monthStart.setHours(0, 0, 0, 0);
-        const monthStats = await inferenceResultsAPI.getTimeseriesStatistics({
-          start_date: monthStart.toISOString(),
-          end_date: now.toISOString(),
-          granularity: 'day',
-          recipe_ids: recipe.id
-        });
-
-        // Note: Backend already returns VN timezone, no conversion needed
-        return {
-          recipeId: recipe.id,
-          recipeName: recipe.name,
-          oneHour: {
-            labels: oneHourStats.data.map(d => {
-              const date = new Date(d.timestamp);
-              return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-            }),
-            totalData: oneHourStats.data.map(d => d.total),
-            passData: oneHourStats.data.map(d => d.pass),
-            failData: oneHourStats.data.map(d => d.fail)
-          },
-          today: {
-            labels: todayStats.data.map(d => {
-              const date = new Date(d.timestamp);
-              return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-            }),
-            totalData: todayStats.data.map(d => d.total),
-            passData: todayStats.data.map(d => d.pass),
-            failData: todayStats.data.map(d => d.fail)
-          },
-          month: {
-            labels: monthStats.data.map(d => {
-              const date = new Date(d.timestamp);
-              return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-            }),
-            totalData: monthStats.data.map(d => d.total),
-            passData: monthStats.data.map(d => d.pass),
-            failData: monthStats.data.map(d => d.fail)
-          }
-        };
-      }));
-
-      setRecipeCharts(chartsData);
+      setRecipeCharts([chartData]);
     } catch (error) {
       console.error('Error fetching recipe charts:', error);
+    }
+  };
+
+  // Handle recipe selection change from dropdown
+  const handleChartRecipeChange = async (recipeId: string) => {
+    setSelectedChartRecipeId(recipeId);
+    const recipe = availableChartRecipes.find(r => r.id === recipeId);
+    if (recipe) {
+      try {
+        const chartData = await fetchChartDataForRecipe({ id: recipe.id, name: recipe.name });
+        setRecipeCharts([chartData]);
+      } catch (error) {
+        console.error('Error fetching chart data for recipe:', error);
+      }
     }
   };
 
@@ -778,11 +832,18 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   useEffect(() => {
     const interval = setInterval(() => {
       fetchTodayStatistics();
-      fetchRecipeCharts();
+      fetchRecipeCharts(selectedChartRecipeId || undefined);
     }, 30000); // 30 seconds
 
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedChartRecipeId]);
+
+  // When runningRecipeId changes, auto-select and fetch chart for that recipe
+  useEffect(() => {
+    if (runningRecipeId) {
+      fetchRecipeCharts(runningRecipeId);
+    }
+  }, [runningRecipeId]);
 
   // Setup socket connection for camera streams
   useEffect(() => {
@@ -1530,6 +1591,42 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
                 {/* Center Section - Recipe Statistics Charts */}
                 <div className="dashboard-center">
+                  {/* Header with Recipe Selector */}
+                  <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '1rem',
+                    padding: '0 0.5rem'
+                  }}>
+                    <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600, color: '#1f2937' }}>
+                      Recipe Statistics
+                    </h3>
+                    {availableChartRecipes.length > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <select
+                          value={selectedChartRecipeId || ''}
+                          onChange={(e) => handleChartRecipeChange(e.target.value)}
+                          style={{
+                            padding: '0.4rem 0.75rem',
+                            borderRadius: '6px',
+                            border: '1px solid #d1d5db',
+                            fontSize: '0.875rem',
+                            backgroundColor: 'white',
+                            cursor: 'pointer',
+                            minWidth: '180px',
+                            color: '#374151'
+                          }}
+                        >
+                          {availableChartRecipes.map((recipe) => (
+                            <option key={recipe.id} value={recipe.id}>
+                              {recipe.name} {recipe.isLoaded ? '(Running)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
                   <div className="camera-stats">
                     {recipeCharts.length > 0 ? (
                       <>
