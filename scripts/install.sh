@@ -166,6 +166,27 @@ else
 fi
 
 # ============================================
+# Step 4.1: Data Migration (Optional)
+# ============================================
+echo ""
+echo "  If you have exported data from another machine, you can import it now."
+read -p "  Do you have data to migrate? (y/N): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    read -p "  Enter path to exports directory (e.g., ./exports): " EXPORTS_DIR
+    if [ -d "$EXPORTS_DIR" ]; then
+        print_info "Migrating data from $EXPORTS_DIR..."
+        cd "$PROJECT_DIR"
+        python3 tests/migration_data.py --input-dir "$EXPORTS_DIR"
+        print_success "Data migration completed"
+    else
+        print_warning "Directory not found: $EXPORTS_DIR, skipping migration..."
+    fi
+else
+    print_info "Skipped data migration"
+fi
+
+# ============================================
 # Step 5: Backend Setup
 # ============================================
 print_step "Step 5/8: Setting up Backend"
@@ -179,7 +200,7 @@ pip install langchain
 pip install langchain-openai 
 pip install langchain-core 
 pip install langchain-mongodb 
-pip installlangchain-community
+pip install langchain-community
 sudo pip3 install -U jetson-stats 2>/dev/null || true
 pip install numpy==1.26.4 --upgrade
 

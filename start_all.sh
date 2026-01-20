@@ -6,7 +6,7 @@
 echo "🚀 Starting OCR Datecode Services on Ubuntu/Jetson Orin..."
 
 # Detect user home directory (change if needed)
-USER_HOME="/home/demo"
+USER_HOME="$HOME"
 
 # 1. Start Backend (FastAPI)
 echo "📦 Starting Backend API (port 8000)..."
