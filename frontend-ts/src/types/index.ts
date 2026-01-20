@@ -145,9 +145,13 @@ export interface Recipe {
   roi_config?: ROIConfig;
   is_active: boolean;
   created_by?: string;
+  updated_by?: string;
+  created_by_name?: string;  // Full name of creator
+  updated_by_name?: string;  // Full name of updater
   created_at?: string;
   updated_at?: string;
 }
+
 
 export interface RecipeCreate {
   name: string;

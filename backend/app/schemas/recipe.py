@@ -142,6 +142,8 @@ class RecipeResponse(RecipeBase):
     id: str
     created_by: str
     updated_by: str
+    created_by_name: Optional[str] = None  # Full name of creator
+    updated_by_name: Optional[str] = None  # Full name of updater
     created_at: datetime
     updated_at: datetime
 

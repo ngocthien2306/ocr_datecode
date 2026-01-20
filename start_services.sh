@@ -1,0 +1,128 @@
+#!/bin/bash
+
+# Script to start all OCR Datecode services in background
+set -e
+
+echo "🚀 Starting OCR Datecode Services in Background..."
+
+# Detect user home directory
+USER_HOME="$HOME"
+
+# Base directories
+BACKEND_DIR="${USER_HOME}/Source/ocr_datecode/backend"
+FRONTEND_DIR="${USER_HOME}/Source/ocr_datecode/frontend-ts"
+AI_SERVICES_DIR="${USER_HOME}/Source/ocr_datecode/ai_services"
+LOG_DIR="${USER_HOME}/Source/ocr_datecode/logs"
+
+# Create log directory
+mkdir -p "$LOG_DIR"
+
+# Check if directories exist
+for dir in "$BACKEND_DIR" "$FRONTEND_DIR" "$AI_SERVICES_DIR"; do
+    if [ ! -d "$dir" ]; then
+        echo "❌ Error: Directory not found: $dir"
+        exit 1
+    fi
+done
+
+# Function to kill existing processes on ports
+kill_port() {
+    local port=$1
+    echo "🔍 Checking port $port..."
+    if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1 ; then
+        echo "⚠️  Port $port is in use. Killing existing process..."
+        fuser -k $port/tcp 2>/dev/null || true
+        sleep 1
+    fi
+}
+
+# Kill existing processes
+kill_port 8000
+kill_port 5173
+pkill -f "camera_management_service.py" 2>/dev/null || true
+pkill ngrok 2>/dev/null || true
+
+sleep 2
+
+# 1. Start Backend (FastAPI)
+echo "📦 Starting Backend API (port 8000)..."
+cd "$BACKEND_DIR"
+nohup python3 -m uvicorn app.main:app --reload --port 8000 --host 0.0.0.0 \
+    > "$LOG_DIR/backend.log" 2>&1 &
+BACKEND_PID=$!
+echo "   PID: $BACKEND_PID"
+sleep 3
+
+# 2. Start Frontend (Vite)
+echo "🎨 Starting Frontend (port 5173)..."
+cd "$FRONTEND_DIR"
+nohup yarn dev > "$LOG_DIR/frontend.log" 2>&1 &
+FRONTEND_PID=$!
+echo "   PID: $FRONTEND_PID"
+sleep 3
+
+# 3. Start AI Services (Camera Management)
+echo "📷 Starting AI Camera Services..."
+cd "$AI_SERVICES_DIR"
+nohup python camera_management_service.py > "$LOG_DIR/ai_camera.log" 2>&1 &
+AI_PID=$!
+echo "   PID: $AI_PID"
+sleep 2
+
+# 4. Start ngrok for Backend API
+echo "🌐 Starting ngrok for Backend API..."
+nohup ngrok http --url=suntech-vision-api.ngrok.app 8000 \
+    > "$LOG_DIR/ngrok_api.log" 2>&1 &
+NGROK_API_PID=$!
+echo "   PID: $NGROK_API_PID"
+sleep 2
+
+# 5. Start ngrok for Frontend
+echo "🌐 Starting ngrok for Frontend..."
+nohup ngrok http --url=suntech-vision.ngrok.app 5173 \
+    > "$LOG_DIR/ngrok_frontend.log" 2>&1 &
+NGROK_FRONTEND_PID=$!
+echo "   PID: $NGROK_FRONTEND_PID"
+
+sleep 2
+
+# Save PIDs to file for easy stopping later
+cat > "$LOG_DIR/pids.txt" << EOF
+BACKEND_PID=$BACKEND_PID
+FRONTEND_PID=$FRONTEND_PID
+AI_PID=$AI_PID
+NGROK_API_PID=$NGROK_API_PID
+NGROK_FRONTEND_PID=$NGROK_FRONTEND_PID
+EOF
+
+echo ""
+echo "✅ All services started in background!"
+echo ""
+echo "📊 Services Dashboard:"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  🔹 Backend API       (PID: $BACKEND_PID)"
+echo "     Local:  http://localhost:8000"
+echo "     Public: https://suntech-vision-api.ngrok.app"
+echo "     Docs:   http://localhost:8000/docs"
+echo "     Log:    $LOG_DIR/backend.log"
+echo ""
+echo "  🔹 Frontend          (PID: $FRONTEND_PID)"
+echo "     Local:  http://localhost:5173"
+echo "     Public: https://suntech-vision.ngrok.app"
+echo "     Log:    $LOG_DIR/frontend.log"
+echo ""
+echo "  🔹 AI Camera Service (PID: $AI_PID)"
+echo "     Log:    $LOG_DIR/ai_camera.log"
+echo ""
+echo "  🔹 ngrok API         (PID: $NGROK_API_PID)"
+echo "     Log:    $LOG_DIR/ngrok_api.log"
+echo ""
+echo "  🔹 ngrok Frontend    (PID: $NGROK_FRONTEND_PID)"
+echo "     Log:    $LOG_DIR/ngrok_frontend.log"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "💡 Commands:"
+echo "  - View logs:     tail -f $LOG_DIR/backend.log"
+echo "  - Check status:  ./check_services.sh"
+echo "  - Stop all:      ./stop_services.sh"
+echo ""

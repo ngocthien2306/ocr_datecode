@@ -109,6 +109,19 @@ class UserRepository:
         result = await self.collection.delete_one({"_id": ObjectId(user_id)})
         return result.deleted_count > 0
 
+    async def get_users_by_ids(self, user_ids: List[str]) -> dict:
+        """Get multiple users by IDs, returns dict mapping user_id -> full_name"""
+        valid_ids = [ObjectId(uid) for uid in user_ids if ObjectId.is_valid(uid)]
+        if not valid_ids:
+            return {}
+
+        cursor = self.collection.find({"_id": {"$in": valid_ids}})
+        result = {}
+        async for user in cursor:
+            user_id = str(user["_id"])
+            result[user_id] = user.get("full_name") or user.get("username", "Unknown")
+        return result
+
     async def create_indexes(self):
         """Create database indexes"""
         await self.collection.create_index("username", unique=True)

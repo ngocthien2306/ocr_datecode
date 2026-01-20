@@ -151,7 +151,7 @@ export default function Receipts() {
         products: 0, // This should come from production data
         passed: 0,
         failed: 0,
-        operator: recipe.created_by || 'System',
+        operator: recipe.created_by_name || recipe.created_by || 'System',
         status: (recipe.is_active ? 'Active' : 'Inactive') as 'Active' | 'Inactive',
         description: recipe.description || '',
         // Include all recipe fields for editing
@@ -211,7 +211,7 @@ export default function Receipts() {
         products: 0,
         passed: 0,
         failed: 0,
-        operator: recipe.created_by || 'System',
+        operator: recipe.created_by_name || recipe.created_by || 'System',
         status: (recipe.is_active ? 'Active' : 'Inactive') as 'Active' | 'Inactive',
         description: recipe.description || '',
         // Include all recipe fields for editing
@@ -862,8 +862,8 @@ export default function Receipts() {
                     <td>
                       {receipt.cameraSettings && (
                         <div style={{ fontSize: '0.85em' }}>
-                          <div>Exp: {receipt.cameraSettings.exposure_time}ms</div>
-                          <div>Delay: {receipt.cameraSettings.delay_trigger}ms</div>
+                          <div>Exp: {receipt.cameras[0]!.exposure_time || "N/A"}ms</div>
+                          <div>Delay: {receipt.cameras[0]!.delay_trigger || "N/A"}ms</div>
                         </div>
                       )}
                     </td>

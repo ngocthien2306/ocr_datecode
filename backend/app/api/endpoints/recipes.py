@@ -19,6 +19,7 @@ from app.models.recipe import RecipeInDB
 from app.models.user import UserInDB, UserRole
 from app.repositories.recipe_repository import RecipeRepository
 from app.repositories.action_log_repository import ActionLogRepository
+from app.repositories.user_repository import UserRepository
 from app.db.mongodb import get_database
 from app.api.dependencies.auth import (
     get_current_user, 
@@ -179,7 +180,12 @@ async def get_receipt_load_repository(db=Depends(get_database)) -> ReceiptLoadRe
     return ReceiptLoadRepository(db)
 
 
-def recipe_to_response(recipe: RecipeInDB) -> RecipeResponse:
+async def get_user_repository(db=Depends(get_database)) -> UserRepository:
+    """Dependency to get user repository"""
+    return UserRepository(db)
+
+
+def recipe_to_response(recipe: RecipeInDB, user_names_map: dict = None) -> RecipeResponse:
     """Convert RecipeInDB to RecipeResponse"""
     # Convert cameras to dict if they are already CameraConfiguration objects
     cameras_data = []
@@ -202,6 +208,11 @@ def recipe_to_response(recipe: RecipeInDB) -> RecipeResponse:
                 camera_templates_data.append(cam_template)
             else:
                 camera_templates_data.append(cam_template)
+    # Get user names from map if provided
+    user_names = user_names_map or {}
+    created_by_name = user_names.get(recipe.created_by)
+    updated_by_name = user_names.get(recipe.updated_by)
+
     return RecipeResponse(
         id=recipe.id,
         name=recipe.name,
@@ -218,6 +229,8 @@ def recipe_to_response(recipe: RecipeInDB) -> RecipeResponse:
         is_active=recipe.is_active,
         created_by=recipe.created_by,
         updated_by=recipe.updated_by,
+        created_by_name=created_by_name,
+        updated_by_name=updated_by_name,
         created_at=recipe.created_at,
         updated_at=recipe.updated_at
     )
@@ -354,18 +367,30 @@ async def list_recipes(
     limit: int = Query(100, ge=1, le=100),
     is_active: Optional[bool] = None,
     current_user: UserInDB = Depends(get_current_user),
-    recipe_repo: RecipeRepository = Depends(get_recipe_repository)
+    recipe_repo: RecipeRepository = Depends(get_recipe_repository),
+    user_repo: UserRepository = Depends(get_user_repository)
 ):
     """
     List all recipes with pagination.
-    
+
     **Permission**: All authenticated users (Operator, Supervisor, Admin)
-    
+
     According to requirements:
     - Operator: Can only load receipt and input datecode field to verify with read content
     """
     recipes = await recipe_repo.get_all(skip=skip, limit=limit, is_active=is_active)
-    return [recipe_to_response(recipe) for recipe in recipes]
+
+    # Collect unique user IDs for batch lookup
+    user_ids = set()
+    for recipe in recipes:
+        if recipe.created_by:
+            user_ids.add(recipe.created_by)
+        if recipe.updated_by:
+            user_ids.add(recipe.updated_by)
+
+    # Batch lookup user names
+    user_names_map = await user_repo.get_users_by_ids(list(user_ids)) if user_ids else {}
+    return [recipe_to_response(recipe, user_names_map) for recipe in recipes]
 
 
 @router.get("/search", response_model=List[RecipeResponse])
@@ -374,15 +399,26 @@ async def search_recipes(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
     current_user: UserInDB = Depends(get_current_user),
-    recipe_repo: RecipeRepository = Depends(get_recipe_repository)
+    recipe_repo: RecipeRepository = Depends(get_recipe_repository),
+    user_repo: UserRepository = Depends(get_user_repository)
 ):
     """
     Search recipes by name, product code, or description.
-    
+
     **Permission**: All authenticated users
     """
     recipes = await recipe_repo.search(q, skip=skip, limit=limit)
-    return [recipe_to_response(recipe) for recipe in recipes]
+
+    # Batch lookup user names
+    user_ids = set()
+    for recipe in recipes:
+        if recipe.created_by:
+            user_ids.add(recipe.created_by)
+        if recipe.updated_by:
+            user_ids.add(recipe.updated_by)
+    user_names_map = await user_repo.get_users_by_ids(list(user_ids)) if user_ids else {}
+
+    return [recipe_to_response(recipe, user_names_map) for recipe in recipes]
 
 
 
