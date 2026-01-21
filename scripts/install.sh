@@ -175,26 +175,6 @@ else
     print_warning "setup_mongodb.sh not found, skipping..."
 fi
 
-# ============================================
-# Step 4.1: Data Migration (Optional)
-# ============================================
-echo ""
-echo "  If you have exported data from another machine, you can import it now."
-read -p "  Do you have data to migrate? (y/N): " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    read -p "  Enter path to exports directory (e.g., ./exports): " EXPORTS_DIR
-    if [ -d "$EXPORTS_DIR" ]; then
-        print_info "Migrating data from $EXPORTS_DIR..."
-        cd "$PROJECT_DIR"
-        python3 tests/migration_data.py --input-dir "$EXPORTS_DIR"
-        print_success "Data migration completed"
-    else
-        print_warning "Directory not found: $EXPORTS_DIR, skipping migration..."
-    fi
-else
-    print_info "Skipped data migration"
-fi
 
 # ============================================
 # Step 5: Backend Setup
@@ -238,6 +218,27 @@ EOF
 fi
 
 print_success "Backend configured"
+
+# ============================================
+# Step 5.1: Data Migration (Optional)
+# ============================================
+echo ""
+echo "  If you have exported data from another machine, you can import it now."
+read -p "  Do you have data to migrate? (y/N): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    read -p "  Enter path to exports directory (e.g., ./exports): " EXPORTS_DIR
+    if [ -d "$EXPORTS_DIR" ]; then
+        print_info "Migrating data from $EXPORTS_DIR..."
+        cd "$PROJECT_DIR"
+        python3 tests/migration_data.py --input-dir "$EXPORTS_DIR"
+        print_success "Data migration completed"
+    else
+        print_warning "Directory not found: $EXPORTS_DIR, skipping migration..."
+    fi
+else
+    print_info "Skipped data migration"
+fi
 
 # ============================================
 # Step 6: AI Services Setup
