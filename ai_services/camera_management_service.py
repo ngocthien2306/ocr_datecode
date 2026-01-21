@@ -30,9 +30,10 @@ from camera_management.websocket_client import CameraWebSocketClient
 
 # Import for API calls
 import requests
+home = os.environ.get('HOME')
 
 # Configure logging
-LOGS_DIR = Path("/home/demo/Source/ocr_datecode/backend/logs")
+LOGS_DIR = Path(f"{home}/Source/ocr_datecode/backend/logs")
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(

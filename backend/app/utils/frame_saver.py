@@ -3,6 +3,7 @@ Frame Saver Utility
 Saves camera frames to disk with proper organization
 """
 
+import os
 import cv2
 import logging
 from pathlib import Path
@@ -11,12 +12,12 @@ from typing import Optional
 import numpy as np
 
 logger = logging.getLogger(__name__)
-
+home = os.environ.get('HOME')
 
 def save_frame_to_disk(
     serial_number: str,
     frame: np.ndarray,
-    base_dir: str = "/home/demo/Source/ocr_datecode/backend/uploads/save_frame",
+    base_dir: str = f"{home}/Source/ocr_datecode/backend/uploads/save_frame",
     quality: int = 95
 ) -> Optional[str]:
     """

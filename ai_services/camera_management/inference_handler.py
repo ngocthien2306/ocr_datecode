@@ -1,4 +1,5 @@
 import logging
+import os
 import cv2
 import json
 import threading
@@ -64,7 +65,9 @@ class InferenceHandler:
             reject_scheduler: RejectScheduler instance for scheduling reject actions
         """
         self.camera_matchers: Dict[str, Any] = {}  # Map serial_number -> matcher
-        self.engine_path = "/home/demo/Source/ocr_datecode/weights/pipeline_fp16_dynamic_480x640.engine"
+        home = os.environ.get('HOME')
+        
+        self.engine_path = f"{home}/Source/ocr_datecode/weights/pipeline_fp16_dynamic_480x640.engine"
 
         # Text recognizer for Check_Type_Product function
         self.text_recognizer = None
@@ -106,8 +109,10 @@ class InferenceHandler:
                 # Initialize selected backend
                 if ocr_backend_choice == "tensorrt" and TRT_AVAILABLE:
                     # Use TensorRT backend
-                    ocr_engine_path = "/home/demo/Source/ocr_datecode/languages/english/rec.engine"
-                    ocr_dict_path = "/home/demo/Source/ocr_datecode/languages/english/dict.txt"
+                    home = os.environ.get('HOME')
+
+                    ocr_engine_path = f"{home}/Source/ocr_datecode/languages/english/rec.engine"
+                    ocr_dict_path = f"{home}/Source/ocr_datecode/languages/english/dict.txt"
                     self.text_recognizer = get_text_recognizer_trt(
                         engine_path=ocr_engine_path,
                         dict_path=ocr_dict_path,
@@ -120,8 +125,10 @@ class InferenceHandler:
                 elif ocr_backend_choice == "onnx" and ONNX_AVAILABLE:
                     # Use ONNX backend
                     import os
-                    ocr_model_path = "/home/demo/Source/ocr_datecode/languages/english/rec.onnx"
-                    ocr_dict_path = "/home/demo/Source/ocr_datecode/languages/english/dict.txt"
+                    home = os.environ.get('HOME')
+
+                    ocr_model_path = f"{home}/Source/ocr_datecode/languages/english/rec.onnx"
+                    ocr_dict_path = f"{home}/Source/ocr_datecode/languages/english/dict.txt"
 
                     # Check file existence
                     if not os.path.exists(ocr_model_path):
@@ -632,7 +639,9 @@ class InferenceHandler:
 
                 # Crop using perspective transform
                 cropped_region = crop_text_region(frame_img, points)
-                path_save = "/home/demo/Source/ocr_datecode/ai_services/test_result"
+                home = os.environ.get('HOME')
+
+                path_save = f"{home}/Source/ocr_datecode/ai_services/test_result"
                 cv2.imwrite(f"{path_save}/cropped_region_{camera.serial_number}_{annotation_idx}.png", cropped_region)
 
                 # Run OCR on cropped region
@@ -793,7 +802,8 @@ class InferenceHandler:
             cropped_target = crop_text_region(frame_img, transformed_points)
 
             # Save debug images
-            path_save = "/home/demo/Source/ocr_datecode/ai_services/test_result"
+            home = os.environ.get('HOME')
+            path_save = f"{home}/Source/ocr_datecode/ai_services/test_result"
             cv2.imwrite(f"{path_save}/template_crop_{camera.serial_number}.png", cropped_template)
             cv2.imwrite(f"{path_save}/target_crop_{camera.serial_number}.png", cropped_target)
 
@@ -1788,11 +1798,15 @@ class InferenceHandler:
 
                 if frame_pass_fail == "FAIL" or frame_pass_fail == "ERROR":
                     # FAIL/ERROR: Save to disk + encode base64 for display
+                    home = os.environ.get('HOME')
+                    base_dir: str = f"{home}/Source/ocr_datecode/backend/uploads/inference_results"
+
                     image_path, image_base64 = save_and_encode_frame(
                         frame_img=frame_img,
                         serial_number=camera.serial_number,
                         recipe_id=camera.recipe_id,
                         pass_fail=frame_pass_fail,
+                        base_dir=base_dir,
                         frame_idx=idx,
                         transformed_bboxes=frame_bboxes,
                         confidence=frame_confidence,
