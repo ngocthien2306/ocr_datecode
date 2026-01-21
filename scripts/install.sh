@@ -286,11 +286,11 @@ print_success "Frontend configured"
 print_step "Step 8/8: Installing Systemd Services"
 
 if [ -d "$SCRIPT_DIR/services" ]; then
-    sudo cp "$SCRIPT_DIR/services/"*.service /etc/systemd/system/
+    sudo cp "$SCRIPT_DIR/services/ocr-all.service" /etc/systemd/system/
     sudo systemctl daemon-reload
-    sudo systemctl enable ocr-backend ocr-frontend ocr-ai-services 2>/dev/null || true
-    sudo systemctl start ocr-backend ocr-frontend ocr-ai-services 2>/dev/null || true
-    print_success "Services installed, enabled and started"
+    sudo systemctl enable ocr-all 2>/dev/null || true
+    sudo systemctl start ocr-all 2>/dev/null || true
+    print_success "OCR service installed, enabled and started"
 fi
 
 # ============================================
