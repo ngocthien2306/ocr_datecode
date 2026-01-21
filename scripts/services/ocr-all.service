@@ -5,11 +5,11 @@ Wants=mongodb.service
 
 [Service]
 Type=forking
-User=demo
-Group=demo
-WorkingDirectory=%h/Source/ocr_datecode
-ExecStart=%h/Source/ocr_datecode/start_services.sh
-ExecStop=%h/Source/ocr_datecode/stop_services.sh
+User=${INSTALL_USER}
+Group=${INSTALL_USER}
+WorkingDirectory=${PROJECT_DIR}
+ExecStart=${PROJECT_DIR}/start_services.sh
+ExecStop=${PROJECT_DIR}/stop_services.sh
 RemainAfterExit=yes
 Restart=on-failure
 RestartSec=10

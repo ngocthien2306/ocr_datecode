@@ -28,7 +28,17 @@ print_step() { echo -e "\n${CYAN}${BOLD}▶ $1${NC}\n"; }
 # Configuration
 REPO_URL="https://github.com/ngocthien2306/ocr_datecode.git"
 BRANCH="release_v1"
-SOURCE_DIR="$HOME/Source"
+
+# Get real user (not root if using sudo)
+if [ -n "$SUDO_USER" ]; then
+    INSTALL_USER="$SUDO_USER"
+    INSTALL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+else
+    INSTALL_USER="$USER"
+    INSTALL_HOME="$HOME"
+fi
+
+SOURCE_DIR="$INSTALL_HOME/Source"
 PROJECT_DIR="$SOURCE_DIR/ocr_datecode"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKIP_CLONE=false
@@ -286,11 +296,15 @@ print_success "Frontend configured"
 print_step "Step 8/8: Installing Systemd Services"
 
 if [ -d "$SCRIPT_DIR/services" ]; then
-    sudo cp "$SCRIPT_DIR/services/ocr-all.service" /etc/systemd/system/
+    # Replace variables in service file
+    sed -e "s|\${INSTALL_USER}|$INSTALL_USER|g" \
+        -e "s|\${PROJECT_DIR}|$PROJECT_DIR|g" \
+        "$SCRIPT_DIR/services/ocr-all.service" | sudo tee /etc/systemd/system/ocr-all.service > /dev/null
+
     sudo systemctl daemon-reload
     sudo systemctl enable ocr-all 2>/dev/null || true
     sudo systemctl start ocr-all 2>/dev/null || true
-    print_success "OCR service installed, enabled and started"
+    print_success "OCR service installed, enabled and started (User: $INSTALL_USER)"
 fi
 
 # ============================================
@@ -336,6 +350,25 @@ echo "  View Logs:"
 echo "    journalctl -u ocr-backend -f"
 echo ""
 echo -e "  ${YELLOW}Important: Update OPENAI_API_KEY in $PROJECT_DIR/backend/.env${NC}"
+echo ""
+
+# ============================================
+# Reboot Option
+# ============================================
+echo ""
+read -p "  Reboot system now to apply all changes? (y/N): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    echo ""
+    echo "🔄 System will reboot in 5 seconds..."
+    echo "   Press Ctrl+C to cancel"
+    sleep 5
+    sudo reboot
+else
+    echo ""
+    echo "⚠️  Please reboot manually later to ensure all services start correctly"
+    echo "   Run: sudo reboot"
+fi
 echo ""
 echo "  Documentation: $SCRIPT_DIR/README.md"
 echo ""
