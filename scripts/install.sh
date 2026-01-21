@@ -289,7 +289,8 @@ if [ -d "$SCRIPT_DIR/services" ]; then
     sudo cp "$SCRIPT_DIR/services/"*.service /etc/systemd/system/
     sudo systemctl daemon-reload
     sudo systemctl enable ocr-backend ocr-frontend ocr-ai-services 2>/dev/null || true
-    print_success "Services installed and enabled"
+    sudo systemctl start ocr-backend ocr-frontend ocr-ai-services 2>/dev/null || true
+    print_success "Services installed, enabled and started"
 fi
 
 # ============================================

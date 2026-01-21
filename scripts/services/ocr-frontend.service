@@ -7,7 +7,7 @@ Wants=ocr-backend.service
 Type=simple
 User=demo
 Group=demo
-WorkingDirectory=/home/demo/Source/ocr_datecode/frontend-ts
+WorkingDirectory=%h/Source/ocr_datecode/frontend-ts
 Environment="PATH=/usr/local/bin:/usr/bin:/bin"
 ExecStart=/usr/bin/yarn dev --port 5000 --host 0.0.0.0
 Restart=always

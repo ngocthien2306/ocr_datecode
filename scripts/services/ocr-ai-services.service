@@ -7,8 +7,8 @@ Wants=ocr-backend.service
 Type=simple
 User=demo
 Group=demo
-WorkingDirectory=/home/demo/Source/ocr_datecode/ai_services
-Environment="PATH=/home/demo/.local/bin:/usr/local/bin:/usr/bin:/bin"
+WorkingDirectory=%h/Source/ocr_datecode/ai_services
+Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="CUDA_HOME=/usr/local/cuda"
 Environment="LD_LIBRARY_PATH=/usr/local/cuda/lib64"
 ExecStart=/usr/bin/python3 camera_management_service.py
