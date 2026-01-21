@@ -20,8 +20,8 @@ python-dateutil==2.8.2
 # Additional utilities
 tiktoken==0.7.0
 psutil==5.9.8
-motor>=3.3.0
-pymongo>=4.5.0
+motor==3.6.0
+pymongo==4.10.1
 # jetson-stats
 
 

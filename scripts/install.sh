@@ -204,13 +204,13 @@ print_step "Step 5/8: Setting up Backend"
 cd "$PROJECT_DIR/backend"
 
 print_info "Installing Python packages..."
-pip install -r requirements.txt
-pip install langgraph 
-pip install langchain 
-pip install langchain-openai 
-pip install langchain-core 
-pip install langchain-mongodb 
-pip install langchain-community
+pip install -r requirements.txt --upgrade
+pip install langgraph --upgrade
+pip install langchain --upgrade
+pip install langchain-openai --upgrade
+pip install langchain-core --upgrade
+pip install langchain-mongodb --upgrade
+pip install langchain-community --upgrade
 sudo pip3 install -U jetson-stats 2>/dev/null || true
 pip install numpy==1.26.4 --upgrade
 

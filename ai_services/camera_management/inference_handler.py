@@ -54,6 +54,7 @@ except Exception as e:
 # OCR is available if either backend is available
 OCR_AVAILABLE = TRT_AVAILABLE or ONNX_AVAILABLE
 
+home = os.environ.get('HOME')
 
 class InferenceHandler:
 
@@ -65,7 +66,6 @@ class InferenceHandler:
             reject_scheduler: RejectScheduler instance for scheduling reject actions
         """
         self.camera_matchers: Dict[str, Any] = {}  # Map serial_number -> matcher
-        home = os.environ.get('HOME')
         
         self.engine_path = f"{home}/Source/ocr_datecode/weights/pipeline_fp16_dynamic_480x640.engine"
 
@@ -109,7 +109,6 @@ class InferenceHandler:
                 # Initialize selected backend
                 if ocr_backend_choice == "tensorrt" and TRT_AVAILABLE:
                     # Use TensorRT backend
-                    home = os.environ.get('HOME')
 
                     ocr_engine_path = f"{home}/Source/ocr_datecode/languages/english/rec.engine"
                     ocr_dict_path = f"{home}/Source/ocr_datecode/languages/english/dict.txt"
@@ -123,9 +122,6 @@ class InferenceHandler:
                     logger.info("✅ Text recognizer initialized with TensorRT backend")
 
                 elif ocr_backend_choice == "onnx" and ONNX_AVAILABLE:
-                    # Use ONNX backend
-                    import os
-                    home = os.environ.get('HOME')
 
                     ocr_model_path = f"{home}/Source/ocr_datecode/languages/english/rec.onnx"
                     ocr_dict_path = f"{home}/Source/ocr_datecode/languages/english/dict.txt"
@@ -639,8 +635,6 @@ class InferenceHandler:
 
                 # Crop using perspective transform
                 cropped_region = crop_text_region(frame_img, points)
-                home = os.environ.get('HOME')
-
                 path_save = f"{home}/Source/ocr_datecode/ai_services/test_result"
                 cv2.imwrite(f"{path_save}/cropped_region_{camera.serial_number}_{annotation_idx}.png", cropped_region)
 
@@ -801,8 +795,6 @@ class InferenceHandler:
             cropped_template = crop_text_region(template_img, original_points)
             cropped_target = crop_text_region(frame_img, transformed_points)
 
-            # Save debug images
-            home = os.environ.get('HOME')
             path_save = f"{home}/Source/ocr_datecode/ai_services/test_result"
             cv2.imwrite(f"{path_save}/template_crop_{camera.serial_number}.png", cropped_template)
             cv2.imwrite(f"{path_save}/target_crop_{camera.serial_number}.png", cropped_target)
@@ -1798,7 +1790,6 @@ class InferenceHandler:
 
                 if frame_pass_fail == "FAIL" or frame_pass_fail == "ERROR":
                     # FAIL/ERROR: Save to disk + encode base64 for display
-                    home = os.environ.get('HOME')
                     base_dir: str = f"{home}/Source/ocr_datecode/backend/uploads/inference_results"
 
                     image_path, image_base64 = save_and_encode_frame(
