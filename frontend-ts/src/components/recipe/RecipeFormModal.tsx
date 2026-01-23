@@ -193,7 +193,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
             }));
 
             // Load function_type for this camera (default to 'OCR' if not set)
-            loadedFunctionTypes[camTemplate.camera_id] = camTemplate.function_type || 'OCR';
+            loadedFunctionTypes[camTemplate.camera_id] = camTemplate.function_type || 'Check_Type_Product';
 
             // Remember first camera with templates for auto-selection
             if (!firstCameraWithTemplates) {
@@ -464,7 +464,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         if (templates && templates.length > 0) {
           cameraTemplatesArray.push({
             camera_id: cameraId,
-            function_type: cameraFunctionTypes[cameraId] || 'OCR', // Include function type
+            function_type: cameraFunctionTypes[cameraId] || 'Check_Type_Product', // Include function type
             templates: templates.map(template => ({
               name: template.name,
               image_url: template.image_url,
@@ -1266,7 +1266,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                     <div className="template-function-type-selector">
                       <label>Function Type:</label>
                       <select
-                        value={cameraFunctionTypes[selectedCameraForTemplate] || 'OCR'}
+                        value={cameraFunctionTypes[selectedCameraForTemplate] || 'Check_Type_Product'}
                         onChange={(e) => {
                           setCameraFunctionTypes(prev => ({
                             ...prev,
@@ -1274,13 +1274,13 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                           }));
                         }}
                       >
-                        <option value="OCR">OCR (Text Recognition)</option>
+                        {/* <option value="OCR">OCR (Text Recognition)</option> */}
                         <option value="Check_Type_Product">Check Type Product</option>
-                        <option value="Check_Color">Check Color</option>
+                        {/* <option value="Check_Color">Check Color</option>
                         <option value="Check_Defect">Check Defect</option>
                         <option value="Check_Position">Check Position</option>
                         <option value="Barcode_Detection">Barcode Detection</option>
-                        <option value="DateCode_Detection">Date Code Detection</option>
+                        <option value="DateCode_Detection">Date Code Detection</option> */}
                       </select>
                       {/* <small style={{display: 'block', marginTop: 4, color: '#666'}}>
                         All templates for this camera will use this function type
