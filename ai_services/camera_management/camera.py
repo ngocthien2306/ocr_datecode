@@ -252,9 +252,35 @@ class Camera:
             # Pixel Format (can ONLY be set when camera is NOT grabbing)
             # Only apply during initial connect, not during runtime settings update
             if apply_pixel_format and self.pixel_format and not self.camera.IsGrabbing():
-                self.camera.PixelFormat.SetValue(self.pixel_format)
-                actual_pixel_format = self.camera.PixelFormat.GetValue()
-                logger.info(f"[{self.serial_number}] PixelFormat: {actual_pixel_format}")
+                try:
+                    self.camera.PixelFormat.SetValue(self.pixel_format)
+                    actual_pixel_format = self.camera.PixelFormat.GetValue()
+                    logger.info(f"[{self.serial_number}] PixelFormat set: {actual_pixel_format}")
+                except Exception as pixel_error:
+                    # USB format -> GigE format mapping
+                    logger.warning(f"[{self.serial_number}] Failed to set {self.pixel_format}: {pixel_error}")
+
+                    # Mapping: USB/UI format -> GigE equivalent format
+                    format_mapping = {
+                        "BGR8": "BayerRG8",
+                        "RGB8": "BayerRG8",
+                        "Mono8": "Mono8",
+                        "Mono12": "Mono12",
+                        "YUV422": "YUV422Packed",
+                        "BayerRG12": "BayerRG12Packed"
+                    }
+
+                    fallback_format = format_mapping.get(self.pixel_format)
+
+                    if fallback_format:
+                        try:
+                            self.camera.PixelFormat.SetValue(fallback_format)
+                            actual_pixel_format = self.camera.PixelFormat.GetValue()
+                            logger.info(f"[{self.serial_number}] PixelFormat mapped: {self.pixel_format} -> {actual_pixel_format}")
+                        except Exception as e:
+                            logger.error(f"[{self.serial_number}] Failed to set mapped format {fallback_format}: {e}")
+                    else:
+                        logger.error(f"[{self.serial_number}] No GigE mapping found for {self.pixel_format}")
 
             # Exposure (can be changed during grabbing) - try different node names
             try:
