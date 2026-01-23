@@ -6,13 +6,22 @@
 
 echo "Setting up sudoers for Digital I/O commands..."
 
+# Get current user (not root if using sudo)
+if [ -n "$SUDO_USER" ]; then
+    CURRENT_USER="$SUDO_USER"
+else
+    CURRENT_USER="$USER"
+fi
+
+echo "Configuring for user: $CURRENT_USER"
+
 # Create sudoers file for dio commands
 SUDOERS_FILE="/etc/sudoers.d/99-dio-nopasswd"
 
 # Create the sudoers rule
-cat << 'EOF' | sudo tee "$SUDOERS_FILE" > /dev/null
-# Allow user 'demo' to run dio_in and dio_out without password
-demo ALL=(ALL) NOPASSWD: /usr/sbin/dio_in, /usr/sbin/dio_out
+cat << EOF | sudo tee "$SUDOERS_FILE" > /dev/null
+# Allow user '$CURRENT_USER' to run dio_in and dio_out without password
+$CURRENT_USER ALL=(ALL) NOPASSWD: /usr/sbin/dio_in, /usr/sbin/dio_out
 EOF
 
 # Set correct permissions (sudoers files must be 0440)
