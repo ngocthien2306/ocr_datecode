@@ -227,7 +227,12 @@ echo "  If you have exported data from another machine, you can import it now."
 read -p "  Do you have data to migrate? (y/N): " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    read -p "  Enter path to exports directory (e.g., ./exports): " EXPORTS_DIR
+    DEFAULT_EXPORTS_DIR="$PROJECT_DIR/exports"
+    read -p "  Enter path to exports directory [$DEFAULT_EXPORTS_DIR]: " EXPORTS_DIR
+
+    # Use default if empty
+    EXPORTS_DIR="${EXPORTS_DIR:-$DEFAULT_EXPORTS_DIR}"
+
     if [ -d "$EXPORTS_DIR" ]; then
         print_info "Migrating data from $EXPORTS_DIR..."
         cd "$PROJECT_DIR"
