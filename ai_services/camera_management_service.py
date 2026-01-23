@@ -310,12 +310,16 @@ class CameraManagementService:
 
             logger.info(f"Discovering cameras... Found {len(device_list)} device(s)")
 
+            # Get list of already connected cameras (to skip opening them)
+            connected_serials = set(self.camera_manager.cameras.keys())
+
             for device in device_list:
+                serial_number = device.GetSerialNumber()
                 device_info = {
-                    "serial_number": device.GetSerialNumber(),
+                    "serial_number": serial_number,
                     "model_name": device.GetModelName(),
                     "ip_address": None,
-                    "resolution_width": 1920,  # Default, actual value requires camera connection
+                    "resolution_width": 1920,  # Default
                     "resolution_height": 1200,  # Default
                 }
 
@@ -334,8 +338,30 @@ class CameraManagementService:
                 except Exception:
                     device_info["device_class"] = "Unknown"
 
+                # Try to get actual resolution by opening camera temporarily
+                # Skip if camera is already connected in camera_manager
+                if serial_number not in connected_serials:
+                    try:
+                        temp_camera = pylon.InstantCamera(tlFactory.CreateDevice(device))
+                        temp_camera.Open()
+                        device_info["resolution_width"] = temp_camera.Width.GetValue()
+                        device_info["resolution_height"] = temp_camera.Height.GetValue()
+                        temp_camera.Close()
+                        logger.debug(f"  Got resolution for {serial_number}: {device_info['resolution_width']}x{device_info['resolution_height']}")
+                    except Exception as e:
+                        logger.warning(f"  Could not get resolution for {serial_number}: {e}")
+                else:
+                    # Camera already connected, get resolution from camera_manager
+                    camera = self.camera_manager.cameras.get(serial_number)
+                    if camera and camera.camera:
+                        try:
+                            device_info["resolution_width"] = camera.camera.Width.GetValue()
+                            device_info["resolution_height"] = camera.camera.Height.GetValue()
+                        except Exception:
+                            pass
+
                 devices.append(device_info)
-                logger.info(f"  Found: {device_info['model_name']} (SN: {device_info['serial_number']})")
+                logger.info(f"  Found: {device_info['model_name']} (SN: {serial_number}, {device_info['resolution_width']}x{device_info['resolution_height']})")
 
             return {
                 "success": True,
