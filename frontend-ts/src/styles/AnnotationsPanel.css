@@ -180,6 +180,58 @@
   pointer-events: none;
 }
 
+.annotation-conf-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.conf-label {
+  color: #a0a0b0;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.annotation-conf-input {
+  flex: 1;
+  padding: 6px 10px;
+  background: rgba(30, 30, 46, 0.8);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: 'Monaco', 'Menlo', monospace;
+  transition: all 0.2s;
+  width: 80px;
+}
+
+.annotation-conf-input:hover {
+  background: rgba(40, 40, 60, 0.9);
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+.annotation-conf-input:focus {
+  outline: none;
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+}
+
+/* Hide number input spinners */
+.annotation-conf-input::-webkit-outer-spin-button,
+.annotation-conf-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.annotation-conf-input[type=number] {
+  -moz-appearance: textfield;
+}
+
 .annotation-info {
   display: flex;
   justify-content: space-between;
@@ -329,6 +381,26 @@ body:not(.dark-mode) .annotation-text-input:hover {
 }
 
 body:not(.dark-mode) .annotation-text-input:focus {
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+}
+
+body:not(.dark-mode) .conf-label {
+  color: #6b7280;
+}
+
+body:not(.dark-mode) .annotation-conf-input {
+  background: white;
+  border: 1px solid #d1d5db;
+  color: #1f2937;
+}
+
+body:not(.dark-mode) .annotation-conf-input:hover {
+  background: #f9fafb;
+  border-color: rgba(139, 92, 246, 0.4);
+}
+
+body:not(.dark-mode) .annotation-conf-input:focus {
   border-color: #8b5cf6;
   box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
 }

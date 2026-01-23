@@ -871,6 +871,7 @@ export default function TemplateEditor({
       id: `annotation-${Date.now()}`,
       type,
       text: '',
+      conf: 0.85,
       ...normalized
     };
 

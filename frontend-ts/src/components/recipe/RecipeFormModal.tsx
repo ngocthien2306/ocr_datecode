@@ -830,6 +830,15 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     handleAnnotationsChange(updated);
   };
 
+  const handleAnnotationConfChange = (index: number, newConf: number) => {
+    const currentAnnotations = getCurrentAnnotations();
+    const updated: any[] = [...currentAnnotations];
+    if (updated[index]) {
+      updated[index].conf = newConf;
+    }
+    handleAnnotationsChange(updated);
+  };
+
   const handleDeleteAnnotation = (index: number) => {
     const currentAnnotations = getCurrentAnnotations();
     const updated = currentAnnotations.filter((_, i) => i !== index);
@@ -1449,8 +1458,11 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                             onSelectAnnotation={setSelectedAnnotation}
                             onAnnotationTypeChange={handleAnnotationTypeChange}
                             onAnnotationTextChange={handleAnnotationTextChange}
+                            onAnnotationConfChange={handleAnnotationConfChange}
                             onDeleteAnnotation={handleDeleteAnnotation}
                             fabricCanvasRef={fabricCanvasRef}
+                            imageWidth={getCurrentTemplate()?.image_width}
+                            imageHeight={getCurrentTemplate()?.image_height}
                           />
                         </div>
                       </div>

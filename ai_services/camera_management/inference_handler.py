@@ -7,6 +7,7 @@ from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from pathlib import Path
 import numpy as np
 from .utils import save_and_encode_frame, encode_frame_for_display
+from camera_management.ocr_utils import crop_text_region
 
 if TYPE_CHECKING:
     from .camera import Camera
@@ -64,7 +65,7 @@ class InferenceHandler:
             reject_scheduler: RejectScheduler instance for scheduling reject actions
         """
         self.camera_matchers: Dict[str, Any] = {}  # Map serial_number -> matcher
-        self.engine_path = "/home/demo/Source/ocr_datecode/weights/pipeline_fp16_dynamic_480x640.engine"
+        self.engine_path = "/home/demo/Source/ocr_datecode/weights/pipeline_fp16_dynamic.engine"
 
         # Text recognizer for Check_Type_Product function
         self.text_recognizer = None
@@ -251,6 +252,7 @@ class InferenceHandler:
             for ann_idx, ann in enumerate(annotations):
                 ann_type = ann.get("type", "")
                 shape = ann.get("shape", "rectangle")
+                conf = ann.get("conf", 0.8)
 
                 if ann_type == "template":
                     x, y = ann.get("x", 0), ann.get("y", 0)
@@ -262,7 +264,8 @@ class InferenceHandler:
                     template_bbox = {
                         "type": "template",
                         "points": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]],
-                        "annotation_index": ann_idx  # Keep original index
+                        "annotation_index": ann_idx,  # Keep original index
+                        "conf": conf
                     }
 
                 elif ann_type in ["text", "barcode", "datecode"]:
@@ -287,7 +290,8 @@ class InferenceHandler:
                             "type": ann_type,
                             "text": ann.get("text", ""),
                             "points": pixel_points,
-                            "annotation_index": ann_idx  # Keep original index for expected_texts lookup
+                            "annotation_index": ann_idx, # Keep original index for expected_texts lookup
+                            "conf": conf
                         })
 
             if not template_bbox:
@@ -594,7 +598,6 @@ class InferenceHandler:
             if bbox.get('type') == 'text'
         ]
         
-        print("transformed_bboxes: ", transformed_bboxes)
         
         logger.info(f"[{camera.serial_number}] Verifying {len(text_bboxes)} text regions")
         logger.info(f"[{camera.serial_number}] Expected texts dict: {expected_texts}")
@@ -604,6 +607,7 @@ class InferenceHandler:
             try:
                 # Get annotation_index from bbox (this is the original index in annotations list)
                 annotation_idx = bbox.get('annotation_index')
+                conf_threshold = bbox.get('conf', 0.8)
                 if annotation_idx is None:
                     logger.warning(f"[{camera.serial_number}] Bbox missing annotation_index, skipping")
                     continue
@@ -625,7 +629,7 @@ class InferenceHandler:
                         'recognized': '',
                         'match': False,
                         'confidence': 0.0,
-                        'threshold': recognition_threshold,
+                        'threshold': conf_threshold,
                         'error': 'Invalid bbox points'
                     })
                     continue
@@ -643,10 +647,10 @@ class InferenceHandler:
                 logger.debug(f"[{camera.serial_number}] OCR result: '{recognized_text}' (conf: {confidence:.2%})")
 
                 # Check if confidence meets threshold first
-                if confidence < recognition_threshold:
+                if confidence < conf_threshold:
                     logger.warning(
                         f"[{camera.serial_number}] Annotation {annotation_idx}: "
-                        f"Low confidence {confidence:.2%} < threshold {recognition_threshold:.2%}, treating as NO MATCH"
+                        f"Low confidence {confidence:.2%} < threshold {conf_threshold:.2%}, treating as NO MATCH"
                     )
                     match = False
                 else:
@@ -662,7 +666,7 @@ class InferenceHandler:
                     'recognized': recognized_text,
                     'match': match,
                     'confidence': confidence,
-                    'threshold': recognition_threshold,
+                    'threshold': conf_threshold,
 
                 })
 
@@ -683,7 +687,7 @@ class InferenceHandler:
                     'recognized': '',
                     'match': False,
                     'confidence': 0.0,
-                    'threshold': recognition_threshold,
+                    'threshold': conf_threshold,
                     'error': str(e)
                 })
 
@@ -742,6 +746,8 @@ class InferenceHandler:
                 if bbox.get('type') == 'template'
             ]
 
+            print("TRANSFORMED_BOXES: ", template_bboxes)
+            similarity_threshold = template_bboxes[0]['conf'] if template_bboxes else similarity_threshold
             logger.info(f"[{camera.serial_number}] Verifying {len(template_bboxes)} template regions")
 
             if not template_bboxes:
@@ -787,7 +793,6 @@ class InferenceHandler:
             # IMPORTANT:
             # - Template crop: Use ORIGINAL bbox points from template image
             # - Target crop: Use TRANSFORMED bbox points (after homography) from target image
-            from camera_management.ocr_utils import crop_text_region
 
             cropped_template = crop_text_region(template_img, original_points)
             cropped_target = crop_text_region(frame_img, transformed_points)

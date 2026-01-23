@@ -230,8 +230,9 @@ export interface Annotation {
   // optional text content for text annotations
   text?: string;
 
-  // common fields
-  confidence?: number;
+  // confidence threshold (0-1), default 0.85
+  conf: number;
+
   metadata?: Record<string, unknown>;
 }
 

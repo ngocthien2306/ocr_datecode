@@ -28,6 +28,7 @@ interface Annotation {
   height?: number;
   points?: Point[];
   text?: string;
+  conf: number;
 }
 
 interface FabricCanvas {
@@ -42,18 +43,24 @@ interface AnnotationsPanelProps {
   onSelectAnnotation?: (index: number) => void;
   onAnnotationTypeChange?: (index: number, type: string) => void;
   onAnnotationTextChange?: (index: number, text: string) => void;
+  onAnnotationConfChange?: (index: number, conf: number) => void;
   onDeleteAnnotation?: (index: number) => void;
   fabricCanvasRef?: React.RefObject<FabricCanvas>;
+  imageWidth?: number;
+  imageHeight?: number;
 }
 
-const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({ 
-  annotations, 
-  selectedAnnotation, 
+const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
+  annotations,
+  selectedAnnotation,
   onSelectAnnotation,
-  onAnnotationTypeChange, 
+  onAnnotationTypeChange,
   onAnnotationTextChange,
+  onAnnotationConfChange,
   onDeleteAnnotation,
-  fabricCanvasRef 
+  fabricCanvasRef,
+  imageWidth,
+  imageHeight
 }) => {
   
   const handleAnnotationClick = (index: number) => {
@@ -122,6 +129,34 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
               </div>
             )}
 
+            {/* Confidence threshold input */}
+            <div className="annotation-conf-field">
+              <label className="conf-label">Conf:</label>
+              <input
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                value={ann.conf ?? 0.85}
+                onChange={(e) => {
+                  const value = parseFloat(e.target.value);
+                  if (!isNaN(value) && value >= 0 && value <= 1) {
+                    onAnnotationConfChange?.(index, value);
+                  }
+                }}
+                onBlur={(e) => {
+                  const value = parseFloat(e.target.value);
+                  if (isNaN(value) || value < 0) {
+                    onAnnotationConfChange?.(index, 0);
+                  } else if (value > 1) {
+                    onAnnotationConfChange?.(index, 1);
+                  }
+                }}
+                className="annotation-conf-input"
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
+
             <div className="annotation-info">
               <span className="info-label">Shape:</span>
               <span className="info-value">{ann.shape}</span>
@@ -131,7 +166,10 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
               <div className="annotation-info">
                 <span className="info-label">Size:</span>
                 <span className="info-value">
-                  {Math.round(ann.width)} × {Math.round(ann.height)}
+                  {imageWidth && imageHeight
+                    ? `${Math.round(ann.width * imageWidth)} × ${Math.round(ann.height * imageHeight)}`
+                    : `${ann.width.toFixed(3)} × ${ann.height.toFixed(3)}`
+                  }
                 </span>
               </div>
             )}
