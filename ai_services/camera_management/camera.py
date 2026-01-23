@@ -249,29 +249,32 @@ class Camera:
         Returns:
             BGR image array
         """
+        # Get actual pixel format from camera if possible
+        actual_format = None
+        try:
+            if self.camera and hasattr(self.camera, 'PixelFormat'):
+                actual_format = self.camera.PixelFormat.GetValue()
+        except:
+            pass
+
+        current_format = pixel_format or actual_format or self.pixel_format
+
         # If already 3-channel (BGR/RGB), return as-is
         if len(img_array.shape) == 3 and img_array.shape[2] == 3:
             return img_array
 
-        # Grayscale (Mono8, Mono12) -> BGR
-        if len(img_array.shape) == 2:
-            return cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
-
-        # Detect Bayer pattern from actual pixel format or self.pixel_format
-        current_format = pixel_format or self.pixel_format
-
+        # Detect Bayer pattern from actual pixel format
         if current_format and "Bayer" in current_format:
             # BayerRG8/BayerRG12 -> BGR using debayering
             if "RG" in current_format:
-                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_RG2BGR)
+                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_RG2RGB)
             elif "BG" in current_format:
-                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_BG2BGR)
+                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_BG2RGB)
             elif "GR" in current_format:
-                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_GR2BGR)
+                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_GR2RGB)
             elif "GB" in current_format:
-                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_GB2BGR)
-
-        # Default: treat as grayscale
+                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_GB2RGB)
+        # Grayscale (Mono8, Mono12) -> BGR
         if len(img_array.shape) == 2:
             return cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
 
@@ -443,9 +446,23 @@ class Camera:
         if "trigger_source" in trigger_config:
             self.trigger_source = trigger_config["trigger_source"]
 
-        # Apply pixel format if needed (skip if grabbing)
+        # Apply pixel format if needed - requires reconnect if grabbing
         if self.camera and "pixel_format" in settings:
-            self._apply_settings(apply_pixel_format=True)
+            if self.camera.IsGrabbing():
+                logger.warning(f"[{self.serial_number}] Pixel format change requires reconnect (camera is grabbing)")
+                # Stop grabbing temporarily
+                old_mode = self.mode
+                self.camera.StopGrabbing()
+
+                # Apply new pixel format
+                self._apply_settings(apply_pixel_format=True)
+
+                # Restart grabbing if was in continuous mode
+                if old_mode == CameraMode.CONTINUOUS:
+                    self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+                    logger.info(f"[{self.serial_number}] Restarted grabbing after pixel format change")
+            else:
+                self._apply_settings(apply_pixel_format=True)
 
         logger.info(f"[{self.serial_number}] Settings updated")
 
