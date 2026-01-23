@@ -58,6 +58,7 @@ const CameraManagement: React.FC = () => {
   const [viewMode, setViewMode] = useState<'list' | 'viewer' | 'form'>('list');
   const [availableCameras, setAvailableCameras] = useState<DiscoveredCamera[]>([]);
   const [loadingDiscover, setLoadingDiscover] = useState(false);
+  const [manualInput, setManualInput] = useState(false);
 
   const [formData, setFormData] = useState<CameraFormData>({
     camera_id: '',
@@ -328,6 +329,7 @@ const CameraManagement: React.FC = () => {
       pixel_format: 'Mono8'
     });
     setViewMode('form');
+    setManualInput(false);
 
     // Discover available cameras
     setLoadingDiscover(true);
@@ -488,9 +490,9 @@ const CameraManagement: React.FC = () => {
                     name="model_name"
                     value={formData.model_name}
                     onChange={handleFormChange}
-                    placeholder={editingCamera ? "Basler acA1920-40gm" : "Auto-filled from selected camera"}
+                    placeholder={editingCamera || manualInput ? "Basler acA1920-40gm" : "Auto-filled from selected camera"}
                     required
-                    readOnly={!editingCamera && formData.serial_number !== ''}
+                    readOnly={!editingCamera && !manualInput && formData.serial_number !== ''}
                   />
                 </div>
 
@@ -516,6 +518,15 @@ const CameraManagement: React.FC = () => {
                           </svg>
                           <span>Discovering cameras...</span>
                         </div>
+                      ) : manualInput ? (
+                        <input
+                          type="text"
+                          name="serial_number"
+                          value={formData.serial_number}
+                          onChange={handleFormChange}
+                          placeholder="Enter serial number manually"
+                          required
+                        />
                       ) : (
                         <select
                           name="serial_number"
@@ -549,9 +560,21 @@ const CameraManagement: React.FC = () => {
                           ))}
                         </select>
                       )}
-                      {!loadingDiscover && availableCameras.length === 0 && (
+                      {!loadingDiscover && (
+                        <button
+                          type="button"
+                          className="toggle-input-btn"
+                          onClick={() => {
+                            setManualInput(!manualInput);
+                            setFormData(prev => ({ ...prev, serial_number: '', model_name: '' }));
+                          }}
+                        >
+                          {manualInput ? 'Select from list' : 'Enter manually'}
+                        </button>
+                      )}
+                      {!loadingDiscover && !manualInput && availableCameras.length === 0 && (
                         <small className="form-hint warning">
-                          No available cameras found. Ensure cameras are connected and Camera Service is running.
+                          No available cameras found. Click "Enter manually" to input serial number.
                         </small>
                       )}
                     </>
