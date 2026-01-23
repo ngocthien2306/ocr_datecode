@@ -5,7 +5,7 @@ import socketService from '@/services/socketio';
 import { useToast } from '@/contexts/ToastContext';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import CameraViewer from './CameraViewer';
-import type { Camera, CameraStats } from '@/types';
+import type { Camera, CameraStats, DiscoveredCamera } from '@/types';
 import '@/styles/Dashboard.css';
 
 interface CameraFormData {
@@ -56,6 +56,8 @@ const CameraManagement: React.FC = () => {
   const [viewingCamera, setViewingCamera] = useState<Camera | null>(null);
   const [connectingCameras, setConnectingCameras] = useState<Set<string>>(new Set());
   const [viewMode, setViewMode] = useState<'list' | 'viewer' | 'form'>('list');
+  const [availableCameras, setAvailableCameras] = useState<DiscoveredCamera[]>([]);
+  const [loadingDiscover, setLoadingDiscover] = useState(false);
 
   const [formData, setFormData] = useState<CameraFormData>({
     camera_id: '',
@@ -309,7 +311,7 @@ const CameraManagement: React.FC = () => {
     setViewingCamera(null);
   };
 
-  const openCreateModal = () => {
+  const openCreateModal = async () => {
     setEditingCamera(null);
     setFormData({
       camera_id: '',
@@ -326,6 +328,23 @@ const CameraManagement: React.FC = () => {
       pixel_format: 'Mono8'
     });
     setViewMode('form');
+
+    // Discover available cameras
+    setLoadingDiscover(true);
+    try {
+      const discovered = await camerasAPI.discoverCameras();
+      setAvailableCameras(discovered);
+      if (discovered.length === 0) {
+        toast.warning('No available cameras found. Make sure cameras are connected and Camera Service is running.');
+      }
+    } catch (err: any) {
+      console.error('Error discovering cameras:', err);
+      const errorMessage = err.response?.data?.detail || 'Failed to discover cameras. Make sure Camera Service is running.';
+      toast.error(errorMessage);
+      setAvailableCameras([]);
+    } finally {
+      setLoadingDiscover(false);
+    }
   };
 
   const openEditModal = (camera: Camera) => {
@@ -469,21 +488,74 @@ const CameraManagement: React.FC = () => {
                     name="model_name"
                     value={formData.model_name}
                     onChange={handleFormChange}
-                    placeholder="Basler acA1920-40gm"
+                    placeholder={editingCamera ? "Basler acA1920-40gm" : "Auto-filled from selected camera"}
                     required
+                    readOnly={!editingCamera && formData.serial_number !== ''}
                   />
                 </div>
 
                 <div className="form-group">
                   <label>Serial Number *</label>
-                  <input
-                    type="text"
-                    name="serial_number"
-                    value={formData.serial_number}
-                    onChange={handleFormChange}
-                    placeholder="40123456"
-                    required
-                  />
+                  {editingCamera ? (
+                    <input
+                      type="text"
+                      name="serial_number"
+                      value={formData.serial_number}
+                      onChange={handleFormChange}
+                      placeholder="40123456"
+                      required
+                      disabled
+                    />
+                  ) : (
+                    <>
+                      {loadingDiscover ? (
+                        <div className="select-loading">
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="spin">
+                            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" opacity="0.25"/>
+                            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="2"/>
+                          </svg>
+                          <span>Discovering cameras...</span>
+                        </div>
+                      ) : (
+                        <select
+                          name="serial_number"
+                          value={formData.serial_number}
+                          onChange={(e) => {
+                            const selectedSerial = e.target.value;
+                            const cam = availableCameras.find(c => c.serial_number === selectedSerial);
+                            if (cam) {
+                              setFormData(prev => ({
+                                ...prev,
+                                serial_number: cam.serial_number,
+                                model_name: cam.model_name,
+                                ip_address: cam.ip_address || '',
+                                resolution_width: cam.resolution_width,
+                                resolution_height: cam.resolution_height,
+                              }));
+                            } else {
+                              setFormData(prev => ({
+                                ...prev,
+                                serial_number: selectedSerial,
+                              }));
+                            }
+                          }}
+                          required
+                        >
+                          <option value="">-- Select Camera --</option>
+                          {availableCameras.map(cam => (
+                            <option key={cam.serial_number} value={cam.serial_number}>
+                              {cam.model_name} ({cam.serial_number})
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      {!loadingDiscover && availableCameras.length === 0 && (
+                        <small className="form-hint warning">
+                          No available cameras found. Ensure cameras are connected and Camera Service is running.
+                        </small>
+                      )}
+                    </>
+                  )}
                 </div>
 
                 <div className="form-group">

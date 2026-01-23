@@ -16,7 +16,8 @@ from app.schemas.camera import (
     CameraUpdate,
     CameraResponse,
     CameraConnectionStatus,
-    CameraSettingsUpdate
+    CameraSettingsUpdate,
+    DiscoveredCamera
 )
 from app.api.dependencies.auth import get_current_user, get_current_user_from_query
 from app.api.dependencies.action_log import get_action_log_repository
@@ -29,6 +30,7 @@ from app.api.websocket.camera_ws import (
     send_disconnect_camera,
     send_set_camera_mode,
     send_update_camera_settings,
+    send_discover_cameras,
     camera_ws_manager
 )
 
@@ -146,6 +148,70 @@ async def get_connected_cameras(
     repo = CameraRepository(db)
     cameras = await repo.get_connected_cameras()
     return cameras
+
+
+@router.get(
+    "/discover",
+    response_model=List[DiscoveredCamera],
+    summary="Discover available cameras from Pylon SDK"
+)
+async def discover_available_cameras(
+    db=Depends(get_database),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Discover available Basler cameras from Pylon SDK.
+    Returns only cameras that are not yet registered in the database.
+
+    This endpoint communicates with the Camera Management Service via WebSocket
+    to scan for connected Pylon cameras.
+
+    Returns:
+        List of discovered cameras with their basic information
+    """
+    # Check if camera service is connected
+    if not camera_ws_manager.is_connected():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Camera Management Service is not connected. Please ensure the service is running."
+        )
+
+    # Send discover command to camera service
+    result = await send_discover_cameras(timeout=10.0)
+
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Failed to get response from Camera Management Service"
+        )
+
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=result.get("error", "Failed to discover cameras")
+        )
+
+    # Get existing cameras from database
+    repo = CameraRepository(db)
+    existing_cameras = await repo.get_all(skip=0, limit=1000)
+    existing_serials = {cam["serial_number"] for cam in existing_cameras}
+
+    # Filter out cameras that already exist in database
+    available_cameras = []
+    for device in result.get("devices", []):
+        if device["serial_number"] not in existing_serials:
+            available_cameras.append(DiscoveredCamera(
+                serial_number=device["serial_number"],
+                model_name=device["model_name"],
+                ip_address=device.get("ip_address"),
+                resolution_width=device.get("resolution_width", 1920),
+                resolution_height=device.get("resolution_height", 1200),
+                device_class=device.get("device_class")
+            ))
+
+    logger.info(f"Discovered {len(available_cameras)} available cameras (filtered from {result.get('count', 0)} total)")
+
+    return available_cameras
 
 
 @router.get(

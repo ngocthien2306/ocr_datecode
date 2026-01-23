@@ -109,6 +109,15 @@ export interface CameraStats {
   active: number;
 }
 
+export interface DiscoveredCamera {
+  serial_number: string;
+  model_name: string;
+  ip_address?: string;
+  resolution_width: number;
+  resolution_height: number;
+  device_class?: string;
+}
+
 // ==================== Recipe/Receipt Types ====================
 export interface ModelThresholds {
   detection_threshold?: number;

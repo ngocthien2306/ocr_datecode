@@ -270,6 +270,14 @@ class CameraManagementService:
                     "data": result
                 })
 
+            elif event == "discover_cameras":
+                # Discover available Pylon cameras
+                result = self._discover_pylon_cameras()
+                await self.ws_client.send_message({
+                    "event": "discover_cameras_response",
+                    "data": result
+                })
+
             else:
                 logger.warning(f"Unknown event: {event}")
 
@@ -285,6 +293,65 @@ class CameraManagementService:
                     "error": str(e)
                 }
             })
+
+    def _discover_pylon_cameras(self) -> Dict[str, Any]:
+        """
+        Scan and return list of available Basler cameras from Pylon SDK
+
+        Returns:
+            Dict with success status and list of discovered devices
+        """
+        try:
+            from pypylon import pylon
+
+            devices = []
+            tlFactory = pylon.TlFactory.GetInstance()
+            device_list = tlFactory.EnumerateDevices()
+
+            logger.info(f"Discovering cameras... Found {len(device_list)} device(s)")
+
+            for device in device_list:
+                device_info = {
+                    "serial_number": device.GetSerialNumber(),
+                    "model_name": device.GetModelName(),
+                    "ip_address": None,
+                    "resolution_width": 1920,  # Default, actual value requires camera connection
+                    "resolution_height": 1200,  # Default
+                }
+
+                # Try to get IP address for GigE cameras
+                try:
+                    if hasattr(device, 'GetAddress'):
+                        device_info["ip_address"] = device.GetAddress()
+                    elif hasattr(device, 'GetIpAddress'):
+                        device_info["ip_address"] = device.GetIpAddress()
+                except Exception:
+                    pass
+
+                # Try to get device class (GigE, USB, etc.)
+                try:
+                    device_info["device_class"] = device.GetDeviceClass()
+                except Exception:
+                    device_info["device_class"] = "Unknown"
+
+                devices.append(device_info)
+                logger.info(f"  Found: {device_info['model_name']} (SN: {device_info['serial_number']})")
+
+            return {
+                "success": True,
+                "devices": devices,
+                "count": len(devices)
+            }
+
+        except Exception as e:
+            logger.error(f"Error discovering cameras: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "success": False,
+                "error": str(e),
+                "devices": []
+            }
 
     async def _check_running_recipes(self):
         """

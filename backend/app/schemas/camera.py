@@ -71,3 +71,13 @@ class CameraSettingsUpdate(BaseModel):
     gain: Optional[float] = Field(None, ge=0.0, le=20.0, description="Camera gain value")
     trigger_config: Optional[Dict[str, Any]] = Field(None, description="Trigger configuration (mode, source, activation, di_number)")
     delay_trigger: Optional[float] = Field(None, ge=0, le=10000, description="Delay trigger in milliseconds (ms)")
+
+
+class DiscoveredCamera(BaseModel):
+    """Schema for discovered camera from Pylon SDK"""
+    serial_number: str = Field(..., description="Camera serial number")
+    model_name: str = Field(..., description="Camera model name")
+    ip_address: Optional[str] = Field(None, description="Camera IP address (GigE only)")
+    resolution_width: int = Field(1920, description="Default resolution width")
+    resolution_height: int = Field(1200, description="Default resolution height")
+    device_class: Optional[str] = Field(None, description="Device class (GigE, USB, etc.)")

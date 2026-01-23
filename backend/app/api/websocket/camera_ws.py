@@ -8,8 +8,12 @@ import json
 import logging
 from typing import Optional, Dict, Any
 import asyncio
+import uuid
 
 logger = logging.getLogger(__name__)
+
+# Pending requests for request-response pattern
+_pending_requests: Dict[str, asyncio.Future] = {}
 
 router = APIRouter()
 
@@ -306,6 +310,15 @@ async def handle_camera_service_message(message: dict):
             from app.services.socketio_service import emit_live_frame
             await emit_live_frame(data)
 
+        elif event == "discover_cameras_response":
+            # Handle discover cameras response
+            logger.info(f"Discover cameras response: {data.get('count', 0)} devices found")
+            # Resolve pending request if exists
+            if "discover_cameras" in _pending_requests:
+                future = _pending_requests.pop("discover_cameras")
+                if not future.done():
+                    future.set_result(data)
+
         elif event.endswith("_response"):
             # Response to command - will be handled by calling code
             logger.debug(f"Response received: {event}")
@@ -457,3 +470,51 @@ async def send_update_camera_settings(serial_number: str, settings: Dict[str, An
             "settings": settings
         }
     })
+
+
+async def send_discover_cameras(timeout: float = 10.0) -> Optional[Dict[str, Any]]:
+    """
+    Send discover cameras command to AI service and wait for response
+
+    Args:
+        timeout: Timeout in seconds to wait for response
+
+    Returns:
+        Response dict with discovered devices or None if failed/timeout
+    """
+    # Check if camera service is connected
+    if not camera_ws_manager.is_connected():
+        logger.warning("Cannot discover cameras: camera service not connected")
+        return None
+
+    # Create future for response
+    loop = asyncio.get_event_loop()
+    future = loop.create_future()
+    _pending_requests["discover_cameras"] = future
+
+    try:
+        # Send discover command
+        success = await camera_ws_manager.send_to_camera_service({
+            "event": "discover_cameras",
+            "data": {}
+        })
+
+        if not success:
+            logger.error("Failed to send discover_cameras command")
+            return None
+
+        # Wait for response with timeout
+        result = await asyncio.wait_for(future, timeout=timeout)
+        return result
+
+    except asyncio.TimeoutError:
+        logger.error(f"Discover cameras request timed out after {timeout}s")
+        return None
+
+    except Exception as e:
+        logger.error(f"Error in send_discover_cameras: {e}")
+        return None
+
+    finally:
+        # Cleanup pending request
+        _pending_requests.pop("discover_cameras", None)

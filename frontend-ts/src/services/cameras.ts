@@ -1,5 +1,5 @@
 import api from './http';
-import type { Camera, CameraCreate, CameraUpdate } from '@/types';
+import type { Camera, CameraCreate, CameraUpdate, DiscoveredCamera } from '@/types';
 
 export const camerasAPI = {
   getAllCameras: async (skip = 0, limit = 100): Promise<Camera[]> => {
@@ -78,6 +78,11 @@ export const camerasAPI = {
 
   getCameraSettings: async (serialNumber: string): Promise<any> => {
     const response = await api.get(`/cameras/${serialNumber}/settings`);
+    return response.data;
+  },
+
+  discoverCameras: async (): Promise<DiscoveredCamera[]> => {
+    const response = await api.get<DiscoveredCamera[]>('/cameras/discover');
     return response.data;
   },
 };
