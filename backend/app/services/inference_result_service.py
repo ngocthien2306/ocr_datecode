@@ -4,6 +4,7 @@ Handles inference results from AI service
 """
 
 import logging
+import os
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, Optional
@@ -13,7 +14,7 @@ from app.models.inference_result import InferenceResultCreate, InferenceResultRe
 from app.repositories.inference_result_repository import InferenceResultRepository
 
 logger = logging.getLogger(__name__)
-
+home = os.environ.get('HOME')
 
 class InferenceResultService:
     """
@@ -28,7 +29,7 @@ class InferenceResultService:
     def __init__(
         self,
         result_repository: InferenceResultRepository,
-        upload_base_path: str = "/home/demo/Source/ocr_datecode/backend/uploads"
+        upload_base_path: str = f"{home}/Source/ocr_datecode/backend/uploads"
     ):
         """
         Initialize service

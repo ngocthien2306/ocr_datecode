@@ -4,6 +4,7 @@ Manages individual camera instance with shared memory and inference
 """
 
 from multiprocessing import shared_memory, Process
+import os
 from pypylon import pylon
 import cv2
 import numpy as np
@@ -824,7 +825,9 @@ class Camera:
         """
         try:
             # Create directory structure
-            base_dir = Path("/home/demo/Source/ocr_datecode/backend/uploads/inference_results")
+            home = os.environ.get('HOME')
+
+            base_dir = Path(f"{home}/Source/ocr_datecode/backend/uploads/inference_results")
             recipe_dir = base_dir / self.recipe_id if self.recipe_id else base_dir / "unknown"
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             save_dir = recipe_dir / today

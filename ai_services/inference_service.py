@@ -1231,4 +1231,5 @@ class InferenceService:
 
 
 # Singleton instance
-inference_service = InferenceService("/home/demo/Source/ocr_datecode/weights/pipeline_fp16_small.engine")
+home = os.environ.get('HOME')
+inference_service = InferenceService(f"{home}/Source/ocr_datecode/weights/pipeline_fp16_dynamic_480x640.engine")

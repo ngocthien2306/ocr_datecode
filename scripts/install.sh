@@ -28,7 +28,17 @@ print_step() { echo -e "\n${CYAN}${BOLD}▶ $1${NC}\n"; }
 # Configuration
 REPO_URL="https://github.com/ngocthien2306/ocr_datecode.git"
 BRANCH="release_v1"
-SOURCE_DIR="$HOME/Source"
+
+# Get real user (not root if using sudo)
+if [ -n "$SUDO_USER" ]; then
+    INSTALL_USER="$SUDO_USER"
+    INSTALL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+else
+    INSTALL_USER="$USER"
+    INSTALL_HOME="$HOME"
+fi
+
+SOURCE_DIR="$INSTALL_HOME/Source"
 PROJECT_DIR="$SOURCE_DIR/ocr_datecode"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKIP_CLONE=false
@@ -165,26 +175,6 @@ else
     print_warning "setup_mongodb.sh not found, skipping..."
 fi
 
-# ============================================
-# Step 4.1: Data Migration (Optional)
-# ============================================
-echo ""
-echo "  If you have exported data from another machine, you can import it now."
-read -p "  Do you have data to migrate? (y/N): " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    read -p "  Enter path to exports directory (e.g., ./exports): " EXPORTS_DIR
-    if [ -d "$EXPORTS_DIR" ]; then
-        print_info "Migrating data from $EXPORTS_DIR..."
-        cd "$PROJECT_DIR"
-        python3 tests/migration_data.py --input-dir "$EXPORTS_DIR"
-        print_success "Data migration completed"
-    else
-        print_warning "Directory not found: $EXPORTS_DIR, skipping migration..."
-    fi
-else
-    print_info "Skipped data migration"
-fi
 
 # ============================================
 # Step 5: Backend Setup
@@ -194,13 +184,13 @@ print_step "Step 5/8: Setting up Backend"
 cd "$PROJECT_DIR/backend"
 
 print_info "Installing Python packages..."
-pip install -r requirements.txt
-pip install langgraph 
-pip install langchain 
-pip install langchain-openai 
-pip install langchain-core 
-pip install langchain-mongodb 
-pip install langchain-community
+pip install -r requirements.txt --upgrade
+pip install langgraph --upgrade
+pip install langchain --upgrade
+pip install langchain-openai --upgrade
+pip install langchain-core --upgrade
+pip install langchain-mongodb --upgrade
+pip install langchain-community --upgrade
 sudo pip3 install -U jetson-stats 2>/dev/null || true
 pip install numpy==1.26.4 --upgrade
 
@@ -228,6 +218,27 @@ EOF
 fi
 
 print_success "Backend configured"
+
+# ============================================
+# Step 5.1: Data Migration (Optional)
+# ============================================
+echo ""
+echo "  If you have exported data from another machine, you can import it now."
+read -p "  Do you have data to migrate? (y/N): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    read -p "  Enter path to exports directory (e.g., ./exports): " EXPORTS_DIR
+    if [ -d "$EXPORTS_DIR" ]; then
+        print_info "Migrating data from $EXPORTS_DIR..."
+        cd "$PROJECT_DIR"
+        python3 tests/migration_data.py --input-dir "$EXPORTS_DIR"
+        print_success "Data migration completed"
+    else
+        print_warning "Directory not found: $EXPORTS_DIR, skipping migration..."
+    fi
+else
+    print_info "Skipped data migration"
+fi
 
 # ============================================
 # Step 6: AI Services Setup
@@ -286,10 +297,15 @@ print_success "Frontend configured"
 print_step "Step 8/8: Installing Systemd Services"
 
 if [ -d "$SCRIPT_DIR/services" ]; then
-    sudo cp "$SCRIPT_DIR/services/"*.service /etc/systemd/system/
+    # Replace variables in service file
+    sed -e "s|\${INSTALL_USER}|$INSTALL_USER|g" \
+        -e "s|\${PROJECT_DIR}|$PROJECT_DIR|g" \
+        "$SCRIPT_DIR/services/ocr-all.service" | sudo tee /etc/systemd/system/ocr-all.service > /dev/null
+
     sudo systemctl daemon-reload
-    sudo systemctl enable ocr-backend ocr-frontend ocr-ai-services 2>/dev/null || true
-    print_success "Services installed and enabled"
+    sudo systemctl enable ocr-all 2>/dev/null || true
+    sudo systemctl start ocr-all 2>/dev/null || true
+    print_success "OCR service installed, enabled and started (User: $INSTALL_USER)"
 fi
 
 # ============================================
@@ -335,6 +351,25 @@ echo "  View Logs:"
 echo "    journalctl -u ocr-backend -f"
 echo ""
 echo -e "  ${YELLOW}Important: Update OPENAI_API_KEY in $PROJECT_DIR/backend/.env${NC}"
+echo ""
+
+# ============================================
+# Reboot Option
+# ============================================
+echo ""
+read -p "  Reboot system now to apply all changes? (y/N): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    echo ""
+    echo "🔄 System will reboot in 5 seconds..."
+    echo "   Press Ctrl+C to cancel"
+    sleep 5
+    sudo reboot
+else
+    echo ""
+    echo "⚠️  Please reboot manually later to ensure all services start correctly"
+    echo "   Run: sudo reboot"
+fi
 echo ""
 echo "  Documentation: $SCRIPT_DIR/README.md"
 echo ""

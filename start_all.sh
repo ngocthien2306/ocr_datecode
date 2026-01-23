@@ -10,7 +10,7 @@ USER_HOME="$HOME"
 
 # 1. Start Backend (FastAPI)
 echo "📦 Starting Backend API (port 8000)..."
-gnome-terminal --title="Backend API" --window -- bash -c "cd ${USER_HOME}/Source/ocr_datecode/backend && uvicorn app.main:app --reload --port 8000 --host 0.0.0.0; exec bash"
+gnome-terminal --title="Backend API" --window -- bash -c "cd ${USER_HOME}/Source/ocr_datecode/backend && python3 -m uvicorn app.main:app --reload --port 8000 --host 0.0.0.0; exec bash"
 sleep 2
 
 # 2. Start Frontend (Vite)

@@ -1,0 +1,20 @@
+[Unit]
+Description=OCR Datecode All Services
+After=network.target mongodb.service
+Wants=mongodb.service
+
+[Service]
+Type=forking
+User=${INSTALL_USER}
+Group=${INSTALL_USER}
+WorkingDirectory=${PROJECT_DIR}
+ExecStart=${PROJECT_DIR}/start_services.sh
+ExecStop=${PROJECT_DIR}/stop_services.sh
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -10,7 +10,8 @@ from pathlib import Path
 from datetime import datetime
 
 # Setup logging to file
-LOGS_DIR = Path("/home/demo/Source/ocr_datecode/backend/logs")
+home = os.environ.get('HOME')
+LOGS_DIR = Path(f"{home}/Source/ocr_datecode/backend/logs")
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Configure file handler for settings service

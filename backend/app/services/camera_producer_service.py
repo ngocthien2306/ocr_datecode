@@ -10,13 +10,13 @@ import os
 
 logger = logging.getLogger(__name__)
 
-
+home = os.environ.get('HOME')
 class CameraProducerService:
     """Service to manage camera producer processes"""
 
     def __init__(self):
         self._processes: Dict[str, subprocess.Popen] = {}
-        self._camera_script_path = "/home/demo/Source/ocr_datecode/ai_services/camera_shm_producer.py"
+        self._camera_script_path = f"{home}/Source/ocr_datecode/ai_services/camera_shm_producer.py"
 
     def start_camera(self, serial_number: str, device_index: int = 0) -> bool:
         """

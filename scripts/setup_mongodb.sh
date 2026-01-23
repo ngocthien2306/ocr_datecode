@@ -45,8 +45,8 @@ print_success "Docker configured"
 if ! docker ps &> /dev/null; then
     print_warning "Docker permission issue - adding user to docker group"
     sudo usermod -aG docker $USER
-    print_warning "Run: newgrp docker OR logout/login, then re-run script"
-    exit 0
+    print_warning "Applying new group permissions..."
+    exec sg docker "$0 $@"
 fi
 
 # Setup MongoDB
