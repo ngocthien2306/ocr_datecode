@@ -238,6 +238,45 @@ class Camera:
         except Exception as e:
             logger.error(f"Error disconnecting camera {self.serial_number}: {e}")
 
+    def _convert_to_bgr(self, img_array, pixel_format=None):
+        """
+        Convert image array to BGR format based on pixel format
+
+        Args:
+            img_array: Raw image array from camera
+            pixel_format: Current pixel format (if None, auto-detect from shape)
+
+        Returns:
+            BGR image array
+        """
+        # If already 3-channel (BGR/RGB), return as-is
+        if len(img_array.shape) == 3 and img_array.shape[2] == 3:
+            return img_array
+
+        # Grayscale (Mono8, Mono12) -> BGR
+        if len(img_array.shape) == 2:
+            return cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
+
+        # Detect Bayer pattern from actual pixel format or self.pixel_format
+        current_format = pixel_format or self.pixel_format
+
+        if current_format and "Bayer" in current_format:
+            # BayerRG8/BayerRG12 -> BGR using debayering
+            if "RG" in current_format:
+                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_RG2BGR)
+            elif "BG" in current_format:
+                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_BG2BGR)
+            elif "GR" in current_format:
+                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_GR2BGR)
+            elif "GB" in current_format:
+                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_GB2BGR)
+
+        # Default: treat as grayscale
+        if len(img_array.shape) == 2:
+            return cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
+
+        return img_array
+
     def _apply_settings(self, apply_pixel_format: bool = True):
         """
         Apply camera settings
@@ -535,9 +574,8 @@ class Camera:
 
                 img_array = grab_result.Array
 
-                # Convert Mono8 to BGR
-                if len(img_array.shape) == 2:
-                    img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
+                # Convert to BGR (handles Mono8, BayerRG8, etc.)
+                img_array = self._convert_to_bgr(img_array)
 
                 # Write to shared memory (Option B - write all frames)
                 metadata = {
@@ -644,9 +682,8 @@ class Camera:
 
                 img_array = grab_result.Array
 
-                # Convert Mono8 to BGR
-                if len(img_array.shape) == 2:
-                    img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
+                # Convert to BGR (handles Mono8, BayerRG8, etc.)
+                img_array = self._convert_to_bgr(img_array)
 
                 # Write to shared memory
                 # Use template_idx (original index) for proper verification mapping
@@ -963,9 +1000,8 @@ class Camera:
                             # Get image array
                             img_array = grab_result.Array
 
-                            # Convert Mono8 to BGR if needed
-                            if len(img_array.shape) == 2:
-                                img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
+                            # Convert to BGR (handles Mono8, BayerRG8, etc.)
+                            img_array = self._convert_to_bgr(img_array)
 
                             # Write to shared memory
                             metadata = {
