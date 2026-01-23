@@ -183,10 +183,13 @@ def compare_texts(text1: str, text2: str, case_sensitive: bool = False, strip: b
         text2: Second text string
         case_sensitive: Whether to do case-sensitive comparison
         strip: Whether to strip whitespace
+        space: Whether to remove spaces
 
     Returns:
         True if texts match, False otherwise
     """
+    import re
+
     if strip:
         text1 = text1.strip()
         text2 = text2.strip()
@@ -195,11 +198,13 @@ def compare_texts(text1: str, text2: str, case_sensitive: bool = False, strip: b
         text1 = text1.replace(" ", "")
         text2 = text2.replace(" ", "")
 
+    # Remove trailing special characters
+    text1 = re.sub(r'[^A-Za-z0-9]+$', '', text1)
+    text2 = re.sub(r'[^A-Za-z0-9]+$', '', text2)
+
     # if not case_sensitive:
     text1 = text1.upper()
     text2 = text2.upper()
-
-
 
     return text1 == text2
 
@@ -315,3 +320,5 @@ def normalize_text_for_comparison(text: str) -> str:
     text = ' '.join(text.split())
 
     return text
+
+
