@@ -81,7 +81,7 @@ class InferenceHandler:
             reject_scheduler: RejectScheduler instance for scheduling reject actions
         """
         self.camera_matchers: Dict[str, Any] = {}  # Map serial_number -> matcher
-        self.engine_path = f"{home}/Source/ocr_datecode/weights/pipeline_fp16_dynamic_480x640.engine"
+        self.engine_path = f"{home}/Source/ocr_datecode/weights/pipeline_fp16_dynamic_480_640.engine"
 
         # Text recognizer for Check_Type_Product function
         self.text_recognizer = None
@@ -119,21 +119,30 @@ class InferenceHandler:
                 logger.info(f"OCR Backend availability - TensorRT: {TRT_AVAILABLE}, ONNX: {ONNX_AVAILABLE}")
 
 
-                ocr_backend_choice = "onnx"
+                ocr_backend_choice = "tensorrt"
                 # Initialize selected backend
                 if ocr_backend_choice == "tensorrt" and TRT_AVAILABLE:
                     # Use TensorRT backend
-
                     ocr_engine_path = f"{home}/Source/ocr_datecode/languages/english/rec.engine"
                     ocr_dict_path = f"{home}/Source/ocr_datecode/languages/english/dict.txt"
+
+                    # Check file existence
+                    if not os.path.exists(ocr_engine_path):
+                        raise FileNotFoundError(f"TensorRT engine not found: {ocr_engine_path}")
+                    if not os.path.exists(ocr_dict_path):
+                        raise FileNotFoundError(f"Dict file not found: {ocr_dict_path}")
+
+                    logger.info(f"Loading TensorRT engine from: {ocr_engine_path}")
                     self.text_recognizer = get_text_recognizer_trt(
                         engine_path=ocr_engine_path,
                         dict_path=ocr_dict_path,
-                        min_width=320,
+                        min_width=50,
                         max_width=2000
                     )
                     self.ocr_backend = "tensorrt"
                     logger.info("✅ Text recognizer initialized with TensorRT backend")
+                    logger.info(f"   Engine: {ocr_engine_path}")
+                    logger.info(f"   Dict: {ocr_dict_path}")
 
                 elif ocr_backend_choice == "onnx" and ONNX_AVAILABLE:
 

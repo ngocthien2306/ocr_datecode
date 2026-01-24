@@ -158,6 +158,7 @@ weights/pipeline_fp16_batch6.engine
 weights/pipeline_fp16_dynamic.engine
 weights/pipeline_fp16_small.engine
 weights/superpoint_lightglue_pipeline.onnx
+weights/superpoint_lightglue_small.onnx
 
 pylon_env/
 data/

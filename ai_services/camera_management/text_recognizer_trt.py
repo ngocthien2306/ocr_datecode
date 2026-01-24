@@ -33,7 +33,7 @@ class TextRecognizerTRT:
     - Auto-padding for character dictionary
     """
 
-    def __init__(self, engine_path: str, dict_path: str, min_width: int = 320, max_width: int = 2000):
+    def __init__(self, engine_path: str, dict_path: str, min_width: int = 50, max_width: int = 2000):
         """
         Initialize TensorRT text recognizer
 
@@ -260,35 +260,37 @@ class TextRecognizerTRT:
         """
         Decode CTC output to text with confidence scores
 
+        NOTE: This implementation matches ONNX text_recognizer.py for consistency:
+        - Uses raw logits (not softmax) for confidence calculation
+        - Collects confidence for all timesteps (not just decoded chars)
+
         Args:
             preds: Model output [batch_size, sequence_length, num_classes]
 
         Returns:
             Tuple of (text, average_confidence)
         """
-        pred = preds[0]
-        softmax_preds = self._softmax(pred)
-        best_path = np.argmax(softmax_preds, axis=-1)
-        
-        confidences = []
+        pred = preds[0]  # Shape: (timesteps, num_classes)
+
+        best_path = np.argmax(pred, axis=-1)
+
+        # Collect ALL confidences (same as ONNX)
+        all_confidences = []
+        for t, char_idx in enumerate(best_path):
+            all_confidences.append(float(pred[t, char_idx]))
+
+        # Decode text (same as ONNX)
         decoded_chars = []
         prev_idx = -1
-        num_classes = softmax_preds.shape[-1]
-        
-        for t, char_idx in enumerate(best_path):
+        for char_idx in best_path:
             if char_idx != 0 and char_idx != prev_idx:
                 if char_idx < len(self.char_list):
                     decoded_chars.append(self.char_list[char_idx])
-                    confidences.append(float(softmax_preds[t, char_idx]))
-                elif char_idx < num_classes:
-                    # Unknown character
-                    decoded_chars.append('�')
-                    confidences.append(float(softmax_preds[t, char_idx]))
             prev_idx = char_idx
-        
+
         text = ''.join(decoded_chars)
-        avg_confidence = np.mean(confidences) if confidences else 0.0
-        
+        avg_confidence = np.mean(all_confidences) if all_confidences else 0.0
+
         return text, float(avg_confidence)
 
     def recognize(self, image: np.ndarray, return_confidence: bool = True):
@@ -382,7 +384,7 @@ _text_recognizer_instance = None
 def get_text_recognizer(
     engine_path: str = None,
     dict_path: str = None,
-    min_width: int = 320,
+    min_width: int = 50,
     max_width: int = 2000
 ) -> TextRecognizerTRT:
     """

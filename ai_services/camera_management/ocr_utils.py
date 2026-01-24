@@ -52,25 +52,27 @@ def preprocess_text_image(
     ratio = target_height / h
     new_w = int(w * ratio)
 
-    # Store original width for padding logic
-    original_w = new_w
-    new_w = max(new_w, min_width)
-    new_w = min(new_w, max_width)
+    # Ensure minimum width of at least 10px
+    new_w = max(new_w, 10)
 
-    resized = cv2.resize(gray, (original_w, target_height))
+    # Resize maintaining aspect ratio
+    resized = cv2.resize(gray, (new_w, target_height))
 
-    # Pad to min_width if necessary
-    if original_w < min_width:
-        pad_width = min_width - original_w
+    # Only pad if width is less than min_width (for TensorRT engine constraints)
+    if new_w < min_width:
+        pad_width = min_width - new_w
         resized = cv2.copyMakeBorder(
             resized,
             0, 0, 0, pad_width,  # top, bottom, left, right
             cv2.BORDER_CONSTANT,
             value=0  # Pad with black
         )
-    elif original_w > max_width:
-        # Resize to max_width if too large
+        new_w = min_width
+
+    # Resize if width exceeds max_width
+    if new_w > max_width:
         resized = cv2.resize(resized, (max_width, target_height))
+        new_w = max_width
 
     # Normalize to [0, 1]
     normalized = resized.astype(np.float32) / 255.0

@@ -781,6 +781,99 @@ async def get_recipe(
     return recipe_to_response(recipe)
 
 
+@router.post("/{recipe_id}/clone", response_model=RecipeResponse, status_code=status.HTTP_201_CREATED)
+async def clone_recipe(
+    recipe_id: str,
+    request: Request,
+    current_user: UserInDB = Depends(require_supervisor),
+    recipe_repo: RecipeRepository = Depends(get_recipe_repository),
+    action_log_repo: ActionLogRepository = Depends(get_action_log_repository)
+):
+    """
+    Clone an existing recipe with a new ID.
+
+    **Permission**: Supervisor and Admin only
+
+    The cloned recipe will have:
+    - A new unique ID (UUID)
+    - Name with " (Copy)" suffix
+    - Same is_active status as original
+    - All other settings identical to the original
+    """
+    # Get original recipe
+    original_recipe = await recipe_repo.get_by_id(recipe_id)
+    if not original_recipe:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recipe not found"
+        )
+
+    # Create new recipe name with (Copy) suffix
+    new_name = f"{original_recipe.name} (Copy)"
+
+    # Check if recipe with this name already exists
+    counter = 1
+    final_name = new_name
+    while await recipe_repo.get_by_name(final_name):
+        counter += 1
+        final_name = f"{original_recipe.name} (Copy {counter})"
+
+    # Convert Pydantic models to dict for RecipeCreate
+    # Helper function to convert model or list of models to dict
+    def to_dict(obj):
+        if obj is None:
+            return None
+        if isinstance(obj, list):
+            return [item.model_dump() if hasattr(item, 'model_dump') else item for item in obj]
+        if hasattr(obj, 'model_dump'):
+            return obj.model_dump()
+        return obj
+
+    # Create new recipe data from original
+    recipe_data = RecipeCreate(
+        name=final_name,
+        product_code=original_recipe.product_code,
+        description=original_recipe.description,
+        cameras=to_dict(original_recipe.cameras) or [],
+        camera_templates=to_dict(original_recipe.camera_templates) or [],
+        delay_reject=original_recipe.delay_reject,
+        do_reject_number=original_recipe.do_reject_number,
+        camera_settings=to_dict(original_recipe.camera_settings),
+        model_thresholds=to_dict(original_recipe.model_thresholds),
+        template_config=original_recipe.template_config,
+        roi_config=original_recipe.roi_config,
+        is_active=original_recipe.is_active
+    )
+
+    # Create the cloned recipe
+    cloned_recipe = await recipe_repo.create(recipe_data, current_user.id)
+
+    # Log the action
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    action_log = ActionLogCreate(
+        user_id=current_user.id,
+        username=current_user.username,
+        action_type=ActionType.CREATE_RECIPE,
+        resource_type="recipe",
+        resource_id=cloned_recipe.id,
+        description=f"Cloned recipe '{original_recipe.name}' to '{cloned_recipe.name}' (from ID: {recipe_id})",
+        new_value={
+            "name": cloned_recipe.name,
+            "product_code": cloned_recipe.product_code,
+            "description": cloned_recipe.description,
+            "is_active": cloned_recipe.is_active,
+            "cloned_from": recipe_id
+        },
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
+    await action_log_repo.create_action_log(action_log)
+
+    return recipe_to_response(cloned_recipe)
+
+
 @router.post("/{recipe_id}/load", response_model=ReceiptLoadResponse)
 async def load_recipe(
     recipe_id: str,
