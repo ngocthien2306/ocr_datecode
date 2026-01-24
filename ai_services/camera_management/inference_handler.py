@@ -67,7 +67,7 @@ class InferenceHandler:
             reject_scheduler: RejectScheduler instance for scheduling reject actions
         """
         self.camera_matchers: Dict[str, Any] = {}  # Map serial_number -> matcher
-        self.engine_path = f"{home}/Source/ocr_datecode/weights/pipeline_fp16_dynamic_1280x720.engine"
+        self.engine_path = f"{home}/Source/ocr_datecode/weights/pipeline_fp16_dynamic_480x640.engine"
 
         # Text recognizer for Check_Type_Product function
         self.text_recognizer = None
@@ -749,7 +749,11 @@ class InferenceHandler:
             ]
 
             print("TRANSFORMED_BOXES: ", template_bboxes)
-            similarity_threshold = template_bboxes[0]['conf'] if template_bboxes else similarity_threshold
+            try:
+                similarity_threshold = template_bboxes[0]['conf'] if template_bboxes else similarity_threshold
+            except Exception as e:
+                similarity_threshold = similarity_threshold
+                
             logger.info(f"[{camera.serial_number}] Verifying {len(template_bboxes)} template regions")
 
             if not template_bboxes:

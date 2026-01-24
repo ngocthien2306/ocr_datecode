@@ -206,7 +206,19 @@ def compare_texts(text1: str, text2: str, case_sensitive: bool = False, strip: b
     text1 = text1.upper()
     text2 = text2.upper()
 
-    return text1 == text2
+    # Compare character by character, treating O/0 as equivalent
+    if len(text1) != len(text2):
+        return False
+
+    for c1, c2 in zip(text1, text2):
+        if c1 == c2:
+            continue
+        # Treat O and 0 as equivalent
+        if {c1, c2} == {'O', '0'}:
+            continue
+        return False
+
+    return True
 
 
 def draw_text_on_image(
