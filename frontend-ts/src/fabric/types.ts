@@ -27,7 +27,9 @@ export const ANNOTATION_TYPES = {
   BARCODE: 'barcode',
   TEMPLATE: 'template',
   CROP_AREA: 'crop_area',
-  DATECODE: 'datecode'
+  DATECODE: 'datecode',
+  PRODUCT: 'product',
+  LABEL: 'label'
 };
 
 export const SHAPE_TYPES = {
@@ -40,5 +42,8 @@ export const TYPE_CONFIGS = [
   { value: 'barcode', label: 'Barcode', color: '#ffdc5c', needsText: false },
   { value: 'template', label: 'Template Match', color: '#ff5555', needsText: false },
   { value: 'crop_area', label: 'Crop Area', color: '#ff64ff', needsText: false },
-  { value: 'datecode', label: 'Date Code', color: '#5096ff', needsText: true }
+  { value: 'datecode', label: 'Date Code', color: '#5096ff', needsText: true },
+  { value: 'product', label: 'Product', color: '#7513dd', needsText: false },
+  { value: 'label', label: 'Label', color: '#ad6df1', needsText: false },
+
 ];

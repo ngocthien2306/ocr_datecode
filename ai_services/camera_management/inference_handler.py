@@ -2,6 +2,7 @@ import logging
 import os
 import cv2
 import json
+import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
@@ -15,17 +16,30 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Import inference service
+# Import inference service (optimized version with shared engine)
 try:
     import sys
     ai_services_path = Path(__file__).parent.parent
     if str(ai_services_path) not in sys.path:
         sys.path.insert(0, str(ai_services_path))
-    from inference_service import SuperPointMatcherTRT
+
+    # Try optimized version first (shared engine - saves memory)
+    try:
+        from inference_engine_shared import SuperPointMatcherTRTOptimized as SuperPointMatcherTRT
+        from inference_engine_shared import SuperPointEngineTRT, TemplateConfig
+        USING_OPTIMIZED_ENGINE = True
+        logger.info("✅ Using optimized shared TensorRT engine")
+    except ImportError:
+        # Fall back to original implementation
+        from inference_service import SuperPointMatcherTRT
+        USING_OPTIMIZED_ENGINE = False
+        logger.info("⚠️ Using legacy TensorRT engine (not optimized)")
+
     INFERENCE_AVAILABLE = True
 except Exception as e:
     logging.warning(f"Inference service not available: {e}")
     INFERENCE_AVAILABLE = False
+    USING_OPTIMIZED_ENGINE = False
     SuperPointMatcherTRT = None
 
 # Import text recognizers (both TensorRT and ONNX)
@@ -213,6 +227,7 @@ class InferenceHandler:
             img_h, img_w = template_img.shape[:2]
 
             # First pass: find crop_area annotation
+
             for ann in annotations:
                 if ann.get("type") == "crop_area":
                     x, y = ann.get("x", 0), ann.get("y", 0)
@@ -269,6 +284,20 @@ class InferenceHandler:
                         "annotation_index": ann_idx,  # Keep original index
                         "conf": conf
                     }
+                
+                elif ann_type == "product":
+                    x, y = ann.get("x", 0), ann.get("y", 0)
+                    w, h = ann.get("width", 0), ann.get("height", 0)
+
+                    x1, y1 = int(x * img_w), int(y * img_h)
+                    x2, y2 = int((x + w) * img_w), int((y + h) * img_h)
+
+                    other_bboxes.append({
+                        "type": "product",
+                        "points": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]],
+                        "annotation_index": ann_idx,  # Keep original index
+                        "conf": conf
+                    })
 
                 elif ann_type in ["text", "barcode", "datecode"]:
                     pixel_points = []
@@ -456,7 +485,16 @@ class InferenceHandler:
                         initialized_count += 1
                         logger.info(f"✅ [{serial_number}] Matcher initialized (first template)")
 
-            logger.info(f"Initialized {initialized_count} matchers using dynamic batch engine")
+            if USING_OPTIMIZED_ENGINE:
+                logger.info(
+                    f"✅ Initialized {initialized_count} matchers using SHARED TensorRT engine "
+                    f"(1 engine, {initialized_count} template configs)"
+                )
+            else:
+                logger.info(
+                    f"⚠️ Initialized {initialized_count} matchers using LEGACY mode "
+                    f"({initialized_count} separate engines - high memory usage)"
+                )
             return initialized_count
 
         except Exception as e:
@@ -730,6 +768,150 @@ class InferenceHandler:
                     # Replace expected text with recognized text
                     bbox['text'] = recognized_map[annotation_idx]
 
+    def batch_verify_text_regions_multi_camera(
+        self,
+        ocr_tasks: List[Dict[str, Any]]
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Batch OCR verification for ALL cameras at once.
+
+        Args:
+            ocr_tasks: List of tasks, each containing:
+                {
+                    'serial_number': str,
+                    'frame_img': np.ndarray,
+                    'transformed_bboxes': list,
+                    'expected_texts': dict,
+                    'camera': Camera,
+                    'recognition_threshold': float
+                }
+
+        Returns:
+            Dict mapping serial_number -> verification_result
+        """
+        if not self.text_recognizer or not OCR_AVAILABLE:
+            logger.warning("OCR model not available, skipping batch text verification")
+            return {task['serial_number']: {'all_match': False, 'results': []} for task in ocr_tasks}
+
+        # ========== PHASE 1: Collect ALL text regions from ALL cameras ==========
+        all_cropped_regions = []
+        all_metadata = []  # Track which camera/annotation each region belongs to
+        path_save = f"{home}/Source/ocr_datecode/ai_services/test_result"
+
+        # Also track per-camera info for results
+        camera_bbox_counts = {}  # serial_number -> count of valid bboxes
+
+        for task in ocr_tasks:
+            serial_number = task['serial_number']
+            frame_img = task['frame_img']
+            transformed_bboxes = task['transformed_bboxes']
+            expected_texts = task['expected_texts']
+            camera = task['camera']
+
+            # Filter text bboxes
+            text_bboxes = [b for b in transformed_bboxes if b.get('type') == 'text']
+
+            logger.debug(f"[{serial_number}] Collecting {len(text_bboxes)} text regions for batch OCR")
+
+            valid_count = 0
+            for bbox in text_bboxes:
+                annotation_idx = bbox.get('annotation_index')
+                if annotation_idx is None:
+                    continue
+
+                points = bbox.get('points', [])
+                if len(points) < 4:
+                    continue
+
+                conf_threshold = bbox.get('conf', 0.8)
+                expected_text = expected_texts.get(annotation_idx, '')
+
+                try:
+                    cropped_region = crop_text_region(frame_img, points)
+                    cv2.imwrite(f"{path_save}/cropped_region_{serial_number}_{annotation_idx}.png", cropped_region)
+
+                    all_cropped_regions.append(cropped_region)
+                    all_metadata.append({
+                        'serial_number': serial_number,
+                        'annotation_idx': annotation_idx,
+                        'conf_threshold': conf_threshold,
+                        'expected_text': expected_text,
+                        'camera': camera
+                    })
+                    valid_count += 1
+                except Exception as e:
+                    logger.error(f"[{serial_number}] Error cropping annotation {annotation_idx}: {e}")
+
+            camera_bbox_counts[serial_number] = valid_count
+
+        if not all_cropped_regions:
+            logger.warning("No valid text regions to process")
+            return {task['serial_number']: {'all_match': True, 'results': []} for task in ocr_tasks}
+
+        # ========== PHASE 2: SINGLE BATCH OCR for ALL cameras ==========
+        logger.info(f"Running BATCH OCR on {len(all_cropped_regions)} regions from {len(ocr_tasks)} cameras")
+
+        try:
+            t0 = time.time()
+            if hasattr(self.text_recognizer, 'recognize_batch'):
+                ocr_results = self.text_recognizer.recognize_batch(all_cropped_regions)
+            else:
+                # Fallback to sequential
+                ocr_results = [
+                    self.text_recognizer.recognize(img, return_confidence=True)
+                    for img in all_cropped_regions
+                ]
+            ocr_time = (time.time() - t0) * 1000
+            logger.info(f"Batch OCR complete: {len(all_cropped_regions)} regions in {ocr_time:.1f}ms")
+        except Exception as e:
+            logger.error(f"Batch OCR failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return {task['serial_number']: {'all_match': False, 'results': [], 'error': str(e)} for task in ocr_tasks}
+
+        # ========== PHASE 3: Distribute results back to cameras ==========
+        camera_results = {task['serial_number']: {'all_match': True, 'results': []} for task in ocr_tasks}
+
+        for i, (text, confidence) in enumerate(ocr_results):
+            meta = all_metadata[i]
+            serial_number = meta['serial_number']
+            annotation_idx = meta['annotation_idx']
+            conf_threshold = meta['conf_threshold']
+            expected_text = meta['expected_text']
+            camera = meta['camera']
+
+            recognized_text = text.strip()
+
+            # Check confidence threshold
+            if confidence < conf_threshold:
+                logger.warning(
+                    f"[{serial_number}] Annotation {annotation_idx}: "
+                    f"Low confidence {confidence:.2%} < threshold {conf_threshold:.2%}"
+                )
+                match = False
+            else:
+                match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
+
+            if not match:
+                camera_results[serial_number]['all_match'] = False
+
+            camera_results[serial_number]['results'].append({
+                'annotation_idx': annotation_idx,
+                'expected': expected_text,
+                'recognized': recognized_text,
+                'match': match,
+                'confidence': confidence,
+                'threshold': conf_threshold,
+            })
+
+            logger.info(
+                f"[{serial_number}] Annotation {annotation_idx}: "
+                f"expected='{expected_text}', recognized='{recognized_text}', "
+                f"match={match}, conf={confidence:.2%}"
+            )
+
+        return camera_results
+
     def verify_template_regions(
         self,
         frame_img: 'np.ndarray',
@@ -748,7 +930,6 @@ class InferenceHandler:
                 if bbox.get('type') == 'template'
             ]
 
-            print("TRANSFORMED_BOXES: ", template_bboxes)
             try:
                 similarity_threshold = template_bboxes[0]['conf'] if template_bboxes else similarity_threshold
             except Exception as e:
@@ -1435,15 +1616,43 @@ class InferenceHandler:
                             f"cameras={len(serial_numbers)}"
                         )
 
-                        # Process results for each camera
+                        # ========== PRE-PROCESS: Transform all results first ==========
+                        transformed_results = {}
+                        for idx, serial_number in enumerate(serial_numbers):
+                            result = batch_result['results'][idx]
+                            crop_area = crop_areas[idx]
+                            transformed_results[serial_number] = self._transform_results_to_full_image(result, crop_area)
+
+                        # ========== BATCH OCR: Collect and run for ALL cameras ==========
+                        ocr_tasks = []
                         for idx, serial_number in enumerate(serial_numbers):
                             camera = cameras_to_process[idx]
-                            result = batch_result['results'][idx]
+                            result = transformed_results[serial_number]
                             first_frame = results[serial_number]['frames'][0]
-                            crop_area = crop_areas[idx]  # Get corresponding crop_area
 
-                            # Transform result back to full image coordinates
-                            result = self._transform_results_to_full_image(result, crop_area)
+                            if result.get('success', False) and camera.function_type == 'Check_Type_Product':
+                                frame_expected_texts = camera.expected_texts.get(0, {})
+                                if frame_expected_texts:
+                                    ocr_tasks.append({
+                                        'serial_number': serial_number,
+                                        'frame_img': first_frame,
+                                        'transformed_bboxes': result.get('transformed_bboxes', []),
+                                        'expected_texts': frame_expected_texts,
+                                        'camera': camera,
+                                        'recognition_threshold': getattr(camera, 'recognition_threshold', 0.5)
+                                    })
+
+                        # Run SINGLE batch OCR for ALL cameras
+                        if ocr_tasks:
+                            batch_ocr_results = self.batch_verify_text_regions_multi_camera(ocr_tasks)
+                        else:
+                            batch_ocr_results = {}
+
+                        # ========== PROCESS: Each camera with OCR results ==========
+                        for idx, serial_number in enumerate(serial_numbers):
+                            camera = cameras_to_process[idx]
+                            result = transformed_results[serial_number]
+                            first_frame = results[serial_number]['frames'][0]
 
                             inference_result_data = "PASS"
                             confidence = 0.0
@@ -1463,31 +1672,8 @@ class InferenceHandler:
 
                                 # Check function_type for specialized logic
                                 if camera.function_type == 'Check_Type_Product':
-                                    logger.info(f"Running text verification for {serial_number} (Check_Type_Product)")
-
-                                    # Get expected_texts for first template (template 0)
-                                    # In multi-camera batch, each camera uses first template only
-                                    logger.info(
-                                        f"[{serial_number}] camera.expected_texts structure: {camera.expected_texts}"
-                                    )
-                                    frame_expected_texts = camera.expected_texts.get(0, {})
-                                    logger.info(
-                                        f"[{serial_number}] Retrieved expected_texts for template 0: {frame_expected_texts}"
-                                    )
-
-                                    if not frame_expected_texts:
-                                        logger.warning(
-                                            f"[{serial_number}] No expected_texts found for template 0"
-                                        )
-
-                                    # Verify text regions
-                                    text_verification = self.verify_text_regions(
-                                        frame_img=first_frame,
-                                        transformed_bboxes=transformed_bboxes,
-                                        expected_texts=frame_expected_texts,
-                                        camera=camera,
-                                        recognition_threshold=getattr(camera, 'recognition_threshold', 0.5)
-                                    )
+                                    # Get pre-computed OCR results from batch
+                                    text_verification = batch_ocr_results.get(serial_number, {'all_match': True, 'results': []})
 
                                     # Update bboxes with recognized text for visualization
                                     self._update_bboxes_with_recognized_text(

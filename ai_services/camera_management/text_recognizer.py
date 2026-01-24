@@ -103,7 +103,6 @@ class TextRecognizer:
         return exp_x / np.sum(exp_x, axis=-1, keepdims=True)
     
     def recognize(self, image, return_confidence=True):
-        print("ONNX INFERENCE ...")
         tensor = self.preprocess(image)
         preds = self.session.run([self.output_name], {self.input_name: tensor})[0]
         
