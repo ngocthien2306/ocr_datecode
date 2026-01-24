@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import { inferenceResultsAPI, type InferenceResultResponse } from '@/services/inferenceResults';
 import { recipesAPI } from '@/services/api';
 import type { Recipe } from '@/types';
 import InspectionResultRow from './InspectionResultRow';
+import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import Toast from '@/components/shared/Toast';
 import { getDateRangeUTC, convertLocalToUTC, getTimezoneOffset, getTimezoneDisplay } from '@/utils/timezone';
 
 interface InspectionResultsTabProps {
@@ -29,6 +31,53 @@ const InspectionResultsTab: React.FC<InspectionResultsTabProps> = ({ dateRange }
   const [customStartDate, setCustomStartDate] = useState<Date | null>(null);
   const [customEndDate, setCustomEndDate] = useState<Date | null>(null);
   const [useCustomDateRange, setUseCustomDateRange] = useState(false);
+
+  // Confirm dialog state
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'warning' | 'danger' | 'info';
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'warning',
+    onConfirm: () => {}
+  });
+
+  // Toast state
+  const [toast, setToast] = useState<{
+    show: boolean;
+    message: string;
+    type: 'success' | 'error' | 'warning' | 'info';
+  }>({
+    show: false,
+    message: '',
+    type: 'info'
+  });
+
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info') => {
+    setToast({ show: true, message, type });
+  }, []);
+
+  const closeToast = useCallback(() => {
+    setToast(prev => ({ ...prev, show: false }));
+  }, []);
+
+  const showConfirm = useCallback((
+    title: string,
+    message: string,
+    onConfirm: () => void,
+    type: 'warning' | 'danger' | 'info' = 'warning'
+  ) => {
+    setConfirmDialog({ isOpen: true, title, message, type, onConfirm });
+  }, []);
+
+  const closeConfirm = useCallback(() => {
+    setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+  }, []);
 
   // Fetch recipes on mount
   useEffect(() => {
@@ -143,19 +192,22 @@ const InspectionResultsTab: React.FC<InspectionResultsTabProps> = ({ dateRange }
     setExpandedRows(newExpanded);
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this inspection result?')) {
-      return;
-    }
-
-    try {
-      await inferenceResultsAPI.delete(id);
-      // Refresh results
-      fetchResults();
-    } catch (error) {
-      console.error('Error deleting result:', error);
-      alert('Failed to delete result');
-    }
+  const handleDelete = (id: string) => {
+    showConfirm(
+      'Delete Result',
+      'Are you sure you want to delete this inspection result?',
+      async () => {
+        try {
+          await inferenceResultsAPI.delete(id);
+          showToast('Result deleted successfully', 'success');
+          fetchResults();
+        } catch (error) {
+          console.error('Error deleting result:', error);
+          showToast('Failed to delete result', 'error');
+        }
+      },
+      'danger'
+    );
   };
 
   const toggleRowSelected = (id: string) => {
@@ -180,27 +232,49 @@ const InspectionResultsTab: React.FC<InspectionResultsTabProps> = ({ dateRange }
     }
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkDelete = () => {
     if (selectedRows.size === 0) {
-      alert('Please select at least one result to delete');
+      showToast('Please select at least one result to delete', 'warning');
       return;
     }
 
-    if (!confirm(`Are you sure you want to delete ${selectedRows.size} inspection result(s)?`)) {
-      return;
-    }
+    showConfirm(
+      'Delete Selected Results',
+      `Are you sure you want to delete ${selectedRows.size} inspection result(s)?`,
+      async () => {
+        try {
+          // Delete all selected rows, tracking successes and failures
+          const ids = Array.from(selectedRows);
+          const deleteResults = await Promise.allSettled(ids.map(id => inferenceResultsAPI.delete(id)));
 
-    try {
-      // Delete all selected rows
-      await Promise.all(Array.from(selectedRows).map(id => inferenceResultsAPI.delete(id)));
+          const failures = deleteResults.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+          const successes = deleteResults.filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled');
 
-      // Clear selection and refresh
-      setSelectedRows(new Set());
-      fetchResults();
-    } catch (error) {
-      console.error('Error bulk deleting results:', error);
-      alert('Failed to delete some results');
-    }
+          if (failures.length > 0) {
+            console.error('Failed to delete some results:', failures.map((f) => ({
+              id: ids[deleteResults.indexOf(f)],
+              error: f.reason
+            })));
+
+            if (successes.length > 0) {
+              showToast(`Deleted ${successes.length} result(s), but ${failures.length} failed.`, 'warning');
+            } else {
+              showToast(`Failed to delete ${failures.length} result(s).`, 'error');
+            }
+          } else {
+            showToast(`Successfully deleted ${successes.length} result(s).`, 'success');
+          }
+
+          // Clear selection and refresh
+          setSelectedRows(new Set());
+          fetchResults();
+        } catch (error) {
+          console.error('Error bulk deleting results:', error);
+          showToast('Failed to delete results', 'error');
+        }
+      },
+      'danger'
+    );
   };
 
   // Get user role for permissions
@@ -475,6 +549,27 @@ const InspectionResultsTab: React.FC<InspectionResultsTabProps> = ({ dateRange }
           </>
         )}
       </div>
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        onClose={closeConfirm}
+        onConfirm={confirmDialog.onConfirm}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+        confirmText="Delete"
+        cancelText="Cancel"
+      />
+
+      {/* Toast */}
+      {toast.show && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={closeToast}
+        />
+      )}
     </div>
   );
 };

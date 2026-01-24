@@ -85,16 +85,27 @@ class InferenceResultRepository:
             Result or None
         """
         try:
-            result = await self.collection.find_one({"_id": ObjectId(result_id)})
+            logger.debug(f"Looking up result by ID: {result_id}")
+
+            # Validate ObjectId format
+            if not ObjectId.is_valid(result_id):
+                logger.warning(f"Invalid ObjectId format: {result_id}")
+                return None
+
+            
+            result = await self.collection.find_one({"_id": result_id})
 
             if result:
                 result["_id"] = str(result["_id"])
+                logger.debug(f"Found result: {result['_id']}")
                 return InferenceResultResponse(**result)
 
+            logger.debug(f"No result found for ID: {result_id}")
             return None
 
         except Exception as e:
-            logger.error(f"Error getting result by ID: {e}")
+            traceback.print_exc()
+            logger.error(f"Error getting result by ID {result_id}: {e}")
             return None
 
     async def get_all(
@@ -192,14 +203,15 @@ class InferenceResultRepository:
         Delete inference result by ID
 
         Args:
-            result_id: Result ID
+            result_id: Result ID (stored as string in MongoDB)
 
         Returns:
             True if deleted
         """
         try:
+            # Query by string _id (not ObjectId) since documents are stored with string _id
             delete_result = await self.collection.delete_one(
-                {"_id": ObjectId(result_id)}
+                {"_id": result_id}
             )
             return delete_result.deleted_count > 0
 

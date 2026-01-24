@@ -101,72 +101,6 @@ async def get_inference_results_count(
 
 
 @router.get(
-    "/{result_id}",
-    response_model=InferenceResultResponse,
-    summary="Get inference result by ID"
-)
-async def get_inference_result(
-    result_id: str,
-    db=Depends(get_database),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Get a specific inference result by ID.
-
-    Returns: Inference result details
-    """
-    repo = InferenceResultRepository(db)
-    result = await repo.get_by_id(result_id)
-
-    if not result:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Inference result with ID '{result_id}' not found"
-        )
-
-    return result
-
-
-@router.delete(
-    "/{result_id}",
-    summary="Delete inference result"
-)
-async def delete_inference_result(
-    result_id: str,
-    db=Depends(get_database),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Delete an inference result by ID.
-
-    Returns: Success status
-    """
-    repo = InferenceResultRepository(db)
-
-    # Check if exists
-    existing = await repo.get_by_id(result_id)
-    if not existing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Inference result with ID '{result_id}' not found"
-        )
-
-    # Delete
-    success = await repo.delete_by_id(result_id)
-
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete inference result"
-        )
-
-    return {
-        "success": True,
-        "message": f"Inference result '{result_id}' deleted successfully"
-    }
-
-
-@router.get(
     "/statistics/summary",
     response_model=SummaryStatisticsResponse,
     summary="Get summary statistics"
@@ -286,3 +220,71 @@ async def get_timeseries_statistics(
 
     logger.info(f"📈 Timeseries statistics: {len(result.data)} data points ({granularity})")
     return result
+
+
+@router.get(
+    "/{result_id}",
+    response_model=InferenceResultResponse,
+    summary="Get inference result by ID"
+)
+async def get_inference_result(
+    result_id: str,
+    db=Depends(get_database),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get a specific inference result by ID.
+
+    Returns: Inference result details
+    """
+    repo = InferenceResultRepository(db)
+    result = await repo.get_by_id(result_id)
+
+    if not result:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Inference result with ID '{result_id}' not found"
+        )
+
+    return result
+
+
+@router.delete(
+    "/{result_id}",
+    summary="Delete inference result"
+)
+async def delete_inference_result(
+    result_id: str,
+    db=Depends(get_database),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Delete an inference result by ID.
+
+    Returns: Success status
+    """
+    logger.info(f"DELETE request for result_id: {result_id}")
+    repo = InferenceResultRepository(db)
+
+    # Check if exists
+    existing = await repo.get_by_id(result_id)
+    if not existing:
+        logger.warning(f"Result not found for deletion: {result_id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Inference result with ID '{result_id}' not found"
+        )
+
+    # Delete
+    success = await repo.delete_by_id(result_id)
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete inference result"
+        )
+
+    return {
+        "success": True,
+        "message": f"Inference result '{result_id}' deleted successfully"
+    }

@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import ReactDOM from 'react-dom';
 import '@/styles/Toast.css';
 
 interface ToastProps {
@@ -24,12 +25,16 @@ const Toast: React.FC<ToastProps> = ({ message, type = 'info', duration = 3000, 
     info: 'ℹ'
   };
 
-  return (
-    <div className={`toast toast-${type}`} onClick={onClose}>
-      <div className="toast-icon">{icons[type]}</div>
-      <div className="toast-message">{message}</div>
-      <button className="toast-close" onClick={onClose}>×</button>
-    </div>
+  // Use portal to render at document body level
+  return ReactDOM.createPortal(
+    <div className="toast-container">
+      <div className={`toast toast-${type}`} onClick={onClose}>
+        <div className="toast-icon">{icons[type]}</div>
+        <div className="toast-message">{message}</div>
+        <button className="toast-close" onClick={onClose}>×</button>
+      </div>
+    </div>,
+    document.body
   );
 };
 
