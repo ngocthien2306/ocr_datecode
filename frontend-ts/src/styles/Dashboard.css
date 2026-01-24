@@ -1816,6 +1816,14 @@ body.dark-mode .camera-management .status-badge.info {
   background: #d1fae5;
 }
 
+.action-btn.clone {
+  color: #8b5cf6;
+}
+
+.action-btn.clone:hover {
+  background: #ede9fe;
+}
+
 .action-btn.reset-password {
   color: #f59e0b;
 }
@@ -2382,6 +2390,14 @@ body.dark-mode .action-btn.download {
 
 body.dark-mode .action-btn.download:hover {
   background: #064e3b;
+}
+
+body.dark-mode .action-btn.clone {
+  color: #a78bfa;
+}
+
+body.dark-mode .action-btn.clone:hover {
+  background: #4c1d95;
 }
 
 /* Dark mode for Load button */

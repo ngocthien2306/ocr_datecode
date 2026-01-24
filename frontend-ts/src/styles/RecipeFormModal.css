@@ -703,6 +703,37 @@
   margin-top: 4px;
 }
 
+.template-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.btn-move-template {
+  padding: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s;
+  opacity: 0.5;
+  flex-shrink: 0;
+  color: #6b7280;
+}
+
+.btn-move-template:hover:not(:disabled) {
+  background-color: #e0e7ff;
+  opacity: 1;
+  color: #4f46e5;
+}
+
+.btn-move-template:disabled {
+  opacity: 0.2;
+  cursor: not-allowed;
+}
+
 .btn-delete-template {
   padding: 8px;
   background: none;
@@ -713,6 +744,7 @@
   font-size: 18px;
   opacity: 0.5;
   flex-shrink: 0;
+  color: #ef4444;
 }
 
 .btn-delete-template:hover {
@@ -1872,6 +1904,65 @@ body.dark-mode .empty-state {
 
 body.dark-mode .empty-state .hint {
   color: #6b7280;
+}
+
+/* Dark mode template items */
+body.dark-mode .template-item {
+  background: #1f2937;
+  border-color: #374151;
+}
+
+body.dark-mode .template-item:hover {
+  border-color: #60a5fa;
+  box-shadow: 0 2px 8px rgba(96, 165, 250, 0.15);
+}
+
+body.dark-mode .template-item.active {
+  border-color: #60a5fa;
+  background-color: #1e3a8a;
+}
+
+body.dark-mode .template-item.invalid {
+  border-color: #f87171;
+  background-color: #7f1d1d;
+}
+
+body.dark-mode .template-item.invalid.active {
+  border-color: #dc2626;
+  background-color: #991b1b;
+}
+
+body.dark-mode .template-thumbnail {
+  border-color: #4b5563;
+  background: #111827;
+}
+
+body.dark-mode .template-name-input {
+  background: #374151;
+  color: #f3f4f6;
+  border-color: #4b5563;
+}
+
+body.dark-mode .template-name-input:focus {
+  background: #4b5563;
+  border-color: #60a5fa;
+}
+
+body.dark-mode .btn-move-template {
+  color: #9ca3af;
+}
+
+body.dark-mode .btn-move-template:hover:not(:disabled) {
+  background-color: #312e81;
+  color: #818cf8;
+}
+
+body.dark-mode .btn-delete-template {
+  color: #f87171;
+}
+
+body.dark-mode .btn-delete-template:hover {
+  background-color: #7f1d1d;
 }
 
 /* Dark mode responsive */

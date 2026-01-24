@@ -290,16 +290,48 @@ export default function Receipts() {
     setSelectedRecipe(null);
   };
 
-  const handleDownloadReceipt = (receipt: Receipt) => {
-    // Download receipt as JSON or PDF
-    const dataStr = JSON.stringify(receipt, null, 2);
-    const dataBlob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(dataBlob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `receipt_${receipt.id}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
+  const handleCloneReceipt = async (receipt: Receipt) => {
+    try {
+      const clonedRecipe = await receiptsAPI.cloneReceipt(receipt.id);
+      toast.success(`Recipe "${receipt.name}" cloned successfully as "${clonedRecipe.name}"!`);
+
+      // Reload receipts to show the new cloned recipe
+      await loadReceipts();
+      await loadStatistics();
+
+      // Transform the cloned recipe to Receipt type for editing
+      const clonedReceipt: Receipt = {
+        id: clonedRecipe.id,
+        name: clonedRecipe.name,
+        productCode: clonedRecipe.product_code,
+        date: clonedRecipe.created_at ? new Date(clonedRecipe.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        camera: `Camera Settings: ${clonedRecipe.camera_settings?.exposure_time || 'N/A'}ms`,
+        products: 0,
+        passed: 0,
+        failed: 0,
+        operator: clonedRecipe.created_by_name || clonedRecipe.created_by || 'System',
+        status: (clonedRecipe.is_active ? 'Active' : 'Inactive') as 'Active' | 'Inactive',
+        description: clonedRecipe.description || '',
+        cameras: clonedRecipe.cameras || [],
+        camera_templates: clonedRecipe.camera_templates || [],
+        delay_reject: clonedRecipe.delay_reject,
+        do_reject_number: clonedRecipe.do_reject_number,
+        cameraSettings: clonedRecipe.camera_settings,
+        modelThresholds: clonedRecipe.model_thresholds,
+        template_config: clonedRecipe.template_config,
+        roi_config: clonedRecipe.roi_config,
+        is_active: clonedRecipe.is_active,
+        createdAt: clonedRecipe.created_at || new Date().toISOString(),
+        updatedAt: clonedRecipe.updated_at || new Date().toISOString()
+      };
+
+      // Open edit modal for the cloned recipe
+      handleEditReceipt(clonedReceipt);
+    } catch (error: any) {
+      console.error('Error cloning receipt:', error);
+      const errorMsg = error.response?.data?.detail || 'Failed to clone recipe. Please try again.';
+      toast.error(errorMsg);
+    }
   };
 
   const handleLoadReceipt = async (receipt: Receipt) => {
@@ -932,17 +964,18 @@ export default function Receipts() {
                             <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                           </svg>
                         </button>
-                        <button 
-                          className="action-btn download" 
-                          title="Download"
-                          onClick={() => handleDownloadReceipt(receipt)}
-                        >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                            <path d="M21 15V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                            <polyline points="7,10 12,15 17,10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                            <line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                        </button>
+                        {canPerformAction('create', 'receipt') && (
+                          <button
+                            className="action-btn clone"
+                            title="Clone Recipe"
+                            onClick={() => handleCloneReceipt(receipt)}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                              <path d="M5 15H4C3.46957 15 2.96086 14.7893 2.58579 14.4142C2.21071 14.0391 2 13.5304 2 13V4C2 3.46957 2.21071 2.96086 2.58579 2.58579C2.96086 2.21071 3.46957 2 4 2H13C13.5304 2 14.0391 2.21071 14.4142 2.58579C14.7893 2.96086 15 3.46957 15 4V5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          </button>
+                        )}
                         {canPerformAction('delete', 'receipt') && (
                           <button 
                             className="action-btn delete" 

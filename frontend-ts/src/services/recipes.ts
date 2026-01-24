@@ -46,6 +46,11 @@ export const recipesAPI = {
     const response = await api.delete(`/recipes/${recipeId}`);
     return response.data;
   },
+
+  cloneRecipe: async (recipeId: string): Promise<Recipe> => {
+    const response = await api.post<Recipe>(`/recipes/${recipeId}/clone`);
+    return response.data;
+  },
 };
 
 export const receiptsAPI = {
@@ -75,6 +80,10 @@ export const receiptsAPI = {
 
   deleteReceipt: async (receiptId: string): Promise<{ message?: string }> => {
     return recipesAPI.deleteRecipe(receiptId);
+  },
+
+  cloneReceipt: async (receiptId: string): Promise<Recipe> => {
+    return recipesAPI.cloneRecipe(receiptId);
   },
 
   getStatistics: async (): Promise<Statistics & { recipes: Recipe[] }> => {

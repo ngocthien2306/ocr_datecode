@@ -754,7 +754,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   
   const handleRenameTemplate = (templateIndex: number, newName: string) => {
     if (!selectedCameraForTemplate) return;
-    
+
     setCameraTemplates(prev => {
       const templates = prev[selectedCameraForTemplate] || [];
       const updated = [...templates];
@@ -764,6 +764,34 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           name: newName
         };
       }
+      return {
+        ...prev,
+        [selectedCameraForTemplate]: updated
+      };
+    });
+  };
+
+  const handleMoveTemplate = (templateIndex: number, direction: 'up' | 'down') => {
+    if (!selectedCameraForTemplate) return;
+
+    setCameraTemplates(prev => {
+      const templates = prev[selectedCameraForTemplate] || [];
+      const newIndex = direction === 'up' ? templateIndex - 1 : templateIndex + 1;
+
+      // Check bounds
+      if (newIndex < 0 || newIndex >= templates.length) return prev;
+
+      // Swap templates
+      const updated = [...templates];
+      [updated[templateIndex], updated[newIndex]] = [updated[newIndex], updated[templateIndex]];
+
+      // Update selected index to follow the moved template
+      if (selectedTemplateIndex === templateIndex) {
+        setSelectedTemplateIndex(newIndex);
+      } else if (selectedTemplateIndex === newIndex) {
+        setSelectedTemplateIndex(templateIndex);
+      }
+
       return {
         ...prev,
         [selectedCameraForTemplate]: updated
@@ -1410,29 +1438,59 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                   </div>
                                 )}
                               </div>
-                              <button
-                                type="button"
-                                className="btn-delete-template"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setConfirmDialog({
-                                    isOpen: true,
-                                    title: 'Delete Template',
-                                    message: `Are you sure you want to delete ${template.name}?\n\nThis action cannot be undone.`,
-                                    type: 'danger',
-                                    onConfirm: () => {
-                                      handleDeleteTemplate(idx);
-                                    }
-                                  });
-                                }}
-                                title="Delete template"
-                                style={{ display: canPerformAction('deleteTemplate', 'template') ? 'block' : 'none' }}
-                              >
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                                  <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                  <path d="M10 11v6M14 11v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                                </svg>
-                              </button>
+                              <div className="template-actions">
+                                <button
+                                  type="button"
+                                  className="btn-move-template"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleMoveTemplate(idx, 'up');
+                                  }}
+                                  disabled={idx === 0}
+                                  title="Move up"
+                                >
+                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                                    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-move-template"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleMoveTemplate(idx, 'down');
+                                  }}
+                                  disabled={idx === (cameraTemplates[selectedCameraForTemplate]?.length || 0) - 1}
+                                  title="Move down"
+                                >
+                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                                    <path d="M12 5v14M19 12l-7 7-7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-delete-template"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setConfirmDialog({
+                                      isOpen: true,
+                                      title: 'Delete Template',
+                                      message: `Are you sure you want to delete ${template.name}?\n\nThis action cannot be undone.`,
+                                      type: 'danger',
+                                      onConfirm: () => {
+                                        handleDeleteTemplate(idx);
+                                      }
+                                    });
+                                  }}
+                                  title="Delete template"
+                                  style={{ display: canPerformAction('deleteTemplate', 'template') ? 'block' : 'none' }}
+                                >
+                                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                                    <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                    <path d="M10 11v6M14 11v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                                  </svg>
+                                </button>
+                              </div>
                             </div>
                           );
                         })}
