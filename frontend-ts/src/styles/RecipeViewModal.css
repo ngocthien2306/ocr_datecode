@@ -249,6 +249,197 @@
   overflow-y: auto;
 }
 
+/* ========== Recipe View Template Styles (scoped with rv- prefix) ========== */
+
+.rv-camera-template {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.rv-camera-template h4 {
+  margin: 0 0 12px 0;
+  color: #1e293b;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.rv-function-type {
+  color: #64748b;
+  font-size: 0.9rem;
+  font-weight: 400;
+  font-style: italic;
+}
+
+.rv-template-container {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+}
+
+.rv-template-header {
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.rv-template-header h5 {
+  margin: 0 0 4px 0;
+  color: #334155;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.rv-template-meta {
+  display: flex;
+  gap: 16px;
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+.rv-template-content {
+  display: grid;
+  grid-template-columns: 620px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.rv-template-image-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rv-zoom-hint {
+  text-align: center;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.rv-annotations-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rv-annotations-section h6 {
+  margin: 0 0 8px 0;
+  color: #475569;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.rv-annotations-table {
+  overflow-x: auto;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+}
+
+.rv-annotations-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  background: white;
+}
+
+.rv-annotations-table thead {
+  background: #f1f5f9;
+  border-bottom: 2px solid #e2e8f0;
+}
+
+.rv-annotations-table th {
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: #475569;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.rv-annotations-table tbody tr {
+  border-bottom: 1px solid #f1f5f9;
+  transition: background 0.15s ease;
+}
+
+.rv-annotations-table tbody tr:hover {
+  background: #f8fafc;
+}
+
+.rv-annotations-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.rv-annotations-table td {
+  padding: 10px 12px;
+  color: #334155;
+}
+
+.rv-annotation-number {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  line-height: 24px;
+  text-align: center;
+  border-radius: 4px;
+  color: white;
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+
+.rv-annotation-type {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+  font-size: 0.8rem;
+  border: 1px solid;
+  background: white;
+}
+
+.rv-annotation-shape {
+  color: #64748b;
+  font-size: 0.85rem;
+  text-transform: capitalize;
+}
+
+.rv-annotation-text code {
+  background: #f1f5f9;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.8rem;
+  color: #1e293b;
+  border: 1px solid #e2e8f0;
+}
+
+.rv-annotation-text .rv-no-text {
+  color: #cbd5e1;
+  font-style: italic;
+}
+
+.rv-annotation-conf {
+  font-weight: 600;
+  color: #334155;
+}
+
+.rv-no-annotations {
+  padding: 20px;
+  text-align: center;
+  color: #94a3b8;
+  font-style: italic;
+  background: #f8fafc;
+  border-radius: 6px;
+  border: 1px dashed #cbd5e1;
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
   .recipe-view-modal-content {
@@ -266,5 +457,18 @@
 
   .recipe-view-content {
     padding: 20px;
+  }
+
+  .rv-template-content {
+    grid-template-columns: 1fr;
+  }
+
+  .rv-annotations-table {
+    font-size: 0.75rem;
+  }
+
+  .rv-annotations-table th,
+  .rv-annotations-table td {
+    padding: 6px 8px;
   }
 }

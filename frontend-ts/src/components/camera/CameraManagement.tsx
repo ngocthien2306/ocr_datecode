@@ -266,7 +266,8 @@ const CameraManagement: React.FC = () => {
         // Check if recipe is running before disconnecting
         const latestRecipe = await receiptsAPI.getLatestLoadedRecipe();
         if (latestRecipe) {
-          toast.error(`Cannot disconnect camera while recipe "${latestRecipe.recipe_name}" is running`);
+          console.log(latestRecipe);
+          toast.error(`Cannot disconnect camera while recipe "${latestRecipe.metadata.name}" is running`);
           setConnectingCameras(prev => {
             const newSet = new Set(prev);
             newSet.delete(serialNumber);

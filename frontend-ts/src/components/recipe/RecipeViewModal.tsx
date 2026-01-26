@@ -1,6 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { Receipt } from '@/types';
 import '@/styles/RecipeViewModal.css';
+import AnnotatedTemplateImage from './AnnotatedTemplateImage';
+import ImageZoomModal from './ImageZoomModal';
+import { TYPE_CONFIGS } from '@/fabric/types';
 
 interface RecipeViewModalProps {
   isOpen: boolean;
@@ -10,7 +13,24 @@ interface RecipeViewModalProps {
 }
 
 const RecipeViewModal: React.FC<RecipeViewModalProps> = ({ isOpen, onClose, recipe, onEdit }) => {
+  const [zoomImage, setZoomImage] = useState<{
+    imageUrl: string;
+    imageWidth: number;
+    imageHeight: number;
+    annotations: any[];
+  } | null>(null);
+
   if (!isOpen || !recipe) return null;
+
+  const getTypeLabel = (type: string): string => {
+    const config = TYPE_CONFIGS.find(c => c.value === type);
+    return config?.label || type;
+  };
+
+  const getTypeColor = (type: string): string => {
+    const config = TYPE_CONFIGS.find(c => c.value === type);
+    return config?.color || '#ffffff';
+  };
 
   return (
     <div className="recipe-view-page">
@@ -131,14 +151,14 @@ const RecipeViewModal: React.FC<RecipeViewModalProps> = ({ isOpen, onClose, reci
               <div className="info-item">
                 <label>Detection Threshold</label>
                 <div className="info-value">
-                  {((recipe as any).modelThresholds?.detection_threshold || (recipe as any).model_thresholds?.detection_threshold) ? 
+                  {((recipe as any).modelThresholds?.detection_threshold || (recipe as any).model_thresholds?.detection_threshold) ?
                     `${(((recipe as any).modelThresholds?.detection_threshold || (recipe as any).model_thresholds?.detection_threshold) * 100).toFixed(1)}%` : 'N/A'}
                 </div>
               </div>
               <div className="info-item">
                 <label>Recognition Threshold</label>
                 <div className="info-value">
-                  {((recipe as any).modelThresholds?.recognition_threshold || (recipe as any).model_thresholds?.recognition_threshold) ? 
+                  {((recipe as any).modelThresholds?.recognition_threshold || (recipe as any).model_thresholds?.recognition_threshold) ?
                     `${(((recipe as any).modelThresholds?.recognition_threshold || (recipe as any).model_thresholds?.recognition_threshold) * 100).toFixed(1)}%` : 'N/A'}
                 </div>
               </div>
@@ -162,15 +182,97 @@ const RecipeViewModal: React.FC<RecipeViewModalProps> = ({ isOpen, onClose, reci
             <div className="info-section">
               <h3>Camera Templates</h3>
               {(recipe as any).camera_templates.map((camTemplate: any, camIndex: number) => (
-                <div key={camIndex} className="camera-template">
-                  <h4>Camera: {camTemplate.camera_id}</h4>
+                <div key={camIndex} className="rv-camera-template">
+                  <h4>
+                    Camera: {camTemplate.camera_id}
+                    {camTemplate.function_type && (
+                      <span className="rv-function-type"> ({camTemplate.function_type})</span>
+                    )}
+                  </h4>
                   {camTemplate.templates && camTemplate.templates.map((template: any, tempIndex: number) => (
-                    <div key={tempIndex} className="template-info">
-                      <h5>Template: {template.name}</h5>
-                      <div className="info-grid">
-                        <div className="info-item">
-                          <label>Image Size</label>
-                          <div className="info-value">{template.image_width} × {template.image_height}</div>
+                    <div key={tempIndex} className="rv-template-container">
+                      <div className="rv-template-header">
+                        <h5>Template: {template.name}</h5>
+                        <div className="rv-template-meta">
+                          <span>Size: {template.image_width} × {template.image_height}</span>
+                          <span>Annotations: {template.annotations?.length || 0}</span>
+                        </div>
+                      </div>
+
+                      <div className="rv-template-content">
+                        {/* Left: Image with annotations */}
+                        <div className="rv-template-image-section">
+                          <AnnotatedTemplateImage
+                            imageUrl={template.image_url}
+                            imageWidth={template.image_width}
+                            imageHeight={template.image_height}
+                            annotations={template.annotations || []}
+                            onImageClick={() => setZoomImage({
+                              imageUrl: template.image_url,
+                              imageWidth: template.image_width,
+                              imageHeight: template.image_height,
+                              annotations: template.annotations || []
+                            })}
+                          />
+                          <div className="rv-zoom-hint">Click to zoom</div>
+                        </div>
+
+                        {/* Right: Annotations info */}
+                        <div className="rv-annotations-section">
+                          <h6>Annotations</h6>
+                          {template.annotations && template.annotations.length > 0 ? (
+                            <div className="rv-annotations-table">
+                              <table>
+                                <thead>
+                                  <tr>
+                                    <th>#</th>
+                                    <th>Type</th>
+                                    <th>Shape</th>
+                                    <th>Text</th>
+                                    <th>Conf</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {template.annotations.map((annotation: any, annIndex: number) => (
+                                    <tr key={annIndex}>
+                                      <td>
+                                        <span
+                                          className="rv-annotation-number"
+                                          style={{ backgroundColor: getTypeColor(annotation.type) }}
+                                        >
+                                          {annIndex + 1}
+                                        </span>
+                                      </td>
+                                      <td>
+                                        <span
+                                          className="rv-annotation-type"
+                                          style={{
+                                            color: getTypeColor(annotation.type),
+                                            borderColor: getTypeColor(annotation.type)
+                                          }}
+                                        >
+                                          {getTypeLabel(annotation.type)}
+                                        </span>
+                                      </td>
+                                      <td className="rv-annotation-shape">{annotation.shape}</td>
+                                      <td className="rv-annotation-text">
+                                        {annotation.text ? (
+                                          <code>{annotation.text}</code>
+                                        ) : (
+                                          <span className="rv-no-text">—</span>
+                                        )}
+                                      </td>
+                                      <td className="rv-annotation-conf">
+                                        {(annotation.conf * 100).toFixed(0)}%
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : (
+                            <div className="rv-no-annotations">No annotations</div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -181,6 +283,18 @@ const RecipeViewModal: React.FC<RecipeViewModalProps> = ({ isOpen, onClose, reci
           )}
         </div>
       </div>
+
+      {/* Image Zoom Modal */}
+      {zoomImage && (
+        <ImageZoomModal
+          isOpen={!!zoomImage}
+          onClose={() => setZoomImage(null)}
+          imageUrl={zoomImage.imageUrl}
+          imageWidth={zoomImage.imageWidth}
+          imageHeight={zoomImage.imageHeight}
+          annotations={zoomImage.annotations}
+        />
+      )}
     </div>
   );
 };
