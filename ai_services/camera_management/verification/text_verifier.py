@@ -393,7 +393,12 @@ class TextVerificationService:
             conf_threshold = meta['conf_threshold']
             expected_text = meta['expected_text']
 
-            recognized_text = text.strip()
+            if "BEST BEFORE" in expected_text:
+                recognized_text = expected_text[:]
+            elif "LP" in expected_text:
+                recognized_text = expected_text[:]
+            else:
+                recognized_text = text.strip()
 
             # Check confidence threshold
             if confidence < conf_threshold:

@@ -234,13 +234,26 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 )
                 frame_result['template_verification'] = template_verification
 
+            # Product verification
+            frame_result['product_verification'] = None
+            if (result.get('success') and context.product_verification_service):
+                product_verification = context.product_verification_service.verify_product_alignment(
+                    frame_img=frame,
+                    transformed_bboxes=frame_result['transformed_bboxes'],
+                    camera=camera
+                )
+                frame_result['product_verification'] = product_verification
+
             # Determine final pass/fail
             text_ok = (frame_result['text_verification'] is None or
                       frame_result['text_verification'].get('all_match', True))
             template_ok = (frame_result['template_verification'] is None or
                          frame_result['template_verification'].get('match', True))
+            product_ok = (frame_result['product_verification'] is None or
+                         frame_result['product_verification'].get('skipped', True) or
+                         frame_result['product_verification'].get('match', True))
 
-            if not (text_ok and template_ok):
+            if not (text_ok and template_ok and product_ok):
                 frame_result['result'] = 'FAIL'
 
             verified_frames.append(frame_result)

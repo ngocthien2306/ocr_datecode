@@ -65,9 +65,9 @@ class AnnotationParser:
                     ann, ann_idx, img_width, img_height, "template"
                 )
 
-            elif ann_type == "product":
+            elif ann_type in ["product", "label"]:
                 bbox = AnnotationParser._parse_rectangle_bbox(
-                    ann, ann_idx, img_width, img_height, "product"
+                    ann, ann_idx, img_width, img_height, ann_type
                 )
                 if bbox:
                     other_bboxes.append(bbox)

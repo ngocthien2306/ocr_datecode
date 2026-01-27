@@ -61,6 +61,10 @@ class FrameResult(BaseModel):
         None, 
         description="Template verification results"
     )
+    product_verification: Optional[Dict[str, Any]] = Field(
+        None, 
+        description="Product verification results"
+    )
     # NOTE: image_base64 is NOT stored in DB - only used for realtime SocketIO emission
 
 

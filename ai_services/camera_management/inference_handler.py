@@ -11,7 +11,7 @@ import numpy as np
 from .utils import save_and_encode_frame, encode_frame_for_display
 
 # Import verification services
-from .verification import TextVerificationService, TemplateVerificationService
+from .verification import TextVerificationService, TemplateVerificationService, ProductVerificationService
 
 # Import OCR backend factory (Strategy Pattern)
 from .ocr import OCRBackendFactory, OCRBackendType
@@ -164,6 +164,14 @@ class InferenceHandler:
             default_threshold=0.85
         )
         logger.info("TemplateVerificationService initialized")
+
+        # Product Verification Service
+        self.product_verification_service = ProductVerificationService(
+            save_debug_images=True,
+            debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
+            default_angle_threshold=1.0
+        )
+        logger.info("ProductVerificationService initialized")
 
     def init_matchers(self, cameras: List['Camera']):
         """
@@ -569,6 +577,7 @@ class InferenceHandler:
                 T_capture_complete=T_capture_complete,
                 text_verification_service=self.text_verification_service,
                 template_verification_service=self.template_verification_service,
+                product_verification_service=self.product_verification_service,
                 emit_callback=emit_callback
             )
 

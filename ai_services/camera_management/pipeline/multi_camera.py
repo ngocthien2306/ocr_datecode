@@ -250,13 +250,26 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                 )
                 camera_result['template_verification'] = template_verification
 
+            # Product verification
+            camera_result['product_verification'] = None
+            if (result.get('success') and context.product_verification_service and frames):
+                product_verification = context.product_verification_service.verify_product_alignment(
+                    frame_img=frames[0],
+                    transformed_bboxes=camera_result['transformed_bboxes'],
+                    camera=camera
+                )
+                camera_result['product_verification'] = product_verification
+
             # Determine pass/fail
             text_ok = (camera_result['text_verification'] is None or
                       camera_result['text_verification'].get('all_match', True))
             template_ok = (camera_result['template_verification'] is None or
                          camera_result['template_verification'].get('match', True))
+            product_ok = (camera_result['product_verification'] is None or
+                         camera_result['product_verification'].get('skipped', True) or
+                         camera_result['product_verification'].get('match', True))
 
-            if not (text_ok and template_ok) or not result.get('success'):
+            if not (text_ok and template_ok and product_ok) or not result.get('success'):
                 camera_result['result'] = 'FAIL'
                 overall = 'FAIL'
 
