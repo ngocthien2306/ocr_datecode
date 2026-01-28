@@ -34,6 +34,7 @@ class FrameResult:
     timings: Optional[Dict] = None
     text_verification: Optional[Dict] = None
     template_verification: Optional[Dict] = None
+    product_verification: Optional[Dict] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -46,7 +47,8 @@ class FrameResult:
             "image_base64": self.image_base64,
             "timings": self.timings,
             "text_verification": self.text_verification,
-            "template_verification": self.template_verification
+            "template_verification": self.template_verification,
+            "product_verification": self.product_verification
         }
 
 
@@ -82,6 +84,7 @@ class FrameResultBuilder:
         self._timings = None
         self._text_verification = None
         self._template_verification = None
+        self._product_verification = None
         self._crop_area = None
 
     def with_inference_data(
@@ -116,6 +119,11 @@ class FrameResultBuilder:
     def with_template_verification(self, verification: Optional[Dict]) -> 'FrameResultBuilder':
         """Set template verification result"""
         self._template_verification = verification
+        return self
+
+    def with_product_verification(self, verification: Optional[Dict]) -> 'FrameResultBuilder':
+        """Set product verification result"""
+        self._product_verification = verification
         return self
 
     def with_crop_area(self, crop_area: Optional[Dict]) -> 'FrameResultBuilder':
@@ -183,7 +191,8 @@ class FrameResultBuilder:
             image_base64=self._image_base64,
             timings=self._timings,
             text_verification=self._text_verification,
-            template_verification=self._template_verification
+            template_verification=self._template_verification,
+            product_verification=self._product_verification
         )
 
 
@@ -410,6 +419,8 @@ class InferenceResultBuilder:
                         frame_data.get('text_verification')
                     ).with_template_verification(
                         frame_data.get('template_verification')
+                    ).with_product_verification(
+                        frame_data.get('product_verification')
                     )
                 elif camera_inference and idx == 0:
                     frame_builder.with_inference_data(
@@ -425,6 +436,8 @@ class InferenceResultBuilder:
                         camera_inference.get('text_verification')
                     ).with_template_verification(
                         camera_inference.get('template_verification')
+                    ).with_product_verification(
+                        camera_inference.get('product_verification')
                     )
                 else:
                     frame_builder.with_inference_data("PASS", 0.0)

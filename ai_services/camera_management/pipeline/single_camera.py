@@ -219,6 +219,17 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                         text_verification
                     )
 
+                    # Mark failed text bboxes with verification_status
+                    if text_verification and text_verification.get('results'):
+                        for text_result in text_verification['results']:
+                            annotation_idx = text_result.get('annotation_idx')
+                            if annotation_idx is not None and not text_result.get('match', False):
+                                # Find bbox with this annotation_index and mark as fail
+                                for bbox in frame_result['transformed_bboxes']:
+                                    if (bbox.get('type') == 'text' and
+                                        bbox.get('annotation_index') == annotation_idx):
+                                        bbox['verification_status'] = 'fail'
+
             # Template verification
             if (result.get('success') and
                 context.template_verification_service and
@@ -234,6 +245,12 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 )
                 frame_result['template_verification'] = template_verification
 
+                # Mark failed template bbox with verification_status
+                if template_verification and not template_verification.get('match', True):
+                    for bbox in frame_result['transformed_bboxes']:
+                        if bbox.get('type') == 'template':
+                            bbox['verification_status'] = 'fail'
+
             # Product verification
             frame_result['product_verification'] = None
             if (result.get('success') and context.product_verification_service):
@@ -243,6 +260,14 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     camera=camera
                 )
                 frame_result['product_verification'] = product_verification
+
+                # Mark failed product bbox with verification_status
+                if (product_verification and
+                    not product_verification.get('skipped', True) and
+                    not product_verification.get('match', True)):
+                    for bbox in frame_result['transformed_bboxes']:
+                        if bbox.get('type') == 'product1':
+                            bbox['verification_status'] = 'fail'
 
             # Determine final pass/fail
             text_ok = (frame_result['text_verification'] is None or

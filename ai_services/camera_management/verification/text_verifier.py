@@ -9,6 +9,7 @@ import logging
 import time
 import os
 import cv2
+from difflib import SequenceMatcher
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from dataclasses import dataclass, field
 
@@ -41,6 +42,26 @@ class TextVerificationSummary:
     all_match: bool
     results: List[TextVerificationResult] = field(default_factory=list)
     error: Optional[str] = None
+
+
+def calculate_text_similarity(text1: str, text2: str) -> float:
+    """
+    Calculate similarity ratio between two texts using SequenceMatcher.
+
+    Args:
+        text1: First text
+        text2: Second text
+
+    Returns:
+        Similarity ratio (0.0 - 1.0)
+    """
+    # Normalize: strip whitespace and convert to lowercase
+    text1_norm = text1.strip().lower()
+    text2_norm = text2.strip().lower()
+
+    # Calculate similarity ratio
+    ratio = SequenceMatcher(None, text1_norm, text2_norm).ratio()
+    return ratio
 
 
 class TextVerificationService:
@@ -236,8 +257,20 @@ class TextVerificationService:
                 )
                 match = False
             else:
-                # Compare texts
-                match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
+                # Compare texts using similarity matching for specific patterns
+                if "BEST BEFORE" in expected_text.upper() or "PL" in expected_text.upper():
+                    # Use similarity matching (default 80% threshold)
+                    similarity = calculate_text_similarity(recognized_text, expected_text)
+                    similarity_threshold = 0.8
+                    match = similarity >= similarity_threshold
+                    logger.info(
+                        f"[{serial_number}] Annotation {annotation_idx}: "
+                        f"Using similarity matching - similarity={similarity:.2%}, "
+                        f"threshold={similarity_threshold:.2%}, match={match}"
+                    )
+                else:
+                    # Use exact match
+                    match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
 
             logger.info(
                 f"[{serial_number}] Annotation {annotation_idx}: "
@@ -393,12 +426,7 @@ class TextVerificationService:
             conf_threshold = meta['conf_threshold']
             expected_text = meta['expected_text']
 
-            if "BEST BEFORE" in expected_text:
-                recognized_text = expected_text[:]
-            elif "LP" in expected_text:
-                recognized_text = expected_text[:]
-            else:
-                recognized_text = text.strip()
+            recognized_text = text.strip()
 
             # Check confidence threshold
             if confidence < conf_threshold:
@@ -408,7 +436,20 @@ class TextVerificationService:
                 )
                 match = False
             else:
-                match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
+                # Compare texts using similarity matching for specific patterns
+                if "BEST BEFORE" in expected_text.upper() or "PL" in expected_text.upper():
+                    # Use similarity matching (default 80% threshold)
+                    similarity = calculate_text_similarity(recognized_text, expected_text)
+                    similarity_threshold = 0.8
+                    match = similarity >= similarity_threshold
+                    logger.info(
+                        f"[{serial_number}] Annotation {annotation_idx}: "
+                        f"Using similarity matching - similarity={similarity:.2%}, "
+                        f"threshold={similarity_threshold:.2%}"
+                    )
+                else:
+                    # Use exact match
+                    match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
 
             if not match:
                 camera_results[serial_number]['all_match'] = False

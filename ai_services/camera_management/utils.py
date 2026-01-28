@@ -318,8 +318,12 @@ def draw_inference_bboxes(
         if len(points) < 3:
             continue
 
-        # Get color
+        # Get color based on type
         color = colors.get(bbox_type, (255, 255, 255))
+
+        # Override with RED if verification failed
+        if bbox.get('verification_status') == 'fail':
+            color = (0, 0, 255)  # Red (BGR)
 
         # Convert points to numpy array
         pts = np.array(points, dtype=np.int32)

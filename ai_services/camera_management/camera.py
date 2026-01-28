@@ -238,6 +238,59 @@ class Camera:
         except Exception as e:
             logger.error(f"Error disconnecting camera {self.serial_number}: {e}")
 
+    def _attempt_reconnect(self) -> bool:
+        """
+        Attempt to reconnect camera when connection is lost
+
+        Returns:
+            True if reconnection successful, False otherwise
+        """
+        try:
+            logger.warning(f"[{self.serial_number}] Attempting to reconnect camera...")
+
+            # Close existing connection if any
+            try:
+                if self.camera:
+                    if self.camera.IsGrabbing():
+                        self.camera.StopGrabbing()
+                    if self.camera.IsOpen():
+                        self.camera.Close()
+            except:
+                pass  # Ignore errors during cleanup
+
+            # Wait a bit before reconnecting
+            time.sleep(0.5)
+
+            # Attempt to reconnect
+            if not self.connect():
+                logger.error(f"[{self.serial_number}] Failed to reconnect camera")
+                return False
+
+            # Reconfigure camera mode if needed
+            if self.mode != CameraMode.IDLE:
+                logger.info(f"[{self.serial_number}] Restarting grabbing after reconnect...")
+                try:
+                    if self.mode == CameraMode.SOFTWARE_TRIGGER:
+                        self.camera.StartGrabbing(pylon.GrabStrategy_OneByOne)
+                    else:
+                        self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+
+                    logger.info(f"[{self.serial_number}] ✅ Camera reconnected successfully")
+                    self._emit_event("camera_reconnected", {
+                        "serial_number": self.serial_number,
+                        "mode": self.mode.value
+                    })
+                    return True
+                except Exception as e:
+                    logger.error(f"[{self.serial_number}] Failed to restart grabbing after reconnect: {e}")
+                    return False
+
+            return True
+
+        except Exception as e:
+            logger.error(f"[{self.serial_number}] Error during reconnect attempt: {e}")
+            return False
+
     def _convert_to_bgr(self, img_array, pixel_format=None):
         """
         Convert image array to BGR format based on pixel format
@@ -554,7 +607,15 @@ class Camera:
                 'error': str (if failed)
             }
         """
-        if not self.camera or not self.camera.IsGrabbing():
+        # Check camera connection and grabbing status
+        if not self.camera:
+            return {'success': False, 'error': 'Camera not initialized'}
+
+        if not self.camera.IsOpen():
+            logger.error(f"[{self.serial_number}] Camera control channel not open")
+            return {'success': False, 'error': 'Camera control channel not open'}
+
+        if not self.camera.IsGrabbing():
             return {'success': False, 'error': 'Camera not grabbing'}
 
         if not self.templates:
@@ -571,6 +632,22 @@ class Camera:
             for idx, template in enumerate(self.templates):
                 # IMPORTANT: Delay BEFORE each frame (including first)
                 time.sleep(self.delay_trigger / 1000.0)
+
+                # Check camera connection before triggering
+                if not self.camera.IsOpen():
+                    logger.warning(
+                        f"[{self.serial_number}] Camera control channel closed during capture "
+                        f"(frame {idx+1}/{len(self.templates)}), attempting reconnect..."
+                    )
+
+                    # Attempt to reconnect once
+                    if not self._attempt_reconnect():
+                        return {
+                            'success': False,
+                            'error': f'Camera connection lost at frame {idx}, reconnect failed'
+                        }
+
+                    logger.info(f"[{self.serial_number}] Reconnect successful, resuming capture...")
 
                 # Execute software trigger
                 self.camera.ExecuteSoftwareTrigger()
@@ -645,7 +722,15 @@ class Camera:
         Returns:
             Dict with success status and captured frames
         """
-        if not self.camera or not self.camera.IsGrabbing():
+        # Check camera connection and grabbing status
+        if not self.camera:
+            return {'success': False, 'error': 'Camera not initialized'}
+
+        if not self.camera.IsOpen():
+            logger.error(f"[{self.serial_number}] Camera control channel not open")
+            return {'success': False, 'error': 'Camera control channel not open'}
+
+        if not self.camera.IsGrabbing():
             return {'success': False, 'error': 'Camera not grabbing'}
 
         if not self.templates:
@@ -679,6 +764,22 @@ class Camera:
                         f"[{self.serial_number}] Delayed {self.delay_interval}ms "
                         f"before capture {capture_idx+1}"
                     )
+
+                # Check camera connection before triggering
+                if not self.camera.IsOpen():
+                    logger.warning(
+                        f"[{self.serial_number}] Camera control channel closed during capture "
+                        f"(frame {capture_idx+1}/{num_templates}), attempting reconnect..."
+                    )
+
+                    # Attempt to reconnect once
+                    if not self._attempt_reconnect():
+                        return {
+                            'success': False,
+                            'error': f'Camera connection lost at frame {capture_idx}, reconnect failed'
+                        }
+
+                    logger.info(f"[{self.serial_number}] Reconnect successful, resuming capture...")
 
                 # Execute software trigger
                 self.camera.ExecuteSoftwareTrigger()
