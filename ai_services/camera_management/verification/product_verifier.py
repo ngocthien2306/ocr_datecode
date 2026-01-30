@@ -101,7 +101,7 @@ class ProductVerificationService:
             # Filter only product type bboxes
             product_bboxes = [
                 bbox for bbox in transformed_bboxes
-                if bbox.get('type') == 'product'
+                if bbox.get('type') == 'product1'
             ]
 
             if not product_bboxes:

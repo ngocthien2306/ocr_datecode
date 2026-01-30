@@ -258,11 +258,14 @@ class TextVerificationService:
                 match = False
             else:
                 # Compare texts using similarity matching for specific patterns
-                if "BEST BEFORE" in expected_text.upper() or "PL" in expected_text.upper():
+                if "BEST BEFORE" in expected_text.upper() or "PL" in expected_text.upper() or "MFG" in expected_text.upper() or "BBD" in expected_text.upper():
                     # Use similarity matching (default 80% threshold)
                     similarity = calculate_text_similarity(recognized_text, expected_text)
-                    similarity_threshold = 0.8
+                    similarity_threshold = 0.7
                     match = similarity >= similarity_threshold
+                    if match:
+                        recognized_text = expected_text[:]  # Override with expected text on match
+
                     logger.info(
                         f"[{serial_number}] Annotation {annotation_idx}: "
                         f"Using similarity matching - similarity={similarity:.2%}, "
@@ -437,11 +440,14 @@ class TextVerificationService:
                 match = False
             else:
                 # Compare texts using similarity matching for specific patterns
-                if "BEST BEFORE" in expected_text.upper() or "PL" in expected_text.upper():
+                if "BEST BEFORE" in expected_text.upper() or "PL" in expected_text.upper() or "MFG" in expected_text.upper() or "BBD" in expected_text.upper():
+
                     # Use similarity matching (default 80% threshold)
                     similarity = calculate_text_similarity(recognized_text, expected_text)
-                    similarity_threshold = 0.8
+                    similarity_threshold = 0.7
                     match = similarity >= similarity_threshold
+                    if match:
+                        recognized_text = expected_text[:]  # Override with expected text on match
                     logger.info(
                         f"[{serial_number}] Annotation {annotation_idx}: "
                         f"Using similarity matching - similarity={similarity:.2%}, "

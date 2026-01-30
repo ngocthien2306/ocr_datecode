@@ -86,6 +86,29 @@ echo "   PID: $NGROK_FRONTEND_PID"
 
 sleep 2
 
+# 6. Auto-open Firefox after services are ready
+echo "🦊 Opening Firefox..."
+sleep 5  # Wait for frontend to be fully ready
+
+# Get the current display and xauthority
+CURRENT_DISPLAY=$(who | grep "$USER" | awk '{print $2}' | head -1)
+CURRENT_DISPLAY=":${CURRENT_DISPLAY##*:}"
+[ -z "$CURRENT_DISPLAY" ] && CURRENT_DISPLAY=":0"
+
+export DISPLAY="$CURRENT_DISPLAY"
+export XAUTHORITY="$HOME/.Xauthority"
+
+# Open Firefox
+if command -v firefox &> /dev/null; then
+    firefox http://localhost:5173 > "$LOG_DIR/firefox.log" 2>&1 &
+    FIREFOX_PID=$!
+    echo "   PID: $FIREFOX_PID (DISPLAY=$DISPLAY)"
+    
+    echo "FIREFOX_PID=$FIREFOX_PID" >> "$LOG_DIR/pids.txt"
+else
+    echo "⚠️  Firefox not found. Please install Firefox."
+fi
+
 # Save PIDs to file for easy stopping later
 cat > "$LOG_DIR/pids.txt" << EOF
 BACKEND_PID=$BACKEND_PID

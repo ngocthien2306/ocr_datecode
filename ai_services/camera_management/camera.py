@@ -179,6 +179,9 @@ class Camera:
             # Apply initial settings
             self._apply_settings()
 
+            # Configure GigE buffer and network settings (must be done after Open and before StartGrabbing)
+            self._configure_gige_buffer_settings()
+
             # Setup shared memory
             actual_width = self.camera.Width.GetValue()
             actual_height = self.camera.Height.GetValue()
@@ -270,6 +273,7 @@ class Camera:
             if self.mode != CameraMode.IDLE:
                 logger.info(f"[{self.serial_number}] Restarting grabbing after reconnect...")
                 try:
+                    # MaxNumBuffer is already configured during connect() in _configure_gige_buffer_settings()
                     if self.mode == CameraMode.SOFTWARE_TRIGGER:
                         self.camera.StartGrabbing(pylon.GrabStrategy_OneByOne)
                     else:
@@ -405,6 +409,95 @@ class Camera:
 
         except Exception as e:
             logger.error(f"Error applying settings: {e}")
+
+    def _configure_gige_buffer_settings(self):
+        """
+        Configure GigE-specific buffer and network settings for reliable image acquisition
+
+        This method addresses the buffer underrun issues by:
+        1. Increasing buffer pool size
+        2. Optimizing GigE packet size
+        3. Configuring inter-packet delay
+        4. Setting bandwidth reserve
+        """
+        if not self.camera or not self.camera.IsOpen():
+            return
+
+        try:
+            # Check if this is a GigE camera by checking for GigE-specific parameters
+            is_gige = False
+            try:
+                if hasattr(self.camera, 'GevSCPSPacketSize'):
+                    is_gige = True
+            except:
+                pass
+
+            if not is_gige:
+                logger.info(f"[{self.serial_number}] Not a GigE camera, skipping GigE-specific configuration")
+                return
+
+            logger.info(f"[{self.serial_number}] Configuring GigE buffer and network settings...")
+
+            # 1. Increase buffer count (default is 5-10, increase to 30 for GigE)
+            try:
+                if hasattr(self.camera, 'MaxNumBuffer'):
+                    # Note: MaxNumBuffer must be set BEFORE StartGrabbing
+                    self.camera.MaxNumBuffer.SetValue(30)
+                    logger.info(f"[{self.serial_number}] ✓ MaxNumBuffer set to 30")
+            except Exception as e:
+                logger.warning(f"[{self.serial_number}] Could not set MaxNumBuffer: {e}")
+
+            # 2. Optimize GigE packet size
+            # 8192 bytes for Jumbo Frames (MTU 9000), 1500 for standard Ethernet
+            try:
+                # Try to set to 8192 first (Jumbo Frames)
+                try:
+                    max_packet_size = self.camera.GevSCPSPacketSize.GetMax()
+                    packet_size = min(8192, max_packet_size)
+                    self.camera.GevSCPSPacketSize.SetValue(packet_size)
+                    logger.info(f"[{self.serial_number}] ✓ GevSCPSPacketSize set to {packet_size} bytes")
+                    if packet_size < 8192:
+                        logger.warning(
+                            f"[{self.serial_number}] Packet size limited to {packet_size}. "
+                            f"Enable Jumbo Frames (MTU 9000) for better performance"
+                        )
+                except Exception as e:
+                    # Fallback to 1500 (standard Ethernet MTU)
+                    self.camera.GevSCPSPacketSize.SetValue(1500)
+                    logger.info(f"[{self.serial_number}] ✓ GevSCPSPacketSize set to 1500 bytes (standard MTU)")
+            except Exception as e:
+                logger.warning(f"[{self.serial_number}] Could not set GevSCPSPacketSize: {e}")
+
+            # 3. Configure inter-packet delay
+            # 0 = maximum speed, increase if network congestion occurs
+            try:
+                self.camera.GevSCPD.SetValue(0)
+                logger.info(f"[{self.serial_number}] ✓ GevSCPD (inter-packet delay) set to 0 μs")
+            except Exception as e:
+                logger.warning(f"[{self.serial_number}] Could not set GevSCPD: {e}")
+
+            # 4. Enable bandwidth reserve (helps with burst traffic)
+            try:
+                if hasattr(self.camera, 'GevSCBWR'):
+                    self.camera.GevSCBWR.SetValue(10)  # 10% reserve
+                    logger.info(f"[{self.serial_number}] ✓ GevSCBWR (bandwidth reserve) set to 10%")
+            except Exception as e:
+                logger.warning(f"[{self.serial_number}] Could not set GevSCBWR: {e}")
+
+            # 5. Enable resend mechanism for lost packets (if available)
+            try:
+                if hasattr(self.camera, 'GevSCPSFireTestPacket'):
+                    self.camera.GevSCPSFireTestPacket.SetValue(False)
+                    logger.info(f"[{self.serial_number}] ✓ GevSCPSFireTestPacket disabled")
+            except Exception as e:
+                logger.debug(f"[{self.serial_number}] GevSCPSFireTestPacket not available: {e}")
+
+            logger.info(f"[{self.serial_number}] ✅ GigE buffer and network settings configured successfully")
+
+        except Exception as e:
+            logger.error(f"[{self.serial_number}] Error configuring GigE buffer settings: {e}")
+            import traceback
+            traceback.print_exc()
 
     def set_mode(self, mode: CameraMode):
         """Set camera operation mode"""
@@ -576,6 +669,7 @@ class Camera:
 
             # Resume grabbing with OneByOne strategy
             if was_grabbing or self.mode == CameraMode.SOFTWARE_TRIGGER:
+                # MaxNumBuffer is already configured in _configure_gige_buffer_settings()
                 self.camera.StartGrabbing(pylon.GrabStrategy_OneByOne)
                 logger.info(f"[{self.serial_number}] Camera grabbing started (OneByOne)")
 
@@ -1092,6 +1186,9 @@ class Camera:
         logger.info(f"[{self.serial_number}] Starting camera loop (mode: {self.mode.value})")
 
         try:
+            # Note: MaxNumBuffer is already configured in _configure_gige_buffer_settings()
+            # which is called during connect(). No need to configure again here.
+
             # Start grabbing based on mode
             if self.mode == CameraMode.SOFTWARE_TRIGGER:
                 # Already started in configure_software_trigger() with OneByOne strategy
