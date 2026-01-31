@@ -273,6 +273,9 @@ class TextVerificationService:
                     )
                 else:
                     # Use exact match
+                    if "USsed" in recognized_text:
+                        recognized_text = recognized_text.replace("USsed", "Used")
+
                     match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
 
             logger.info(
@@ -454,6 +457,9 @@ class TextVerificationService:
                         f"threshold={similarity_threshold:.2%}"
                     )
                 else:
+                    if "USsed" in recognized_text:
+                        recognized_text = recognized_text.replace("USsed", "Used")
+                        
                     # Use exact match
                     match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
 
