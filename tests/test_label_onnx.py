@@ -191,7 +191,7 @@ def main():
     # Initialize model
     model = YOLOOBBInference(
         model_path="weights/yolo26n-ultralight-obb.onnx",
-        class_names=['bottle', 'botlabeltle']
+        class_names=['bottle', 'label']
     )
 
     print(f"Model loaded: built-in NMS = {model.has_builtin_nms}")
