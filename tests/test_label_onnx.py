@@ -239,4 +239,4 @@ if __name__ == "__main__":
     main()
  
 
-/usr/src/tensorrt/bin/trtexec --onnx=weights/yolo26n-ultralight-obb.onnx --saveEngine=weights/yolo26n-ultralight-obb_fp16_dynamic.engine --fp16 --minShapes=images:1x3x640x640 --optShapes=images:4x3x640x640 --maxShapes=images:8x3x640x640 --workspace=4096
+# /usr/src/tensorrt/bin/trtexec --onnx=weights/yolo26n-ultralight-obb.onnx --saveEngine=weights/yolo26n-ultralight-obb_fp16_dynamic.engine --fp16 --minShapes=images:1x3x640x640 --optShapes=images:4x3x640x640 --maxShapes=images:8x3x640x640 --workspace=4096

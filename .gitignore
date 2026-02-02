@@ -159,6 +159,8 @@ weights/pipeline_fp16_dynamic.engine
 weights/pipeline_fp16_small.engine
 weights/superpoint_lightglue_pipeline.onnx
 weights/superpoint_lightglue_small.onnx
+weights/yolo26_bottle_obb.onnx
+weights/yolo26_label_seg.onnx
 
 pylon_env/
 data/
@@ -177,3 +179,4 @@ inference_data
 logs/pids.txt
 ai_services/test_result
 data
+obb_annotator
