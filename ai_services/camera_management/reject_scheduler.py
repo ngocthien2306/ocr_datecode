@@ -66,6 +66,9 @@ class RejectScheduler:
         # DO control callback
         self._do_control_callback = do_control_callback
 
+        # Reject pulse duration from recipe (default 50ms)
+        self._reject_pulse_ms = 50.0
+
         # Scheduler thread
         self._running = False
         self._scheduler_thread: Optional[threading.Thread] = None
@@ -86,6 +89,16 @@ class RejectScheduler:
         self._stats_interval = 10  # seconds
 
         logger.info("RejectScheduler initialized")
+
+    def set_reject_pulse(self, pulse_ms: float):
+        """
+        Set reject pulse duration from recipe
+
+        Args:
+            pulse_ms: Pulse duration in milliseconds
+        """
+        self._reject_pulse_ms = pulse_ms
+        logger.info(f"Reject pulse duration updated: {pulse_ms}ms")
 
     def start(self):
         """Start scheduler thread"""
@@ -338,18 +351,18 @@ class RejectScheduler:
         try:
             logger.info(
                 f"[Group #{entry.group_id}] 🔴 REJECTING! "
-                f"DO{entry.do_number} pulse (300ms)"
+                f"DO{entry.do_number} pulse ({self._reject_pulse_ms}ms)"
             )
 
             # Trigger DO pulse
             if self._do_control_callback:
-                self._do_control_callback(entry.do_number, pulse_ms=300)
-                self._do_control_callback(3, pulse_ms=300)
+                self._do_control_callback(entry.do_number, pulse_ms=self._reject_pulse_ms)
+                self._do_control_callback(3, pulse_ms=self._reject_pulse_ms)
             else:
                 # Use default implementation
                 from .utils import trigger_reject_pulse
-                trigger_reject_pulse(entry.do_number, pulse_ms=300)
-                trigger_reject_pulse(3, pulse_ms=300)
+                trigger_reject_pulse(entry.do_number, pulse_ms=self._reject_pulse_ms)
+                trigger_reject_pulse(3, pulse_ms=self._reject_pulse_ms)
 
             # Update stats
             with self._stats_lock:

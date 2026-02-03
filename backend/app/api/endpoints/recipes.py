@@ -219,6 +219,7 @@ def recipe_to_response(recipe: RecipeInDB, user_names_map: dict = None) -> Recip
         product_code=recipe.product_code,
         description=recipe.description,
         delay_reject=recipe.delay_reject if hasattr(recipe, 'delay_reject') else 100.0,
+        reject_pulse=recipe.reject_pulse if hasattr(recipe, 'reject_pulse') else 50.0,
         do_reject_number=recipe.do_reject_number if hasattr(recipe, 'do_reject_number') else 0,
         cameras=cameras_data,
         camera_templates=camera_templates_data,
@@ -964,6 +965,7 @@ async def load_recipe(
         'recipe_id': recipe_id,
         'name': recipe.name,
         'delay_reject': recipe.delay_reject,
+        'reject_pulse': recipe.reject_pulse if hasattr(recipe, 'reject_pulse') else 50.0,
         'do_reject_number': recipe.do_reject_number,
         'product_code': recipe.product_code,
         'camera_templates': _to_primitive(camera_templates),
@@ -979,6 +981,7 @@ async def load_recipe(
         'name': recipe.name,
         'product_code': recipe.product_code,
         'delay_reject': recipe.delay_reject,
+        'reject_pulse': recipe.reject_pulse if hasattr(recipe, 'reject_pulse') else 50.0,
         'do_reject_number': recipe.do_reject_number,
         'cameras': enriched_cameras,  # Use enriched cameras with function_type
         'camera_templates': _to_primitive(camera_templates),

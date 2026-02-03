@@ -267,6 +267,10 @@ class CameraManager:
                 # Start trigger polling if any cameras use Software Trigger
                 self.trigger_handler.start_polling()
 
+                # Update reject pulse duration from recipe
+                reject_pulse = recipe_data.get("reject_pulse", 50.0)
+                self.reject_scheduler.set_reject_pulse(reject_pulse)
+
                 # Start reject scheduler (if not already running)
                 self.reject_scheduler.start()
 
