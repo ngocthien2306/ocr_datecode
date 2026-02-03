@@ -25,6 +25,7 @@ interface RecipeCamera {
   exposure_time: number;
   delay_trigger: number;
   delay_interval: number;
+  reject_pulse: number;
   gain: number;
   pixel_format: string;
   trigger_mode: string;  // 'continuous', 'software_trigger', 'hardware_trigger'
@@ -156,6 +157,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           model_name: cam.model_name || '',
           serial_number: cam.serial_number || '',
           location: cam.location || '',
+          reject_pulse: cam.reject_pulse || 50.0,
           exposure_time: cam.exposure_time || 50.0,
           delay_trigger: cam.delay_trigger || 100.0,
           delay_interval: cam.delay_interval || 500.0,
@@ -371,6 +373,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       model_name: camera.model_name,
       serial_number: camera.serial_number,
       location: camera.location || '',
+      reject_pulse: 50.0,
       exposure_time: 50.0,
       delay_trigger: 100.0,
       delay_interval: 500.0,
