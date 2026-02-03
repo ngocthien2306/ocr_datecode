@@ -333,11 +333,18 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             result = transformed_results.get(serial_number, {})
             frames = context.results.get(serial_number, {}).get('frames', [])
 
+            # Get center_offset_threshold from first template (multi-camera uses first template only)
+            center_offset_threshold = None
+            if camera.templates and len(camera.templates) > 0:
+                template = camera.templates[0]
+                center_offset_threshold = template.get('center_offset_threshold', 50.0)
+
             if result.get('success') and frames:
                 frames_data.append({
                     'frame_img': frames[0],
                     'transformed_bboxes': result.get('transformed_bboxes', []),
-                    'camera': camera
+                    'camera': camera,
+                    'center_offset_threshold': center_offset_threshold
                 })
                 serial_numbers.append(serial_number)
 

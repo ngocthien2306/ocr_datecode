@@ -172,17 +172,30 @@ class InferenceHandler:
         # Use "never" for production (fastest), "on_fail" for debugging failures
         product_debug_mode = os.environ.get('PRODUCT_VERIFICATION_DEBUG', 'never')
 
+        # Configuration: check_label_boundary can be enabled/disabled via env var
+        # Set to "0", "false", or "no" to disable the label region boundary check
+        check_label_boundary = os.environ.get('PRODUCT_CHECK_LABEL_BOUNDARY', 'true').lower()
+        check_label_boundary = check_label_boundary not in ['0', 'false', 'no']
+
+        # Configuration: check_misalignment can be enabled/disabled via env var
+        # Set to "0", "false", or "no" to disable the misalignment check
+        check_misalignment = os.environ.get('PRODUCT_CHECK_MISALIGNMENT', 'true').lower()
+        check_misalignment = check_misalignment not in ['0', 'false', 'no']
+
         self.product_verification_service = ProductVerificationService(
             engine_path=yolo_obb_engine_path,
             save_debug_images=product_debug_mode,  # "never", "on_fail", or "always"
             debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
             angle_threshold=3.0,  # Rotation threshold in degrees
             margin_pixels=30,     # Misalignment margin in pixels
-            conf_threshold=0.25   # YOLO confidence threshold
+            conf_threshold=0.01,  # YOLO confidence threshold
+            check_label_boundary=check_label_boundary,  # Enable/disable label boundary check
+            check_misalignment=check_misalignment  # Enable/disable misalignment check
         )
         logger.info(
             f"ProductVerificationService initialized with YOLO OBB: {yolo_obb_engine_path}, "
-            f"debug_mode={product_debug_mode}"
+            f"debug_mode={product_debug_mode}, check_misalignment={check_misalignment}, "
+            f"check_label_boundary={check_label_boundary}"
         )
 
     def init_matchers(self, cameras: List['Camera']):

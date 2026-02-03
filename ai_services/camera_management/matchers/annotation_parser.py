@@ -61,12 +61,12 @@ class AnnotationParser:
                 continue  # Already processed
 
             if ann_type == "template":
-                template_bbox = AnnotationParser._parse_rectangle_bbox(
+                template_bbox = AnnotationParser._parse_flexible_bbox(
                     ann, ann_idx, img_width, img_height, "template"
                 )
 
             elif ann_type in ["product", "label"]:
-                bbox = AnnotationParser._parse_rectangle_bbox(
+                bbox = AnnotationParser._parse_flexible_bbox(
                     ann, ann_idx, img_width, img_height, ann_type
                 )
                 if bbox:
@@ -148,6 +148,54 @@ class AnnotationParser:
             annotation_index=ann_idx,
             conf=conf
         )
+
+    @staticmethod
+    def _parse_flexible_bbox(
+        ann: Dict[str, Any],
+        ann_idx: int,
+        img_width: int,
+        img_height: int,
+        bbox_type: str
+    ) -> Optional[BoundingBox]:
+        """
+        Parse annotation that can have either points or rectangle format.
+        Supports both polygon points and rectangle coordinates.
+        """
+        conf = ann.get("conf", 0.8)
+        text = ann.get("text", "")
+        pixel_points = []
+
+        if ann.get("points"):
+            # Polygon points provided
+            pixel_points = [
+                [int(pt[0] * img_width), int(pt[1] * img_height)]
+                for pt in ann.get("points", [])
+            ]
+        elif ann.get("x") is not None:
+            # Rectangle coordinates
+            x, y = ann.get("x", 0), ann.get("y", 0)
+            w, h = ann.get("width", 0), ann.get("height", 0)
+
+            x1, y1 = int(x * img_width), int(y * img_height)
+            x2, y2 = int((x + w) * img_width), int((y + h) * img_height)
+
+            pixel_points = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+
+        if not pixel_points:
+            return None
+
+        bbox_kwargs = {
+            "type": bbox_type,
+            "points": pixel_points,
+            "annotation_index": ann_idx,
+            "conf": conf
+        }
+
+        # Only add text if it's not empty
+        if text:
+            bbox_kwargs["text"] = text
+
+        return BoundingBox(**bbox_kwargs)
 
     @staticmethod
     def _parse_text_bbox(

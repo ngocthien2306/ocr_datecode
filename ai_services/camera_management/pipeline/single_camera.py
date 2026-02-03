@@ -326,17 +326,26 @@ class SingleCameraPipeline(InferencePipelineTemplate):
         # Prepare frames data for batch verification
         frames_data = []
         for idx, result in enumerate(transformed_results):
+            # Get center_offset_threshold from template config
+            # In single camera scenario with multiple templates, idx corresponds to template_idx
+            center_offset_threshold = None
+            if camera.templates and idx < len(camera.templates):
+                template = camera.templates[idx]
+                center_offset_threshold = template.get('center_offset_threshold', 50.0)
+
             if result.get('success') and idx < len(frames):
                 frames_data.append({
                     'frame_img': frames[idx],
                     'transformed_bboxes': result.get('transformed_bboxes', []),
-                    'camera': camera
+                    'camera': camera,
+                    'center_offset_threshold': center_offset_threshold
                 })
             else:
                 frames_data.append({
                     'frame_img': None,
                     'transformed_bboxes': [],
-                    'camera': camera
+                    'camera': camera,
+                    'center_offset_threshold': center_offset_threshold
                 })
 
         # Filter valid frames for batch processing

@@ -407,6 +407,76 @@ def draw_inference_bboxes(
     return result_img
 
 
+def draw_center_points(
+    img: np.ndarray,
+    center_alignment_check: Optional[Dict[str, Any]]
+) -> np.ndarray:
+    """
+    Draw center points of template and product boxes.
+
+    Args:
+        img: Input image
+        center_alignment_check: Dict with 'template_center' and 'product_center'
+
+    Returns:
+        Image with drawn center points
+    """
+    if not center_alignment_check or center_alignment_check.get('skipped', False):
+        return img
+
+    result_img = img.copy()
+    height, width = img.shape[:2]
+
+    # Calculate dynamic sizes
+    font_scale = max(0.4, min(1.5, width / 2500))
+    text_thickness = max(1, int(width / 1500))
+    circle_radius = max(5, int(width / 300))  # Adaptive circle size
+
+    # Get centers
+    template_center = center_alignment_check.get('template_center')
+    product_center = center_alignment_check.get('product_center')
+
+    # Draw template center (cyan)
+    if template_center:
+        cv2.circle(
+            result_img,
+            (int(template_center[0]), int(template_center[1])),
+            circle_radius,
+            (255, 255, 0),  # Cyan
+            -1  # Filled
+        )
+        cv2.putText(
+            result_img, "Template",
+            (int(template_center[0]) + circle_radius + 5, int(template_center[1]) - 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale * 0.8,
+            (255, 255, 0),
+            text_thickness,
+            cv2.LINE_AA
+        )
+
+    # Draw product center (magenta)
+    if product_center:
+        cv2.circle(
+            result_img,
+            (int(product_center[0]), int(product_center[1])),
+            circle_radius,
+            (255, 0, 255),  # Magenta
+            -1  # Filled
+        )
+        cv2.putText(
+            result_img, "Product",
+            (int(product_center[0]) + circle_radius + 5, int(product_center[1]) + 15),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale * 0.8,
+            (255, 0, 255),
+            text_thickness,
+            cv2.LINE_AA
+        )
+
+    return result_img
+
+
 def draw_detected_obb_boxes(
     img: np.ndarray,
     detected_boxes: Optional[Dict[str, Any]],
@@ -557,6 +627,14 @@ def encode_frame_for_display(
                     show_details=True
                 )
 
+            # Draw center points (template center and product center)
+            center_alignment_check = product_verification.get('center_alignment_check')
+            if center_alignment_check:
+                img_to_encode = draw_center_points(
+                    img_to_encode,
+                    center_alignment_check
+                )
+
         # Resize for display
         display_img = resize_for_display(img_to_encode, scale_factor=scale_factor)
 
@@ -632,6 +710,15 @@ def save_and_encode_frame(
                     show_details=True
                 )
                 logger.info(f"Drew detected OBB boxes (product + label) on frame")
+
+            # Draw center points (template center and product center)
+            center_alignment_check = product_verification.get('center_alignment_check')
+            if center_alignment_check:
+                img_to_save = draw_center_points(
+                    img_to_save,
+                    center_alignment_check
+                )
+                logger.info(f"Drew center points (template + product) on frame")
 
         # Create directory structure: base_dir/{recipe_id}/{YYYY-MM-DD}/{camera_serial}/
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
