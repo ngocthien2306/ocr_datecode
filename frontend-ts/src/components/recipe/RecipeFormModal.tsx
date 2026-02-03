@@ -1304,11 +1304,11 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       >
                         {/* <option value="OCR">OCR (Text Recognition)</option> */}
                         <option value="Check_Type_Product">Check Type Product</option>
-                        {/* <option value="Check_Color">Check Color</option>
-                        <option value="Check_Defect">Check Defect</option>
+                        <option value="Check_Color">Check Color</option>
+                        {/* <option value="Check_Defect">Check Defect</option>
                         <option value="Check_Position">Check Position</option>
                         <option value="Barcode_Detection">Barcode Detection</option>
-                        <option value="DateCode_Detection">Date Code Detection</option> */}
+                        <option value="DateCode_Detection">Date Code Detection</option>  */}
                       </select>
                       {/* <small style={{display: 'block', marginTop: 4, color: '#666'}}>
                         All templates for this camera will use this function type

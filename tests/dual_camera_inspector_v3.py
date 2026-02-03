@@ -5,7 +5,7 @@ from pathlib import Path
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QLabel, QFileDialog,
                              QTextEdit, QSlider, QGroupBox, QSpinBox, QDialog,
-                             QFormLayout, QDialogButtonBox)
+                             QFormLayout, QDialogButtonBox, QCheckBox)
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import Qt
 from test_segment import YOLOSegmentInference
@@ -13,12 +13,15 @@ from test_segment import YOLOSegmentInference
 
 class CircularROISelector(QDialog):
     """Dialog for selecting circular ROI on template image"""
-    def __init__(self, image, parent=None):
+    def __init__(self, image, model, conf_threshold=0.25, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Select ROI (Circular)")
         self.setGeometry(100, 100, 1000, 800)
 
         self.original_image = image.copy()
+        self.model = model
+        self.conf_threshold = conf_threshold
+
         self.circle_center = None  # (x, y)
         self.circle_radius = 50
         self.dragging = False
@@ -28,12 +31,29 @@ class CircularROISelector(QDialog):
         self.s_min, self.s_max = 0, 255
         self.v_min, self.v_max = 0, 255
 
+        # Visualization options
+        self.show_label_masks = True
+        self.show_matching_pixels = True  # Show yellow matching pixels
+        self.bind_pixel_visualization = True  # Real-time update when dragging sliders
+
+        # Detect labels first
+        self.boxes = None
+        self.masks = None
+        self.detect_labels()
+
         self.setup_ui()
 
         # Set initial circle at center
         h, w = image.shape[:2]
         self.circle_center = (w // 2, h // 2)
         self.analyze_roi()
+
+    def detect_labels(self):
+        """Detect labels in template image"""
+        self.boxes, self.masks = self.model.predict(self.original_image, conf_threshold=self.conf_threshold)
+
+        if self.boxes is None or len(self.boxes) == 0:
+            print("Warning: No labels detected in template image!")
 
     def setup_ui(self):
         layout = QVBoxLayout()
@@ -51,8 +71,21 @@ class CircularROISelector(QDialog):
         radius_layout.addWidget(self.radius_label)
         layout.addLayout(radius_layout)
 
+        # View options
+        view_options_layout = QHBoxLayout()
+        self.btn_toggle_label_masks = QPushButton("Hide Label Masks")
+        self.btn_toggle_label_masks.clicked.connect(self.toggle_label_masks)
+        view_options_layout.addWidget(self.btn_toggle_label_masks)
+
+        self.btn_toggle_matching_pixels = QPushButton("Hide Matching Pixels")
+        self.btn_toggle_matching_pixels.clicked.connect(self.toggle_matching_pixels)
+        view_options_layout.addWidget(self.btn_toggle_matching_pixels)
+
+        view_options_layout.addStretch()
+        layout.addLayout(view_options_layout)
+
         # Instructions
-        instructions = QLabel("Click and drag to move the circle. Adjust radius with slider.")
+        instructions = QLabel("Click and drag to move the circle. Yellow = matching pixels in label region.")
         layout.addWidget(instructions)
 
         # Image display
@@ -64,66 +97,140 @@ class CircularROISelector(QDialog):
         self.image_label.mouseReleaseEvent = self.mouse_release
         layout.addWidget(self.image_label)
 
+        # === 2-COLUMN LAYOUT: Sliders (left) + Histogram (right) ===
+        controls_layout = QHBoxLayout()
+
+        # LEFT COLUMN: Manual HSV sliders
+        left_column = QGroupBox("Manual HSV Adjust")
+        left_layout = QVBoxLayout()
+
+        # H range
+        h_group = QGroupBox("Hue (0-180)")
+        h_group_layout = QVBoxLayout()
+
+        h_min_layout = QHBoxLayout()
+        h_min_layout.addWidget(QLabel("Min:"))
+        self.h_min_slider = QSlider(Qt.Horizontal)
+        self.h_min_slider.setRange(0, 180)
+        self.h_min_slider.valueChanged.connect(self.on_h_min_slider_changed)
+        h_min_layout.addWidget(self.h_min_slider)
+        self.h_min_label = QLabel("0")
+        self.h_min_label.setMinimumWidth(30)
+        h_min_layout.addWidget(self.h_min_label)
+        h_group_layout.addLayout(h_min_layout)
+
+        h_max_layout = QHBoxLayout()
+        h_max_layout.addWidget(QLabel("Max:"))
+        self.h_max_slider = QSlider(Qt.Horizontal)
+        self.h_max_slider.setRange(0, 180)
+        self.h_max_slider.setValue(180)
+        self.h_max_slider.valueChanged.connect(self.on_h_max_slider_changed)
+        h_max_layout.addWidget(self.h_max_slider)
+        self.h_max_label = QLabel("180")
+        self.h_max_label.setMinimumWidth(30)
+        h_max_layout.addWidget(self.h_max_label)
+        h_group_layout.addLayout(h_max_layout)
+
+        h_group.setLayout(h_group_layout)
+        left_layout.addWidget(h_group)
+
+        # S range
+        s_group = QGroupBox("Saturation (0-255)")
+        s_group_layout = QVBoxLayout()
+
+        s_min_layout = QHBoxLayout()
+        s_min_layout.addWidget(QLabel("Min:"))
+        self.s_min_slider = QSlider(Qt.Horizontal)
+        self.s_min_slider.setRange(0, 255)
+        self.s_min_slider.valueChanged.connect(self.on_s_min_slider_changed)
+        s_min_layout.addWidget(self.s_min_slider)
+        self.s_min_label = QLabel("0")
+        self.s_min_label.setMinimumWidth(30)
+        s_min_layout.addWidget(self.s_min_label)
+        s_group_layout.addLayout(s_min_layout)
+
+        s_max_layout = QHBoxLayout()
+        s_max_layout.addWidget(QLabel("Max:"))
+        self.s_max_slider = QSlider(Qt.Horizontal)
+        self.s_max_slider.setRange(0, 255)
+        self.s_max_slider.setValue(255)
+        self.s_max_slider.valueChanged.connect(self.on_s_max_slider_changed)
+        s_max_layout.addWidget(self.s_max_slider)
+        self.s_max_label = QLabel("255")
+        self.s_max_label.setMinimumWidth(30)
+        s_max_layout.addWidget(self.s_max_label)
+        s_group_layout.addLayout(s_max_layout)
+
+        s_group.setLayout(s_group_layout)
+        left_layout.addWidget(s_group)
+
+        # V range
+        v_group = QGroupBox("Value (0-255)")
+        v_group_layout = QVBoxLayout()
+
+        v_min_layout = QHBoxLayout()
+        v_min_layout.addWidget(QLabel("Min:"))
+        self.v_min_slider = QSlider(Qt.Horizontal)
+        self.v_min_slider.setRange(0, 255)
+        self.v_min_slider.valueChanged.connect(self.on_v_min_slider_changed)
+        v_min_layout.addWidget(self.v_min_slider)
+        self.v_min_label = QLabel("0")
+        self.v_min_label.setMinimumWidth(30)
+        v_min_layout.addWidget(self.v_min_label)
+        v_group_layout.addLayout(v_min_layout)
+
+        v_max_layout = QHBoxLayout()
+        v_max_layout.addWidget(QLabel("Max:"))
+        self.v_max_slider = QSlider(Qt.Horizontal)
+        self.v_max_slider.setRange(0, 255)
+        self.v_max_slider.setValue(255)
+        self.v_max_slider.valueChanged.connect(self.on_v_max_slider_changed)
+        v_max_layout.addWidget(self.v_max_slider)
+        self.v_max_label = QLabel("255")
+        self.v_max_label.setMinimumWidth(30)
+        v_max_layout.addWidget(self.v_max_label)
+        v_group_layout.addLayout(v_max_layout)
+
+        v_group.setLayout(v_group_layout)
+        left_layout.addWidget(v_group)
+
+        # Bind pixel visualization checkbox
+        self.bind_checkbox = QCheckBox("Real-time Pixel Update (may be slow on large images)")
+        self.bind_checkbox.setChecked(True)
+        self.bind_checkbox.stateChanged.connect(self.on_bind_checkbox_changed)
+        left_layout.addWidget(self.bind_checkbox)
+
+        left_layout.addStretch()
+        left_column.setLayout(left_layout)
+        controls_layout.addWidget(left_column)
+
+        # RIGHT COLUMN: Histogram + Info
+        right_column = QGroupBox("Histogram & Info")
+        right_layout = QVBoxLayout()
+
         # Histogram display
         self.histogram_label = QLabel()
         self.histogram_label.setFixedHeight(120)
         self.histogram_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.histogram_label)
+        right_layout.addWidget(self.histogram_label)
 
-        # HSV range display (read-only, auto-updated)
-        hsv_group = QGroupBox("HSV Range (auto-detected from circle)")
-        hsv_layout = QVBoxLayout()
+        # HSV range info
+        hsv_info_group = QGroupBox("Current HSV Range")
+        hsv_info_layout = QVBoxLayout()
 
         self.hsv_info = QTextEdit()
-        self.hsv_info.setMaximumHeight(80)
+        self.hsv_info.setMaximumHeight(100)
         self.hsv_info.setReadOnly(True)
-        hsv_layout.addWidget(self.hsv_info)
+        hsv_info_layout.addWidget(self.hsv_info)
 
-        hsv_group.setLayout(hsv_layout)
-        layout.addWidget(hsv_group)
+        hsv_info_group.setLayout(hsv_info_layout)
+        right_layout.addWidget(hsv_info_group)
 
-        # Manual override inputs
-        manual_group = QGroupBox("Manual Override (optional)")
-        manual_layout = QFormLayout()
+        right_layout.addStretch()
+        right_column.setLayout(right_layout)
+        controls_layout.addWidget(right_column)
 
-        # H range
-        h_layout = QHBoxLayout()
-        self.h_min_spin = QSpinBox()
-        self.h_min_spin.setRange(0, 180)
-        self.h_max_spin = QSpinBox()
-        self.h_max_spin.setRange(0, 180)
-        h_layout.addWidget(QLabel("Min:"))
-        h_layout.addWidget(self.h_min_spin)
-        h_layout.addWidget(QLabel("Max:"))
-        h_layout.addWidget(self.h_max_spin)
-        manual_layout.addRow("Hue:", h_layout)
-
-        # S range
-        s_layout = QHBoxLayout()
-        self.s_min_spin = QSpinBox()
-        self.s_min_spin.setRange(0, 255)
-        self.s_max_spin = QSpinBox()
-        self.s_max_spin.setRange(0, 255)
-        s_layout.addWidget(QLabel("Min:"))
-        s_layout.addWidget(self.s_min_spin)
-        s_layout.addWidget(QLabel("Max:"))
-        s_layout.addWidget(self.s_max_spin)
-        manual_layout.addRow("Saturation:", s_layout)
-
-        # V range
-        v_layout = QHBoxLayout()
-        self.v_min_spin = QSpinBox()
-        self.v_min_spin.setRange(0, 255)
-        self.v_max_spin = QSpinBox()
-        self.v_max_spin.setRange(0, 255)
-        v_layout.addWidget(QLabel("Min:"))
-        v_layout.addWidget(self.v_min_spin)
-        v_layout.addWidget(QLabel("Max:"))
-        v_layout.addWidget(self.v_max_spin)
-        manual_layout.addRow("Value:", v_layout)
-
-        manual_group.setLayout(manual_layout)
-        layout.addWidget(manual_group)
+        layout.addLayout(controls_layout)
 
         # Buttons
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -137,6 +244,81 @@ class CircularROISelector(QDialog):
         self.circle_radius = value
         self.radius_label.setText(f"{value} px")
         self.analyze_roi()
+
+    def toggle_label_masks(self):
+        """Toggle label mask visualization"""
+        self.show_label_masks = not self.show_label_masks
+        self.btn_toggle_label_masks.setText("Show Label Masks" if not self.show_label_masks else "Hide Label Masks")
+        self.update_display()
+
+    def toggle_matching_pixels(self):
+        """Toggle matching pixels visualization"""
+        self.show_matching_pixels = not self.show_matching_pixels
+        self.btn_toggle_matching_pixels.setText("Show Matching Pixels" if not self.show_matching_pixels else "Hide Matching Pixels")
+        self.update_display()
+
+    def on_bind_checkbox_changed(self, state):
+        """Toggle real-time pixel visualization binding"""
+        self.bind_pixel_visualization = (state == Qt.Checked)
+
+    def on_h_min_slider_changed(self, value):
+        self.h_min = value
+        self.h_min_label.setText(str(value))
+        self.update_hsv_info()
+        if self.bind_pixel_visualization:
+            self.update_display()
+
+    def on_h_max_slider_changed(self, value):
+        self.h_max = value
+        self.h_max_label.setText(str(value))
+        self.update_hsv_info()
+        if self.bind_pixel_visualization:
+            self.update_display()
+
+    def on_s_min_slider_changed(self, value):
+        self.s_min = value
+        self.s_min_label.setText(str(value))
+        self.update_hsv_info()
+        if self.bind_pixel_visualization:
+            self.update_display()
+
+    def on_s_max_slider_changed(self, value):
+        self.s_max = value
+        self.s_max_label.setText(str(value))
+        self.update_hsv_info()
+        if self.bind_pixel_visualization:
+            self.update_display()
+
+    def on_v_min_slider_changed(self, value):
+        self.v_min = value
+        self.v_min_label.setText(str(value))
+        self.update_hsv_info()
+        if self.bind_pixel_visualization:
+            self.update_display()
+
+    def on_v_max_slider_changed(self, value):
+        self.v_max = value
+        self.v_max_label.setText(str(value))
+        self.update_hsv_info()
+        if self.bind_pixel_visualization:
+            self.update_display()
+
+    def update_hsv_info(self):
+        """Update HSV info text"""
+        if self.circle_center is not None:
+            # Calculate pixel count in circle
+            h, w = self.original_image.shape[:2]
+            mask = np.zeros((h, w), dtype=np.uint8)
+            cv2.circle(mask, self.circle_center, self.circle_radius, 255, -1)
+            roi_pixels = self.original_image[mask > 0]
+            pixel_count = len(roi_pixels)
+
+            self.hsv_info.setText(
+                f"H: [{self.h_min}, {self.h_max}]  (range: {self.h_max - self.h_min})\n"
+                f"S: [{self.s_min}, {self.s_max}]  (range: {self.s_max - self.s_min})\n"
+                f"V: [{self.v_min}, {self.v_max}]  (range: {self.v_max - self.v_min})\n"
+                f"Pixels in circle: {pixel_count}"
+            )
 
     def mouse_press(self, event):
         if event.button() == Qt.LeftButton:
@@ -248,13 +430,21 @@ class CircularROISelector(QDialog):
             self.v_min = int(v_indices.min())
             self.v_max = int(v_indices.max())
 
-        # Update spinboxes
-        self.h_min_spin.setValue(self.h_min)
-        self.h_max_spin.setValue(self.h_max)
-        self.s_min_spin.setValue(self.s_min)
-        self.s_max_spin.setValue(self.s_max)
-        self.v_min_spin.setValue(self.v_min)
-        self.v_max_spin.setValue(self.v_max)
+        # Update sliders
+        self.h_min_slider.setValue(self.h_min)
+        self.h_max_slider.setValue(self.h_max)
+        self.s_min_slider.setValue(self.s_min)
+        self.s_max_slider.setValue(self.s_max)
+        self.v_min_slider.setValue(self.v_min)
+        self.v_max_slider.setValue(self.v_max)
+
+        # Update labels
+        self.h_min_label.setText(str(self.h_min))
+        self.h_max_label.setText(str(self.h_max))
+        self.s_min_label.setText(str(self.s_min))
+        self.s_max_label.setText(str(self.s_max))
+        self.v_min_label.setText(str(self.v_min))
+        self.v_max_label.setText(str(self.v_max))
 
         # Update info text
         self.hsv_info.setText(
@@ -322,13 +512,70 @@ class CircularROISelector(QDialog):
         self.histogram_label.setPixmap(pixmap)
 
     def update_display(self):
-        """Update image display with circle overlay"""
+        """Update image display with circle overlay and matching pixels visualization"""
         display = self.original_image.copy()
+
+        # Draw detected label masks first (semi-transparent green) - only if enabled
+        if self.show_label_masks and self.boxes is not None and len(self.boxes) > 0 and self.masks is not None:
+            mask_overlay = np.zeros_like(display)
+            for i, box in enumerate(self.boxes):
+                class_id = int(box[5])
+                class_name = self.model.class_names[class_id]
+
+                if class_name == 'label' and i < len(self.masks):
+                    mask = self.masks[i]
+                    mask_binary = mask.astype(np.uint8)
+                    mask_overlay[mask_binary > 0] = [0, 255, 0]  # Green for label regions
+
+            display = cv2.addWeighted(display, 0.8, mask_overlay, 0.2, 0)
+
+        # Visualize matching pixels ONLY within label masks - if enabled
+        if self.show_matching_pixels and self.circle_center is not None and (self.h_max > self.h_min):
+            if self.boxes is not None and len(self.boxes) > 0 and self.masks is not None:
+                # Convert image to HSV
+                image_hsv = cv2.cvtColor(self.original_image, cv2.COLOR_BGR2HSV)
+
+                # Create combined label mask
+                combined_label_mask = np.zeros(self.original_image.shape[:2], dtype=bool)
+                for i, box in enumerate(self.boxes):
+                    class_id = int(box[5])
+                    class_name = self.model.class_names[class_id]
+
+                    if class_name == 'label' and i < len(self.masks):
+                        mask = self.masks[i]
+                        combined_label_mask |= (mask > 0)
+
+                # Create HSV range matching mask
+                h_match = (image_hsv[:, :, 0] >= self.h_min) & (image_hsv[:, :, 0] <= self.h_max)
+                s_match = (image_hsv[:, :, 1] >= self.s_min) & (image_hsv[:, :, 1] <= self.s_max)
+                v_match = (image_hsv[:, :, 2] >= self.v_min) & (image_hsv[:, :, 2] <= self.v_max)
+
+                hsv_matching_mask = h_match & s_match & v_match
+
+                # Combine: only show matching pixels INSIDE label masks
+                final_matching_mask = combined_label_mask & hsv_matching_mask
+
+                # Create overlay showing matching pixels
+                overlay = display.copy()
+                overlay[final_matching_mask] = [0, 255, 255]  # Yellow for matching pixels
+
+                # Blend overlay
+                display = cv2.addWeighted(display, 0.5, overlay, 0.5, 0)
 
         # Draw circle
         if self.circle_center is not None:
             cv2.circle(display, self.circle_center, self.circle_radius, (0, 255, 0), 2)
             cv2.circle(display, self.circle_center, 5, (0, 0, 255), -1)  # Center dot
+
+            # Draw crosshair
+            cv2.line(display,
+                    (self.circle_center[0] - self.circle_radius - 10, self.circle_center[1]),
+                    (self.circle_center[0] + self.circle_radius + 10, self.circle_center[1]),
+                    (0, 255, 0), 1)
+            cv2.line(display,
+                    (self.circle_center[0], self.circle_center[1] - self.circle_radius - 10),
+                    (self.circle_center[0], self.circle_center[1] + self.circle_radius + 10),
+                    (0, 255, 0), 1)
 
         # Convert to QPixmap and display
         display_rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
@@ -590,8 +837,8 @@ class DualCameraInspectorV3(QMainWindow):
 
         image = cv2.imread(file_path)
 
-        # Open circular ROI selector
-        dialog = CircularROISelector(image, self)
+        # Open circular ROI selector with model
+        dialog = CircularROISelector(image, self.model, self.conf_threshold, self)
         if dialog.exec_() == QDialog.Accepted:
             result = dialog.get_result()
 

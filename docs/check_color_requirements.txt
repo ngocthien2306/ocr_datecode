@@ -1,0 +1,18 @@
+Function Type:
+                        <option value="Check_Type_Product">Check Type Product</option>
+                        <option value="Check_Color">Check Color</option>
+
+tôi cần bổ sung thêm 1 chức năng mới
+
+  - Chọn vùng quan tâm hình tròn trên ảnh template                                                                                                
+  - Phân tích màu sắc theo không gian HSV tự động                                                                                                 
+  - Điều chỉnh ngưỡng HSV bằng slider (Hue, Saturation, Value)                                                                                    
+  - Hiển thị histogram phân bố màu sắc                                                                                                            
+  - Trực quan hóa pixel khớp màu (màu vàng)                                                                                                       
+  - Hiển thị/ẩn mask của pixel khớp màu được phát hiện                                                                                                     
+  - Kéo thả vùng tròn để chọn vị trí                                                                                                              
+  - Cập nhật real-time khi thay đổi tham số (HSV) tạo 3 slider để làm điều này binding min max
+
+khi tôi chọn check color thì cho phép các chức năng này, chỉ cần khi upload ảnh hoặc get current frame 
+
+/home/demo/Source/ocr_datecode/frontend-ts/src/components/recipe/RecipeFormModal.tsx

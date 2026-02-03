@@ -1,0 +1,69 @@
+/home/demo/Source/ocr_datecode/ai_services/camera_management/verification/product_verifier.py
+và class ProductVerificationService
+
+product_verification = context.product_verification_service.verify_product_alignment(
+                    frame_img=frame,
+                    transformed_bboxes=frame_result['transformed_bboxes'],
+                    camera=camera
+                )
+
+tôi muốn sửa lại logic 1 tí là khi nào transformed_bboxes có đầy đủ box product và label thì ta mới bắt đầu implement chức năng check lệch nhãn này lên
+
+logic check lệch như sau, ta kiểm tra xem những template nào có vẽ 2 box (product và label) thì ta mới bắt đầu check
+
+ví dụ ta có 3 cameras mà 2 camera mỗi camera 1 template mà mỗi template tôi vẽ đầy đủ 2 vùng -> có 2 frame cần check
+
+đầu tiên /home/demo/Source/ocr_datecode/tests/test_tensorrt_obb.py kiểm tra code này nó predict vùng 2 vùng label và product cho các sản phẩm trong ảnh 
+
+sau bước predict đó ta dùng toạ độ để check xem các bbox nào nằm hoàn toàn bên trong transformed_bboxes của toạ độ type product,
+ví dụ sau khi filter thì còn lại 2 box (1 box product 1 box label) nằm bên trong. Tiếp theo ta có sánh góc lệch của 2 box (so sánh box product với box lable) này nếu lớn hơn 3 độ -> nhãn bị xoay
+các trường hợp ko check: ko có box nào, chỉ có 1 box product, chỉ có 1 box label, tất cả là box product, tất cả là box label
+có hơn 2 box product và 1 box label thì ta auto giữ 1 box product có conf cao
+có hơn 2 box label và 1 box product thì ta auto giữ 1 box label có conf cao
+
+Sau khi check xoay xong ta check xem có bị lệch ko, nếu box label chạm vào transformed_bboxes type label -> bị lệch (cho phép sai số khoảng N pixel) check lệch theo 2 cạnh 2 bên thôi cạnh trên dưới ta không cần check
+
+
+note: ta refactor code làm sao để predict batch khi có nhiều ảnh thoả mãn để inference 
+
+
+  1. YOLO OBB model path: Model engine nằm ở đâu? Có phải là weights/yolo26n-ultralight-obb_fp16_dynamic.engine như trong test? 
+  trả lời: /home/demo/Source/ocr_datecode/weights/yolo26n-ultralight-obb_fp16_dynamic.engine
+  2. Threshold values:                                                                                                                                                      
+    - Góc xoay threshold = 3 độ? ✓                                                                                                                                          
+    - Margin pixels cho check lệch = bao nhiêu? (N pixels bạn muốn là bao nhiêu?)                                                                                           
+    - YOLO confidence threshold = 0.6 có OK không?  
+  tra lời: margin cho default là 30px, conf=0.25
+
+  3. Logic "chạm vào label region":                                                                                                                                         
+    - Bạn muốn check label box có CHẠM VÀO boundary của label region (tức là label bị lệch ra ngoài)?   
+    trả lời: đúng vậy, check label có bị lệch ra ngoài không                                                                   
+    - Hay check label box KHÔNG NẰM HOÀN TOÀN TRONG label region?
+    trả lời: label sẽ nằm bên trong, nhưng có những nhãn bị lệch ra ngoài 1 tí                                                                                                            
+    - Check 2 cạnh trái/phải nghĩa là check x-coordinates phải không?     
+    trả lời: thì obb box có top right bottom left thì chỉ lấy cạnh right và left thôi   ( hoặc đề xuất cách thông minh hơn)                                                                                                
+  4. Batch inference location:                                                                                                                                              
+    - Batch inference nên ở đâu? Trong SingleCameraPipeline khi có multi-templates?                                                                                         
+    - Hay trong MultiCameraPipeline khi có nhiều cameras?     
+    trả lời: khi có nhiều cameras và có 2 cameras cần check khi 2 camera (2 template) đc vẽ đầy đủ product và label region                                                                                                              
+  5. Điều kiện "có đủ 2 vùng":                                                                                                                                              
+    - Có phải là check trong transformed_bboxes có cả type="product" VÀ type="label"?    
+
+    trả lời: đúng vậy, nghĩa là dò  transformed_bboxes của frame đó nếu có đủ 2 vùng thì mới cho frame để inference, sau khi inference để predict product và label thì mới tiếp tục check                                                                                 
+    - Hay check trong template annotations ban đầu?       
+                                                                                                                 
+  6. Return format: Bạn có muốn giữ format kết quả giống như hiện tại (match, skipped, angle_diff...) không?    
+  trả lời: có
+
+
+
+1a. cần batch inference 2 frames (template 0 + template 2)
+1b. option A
+
+2. cách này ok
+
+3.logic này đúng
+
+4. đồng ý
+
+5. đồng ý
