@@ -586,7 +586,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           image_url: url, // Server URL for submission
           image_width: width,
           image_height: height,
-          annotations: []
+          annotations: [],
+          center_offset_threshold: 50.0  // Default center alignment threshold
         };
 
         setCameraTemplates(prev => ({

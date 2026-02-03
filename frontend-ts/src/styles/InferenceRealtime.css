@@ -539,6 +539,17 @@
   color: white;
 }
 
+.frame-offset-x {
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  backdrop-filter: blur(8px);
+  background: rgba(255, 140, 0, 0.8);
+  color: white;
+  font-family: 'Courier New', monospace;
+}
+
 /* Camera Stats - Compact Inline */
 .camera-stats-compact {
   display: flex;

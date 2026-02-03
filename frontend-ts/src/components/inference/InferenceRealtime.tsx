@@ -38,6 +38,25 @@ interface TemplateVerification {
   template_bbox?: any;
 }
 
+interface ProductVerification {
+  match: boolean;
+  skipped: boolean;
+  error?: string;
+  center_alignment_check?: {
+    ok: boolean;
+    offset_x: number;
+    threshold: number;
+    template_center: [number, number];
+    product_center: [number, number];
+  };
+  timing?: {
+    total: number;
+    yolo_inference?: number;
+    frames_checked?: number;
+    frames_total?: number;
+  };
+}
+
 interface FrameResult {
   frame_idx: number;
   pass_fail: string;
@@ -49,6 +68,7 @@ interface FrameResult {
   detected_regions?: any[];
   text_verification?: TextVerification;
   template_verification?: TemplateVerification;
+  product_verification?: ProductVerification;
 }
 
 interface CameraResult {
@@ -852,6 +872,11 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                                 {/* <span className="frame-confidence">
                                   {(frame.confidence * 100).toFixed(1)}%
                                 </span> */}
+                                {frame.product_verification?.center_alignment_check && (
+                                  <span className="frame-offset-x">
+                                    Offset: {frame.product_verification.center_alignment_check.offset_x.toFixed(1)}px / {frame.product_verification.center_alignment_check.threshold.toFixed(1)}px
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
