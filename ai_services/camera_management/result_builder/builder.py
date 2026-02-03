@@ -163,7 +163,8 @@ class FrameResultBuilder:
                 confidence=self._confidence,
                 inliers=self._inliers,
                 total_matches=self._total_matches,
-                crop_area=self._crop_area
+                crop_area=self._crop_area,
+                product_verification=self._product_verification
             )
         else:
             # Encode for display only
@@ -173,7 +174,8 @@ class FrameResultBuilder:
                 confidence=self._confidence,
                 inliers=self._inliers,
                 total_matches=self._total_matches,
-                crop_area=self._crop_area
+                crop_area=self._crop_area,
+                product_verification=self._product_verification
             )
         return self
 

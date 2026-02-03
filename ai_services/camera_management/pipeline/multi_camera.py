@@ -10,9 +10,8 @@ from typing import Dict, Any, List, Optional, TYPE_CHECKING
 
 from .base import InferencePipelineTemplate, PipelineContext
 
-if TYPE_CHECKING:
-    from ..camera import Camera
-    import numpy as np
+from ..camera import Camera
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +203,11 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                 ocr_tasks
             )
 
+        # Batch Product Verification (NEW)
+        batch_product_results = self._batch_verify_products(
+            context, transformed_results
+        )
+
         # Build verified results for each camera
         verified_results = {}
         overall = 'PASS'
@@ -268,14 +272,10 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                         if bbox.get('type') == 'template':
                             bbox['verification_status'] = 'fail'
 
-            # Product verification
+            # Product verification (UPDATED - use batch results)
             camera_result['product_verification'] = None
-            if (result.get('success') and context.product_verification_service and frames):
-                product_verification = context.product_verification_service.verify_product_alignment(
-                    frame_img=frames[0],
-                    transformed_bboxes=camera_result['transformed_bboxes'],
-                    camera=camera
-                )
+            if result.get('success') and context.product_verification_service and frames:
+                product_verification = batch_product_results.get(serial_number)
                 camera_result['product_verification'] = product_verification
 
                 # Mark failed product bbox with verification_status
@@ -283,7 +283,7 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     not product_verification.get('skipped', True) and
                     not product_verification.get('match', True)):
                     for bbox in camera_result['transformed_bboxes']:
-                        if bbox.get('type') == 'product1':
+                        if bbox.get('type') == 'product':
                             bbox['verification_status'] = 'fail'
 
             # Determine pass/fail
@@ -305,6 +305,100 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             'camera_results': verified_results,
             'overall_result': overall
         }
+
+    def _batch_verify_products(
+        self,
+        context: PipelineContext,
+        transformed_results: Dict[str, Any]
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Batch verify products for all cameras.
+
+        Args:
+            context: Pipeline context
+            transformed_results: Dict mapping serial_number -> inference result
+
+        Returns:
+            Dict mapping serial_number -> product verification result
+        """
+        if not context.product_verification_service:
+            return {}
+
+        # Collect all cameras/frames that need product verification
+        frames_data = []
+        serial_numbers = []
+
+        for camera in context.cameras_to_process:
+            serial_number = camera.serial_number
+            result = transformed_results.get(serial_number, {})
+            frames = context.results.get(serial_number, {}).get('frames', [])
+
+            if result.get('success') and frames:
+                frames_data.append({
+                    'frame_img': frames[0],
+                    'transformed_bboxes': result.get('transformed_bboxes', []),
+                    'camera': camera
+                })
+                serial_numbers.append(serial_number)
+
+        if not frames_data:
+            return {}
+
+        # Check how many frames need verification
+        frames_needing_verification = [
+            data for data in frames_data
+            if context.product_verification_service.should_verify_frame(data['transformed_bboxes'])
+        ]
+
+        logger.debug(
+            f"[Job #{context.job_id}] Product verification: "
+            f"{len(frames_needing_verification)}/{len(frames_data)} cameras need verification"
+        )
+
+        # Batch verify
+        try:
+            import time
+            t_start = time.perf_counter()
+            verification_results = context.product_verification_service.verify_batch(frames_data)
+            t_elapsed = (time.perf_counter() - t_start) * 1000
+
+            # Map results back to serial numbers
+            result_map = {}
+            for idx, serial_number in enumerate(serial_numbers):
+                if idx < len(verification_results):
+                    result_map[serial_number] = verification_results[idx]
+
+            # Log timing details if available (find first valid timing)
+            timing = None
+            for result in verification_results:
+                if result and result.get('timing') and result['timing'].get('total', 0) > 0:
+                    timing = result['timing']
+                    break
+
+            if timing:
+                logger.info(
+                    f"[Job #{context.job_id}] Product verification complete: "
+                    f"total={timing.get('total', 0):.1f}ms, "
+                    f"yolo={timing.get('yolo_inference', 0):.1f}ms, "
+                    f"cameras={timing.get('frames_checked', 0)}/{timing.get('frames_total', 0)}"
+                )
+
+            return result_map
+
+        except Exception as e:
+            logger.error(f"[Job #{context.job_id}] Batch product verification failed: {e}")
+            import traceback
+            traceback.print_exc()
+            # Return error results
+            return {
+                sn: {
+                    'match': False,
+                    'skipped': False,
+                    'error': f'Batch verification failed: {str(e)}',
+                    'timing': {'total': 0.0}
+                }
+                for sn in serial_numbers
+            }
 
     def postprocess(
         self,

@@ -266,10 +266,12 @@ def draw_inference_bboxes(
 
     # Define colors for different bbox types (BGR format)
     colors = {
-        'template': (0, 255, 0),      # Green
+        'template': (0, 255, 0),       # Green
         'text': (0, 165, 255),         # Orange
         'barcode': (255, 0, 255),      # Magenta
-        'datecode': (255, 255, 0)      # Cyan
+        'datecode': (255, 255, 0),     # Cyan
+        'product': (255, 128, 0),      # Blue (for product region)
+        'label': (128, 0, 255)         # Purple (for label region)
     }
     logger.debug(f"Drawing {len(transformed_bboxes)} bboxes")
 
@@ -405,6 +407,122 @@ def draw_inference_bboxes(
     return result_img
 
 
+def draw_detected_obb_boxes(
+    img: np.ndarray,
+    detected_boxes: Optional[Dict[str, Any]],
+    show_details: bool = True
+) -> np.ndarray:
+    """
+    Draw detected OBB boxes from YOLO on the image.
+
+    Args:
+        img: Input image
+        detected_boxes: Dict with 'product' and 'label' detected boxes
+        show_details: Whether to show confidence and angles
+
+    Returns:
+        Image with drawn OBB boxes
+    """
+    if not detected_boxes:
+        return img
+
+    result_img = img.copy()
+    height, width = img.shape[:2]
+
+    # Calculate dynamic sizes
+    font_scale = max(0.4, min(1.5, width / 2500))
+    line_thickness = max(2, int(width / 1000))
+    text_thickness = max(1, int(width / 1500))
+
+    # Colors for detected boxes (brighter colors to distinguish from template regions)
+    colors = {
+        'product': (0, 255, 255),   # Yellow (detected product)
+        'label': (255, 0, 255)      # Magenta (detected label)
+    }
+
+    # Draw each detected box
+    for box_type in ['product', 'label']:
+        if box_type not in detected_boxes:
+            continue
+
+        box_data = detected_boxes[box_type]
+        if not box_data or not isinstance(box_data, dict):
+            continue
+
+        # Get corners
+        corners = box_data.get('corners')
+        if corners is None:
+            continue
+
+        # Convert to numpy array if needed
+        if isinstance(corners, list):
+            corners = np.array(corners, dtype=np.int32)
+        else:
+            corners = corners.astype(np.int32)
+
+        # Get color
+        color = colors.get(box_type, (255, 255, 255))
+
+        # Draw OBB polygon with thicker line (dashed style)
+        for i in range(4):
+            pt1 = tuple(corners[i])
+            pt2 = tuple(corners[(i + 1) % 4])
+            cv2.line(result_img, pt1, pt2, color, line_thickness + 1, cv2.LINE_AA)
+
+        # Draw corner points
+        for corner in corners:
+            cv2.circle(result_img, tuple(corner), max(3, line_thickness), color, -1)
+
+        # Prepare label text
+        score = box_data.get('score', 0.0)
+        label_parts = [f"{box_type.upper()}"]
+
+        if show_details:
+            label_parts.append(f"{score:.2f}")
+
+        label_text = " ".join(label_parts)
+
+        # Calculate label position (top-left corner of box)
+        label_x = int(corners[0][0])
+        label_y = int(corners[0][1]) - 8
+
+        # Get text size
+        (text_w, text_h), baseline = cv2.getTextSize(
+            label_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, text_thickness
+        )
+
+        # Ensure label stays within image bounds
+        if label_y - text_h < 0:
+            label_y = int(corners[0][1]) + text_h + 8
+        if label_x + text_w + 8 > width:
+            label_x = width - text_w - 8
+        if label_x < 0:
+            label_x = 0
+
+        # Draw background rectangle for label
+        cv2.rectangle(
+            result_img,
+            (label_x - 2, label_y - text_h - 4),
+            (label_x + text_w + 2, label_y + baseline + 2),
+            color,
+            -1  # Filled
+        )
+
+        # Draw label text
+        cv2.putText(
+            result_img,
+            label_text,
+            (label_x, label_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            (0, 0, 0),  # Black text on colored background
+            text_thickness,
+            cv2.LINE_AA
+        )
+
+    return result_img
+
+
 def encode_frame_for_display(
     frame_img: np.ndarray,
     transformed_bboxes: Optional[List[Dict[str, Any]]] = None,
@@ -412,6 +530,7 @@ def encode_frame_for_display(
     inliers: int = 0,
     total_matches: int = 0,
     crop_area: Optional[Dict[str, int]] = None,
+    product_verification: Optional[Dict[str, Any]] = None,
     scale_factor: int = 3,
     quality: int = 70
 ) -> Optional[str]:
@@ -427,6 +546,16 @@ def encode_frame_for_display(
                 total_matches,
                 crop_area
             )
+
+        # Draw detected OBB boxes from YOLO (if product verification was performed)
+        if product_verification and not product_verification.get('skipped', False):
+            detected_boxes = product_verification.get('detected_boxes')
+            if detected_boxes:
+                img_to_encode = draw_detected_obb_boxes(
+                    img_to_encode,
+                    detected_boxes,
+                    show_details=True
+                )
 
         # Resize for display
         display_img = resize_for_display(img_to_encode, scale_factor=scale_factor)
@@ -454,7 +583,8 @@ def save_and_encode_frame(
     confidence: float = 0.0,
     inliers: int = 0,
     total_matches: int = 0,
-    crop_area: Optional[Dict[str, int]] = None
+    crop_area: Optional[Dict[str, int]] = None,
+    product_verification: Optional[Dict[str, Any]] = None
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Save frame DIRECTLY to permanent storage and create resized version for display
@@ -491,6 +621,17 @@ def save_and_encode_frame(
                 crop_area  # Pass crop_area to visualization
             )
             logger.info(f"Drew {len(transformed_bboxes)} bboxes on frame")
+
+        # Draw detected OBB boxes from YOLO (if product verification was performed)
+        if product_verification and not product_verification.get('skipped', False):
+            detected_boxes = product_verification.get('detected_boxes')
+            if detected_boxes:
+                img_to_save = draw_detected_obb_boxes(
+                    img_to_save,
+                    detected_boxes,
+                    show_details=True
+                )
+                logger.info(f"Drew detected OBB boxes (product + label) on frame")
 
         # Create directory structure: base_dir/{recipe_id}/{YYYY-MM-DD}/{camera_serial}/
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")

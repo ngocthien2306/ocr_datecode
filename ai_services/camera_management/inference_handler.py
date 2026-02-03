@@ -165,13 +165,25 @@ class InferenceHandler:
         )
         logger.info("TemplateVerificationService initialized")
 
-        # Product Verification Service
+        # Product Verification Service with YOLO OBB
+        yolo_obb_engine_path = f"{home}/Source/ocr_datecode/weights/yolo26n-ultralight-obb_fp16_dynamic.engine"
+
+        # Configuration: save_debug_images can be "never", "on_fail", or "always"
+        # Use "never" for production (fastest), "on_fail" for debugging failures
+        product_debug_mode = os.environ.get('PRODUCT_VERIFICATION_DEBUG', 'never')
+
         self.product_verification_service = ProductVerificationService(
-            save_debug_images=True,
+            engine_path=yolo_obb_engine_path,
+            save_debug_images=product_debug_mode,  # "never", "on_fail", or "always"
             debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
-            default_angle_threshold=1.0
+            angle_threshold=3.0,  # Rotation threshold in degrees
+            margin_pixels=30,     # Misalignment margin in pixels
+            conf_threshold=0.25   # YOLO confidence threshold
         )
-        logger.info("ProductVerificationService initialized")
+        logger.info(
+            f"ProductVerificationService initialized with YOLO OBB: {yolo_obb_engine_path}, "
+            f"debug_mode={product_debug_mode}"
+        )
 
     def init_matchers(self, cameras: List['Camera']):
         """

@@ -11,9 +11,9 @@ from typing import Dict, Any, List, Optional, TYPE_CHECKING
 
 from .base import InferencePipelineTemplate, PipelineContext
 
-if TYPE_CHECKING:
-    from ..camera import Camera
-    import numpy as np
+
+from ..camera import Camera
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +179,12 @@ class SingleCameraPipeline(InferencePipelineTemplate):
 
         transformed_results = inference_results['transformed_results']
 
+        # Batch product verification (NEW)
+        # Collect all frames that need product verification and verify them in batch
+        product_verification_results = self._batch_verify_products(
+            context, camera, frames, transformed_results
+        )
+
         verified_frames = []
 
         for idx, result in enumerate(transformed_results):
@@ -251,14 +257,13 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                         if bbox.get('type') == 'template':
                             bbox['verification_status'] = 'fail'
 
-            # Product verification
+            # Product verification (UPDATED - use batch results)
             frame_result['product_verification'] = None
-            if (result.get('success') and context.product_verification_service):
-                product_verification = context.product_verification_service.verify_product_alignment(
-                    frame_img=frame,
-                    transformed_bboxes=frame_result['transformed_bboxes'],
-                    camera=camera
-                )
+            if (result.get('success') and
+                context.product_verification_service and
+                idx < len(product_verification_results)):
+
+                product_verification = product_verification_results[idx]
                 frame_result['product_verification'] = product_verification
 
                 # Mark failed product bbox with verification_status
@@ -266,7 +271,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     not product_verification.get('skipped', True) and
                     not product_verification.get('match', True)):
                     for bbox in frame_result['transformed_bboxes']:
-                        if bbox.get('type') == 'product1':
+                        if bbox.get('type') == 'product':
                             bbox['verification_status'] = 'fail'
 
             # Determine final pass/fail
@@ -295,6 +300,99 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             'frames': verified_frames,
             'overall_result': overall
         }
+
+    def _batch_verify_products(
+        self,
+        context: PipelineContext,
+        camera: 'Camera',
+        frames: List[np.ndarray],
+        transformed_results: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Batch verify products for all frames.
+
+        Args:
+            context: Pipeline context
+            camera: Camera object
+            frames: List of frame images
+            transformed_results: List of transformed inference results
+
+        Returns:
+            List of product verification results (one per frame)
+        """
+        if not context.product_verification_service:
+            return [None] * len(frames)
+
+        # Prepare frames data for batch verification
+        frames_data = []
+        for idx, result in enumerate(transformed_results):
+            if result.get('success') and idx < len(frames):
+                frames_data.append({
+                    'frame_img': frames[idx],
+                    'transformed_bboxes': result.get('transformed_bboxes', []),
+                    'camera': camera
+                })
+            else:
+                frames_data.append({
+                    'frame_img': None,
+                    'transformed_bboxes': [],
+                    'camera': camera
+                })
+
+        # Filter valid frames for batch processing
+        valid_frames = [
+            data for data in frames_data
+            if data['frame_img'] is not None
+        ]
+
+        if not valid_frames:
+            return [None] * len(frames)
+
+        # Check how many frames need verification (have both product and label regions)
+        frames_needing_verification = [
+            data for data in valid_frames
+            if context.product_verification_service.should_verify_frame(data['transformed_bboxes'])
+        ]
+
+        logger.debug(
+            f"[{camera.serial_number}] Product verification: "
+            f"{len(frames_needing_verification)}/{len(valid_frames)} frames need verification"
+        )
+
+        # Batch verify
+        try:
+            import time
+            t_start = time.perf_counter()
+            verification_results = context.product_verification_service.verify_batch(frames_data)
+            t_elapsed = (time.perf_counter() - t_start) * 1000
+
+            # Log timing details if available (find first valid timing)
+            timing = None
+            for result in verification_results:
+                if result and result.get('timing') and result['timing'].get('total', 0) > 0:
+                    timing = result['timing']
+                    break
+
+            if timing:
+                logger.info(
+                    f"[{camera.serial_number}] Product verification complete: "
+                    f"total={timing.get('total', 0):.1f}ms, "
+                    f"yolo={timing.get('yolo_inference', 0):.1f}ms, "
+                    f"frames={timing.get('frames_checked', 0)}/{timing.get('frames_total', 0)}"
+                )
+
+            return verification_results
+        except Exception as e:
+            logger.error(f"[{camera.serial_number}] Batch product verification failed: {e}")
+            import traceback
+            traceback.print_exc()
+            # Return error results
+            return [{
+                'match': False,
+                'skipped': False,
+                'error': f'Batch verification failed: {str(e)}',
+                'timing': {'total': 0.0}
+            } for _ in frames]
 
     def postprocess(
         self,
