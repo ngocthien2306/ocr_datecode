@@ -147,6 +147,7 @@ export interface Recipe {
   cameras: string[]; // Camera IDs
   camera_templates: string[]; // Template file paths
   delay_reject?: number;
+  reject_pulse?: number;
   do_reject_number?: number;
   camera_settings?: CameraSettings;
   model_thresholds?: ModelThresholds;
@@ -169,6 +170,7 @@ export interface RecipeCreate {
   cameras?: string[];
   camera_templates?: string[];
   delay_reject?: number;
+  reject_pulse?: number;
   do_reject_number?: number;
   camera_settings?: CameraSettings;
   model_thresholds?: ModelThresholds;
@@ -184,6 +186,7 @@ export interface RecipeUpdate {
   cameras?: string[];
   camera_templates?: string[];
   delay_reject?: number;
+  reject_pulse?: number;
   do_reject_number?: number;
   camera_settings?: CameraSettings;
   model_thresholds?: ModelThresholds;
@@ -208,6 +211,7 @@ export interface Receipt {
   cameras: string[];
   camera_templates: string[];
   delay_reject?: number;
+  reject_pulse?: number;
   do_reject_number?: number;
   cameraSettings?: CameraSettings;
   modelThresholds?: ModelThresholds;

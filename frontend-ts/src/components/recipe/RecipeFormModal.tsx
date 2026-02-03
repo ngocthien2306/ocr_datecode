@@ -41,6 +41,7 @@ interface FormDataType {
   product_code: string;
   description: string;
   delay_reject: number;
+  reject_pulse: number;
   do_reject_number: number;
   is_active: boolean;
   cameras: RecipeCamera[];
@@ -87,6 +88,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     product_code: '',
     description: '',
     delay_reject: 100.0,
+    reject_pulse: 50.0,
     do_reject_number: 2,
     is_active: true,
     cameras: [],
@@ -220,6 +222,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         product_code: recipeAny.productCode || recipeAny.product_code || '',
         description: recipeAny.description || '',
         delay_reject: recipeAny.delay_reject || 100.0,
+        reject_pulse: recipeAny.reject_pulse || 50.0,
         do_reject_number: recipeAny.do_reject_number !== undefined ? recipeAny.do_reject_number : 0,
         is_active: recipeAny.is_active !== undefined ? recipeAny.is_active : (recipeAny.status === 'Active'),
         cameras: normalizedCameras,
@@ -263,6 +266,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         product_code: '',
         description: '',
         delay_reject: 100.0,
+        reject_pulse: 50.0,
         do_reject_number: 2,
         is_active: true,
         cameras: [],
@@ -317,7 +321,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
     if (type === 'checkbox') {
       finalValue = checked;
-    } else if (name === 'delay_reject') {
+    } else if (name === 'delay_reject' || name === 'reject_pulse') {
       finalValue = parseFloat(value) || 0;
     } else if (name === 'do_reject_number') {
       finalValue = parseInt(value) || 0;
@@ -977,6 +981,12 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                     <input type="number" name="delay_reject" value={formData.delay_reject}
                            onChange={handleInputChange} step="0.1" min="0"
                            placeholder="Delay reject time in milliseconds" />
+                  </div>
+                  <div className="form-group">
+                    <label>Reject Pulse (ms)</label>
+                    <input type="number" name="reject_pulse" value={formData.reject_pulse}
+                           onChange={handleInputChange} step="0.1" min="0"
+                           placeholder="Reject pulse duration in milliseconds" />
                   </div>
                   <div className="form-group">
                     <label>Digital Output (DO) Number</label>

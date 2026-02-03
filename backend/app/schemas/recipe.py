@@ -88,17 +88,18 @@ class RecipeBase(BaseModel):
     product_code: str = Field(..., min_length=1, max_length=50, description="Product code")
     description: Optional[str] = Field(None, max_length=500)
     delay_reject: Optional[float] = Field(default=100.0, description="Delay reject time in milliseconds")
+    reject_pulse: Optional[float] = Field(default=50.0, description="Reject pulse duration in milliseconds")
     do_reject_number: Optional[int] = Field(default=2, ge=0, le=3, description="Digital Output number for reject (0-3)")
-    
+
     # Multiple cameras support (new approach)
     cameras: List[CameraConfiguration] = Field(default_factory=list, description="Camera configurations for this recipe")
-    
+
     # Camera templates (new multi-template support)
     camera_templates: List[CameraTemplates] = Field(default_factory=list, description="Template configurations for each camera")
-    
+
     # Keep old camera_settings for backward compatibility (make optional)
     camera_settings: Optional[CameraSettings] = Field(default=None, description="Legacy camera settings (deprecated)")
-    
+
     model_thresholds: ModelThresholds
     template_config: Optional[Dict[str, Any]] = Field(None, description="Legacy template matching configuration (deprecated)")
     roi_config: Optional[Dict[str, Any]] = Field(None, description="Region of interest configuration")
@@ -116,6 +117,7 @@ class RecipeUpdate(BaseModel):
     product_code: Optional[str] = Field(None, min_length=1, max_length=50)
     description: Optional[str] = Field(None, max_length=500)
     delay_reject: Optional[float] = None
+    reject_pulse: Optional[float] = None
     do_reject_number: Optional[int] = Field(None, ge=0, le=3)
     cameras: Optional[List[CameraConfiguration]] = None
     camera_templates: Optional[List[CameraTemplates]] = None

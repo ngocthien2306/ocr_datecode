@@ -62,6 +62,9 @@ class RecipeRepository:
                 # Ensure camera_templates exists for backward compatibility
                 if "camera_templates" not in recipe:
                     recipe["camera_templates"] = []
+                # Ensure reject_pulse exists for backward compatibility
+                if "reject_pulse" not in recipe:
+                    recipe["reject_pulse"] = 50.0
                 return RecipeInDB(**recipe)
         except Exception:
             return None
@@ -75,6 +78,9 @@ class RecipeRepository:
             # Ensure camera_templates exists for backward compatibility
             if "camera_templates" not in recipe:
                 recipe["camera_templates"] = []
+            # Ensure reject_pulse exists for backward compatibility
+            if "reject_pulse" not in recipe:
+                recipe["reject_pulse"] = 50.0
             return RecipeInDB(**recipe)
         return None
     
@@ -86,6 +92,9 @@ class RecipeRepository:
             # Ensure camera_templates exists for backward compatibility
             if "camera_templates" not in recipe:
                 recipe["camera_templates"] = []
+            # Ensure reject_pulse exists for backward compatibility
+            if "reject_pulse" not in recipe:
+                recipe["reject_pulse"] = 50.0
             return RecipeInDB(**recipe)
         return None
     
@@ -107,8 +116,11 @@ class RecipeRepository:
             # Ensure camera_templates exists for backward compatibility
             if "camera_templates" not in recipe:
                 recipe["camera_templates"] = []
+            # Ensure reject_pulse exists for backward compatibility
+            if "reject_pulse" not in recipe:
+                recipe["reject_pulse"] = 50.0
             recipes.append(RecipeInDB(**recipe))
-        
+
         return recipes
     
     async def update(self, recipe_id: str, recipe_update: RecipeUpdate, user_id: str) -> Optional[RecipeInDB]:
@@ -143,6 +155,9 @@ class RecipeRepository:
                 # Ensure camera_templates exists for backward compatibility
                 if "camera_templates" not in result:
                     result["camera_templates"] = []
+                # Ensure reject_pulse exists for backward compatibility
+                if "reject_pulse" not in result:
+                    result["reject_pulse"] = 50.0
                 return RecipeInDB(**result)
         except Exception as e:
             print(f"Error updating recipe: {e}")
@@ -190,6 +205,9 @@ class RecipeRepository:
             # Ensure camera_templates exists for backward compatibility
             if "camera_templates" not in recipe:
                 recipe["camera_templates"] = []
+            # Ensure reject_pulse exists for backward compatibility
+            if "reject_pulse" not in recipe:
+                recipe["reject_pulse"] = 50.0
             recipes.append(RecipeInDB(**recipe))
-        
+
         return recipes
