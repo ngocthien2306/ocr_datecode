@@ -1,14 +1,3 @@
-"""
-Reject Scheduler Module
-Manages scheduled reject actions using priority queue
-
-Features:
-- Schedule reject at specific time
-- Cancel scheduled reject (if PASS)
-- Thread-safe operations
-- Statistics tracking
-"""
-
 import heapq
 import logging
 import threading
@@ -357,12 +346,10 @@ class RejectScheduler:
             # Trigger DO pulse
             if self._do_control_callback:
                 self._do_control_callback(entry.do_number, pulse_ms=self._reject_pulse_ms)
-                self._do_control_callback(3, pulse_ms=self._reject_pulse_ms)
             else:
                 # Use default implementation
                 from .utils import trigger_reject_pulse
                 trigger_reject_pulse(entry.do_number, pulse_ms=self._reject_pulse_ms)
-                trigger_reject_pulse(3, pulse_ms=self._reject_pulse_ms)
 
             # Update stats
             with self._stats_lock:

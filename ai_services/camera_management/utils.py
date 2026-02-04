@@ -4,6 +4,7 @@ Pure functions without state dependencies
 """
 
 import cv2
+import ctypes
 import subprocess
 import logging
 import base64
@@ -18,9 +19,58 @@ logger = logging.getLogger(__name__)
 
 # ============= GPIO/DI/DO Utilities =============
 
-# Global lock to prevent concurrent DI/DO operations
-# Advantech driver conflicts when multiple processes access it simultaneously
+# Global lock for ALL GPIO operations (libapmi is NOT thread-safe!)
+# DI read and DO write must be serialized to prevent ret=-1 errors
 _gpio_lock = threading.Lock()
+
+# Per-pin locks for pulse sequences (prevent concurrent writes during pulse)
+# Use RLock to allow reentrant calls from trigger_reject_pulse
+_pulse_locks = {i: threading.RLock() for i in range(8)}
+
+# ============= ASUS libapmi Native Library (Fast GPIO) =============
+# Uses ctypes to call ASUS PE1100N native library directly
+# Much faster than subprocess (~21ms vs ~37ms per call)
+
+_libapmi = None
+_apmi_dio_read_input = None
+_apmi_dio_write_output = None
+_apmi_dio_read_output = None
+_use_native_gpio = False
+
+# libapmi uses power-of-2 pin mapping: DO0->1, DO1->2, DO2->4, DO3->8
+_LIBAPMI_PIN_MAP = {0: 1, 1: 2, 2: 4, 3: 8}
+
+def _init_libapmi():
+    """Initialize ASUS libapmi library for native GPIO access"""
+    global _libapmi, _apmi_dio_read_input, _apmi_dio_write_output, _apmi_dio_read_output, _use_native_gpio
+
+    try:
+        _libapmi = ctypes.CDLL('/lib/libapmi.so')
+
+        # Setup apmi_dio_read_input(int pin, int *value) -> int
+        _apmi_dio_read_input = _libapmi.apmi_dio_read_input
+        _apmi_dio_read_input.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+        _apmi_dio_read_input.restype = ctypes.c_int
+
+        # Setup apmi_dio_write_output(int pin, int value) -> int
+        _apmi_dio_write_output = _libapmi.apmi_dio_write_output
+        _apmi_dio_write_output.argtypes = [ctypes.c_int, ctypes.c_int]
+        _apmi_dio_write_output.restype = ctypes.c_int
+
+        # Setup apmi_dio_read_output(int pin, int *value) -> int
+        _apmi_dio_read_output = _libapmi.apmi_dio_read_output
+        _apmi_dio_read_output.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+        _apmi_dio_read_output.restype = ctypes.c_int
+
+        _use_native_gpio = True
+        logger.info("ASUS libapmi initialized - using native GPIO (fast mode)")
+
+    except Exception as e:
+        logger.warning(f"Failed to load libapmi, falling back to subprocess: {e}")
+        _use_native_gpio = False
+
+# Initialize on module load
+_init_libapmi()
 
 def read_di_value(di_number: int) -> int:
     """
@@ -33,10 +83,24 @@ def read_di_value(di_number: int) -> int:
         Pin value (0 or 1), or 0 on error
 
     Note:
-        Uses global lock to prevent conflicts with DO operations.
-        Advantech driver returns errors when DI read and DO write happen simultaneously.
+        Uses global _gpio_lock because libapmi is not thread-safe.
     """
-    with _gpio_lock:  # Prevent conflict with DO operations
+    with _gpio_lock:
+        # Try native library first (faster)
+        if _use_native_gpio and _apmi_dio_read_input is not None:
+            try:
+                value = ctypes.c_int()
+                lib_pin = _LIBAPMI_PIN_MAP.get(di_number)
+                if lib_pin is not None:
+                    ret = _apmi_dio_read_input(lib_pin, ctypes.byref(value))
+                    if ret == 0:
+                        return value.value
+                    else:
+                        logger.warning(f"Native DI{di_number} read failed: ret={ret}")
+            except Exception as e:
+                logger.warning(f"Native DI{di_number} read error: {e}")
+
+        # Fallback to subprocess
         try:
             result = subprocess.run(
                 ["sudo", "dio_in", str(di_number)],
@@ -113,105 +177,85 @@ def write_do_value(do_number: int, value: int) -> bool:
     Returns:
         True if success, False on error
 
-    Command format:
-        sudo dio_out <do_number> <value>
-
-    Example:
-        sudo dio_out 2 1  # Set DO2 = HIGH
-        sudo dio_out 2 0  # Set DO2 = LOW
-
     Note:
-        Uses global lock to prevent conflicts with DI operations.
-        Advantech driver returns errors when DI read and DO write happen simultaneously.
-        Also returns returncode=255 with "Completion code = 0xFFFFFFFF"
-        when trying to set same value twice. We check the output message instead.
+        Uses per-pin pulse lock to prevent writes during active pulse.
+        Uses native libapmi when available (fast), falls back to subprocess.
     """
-    with _gpio_lock:  # Prevent conflict with DI operations
-        try:
-            result = subprocess.run(
-                ["sudo", "dio_out", str(do_number), str(value)],
-                capture_output=True,
-                text=True,
-                timeout=1.0
-            )
+    pulse_lock = _pulse_locks.get(do_number)
+    if pulse_lock is None:
+        logger.error(f"Invalid DO pin: {do_number}")
+        return False
 
-            # Check output for success indicator
-            # Success: "Completion code = 0x00"
-            # Failure: "Completion code = 0xFFFFFFFF"
-            if "Completion code = 0x00" in result.stdout or "Completion code = 0x00" in result.stderr:
-                logger.debug(f"DO{do_number} = {value}")
-                return True
-            elif "Completion code = 0xFFFFFFFF" in result.stdout or "Completion code = 0xFFFFFFFF" in result.stderr:
-                # This happens when setting same value twice - treat as warning, not error
-                logger.debug(
-                    f"DO{do_number} already at {value} (Advantech driver quirk)"
+    with pulse_lock:  # Wait for any active pulse on this pin
+        with _gpio_lock:  # Global lock (libapmi not thread-safe)
+            # Try native library first (faster)
+            if _use_native_gpio and _apmi_dio_write_output is not None:
+                try:
+                    lib_pin = _LIBAPMI_PIN_MAP.get(do_number)
+                    if lib_pin is not None:
+                        ret = _apmi_dio_write_output(lib_pin, value)
+                        if ret == 0:
+                            logger.debug(f"DO{do_number} = {value} (native)")
+                            return True
+                        else:
+                            logger.warning(f"Native DO{do_number} write failed: ret={ret}")
+                except Exception as e:
+                    logger.warning(f"Native DO{do_number} write error: {e}")
+
+            # Fallback to subprocess
+            try:
+                result = subprocess.run(
+                    ["sudo", "dio_out", str(do_number), str(value)],
+                    capture_output=True,
+                    text=True,
+                    timeout=1.0
                 )
-                return True  # Treat as success since pin is already at desired state
-            elif result.returncode == 0:
-                # Fallback: if returncode is 0, assume success
-                logger.debug(f"DO{do_number} = {value} (returncode=0)")
-                return True
-            else:
-                logger.error(
-                    f"Failed to set DO{do_number}: returncode={result.returncode}, "
-                    f"stdout={result.stdout.strip()}, stderr={result.stderr.strip()}"
-                )
+
+                if "Completion code = 0x00" in result.stdout or "Completion code = 0x00" in result.stderr:
+                    logger.debug(f"DO{do_number} = {value}")
+                    return True
+                elif "Completion code = 0xFFFFFFFF" in result.stdout or "Completion code = 0xFFFFFFFF" in result.stderr:
+                    logger.debug(f"DO{do_number} already at {value}")
+                    return True
+                elif result.returncode == 0:
+                    logger.debug(f"DO{do_number} = {value} (returncode=0)")
+                    return True
+                else:
+                    logger.error(f"Failed to set DO{do_number}: {result.returncode}")
+                    return False
+
+            except subprocess.TimeoutExpired:
+                logger.error(f"Timeout setting DO{do_number}")
                 return False
-
-        except subprocess.TimeoutExpired:
-            logger.error(f"Timeout setting DO{do_number}")
-            return False
-        except Exception as e:
-            logger.error(f"Error setting DO{do_number}: {e}")
-            return False
+            except Exception as e:
+                logger.error(f"Error setting DO{do_number}: {e}")
+                return False
 
 
 def trigger_reject_pulse(do_number: int, pulse_ms: int = 100):
     """
     Trigger reject pulse on DO pin (ACTIVE LOW logic)
-
-    Args:
-        do_number: DO pin number (typically 2 for reject)
-        pulse_ms: Pulse duration in milliseconds (default: 100ms)
-
-    Raises:
-        RuntimeError: If DO control fails
-
-    Hardware Logic (ACTIVE LOW):
-        - Idle state: DO = HIGH (1)
-        - Active state: DO = LOW (0) → Solenoid activates → Product rejected
-
-    Timing:
-        t=0ms: DO = HIGH (ensure idle state)
-        t=1ms: DO = LOW (activate solenoid - REJECT!)
-        t=pulse_ms: DO = HIGH (deactivate - return to idle)
-
-    Example:
-        trigger_reject_pulse(2, 100)  # 100ms LOW pulse on DO2
-
-    Note:
-        Advantech DIO driver may return error if setting same value twice.
-        We ensure HIGH state first to avoid this issue.
+    Uses per-pin lock to prevent concurrent writes during pulse.
     """
     import time
 
-    # Ensure HIGH state first (idle state)
-    # Ignore error if already HIGH (Advantech driver quirk)
-    write_do_value(do_number, 1)
-    time.sleep(0.001)  # 1ms delay to ensure state change
+    pulse_lock = _pulse_locks.get(do_number)
+    if pulse_lock is None:
+        raise RuntimeError(f"Invalid DO pin: {do_number}")
 
-    # Set LOW (ACTIVATE REJECT!)
-    if not write_do_value(do_number, 0):
-        raise RuntimeError(f"Failed to set DO{do_number} LOW (activate reject)")
+    with pulse_lock:
+        write_do_value(do_number, 1)
+        time.sleep(0.001)
 
-    # Hold pulse (reject active)
-    time.sleep(pulse_ms / 1000.0)
+        if not write_do_value(do_number, 0):
+            raise RuntimeError(f"Failed to set DO{do_number} LOW")
 
-    # Set HIGH (deactivate - return to idle)
-    if not write_do_value(do_number, 1):
-        raise RuntimeError(f"Failed to set DO{do_number} HIGH (deactivate reject)")
+        time.sleep(pulse_ms / 1000.0)
 
-    logger.info(f"DO{do_number} pulse complete ({pulse_ms}ms, active LOW)")
+        if not write_do_value(do_number, 1):
+            raise RuntimeError(f"Failed to set DO{do_number} HIGH")
+
+    logger.info(f"DO{do_number} pulse complete ({pulse_ms}ms)")
 
 
 # ============= Image Processing Utilities =============
@@ -430,7 +474,7 @@ def draw_center_points(
     # Calculate dynamic sizes
     font_scale = max(0.4, min(1.5, width / 2500))
     text_thickness = max(1, int(width / 1500))
-    circle_radius = max(5, int(width / 300))  # Adaptive circle size
+    circle_radius = max(15, int(width / 300))  # Adaptive circle size
 
     # Get centers
     template_center = center_alignment_check.get('template_center')
@@ -470,6 +514,67 @@ def draw_center_points(
             cv2.FONT_HERSHEY_SIMPLEX,
             font_scale * 0.8,
             (255, 0, 255),
+            text_thickness,
+            cv2.LINE_AA
+        )
+
+    # Draw x-axis distance between centers
+    if template_center and product_center:
+        x1, y1 = int(template_center[0]), int(template_center[1])
+        x2, y2 = int(product_center[0]), int(product_center[1])
+
+        # Calculate x-axis distance
+        x_distance = abs(x2 - x1)
+
+        # Draw horizontal line at the average y position
+        y_line = (y1 + y2) // 2
+        line_thickness = max(2, int(width / 1000))
+
+        # Draw line from template x to product x
+        cv2.line(
+            result_img,
+            (x1, y_line),
+            (x2, y_line),
+            (0, 255, 255),  # Yellow
+            line_thickness,
+            cv2.LINE_AA
+        )
+
+        # Draw vertical ticks at both ends
+        tick_length = circle_radius // 2
+        cv2.line(result_img, (x1, y_line - tick_length), (x1, y_line + tick_length), (0, 255, 255), line_thickness, cv2.LINE_AA)
+        cv2.line(result_img, (x2, y_line - tick_length), (x2, y_line + tick_length), (0, 255, 255), line_thickness, cv2.LINE_AA)
+
+        # Draw distance text in the middle
+        mid_x = (x1 + x2) // 2
+        distance_text = f"{x_distance}px"
+
+        # Get text size for background
+        (text_w, text_h), baseline = cv2.getTextSize(
+            distance_text,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            text_thickness
+        )
+
+        # Draw background rectangle for text
+        padding = 5
+        cv2.rectangle(
+            result_img,
+            (mid_x - text_w // 2 - padding, y_line - text_h - padding - 5),
+            (mid_x + text_w // 2 + padding, y_line - padding - 5),
+            (0, 0, 0),  # Black background
+            -1
+        )
+
+        # Draw distance text
+        cv2.putText(
+            result_img,
+            distance_text,
+            (mid_x - text_w // 2, y_line - padding - 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            (0, 0, 255),  # Red
             text_thickness,
             cv2.LINE_AA
         )

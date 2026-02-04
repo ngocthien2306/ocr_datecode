@@ -55,6 +55,7 @@ class ProductVerificationService:
         angle_threshold: float = 3.0,
         margin_pixels: int = 30,
         conf_threshold: float = 0.25,
+        check_rotation: bool = True,
         check_label_boundary: bool = True,
         check_misalignment: bool = True,
         check_center_alignment: bool = True,
@@ -65,6 +66,7 @@ class ProductVerificationService:
         self.angle_threshold = angle_threshold
         self.margin_pixels = margin_pixels
         self.conf_threshold = conf_threshold
+        self.check_rotation = False
         self.check_label_boundary = False
         self.check_misalignment = False
         self.check_center_alignment = True
@@ -299,36 +301,47 @@ class ProductVerificationService:
 
         product_box = validation['product_box']
         label_box = validation['label_box']
+        has_product = validation['has_product']
+        has_label = validation['has_label']
 
-        # Check rotation
-        rotation_check = self._check_rotation(product_box, label_box, serial_number)
+        # Check rotation - requires BOTH product_box AND label_box
+        if self.check_rotation and has_product and has_label:
+            rotation_check = self._check_rotation(product_box, label_box, serial_number)
+        elif not self.check_rotation:
+            rotation_check = {'ok': True, 'skipped': True, 'reason': 'Check disabled'}
+        else:
+            rotation_check = {'ok': True, 'skipped': True, 'reason': 'Missing product or label box'}
 
-        # Check misalignment (detected label box vs label region)
-        # Only if enabled
-        if self.check_misalignment:
+        # Check misalignment - requires label_box
+        if self.check_misalignment and has_label:
             misalignment_check = self._check_misalignment(
                 label_box, transformed_bboxes, serial_number
             )
-        else:
+        elif not self.check_misalignment:
             misalignment_check = {'ok': True, 'skipped': True, 'reason': 'Check disabled'}
+        else:
+            misalignment_check = {'ok': True, 'skipped': True, 'reason': 'No label box detected'}
 
-        # Check label region boundary (template label region vs detected product box)
-        # Only if enabled
-        if self.check_label_boundary:
+        # Check label region boundary - requires product_box
+        if self.check_label_boundary and has_product:
             label_region_check = self._check_label_region_boundary(
                 product_box, transformed_bboxes, serial_number
             )
-        else:
+        elif not self.check_label_boundary:
             label_region_check = {'ok': True, 'skipped': True, 'reason': 'Check disabled'}
+        else:
+            label_region_check = {'ok': True, 'skipped': True, 'reason': 'No product box detected'}
 
-        # Check center alignment (template box center vs detected product box center)
-        # Only if enabled
-        if self.check_center_alignment:
+        # Check center alignment - requires product_box
+        if self.check_center_alignment and has_product:
             center_alignment_check = self._check_center_alignment(
                 product_box, transformed_bboxes, serial_number, center_offset_threshold
             )
-        else:
+        elif not self.check_center_alignment:
             center_alignment_check = {'ok': True, 'skipped': True, 'reason': 'Check disabled'}
+        else:
+            center_alignment_check = {'ok': True, 'skipped': True, 'reason': 'No product box detected'}
+
 
         # Determine overall match
         overall_match = (
@@ -338,12 +351,17 @@ class ProductVerificationService:
             center_alignment_check['ok']
         )
 
+        def _check_status(check_result):
+            if check_result.get('skipped', False):
+                return 'SKIP'
+            return 'OK' if check_result['ok'] else 'FAIL'
+
         logger.info(
             f"[{serial_number}] Product verification: "
-            f"rotation={'OK' if rotation_check['ok'] else 'FAIL'}, "
-            f"misalignment={'OK' if misalignment_check['ok'] else 'FAIL'}, "
-            f"label_boundary={'OK' if label_region_check['ok'] else 'FAIL'}, "
-            f"center_alignment={'OK' if center_alignment_check['ok'] else 'FAIL'}, "
+            f"rotation={_check_status(rotation_check)}, "
+            f"misalignment={_check_status(misalignment_check)}, "
+            f"label_boundary={_check_status(label_region_check)}, "
+            f"center_alignment={_check_status(center_alignment_check)}, "
             f"overall={'PASS' if overall_match else 'FAIL'}"
         )
 
@@ -356,20 +374,21 @@ class ProductVerificationService:
             )
 
         # Convert numpy arrays to Python native types for JSON serialization
-        detected_boxes = {
-            'product': {
+        detected_boxes = {}
+        if has_product:
+            detected_boxes['product'] = {
                 'box': product_box['box'].tolist() if isinstance(product_box['box'], np.ndarray) else product_box['box'],
                 'score': float(product_box['score']),
                 'class': str(product_box['class']),
                 'corners': product_box['corners'].tolist() if isinstance(product_box['corners'], np.ndarray) else product_box['corners']
-            },
-            'label': {
+            }
+        if has_label:
+            detected_boxes['label'] = {
                 'box': label_box['box'].tolist() if isinstance(label_box['box'], np.ndarray) else label_box['box'],
                 'score': float(label_box['score']),
                 'class': str(label_box['class']),
                 'corners': label_box['corners'].tolist() if isinstance(label_box['corners'], np.ndarray) else label_box['corners']
             }
-        }
 
         return {
             'match': bool(overall_match),
@@ -424,25 +443,36 @@ class ProductVerificationService:
         products = [b for b in filtered_boxes if b['class'] == 'product']
         labels = [b for b in filtered_boxes if b['class'] == 'label']
 
-        # Check if we have at least one of each
-        if not products:
-            return {'valid': False, 'reason': 'No product box detected'}
-        if not labels:
-            return {'valid': False, 'reason': 'No label box detected'}
+        # Check if we have at least one of either type
+        if not products and not labels:
+            return {'valid': False, 'reason': 'No boxes detected'}
 
         # Select highest confidence if multiple
-        if len(products) > 1:
-            logger.debug(f"[{serial_number}] Multiple product boxes, selecting highest confidence")
-        if len(labels) > 1:
-            logger.debug(f"[{serial_number}] Multiple label boxes, selecting highest confidence")
+        product_box = None
+        label_box = None
 
-        product_box = max(products, key=lambda x: x['score'])
-        label_box = max(labels, key=lambda x: x['score'])
+        if products:
+            if len(products) > 1:
+                logger.debug(f"[{serial_number}] Multiple product boxes, selecting highest confidence")
+            product_box = max(products, key=lambda x: x['score'])
+
+        if labels:
+            if len(labels) > 1:
+                logger.debug(f"[{serial_number}] Multiple label boxes, selecting highest confidence")
+            label_box = max(labels, key=lambda x: x['score'])
+
+        logger.debug(
+            f"[{serial_number}] Validated boxes: "
+            f"product={'YES' if product_box else 'NO'}, "
+            f"label={'YES' if label_box else 'NO'}"
+        )
 
         return {
             'valid': True,
             'product_box': product_box,
-            'label_box': label_box
+            'label_box': label_box,
+            'has_product': product_box is not None,
+            'has_label': label_box is not None
         }
 
     def _check_rotation(
@@ -733,8 +763,8 @@ class ProductVerificationService:
     def _visualize_result(
         self,
         frame_img: np.ndarray,
-        product_box: Dict[str, Any],
-        label_box: Dict[str, Any],
+        product_box: Optional[Dict[str, Any]],
+        label_box: Optional[Dict[str, Any]],
         rotation_check: Dict[str, Any],
         misalignment_check: Dict[str, Any],
         label_region_check: Dict[str, Any],
@@ -761,24 +791,26 @@ class ProductVerificationService:
         try:
             result_img = frame_img.copy()
 
-            # Draw product box (green)
-            product_corners = product_box['corners'].astype(np.int32)
-            cv2.polylines(result_img, [product_corners], True, (0, 255, 0), 2)
-            cv2.putText(
-                result_img, f"Product: {product_box['score']:.2f}",
-                tuple(product_corners[0]), cv2.FONT_HERSHEY_SIMPLEX,
-                0.5, (0, 255, 0), 2
-            )
+            # Draw product box (green) if available
+            if product_box is not None:
+                product_corners = product_box['corners'].astype(np.int32)
+                cv2.polylines(result_img, [product_corners], True, (0, 255, 0), 2)
+                cv2.putText(
+                    result_img, f"Product: {product_box['score']:.2f}",
+                    tuple(product_corners[0]), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, (0, 255, 0), 2
+                )
 
-            # Draw label box (blue if OK, red if fail)
-            label_color = (255, 0, 0) if not overall_match else (0, 0, 255)
-            label_corners = label_box['corners'].astype(np.int32)
-            cv2.polylines(result_img, [label_corners], True, label_color, 2)
-            cv2.putText(
-                result_img, f"Label: {label_box['score']:.2f}",
-                tuple(label_corners[0]), cv2.FONT_HERSHEY_SIMPLEX,
-                0.5, label_color, 2
-            )
+            # Draw label box (blue if OK, red if fail) if available
+            if label_box is not None:
+                label_color = (255, 0, 0) if not overall_match else (0, 0, 255)
+                label_corners = label_box['corners'].astype(np.int32)
+                cv2.polylines(result_img, [label_corners], True, label_color, 2)
+                cv2.putText(
+                    result_img, f"Label: {label_box['score']:.2f}",
+                    tuple(label_corners[0]), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, label_color, 2
+                )
 
             # Add status text
             status_color = (0, 255, 0) if overall_match else (0, 0, 255)
@@ -792,10 +824,15 @@ class ProductVerificationService:
             )
 
             y_offset += 35
-            rotation_status = "OK" if rotation_check['ok'] else "FAIL"
+            if rotation_check.get('skipped', False):
+                rotation_status = "SKIP"
+                rotation_text = f"Rotation: {rotation_status}"
+            else:
+                rotation_status = "OK" if rotation_check['ok'] else "FAIL"
+                rotation_text = f"Rotation: {rotation_status} ({rotation_check['angle_diff']:.2f} deg)"
             cv2.putText(
                 result_img,
-                f"Rotation: {rotation_status} ({rotation_check['angle_diff']:.2f} deg)",
+                rotation_text,
                 (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX,
                 0.7, status_color, 2
             )

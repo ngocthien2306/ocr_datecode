@@ -36,15 +36,16 @@ class RecipeRepository:
     
     async def create(self, recipe: RecipeCreate, user_id: str) -> RecipeInDB:
         """Create a new recipe"""
-        recipe_dict = recipe.model_dump()
+        # IMPORTANT: Use mode='json' and exclude_defaults=False to include all fields
+        recipe_dict = recipe.model_dump(mode='json', exclude_defaults=False)
         recipe_dict["created_by"] = user_id
         recipe_dict["updated_by"] = user_id
         recipe_dict["created_at"] = datetime.utcnow()
         recipe_dict["updated_at"] = datetime.utcnow()
-        
+
         result = await self.collection.insert_one(recipe_dict)
         recipe_dict["_id"] = str(result.inserted_id)
-        
+
         return RecipeInDB(**recipe_dict)
     
     async def get_by_id(self, recipe_id: str) -> Optional[RecipeInDB]:
@@ -125,15 +126,25 @@ class RecipeRepository:
     
     async def update(self, recipe_id: str, recipe_update: RecipeUpdate, user_id: str) -> Optional[RecipeInDB]:
         """Update a recipe"""
-        # Use exclude_none instead of exclude_unset to allow empty arrays and default values
-        update_data = recipe_update.model_dump(exclude_none=True, exclude_unset=False)
-        
-        # Remove None values manually but keep empty arrays
+        # IMPORTANT: Use mode='json' to ensure ALL fields including defaults are serialized
+        # Without this, fields with default values may be excluded
+        update_data = recipe_update.model_dump(mode='json', exclude_none=True, exclude_defaults=False)
+
+        # DEBUG: Log camera_templates to check center_offset_threshold
+        if 'camera_templates' in update_data:
+            print(f"[DEBUG] Updating recipe {recipe_id} with camera_templates:")
+            for cam_template in update_data.get('camera_templates', []):
+                print(f"  Camera: {cam_template.get('camera_id')}, Templates: {len(cam_template.get('templates', []))}")
+                for idx, template in enumerate(cam_template.get('templates', [])):
+                    threshold = template.get('center_offset_threshold', 'NOT_FOUND')
+                    print(f"    Template {idx}: {template.get('name')} - center_offset_threshold: {threshold}")
+
+        # Remove None values manually but keep empty arrays and zero values
         update_data = {k: v for k, v in update_data.items() if v is not None}
-        
+
         if not update_data:
             return await self.get_by_id(recipe_id)
-        
+
         update_data["updated_by"] = user_id
         update_data["updated_at"] = datetime.utcnow()
         

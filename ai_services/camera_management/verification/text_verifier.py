@@ -55,9 +55,9 @@ def calculate_text_similarity(text1: str, text2: str) -> float:
     Returns:
         Similarity ratio (0.0 - 1.0)
     """
-    # Normalize: strip whitespace and convert to lowercase
-    text1_norm = text1.strip().lower()
-    text2_norm = text2.strip().lower()
+    # Normalize: strip whitespace, remove internal spaces, and convert to lowercase
+    text1_norm = text1.strip().replace(" ", "").lower()
+    text2_norm = text2.strip().replace(" ", "").lower()
 
     # Calculate similarity ratio
     ratio = SequenceMatcher(None, text1_norm, text2_norm).ratio()
@@ -261,7 +261,7 @@ class TextVerificationService:
                 if "BEST BEFORE" in expected_text.upper() or "PL" in expected_text.upper() or "MFG" in expected_text.upper() or "BB" in expected_text.upper():
                     # Use similarity matching (default 80% threshold)
                     similarity = calculate_text_similarity(recognized_text, expected_text)
-                    similarity_threshold = 0.75
+                    similarity_threshold = 0.95
                     match = similarity >= similarity_threshold
                     if match:
                         recognized_text = expected_text[:]  # Override with expected text on match
@@ -447,7 +447,7 @@ class TextVerificationService:
 
                     # Use similarity matching (default 80% threshold)
                     similarity = calculate_text_similarity(recognized_text, expected_text)
-                    similarity_threshold = 0.75
+                    similarity_threshold = 0.95
                     match = similarity >= similarity_threshold
                     if match:
                         recognized_text = expected_text[:]  # Override with expected text on match

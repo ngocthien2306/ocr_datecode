@@ -69,6 +69,7 @@ class InferenceHandler:
         """
         self.camera_matchers: Dict[str, Any] = {}  # Map serial_number -> matcher
         self.engine_path = f"{home}/Source/ocr_datecode/weights/pipeline_fp16_dynamic_480_640.engine"
+        # self.engine_path = f"{home}/Source/ocr_datecode/weights/pipeline_fp16_dynamic_315_560.engine"
 
         # Initialize matcher factory (for future use)
         self._matcher_factory = MatcherFactory(
@@ -121,8 +122,9 @@ class InferenceHandler:
         - Available backends on the system
         """
         try:
-            # Use factory to create backend (respects OCR_BACKEND env var)
-            # Force ONNX for now (can be changed via env var later)
+            # ⚠️ TEMPORARY: Force ONNX to avoid CUDA context conflict with SuperPoint TensorRT
+            # TODO: Fix TensorRT OCR + SuperPoint TensorRT concurrent usage
+            # Both models creating separate CUDA contexts causing "invalid resource handle"
             self._ocr_backend_instance = OCRBackendFactory.create(OCRBackendType.ONNX)
 
             if self._ocr_backend_instance is not None:
@@ -188,7 +190,7 @@ class InferenceHandler:
             debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
             angle_threshold=3.0,  # Rotation threshold in degrees
             margin_pixels=30,     # Misalignment margin in pixels
-            conf_threshold=0.01,  # YOLO confidence threshold
+            conf_threshold=0.005,  # YOLO confidence threshold
             check_label_boundary=check_label_boundary,  # Enable/disable label boundary check
             check_misalignment=check_misalignment  # Enable/disable misalignment check
         )

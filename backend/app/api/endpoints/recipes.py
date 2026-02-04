@@ -1213,13 +1213,14 @@ async def update_recipe(
 ):
     """
     Update an existing recipe (Save Receipt).
-    
+
     **Permission**: Supervisor and Admin only
-    
+
     According to requirements:
     - Supervisor: Can create new receipt and edit old receipt content
     - Admin: Has all permissions
     """
+    
     # Check if recipe exists
     existing_recipe = await recipe_repo.get_by_id(recipe_id)
     if not existing_recipe:
@@ -1228,6 +1229,8 @@ async def update_recipe(
             detail="Recipe not found"
         )
     
+
+    print(recipe_update.camera_templates)
     # If name is being updated, check for duplicates
     if recipe_update.name and recipe_update.name != existing_recipe.name:
         duplicate = await recipe_repo.get_by_name(recipe_update.name)

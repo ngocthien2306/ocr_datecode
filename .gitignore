@@ -157,6 +157,7 @@ weights/build.sh
 weights/pipeline_fp16_batch6.engine
 weights/pipeline_fp16_dynamic.engine
 weights/pipeline_fp16_small.engine
+weights/pipeline_fp16_dynamic_315_560.engine
 weights/superpoint_lightglue_pipeline.onnx
 weights/superpoint_lightglue_small.onnx
 weights/yolo26_bottle_obb.onnx

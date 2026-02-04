@@ -493,17 +493,12 @@ class SuperPointEngineTRT:
     ) -> Dict:
         """Post-process a single template-target pair from batch outputs"""
 
-        # Reshape keypoints
+        # ⭐ OPTIMIZATION: Hardcode num_kpts=512 (engine output shape is fixed)
+        # Engine: pipeline_fp16_dynamic_480_640.engine outputs (batch, 512, 2)
         kpts_flat = kpts_raw.ravel()
         try:
-            for num_kpts in [4096, 2048, 1024, 512]:
-                try:
-                    kpts = kpts_flat[:kpts_raw.shape[0]*num_kpts*2].reshape(kpts_raw.shape[0], num_kpts, 2)
-                    break
-                except:
-                    continue
-            else:
-                kpts = kpts_flat[:kpts_raw.shape[0]*1024*2].reshape(kpts_raw.shape[0], 1024, 2)
+            num_kpts = 512  # Fixed output from engine
+            kpts = kpts_flat[:kpts_raw.shape[0]*num_kpts*2].reshape(kpts_raw.shape[0], num_kpts, 2)
         except Exception as e:
             return {
                 'success': False,

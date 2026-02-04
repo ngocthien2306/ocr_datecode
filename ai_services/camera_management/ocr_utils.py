@@ -196,9 +196,9 @@ def compare_texts(text1: str, text2: str, case_sensitive: bool = False, strip: b
         text1 = text1.strip()
         text2 = text2.strip()
 
-    if space:
-        text1 = text1.replace(" ", "")
-        text2 = text2.replace(" ", "")
+    
+    text1 = text1.replace(" ", "")
+    text2 = text2.replace(" ", "")
 
     # Remove trailing special characters
     text1 = re.sub(r'[^A-Za-z0-9]+$', '', text1)
