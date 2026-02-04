@@ -180,7 +180,7 @@ class Camera:
             self._apply_settings()
 
             # Configure GigE buffer and network settings (must be done after Open and before StartGrabbing)
-            self._configure_gige_buffer_settings()
+            # self._configure_gige_buffer_settings()
 
             # Setup shared memory
             actual_width = self.camera.Width.GetValue()
