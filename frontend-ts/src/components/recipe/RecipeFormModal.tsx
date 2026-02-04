@@ -73,7 +73,8 @@ interface Template {
   image_width?: number;
   image_height?: number;
   annotations: Annotation[];
-  center_offset_threshold?: number;  // Center alignment threshold in pixels (0-500)
+  center_offset_threshold_left?: number;   // Center alignment threshold left in pixels (0-500)
+  center_offset_threshold_right?: number;  // Center alignment threshold right in pixels (0-500)
 }
 
 interface CameraTemplates {
@@ -195,7 +196,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               image_width: template.image_width,
               image_height: template.image_height,
               annotations: template.annotations,
-              center_offset_threshold: template.center_offset_threshold ?? 50.0  // Default to 50px
+              center_offset_threshold_left: template.center_offset_threshold_left ?? 50.0,   // Default to 50px
+              center_offset_threshold_right: template.center_offset_threshold_right ?? 50.0  // Default to 50px
             }));
 
             // Load function_type for this camera (default to 'OCR' if not set)
@@ -480,7 +482,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               image_width: template.image_width,
               image_height: template.image_height,
               annotations: template.annotations,
-              center_offset_threshold: template.center_offset_threshold ?? 50.0
+              center_offset_threshold_left: template.center_offset_threshold_left ?? 50.0,
+              center_offset_threshold_right: template.center_offset_threshold_right ?? 50.0
             }))
           });
         }
@@ -587,7 +590,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           image_width: width,
           image_height: height,
           annotations: [],
-          center_offset_threshold: 50.0  // Default center alignment threshold
+          center_offset_threshold_left: 50.0,   // Default center alignment threshold left
+          center_offset_threshold_right: 50.0   // Default center alignment threshold right
         };
 
         setCameraTemplates(prev => ({
@@ -650,7 +654,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               image_url: url, // Server URL for submission
               image_width: width,
               image_height: height,
-              annotations: []
+              annotations: [],
+              center_offset_threshold_left: 50.0,   // Default center alignment threshold left
+              center_offset_threshold_right: 50.0   // Default center alignment threshold right
             };
 
             setCameraTemplates(prev => ({
@@ -1440,29 +1446,55 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                   className="template-name-input"
                                 />
                                 <div className="template-threshold-input">
-                                  <label htmlFor={`threshold-${template.id}`}>
-                                    Center Offset (px):
-                                  </label>
-                                  <input
-                                    id={`threshold-${template.id}`}
-                                    type="number"
-                                    min="0"
-                                    max="500"
-                                    value={template.center_offset_threshold ?? 50}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      const value = parseFloat(e.target.value) || 50;
-                                      const clampedValue = Math.max(0, Math.min(500, value));
-                                      setCameraTemplates(prev => ({
-                                        ...prev,
-                                        [selectedCameraForTemplate]: prev[selectedCameraForTemplate].map((t, i) =>
-                                          i === idx ? { ...t, center_offset_threshold: clampedValue } : t
-                                        )
-                                      }));
-                                    }}
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="threshold-input"
-                                  />
+                                  <span className="threshold-label">Center Offset (px):</span>
+                                  <div className="threshold-inputs-row">
+                                    <div className="threshold-input-group">
+                                      <label htmlFor={`threshold-left-${template.id}`}>L</label>
+                                      <input
+                                        id={`threshold-left-${template.id}`}
+                                        type="number"
+                                        min="0"
+                                        max="500"
+                                        value={template.center_offset_threshold_left ?? 50}
+                                        onChange={(e) => {
+                                          e.stopPropagation();
+                                          const value = parseFloat(e.target.value) || 50;
+                                          const clampedValue = Math.max(0, Math.min(500, value));
+                                          setCameraTemplates(prev => ({
+                                            ...prev,
+                                            [selectedCameraForTemplate]: prev[selectedCameraForTemplate]?.map((t, i) =>
+                                              i === idx ? { ...t, center_offset_threshold_left: clampedValue } : t
+                                            ) || []
+                                          }));
+                                        }}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="threshold-input"
+                                      />
+                                    </div>
+                                    <div className="threshold-input-group">
+                                      <label htmlFor={`threshold-right-${template.id}`}>R</label>
+                                      <input
+                                        id={`threshold-right-${template.id}`}
+                                        type="number"
+                                        min="0"
+                                        max="500"
+                                        value={template.center_offset_threshold_right ?? 50}
+                                        onChange={(e) => {
+                                          e.stopPropagation();
+                                          const value = parseFloat(e.target.value) || 50;
+                                          const clampedValue = Math.max(0, Math.min(500, value));
+                                          setCameraTemplates(prev => ({
+                                            ...prev,
+                                            [selectedCameraForTemplate]: prev[selectedCameraForTemplate]?.map((t, i) =>
+                                              i === idx ? { ...t, center_offset_threshold_right: clampedValue } : t
+                                            ) || []
+                                          }));
+                                        }}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="threshold-input"
+                                      />
+                                    </div>
+                                  </div>
                                 </div>
                                 <div className="template-stats">
                                   {hasTemplateRegion && <span className="stat">📐 Template</span>}
