@@ -332,13 +332,17 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             if camera.templates and idx < len(camera.templates):
                 template = camera.templates[idx]
                 center_offset_threshold = template.get('center_offset_threshold', 50.0)
+                center_offset_threshold_left = template.get('center_offset_threshold_left', 50.0)
+                center_offset_threshold_right = template.get('center_offset_threshold_right', 50.0)
 
             if result.get('success') and idx < len(frames):
                 frames_data.append({
                     'frame_img': frames[idx],
                     'transformed_bboxes': result.get('transformed_bboxes', []),
                     'camera': camera,
-                    'center_offset_threshold': center_offset_threshold
+                    'center_offset_threshold': center_offset_threshold,
+                    'center_offset_threshold_left': center_offset_threshold_left,
+                    'center_offset_threshold_right': center_offset_threshold_right
                 })
             else:
                 frames_data.append({

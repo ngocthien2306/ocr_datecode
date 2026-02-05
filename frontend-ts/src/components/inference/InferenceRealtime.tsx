@@ -874,7 +874,9 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                                 </span> */}
                                 {frame.product_verification?.center_alignment_check && (
                                   <span className="frame-offset-x">
-                                    Offset: {frame.product_verification.center_alignment_check.offset_x.toFixed(1)}px / {frame.product_verification.center_alignment_check.threshold.toFixed(1)}px
+                                    Offset: {(frame.product_verification.center_alignment_check.abs_offset_x ?? Math.abs(frame.product_verification.center_alignment_check.offset_x)).toFixed(1)}px
+                                    {frame.product_verification.center_alignment_check.direction === 'left' ? ' L' : ' R'}
+                                    (L:{frame.product_verification.center_alignment_check.threshold_left?.toFixed(0) ?? '-'} / R:{frame.product_verification.center_alignment_check.threshold_right?.toFixed(0) ?? '-'})
                                   </span>
                                 )}
                               </div>

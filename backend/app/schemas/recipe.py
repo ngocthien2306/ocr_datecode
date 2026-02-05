@@ -25,6 +25,8 @@ class TemplateImage(BaseModel):
     image_width: int = Field(..., description="Original image width in pixels")
     image_height: int = Field(..., description="Original image height in pixels")
     annotations: List[TemplateAnnotation] = Field(default_factory=list, description="List of annotations")
+    center_offset_threshold_left: float = Field(default=50.0, ge=0.0, le=500.0, description="Left alignment threshold in pixels (0-500)")
+    center_offset_threshold_right: float = Field(default=50.0, ge=0.0, le=500.0, description="Right alignment threshold in pixels (0-500)")
     center_offset_threshold: float = Field(default=50.0, ge=0.0, le=500.0, description="Center alignment threshold in pixels (0-500)")
 
 class CameraTemplates(BaseModel):

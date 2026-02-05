@@ -228,7 +228,10 @@ class ProductVerificationService:
                 transformed_bboxes=data['transformed_bboxes'],
                 frame_img=data['frame_img'],
                 camera=data['camera'],
-                center_offset_threshold=data.get('center_offset_threshold')
+                center_offset_threshold=data.get('center_offset_threshold'),
+                center_offset_threshold_left=data.get('center_offset_threshold_left'),
+                center_offset_threshold_right=data.get('center_offset_threshold_right'),
+
             )
 
             # Track if debug image was saved
@@ -271,7 +274,9 @@ class ProductVerificationService:
         transformed_bboxes: List[Dict[str, Any]],
         frame_img: np.ndarray,
         camera: 'Camera',
-        center_offset_threshold: Optional[float] = None
+        center_offset_threshold: Optional[float] = None,
+        center_offset_threshold_left: Optional[float] = None,
+        center_offset_threshold_right: Optional[float] = None
     ) -> Dict[str, Any]:
         serial_number = camera.serial_number
 
@@ -335,7 +340,8 @@ class ProductVerificationService:
         # Check center alignment - requires product_box
         if self.check_center_alignment and has_product:
             center_alignment_check = self._check_center_alignment(
-                product_box, transformed_bboxes, serial_number, center_offset_threshold
+                product_box, transformed_bboxes, serial_number, center_offset_threshold,
+                center_offset_threshold_left, center_offset_threshold_right 
             )
         elif not self.check_center_alignment:
             center_alignment_check = {'ok': True, 'skipped': True, 'reason': 'Check disabled'}
@@ -640,11 +646,15 @@ class ProductVerificationService:
         product_box: Dict[str, Any],
         transformed_bboxes: List[Dict[str, Any]],
         serial_number: str,
-        center_offset_threshold: Optional[float] = None
+        center_offset_threshold: Optional[float] = None,
+        center_offset_threshold_left: Optional[float] = None,
+        center_offset_threshold_right: Optional[float] = None
     ) -> Dict[str, Any]:
 
-        # Use provided threshold or fall back to default
-        threshold = center_offset_threshold if center_offset_threshold is not None else self.center_offset_threshold
+        # Use provided thresholds or fall back to default
+        default_threshold = center_offset_threshold if center_offset_threshold is not None else self.center_offset_threshold
+        threshold_left = center_offset_threshold_left if center_offset_threshold_left is not None else default_threshold
+        threshold_right = center_offset_threshold_right if center_offset_threshold_right is not None else default_threshold
 
         # Find template region from transformed_bboxes
         template_region = next(
@@ -673,25 +683,39 @@ class ProductVerificationService:
         product_center_x = np.mean(product_corners[:, 0])
         product_center_y = np.mean(product_corners[:, 1])
 
-        # Calculate offset on x-axis
-        offset_x = abs(template_center_x - product_center_x)
+        # Calculate offset on x-axis (positive = product is to the right of template)
+        offset_x = product_center_x - template_center_x
+        abs_offset_x = abs(offset_x)
 
-        # Check if offset exceeds threshold
-        ok = offset_x <= threshold
+        # Determine direction and check against appropriate threshold
+        if offset_x > 0:
+            # Product is to the LEFT of template center
+            direction = 'left'
+            threshold_used = threshold_left
+            ok = abs_offset_x <= threshold_left
+        else:
+            # Product is to the RIGHT of template center (or centered)
+            direction = 'right'
+            threshold_used = threshold_right
+            ok = abs_offset_x <= threshold_right
 
         logger.debug(
             f"[{serial_number}] Center alignment check: "
             f"template_center=({template_center_x:.1f}, {template_center_y:.1f}), "
             f"product_center=({product_center_x:.1f}, {product_center_y:.1f}), "
-            f"offset_x={offset_x:.1f}px, "
-            f"threshold={threshold}px, "
+            f"offset_x={offset_x:.1f}px ({direction}), "
+            f"threshold_left={threshold_left}px, threshold_right={threshold_right}px, "
             f"result={'OK' if ok else 'FAIL'}"
         )
 
         return {
             'ok': bool(ok),
             'offset_x': float(offset_x),
-            'threshold': float(threshold),
+            'abs_offset_x': float(abs_offset_x),
+            'direction': direction,
+            'threshold_left': float(threshold_left),
+            'threshold_right': float(threshold_right),
+            'threshold_used': float(threshold_used),
             'template_center': [float(template_center_x), float(template_center_y)],
             'product_center': [float(product_center_x), float(product_center_y)]
         }
@@ -858,9 +882,12 @@ class ProductVerificationService:
             y_offset += 30
             center_status = "OK" if center_alignment_check['ok'] else "FAIL"
             offset_x_val = center_alignment_check.get('offset_x', 0)
+            direction = center_alignment_check.get('direction', '')
+            threshold_used = center_alignment_check.get('threshold_used', 0)
+            direction_label = f" {direction.upper()}" if direction else ""
             cv2.putText(
                 result_img,
-                f"Center Alignment: {center_status} ({offset_x_val:.1f}px)",
+                f"Center Alignment: {center_status} ({offset_x_val:.1f}px{direction_label}, thresh={threshold_used:.0f})",
                 (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX,
                 0.7, status_color, 2
             )
