@@ -58,12 +58,14 @@ class CameraResult:
     serial_number: str
     delay_trigger: int
     frames: List[FrameResult] = field(default_factory=list)
+    pass_fail: str = "PASS"  # Overall camera pass/fail status
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "camera_id": self.serial_number,
             "serial_number": self.serial_number,
             "delay_trigger": self.delay_trigger,
+            "pass_fail": self.pass_fail,
             "frames": [f.to_dict() for f in self.frames]
         }
 
@@ -218,10 +220,19 @@ class CameraResultBuilder:
 
     def build(self) -> CameraResult:
         """Build the camera result"""
+        # Determine camera pass/fail based on frames
+        # If any frame is FAIL or ERROR, camera is FAIL
+        camera_pass_fail = "PASS"
+        for frame in self._frames:
+            if frame.pass_fail in ["FAIL", "ERROR"]:
+                camera_pass_fail = "FAIL"
+                break
+
         return CameraResult(
             serial_number=self._serial_number,
             delay_trigger=self._delay_trigger,
-            frames=self._frames
+            frames=self._frames,
+            pass_fail=camera_pass_fail
         )
 
 
@@ -245,6 +256,15 @@ class InferenceResultBuilder:
         self._all_total_matches: List[int] = []
         self._overall_timings: Dict = {}
         self._per_camera_stats: List[Dict] = []
+        # Statistics tracking (will be set from InferenceHandler)
+        self._statistics: Dict[str, Any] = {
+            'total_triggers': 0,
+            'total_inferences': 0,
+            'total_pass': 0,
+            'total_fail': 0,
+            'total_reject': 0,
+            'per_camera': []  # Cumulative per-camera counts from InferenceHandler
+        }
 
     def with_overall_result(self, pass_fail: str) -> 'InferenceResultBuilder':
         """Set overall pass/fail result"""
@@ -281,8 +301,12 @@ class InferenceResultBuilder:
         error_count: int
     ) -> 'InferenceResultBuilder':
         """Add per-camera statistics"""
+        # Determine camera pass/fail
+        camera_pass_fail = "PASS" if (fail_count == 0 and error_count == 0) else "FAIL"
+
         self._per_camera_stats.append({
             "serial_number": serial_number,
+            "pass_fail": camera_pass_fail,
             "confidence": avg_confidence,
             "inliers": total_inliers,
             "total_matches": total_matches,
@@ -295,6 +319,32 @@ class InferenceResultBuilder:
                 "avg_confidence": avg_confidence
             }
         })
+
+        # Note: statistics['per_camera'] is now managed by InferenceHandler
+        # for cumulative tracking across all inferences
+
+        return self
+
+    def with_statistics(
+        self,
+        total_triggers: int = 0,
+        total_inferences: int = 0,
+        total_pass: int = 0,
+        total_fail: int = 0,
+        total_reject: int = 0
+    ) -> 'InferenceResultBuilder':
+        """Set global statistics from trigger handler"""
+        # Preserve per_camera list if it exists
+        per_camera = self._statistics.get('per_camera', [])
+
+        self._statistics = {
+            'total_triggers': total_triggers,
+            'total_inferences': total_inferences,
+            'total_pass': total_pass,
+            'total_fail': total_fail,
+            'total_reject': total_reject,
+            'per_camera': per_camera
+        }
         return self
 
     def build(self) -> Dict[str, Any]:
@@ -309,6 +359,7 @@ class InferenceResultBuilder:
             "recipe_name": self._recipe_name,
             "product_pass_fail": self._overall_pass_fail,
             "camera_results": [cr.to_dict() for cr in self._camera_results],
+            "statistics": self._statistics,
             "metadata": {
                 "total_cameras": self._total_cameras,
                 "total_frames": self._total_frames,
@@ -331,7 +382,8 @@ class InferenceResultBuilder:
         overall_pass_fail: str,
         camera_matchers: Dict[str, Any],
         save_and_encode_func,
-        encode_display_func
+        encode_display_func,
+        statistics: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Build inference result from camera data.
@@ -347,6 +399,7 @@ class InferenceResultBuilder:
             camera_matchers: Dict of matchers per camera
             save_and_encode_func: Function to save and encode frames
             encode_display_func: Function to encode for display
+            statistics: Optional statistics dict from trigger handler
 
         Returns:
             Complete inference result dict
@@ -359,6 +412,11 @@ class InferenceResultBuilder:
             recipe_id=first_camera.recipe_id,
             recipe_name=first_camera.recipe_name
         ).with_overall_result(overall_pass_fail)
+
+        # Apply statistics if provided
+        if statistics:
+            # Directly set statistics to preserve per_camera from InferenceHandler
+            builder._statistics = statistics.copy()
 
         for camera in cameras:
             serial_number = camera.serial_number

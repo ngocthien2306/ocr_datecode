@@ -429,7 +429,8 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                 overall_pass_fail=context.overall_pass_fail,
                 camera_matchers=context.camera_matchers,
                 save_and_encode_func=self._save_and_encode_func,
-                encode_display_func=self._encode_display_func
+                encode_display_func=self._encode_display_func,
+                statistics=context.statistics
             )
 
         # Fallback to simple result

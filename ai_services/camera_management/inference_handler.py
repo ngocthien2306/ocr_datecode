@@ -60,12 +60,13 @@ home = os.environ.get('HOME')
 
 class InferenceHandler:
 
-    def __init__(self, reject_scheduler=None):
+    def __init__(self, reject_scheduler=None, trigger_handler=None):
         """
         Initialize InferenceHandler
 
         Args:
             reject_scheduler: RejectScheduler instance for scheduling reject actions
+            trigger_handler: TriggerHandler instance for statistics
         """
         self.camera_matchers: Dict[str, Any] = {}  # Map serial_number -> matcher
         self.engine_path = f"{home}/Source/ocr_datecode/weights/pipeline_fp16_dynamic_480_640.engine"
@@ -84,6 +85,9 @@ class InferenceHandler:
 
         # Reject scheduler reference
         self.reject_scheduler = reject_scheduler
+
+        # Trigger handler reference for statistics
+        self.trigger_handler = trigger_handler
 
         # Async inference executor
         self._inference_executor = ThreadPoolExecutor(
@@ -104,6 +108,11 @@ class InferenceHandler:
             'max_queue_depth': 0
         }
         self._stats_lock = threading.Lock()
+
+        # Per-camera cumulative statistics
+        self._per_camera_stats: Dict[str, Dict[str, int]] = {}
+        # Structure: {serial_number: {'pass_count': N, 'fail_count': M, 'error_count': K}}
+        self._camera_stats_lock = threading.Lock()
 
         # Initialize OCR backend using Factory Pattern
         self._init_ocr_backend()
@@ -287,9 +296,11 @@ class InferenceHandler:
             return 0
 
     def clear_matchers(self):
-        """Clear all inference matchers"""
+        """Clear all inference matchers and reset per-camera stats"""
         self.camera_matchers.clear()
-        logger.info("All inference matchers cleared")
+        with self._camera_stats_lock:
+            self._per_camera_stats.clear()
+        logger.info("All inference matchers and camera stats cleared")
 
     def shutdown(self):
         """Shutdown inference handler and cleanup resources"""
@@ -572,6 +583,52 @@ class InferenceHandler:
                 self._inference_stats['total_completed'] += 1
                 logger.info(f"[Job #{job_id}] Completed successfully")
 
+    def _update_camera_stats(self, serial_number: str, pass_count: int, fail_count: int, error_count: int):
+        """
+        Update cumulative per-camera statistics
+
+        Args:
+            serial_number: Camera serial number
+            pass_count: Number of pass frames in this inference
+            fail_count: Number of fail frames in this inference
+            error_count: Number of error frames in this inference
+        """
+        with self._camera_stats_lock:
+            if serial_number not in self._per_camera_stats:
+                self._per_camera_stats[serial_number] = {
+                    'pass_count': 0,
+                    'fail_count': 0,
+                    'error_count': 0
+                }
+
+            self._per_camera_stats[serial_number]['pass_count'] += pass_count
+            self._per_camera_stats[serial_number]['fail_count'] += fail_count
+            self._per_camera_stats[serial_number]['error_count'] += error_count
+
+    def _get_camera_stats_summary(self) -> List[Dict[str, Any]]:
+        """
+        Get cumulative per-camera statistics summary
+
+        Returns:
+            List of dicts with serial_number and counts
+        """
+        with self._camera_stats_lock:
+            summary = []
+            for serial_number, stats in self._per_camera_stats.items():
+                pass_count = stats['pass_count']
+                fail_count = stats['fail_count']
+                error_count = stats['error_count']
+                camera_pass_fail = "PASS" if (fail_count == 0 and error_count == 0) else "FAIL"
+
+                summary.append({
+                    'serial_number': serial_number,
+                    'pass_count': pass_count,
+                    'fail_count': fail_count,
+                    'error_count': error_count,
+                    'camera_pass_fail': camera_pass_fail
+                })
+            return summary
+
     def _do_inference_sync(
         self,
         job_id: int,
@@ -594,6 +651,31 @@ class InferenceHandler:
         )
 
         try:
+            # Get statistics from trigger handler if available
+            statistics = {
+                'total_triggers': 0,
+                'total_inferences': 0,
+                'total_pass': 0,
+                'total_fail': 0,
+                'total_reject': 0
+            }
+            if self.trigger_handler:
+                with self.trigger_handler._stats_lock:
+                    stats = self.trigger_handler._stats
+                    statistics['total_triggers'] = stats.get('total_triggers', 0)
+                    statistics['total_inferences'] = stats.get('total_inferences', 0)
+                    # Pass/Fail based on completed vs timeout groups
+                    statistics['total_pass'] = stats.get('total_groups_completed', 0)
+                    statistics['total_fail'] = stats.get('total_groups_timeout', 0)
+
+            # Get reject count from reject scheduler if available
+            if self.reject_scheduler:
+                reject_stats = self.reject_scheduler.get_stats()
+                statistics['total_reject'] = reject_stats.get('total_rejected', 0)
+
+            # Get cumulative per-camera statistics
+            statistics['per_camera'] = self._get_camera_stats_summary()
+
             # Create pipeline context
             context = PipelineContext(
                 job_id=job_id,
@@ -605,7 +687,8 @@ class InferenceHandler:
                 text_verification_service=self.text_verification_service,
                 template_verification_service=self.template_verification_service,
                 product_verification_service=self.product_verification_service,
-                emit_callback=emit_callback
+                emit_callback=emit_callback,
+                statistics=statistics
             )
 
             # Filter cameras with matchers (up to 4)
@@ -667,6 +750,45 @@ class InferenceHandler:
 
             # Calculate inference time
             inference_time = time.time() - T_inference_start
+
+            # Update per-camera cumulative statistics
+            if context.camera_inference_results:
+                for serial_number, camera_result in context.camera_inference_results.items():
+                    # Handle different structures for single vs multi-camera
+                    if 'frames' in camera_result:
+                        # Single-camera mode: has 'frames' list
+                        frames_list = camera_result['frames']
+                        logger.debug(
+                            f"[Job #{job_id}] Camera {serial_number}: "
+                            f"Single-camera mode, {len(frames_list)} frames"
+                        )
+                    else:
+                        # Multi-camera mode: camera_result is the frame result itself
+                        frames_list = [camera_result]
+                        logger.debug(
+                            f"[Job #{job_id}] Camera {serial_number}: "
+                            f"Multi-camera mode, single frame"
+                        )
+
+                    # Count pass/fail/error
+                    pass_count = sum(1 for f in frames_list if f.get('result') == 'PASS')
+                    fail_count = sum(1 for f in frames_list if f.get('result') == 'FAIL')
+                    error_count = sum(1 for f in frames_list if f.get('result') == 'ERROR')
+
+                    logger.info(
+                        f"[Job #{job_id}] Camera {serial_number}: "
+                        f"pass={pass_count}, fail={fail_count}, error={error_count}"
+                    )
+
+                    if pass_count > 0 or fail_count > 0 or error_count > 0:
+                        self._update_camera_stats(serial_number, pass_count, fail_count, error_count)
+                    else:
+                        logger.warning(
+                            f"[Job #{job_id}] Camera {serial_number}: No valid results to count. "
+                            f"Frames: {frames_list}"
+                        )
+            else:
+                logger.warning(f"[Job #{job_id}] No camera_inference_results to update stats")
 
             # Handle reject decision
             if group_id and T_capture_complete and self.reject_scheduler:

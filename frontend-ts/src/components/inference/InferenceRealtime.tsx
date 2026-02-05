@@ -75,6 +75,7 @@ interface CameraResult {
   camera_id: string;
   serial_number: string;
   delay_trigger?: number;
+  pass_fail?: string;
   frames: FrameResult[];
 }
 
@@ -99,12 +100,28 @@ interface PerCameraStats {
   };
 }
 
+interface PerCameraCumulativeStats {
+  serial_number: string;
+  pass_count: number;
+  fail_count: number;
+  error_count: number;
+  camera_pass_fail: string;
+}
+
 interface InferenceResult {
   id: string;
   recipe_id: string;
   recipe_name: string;
   product_pass_fail: string;
   camera_results: CameraResult[];
+  statistics?: {
+    total_triggers: number;
+    total_inferences: number;
+    total_pass: number;
+    total_fail: number;
+    total_reject: number;
+    per_camera: PerCameraCumulativeStats[];
+  };
   metadata: {
     total_cameras: number;
     total_frames: number;
@@ -805,9 +822,48 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
         <div className="cameras-grid">
           <div className="panel-header">
             <h3>Latest Result</h3>
-            {/* <span className="camera-count">
-              {latestResults ? `${latestResults.camera_results.length} camera(s)` : 'No results'}
-            </span> */}
+            {latestResults?.statistics && (
+              <div className="statistics-summary">
+                <div className="stat-badge stat-triggers">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                    <path d="M13 2L3 14h8l-1 8 10-12h-8l1-8z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+                  </svg>
+                  <span className="stat-label">Triggers:</span>
+                  <span className="stat-value">{latestResults.statistics.total_triggers}</span>
+                </div>
+                <div className="stat-badge stat-inferences">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+                    <path d="M12 6v6l4 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>
+                  <span className="stat-label">Inferences:</span>
+                  <span className="stat-value">{latestResults.statistics.total_inferences}</span>
+                </div>
+                <div className="stat-badge stat-pass">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+                    <path d="M9 12l2 2 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>
+                  <span className="stat-label">Pass:</span>
+                  <span className="stat-value">{latestResults.statistics.total_pass}</span>
+                </div>
+                <div className="stat-badge stat-fail">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+                    <path d="M15 9l-6 6m0-6l6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>
+                  <span className="stat-label">Fail:</span>
+                  <span className="stat-value">{latestResults.statistics.total_fail}</span>
+                </div>
+                <div className="stat-badge stat-reject">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>
+                  <span className="stat-label">Reject:</span>
+                  <span className="stat-value">{latestResults.statistics.total_reject}</span>
+                </div>
+              </div>
+            )}
           </div>
 
           {!latestResults ? (
@@ -855,6 +911,11 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                             ? `/api/uploads/${frame.image_path}`
                             : null;
 
+                        // Find cumulative stats for this camera
+                        const cumulativeStats = latestResults.statistics?.per_camera?.find(
+                          (s) => s.serial_number === cameraResult.serial_number
+                        );
+
                         return (
                           <div key={frame.frame_idx} className="frame-container">
                             <div className="frame-aspect-wrapper">
@@ -866,9 +927,18 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                                 </div>
                               )}
                               <div className="frame-overlay">
-                                <span className={`frame-badge ${frame.pass_fail.toLowerCase()}`}>
-                                  {frame.pass_fail}
-                                </span>
+                                {/* Camera Serial & Cumulative Counter */}
+                                <div className="frame-camera-info">
+                                  <span className="camera-serial-badge">{cameraResult.serial_number}</span>
+                                  {cumulativeStats && (
+                                    <span className="camera-counter">
+                                      <span className="counter-pass">✓{cumulativeStats.pass_count}</span>
+                                      <span className="counter-separator">/</span>
+                                      <span className="counter-fail">✗{cumulativeStats.fail_count}</span>
+                                    </span>
+                                  )}
+                                </div>
+
                                 {/* <span className="frame-confidence">
                                   {(frame.confidence * 100).toFixed(1)}%
                                 </span> */}
@@ -879,6 +949,9 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                                     (L:{frame.product_verification.center_alignment_check.threshold_left?.toFixed(0) ?? '-'} / R:{frame.product_verification.center_alignment_check.threshold_right?.toFixed(0) ?? '-'})
                                   </span>
                                 )}
+                                <span className={`frame-badge ${frame.pass_fail.toLowerCase()}`}>
+                                  {frame.pass_fail}
+                                </span>
                               </div>
                             </div>
                           </div>

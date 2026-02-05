@@ -101,6 +101,7 @@ class InferenceResultService:
                 recipe_name=recipe_name,
                 product_pass_fail=product_pass_fail,
                 camera_results=camera_results,
+                statistics=data.get("statistics"),
                 metadata=data.get("metadata")
             )
 

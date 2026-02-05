@@ -47,6 +47,15 @@ class PipelineContext:
     # Timing
     T_inference_start: float = 0.0
 
+    # Statistics from TriggerHandler (passed through for reporting)
+    statistics: Dict[str, Any] = field(default_factory=lambda: {
+        'total_triggers': 0,
+        'total_inferences': 0,
+        'total_pass': 0,
+        'total_fail': 0,
+        'total_reject': 0
+    })
+
 
 class InferencePipelineTemplate(ABC):
     """

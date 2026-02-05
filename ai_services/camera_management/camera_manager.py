@@ -55,7 +55,10 @@ class CameraManager:
         # Initialize handlers
         self.trigger_handler = TriggerHandler(self)
         self.reject_scheduler = RejectScheduler()
-        self.inference_handler = InferenceHandler(reject_scheduler=self.reject_scheduler)
+        self.inference_handler = InferenceHandler(
+            reject_scheduler=self.reject_scheduler,
+            trigger_handler=self.trigger_handler
+        )
 
         logger.info("CameraManager initialized with handlers")
 

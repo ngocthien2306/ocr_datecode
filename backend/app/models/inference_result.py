@@ -72,6 +72,7 @@ class CameraResult(BaseModel):
     """Result for a single camera"""
     camera_id: str = Field(..., description="Camera identifier")
     serial_number: str = Field(..., description="Camera serial number")
+    pass_fail: Optional[str] = Field(None, description="Overall camera pass/fail status")
     frames: List[FrameResult] = Field(
         default_factory=list,
         description="List of frame results"
@@ -86,6 +87,10 @@ class InferenceResultCreate(BaseModel):
     camera_results: List[CameraResult] = Field(
         default_factory=list,
         description="Results from all cameras"
+    )
+    statistics: Optional[Dict[str, Any]] = Field(
+        None,
+        description="System statistics (triggers, inferences, rejects)"
     )
     metadata: Optional[Dict[str, Any]] = Field(
         None,
@@ -105,6 +110,7 @@ class InferenceResultInDB(BaseModel):
     recipe_name: str = Field(..., description="Recipe name")
     product_pass_fail: str = Field(..., description="Overall product result")
     camera_results: List[CameraResult] = Field(default_factory=list)
+    statistics: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -119,6 +125,7 @@ class InferenceResultResponse(BaseModel):
     recipe_name: str
     product_pass_fail: str
     camera_results: List[CameraResult]
+    statistics: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     timestamp: datetime
     created_at: datetime

@@ -14,6 +14,7 @@ from typing import Optional, Tuple, List, Dict, Any
 from pathlib import Path
 from datetime import datetime, timezone
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,6 +64,7 @@ def _init_libapmi():
         _apmi_dio_read_output.restype = ctypes.c_int
 
         _use_native_gpio = True
+        # print("ASUS libapmi initialized - using native GPIO (fast mode)")   
         logger.info("ASUS libapmi initialized - using native GPIO (fast mode)")
 
     except Exception as e:
@@ -94,8 +96,10 @@ def read_di_value(di_number: int) -> int:
                 if lib_pin is not None:
                     ret = _apmi_dio_read_input(lib_pin, ctypes.byref(value))
                     if ret == 0:
+                        # print(f"DI{di_number} = {value.value} (native)")
                         return value.value
                     else:
+                        print(f"Native DI{di_number} read failed: ret={ret}")
                         logger.warning(f"Native DI{di_number} read failed: ret={ret}")
             except Exception as e:
                 logger.warning(f"Native DI{di_number} read error: {e}")
@@ -166,9 +170,64 @@ def check_trigger_edge(current: int, previous: Optional[int], activation: str) -
         return False
 
 
+def _write_do_raw(do_number: int, value: int) -> bool:
+    """
+    Internal: Write DO value with only _gpio_lock (no pulse_lock).
+    Used by trigger_reject_pulse which already holds pulse_lock.
+
+    MUST be called while holding pulse_lock for the pin!
+    """
+    with _gpio_lock:
+        # Try native library first (faster)
+        if _use_native_gpio and _apmi_dio_write_output is not None:
+            try:
+                lib_pin = _LIBAPMI_PIN_MAP.get(do_number)
+                if lib_pin is not None:
+                    ret = _apmi_dio_write_output(lib_pin, value)
+                    if ret == 0:
+                        print(f"DO{do_number} = {value} (native)")
+                        logger.debug(f"DO{do_number} = {value} (native)")
+                        return True
+                    else:
+                        print(f"Native DO{do_number} write failed: ret={ret}")
+                        logger.warning(f"Native DO{do_number} write failed: ret={ret}")
+            except Exception as e:
+                print(f"Native DO{do_number} write error: {e}")
+                logger.warning(f"Native DO{do_number} write error: {e}")
+
+        # Fallback to subprocess
+        try:
+            result = subprocess.run(
+                ["sudo", "dio_out", str(do_number), str(value)],
+                capture_output=True,
+                text=True,
+                timeout=1.0
+            )
+
+            if "Completion code = 0x00" in result.stdout or "Completion code = 0x00" in result.stderr:
+                logger.debug(f"DO{do_number} = {value}")
+                return True
+            elif "Completion code = 0xFFFFFFFF" in result.stdout or "Completion code = 0xFFFFFFFF" in result.stderr:
+                logger.debug(f"DO{do_number} already at {value}")
+                return True
+            elif result.returncode == 0:
+                logger.debug(f"DO{do_number} = {value} (returncode=0)")
+                return True
+            else:
+                logger.error(f"Failed to set DO{do_number}: {result.returncode}")
+                return False
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"Timeout setting DO{do_number}")
+            return False
+        except Exception as e:
+            logger.error(f"Error setting DO{do_number}: {e}")
+            return False
+
+
 def write_do_value(do_number: int, value: int) -> bool:
     """
-    Set Digital Output pin value
+    Set Digital Output pin value (public API).
 
     Args:
         do_number: DO pin number (0-7)
@@ -179,7 +238,7 @@ def write_do_value(do_number: int, value: int) -> bool:
 
     Note:
         Uses per-pin pulse lock to prevent writes during active pulse.
-        Uses native libapmi when available (fast), falls back to subprocess.
+        If a pulse is in progress on this pin, this call will block until complete.
     """
     pulse_lock = _pulse_locks.get(do_number)
     if pulse_lock is None:
@@ -187,55 +246,22 @@ def write_do_value(do_number: int, value: int) -> bool:
         return False
 
     with pulse_lock:  # Wait for any active pulse on this pin
-        with _gpio_lock:  # Global lock (libapmi not thread-safe)
-            # Try native library first (faster)
-            if _use_native_gpio and _apmi_dio_write_output is not None:
-                try:
-                    lib_pin = _LIBAPMI_PIN_MAP.get(do_number)
-                    if lib_pin is not None:
-                        ret = _apmi_dio_write_output(lib_pin, value)
-                        if ret == 0:
-                            logger.debug(f"DO{do_number} = {value} (native)")
-                            return True
-                        else:
-                            logger.warning(f"Native DO{do_number} write failed: ret={ret}")
-                except Exception as e:
-                    logger.warning(f"Native DO{do_number} write error: {e}")
-
-            # Fallback to subprocess
-            try:
-                result = subprocess.run(
-                    ["sudo", "dio_out", str(do_number), str(value)],
-                    capture_output=True,
-                    text=True,
-                    timeout=1.0
-                )
-
-                if "Completion code = 0x00" in result.stdout or "Completion code = 0x00" in result.stderr:
-                    logger.debug(f"DO{do_number} = {value}")
-                    return True
-                elif "Completion code = 0xFFFFFFFF" in result.stdout or "Completion code = 0xFFFFFFFF" in result.stderr:
-                    logger.debug(f"DO{do_number} already at {value}")
-                    return True
-                elif result.returncode == 0:
-                    logger.debug(f"DO{do_number} = {value} (returncode=0)")
-                    return True
-                else:
-                    logger.error(f"Failed to set DO{do_number}: {result.returncode}")
-                    return False
-
-            except subprocess.TimeoutExpired:
-                logger.error(f"Timeout setting DO{do_number}")
-                return False
-            except Exception as e:
-                logger.error(f"Error setting DO{do_number}: {e}")
-                return False
+        return _write_do_raw(do_number, value)
 
 
 def trigger_reject_pulse(do_number: int, pulse_ms: int = 100):
     """
-    Trigger reject pulse on DO pin (ACTIVE LOW logic)
+    Trigger reject pulse on DO pin (ACTIVE LOW logic).
+
+    Pulse sequence: HIGH -> LOW (pulse_ms) -> HIGH
     Uses per-pin lock to prevent concurrent writes during pulse.
+
+    Args:
+        do_number: DO pin number (0-3)
+        pulse_ms: Pulse duration in milliseconds
+
+    Raises:
+        RuntimeError: If write fails
     """
     import time
 
@@ -244,17 +270,18 @@ def trigger_reject_pulse(do_number: int, pulse_ms: int = 100):
         raise RuntimeError(f"Invalid DO pin: {do_number}")
 
     with pulse_lock:
-        write_do_value(do_number, 1)
-        time.sleep(0.001)
-
-        if not write_do_value(do_number, 0):
+        # Set LOW (active)
+        if not _write_do_raw(do_number, 0):
             raise RuntimeError(f"Failed to set DO{do_number} LOW")
 
+        # Hold pulse - _gpio_lock is FREE during sleep, DI reads can proceed
         time.sleep(pulse_ms / 1000.0)
 
-        if not write_do_value(do_number, 1):
+        # Set HIGH (inactive)
+        if not _write_do_raw(do_number, 1):
             raise RuntimeError(f"Failed to set DO{do_number} HIGH")
 
+    print(f"DO{do_number} pulse complete ({pulse_ms}ms)")
     logger.info(f"DO{do_number} pulse complete ({pulse_ms}ms)")
 
 
