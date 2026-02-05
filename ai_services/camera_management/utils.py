@@ -10,6 +10,8 @@ import logging
 import base64
 import numpy as np
 import threading
+import atexit
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple, List, Dict, Any
 from pathlib import Path
 from datetime import datetime, timezone
@@ -782,6 +784,145 @@ def encode_frame_for_display(
         return None
 
 
+# ============= Async Image Saver =============
+
+class AsyncImageSaver:
+    """
+    Singleton class for async image saving using ThreadPoolExecutor.
+
+    Benefits:
+    - Save images to disk without blocking the main inference pipeline
+    - Encode base64 synchronously for real-time display
+    - Multiple cameras save in parallel
+    """
+
+    _instance = None
+    _lock = threading.Lock()
+
+    def __init__(self, max_workers: int = 4):
+        """
+        Initialize AsyncImageSaver.
+
+        Args:
+            max_workers: Maximum number of concurrent save operations
+        """
+        self.executor = ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="AsyncImageSaver"
+        )
+        self._pending_count = 0
+        self._count_lock = threading.Lock()
+        self._shutdown = False
+
+        # Register cleanup on exit
+        atexit.register(self.shutdown)
+
+        logger.info(f"AsyncImageSaver initialized with {max_workers} workers")
+
+    @classmethod
+    def get_instance(cls, max_workers: int = 4) -> 'AsyncImageSaver':
+        """Get singleton instance"""
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = AsyncImageSaver(max_workers=max_workers)
+        return cls._instance
+
+    @classmethod
+    def reset_instance(cls) -> None:
+        """Reset singleton instance (for testing)"""
+        with cls._lock:
+            if cls._instance is not None:
+                cls._instance.shutdown(wait=True)
+                cls._instance = None
+
+    def save_images_async(
+        self,
+        img_viz: np.ndarray,
+        img_org: np.ndarray,
+        path_viz: Path,
+        path_org: Path,
+        quality: int = 95
+    ) -> None:
+        """
+        Submit image save task to background thread.
+
+        Args:
+            img_viz: Visualization image (with bboxes)
+            img_org: Original image (no bboxes)
+            path_viz: Path for visualization image
+            path_org: Path for original image
+            quality: JPEG quality (1-100)
+        """
+        if self._shutdown:
+            logger.warning("AsyncImageSaver is shutdown, saving synchronously")
+            self._do_save(img_viz, img_org, path_viz, path_org, quality)
+            return
+
+        with self._count_lock:
+            self._pending_count += 1
+
+        self.executor.submit(
+            self._do_save,
+            img_viz, img_org, path_viz, path_org, quality
+        )
+
+    def _do_save(
+        self,
+        img_viz: np.ndarray,
+        img_org: np.ndarray,
+        path_viz: Path,
+        path_org: Path,
+        quality: int
+    ) -> None:
+        """
+        Actually save images to disk (runs in background thread).
+
+        Args:
+            img_viz: Visualization image
+            img_org: Original image
+            path_viz: Path for viz image
+            path_org: Path for org image
+            quality: JPEG quality
+        """
+        import time
+        t_start = time.perf_counter()
+        try:
+            cv2.imwrite(str(path_viz), img_viz, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            cv2.imwrite(str(path_org), img_org, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            t_elapsed = (time.perf_counter() - t_start) * 1000
+            logger.debug(f"AsyncImageSaver: saved {path_viz.name} in {t_elapsed:.1f}ms (pending: {self._pending_count - 1})")
+        except Exception as e:
+            logger.error(f"AsyncImageSaver error saving images: {e}")
+        finally:
+            with self._count_lock:
+                self._pending_count -= 1
+
+    def get_pending_count(self) -> int:
+        """Get number of pending save operations"""
+        with self._count_lock:
+            return self._pending_count
+
+    def shutdown(self, wait: bool = True) -> None:
+        """
+        Shutdown the executor.
+
+        Args:
+            wait: Whether to wait for pending tasks to complete
+        """
+        if self._shutdown:
+            return
+
+        self._shutdown = True
+        pending = self.get_pending_count()
+
+        if pending > 0:
+            logger.info(f"AsyncImageSaver shutting down, waiting for {pending} pending saves...")
+
+        self.executor.shutdown(wait=wait)
+        logger.info("AsyncImageSaver shutdown complete")
+
+
 def save_and_encode_frame(
     frame_img,
     serial_number: str,
@@ -867,19 +1008,27 @@ def save_and_encode_frame(
         # Get original dimensions
         h, w = img_to_save.shape[:2]
 
-        # Save FULL resolution to permanent storage (with bboxes drawn if applicable)
-        cv2.imwrite(str(full_path_viz), img_to_save, [cv2.IMWRITE_JPEG_QUALITY, 95])
-        cv2.imwrite(str(full_path_org), frame_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
-
         # Relative path for DB and API (from uploads/)
         relative_path = f"inference_results/{recipe_id}/{today}/{serial_number}/{filename_viz}"
 
         # Create RESIZED + COMPRESSED version for realtime display (divide by 3)
+        # This is SYNCHRONOUS because we need base64 for immediate response
         display_img = resize_for_display(img_to_save, scale_factor=3)
         image_base64 = encode_image_to_base64(display_img, quality=70)
 
+        # Save FULL resolution to permanent storage ASYNCHRONOUSLY
+        # This runs in background thread, doesn't block the pipeline
+        async_saver = AsyncImageSaver.get_instance()
+        async_saver.save_images_async(
+            img_viz=img_to_save,
+            img_org=frame_img,
+            path_viz=full_path_viz,
+            path_org=full_path_org,
+            quality=95
+        )
+
         logger.info(
-            f"Saved {pass_fail} frame: {relative_path} "
+            f"Queued {pass_fail} frame for async save: {relative_path} "
             f"(full: {w}x{h}, display: {display_img.shape[1]}x{display_img.shape[0]})"
         )
 

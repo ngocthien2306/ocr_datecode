@@ -8,6 +8,7 @@ detected regions and reference templates.
 
 import logging
 import os
+import time
 import cv2
 import numpy as np
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
@@ -32,6 +33,7 @@ class TemplateVerificationResult:
     method: str
     template_bbox: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    timing: Optional[Dict[str, float]] = None
 
 
 class TemplateVerificationService:
@@ -113,6 +115,12 @@ class TemplateVerificationService:
         method = method or self.default_method
         similarity_threshold = similarity_threshold or self.default_threshold
 
+        # Timing measurements
+        t_start = time.perf_counter()
+        t_crop = 0.0
+        t_resize = 0.0
+        t_matching = 0.0
+
         try:
             # Filter only template type bboxes
             template_bboxes = [
@@ -162,8 +170,10 @@ class TemplateVerificationService:
                 )
 
             # Crop template region from both images using perspective transform
+            t_crop_start = time.perf_counter()
             cropped_template = crop_text_region(template_img, original_points)
             cropped_target = crop_text_region(frame_img, transformed_points)
+            t_crop = (time.perf_counter() - t_crop_start) * 1000  # Convert to ms
 
             # Save debug images if enabled
             if self.save_debug_images:
@@ -182,27 +192,43 @@ class TemplateVerificationService:
                     f"[{serial_number}] Template and target crop size mismatch: "
                     f"{cropped_template.shape} vs {cropped_target.shape}"
                 )
+                t_resize_start = time.perf_counter()
                 cropped_target = cv2.resize(
                     cropped_target,
                     (cropped_template.shape[1], cropped_template.shape[0])
                 )
+                t_resize = (time.perf_counter() - t_resize_start) * 1000  # Convert to ms
 
             # Calculate similarity score
+            t_matching_start = time.perf_counter()
             similarity_score = self._calculate_similarity(
                 cropped_template,
                 cropped_target,
                 method
             )
+            t_matching = (time.perf_counter() - t_matching_start) * 1000  # Convert to ms
 
             # Determine if it matches threshold
             match = bool(similarity_score >= similarity_threshold)
 
             method_name = self.METHOD_NAMES.get(method, 'UNKNOWN')
 
+            # Calculate total time
+            t_total = (time.perf_counter() - t_start) * 1000  # Convert to ms
+
+            # Build timing dict
+            timing = {
+                'crop_ms': t_crop,
+                'resize_ms': t_resize,
+                'matching_ms': t_matching,
+                'total_ms': t_total
+            }
+
             logger.info(
                 f"[{serial_number}] Template verification: "
                 f"similarity={similarity_score:.4f}, threshold={similarity_threshold}, "
-                f"match={match}, method={method_name}"
+                f"match={match}, method={method_name}, "
+                f"total={t_total:.1f}ms (crop={t_crop:.1f}ms, resize={t_resize:.1f}ms, matching={t_matching:.1f}ms)"
             )
 
             return {
@@ -210,7 +236,8 @@ class TemplateVerificationService:
                 'similarity': similarity_score,
                 'threshold': similarity_threshold,
                 'method': method_name,
-                'template_bbox': transformed_template_bbox
+                'template_bbox': transformed_template_bbox,
+                'timing': timing
             }
 
         except Exception as e:
@@ -318,6 +345,7 @@ class TemplateVerificationService:
         Returns:
             List of verification results in same order as tasks
         """
+        t_batch_start = time.perf_counter()
         results = []
 
         for task in verification_tasks:
@@ -331,5 +359,22 @@ class TemplateVerificationService:
                 method=task.get('method')
             )
             results.append(result)
+
+        t_batch_total = (time.perf_counter() - t_batch_start) * 1000  # Convert to ms
+
+        # Calculate timing statistics
+        n_cameras = len(verification_tasks)
+        avg_time = t_batch_total / n_cameras if n_cameras > 0 else 0.0
+
+        # Sum up individual timings
+        total_crop = sum(r.get('timing', {}).get('crop_ms', 0.0) for r in results)
+        total_resize = sum(r.get('timing', {}).get('resize_ms', 0.0) for r in results)
+        total_matching = sum(r.get('timing', {}).get('matching_ms', 0.0) for r in results)
+
+        logger.info(
+            f"Template verification batch: {n_cameras} camera(s), "
+            f"total={t_batch_total:.1f}ms (avg={avg_time:.1f}ms/camera), "
+            f"crop={total_crop:.1f}ms, resize={total_resize:.1f}ms, matching={total_matching:.1f}ms"
+        )
 
         return results
