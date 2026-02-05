@@ -923,6 +923,258 @@ class AsyncImageSaver:
         logger.info("AsyncImageSaver shutdown complete")
 
 
+# ============= Background Result Emitter =============
+
+class BackgroundResultEmitter:
+    """
+    Background worker for encoding images and emitting results.
+
+    This allows the inference pipeline to complete immediately after verification,
+    while encoding and emitting happens in background threads.
+
+    Benefits:
+    - Pipeline complete time excludes encoding time (~38ms for 3 cameras)
+    - Encoding can run in parallel for multiple cameras
+    - Real-time display still gets images, just slightly delayed
+    """
+
+    _instance = None
+    _lock = threading.Lock()
+
+    def __init__(self, max_workers: int = 4):
+        """
+        Initialize BackgroundResultEmitter.
+
+        Args:
+            max_workers: Maximum concurrent encoding operations
+        """
+        self.executor = ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="ResultEmitter"
+        )
+        self._pending_count = 0
+        self._count_lock = threading.Lock()
+        self._shutdown = False
+        self._emit_callback = None
+        self._event_loop = None
+
+        # Register cleanup on exit
+        atexit.register(self.shutdown)
+
+        logger.info(f"BackgroundResultEmitter initialized with {max_workers} workers")
+
+    @classmethod
+    def get_instance(cls, max_workers: int = 4) -> 'BackgroundResultEmitter':
+        """Get singleton instance"""
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = BackgroundResultEmitter(max_workers=max_workers)
+        return cls._instance
+
+    def set_emit_callback(self, callback, event_loop=None):
+        """
+        Set the emit callback function.
+
+        Args:
+            callback: Function to call with (event_type, data)
+            event_loop: Asyncio event loop for async callbacks
+        """
+        self._emit_callback = callback
+        self._event_loop = event_loop
+
+    def emit_result_async(
+        self,
+        result_data: Dict[str, Any],
+        encode_tasks: List[Dict[str, Any]],
+        save_and_encode_func,
+        encode_display_func
+    ) -> None:
+        """
+        Queue result for background encoding and emit.
+
+        Args:
+            result_data: Base result dict (will be modified with encoded images)
+            encode_tasks: List of encoding tasks with frame data
+            save_and_encode_func: Function to save and encode FAIL frames
+            encode_display_func: Function to encode PASS frames for display
+        """
+        if self._shutdown:
+            logger.warning("BackgroundResultEmitter is shutdown, processing synchronously")
+            self._process_and_emit(result_data, encode_tasks, save_and_encode_func, encode_display_func)
+            return
+
+        with self._count_lock:
+            self._pending_count += 1
+
+        self.executor.submit(
+            self._process_and_emit,
+            result_data, encode_tasks, save_and_encode_func, encode_display_func
+        )
+
+    def _process_and_emit(
+        self,
+        result_data: Dict[str, Any],
+        encode_tasks: List[Dict[str, Any]],
+        save_and_encode_func,
+        encode_display_func
+    ) -> None:
+        """
+        Process encoding tasks and emit result (runs in background thread).
+
+        Args:
+            result_data: Result dict to update and emit
+            encode_tasks: List of encoding tasks
+            save_and_encode_func: Function for FAIL frames
+            encode_display_func: Function for PASS frames
+        """
+        import time
+        t_start = time.perf_counter()
+
+        try:
+            # Encode all frames in parallel using nested ThreadPoolExecutor
+            if len(encode_tasks) > 1:
+                encoded_results = self._encode_parallel(
+                    encode_tasks, save_and_encode_func, encode_display_func
+                )
+            else:
+                encoded_results = self._encode_sequential(
+                    encode_tasks, save_and_encode_func, encode_display_func
+                )
+
+            # Update result_data with encoded images
+            for task, (image_path, image_base64) in zip(encode_tasks, encoded_results):
+                camera_idx = task['camera_idx']
+                frame_idx = task['frame_idx']
+
+                if camera_idx < len(result_data.get('camera_results', [])):
+                    camera_result = result_data['camera_results'][camera_idx]
+                    if 'frames' in camera_result and frame_idx < len(camera_result['frames']):
+                        camera_result['frames'][frame_idx]['image_path'] = image_path
+                        camera_result['frames'][frame_idx]['image_base64'] = image_base64
+
+            t_encode = (time.perf_counter() - t_start) * 1000
+
+            # Emit result
+            if self._emit_callback:
+                if self._event_loop:
+                    self._event_loop.call_soon_threadsafe(
+                        lambda: self._event_loop.create_task(
+                            self._emit_callback("inference_result", result_data)
+                        )
+                    )
+                else:
+                    self._emit_callback("inference_result", result_data)
+
+            t_total = (time.perf_counter() - t_start) * 1000
+            logger.info(
+                f"BackgroundResultEmitter: encoded {len(encode_tasks)} frames in {t_encode:.1f}ms, "
+                f"total={t_total:.1f}ms (pending: {self._pending_count - 1})"
+            )
+
+        except Exception as e:
+            logger.error(f"BackgroundResultEmitter error: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            with self._count_lock:
+                self._pending_count -= 1
+
+    def _encode_sequential(
+        self,
+        encode_tasks: List[Dict[str, Any]],
+        save_and_encode_func,
+        encode_display_func
+    ) -> List[tuple]:
+        """Encode frames sequentially"""
+        results = []
+        for task in encode_tasks:
+            result = self._encode_single_frame(task, save_and_encode_func, encode_display_func)
+            results.append(result)
+        return results
+
+    def _encode_parallel(
+        self,
+        encode_tasks: List[Dict[str, Any]],
+        save_and_encode_func,
+        encode_display_func
+    ) -> List[tuple]:
+        """Encode frames in parallel"""
+        results = [None] * len(encode_tasks)
+
+        with ThreadPoolExecutor(max_workers=len(encode_tasks)) as executor:
+            futures = {
+                executor.submit(
+                    self._encode_single_frame, task, save_and_encode_func, encode_display_func
+                ): idx
+                for idx, task in enumerate(encode_tasks)
+            }
+
+            for future in futures:
+                try:
+                    idx = futures[future]
+                    results[idx] = future.result()
+                except Exception as e:
+                    logger.error(f"Encode error: {e}")
+                    results[futures[future]] = (None, None)
+
+        return results
+
+    def _encode_single_frame(
+        self,
+        task: Dict[str, Any],
+        save_and_encode_func,
+        encode_display_func
+    ) -> tuple:
+        """Encode a single frame"""
+        pass_fail = task.get('pass_fail', 'PASS')
+
+        if pass_fail in ['FAIL', 'ERROR']:
+            return save_and_encode_func(
+                frame_img=task['frame_img'],
+                serial_number=task['serial_number'],
+                recipe_id=task['recipe_id'],
+                pass_fail=pass_fail,
+                frame_idx=task['frame_idx'],
+                transformed_bboxes=task.get('transformed_bboxes'),
+                confidence=task.get('confidence', 0.0),
+                inliers=task.get('inliers', 0),
+                total_matches=task.get('total_matches', 0),
+                crop_area=task.get('crop_area'),
+                product_verification=task.get('product_verification')
+            )
+        else:
+            image_base64 = encode_display_func(
+                frame_img=task['frame_img'],
+                transformed_bboxes=task.get('transformed_bboxes'),
+                confidence=task.get('confidence', 0.0),
+                inliers=task.get('inliers', 0),
+                total_matches=task.get('total_matches', 0),
+                crop_area=task.get('crop_area'),
+                product_verification=task.get('product_verification')
+            )
+            return (None, image_base64)
+
+    def get_pending_count(self) -> int:
+        """Get number of pending emit operations"""
+        with self._count_lock:
+            return self._pending_count
+
+    def shutdown(self, wait: bool = True) -> None:
+        """Shutdown the emitter"""
+        if self._shutdown:
+            return
+
+        self._shutdown = True
+        pending = self.get_pending_count()
+
+        if pending > 0:
+            logger.info(f"BackgroundResultEmitter shutting down, waiting for {pending} pending emits...")
+
+        self.executor.shutdown(wait=wait)
+        logger.info("BackgroundResultEmitter shutdown complete")
+
+
 def save_and_encode_frame(
     frame_img,
     serial_number: str,

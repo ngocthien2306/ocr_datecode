@@ -203,8 +203,13 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                 ocr_tasks
             )
 
-        # Batch Product Verification (NEW)
+        # Batch Product Verification
         batch_product_results = self._batch_verify_products(
+            context, transformed_results
+        )
+
+        # Batch Template Verification (PARALLEL)
+        batch_template_results = self._batch_verify_templates(
             context, transformed_results
         )
 
@@ -250,20 +255,10 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                                     bbox.get('annotation_index') == annotation_idx):
                                     bbox['verification_status'] = 'fail'
 
-            # Template verification
-            if (result.get('success') and
-                context.template_verification_service and
-                hasattr(matcher, 'template_img') and
-                hasattr(matcher, 'template_bbox') and
-                frames):
-
-                template_verification = context.template_verification_service.verify_template_regions(
-                    frame_img=frames[0],
-                    template_img=matcher.template_img,
-                    transformed_bboxes=camera_result['transformed_bboxes'],
-                    original_template_bbox=matcher.template_bbox,
-                    camera=camera
-                )
+            # Template verification (UPDATED - use batch results)
+            camera_result['template_verification'] = None
+            if result.get('success') and context.template_verification_service and frames:
+                template_verification = batch_template_results.get(serial_number)
                 camera_result['template_verification'] = template_verification
 
                 # Mark failed template bbox with verification_status
@@ -407,6 +402,88 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     'skipped': False,
                     'error': f'Batch verification failed: {str(e)}',
                     'timing': {'total': 0.0}
+                }
+                for sn in serial_numbers
+            }
+
+    def _batch_verify_templates(
+        self,
+        context: PipelineContext,
+        transformed_results: Dict[str, Any]
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Batch verify templates for all cameras (PARALLEL).
+
+        Args:
+            context: Pipeline context
+            transformed_results: Dict mapping serial_number -> inference result
+
+        Returns:
+            Dict mapping serial_number -> template verification result
+        """
+        if not context.template_verification_service:
+            return {}
+
+        # Collect all template verification tasks
+        verification_tasks = []
+        serial_numbers = []
+
+        for camera in context.cameras_to_process:
+            serial_number = camera.serial_number
+            result = transformed_results.get(serial_number, {})
+            frames = context.results.get(serial_number, {}).get('frames', [])
+
+            # Get matcher
+            matcher = context.camera_matchers.get(serial_number)
+            if isinstance(matcher, list):
+                matcher = matcher[0]
+
+            # Check if template verification is needed
+            if (result.get('success') and
+                matcher and
+                hasattr(matcher, 'template_img') and
+                hasattr(matcher, 'template_bbox') and
+                frames):
+
+                verification_tasks.append({
+                    'frame_img': frames[0],
+                    'template_img': matcher.template_img,
+                    'transformed_bboxes': result.get('transformed_bboxes', []),
+                    'original_template_bbox': matcher.template_bbox,
+                    'camera': camera
+                })
+                serial_numbers.append(serial_number)
+
+        if not verification_tasks:
+            return {}
+
+        # Batch verify with PARALLEL execution
+        try:
+            verification_results = context.template_verification_service.batch_verify_templates(
+                verification_tasks,
+                parallel=True  # Enable parallel processing
+            )
+
+            # Map results back to serial numbers
+            result_map = {}
+            for idx, serial_number in enumerate(serial_numbers):
+                if idx < len(verification_results):
+                    result_map[serial_number] = verification_results[idx]
+
+            return result_map
+
+        except Exception as e:
+            logger.error(f"[Job #{context.job_id}] Batch template verification failed: {e}")
+            import traceback
+            traceback.print_exc()
+            # Return error results
+            return {
+                sn: {
+                    'match': False,
+                    'similarity': 0.0,
+                    'threshold': 0.0,
+                    'method': 'ERROR',
+                    'error': f'Batch verification failed: {str(e)}'
                 }
                 for sn in serial_numbers
             }

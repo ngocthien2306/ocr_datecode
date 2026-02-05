@@ -11,6 +11,7 @@ import os
 import time
 import cv2
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from dataclasses import dataclass
 
@@ -58,12 +59,19 @@ class TemplateVerificationService:
         cv2.TM_SQDIFF_NORMED: 'TM_SQDIFF_NORMED'
     }
 
+    # Default max dimension for resize optimization
+    # Based on analysis: 59x547 crop takes 2.5ms matching
+    # Larger crops (763x520) take 16.5ms - resizing helps significantly
+    DEFAULT_MAX_DIMENSION = 200
+
     def __init__(
         self,
         save_debug_images: bool = True,
         debug_path: Optional[str] = None,
         default_method: int = cv2.TM_CCOEFF_NORMED,
-        default_threshold: float = 0.85
+        default_threshold: float = 0.85,
+        max_dimension: int = DEFAULT_MAX_DIMENSION,
+        max_workers: int = 4
     ):
         """
         Initialize TemplateVerificationService.
@@ -73,11 +81,46 @@ class TemplateVerificationService:
             debug_path: Path to save debug images
             default_method: Default OpenCV template matching method
             default_threshold: Default similarity threshold
+            max_dimension: Max dimension for resize optimization (0 = disabled)
+            max_workers: Max workers for parallel verification
         """
         self.save_debug_images = save_debug_images
         self.debug_path = debug_path or f"{home}/Source/ocr_datecode/ai_services/test_result"
         self.default_method = default_method
         self.default_threshold = default_threshold
+        self.max_dimension = max_dimension
+        self.max_workers = max_workers
+
+    def _resize_for_matching(
+        self,
+        img: np.ndarray,
+        max_dim: int
+    ) -> tuple:
+        """
+        Resize image if larger than max_dimension for faster matching.
+
+        Args:
+            img: Input image
+            max_dim: Maximum dimension (width or height)
+
+        Returns:
+            Tuple of (resized_img, scale_factor)
+        """
+        if max_dim <= 0:
+            return img, 1.0
+
+        h, w = img.shape[:2]
+        max_current = max(h, w)
+
+        if max_current <= max_dim:
+            return img, 1.0
+
+        scale = max_dim / max_current
+        new_w = int(w * scale)
+        new_h = int(h * scale)
+
+        resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        return resized, scale
 
     def verify_template_regions(
         self,
@@ -199,6 +242,19 @@ class TemplateVerificationService:
                 )
                 t_resize = (time.perf_counter() - t_resize_start) * 1000  # Convert to ms
 
+            # Resize for faster matching if images are large
+            original_size = cropped_template.shape[:2]
+            t_opt_resize_start = time.perf_counter()
+            cropped_template, scale = self._resize_for_matching(cropped_template, self.max_dimension)
+            cropped_target, _ = self._resize_for_matching(cropped_target, self.max_dimension)
+            t_opt_resize = (time.perf_counter() - t_opt_resize_start) * 1000
+
+            if scale < 1.0:
+                logger.info(
+                    f"[{serial_number}] Resized for matching: {original_size} -> "
+                    f"{cropped_template.shape[:2]} (scale={scale:.2f})"
+                )
+
             # Calculate similarity score
             t_matching_start = time.perf_counter()
             similarity_score = self._calculate_similarity(
@@ -220,6 +276,7 @@ class TemplateVerificationService:
             timing = {
                 'crop_ms': t_crop,
                 'resize_ms': t_resize,
+                'opt_resize_ms': t_opt_resize,
                 'matching_ms': t_matching,
                 'total_ms': t_total
             }
@@ -228,7 +285,8 @@ class TemplateVerificationService:
                 f"[{serial_number}] Template verification: "
                 f"similarity={similarity_score:.4f}, threshold={similarity_threshold}, "
                 f"match={match}, method={method_name}, "
-                f"total={t_total:.1f}ms (crop={t_crop:.1f}ms, resize={t_resize:.1f}ms, matching={t_matching:.1f}ms)"
+                f"total={t_total:.1f}ms (crop={t_crop:.1f}ms, resize={t_resize:.1f}ms, "
+                f"opt_resize={t_opt_resize:.1f}ms, matching={t_matching:.1f}ms)"
             )
 
             return {
@@ -325,10 +383,11 @@ class TemplateVerificationService:
 
     def batch_verify_templates(
         self,
-        verification_tasks: List[Dict[str, Any]]
+        verification_tasks: List[Dict[str, Any]],
+        parallel: bool = True
     ) -> List[Dict[str, Any]]:
         """
-        Batch verify multiple template regions.
+        Batch verify multiple template regions (optionally in parallel).
 
         Args:
             verification_tasks: List of tasks, each containing:
@@ -341,13 +400,50 @@ class TemplateVerificationService:
                     'similarity_threshold': float (optional),
                     'method': int (optional)
                 }
+            parallel: Whether to run verification in parallel (default: True)
 
         Returns:
             List of verification results in same order as tasks
         """
         t_batch_start = time.perf_counter()
-        results = []
+        n_cameras = len(verification_tasks)
 
+        if n_cameras == 0:
+            return []
+
+        # Use parallel execution for multiple cameras
+        if parallel and n_cameras > 1:
+            results = self._batch_verify_parallel(verification_tasks)
+        else:
+            results = self._batch_verify_sequential(verification_tasks)
+
+        t_batch_total = (time.perf_counter() - t_batch_start) * 1000  # Convert to ms
+
+        # Calculate timing statistics
+        avg_time = t_batch_total / n_cameras if n_cameras > 0 else 0.0
+
+        # Sum up individual timings
+        total_crop = sum(r.get('timing', {}).get('crop_ms', 0.0) for r in results)
+        total_resize = sum(r.get('timing', {}).get('resize_ms', 0.0) for r in results)
+        total_opt_resize = sum(r.get('timing', {}).get('opt_resize_ms', 0.0) for r in results)
+        total_matching = sum(r.get('timing', {}).get('matching_ms', 0.0) for r in results)
+
+        mode = "parallel" if parallel and n_cameras > 1 else "sequential"
+        logger.info(
+            f"Template verification batch ({mode}): {n_cameras} camera(s), "
+            f"total={t_batch_total:.1f}ms (avg={avg_time:.1f}ms/camera), "
+            f"crop={total_crop:.1f}ms, resize={total_resize:.1f}ms, "
+            f"opt_resize={total_opt_resize:.1f}ms, matching={total_matching:.1f}ms"
+        )
+
+        return results
+
+    def _batch_verify_sequential(
+        self,
+        verification_tasks: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Run verification sequentially"""
+        results = []
         for task in verification_tasks:
             result = self.verify_template_regions(
                 frame_img=task['frame_img'],
@@ -359,22 +455,38 @@ class TemplateVerificationService:
                 method=task.get('method')
             )
             results.append(result)
+        return results
 
-        t_batch_total = (time.perf_counter() - t_batch_start) * 1000  # Convert to ms
+    def _batch_verify_parallel(
+        self,
+        verification_tasks: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Run verification in parallel using ThreadPoolExecutor"""
+        results = [None] * len(verification_tasks)
 
-        # Calculate timing statistics
-        n_cameras = len(verification_tasks)
-        avg_time = t_batch_total / n_cameras if n_cameras > 0 else 0.0
+        def verify_task(idx_task):
+            idx, task = idx_task
+            return idx, self.verify_template_regions(
+                frame_img=task['frame_img'],
+                template_img=task['template_img'],
+                transformed_bboxes=task['transformed_bboxes'],
+                original_template_bbox=task['original_template_bbox'],
+                camera=task['camera'],
+                similarity_threshold=task.get('similarity_threshold'),
+                method=task.get('method')
+            )
 
-        # Sum up individual timings
-        total_crop = sum(r.get('timing', {}).get('crop_ms', 0.0) for r in results)
-        total_resize = sum(r.get('timing', {}).get('resize_ms', 0.0) for r in results)
-        total_matching = sum(r.get('timing', {}).get('matching_ms', 0.0) for r in results)
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = [
+                executor.submit(verify_task, (idx, task))
+                for idx, task in enumerate(verification_tasks)
+            ]
 
-        logger.info(
-            f"Template verification batch: {n_cameras} camera(s), "
-            f"total={t_batch_total:.1f}ms (avg={avg_time:.1f}ms/camera), "
-            f"crop={total_crop:.1f}ms, resize={total_resize:.1f}ms, matching={total_matching:.1f}ms"
-        )
+            for future in as_completed(futures):
+                try:
+                    idx, result = future.result()
+                    results[idx] = result
+                except Exception as e:
+                    logger.error(f"Parallel verification error: {e}")
 
         return results

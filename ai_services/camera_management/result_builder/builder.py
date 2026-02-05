@@ -7,6 +7,8 @@ Provides fluent interface for building complex result structures.
 
 import os
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from dataclasses import dataclass, field
 
@@ -179,6 +181,22 @@ class FrameResultBuilder:
                 crop_area=self._crop_area,
                 product_verification=self._product_verification
             )
+        return self
+
+    def set_encoded_image(
+        self,
+        image_path: Optional[str],
+        image_base64: Optional[str]
+    ) -> 'FrameResultBuilder':
+        """
+        Directly set encoded image (for parallel encoding).
+
+        Args:
+            image_path: Path to saved image (for FAIL frames)
+            image_base64: Base64 encoded image for display
+        """
+        self._image_path = image_path
+        self._image_base64 = image_base64
         return self
 
     def build(self) -> FrameResult:
@@ -401,7 +419,8 @@ class InferenceResultBuilder:
         camera_matchers: Dict[str, Any],
         save_and_encode_func,
         encode_display_func,
-        statistics: Optional[Dict[str, Any]] = None
+        statistics: Optional[Dict[str, Any]] = None,
+        parallel_encode: bool = True
     ) -> Dict[str, Any]:
         """
         Build inference result from camera data.
@@ -418,12 +437,15 @@ class InferenceResultBuilder:
             save_and_encode_func: Function to save and encode frames
             encode_display_func: Function to encode for display
             statistics: Optional statistics dict from trigger handler
+            parallel_encode: Whether to encode images in parallel (default: True)
 
         Returns:
             Complete inference result dict
         """
         if not cameras:
             return {}
+
+        t_start = time.perf_counter()
 
         first_camera = cameras[0]
         builder = cls(
@@ -435,6 +457,9 @@ class InferenceResultBuilder:
         if statistics:
             # Directly set statistics to preserve per_camera from InferenceHandler
             builder._statistics = statistics.copy()
+
+        # Collect all frame builders and encode tasks
+        camera_frame_data = []  # List of (camera, camera_builder, [(frame_builder, encode_task), ...])
 
         for camera in cameras:
             serial_number = camera.serial_number
@@ -458,7 +483,9 @@ class InferenceResultBuilder:
             else:
                 num_frames = min(len(camera.templates), len(camera_frames))
 
-            # Build frame results
+            frame_builders_with_tasks = []
+
+            # Build frame results (without encoding)
             for idx in range(num_frames):
                 if idx >= len(camera_frames):
                     break
@@ -520,15 +547,57 @@ class InferenceResultBuilder:
                 else:
                     frame_builder.with_inference_data("PASS", 0.0)
 
-                # Encode image
-                frame_builder.with_encoded_image(
-                    frame_img=frame_img,
-                    serial_number=serial_number,
-                    recipe_id=camera.recipe_id,
-                    save_and_encode_func=save_and_encode_func,
-                    encode_display_func=encode_display_func
-                )
+                # Create encode task
+                encode_task = {
+                    'frame_img': frame_img,
+                    'serial_number': serial_number,
+                    'recipe_id': camera.recipe_id,
+                    'pass_fail': frame_builder._pass_fail,
+                    'frame_idx': idx,
+                    'transformed_bboxes': frame_builder._detected_regions,
+                    'confidence': frame_builder._confidence,
+                    'inliers': frame_builder._inliers,
+                    'total_matches': frame_builder._total_matches,
+                    'crop_area': crop_area,
+                    'product_verification': frame_builder._product_verification
+                }
 
+                frame_builders_with_tasks.append((frame_builder, encode_task))
+
+            camera_frame_data.append((camera, camera_builder, frame_builders_with_tasks))
+
+        # Collect all encode tasks
+        all_encode_tasks = []
+        task_to_builder = {}  # Map task index to frame_builder
+
+        for camera, camera_builder, frame_builders_with_tasks in camera_frame_data:
+            for frame_builder, encode_task in frame_builders_with_tasks:
+                task_idx = len(all_encode_tasks)
+                all_encode_tasks.append(encode_task)
+                task_to_builder[task_idx] = frame_builder
+
+        # Encode images (parallel or sequential)
+        t_encode_start = time.perf_counter()
+
+        if parallel_encode and len(all_encode_tasks) > 1:
+            encoded_results = cls._encode_parallel(
+                all_encode_tasks, save_and_encode_func, encode_display_func
+            )
+        else:
+            encoded_results = cls._encode_sequential(
+                all_encode_tasks, save_and_encode_func, encode_display_func
+            )
+
+        t_encode = (time.perf_counter() - t_encode_start) * 1000
+
+        # Apply encoded images to frame builders
+        for task_idx, (image_path, image_base64) in enumerate(encoded_results):
+            frame_builder = task_to_builder[task_idx]
+            frame_builder.set_encoded_image(image_path, image_base64)
+
+        # Build final results
+        for camera, camera_builder, frame_builders_with_tasks in camera_frame_data:
+            for frame_builder, _ in frame_builders_with_tasks:
                 camera_builder.add_frame(frame_builder.build())
 
             camera_result = camera_builder.build()
@@ -543,7 +612,7 @@ class InferenceResultBuilder:
             avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
 
             builder.add_camera_stats(
-                serial_number=serial_number,
+                serial_number=camera.serial_number,
                 avg_confidence=avg_conf,
                 total_inliers=sum(f.inliers for f in frames),
                 total_matches=sum(f.total_matches for f in frames),
@@ -553,4 +622,92 @@ class InferenceResultBuilder:
                 error_count=error_count
             )
 
+        t_total = (time.perf_counter() - t_start) * 1000
+        mode = "parallel" if parallel_encode and len(all_encode_tasks) > 1 else "sequential"
+        logger.info(
+            f"Result builder ({mode}): {len(all_encode_tasks)} frames encoded in {t_encode:.1f}ms, "
+            f"total={t_total:.1f}ms"
+        )
+
         return builder.build()
+
+    @classmethod
+    def _encode_sequential(
+        cls,
+        encode_tasks: List[Dict[str, Any]],
+        save_and_encode_func,
+        encode_display_func
+    ) -> List[tuple]:
+        """Encode frames sequentially"""
+        results = []
+        for task in encode_tasks:
+            result = cls._encode_single_frame(task, save_and_encode_func, encode_display_func)
+            results.append(result)
+        return results
+
+    @classmethod
+    def _encode_parallel(
+        cls,
+        encode_tasks: List[Dict[str, Any]],
+        save_and_encode_func,
+        encode_display_func,
+        max_workers: int = 4
+    ) -> List[tuple]:
+        """Encode frames in parallel using ThreadPoolExecutor"""
+        results = [None] * len(encode_tasks)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    cls._encode_single_frame, task, save_and_encode_func, encode_display_func
+                ): idx
+                for idx, task in enumerate(encode_tasks)
+            }
+
+            for future in as_completed(futures):
+                idx = futures[future]
+                try:
+                    results[idx] = future.result()
+                except Exception as e:
+                    logger.error(f"Encode error for task {idx}: {e}")
+                    results[idx] = (None, None)
+
+        return results
+
+    @classmethod
+    def _encode_single_frame(
+        cls,
+        task: Dict[str, Any],
+        save_and_encode_func,
+        encode_display_func
+    ) -> tuple:
+        """Encode a single frame"""
+        pass_fail = task.get('pass_fail', 'PASS')
+
+        if pass_fail in ['FAIL', 'ERROR']:
+            base_dir = f"{home}/Source/ocr_datecode/backend/uploads/inference_results"
+            return save_and_encode_func(
+                frame_img=task['frame_img'],
+                serial_number=task['serial_number'],
+                recipe_id=task['recipe_id'],
+                pass_fail=pass_fail,
+                base_dir=base_dir,
+                frame_idx=task['frame_idx'],
+                transformed_bboxes=task.get('transformed_bboxes'),
+                confidence=task.get('confidence', 0.0),
+                inliers=task.get('inliers', 0),
+                total_matches=task.get('total_matches', 0),
+                crop_area=task.get('crop_area'),
+                product_verification=task.get('product_verification')
+            )
+        else:
+            image_base64 = encode_display_func(
+                frame_img=task['frame_img'],
+                transformed_bboxes=task.get('transformed_bboxes'),
+                confidence=task.get('confidence', 0.0),
+                inliers=task.get('inliers', 0),
+                total_matches=task.get('total_matches', 0),
+                crop_area=task.get('crop_area'),
+                product_verification=task.get('product_verification')
+            )
+            return (None, image_base64)
