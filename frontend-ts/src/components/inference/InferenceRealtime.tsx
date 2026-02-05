@@ -45,7 +45,11 @@ interface ProductVerification {
   center_alignment_check?: {
     ok: boolean;
     offset_x: number;
+    abs_offset_x?: number;
+    direction?: string;
     threshold: number;
+    threshold_left?: number;
+    threshold_right?: number;
     template_center: [number, number];
     product_center: [number, number];
   };
@@ -105,6 +109,9 @@ interface PerCameraCumulativeStats {
   pass_count: number;
   fail_count: number;
   error_count: number;
+  total_pass_count: number;
+  total_fail_count: number;
+  total_error_count: number;
   camera_pass_fail: string;
 }
 
@@ -927,31 +934,42 @@ export default function InferenceRealtime({ runningRecipeId }: InferenceRealtime
                                 </div>
                               )}
                               <div className="frame-overlay">
-                                {/* Camera Serial & Cumulative Counter */}
-                                <div className="frame-camera-info">
+                                {/* Top Row: Camera Serial + Offset (center) + Pass/Fail Badge */}
+                                <div className="frame-top-row">
                                   <span className="camera-serial-badge">{cameraResult.serial_number}</span>
-                                  {cumulativeStats && (
-                                    <span className="camera-counter">
-                                      <span className="counter-pass">✓{cumulativeStats.pass_count}</span>
-                                      <span className="counter-separator">/</span>
-                                      <span className="counter-fail">✗{cumulativeStats.fail_count}</span>
+                                  {frame.product_verification?.center_alignment_check && (
+                                    <span className="frame-offset-x">
+                                      Offset: {(frame.product_verification.center_alignment_check.abs_offset_x ?? Math.abs(frame.product_verification.center_alignment_check.offset_x)).toFixed(1)}px
+                                      {frame.product_verification.center_alignment_check.direction === 'left' ? ' L' : ' R'}
+                                      (L:{frame.product_verification.center_alignment_check.threshold_left?.toFixed(0) ?? '-'} / R:{frame.product_verification.center_alignment_check.threshold_right?.toFixed(0) ?? '-'})
                                     </span>
                                   )}
+                                  <span className={`frame-badge ${frame.pass_fail.toLowerCase()}`}>
+                                    {frame.pass_fail}
+                                  </span>
                                 </div>
 
-                                {/* <span className="frame-confidence">
-                                  {(frame.confidence * 100).toFixed(1)}%
-                                </span> */}
-                                {frame.product_verification?.center_alignment_check && (
-                                  <span className="frame-offset-x">
-                                    Offset: {(frame.product_verification.center_alignment_check.abs_offset_x ?? Math.abs(frame.product_verification.center_alignment_check.offset_x)).toFixed(1)}px
-                                    {frame.product_verification.center_alignment_check.direction === 'left' ? ' L' : ' R'}
-                                    (L:{frame.product_verification.center_alignment_check.threshold_left?.toFixed(0) ?? '-'} / R:{frame.product_verification.center_alignment_check.threshold_right?.toFixed(0) ?? '-'})
-                                  </span>
+                                {/* Bottom Row: Counters */}
+                                {cumulativeStats && (
+                                  <div className="frame-bottom-row">
+                                    <div className="counter-group">
+                                      <span className="counter-label">Session:</span>
+                                      <span className="counter-values">
+                                        <span className="counter-pass">✓{cumulativeStats.pass_count}</span>
+                                        <span className="counter-separator">/</span>
+                                        <span className="counter-fail">✗{cumulativeStats.fail_count}</span>
+                                      </span>
+                                    </div>
+                                    <div className="counter-group">
+                                      <span className="counter-label">Total:</span>
+                                      <span className="counter-values">
+                                        <span className="counter-pass">✓{cumulativeStats.total_pass_count}</span>
+                                        <span className="counter-separator">/</span>
+                                        <span className="counter-fail">✗{cumulativeStats.total_fail_count}</span>
+                                      </span>
+                                    </div>
+                                  </div>
                                 )}
-                                <span className={`frame-badge ${frame.pass_fail.toLowerCase()}`}>
-                                  {frame.pass_fail}
-                                </span>
                               </div>
                             </div>
                           </div>

@@ -301,10 +301,21 @@ class InferenceResultBuilder:
         error_count: int
     ) -> 'InferenceResultBuilder':
         """Add per-camera statistics"""
-        # Determine camera pass/fail
-        camera_pass_fail = "PASS" if (fail_count == 0 and error_count == 0) else "FAIL"
+        # Get cumulative stats from statistics (if available)
+        cumulative_stats_for_camera = None
+        if 'per_camera' in self._statistics:
+            cumulative_stats_for_camera = next(
+                (s for s in self._statistics['per_camera'] if s['serial_number'] == serial_number),
+                None
+            )
 
-        self._per_camera_stats.append({
+        # Determine camera pass/fail (use cumulative if available)
+        if cumulative_stats_for_camera:
+            camera_pass_fail = cumulative_stats_for_camera['camera_pass_fail']
+        else:
+            camera_pass_fail = "PASS" if (fail_count == 0 and error_count == 0) else "FAIL"
+
+        camera_stat = {
             "serial_number": serial_number,
             "pass_fail": camera_pass_fail,
             "confidence": avg_confidence,
@@ -318,10 +329,17 @@ class InferenceResultBuilder:
                 "error_count": error_count,
                 "avg_confidence": avg_confidence
             }
-        })
+        }
 
-        # Note: statistics['per_camera'] is now managed by InferenceHandler
-        # for cumulative tracking across all inferences
+        # Add cumulative stats if available
+        if cumulative_stats_for_camera:
+            camera_stat["cumulative_stats"] = {
+                "pass_count": cumulative_stats_for_camera['pass_count'],
+                "fail_count": cumulative_stats_for_camera['fail_count'],
+                "error_count": cumulative_stats_for_camera['error_count']
+            }
+
+        self._per_camera_stats.append(camera_stat)
 
         return self
 

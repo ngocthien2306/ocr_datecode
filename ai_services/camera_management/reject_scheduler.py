@@ -72,6 +72,10 @@ class RejectScheduler:
         }
         self._stats_lock = threading.Lock()
 
+        # Sequential reject counter for logging
+        self._reject_counter = 0
+        self._reject_counter_lock = threading.Lock()
+
         # Statistics monitoring
         self._monitoring = False
         self._monitoring_thread: Optional[threading.Thread] = None
@@ -210,6 +214,11 @@ class RejectScheduler:
         # Calculate absolute reject time
         T_reject = T_capture_complete + delay_reject_sec
 
+        # Increment reject counter
+        with self._reject_counter_lock:
+            self._reject_counter += 1
+            reject_count = self._reject_counter
+
         # Create entry
         entry = RejectEntry(
             T_reject=T_reject,
@@ -217,6 +226,18 @@ class RejectScheduler:
             do_number=do_number,
             inference_time=inference_time,
             scheduled_at=time.time()
+        )
+
+        # Log reject start
+        from .utils import log_reject_start
+        log_reject_start(
+            reject_count=reject_count,
+            group_id=group_id,
+            do_number=do_number,
+            T_capture_complete=T_capture_complete,
+            T_reject=T_reject,
+            delay_reject_ms=delay_reject,
+            inference_time_ms=inference_time * 1000
         )
 
         # Add to queue (thread-safe)
@@ -262,9 +283,19 @@ class RejectScheduler:
             # Remove from tracking dict
             del self._scheduled_rejects[group_id]
 
-        # Update stats
+        # Update stats and get counter
         with self._stats_lock:
             self._stats['total_cancelled'] += 1
+            # Counter for cancelled rejects is total_scheduled
+            reject_count = self._stats['total_scheduled']
+
+        # Log cancellation
+        from .utils import log_reject_cancelled
+        log_reject_cancelled(
+            reject_count=reject_count,
+            group_id=group_id,
+            reason="PASS"
+        )
 
         logger.info(
             f"[Group #{group_id}] ✅ Reject cancelled (result: PASS)"
@@ -337,11 +368,20 @@ class RejectScheduler:
 
     def _execute_reject(self, entry: RejectEntry):
         """Execute reject pulse"""
+        import time
+
         try:
             logger.info(
                 f"[Group #{entry.group_id}] 🔴 REJECTING! "
                 f"DO{entry.do_number} pulse ({self._reject_pulse_ms}ms)"
             )
+
+            # Get reject counter for this entry
+            with self._stats_lock:
+                reject_count = self._stats['total_rejected'] + 1
+
+            # Measure actual pulse duration
+            T_pulse_start = time.time()
 
             # Trigger DO pulse
             if self._do_control_callback:
@@ -351,9 +391,23 @@ class RejectScheduler:
                 from .utils import trigger_reject_pulse
                 trigger_reject_pulse(entry.do_number, pulse_ms=self._reject_pulse_ms)
 
+            # Calculate actual duration
+            T_pulse_end = time.time()
+            actual_duration_ms = (T_pulse_end - T_pulse_start) * 1000
+
             # Update stats
             with self._stats_lock:
                 self._stats['total_rejected'] += 1
+
+            # Log reject end with timing
+            from .utils import log_reject_end
+            log_reject_end(
+                reject_count=reject_count,
+                group_id=entry.group_id,
+                do_number=entry.do_number,
+                pulse_duration_ms=self._reject_pulse_ms,
+                actual_duration_ms=actual_duration_ms
+            )
 
             logger.info(f"[Group #{entry.group_id}] Reject pulse complete")
 

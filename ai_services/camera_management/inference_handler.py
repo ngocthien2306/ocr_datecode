@@ -607,24 +607,56 @@ class InferenceHandler:
 
     def _get_camera_stats_summary(self) -> List[Dict[str, Any]]:
         """
-        Get cumulative per-camera statistics summary
+        Get per-camera statistics summary with both session and cumulative counts
 
         Returns:
-            List of dicts with serial_number and counts
+            List of dicts with serial_number, session counts, and total counts
         """
+        # Get cumulative stats from TriggerHandler (persistent across recipe reload)
+        cumulative_stats = {}
+        if self.trigger_handler:
+            cumulative_stats = self.trigger_handler.get_camera_cumulative_stats()
+
         with self._camera_stats_lock:
             summary = []
-            for serial_number, stats in self._per_camera_stats.items():
-                pass_count = stats['pass_count']
-                fail_count = stats['fail_count']
-                error_count = stats['error_count']
-                camera_pass_fail = "PASS" if (fail_count == 0 and error_count == 0) else "FAIL"
+            # Get all serial numbers (union of session and cumulative)
+            all_serial_numbers = set(self._per_camera_stats.keys()) | set(cumulative_stats.keys())
+
+            for serial_number in all_serial_numbers:
+                # Session stats (current recipe run)
+                session_stats = self._per_camera_stats.get(serial_number, {
+                    'pass_count': 0,
+                    'fail_count': 0,
+                    'error_count': 0
+                })
+                pass_count = session_stats['pass_count']
+                fail_count = session_stats['fail_count']
+                error_count = session_stats['error_count']
+
+                # Cumulative stats (across all recipe runs)
+                cum_stats = cumulative_stats.get(serial_number, {
+                    'total_pass': 0,
+                    'total_fail': 0,
+                    'total_error': 0
+                })
+                total_pass_count = cum_stats['total_pass']
+                total_fail_count = cum_stats['total_fail']
+                total_error_count = cum_stats['total_error']
+
+                # Determine camera_pass_fail based on cumulative stats
+                camera_pass_fail = "PASS" if (total_fail_count == 0 and total_error_count == 0) else "FAIL"
 
                 summary.append({
                     'serial_number': serial_number,
+                    # Session counts (current recipe run)
                     'pass_count': pass_count,
                     'fail_count': fail_count,
                     'error_count': error_count,
+                    # Cumulative counts (persistent across recipe reload)
+                    'total_pass_count': total_pass_count,
+                    'total_fail_count': total_fail_count,
+                    'total_error_count': total_error_count,
+                    # Overall status based on cumulative
                     'camera_pass_fail': camera_pass_fail
                 })
             return summary
@@ -781,7 +813,14 @@ class InferenceHandler:
                     )
 
                     if pass_count > 0 or fail_count > 0 or error_count > 0:
+                        # Update session stats (InferenceHandler)
                         self._update_camera_stats(serial_number, pass_count, fail_count, error_count)
+
+                        # Update cumulative stats (TriggerHandler - persistent across recipe reload)
+                        if self.trigger_handler:
+                            self.trigger_handler.update_camera_cumulative_stats(
+                                serial_number, pass_count, fail_count, error_count
+                            )
                     else:
                         logger.warning(
                             f"[Job #{job_id}] Camera {serial_number}: No valid results to count. "

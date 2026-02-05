@@ -69,6 +69,11 @@ class TriggerHandler:
         }
         self._stats_lock = threading.Lock()
 
+        # Per-camera cumulative statistics (persistent across recipe reload)
+        # Structure: {serial_number: {'total_pass': N, 'total_fail': M, 'total_error': K}}
+        self._per_camera_cumulative_stats: Dict[str, Dict[str, int]] = {}
+        self._camera_cumulative_lock = threading.Lock()
+
         # Statistics monitoring thread
         self._monitoring = False
         self._monitoring_thread: Optional[threading.Thread] = None
@@ -800,3 +805,39 @@ class TriggerHandler:
         except Exception as e:
             logger.error(f"Error in simulate_trigger_sequence: {e}")
             return {"success": False, "error": str(e)}
+
+    def update_camera_cumulative_stats(self, serial_number: str, pass_count: int,
+                                       fail_count: int, error_count: int):
+        """
+        Update cumulative per-camera statistics (persistent across recipe reload)
+
+        Args:
+            serial_number: Camera serial number
+            pass_count: Number of pass frames in this inference
+            fail_count: Number of fail frames in this inference
+            error_count: Number of error frames in this inference
+        """
+        with self._camera_cumulative_lock:
+            if serial_number not in self._per_camera_cumulative_stats:
+                self._per_camera_cumulative_stats[serial_number] = {
+                    'total_pass': 0,
+                    'total_fail': 0,
+                    'total_error': 0
+                }
+
+            self._per_camera_cumulative_stats[serial_number]['total_pass'] += pass_count
+            self._per_camera_cumulative_stats[serial_number]['total_fail'] += fail_count
+            self._per_camera_cumulative_stats[serial_number]['total_error'] += error_count
+
+    def get_camera_cumulative_stats(self) -> Dict[str, Dict[str, int]]:
+        """
+        Get cumulative per-camera statistics (persistent across recipe reload)
+
+        Returns:
+            Dict mapping serial_number to cumulative stats
+        """
+        with self._camera_cumulative_lock:
+            return {
+                sn: stats.copy()
+                for sn, stats in self._per_camera_cumulative_stats.items()
+            }
