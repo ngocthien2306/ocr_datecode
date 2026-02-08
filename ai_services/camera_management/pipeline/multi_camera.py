@@ -251,7 +251,7 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                         if annotation_idx is not None and not text_result.get('match', False):
                             # Find bbox with this annotation_index and mark as fail
                             for bbox in camera_result['transformed_bboxes']:
-                                if (bbox.get('type') == 'text' and
+                                if (bbox.get('type') in ['text', 'datecode'] and
                                     bbox.get('annotation_index') == annotation_idx):
                                     bbox['verification_status'] = 'fail'
 

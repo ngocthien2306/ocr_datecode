@@ -26,6 +26,8 @@ import json
 import numpy as np
 import time
 import threading
+import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor
 import tensorrt as trt
 import pycuda.driver as cuda
 import pycuda.autoinit
@@ -429,35 +431,61 @@ class SuperPointEngineTRT:
         outputs = self._infer(batch_input)
         batch_timings['trt_inference'] = (time.time() - t0) * 1000
 
-        # Post-process each pair
+        # Post-process each pair (PARALLEL)
         t0 = time.time()
-        results = []
-        per_pair_postprocess = []
 
         kpts_raw = outputs[0]
         matches_raw = outputs[1]
         mscores_raw = outputs[2]
 
-        for idx, template in enumerate(templates):
-            t_post = time.time()
+        # Pre-allocate results (thread-safe indexing instead of append)
+        num_pairs = len(templates)
+        results = [None] * num_pairs
+        per_pair_postprocess = [0.0] * num_pairs
 
-            template_idx = idx * 2
-            target_idx = idx * 2 + 1
+        # Parallel postprocessing with ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(num_pairs, 4)) as executor:
+            futures = []
 
-            result = self._postprocess_pair(
-                kpts_raw=kpts_raw,
-                matches_raw=matches_raw,
-                mscores_raw=mscores_raw,
-                template_idx=template_idx,
-                target_idx=target_idx,
-                template=template,
-                target_img_full=target_imgs[idx],
-                score_threshold=score_threshold,
-                ransac_threshold=ransac_threshold
-            )
+            for idx, template in enumerate(templates):
+                template_idx = idx * 2
+                target_idx = idx * 2 + 1
 
-            per_pair_postprocess.append((time.time() - t_post) * 1000)
-            results.append(result)
+                future = executor.submit(
+                    self._postprocess_pair_wrapper,
+                    idx,
+                    kpts_raw,
+                    matches_raw,
+                    mscores_raw,
+                    template_idx,
+                    target_idx,
+                    template,
+                    target_imgs[idx],
+                    score_threshold,
+                    ransac_threshold
+                )
+                futures.append(future)
+
+            # Collect results as they complete
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    idx, result, postprocess_time = future.result()
+                    results[idx] = result
+                    per_pair_postprocess[idx] = postprocess_time
+                except Exception as e:
+                    logger.error(f"Postprocess failed for pair {idx}: {e}")
+                    # Fill with error result
+                    results[idx] = {
+                        'success': False,
+                        'error': f'Postprocess exception: {e}',
+                        'homography': None,
+                        'confidence': 0.0,
+                        'inliers': 0,
+                        'total_matches': 0,
+                        'transformed_bboxes': [],
+                        'target_img': target_imgs[idx] if idx < len(target_imgs) else None
+                    }
+                    per_pair_postprocess[idx] = 0.0
 
         batch_timings['postprocess'] = (time.time() - t0) * 1000
         batch_timings['total'] = (time.time() - t_total) * 1000
@@ -640,6 +668,44 @@ class SuperPointEngineTRT:
             'transformed_bboxes': transformed_bboxes,
             'target_img': target_img_full
         }
+
+    def _postprocess_pair_wrapper(
+        self,
+        idx: int,
+        kpts_raw: np.ndarray,
+        matches_raw: np.ndarray,
+        mscores_raw: np.ndarray,
+        template_idx: int,
+        target_idx: int,
+        template: TemplateConfig,
+        target_img_full: np.ndarray,
+        score_threshold: float,
+        ransac_threshold: float
+    ) -> Tuple[int, Dict, float]:
+        """
+        Wrapper for _postprocess_pair that returns index + result + timing.
+        Used for parallel processing.
+
+        Returns:
+            Tuple of (idx, result_dict, postprocess_time_ms)
+        """
+        t_start = time.time()
+
+        result = self._postprocess_pair(
+            kpts_raw=kpts_raw,
+            matches_raw=matches_raw,
+            mscores_raw=mscores_raw,
+            template_idx=template_idx,
+            target_idx=target_idx,
+            template=template,
+            target_img_full=target_img_full,
+            score_threshold=score_threshold,
+            ransac_threshold=ransac_threshold
+        )
+
+        postprocess_time = (time.time() - t_start) * 1000  # Convert to ms
+
+        return idx, result, postprocess_time
 
 
 # Backward compatibility wrapper

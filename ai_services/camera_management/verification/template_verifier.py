@@ -91,6 +91,9 @@ class TemplateVerificationService:
         self.max_dimension = max_dimension
         self.max_workers = max_workers
 
+        # Cache for cropped templates (key: (camera_serial, points_tuple))
+        self._template_crop_cache = {}
+
     def _resize_for_matching(
         self,
         img: np.ndarray,
@@ -212,10 +215,54 @@ class TemplateVerificationService:
                     error='Invalid original bbox points'
                 )
 
-            # Crop template region from both images using perspective transform
+            # Validate crop size before expensive perspective transform
+            frame_h, frame_w = frame_img.shape[:2]
+            pts = np.array(transformed_points, dtype=np.float32)
+
+            # Calculate crop dimensions (same as cv2.boundingRect will compute)
+            min_x = pts[:, 0].min()
+            max_x = pts[:, 0].max()
+            min_y = pts[:, 1].min()
+            max_y = pts[:, 1].max()
+            crop_width = int(max_x - min_x)
+            crop_height = int(max_y - min_y)
+
+            # Validate crop size (prevent huge allocations when template matching fails)
+            MAX_CROP_DIM = 1500  # Reasonable limit for template regions
+            if (crop_width > MAX_CROP_DIM or crop_height > MAX_CROP_DIM or
+                crop_width <= 0 or crop_height <= 0):
+                logger.error(
+                    f"[{serial_number}] Invalid crop size: {crop_width}x{crop_height}. "
+                    f"Bounds: ({min_x:.0f},{min_y:.0f})→({max_x:.0f},{max_y:.0f}), "
+                    f"Frame: {frame_w}x{frame_h}. Skipping template verification."
+                )
+                return self._build_result(
+                    serial_number,
+                    False,
+                    0.0,
+                    method,
+                    template_bbox=transformed_template_bbox,
+                    error=f'Invalid bbox (crop={crop_width}x{crop_height})'
+                )
+
+            # Crop template region (cache template crop, only crop target each time)
+            # Create cache key from camera serial and original points
+            cache_key = (serial_number, tuple(map(tuple, original_points)))
+
             t_crop_start = time.perf_counter()
-            cropped_template = crop_text_region(template_img, original_points)
+
+            # Check cache for template crop (template doesn't change)
+            if cache_key in self._template_crop_cache:
+                cropped_template = self._template_crop_cache[cache_key]
+            else:
+                # First time: crop and cache
+                cropped_template = crop_text_region(template_img, original_points)
+                self._template_crop_cache[cache_key] = cropped_template
+                logger.debug(f"[{serial_number}] Cached template crop (size: {cropped_template.shape})")
+
+            # Always crop target (transformed_points change each frame)
             cropped_target = crop_text_region(frame_img, transformed_points)
+
             t_crop = (time.perf_counter() - t_crop_start) * 1000  # Convert to ms
 
             # Save debug images if enabled

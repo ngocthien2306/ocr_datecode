@@ -856,7 +856,7 @@ class InferenceService:
                         'type': 'template',
                         'points': [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
                     }
-                elif ann_type == 'text' and ann.get('points'):
+                elif ann_type in ['text', 'datecode'] and ann.get('points'):
                     points = ann.get('points', [])
                     template_img = cv2.imread(template_path)
                     img_h, img_w = template_img.shape[:2]
@@ -1018,7 +1018,7 @@ class InferenceService:
                         'type': 'template',
                         'points': [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
                     }
-                elif ann_type == 'text' and ann.get('points'):
+                elif ann_type in ['text', 'datecode'] and ann.get('points'):
                     # Already in polygon format
                     points = ann.get('points', [])
 

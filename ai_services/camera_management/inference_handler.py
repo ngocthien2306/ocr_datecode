@@ -4,6 +4,7 @@ import cv2
 import json
 import time
 import threading
+import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from pathlib import Path
@@ -105,6 +106,7 @@ class InferenceHandler:
             'total_submitted': 0,
             'total_completed': 0,
             'total_failed': 0,
+            'total_timeout': 0,  # NEW: Track timeout jobs
             'max_queue_depth': 0
         }
         self._stats_lock = threading.Lock()
@@ -317,6 +319,7 @@ class InferenceHandler:
             logger.info(
                 f"📊 [INFERENCE STATS] Total: {self._inference_stats['total_submitted']}, "
                 f"Completed: {self._inference_stats['total_completed']}, "
+                f"Timeout: {self._inference_stats['total_timeout']}, "
                 f"Failed: {self._inference_stats['total_failed']}, "
                 f"Max Queue: {self._inference_stats['max_queue_depth']}"
             )
@@ -559,29 +562,209 @@ class InferenceHandler:
             T_capture_complete=T_capture_complete
         )
 
-        # Track active job
+        # Track active job with timeout flags
         with self._job_lock:
-            self._active_jobs[job_id] = future
+            self._active_jobs[job_id] = {
+                'future': future,
+                'timeout': False,      # Has timeout occurred?
+                'emitted': False,      # Has result been emitted?
+                'handled': False,      # Has reject been handled?
+                'group_id': group_id,
+                'cameras': cameras,
+                'T_capture_complete': T_capture_complete
+            }
 
         # Add callback to cleanup when done
         future.add_done_callback(lambda f: self._cleanup_job(job_id, f))
+
+        # Start timeout checker thread
+        timeout_thread = threading.Thread(
+            target=self._check_timeout_and_handle,
+            args=(job_id, cameras, emit_callback),
+            daemon=True,
+            name=f"TimeoutChecker-{job_id}"
+        )
+        timeout_thread.start()
 
         return job_id
 
     def _cleanup_job(self, job_id: int, future):
         """Cleanup completed job"""
+        is_timeout = False
         with self._job_lock:
             if job_id in self._active_jobs:
+                is_timeout = self._active_jobs[job_id]['timeout']
                 del self._active_jobs[job_id]
 
         # Update stats
         with self._stats_lock:
-            if future.exception():
+            if is_timeout:
+                # Already counted in _check_timeout_and_handle
+                pass
+            elif future.exception():
                 self._inference_stats['total_failed'] += 1
                 logger.error(f"[Job #{job_id}] Failed with exception: {future.exception()}")
             else:
                 self._inference_stats['total_completed'] += 1
                 logger.info(f"[Job #{job_id}] Completed successfully")
+
+    def _check_timeout_and_handle(
+        self,
+        job_id: int,
+        cameras: List['Camera'],
+        emit_callback
+    ):
+        """
+        Check for inference timeout and handle accordingly.
+
+        This runs in a separate thread to monitor each job's execution time.
+        If timeout occurs:
+        1. Emit FAIL result (if not already emitted)
+        2. Schedule reject (if not already handled)
+        3. Mark job as timeout to prevent double processing
+
+        Args:
+            job_id: Job identifier
+            cameras: List of cameras for this job
+            emit_callback: Callback to emit results
+        """
+        TIMEOUT_SECONDS = 10.0  # 1 second timeout
+
+        try:
+            # Get future from active jobs
+            with self._job_lock:
+                if job_id not in self._active_jobs:
+                    return  # Job already cleaned up
+                future = self._active_jobs[job_id]['future']
+                group_id = self._active_jobs[job_id]['group_id']
+                T_capture_complete = self._active_jobs[job_id]['T_capture_complete']
+
+            # Wait for result with timeout
+            try:
+                future.result(timeout=TIMEOUT_SECONDS)
+                # Inference completed within timeout - nothing to do
+                return
+
+            except concurrent.futures.TimeoutError:
+                # Timeout occurred!
+                logger.warning(
+                    f"[Job #{job_id}] ⏱️ TIMEOUT after {TIMEOUT_SECONDS}s "
+                    f"(group_id: {group_id})"
+                )
+
+                # Mark job as timeout
+                with self._job_lock:
+                    if job_id not in self._active_jobs:
+                        return  # Already cleaned up
+
+                    job_info = self._active_jobs[job_id]
+
+                    # Check if already handled
+                    if job_info['timeout']:
+                        return  # Already handled by another thread
+
+                    # Mark as timeout
+                    job_info['timeout'] = True
+
+                    # Emit FAIL result (if not already emitted)
+                    if not job_info['emitted']:
+                        self._emit_timeout_result(
+                            job_id, cameras, emit_callback, TIMEOUT_SECONDS
+                        )
+                        job_info['emitted'] = True
+
+                    # Schedule reject (if not already handled)
+                    if not job_info['handled'] and group_id and T_capture_complete:
+                        self._schedule_timeout_reject(
+                            job_id, group_id, cameras,
+                            T_capture_complete, TIMEOUT_SECONDS
+                        )
+                        job_info['handled'] = True
+
+                # Update statistics
+                with self._stats_lock:
+                    self._inference_stats['total_timeout'] += 1
+
+        except Exception as e:
+            logger.error(f"[Job #{job_id}] Error in timeout checker: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _emit_timeout_result(
+        self,
+        job_id: int,
+        cameras: List['Camera'],
+        emit_callback,
+        timeout_seconds: float
+    ):
+        """Emit FAIL result for timeout"""
+        try:
+            if not cameras:
+                return
+
+            first_camera = cameras[0]
+
+            # Build timeout error result
+            error_result = {
+                "recipe_id": first_camera.recipe_id,
+                "recipe_name": first_camera.recipe_name,
+                "product_pass_fail": "FAIL",
+                "error": f"Inference timeout ({timeout_seconds}s)",
+                "timeout": True,
+                "camera_results": [],
+                "metadata": {
+                    "job_id": job_id,
+                    "timeout_seconds": timeout_seconds,
+                    "inference_time": timeout_seconds
+                }
+            }
+
+            emit_callback("inference_result", error_result)
+            logger.warning(
+                f"[Job #{job_id}] Emitted FAIL result due to timeout"
+            )
+
+        except Exception as e:
+            logger.error(f"[Job #{job_id}] Error emitting timeout result: {e}")
+
+    def _schedule_timeout_reject(
+        self,
+        job_id: int,
+        group_id: int,
+        cameras: List['Camera'],
+        T_capture_complete: float,
+        timeout_seconds: float
+    ):
+        """Schedule reject for timeout case"""
+        try:
+            if not cameras or not self.reject_scheduler:
+                return
+
+            camera = cameras[0]
+            delay_reject = camera.delay_reject  # ms
+            do_reject_number = camera.do_reject_number
+
+            # Use timeout as inference_time for reject timing calculation
+            success = self.reject_scheduler.schedule_reject(
+                group_id=group_id,
+                T_capture_complete=T_capture_complete,
+                inference_time=timeout_seconds,
+                delay_reject=delay_reject,
+                do_number=do_reject_number
+            )
+
+            if success:
+                logger.warning(
+                    f"[Job #{job_id}] Reject scheduled for timeout "
+                    f"(delay_reject={delay_reject}ms, DO{do_reject_number})"
+                )
+            else:
+                logger.error(
+                    f"[Job #{job_id}] Failed to schedule reject for timeout"
+                )
+
+        except Exception as e:
+            logger.error(f"[Job #{job_id}] Error scheduling timeout reject: {e}")
 
     def _update_camera_stats(self, serial_number: str, pass_count: int, fail_count: int, error_count: int):
         """
@@ -682,6 +865,14 @@ class InferenceHandler:
             f"(group_id: {group_id})"
         )
 
+        # Check if timeout already occurred
+        with self._job_lock:
+            if job_id in self._active_jobs and self._active_jobs[job_id]['timeout']:
+                logger.info(
+                    f"[Job #{job_id}] Skipping inference (timeout already handled)"
+                )
+                return  # Exit early, timeout handler already emitted result
+
         try:
             # Get statistics from trigger handler if available
             statistics = {
@@ -778,10 +969,22 @@ class InferenceHandler:
             T_inference_start = time.time()
 
             # Execute pipeline (will emit result via finalize)
+            # Note: If timeout occurs during pipeline.process(), the timeout handler
+            # will emit FAIL result. The pipeline will continue to completion, but
+            # we'll skip the result emit below.
             inference_result = pipeline.process(context)
 
             # Calculate inference time
             inference_time = time.time() - T_inference_start
+
+            # Check if timeout occurred during inference
+            with self._job_lock:
+                if job_id in self._active_jobs and self._active_jobs[job_id]['timeout']:
+                    logger.info(
+                        f"[Job #{job_id}] Inference completed but timeout already handled "
+                        f"(actual time: {inference_time:.3f}s). Skipping result emit and reject."
+                    )
+                    return  # Exit early, timeout handler already handled everything
 
             # Update per-camera cumulative statistics
             if context.camera_inference_results:

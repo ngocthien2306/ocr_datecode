@@ -1015,7 +1015,7 @@ class Camera:
                         template_expected_texts = {}
 
                         for ann_idx, ann in enumerate(annotations):
-                            if ann.get('type') == 'text':
+                            if ann.get('type') in ['text', 'datecode']:
                                 expected_text = ann.get('text', '')
                                 if expected_text:
                                     # Use ann_idx (annotation index) as the key

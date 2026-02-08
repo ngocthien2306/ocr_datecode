@@ -146,7 +146,7 @@ class TextVerificationService:
         # Filter only text type bboxes
         text_bboxes = [
             bbox for bbox in transformed_bboxes
-            if bbox.get('type') == 'text'
+            if bbox.get('type') in ['text', 'datecode']
         ]
 
         logger.info(f"[{serial_number}] Verifying {len(text_bboxes)} text regions")
@@ -261,7 +261,7 @@ class TextVerificationService:
                 if "BEST BEFORE" in expected_text.upper() or "PL" in expected_text.upper() or "MFG" in expected_text.upper() or "BB" in expected_text.upper():
                     # Use similarity matching (default 80% threshold)
                     similarity = calculate_text_similarity(recognized_text, expected_text)
-                    similarity_threshold = 0.9
+                    similarity_threshold = 0.99
                     match = similarity >= similarity_threshold
                     if match:
                         recognized_text = expected_text[:]  # Override with expected text on match
@@ -277,6 +277,8 @@ class TextVerificationService:
                         recognized_text = recognized_text.replace("USsed", "Used")
 
                     match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
+                    if match: 
+                        recognized_text = expected_text[:]
 
             logger.info(
                 f"[{serial_number}] Annotation {annotation_idx}: "
@@ -347,9 +349,13 @@ class TextVerificationService:
             expected_texts = task['expected_texts']
 
             # Filter text bboxes
-            text_bboxes = [b for b in transformed_bboxes if b.get('type') == 'text']
-
-            logger.debug(f"[{serial_number}] Collecting {len(text_bboxes)} text regions for batch OCR")
+            # text_bboxes = [b for b in transformed_bboxes if b.get('type') in ['text', 'datecode']]
+            text_bboxes = [
+                bbox for bbox in transformed_bboxes
+                if bbox.get('type') in ['text', 'datecode']
+            ]
+            logger.info(f"[{serial_number}] Collecting {len(text_bboxes)} text regions for batch OCR")
+            logger.info(f"[{serial_number}] transformed_bboxes {transformed_bboxes}")
 
             for bbox in text_bboxes:
                 annotation_idx = bbox.get('annotation_index')
@@ -447,7 +453,7 @@ class TextVerificationService:
 
                     # Use similarity matching (default 80% threshold)
                     similarity = calculate_text_similarity(recognized_text, expected_text)
-                    similarity_threshold = 0.9
+                    similarity_threshold = 0.90
                     match = similarity >= similarity_threshold
                     if match:
                         recognized_text = expected_text[:]  # Override with expected text on match
@@ -462,6 +468,8 @@ class TextVerificationService:
                         
                     # Use exact match
                     match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
+                    if match: 
+                        recognized_text = expected_text[:]
 
             if not match:
                 camera_results[serial_number]['all_match'] = False
@@ -509,7 +517,7 @@ class TextVerificationService:
 
         # Update text bboxes with recognized text
         for bbox in transformed_bboxes:
-            if bbox.get('type') == 'text':
+            if bbox.get('type') in ['text', 'datecode']:
                 annotation_idx = bbox.get('annotation_index')
                 if annotation_idx is not None and annotation_idx in recognized_map:
                     bbox['text'] = recognized_map[annotation_idx]
