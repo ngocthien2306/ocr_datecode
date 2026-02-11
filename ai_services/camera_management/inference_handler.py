@@ -129,26 +129,33 @@ class InferenceHandler:
         Initialize OCR backend using Factory Pattern.
 
         Uses OCRBackendFactory to create the appropriate backend based on:
-        - Environment variable OCR_BACKEND (tensorrt/onnx/auto)
+        - Environment variable OCR_MODEL (openocr/paddlev5) - default: openocr
+        - Environment variable OCR_BACKEND (tensorrt/onnx/auto) - default: auto
         - Available backends on the system
+
+        Default: OpenOCR RepSVTR with TensorRT (127 imgs/sec, batch=4)
+        Fallback chain:
+            1. OpenOCR TensorRT (fastest)
+            2. OpenOCR ONNX (13 imgs/sec)
+            3. PaddleV5 TensorRT (legacy, ~40 imgs/sec)
+            4. PaddleV5 ONNX (legacy, ~10 imgs/sec)
         """
         try:
-            # ⚠️ TEMPORARY: Force ONNX to avoid CUDA context conflict with SuperPoint TensorRT
-            # TODO: Fix TensorRT OCR + SuperPoint TensorRT concurrent usage
-            # Both models creating separate CUDA contexts causing "invalid resource handle"
-            self._ocr_backend_instance = OCRBackendFactory.create(OCRBackendType.ONNX)
+            # Use AUTO mode to select best available backend
+            # Priority: OpenOCR TensorRT > OpenOCR ONNX > PaddleV5
+            self._ocr_backend_instance = OCRBackendFactory.create(OCRBackendType.AUTO)
 
             if self._ocr_backend_instance is not None:
                 self.text_recognizer = self._ocr_backend_instance
                 self.ocr_backend = self._ocr_backend_instance.backend_name
-                logger.info(f"OCR backend initialized: {self._ocr_backend_instance}")
+                logger.info(f"✅ OCR backend initialized: {self.ocr_backend}")
             else:
                 self.text_recognizer = None
                 self.ocr_backend = None
-                logger.warning("No OCR backend available")
+                logger.warning("⚠️ No OCR backend available")
 
         except Exception as e:
-            logger.error(f"Failed to initialize OCR backend: {e}")
+            logger.error(f"❌ Failed to initialize OCR backend: {e}")
             import traceback
             traceback.print_exc()
             self.text_recognizer = None

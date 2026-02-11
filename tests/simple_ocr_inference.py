@@ -34,9 +34,61 @@ class SimpleOCR:
 
         self.character = ['blank'] + chars
 
+    def preprocess_numpy(self, image: np.ndarray):
+        """
+        Preprocess numpy array image directly
+
+        Args:
+            image: numpy array (BGR or RGB), shape [H, W, 3] or [H, W]
+
+        Returns:
+            tuple: (preprocessed array [3, H, W], actual_width, target_width, target_height)
+        """
+        import cv2
+
+        # Convert to RGB if BGR
+        if len(image.shape) == 3 and image.shape[2] == 3:
+            img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        else:
+            img_rgb = image
+
+        # Dynamic ratio resize logic (height=48 for this model)
+        h, w = img_rgb.shape[:2]
+        base_h = 48
+        max_ratio = 12
+
+        # Calculate ratio
+        gen_ratio = max(1, round(float(w) / float(h)))
+        ratio_resize = min(gen_ratio, max_ratio)
+
+        # Get target size (width = height * ratio)
+        target_h = base_h
+        target_w = base_h * ratio_resize
+
+        # Resize with padding
+        ratio = w / float(h)
+        import math
+        if math.ceil(target_h * ratio) > target_w:
+            resized_w = target_w
+        else:
+            resized_w = int(math.ceil(target_h * ratio))
+
+        # Resize image using cv2
+        img_resized = cv2.resize(img_rgb, (resized_w, target_h), interpolation=cv2.INTER_CUBIC)
+
+        # Convert to tensor and normalize
+        img_array = img_resized.astype(np.float32)
+        img_array = img_array / 255.0
+        img_array = (img_array - 0.5) / 0.5
+
+        # HWC to CHW
+        img_array = img_array.transpose(2, 0, 1)
+
+        return img_array, resized_w, target_w, target_h
+
     def preprocess_single(self, img_path):
         """
-        Preprocess single image: dynamic ratio resize with padding
+        Preprocess single image from file path
 
         Args:
             img_path: path to input image
@@ -141,8 +193,12 @@ class SimpleOCR:
 
             # Preprocess batch
             batch_data = []
-            for img_path in batch_paths:
-                img_array, resized_w, target_w, target_h = self.preprocess_single(img_path)
+            for img_input in batch_paths:
+                # Detect if input is numpy array or file path
+                if isinstance(img_input, np.ndarray):
+                    img_array, resized_w, target_w, target_h = self.preprocess_numpy(img_input)
+                else:
+                    img_array, resized_w, target_w, target_h = self.preprocess_single(img_input)
                 batch_data.append((img_array, resized_w, target_w, target_h))
 
             # Find max dimensions in batch
