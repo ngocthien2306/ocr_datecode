@@ -173,7 +173,7 @@ class SimpleOCR:
         Run OCR on single image or batch of images
 
         Args:
-            img_paths: path to input image (str) or list of image paths
+            img_paths: path to input image (str), numpy array, or list of image paths/arrays
             batch_size: batch size for processing
 
         Returns:
@@ -181,8 +181,8 @@ class SimpleOCR:
         """
         import time
 
-        # Handle single image
-        if isinstance(img_paths, str):
+        # Handle single image (string path or numpy array)
+        if isinstance(img_paths, (str, np.ndarray)):
             img_paths = [img_paths]
             return_single = True
         else:
