@@ -59,6 +59,7 @@ class ProductVerificationService:
         check_label_boundary: bool = True,
         check_misalignment: bool = True,
         check_center_alignment: bool = True,
+        check_wrinkled: bool = True,
         center_offset_threshold: float = 50.0
     ):
         self.save_debug_images = save_debug_images.lower()
@@ -70,6 +71,7 @@ class ProductVerificationService:
         self.check_label_boundary = False
         self.check_misalignment = False
         self.check_center_alignment = True
+        self.check_wrinkled = False
         self.center_offset_threshold = center_offset_threshold
 
         # Validate save_debug_images option
@@ -82,14 +84,14 @@ class ProductVerificationService:
 
         # Initialize YOLO OBB model
         if engine_path is None:
-            engine_path = f"{home}/Source/ocr_datecode/weights/yolo26n-ultralight-obb_fp16_dynamic.engine"
+            engine_path = f"{home}/Source/ocr_datecode/weights/best_obb.engine"
 
         self.obb_model = None
         if YOLO_OBB_AVAILABLE:
             try:
                 self.obb_model = YOLOOBBTensorRT(
                     engine_path=engine_path,
-                    class_names=['product', 'label']
+                    class_names=['product', 'label', "wrinkled"],
                 )
                 logger.info(
                     f"YOLO OBB model loaded: {engine_path}, "
@@ -280,6 +282,14 @@ class ProductVerificationService:
     ) -> Dict[str, Any]:
         serial_number = camera.serial_number
 
+        # Check wrinkled FIRST (before any other checks)
+        if self.check_wrinkled:
+            wrinkled_check = self._check_wrinkled(
+                boxes, scores, class_ids, transformed_bboxes, serial_number
+            )
+        else:
+            wrinkled_check = {'ok': True, 'skipped': True, 'reason': 'Check disabled', 'has_wrinkled': False, 'wrinkled_count': 0, 'wrinkled_boxes': []}
+
         # Filter boxes inside product region
         filtered_boxes = self._filter_boxes_inside_product_region(
             boxes, scores, class_ids, transformed_bboxes
@@ -351,6 +361,7 @@ class ProductVerificationService:
 
         # Determine overall match
         overall_match = (
+            wrinkled_check['ok'] and
             rotation_check['ok'] and
             misalignment_check['ok'] and
             label_region_check['ok'] and
@@ -364,6 +375,7 @@ class ProductVerificationService:
 
         logger.info(
             f"[{serial_number}] Product verification: "
+            f"wrinkled={_check_status(wrinkled_check)}, "
             f"rotation={_check_status(rotation_check)}, "
             f"misalignment={_check_status(misalignment_check)}, "
             f"label_boundary={_check_status(label_region_check)}, "
@@ -374,9 +386,9 @@ class ProductVerificationService:
         # Save debug image based on configuration
         if self._should_save_debug_image(overall_match):
             self._visualize_result(
-                frame_img, product_box, label_box, rotation_check,
-                misalignment_check, label_region_check, center_alignment_check,
-                overall_match, serial_number, transformed_bboxes
+                frame_img, product_box, label_box, wrinkled_check,
+                rotation_check, misalignment_check, label_region_check,
+                center_alignment_check, overall_match, serial_number, transformed_bboxes
             )
 
         # Convert numpy arrays to Python native types for JSON serialization
@@ -395,10 +407,13 @@ class ProductVerificationService:
                 'class': str(label_box['class']),
                 'corners': label_box['corners'].tolist() if isinstance(label_box['corners'], np.ndarray) else label_box['corners']
             }
+        if wrinkled_check.get('has_wrinkled', False):
+            detected_boxes['wrinkled'] = wrinkled_check['wrinkled_boxes']
 
         return {
             'match': bool(overall_match),
             'skipped': False,
+            'wrinkled_check': wrinkled_check,
             'rotation_check': rotation_check,
             'misalignment_check': misalignment_check,
             'label_region_check': label_region_check,
@@ -720,6 +735,85 @@ class ProductVerificationService:
             'product_center': [float(product_center_x), float(product_center_y)]
         }
 
+    def _check_wrinkled(
+        self,
+        boxes: np.ndarray,
+        scores: np.ndarray,
+        class_ids: np.ndarray,
+        transformed_bboxes: List[Dict[str, Any]],
+        serial_number: str
+    ) -> Dict[str, Any]:
+        """
+        Check for wrinkled boxes inside product region.
+
+        Args:
+            boxes: All detected boxes from YOLO
+            scores: Confidence scores
+            class_ids: Class IDs
+            transformed_bboxes: Template bounding boxes (to find product region)
+            serial_number: Camera serial number
+
+        Returns:
+            Dict with:
+                - ok: bool (False if wrinkled detected)
+                - has_wrinkled: bool
+                - wrinkled_count: int
+                - wrinkled_boxes: list of detected wrinkled boxes
+        """
+        # Find product region
+        product_region = next(
+            (bbox for bbox in transformed_bboxes if bbox.get('type') == 'product'),
+            None
+        )
+
+        if product_region is None:
+            logger.debug(f"[{serial_number}] No product region found for wrinkled check")
+            return {
+                'ok': True,
+                'has_wrinkled': False,
+                'wrinkled_count': 0,
+                'wrinkled_boxes': [],
+                'reason': 'No product region in template'
+            }
+
+        product_poly = np.array(product_region['points'], dtype=np.float32)
+
+        # Filter wrinkled boxes inside product region
+        wrinkled_boxes = []
+        for box, score, cls_id in zip(boxes, scores, class_ids):
+            # Check if this is a wrinkled class
+            if self.obb_model.class_names[cls_id] != 'wrinkled':
+                continue
+
+            # Convert OBB to corners
+            corners = self._obb_to_corners(box)
+
+            # Check if all corners are inside product region
+            if self._is_box_inside_polygon(corners, product_poly):
+                wrinkled_boxes.append({
+                    'box': box.tolist() if isinstance(box, np.ndarray) else box,
+                    'score': float(score),
+                    'class': 'wrinkled',
+                    'corners': corners.tolist() if isinstance(corners, np.ndarray) else corners
+                })
+
+        has_wrinkled = len(wrinkled_boxes) > 0
+        wrinkled_count = len(wrinkled_boxes)
+        ok = not has_wrinkled
+
+        logger.debug(
+            f"[{serial_number}] Wrinkled check: "
+            f"count={wrinkled_count}, "
+            f"result={'FAIL' if has_wrinkled else 'OK'}"
+        )
+
+        return {
+            'ok': bool(True),
+            'has_wrinkled': bool(has_wrinkled),
+            'wrinkled_count': int(wrinkled_count),
+            'wrinkled_boxes': wrinkled_boxes
+        }
+
     # ========== Helper Methods ==========
 
     def _should_save_debug_image(self, overall_match: bool) -> bool:
@@ -789,6 +883,7 @@ class ProductVerificationService:
         frame_img: np.ndarray,
         product_box: Optional[Dict[str, Any]],
         label_box: Optional[Dict[str, Any]],
+        wrinkled_check: Dict[str, Any],
         rotation_check: Dict[str, Any],
         misalignment_check: Dict[str, Any],
         label_region_check: Dict[str, Any],
@@ -804,6 +899,7 @@ class ProductVerificationService:
             frame_img: Frame image
             product_box: Product box dict
             label_box: Label box dict
+            wrinkled_check: Wrinkled check result
             rotation_check: Rotation check result
             misalignment_check: Misalignment check result
             label_region_check: Label region boundary check result
@@ -836,6 +932,20 @@ class ProductVerificationService:
                     0.5, label_color, 2
                 )
 
+            # Draw wrinkled boxes (orange) if available
+            if wrinkled_check.get('has_wrinkled', False):
+                wrinkled_boxes = wrinkled_check.get('wrinkled_boxes', [])
+                wrinkled_color = (0, 165, 255)  # Orange
+                for idx, wrinkled_box in enumerate(wrinkled_boxes):
+                    wrinkled_corners = np.array(wrinkled_box['corners'], dtype=np.int32)
+                    cv2.polylines(result_img, [wrinkled_corners], True, wrinkled_color, 2)
+                    label_text = f"Wrinkled#{idx+1}: {wrinkled_box['score']:.2f}"
+                    cv2.putText(
+                        result_img, label_text,
+                        tuple(wrinkled_corners[0]), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5, wrinkled_color, 2
+                    )
+
             # Add status text
             status_color = (0, 255, 0) if overall_match else (0, 0, 255)
             status = "PASS" if overall_match else "FAIL"
@@ -848,6 +958,21 @@ class ProductVerificationService:
             )
 
             y_offset += 35
+            if wrinkled_check.get('skipped', False):
+                wrinkled_status = "SKIP"
+                wrinkled_text = f"Wrinkled: {wrinkled_status}"
+            else:
+                wrinkled_status = "OK" if wrinkled_check['ok'] else "FAIL"
+                wrinkled_count = wrinkled_check.get('wrinkled_count', 0)
+                wrinkled_text = f"Wrinkled: {wrinkled_status} (count={wrinkled_count})"
+            cv2.putText(
+                result_img,
+                wrinkled_text,
+                (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX,
+                0.7, status_color, 2
+            )
+
+            y_offset += 30
             if rotation_check.get('skipped', False):
                 rotation_status = "SKIP"
                 rotation_text = f"Rotation: {rotation_status}"

@@ -641,88 +641,100 @@ def draw_detected_obb_boxes(
     # Colors for detected boxes (brighter colors to distinguish from template regions)
     colors = {
         'product': (0, 255, 255),   # Yellow (detected product)
-        'label': (255, 0, 255)      # Magenta (detected label)
+        'label': (255, 0, 255),     # Magenta (detected label)
+        'wrinkled': (0, 165, 255)   # Orange (detected wrinkled)
     }
 
     # Draw each detected box
-    for box_type in ['product', 'label']:
+    for box_type in ['product', 'label', 'wrinkled']:
         if box_type not in detected_boxes:
             continue
 
         box_data = detected_boxes[box_type]
-        if not box_data or not isinstance(box_data, dict):
+        if not box_data:
             continue
 
-        # Get corners
-        corners = box_data.get('corners')
-        if corners is None:
-            continue
+        # Handle wrinkled as list of boxes, others as single dict
+        boxes_to_draw = box_data if isinstance(box_data, list) else [box_data]
 
-        # Convert to numpy array if needed
-        if isinstance(corners, list):
-            corners = np.array(corners, dtype=np.int32)
-        else:
-            corners = corners.astype(np.int32)
+        for idx, single_box in enumerate(boxes_to_draw):
+            if not isinstance(single_box, dict):
+                continue
 
-        # Get color
-        color = colors.get(box_type, (255, 255, 255))
+            # Get corners
+            corners = single_box.get('corners')
+            if corners is None:
+                continue
 
-        # Draw OBB polygon with thicker line (dashed style)
-        for i in range(4):
-            pt1 = tuple(corners[i])
-            pt2 = tuple(corners[(i + 1) % 4])
-            cv2.line(result_img, pt1, pt2, color, line_thickness + 1, cv2.LINE_AA)
+            # Convert to numpy array if needed
+            if isinstance(corners, list):
+                corners = np.array(corners, dtype=np.int32)
+            else:
+                corners = corners.astype(np.int32)
 
-        # Draw corner points
-        for corner in corners:
-            cv2.circle(result_img, tuple(corner), max(3, line_thickness), color, -1)
+            # Get color
+            color = colors.get(box_type, (255, 255, 255))
 
-        # Prepare label text
-        score = box_data.get('score', 0.0)
-        label_parts = [f"{box_type.upper()}"]
+            # Draw OBB polygon with thicker line (dashed style)
+            for i in range(4):
+                pt1 = tuple(corners[i])
+                pt2 = tuple(corners[(i + 1) % 4])
+                cv2.line(result_img, pt1, pt2, color, line_thickness + 1, cv2.LINE_AA)
 
-        if show_details:
-            label_parts.append(f"{score:.2f}")
+            # Draw corner points
+            for corner in corners:
+                cv2.circle(result_img, tuple(corner), max(3, line_thickness), color, -1)
 
-        label_text = " ".join(label_parts)
+            # Prepare label text
+            score = single_box.get('score', 0.0)
+            label_parts = [f"{box_type.upper()}"]
 
-        # Calculate label position (top-left corner of box)
-        label_x = int(corners[0][0])
-        label_y = int(corners[0][1]) - 8
+            # For wrinkled with multiple boxes, add index
+            if isinstance(box_data, list) and len(boxes_to_draw) > 1:
+                label_parts[0] = f"{box_type.upper()}#{idx+1}"
 
-        # Get text size
-        (text_w, text_h), baseline = cv2.getTextSize(
-            label_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, text_thickness
-        )
+            if show_details:
+                label_parts.append(f"{score:.2f}")
 
-        # Ensure label stays within image bounds
-        if label_y - text_h < 0:
-            label_y = int(corners[0][1]) + text_h + 8
-        if label_x + text_w + 8 > width:
-            label_x = width - text_w - 8
-        if label_x < 0:
-            label_x = 0
+            label_text = " ".join(label_parts)
 
-        # Draw background rectangle for label
-        cv2.rectangle(
-            result_img,
-            (label_x - 2, label_y - text_h - 4),
-            (label_x + text_w + 2, label_y + baseline + 2),
-            color,
-            -1  # Filled
-        )
+            # Calculate label position (top-left corner of box)
+            label_x = int(corners[0][0])
+            label_y = int(corners[0][1]) - 8
 
-        # Draw label text
-        cv2.putText(
-            result_img,
-            label_text,
-            (label_x, label_y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            font_scale,
-            (0, 0, 0),  # Black text on colored background
-            text_thickness,
-            cv2.LINE_AA
-        )
+            # Get text size
+            (text_w, text_h), baseline = cv2.getTextSize(
+                label_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, text_thickness
+            )
+
+            # Ensure label stays within image bounds
+            if label_y - text_h < 0:
+                label_y = int(corners[0][1]) + text_h + 8
+            if label_x + text_w + 8 > width:
+                label_x = width - text_w - 8
+            if label_x < 0:
+                label_x = 0
+
+            # Draw background rectangle for label
+            cv2.rectangle(
+                result_img,
+                (label_x - 2, label_y - text_h - 4),
+                (label_x + text_w + 2, label_y + baseline + 2),
+                color,
+                -1  # Filled
+            )
+
+            # Draw label text
+            cv2.putText(
+                result_img,
+                label_text,
+                (label_x, label_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                (0, 0, 0),  # Black text on colored background
+                text_thickness,
+                cv2.LINE_AA
+            )
 
     return result_img
 

@@ -140,29 +140,29 @@ class TextRecognizer:
         
         return results
 
-if __name__ == '__main__':
-    # Initialize recognizer
-    recognizer = TextRecognizer(
-        model_path='../languages/english/rec.onnx',
-        dict_path='../languages/english/dict.txt',
-        use_gpu=False
-    )
+# if __name__ == '__main__':
+#     # Initialize recognizer
+#     recognizer = TextRecognizer(
+#         model_path='../languages/english/rec.onnx',
+#         dict_path='../languages/english/dict.txt',
+#         use_gpu=False
+#     )
     
-    # Test with sample image
-    test_image = cv2.imread('/home/demo/Source/ocr_datecode/desktop/tests/debug_ocr_0.png')
+#     # Test with sample image
+#     test_image = cv2.imread('/home/demo/Source/ocr_datecode/desktop/tests/debug_ocr_0.png')
     
-    if test_image is not None:
+#     if test_image is not None:
         
-        start_time = time.time()
-        # Recognize
-        text, confidence = recognizer.recognize(test_image)
-        end_time = time.time()
-        print(f"Processing time: {(end_time - start_time)*1000:.3f}  ms")
-        print(f"\nRecognized: '{text}'")
-        print(f"Confidence: {confidence:.3f}")
+#         start_time = time.time()
+#         # Recognize
+#         text, confidence = recognizer.recognize(test_image)
+#         end_time = time.time()
+#         print(f"Processing time: {(end_time - start_time)*1000:.3f}  ms")
+#         print(f"\nRecognized: '{text}'")
+#         print(f"Confidence: {confidence:.3f}")
         
-    else:
-        print("Please provide a test image")
+#     else:
+#         print("Please provide a test image")
 
 
 # import cv2
@@ -170,10 +170,12 @@ if __name__ == '__main__':
 
 # recognizer = TextRecognizer('../languages/english/rec.onnx', 
 #                            '../languages/english/dict.txt', 
-#                            use_gpu=True)
+#                            use_gpu=False)
 
-# images = [cv2.imread(str(p)) for p in sorted(Path('/Users/ngocthien.ai/Source/Projects/ocr_datecode/desktop/results').glob('cropped_text_*.jpg'))]
+# images = [cv2.imread(str(p)) for p in sorted(Path('/home/demo/Source/ocr_datecode/ai_services/test_result').glob('test.png'))]
+# # images = ["/home/demo/Source/ocr_datecode/ai_services/test_result/cropped_region_24241268_2.png"]
 # start_time = time.time()
+# print(len(images))
 # results = recognizer.recognize_batch(images)
 # end_time = time.time()
 # print(f"Processing time for {len(images)} images: {(end_time - start_time)*1000:.3f} ms")

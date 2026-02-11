@@ -190,16 +190,16 @@ class YOLOOBBInference:
 def main():
     # Initialize model
     model = YOLOOBBInference(
-        model_path="weights/yolo26n-ultralight-obb.onnx",
-        class_names=['bottle', 'label']
+        model_path="weights/yolo26n-obb-label.onnx",
+        class_names=['bottle', 'label', "wrinkled"]
     )
 
     print(f"Model loaded: built-in NMS = {model.has_builtin_nms}")
 
     # Single image inference with timing
     print("\n=== Single Image Inference ===")
-    image = cv2.imread('test4.jpg')
-    results, timing = model.predict([image], conf_threshold=0.6, return_timing=True)
+    image = cv2.imread('test.jpg')
+    results, timing = model.predict([image], conf_threshold=0.3, return_timing=True)
 
     boxes, scores, class_ids = results[0]
     print(f"Detected {len(boxes)} objects:")
@@ -220,7 +220,7 @@ def main():
 
     # Batch inference with timing
     print("\n=== Batch Inference (3 images) ===")
-    images = [cv2.imread('test4.jpg') for _ in range(3)]
+    images = [cv2.imread('test.jpg') for _ in range(3)]
     for _ in range(10):   
         batch_results, timing = model.predict(images, conf_threshold=0.6, return_timing=True)
 
@@ -239,4 +239,4 @@ if __name__ == "__main__":
     main()
  
 
-# /usr/src/tensorrt/bin/trtexec --onnx=weights/yolo26n-ultralight-obb.onnx --saveEngine=weights/yolo26n-ultralight-obb_fp16_dynamic.engine --fp16 --minShapes=images:1x3x640x640 --optShapes=images:4x3x640x640 --maxShapes=images:8x3x640x640 --workspace=4096
+# /usr/src/tensorrt/bin/trtexec --onnx=weights/best_obb.onnx --saveEngine=weights/best_obb.engine --fp16 --minShapes=images:1x3x640x640 --optShapes=images:4x3x640x640 --maxShapes=images:8x3x640x640

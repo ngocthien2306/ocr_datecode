@@ -179,7 +179,7 @@ class InferenceHandler:
         logger.info("TemplateVerificationService initialized")
 
         # Product Verification Service with YOLO OBB
-        yolo_obb_engine_path = f"{home}/Source/ocr_datecode/weights/yolo26n-ultralight-obb_fp16_dynamic.engine"
+        yolo_obb_engine_path = f"{home}/Source/ocr_datecode/weights/best_obb.engine"
 
         # Configuration: save_debug_images can be "never", "on_fail", or "always"
         # Use "never" for production (fastest), "on_fail" for debugging failures
@@ -200,8 +200,8 @@ class InferenceHandler:
             save_debug_images=product_debug_mode,  # "never", "on_fail", or "always"
             debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
             angle_threshold=3.0,  # Rotation threshold in degrees
-            margin_pixels=30,     # Misalignment margin in pixels
-            conf_threshold=0.005,  # YOLO confidence threshold
+            margin_pixels=15,     # Misalignment margin in pixels
+            conf_threshold=0.001,  # YOLO confidence threshold
             check_label_boundary=check_label_boundary,  # Enable/disable label boundary check
             check_misalignment=check_misalignment  # Enable/disable misalignment check
         )

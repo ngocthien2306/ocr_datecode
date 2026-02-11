@@ -160,8 +160,10 @@ weights/pipeline_fp16_small.engine
 weights/pipeline_fp16_dynamic_315_560.engine
 weights/superpoint_lightglue_pipeline.onnx
 weights/superpoint_lightglue_small.onnx
-weights/yolo26_bottle_obb.onnx
-weights/yolo26_label_seg.onnx
+weights/yolo26n_bottle_obb.onnx
+weights/yolo26n_label_seg.onnx
+weights/yolo26n-obb-label.engine
+weights/yolo26n-obb-label.onnx
 
 pylon_env/
 data/

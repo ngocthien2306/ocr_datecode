@@ -203,16 +203,16 @@ class YOLOOBBTensorRT:
 def main():
     # Initialize
     model = YOLOOBBTensorRT(
-        engine_path="weights/yolo26n-ultralight-obb_fp16_dynamic.engine",
-        class_names=['label', 'bottle']
+        engine_path="weights/best_obb.engine",
+        class_names=['bottle', 'label', 'wrinkled']
     )
 
     print(f"\n=== TensorRT OBB Inference ===")
 
     # Test single image
     print("\n--- Single Image ---")
-    image = cv2.imread('test4.jpg')
-    results, timing = model.predict([image], conf_threshold=0.6, return_timing=True)
+    image = cv2.imread('/home/demo/Source/ocr_datecode/data/22376896_2026-01-23_fail_f0_20260123_150800636714_org.jpg')
+    results, timing = model.predict([image], conf_threshold=0.1, return_timing=True)
 
     boxes, scores, class_ids = results[0]
     print(f"Detected: {len(boxes)} objects")
@@ -234,8 +234,8 @@ def main():
 
     # Test batch
     print("\n--- Batch Inference (4 images) ---")
-    images = [cv2.imread('test4.jpg') for _ in range(2)]
-    results, timing = model.predict(images, conf_threshold=0.6, return_timing=True)
+    images = [cv2.imread('/home/demo/Source/ocr_datecode/data/22376896_2026-01-23_fail_f0_20260123_150800636714_org.jpg') for _ in range(2)]
+    results, timing = model.predict(images, conf_threshold=0.3, return_timing=True)
 
     for i, (boxes, scores, _) in enumerate(results):
         print(f"Image {i}: {len(boxes)} detections")
