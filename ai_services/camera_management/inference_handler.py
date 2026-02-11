@@ -141,9 +141,10 @@ class InferenceHandler:
             4. PaddleV5 ONNX (legacy, ~10 imgs/sec)
         """
         try:
-            # Use AUTO mode to select best available backend
-            # Priority: OpenOCR TensorRT > OpenOCR ONNX > PaddleV5
-            self._ocr_backend_instance = OCRBackendFactory.create(OCRBackendType.AUTO)
+            # FORCE ONNX to avoid CUDA context conflict with SuperPoint TensorRT
+            # Priority: OpenOCR ONNX > PaddleV5 ONNX
+            # Note: TensorRT OpenOCR disabled due to CUDA context conflict
+            self._ocr_backend_instance = OCRBackendFactory.create(OCRBackendType.ONNX)
 
             if self._ocr_backend_instance is not None:
                 self.text_recognizer = self._ocr_backend_instance
