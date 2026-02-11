@@ -46,8 +46,12 @@ class SimpleOCR:
         """
         import cv2
 
-        # Convert to RGB if BGR
-        if len(image.shape) == 3 and image.shape[2] == 3:
+        # Convert to RGB (handle grayscale and BGR)
+        if len(image.shape) == 2:
+            # Grayscale -> RGB
+            img_rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+        elif len(image.shape) == 3 and image.shape[2] == 3:
+            # BGR -> RGB
             img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         else:
             img_rgb = image
