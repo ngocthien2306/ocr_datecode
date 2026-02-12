@@ -276,6 +276,10 @@ class TextVerificationService:
                     if "USsed" in recognized_text:
                         recognized_text = recognized_text.replace("USsed", "Used")
 
+                    if "Iif" in recognized_text:
+                        recognized_text = recognized_text.replace("Iif", "If")
+                        
+
                     match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
                     if match: 
                         recognized_text = expected_text[:]
