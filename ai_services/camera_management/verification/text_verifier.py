@@ -466,7 +466,7 @@ class TextVerificationService:
                     if "USsed" in recognized_text:
                         recognized_text = recognized_text.replace("USsed", "Used")
 
-                    if "Iif" in recognized_text::
+                    if "Iif" in recognized_text:
                         recognized_text = recognized_text.replace("Iif", "If")
                         
                     # Use exact match
