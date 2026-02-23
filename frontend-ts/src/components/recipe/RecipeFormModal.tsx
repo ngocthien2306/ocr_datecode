@@ -43,7 +43,9 @@ interface FormDataType {
   description: string;
   delay_reject: number;
   reject_pulse: number;
+  reject_method: string;
   do_reject_number: number;
+  do_alarm_number: number;
   is_active: boolean;
   cameras: RecipeCamera[];
   camera_settings: {
@@ -92,7 +94,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     description: '',
     delay_reject: 100.0,
     reject_pulse: 50.0,
+    reject_method: 'DIO_OUT',
     do_reject_number: 2,
+    do_alarm_number: 0,
     is_active: true,
     cameras: [],
     camera_settings: {
@@ -229,7 +233,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         description: recipeAny.description || '',
         delay_reject: recipeAny.delay_reject || 100.0,
         reject_pulse: recipeAny.reject_pulse || 50.0,
+        reject_method: recipeAny.reject_method || 'DIO_OUT',
         do_reject_number: recipeAny.do_reject_number !== undefined ? recipeAny.do_reject_number : 0,
+        do_alarm_number: recipeAny.do_alarm_number !== undefined ? recipeAny.do_alarm_number : 0,
         is_active: recipeAny.is_active !== undefined ? recipeAny.is_active : (recipeAny.status === 'Active'),
         cameras: normalizedCameras,
         camera_settings: recipeAny.cameraSettings || recipeAny.camera_settings || {
@@ -273,7 +279,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         description: '',
         delay_reject: 100.0,
         reject_pulse: 50.0,
+        reject_method: 'DIO_OUT',
         do_reject_number: 2,
+        do_alarm_number: 0,
         is_active: true,
         cameras: [],
         camera_settings: {
@@ -329,7 +337,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       finalValue = checked;
     } else if (name === 'delay_reject' || name === 'reject_pulse') {
       finalValue = parseFloat(value) || 0;
-    } else if (name === 'do_reject_number') {
+    } else if (name === 'do_reject_number' || name === 'do_alarm_number') {
       finalValue = parseInt(value) || 0;
     }
 
@@ -1002,7 +1010,21 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                            placeholder="Reject pulse duration in milliseconds" />
                   </div>
                   <div className="form-group">
-                    <label>Digital Output (DO) Number</label>
+                    <label>Reject Output Method</label>
+                    <select
+                      name="reject_method"
+                      value={formData.reject_method}
+                      onChange={handleInputChange}
+                    >
+                      <option value="DIO_OUT">DIO_OUT</option>
+                      <option value="PLC">PLC</option>
+                    </select>
+                    <small style={{display: 'block', marginTop: 4, color: '#666'}}>
+                      Output method for reject signal
+                    </small>
+                  </div>
+                  <div className="form-group">
+                    <label>Reject DO Number</label>
                     <select
                       name="do_reject_number"
                       value={formData.do_reject_number.toString()}
@@ -1015,6 +1037,23 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                     </select>
                     <small style={{display: 'block', marginTop: 4, color: '#666'}}>
                       Digital Output port for reject control (0-3)
+                    </small>
+                  </div>
+                  <div className="form-group">
+                    <label>Alarm DO Number</label>
+                    <select
+                      name="do_alarm_number"
+                      value={formData.do_alarm_number.toString()}
+                      onChange={handleInputChange}
+                    >
+                      <option value="0">DO 0</option>
+                      <option value="1">DO 1</option>
+                      <option value="2">DO 2</option>
+                      <option value="3">DO 3</option>
+                      <option value="4">DO 4</option>
+                    </select>
+                    <small style={{display: 'block', marginTop: 4, color: '#666'}}>
+                      Digital Output port for alarm output (0-4)
                     </small>
                   </div>
                 </div>

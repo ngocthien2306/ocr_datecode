@@ -159,7 +159,9 @@ export default function Receipts() {
         camera_templates: recipe.camera_templates || [],
         delay_reject: recipe.delay_reject,
         reject_pulse: recipe.reject_pulse,
+        reject_method: recipe.reject_method || 'DIO_OUT',
         do_reject_number: recipe.do_reject_number,
+        do_alarm_number: recipe.do_alarm_number ?? 0,
         cameraSettings: recipe.camera_settings,
         modelThresholds: recipe.model_thresholds,
         template_config: recipe.template_config,
@@ -168,7 +170,7 @@ export default function Receipts() {
         createdAt: recipe.created_at || new Date().toISOString(),
         updatedAt: recipe.updated_at || new Date().toISOString()
       }));
-      
+
       setReceipts(transformedReceipts);
       
       // Calculate total pages
@@ -220,7 +222,9 @@ export default function Receipts() {
         camera_templates: recipe.camera_templates || [],
         delay_reject: recipe.delay_reject,
         reject_pulse: recipe.reject_pulse,
+        reject_method: recipe.reject_method || 'DIO_OUT',
         do_reject_number: recipe.do_reject_number,
+        do_alarm_number: recipe.do_alarm_number ?? 0,
         cameraSettings: recipe.camera_settings,
         modelThresholds: recipe.model_thresholds,
         template_config: recipe.template_config,
@@ -229,7 +233,7 @@ export default function Receipts() {
         createdAt: recipe.created_at || new Date().toISOString(),
         updatedAt: recipe.updated_at || new Date().toISOString()
       }));
-      
+
       setReceipts(transformedReceipts);
       setError(null);
     } catch (err) {
@@ -318,7 +322,9 @@ export default function Receipts() {
         camera_templates: clonedRecipe.camera_templates || [],
         delay_reject: clonedRecipe.delay_reject,
         reject_pulse: clonedRecipe.reject_pulse,
+        reject_method: clonedRecipe.reject_method || 'DIO_OUT',
         do_reject_number: clonedRecipe.do_reject_number,
+        do_alarm_number: clonedRecipe.do_alarm_number ?? 0,
         cameraSettings: clonedRecipe.camera_settings,
         modelThresholds: clonedRecipe.model_thresholds,
         template_config: clonedRecipe.template_config,
