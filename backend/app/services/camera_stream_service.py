@@ -188,64 +188,78 @@ class CameraStreamService:
 
     def _read_frame_from_shm(self, shm: shared_memory.SharedMemory) -> Optional[Dict[str, Any]]:
         """
-        Read frame from shared memory
+        Read latest frame from ring buffer shared memory
 
-        Format written by camera.py:
-        [8 bytes: frame_idx] [4 bytes: metadata_len] [metadata] [4 bytes: frame_len] [frame] [8 bytes: frame_idx verify]
+        Ring Buffer Format:
+        - Header (64 bytes): [write_idx, frame_count, buffer_size, frame_counter, slot_size, ...]
+        - Frame Slots (5 slots): Each slot contains one frame with metadata
 
         Returns:
             Dict with 'image' (numpy array) and 'metadata'
         """
         try:
-            offset = 0
+            # Constants
+            HEADER_SIZE = 64
+            BUFFER_SIZE = 5
 
-            # Read frame version (8 bytes)
-            frame_idx = struct.unpack('<Q', bytes(shm.buf[offset:offset+8]))[0]
+            # Read ring buffer header
+            write_idx = struct.unpack_from("<I", shm.buf, 0)[0]
+            frame_count = struct.unpack_from("<I", shm.buf, 4)[0]
+            slot_size = struct.unpack_from("<I", shm.buf, 20)[0]
+
+            # Check if buffer has any frames
+            if frame_count == 0:
+                return None
+
+            # Calculate slot index of latest frame (last written)
+            latest_slot_idx = (write_idx - 1) % BUFFER_SIZE
+
+            # Calculate slot offset
+            slot_offset = HEADER_SIZE + (latest_slot_idx * slot_size)
+            offset = slot_offset
+
+            # Read frame_idx (8 bytes)
+            frame_idx = struct.unpack_from("<Q", shm.buf, offset)[0]
             offset += 8
 
-            # Read metadata size (4 bytes)
-            metadata_size = struct.unpack('<I', bytes(shm.buf[offset:offset+4]))[0]
+            # Read timestamp (8 bytes)
+            timestamp_ns = struct.unpack_from("<Q", shm.buf, offset)[0]
+            offset += 8
+
+            # Read metadata length (4 bytes)
+            metadata_len = struct.unpack_from("<I", shm.buf, offset)[0]
             offset += 4
 
-            if metadata_size == 0 or metadata_size > 1000000:  # Sanity check
+            # Validate metadata_len to prevent reading garbage
+            if metadata_len > 10000:  # Metadata should be < 10KB
+                logger.warning(f"Invalid metadata_len={metadata_len}, slot may be empty")
                 return None
 
-            # Read metadata
-            metadata_bytes = bytes(shm.buf[offset:offset + metadata_size])
+            # Read metadata bytes
+            metadata_bytes = bytes(shm.buf[offset:offset+metadata_len])
             metadata = pickle.loads(metadata_bytes)
-            offset += metadata_size
+            offset += metadata_len
+
+            # Add ring buffer specific metadata
+            metadata['frame_idx'] = frame_idx
+            metadata['timestamp_ns'] = timestamp_ns
 
             # Read frame length (4 bytes)
-            frame_len = struct.unpack('<I', bytes(shm.buf[offset:offset+4]))[0]
+            frame_len = struct.unpack_from("<I", shm.buf, offset)[0]
             offset += 4
 
-            # Read image shape from metadata
-            shape = metadata.get('shape')
-            if not shape or len(shape) != 3:
+            # Read frame bytes
+            frame_bytes = bytes(shm.buf[offset:offset+frame_len])
+
+            # Reconstruct frame array
+            shape = metadata.get("shape")
+            dtype = metadata.get("dtype")
+
+            if not shape or not dtype:
+                logger.error("Missing shape or dtype in metadata")
                 return None
 
-            # Calculate expected image size
-            h, w, c = shape
-            expected_size = h * w * c
-
-            if frame_len != expected_size:
-                logger.warning(f"Frame length mismatch: {frame_len} != {expected_size}")
-
-            # Read image data
-            image_bytes = bytes(shm.buf[offset:offset + frame_len])
-            offset += frame_len
-
-            # Read frame version verify (8 bytes)
-            frame_idx_verify = struct.unpack('<Q', bytes(shm.buf[offset:offset+8]))[0]
-
-            # Verify frame consistency
-            if frame_idx != frame_idx_verify:
-                logger.warning(f"Frame index mismatch: {frame_idx} != {frame_idx_verify} (frame being written)")
-                return None
-
-            # Reconstruct numpy array
-            img_array = np.frombuffer(image_bytes, dtype=np.uint8)
-            img_array = img_array.reshape(shape)
+            img_array = np.frombuffer(frame_bytes, dtype=dtype).reshape(shape)
 
             return {
                 'image': img_array,
@@ -253,7 +267,9 @@ class CameraStreamService:
             }
 
         except Exception as e:
-            logger.warning(f"Error reading from shared memory: {e}")
+            logger.warning(f"Error reading from ring buffer: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def _encode_frame(self, img_array: np.ndarray, quality: int = 65) -> Optional[str]:
