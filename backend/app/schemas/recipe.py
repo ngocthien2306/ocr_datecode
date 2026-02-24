@@ -91,7 +91,9 @@ class RecipeBase(BaseModel):
     description: Optional[str] = Field(None, max_length=500)
     delay_reject: Optional[float] = Field(default=100.0, description="Delay reject time in milliseconds")
     reject_pulse: Optional[float] = Field(default=50.0, description="Reject pulse duration in milliseconds")
+    reject_method: Optional[str] = Field(default='DIO_OUT', description="Reject output method: PLC or DIO_OUT")
     do_reject_number: Optional[int] = Field(default=2, ge=0, le=3, description="Digital Output number for reject (0-3)")
+    do_alarm_number: Optional[int] = Field(default=0, ge=0, le=4, description="Digital Output number for alarm (0-4)")
 
     # Multiple cameras support (new approach)
     cameras: List[CameraConfiguration] = Field(default_factory=list, description="Camera configurations for this recipe")
@@ -120,7 +122,9 @@ class RecipeUpdate(BaseModel):
     description: Optional[str] = Field(None, max_length=500)
     delay_reject: Optional[float] = None
     reject_pulse: Optional[float] = None
+    reject_method: Optional[str] = None
     do_reject_number: Optional[int] = Field(None, ge=0, le=3)
+    do_alarm_number: Optional[int] = Field(None, ge=0, le=4)
     cameras: Optional[List[CameraConfiguration]] = None
     camera_templates: Optional[List[CameraTemplates]] = None
     camera_settings: Optional[CameraSettings] = None
