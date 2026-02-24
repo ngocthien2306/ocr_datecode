@@ -638,7 +638,7 @@
   grid-template-columns: repeat(3, 1fr);
 }
 
-/* Camera Card - Auto height to fit template */
+/* Camera Card - Auto height to fit multiple templates */
 .camera-card-infer {
   background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
   border-radius: 12px;
@@ -648,8 +648,27 @@
   display: flex;
   flex-direction: column;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  max-height: 850px;
+  max-height: 100%;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* Scrollbar styling for camera card */
+.camera-card-infer::-webkit-scrollbar {
+  width: 6px;
+}
+
+.camera-card-infer::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 10px;
+}
+
+.camera-card-infer::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 10px;
+}
+
+.camera-card-infer::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
 }
 
 /* PASS variant - light green */
@@ -1177,11 +1196,14 @@
   color: var(--text-primary);
 }
 
-/* Template Preview Section */
+/* Template Preview Section - Container for all templates */
 .template-preview-section {
   background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
   border-top: 2px solid rgba(0, 0, 0, 0.08);
   padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
   animation: slideDown 0.3s ease-out;
 }
 
@@ -1196,6 +1218,18 @@
   }
 }
 
+/* Each template item */
+.template-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.template-item:not(:last-child) {
+  padding-bottom: 0.75rem;
+  border-bottom: 1px dashed rgba(0, 0, 0, 0.1);
+}
+
 .template-preview-header {
   display: flex;
   align-items: center;
@@ -1203,7 +1237,6 @@
   padding: 0.5rem;
   background: rgba(255, 255, 255, 0.8);
   border-radius: 6px;
-  margin-bottom: 0.5rem;
 }
 
 .template-preview-header svg {

@@ -1142,36 +1142,38 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                       })}
                     </div>
 
-                    {/* Template Preview Section */}
-                    {showTemplates && cameraResult.frames.length > 0 && cameraResult.frames[0] && (() => {
-                      const frame = cameraResult.frames[0]; // Get first frame for template
-                      const templateImageUrl = getTemplateImageUrl(cameraResult.serial_number, frame.template_name);
-                      const cameraInfo = getCameraInfo(cameraResult.serial_number);
+                    {/* Template Preview Section - Show all templates */}
+                    {showTemplates && cameraResult.frames.length > 0 && (
+                      <div className="template-preview-section">
+                        {cameraResult.frames.map((frame, frameIdx) => {
+                          const templateImageUrl = getTemplateImageUrl(cameraResult.serial_number, frame.template_name);
+                          const cameraInfo = getCameraInfo(cameraResult.serial_number);
 
-                      if (templateImageUrl) {
-                        return (
-                          <div className="template-preview-section">
-                            <div className="template-preview-header">
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                                <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/>
-                                <path d="M3 9h18M9 3v18" stroke="currentColor" strokeWidth="2"/>
-                              </svg>
-                              <span className="template-label">
-                                {cameraInfo ? cameraInfo.camera_id : cameraResult.serial_number} - Template: {frame.template_name}
-                              </span>
+                          if (!templateImageUrl) return null;
+
+                          return (
+                            <div key={frameIdx} className="template-item">
+                              <div className="template-preview-header">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                                  <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/>
+                                  <path d="M3 9h18M9 3v18" stroke="currentColor" strokeWidth="2"/>
+                                </svg>
+                                <span className="template-label">
+                                  {cameraInfo ? cameraInfo.camera_id : cameraResult.serial_number} - Template: {frame.template_name}
+                                </span>
+                              </div>
+                              <div className="template-image-wrapper">
+                                <img
+                                  src={templateImageUrl}
+                                  alt={`Template ${frame.template_name}`}
+                                  className="template-image"
+                                />
+                              </div>
                             </div>
-                            <div className="template-image-wrapper">
-                              <img
-                                src={templateImageUrl}
-                                alt={`Template ${frame.template_name}`}
-                                className="template-image"
-                              />
-                            </div>
-                          </div>
-                        );
-                      }
-                      return null;
-                    })()}
+                          );
+                        })}
+                      </div>
+                    )}
 
                   </div>
                 );
