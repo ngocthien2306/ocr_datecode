@@ -1152,7 +1152,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                           if (!templateImageUrl) return null;
 
                           return (
-                            <div key={frameIdx} className="template-item">
+                            <div key={frameIdx} className="template-preview-item">
                               <div className="template-image-wrapper">
                                 <img
                                   src={templateImageUrl}

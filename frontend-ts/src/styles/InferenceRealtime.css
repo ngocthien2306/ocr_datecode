@@ -1222,7 +1222,7 @@
 }
 
 /* Each template item - same as frame-container */
-.template-item {
+.template-preview-item {
   width: 100%;
   height: 100%;
   display: flex;
