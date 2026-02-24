@@ -116,13 +116,12 @@ class InferenceHandler:
         # Structure: {serial_number: {'pass_count': N, 'fail_count': M, 'error_count': K}}
         self._camera_stats_lock = threading.Lock()
 
-        # Initialize OCR backend using Factory Pattern
-        self._init_ocr_backend()
+        # LAZY INITIALIZATION FLAG
+        # Models will be initialized on WORKER THREAD to avoid CUDA context issues
+        self._models_initialized = False
+        self._models_init_lock = threading.Lock()
 
-        # Initialize verification services
-        self._init_verification_services()
-
-        logger.info("InferenceHandler initialized with dynamic batch engine")
+        logger.info("InferenceHandler initialized (models will be lazy-loaded on worker thread)")
 
     def _init_ocr_backend(self):
         """
@@ -141,10 +140,10 @@ class InferenceHandler:
             4. PaddleV5 ONNX (legacy, ~10 imgs/sec)
         """
         try:
-            # FORCE ONNX to avoid CUDA context conflict with SuperPoint TensorRT
-            # Priority: OpenOCR ONNX > PaddleV5 ONNX
-            # Note: TensorRT OpenOCR disabled due to CUDA context conflict
-            self._ocr_backend_instance = OCRBackendFactory.create(OCRBackendType.ONNX)
+            # AUTO selection with fixed TensorRT (no more CUDA context conflict!)
+            # Priority: OpenOCR TensorRT > OpenOCR ONNX > PaddleV5 TensorRT > PaddleV5 ONNX
+            # Note: TensorRT OpenOCR now uses pre-allocated buffers (like YOLO OBB) - NO CONFLICT!
+            self._ocr_backend_instance = OCRBackendFactory.create(OCRBackendType.AUTO)
 
             if self._ocr_backend_instance is not None:
                 self.text_recognizer = self._ocr_backend_instance
@@ -162,6 +161,85 @@ class InferenceHandler:
             self.text_recognizer = None
             self.ocr_backend = None
             self._ocr_backend_instance = None
+
+    def _ensure_models_initialized(self, thread_name: str = None):
+        """
+        Ensure OCR and YOLO models are initialized (lazy initialization).
+        This is called from worker thread to ensure CUDA context consistency.
+
+        Args:
+            thread_name: Optional thread name for logging
+        """
+        if not self._models_initialized:
+            with self._models_init_lock:
+                if not self._models_initialized:  # Double-check locking
+                    thread_name = thread_name or threading.current_thread().name
+                    logger.info(f"🔧 Lazy-initializing OCR/YOLO models on {thread_name}...")
+
+                    try:
+                        # CRITICAL: Initialize CUDA context on worker thread
+                        # pycuda.autoinit only runs once (on main thread import)
+                        # Worker thread needs explicit context creation
+                        self._initialize_cuda_context_for_thread(thread_name)
+
+                        # Initialize OCR backend
+                        self._init_ocr_backend()
+
+                        # Initialize verification services (YOLO OBB)
+                        self._init_verification_services()
+
+                        self._models_initialized = True
+                        logger.info(f"✅ OCR/YOLO models initialized on {thread_name}")
+
+                    except Exception as e:
+                        logger.error(f"❌ Failed to initialize models on {thread_name}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        # Don't set flag = True to allow retry
+                        raise
+
+    def _initialize_cuda_context_for_thread(self, thread_name: str):
+        """
+        Initialize CUDA context for the current thread.
+
+        CRITICAL: pycuda.autoinit only works on the thread that imports it first.
+        Worker threads need explicit context initialization.
+
+        Args:
+            thread_name: Thread name for logging
+        """
+        current_thread = threading.current_thread()
+
+        # Check if context already initialized for this thread
+        if hasattr(current_thread, '_cuda_context_initialized'):
+            logger.debug(f"CUDA context already initialized on {thread_name}")
+            return
+
+        try:
+            import pycuda.driver as cuda
+
+            # Initialize CUDA driver
+            cuda.init()
+
+            # Get device 0
+            device = cuda.Device(0)
+
+            # Create a context for this thread
+            # Use retain_primary_context() which creates/reuses the primary context
+            ctx = device.retain_primary_context()
+            ctx.push()
+
+            # Mark thread as initialized
+            current_thread._cuda_context_initialized = True
+            current_thread._cuda_context = ctx
+
+            logger.info(f"✅ CUDA context created on {thread_name} (handle: {ctx.handle})")
+
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize CUDA context on {thread_name}: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
 
     def _init_verification_services(self):
         """Initialize text and template verification services"""
@@ -223,12 +301,40 @@ class InferenceHandler:
         """
         Initialize matchers for all cameras using MatcherFactory.
 
+        IMPORTANT: This runs on WORKER THREAD to avoid CUDA context issues.
+
         Args:
             cameras: List of Camera objects with templates
 
         Returns:
             Number of matchers initialized
         """
+        # Submit to worker thread and wait for completion
+        logger.info("Submitting matcher initialization to worker thread...")
+        future = self._inference_executor.submit(self._init_matchers_on_worker, cameras)
+
+        try:
+            num_initialized = future.result(timeout=30.0)  # 30s timeout for init
+            logger.info(f"✅ Matcher initialization completed: {num_initialized} matchers")
+            return num_initialized
+        except Exception as e:
+            logger.error(f"❌ Matcher initialization failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return 0
+
+    def _init_matchers_on_worker(self, cameras: List['Camera']):
+        """
+        Internal method that runs on WORKER THREAD to initialize matchers.
+        This ensures TensorRT engine is created on the same thread as inference.
+        """
+        thread_name = threading.current_thread().name
+        logger.info(f"🔧 Initializing matchers on {thread_name}...")
+
+        # IMPORTANT: Initialize OCR/YOLO first to establish CUDA context
+        # This ensures pycuda.autoinit runs before SuperPoint TensorRT init
+        self._ensure_models_initialized(thread_name)
+
         try:
             if not self._matcher_factory.is_available:
                 logger.warning("Matcher factory not available (inference service missing)")
@@ -297,10 +403,11 @@ class InferenceHandler:
                     f"Initialized {initialized_count} matchers using LEGACY mode "
                     f"({initialized_count} separate engines - high memory usage)"
                 )
+            logger.info(f"✅ Initialized {initialized_count} matchers on {thread_name}")
             return initialized_count
 
         except Exception as e:
-            logger.error(f"Error initializing inference matchers: {e}")
+            logger.error(f"❌ Error initializing inference matchers on {thread_name}: {e}")
             import traceback
             traceback.print_exc()
             return 0
@@ -868,6 +975,12 @@ class InferenceHandler:
         import time
 
         thread_name = threading.current_thread().name
+
+        # LAZY INITIALIZATION: Initialize OCR/YOLO models on WORKER THREAD (once)
+        # Note: SuperPoint matchers are initialized separately via init_matchers()
+        # This ensures ALL CUDA operations happen on the same thread
+        self._ensure_models_initialized(thread_name)
+
         logger.info(
             f"[Job #{job_id}] Starting inference in {thread_name} "
             f"(group_id: {group_id})"

@@ -212,21 +212,15 @@ class TensorRTOpenOCRBackend(OCRBackendStrategy):
         self._batch_size = config.batch_size
 
         try:
-            # Import from tests directory (will move to proper location later)
-            import sys
-            from pathlib import Path
-            tests_path = Path(__file__).parent.parent.parent.parent / "tests"
-            if str(tests_path) not in sys.path:
-                sys.path.insert(0, str(tests_path))
-
-            from test_trt_inference import TensorRTOCR
+            # Import from camera_management directory (new implementation)
+            from ..text_recognizer_openocr_trt import TextRecognizerOpenOCRTRT
 
             if not os.path.exists(config.model_path):
                 raise FileNotFoundError(f"TensorRT engine not found: {config.model_path}")
             if not os.path.exists(config.dict_path):
                 raise FileNotFoundError(f"Dict file not found: {config.dict_path}")
 
-            self._recognizer = TensorRTOCR(
+            self._recognizer = TextRecognizerOpenOCRTRT(
                 engine_path=config.model_path,
                 dict_path=config.dict_path,
                 use_space_char=True
@@ -299,21 +293,15 @@ class ONNXOpenOCRBackend(OCRBackendStrategy):
         self._batch_size = config.batch_size
 
         try:
-            # Import from tests directory
-            import sys
-            from pathlib import Path
-            tests_path = Path(__file__).parent.parent.parent.parent / "tests"
-            if str(tests_path) not in sys.path:
-                sys.path.insert(0, str(tests_path))
-
-            from simple_ocr_inference import SimpleOCR
+            # Import from camera_management directory (new implementation)
+            from ..text_recognizer_openocr_onnx import TextRecognizerOpenOCRONNX
 
             if not os.path.exists(config.model_path):
                 raise FileNotFoundError(f"ONNX model not found: {config.model_path}")
             if not os.path.exists(config.dict_path):
                 raise FileNotFoundError(f"Dict file not found: {config.dict_path}")
 
-            self._recognizer = SimpleOCR(
+            self._recognizer = TextRecognizerOpenOCRONNX(
                 onnx_path=config.model_path,
                 dict_path=config.dict_path,
                 use_space_char=True
@@ -358,7 +346,7 @@ class ONNXOpenOCRBackend(OCRBackendStrategy):
             return [("", 0.0) for _ in images]
 
         # Direct numpy array batch processing
-        results = self._recognizer.recognize(images, batch_size=self._batch_size)
+        results = self._recognizer.recognize_batch(images, batch_size=self._batch_size)
         return [(r['text'], r['confidence']) for r in results]
 
 
