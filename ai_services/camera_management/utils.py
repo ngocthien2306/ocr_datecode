@@ -1354,18 +1354,20 @@ def _init_reject_logger():
 
 def log_reject_start(reject_count: int, group_id: int, do_number: int,
                      T_capture_complete: float, T_reject: float,
-                     delay_reject_ms: int, inference_time_ms: float):
+                     delay_reject_ms: int, inference_time_ms: float,
+                     alarm_number: int = -1):
     """
     Log reject action START with timing and counter
 
     Args:
         reject_count: Sequential reject counter (1, 2, 3, ...)
         group_id: Capture group ID
-        do_number: Digital output pin number
+        do_number: Digital output pin number for reject
         T_capture_complete: Timestamp when capture completed (seconds)
         T_reject: Scheduled reject timestamp (seconds)
         delay_reject_ms: Configured delay from capture to reject (milliseconds)
         inference_time_ms: Inference duration (milliseconds)
+        alarm_number: Digital output pin number for alarm (-1 = no alarm)
     """
     reject_log = _init_reject_logger()
 
@@ -1373,31 +1375,35 @@ def log_reject_start(reject_count: int, group_id: int, do_number: int,
     T_now = time.time()
     time_until_reject = (T_reject - T_now) * 1000  # ms
 
+    alarm_info = f" + Alarm(DO{alarm_number})" if alarm_number >= 0 else ""
     reject_log.info(
-        f"REJECT_START | #{reject_count:04d} | Group #{group_id} | DO{do_number} | "
+        f"REJECT_START | #{reject_count:04d} | Group #{group_id} | Reject(DO{do_number}){alarm_info} | "
         f"Scheduled: T={T_reject:.3f}s (in {time_until_reject:.1f}ms) | "
         f"Delay: {delay_reject_ms}ms | Inference: {inference_time_ms:.1f}ms"
     )
 
 
 def log_reject_end(reject_count: int, group_id: int, do_number: int,
-                   pulse_duration_ms: float, actual_duration_ms: float):
+                   pulse_duration_ms: float, actual_duration_ms: float,
+                   alarm_number: int = -1):
     """
     Log reject action END with actual duration
 
     Args:
         reject_count: Sequential reject counter (same as start)
         group_id: Capture group ID
-        do_number: Digital output pin number
+        do_number: Digital output pin number for reject
         pulse_duration_ms: Configured pulse duration (milliseconds)
         actual_duration_ms: Actual measured pulse duration (milliseconds)
+        alarm_number: Digital output pin number for alarm (-1 = no alarm)
     """
     reject_log = _init_reject_logger()
 
     duration_diff = actual_duration_ms - pulse_duration_ms
 
+    alarm_info = f" + Alarm(DO{alarm_number})" if alarm_number >= 0 else ""
     reject_log.info(
-        f"REJECT_END   | #{reject_count:04d} | Group #{group_id} | DO{do_number} | "
+        f"REJECT_END   | #{reject_count:04d} | Group #{group_id} | Reject(DO{do_number}){alarm_info} | "
         f"Pulse: {pulse_duration_ms:.1f}ms | Actual: {actual_duration_ms:.1f}ms | "
         f"Diff: {duration_diff:+.1f}ms"
     )

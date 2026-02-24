@@ -1061,7 +1061,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       value={formData.reject_method}
                       onChange={handleInputChange}
                     >
-                      <option value="DIO_OUT">DIO_OUT</option>
+                      <option value="DIO">DIO_OUT</option>
                       <option value="PLC">PLC</option>
                     </select>
                     <small style={{display: 'block', marginTop: 4, color: '#666'}}>

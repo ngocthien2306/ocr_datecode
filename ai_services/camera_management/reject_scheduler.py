@@ -7,6 +7,14 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+# Import PLC Controller
+try:
+    from .plc_controller import PLCController
+    PLC_AVAILABLE = True
+except ImportError:
+    logger.warning("PLCController not available, PLC mode disabled")
+    PLC_AVAILABLE = False
+
 
 @dataclass(order=True)
 class RejectEntry:
@@ -18,6 +26,7 @@ class RejectEntry:
     # Data fields (not used for comparison)
     group_id: int = field(compare=False)
     do_number: int = field(compare=False)
+    alarm_number: int = field(compare=False)  # Alarm DO/D number
     inference_time: float = field(compare=False)
     scheduled_at: float = field(compare=False)
 
@@ -37,13 +46,14 @@ class RejectScheduler:
     - Automatic cleanup
     """
 
-    def __init__(self, do_control_callback=None):
+    def __init__(self, do_control_callback=None, plc_controller: Optional['PLCController'] = None):
         """
         Initialize RejectScheduler
 
         Args:
             do_control_callback: Function(do_number, pulse_ms) to trigger DO pulse
                                 If None, will use default implementation
+            plc_controller: PLCController instance for PLC mode (optional)
         """
         # Priority queue: sorted by T_reject (earliest first)
         self._reject_queue = []  # Heap of RejectEntry
@@ -55,8 +65,12 @@ class RejectScheduler:
         # DO control callback
         self._do_control_callback = do_control_callback
 
-        # Reject pulse duration from recipe (default 50ms)
+        # PLC Controller
+        self._plc_controller = plc_controller
+
+        # Reject configuration from recipe
         self._reject_pulse_ms = 50.0
+        self._reject_method = "DIO"  # Default: DIO, can be "PLC"
 
         # Scheduler thread
         self._running = False
@@ -68,7 +82,11 @@ class RejectScheduler:
             'total_rejected': 0,     # Actually triggered
             'total_cancelled': 0,    # Cancelled (PASS)
             'total_missed': 0,       # Too late (negative delay)
-            'max_queue_depth': 0
+            'max_queue_depth': 0,
+            'plc_rejects': 0,        # PLC rejects
+            'dio_rejects': 0,        # DIO rejects
+            'plc_fallbacks': 0,      # PLC → DIO fallbacks
+            'plc_reconnects': 0      # PLC reconnect attempts (successful)
         }
         self._stats_lock = threading.Lock()
 
@@ -92,6 +110,21 @@ class RejectScheduler:
         """
         self._reject_pulse_ms = pulse_ms
         logger.info(f"Reject pulse duration updated: {pulse_ms}ms")
+
+    def set_reject_config(self, pulse_ms: float, reject_method: str = "DIO"):
+        """
+        Set reject configuration from recipe
+
+        Args:
+            pulse_ms: Pulse duration in milliseconds
+            reject_method: Reject method ("PLC" or "DIO")
+        """
+        self._reject_pulse_ms = pulse_ms
+        self._reject_method = reject_method.upper()
+
+        logger.info(
+            f"Reject config updated: method={self._reject_method}, pulse={pulse_ms}ms"
+        )
 
     def start(self):
         """Start scheduler thread"""
@@ -150,7 +183,9 @@ class RejectScheduler:
             logger.info(
                 f"📊 [REJECT FINAL STATS] "
                 f"Scheduled: {self._stats['total_scheduled']}, "
-                f"Rejected: {self._stats['total_rejected']}, "
+                f"Rejected: {self._stats['total_rejected']} "
+                f"(PLC: {self._stats['plc_rejects']}, DIO: {self._stats['dio_rejects']}, "
+                f"Fallback: {self._stats['plc_fallbacks']}, Reconnect: {self._stats['plc_reconnects']}), "
                 f"Cancelled: {self._stats['total_cancelled']}, "
                 f"Missed: {self._stats['total_missed']}, "
                 f"Max Queue: {self._stats['max_queue_depth']}"
@@ -162,17 +197,19 @@ class RejectScheduler:
         T_capture_complete: float,
         inference_time: float,
         delay_reject: int,  # ms
-        do_number: int
+        do_number: int,
+        alarm_number: int = -1  # Alarm DO/D number (-1 = no alarm)
     ) -> bool:
         """
-        Schedule a reject action
+        Schedule a reject action (with optional alarm)
 
         Args:
             group_id: Group ID for tracking
             T_capture_complete: Time when cameras finished capturing (seconds)
             inference_time: Inference duration (seconds)
             delay_reject: Time from camera to reject station (milliseconds)
-            do_number: DO pin number to trigger
+            do_number: DO/D pin number for reject
+            alarm_number: DO/D pin number for alarm (-1 to disable)
 
         Returns:
             True if scheduled successfully
@@ -224,6 +261,7 @@ class RejectScheduler:
             T_reject=T_reject,
             group_id=group_id,
             do_number=do_number,
+            alarm_number=alarm_number,
             inference_time=inference_time,
             scheduled_at=time.time()
         )
@@ -234,6 +272,7 @@ class RejectScheduler:
             reject_count=reject_count,
             group_id=group_id,
             do_number=do_number,
+            alarm_number=alarm_number,
             T_capture_complete=T_capture_complete,
             T_reject=T_reject,
             delay_reject_ms=delay_reject,
@@ -252,9 +291,11 @@ class RejectScheduler:
                 if queue_depth > self._stats['max_queue_depth']:
                     self._stats['max_queue_depth'] = queue_depth
 
+        alarm_info = f" + Alarm(DO/D{alarm_number})" if alarm_number >= 0 else ""
         logger.info(
             f"[Group #{group_id}] 🕐 Reject scheduled @ "
-            f"T={T_reject:.3f}s (in {delay_needed:.3f}s), DO{do_number}"
+            f"T={T_reject:.3f}s (in {delay_needed:.3f}s), "
+            f"Reject(DO/D{do_number}){alarm_info}"
         )
 
         return True
@@ -367,29 +408,188 @@ class RejectScheduler:
             logger.info("RejectScheduler thread stopped")
 
     def _execute_reject(self, entry: RejectEntry):
-        """Execute reject pulse"""
+        """Execute reject pulse (PLC or DIO with fallback)"""
         import time
 
         try:
-            logger.info(
-                f"[Group #{entry.group_id}] 🔴 REJECTING! "
-                f"DO{entry.do_number} pulse ({self._reject_pulse_ms}ms)"
-            )
-
             # Get reject counter for this entry
             with self._stats_lock:
                 reject_count = self._stats['total_rejected'] + 1
 
+            # Determine reject method
+            method = self._reject_method
+            reject_address = entry.do_number  # D0=0, D1=1, etc.
+            alarm_address = entry.alarm_number  # D1=1, etc. (-1 = no alarm)
+
+            alarm_info = f" + Alarm({alarm_address})" if alarm_address >= 0 else ""
+            logger.info(
+                f"[Group #{entry.group_id}] 🔴 REJECTING! "
+                f"Method: {method}, Reject({reject_address}){alarm_info}, "
+                f"Pulse: {self._reject_pulse_ms}ms"
+            )
+
             # Measure actual pulse duration
             T_pulse_start = time.time()
+            success = False
+            used_method = method
 
-            # Trigger DO pulse
-            if self._do_control_callback:
-                self._do_control_callback(entry.do_number, pulse_ms=self._reject_pulse_ms)
-            else:
-                # Use default implementation
-                from .utils import trigger_reject_pulse
-                trigger_reject_pulse(entry.do_number, pulse_ms=self._reject_pulse_ms)
+            # Try PLC first if configured
+            if method == "PLC":
+                # Check prerequisites
+                if not PLC_AVAILABLE:
+                    logger.warning(
+                        f"[Group #{entry.group_id}] ⚠️ PLC mode requested but PLCController not available "
+                        f"(import failed), fallback to DIO"
+                    )
+                    used_method = "DIO"
+                    with self._stats_lock:
+                        self._stats['plc_fallbacks'] += 1
+                elif not self._plc_controller:
+                    logger.warning(
+                        f"[Group #{entry.group_id}] ⚠️ PLC mode requested but PLCController not initialized, "
+                        f"fallback to DIO"
+                    )
+                    used_method = "DIO"
+                    with self._stats_lock:
+                        self._stats['plc_fallbacks'] += 1
+                else:
+                    logger.info(f"[Group #{entry.group_id}] Attempting PLC reject (D{reject_address})")
+
+                    # Check PLC connection
+                    if not self._plc_controller.is_connected():
+                        logger.warning(
+                            f"[Group #{entry.group_id}] ⚠️ PLC not connected, attempting reconnect..."
+                        )
+
+                        # Retry connect once
+                        reconnect_success = self._plc_controller.connect()
+
+                        if not reconnect_success:
+                            logger.warning(
+                                f"[Group #{entry.group_id}] ❌ PLC reconnect failed, fallback to DIO"
+                            )
+                            used_method = "DIO"
+                            with self._stats_lock:
+                                self._stats['plc_fallbacks'] += 1
+                        else:
+                            logger.info(
+                                f"[Group #{entry.group_id}] ✅ PLC reconnected successfully"
+                            )
+                            with self._stats_lock:
+                                self._stats['plc_reconnects'] += 1
+
+                    # Execute PLC if connected
+                    if self._plc_controller.is_connected() and used_method == "PLC":
+                        # Check if reject and alarm use same address
+                        if alarm_address >= 0 and alarm_address == reject_address:
+                            logger.info(
+                                f"[Group #{entry.group_id}] Reject and Alarm use same D{reject_address}, "
+                                f"triggering once"
+                            )
+                            # Same address, pulse once
+                            success, plc_duration = self._plc_controller.write_pulse(
+                                reject_address, self._reject_pulse_ms
+                            )
+                        elif alarm_address >= 0:
+                            # Different addresses, use optimized dual pulse
+                            logger.info(
+                                f"[Group #{entry.group_id}] Executing dual PLC pulse "
+                                f"(D{reject_address} + D{alarm_address})"
+                            )
+                            success, plc_duration = self._plc_controller.write_dual_pulse(
+                                reject_address, alarm_address, self._reject_pulse_ms
+                            )
+                        else:
+                            # Only reject, no alarm
+                            success, plc_duration = self._plc_controller.write_pulse(
+                                reject_address, self._reject_pulse_ms
+                            )
+
+                        # Check results
+                        if success:
+                            logger.info(
+                                f"[Group #{entry.group_id}] ✅ PLC pulse successful "
+                                f"(Duration: {plc_duration:.2f}ms)"
+                            )
+                            with self._stats_lock:
+                                self._stats['plc_rejects'] += 1
+                        else:
+                            logger.error(
+                                f"[Group #{entry.group_id}] ❌ PLC pulse failed, fallback to DIO"
+                            )
+                            used_method = "DIO"
+                            with self._stats_lock:
+                                self._stats['plc_fallbacks'] += 1
+
+            # Fallback to DIO if PLC failed or method is DIO
+            if used_method == "DIO" or not success:
+                # Check if reject and alarm use same address
+                if alarm_address >= 0 and alarm_address == reject_address:
+                    logger.info(
+                        f"[Group #{entry.group_id}] Reject and Alarm use same DO{reject_address}, "
+                        f"triggering once"
+                    )
+                    # Same address, pulse once
+                    if self._do_control_callback:
+                        self._do_control_callback(reject_address, pulse_ms=self._reject_pulse_ms)
+                    else:
+                        from .utils import trigger_reject_pulse
+                        trigger_reject_pulse(reject_address, pulse_ms=self._reject_pulse_ms)
+                elif alarm_address >= 0:
+                    # Different addresses, pulse in parallel (threading)
+                    logger.info(
+                        f"[Group #{entry.group_id}] Executing parallel DIO pulses "
+                        f"(DO{reject_address} + DO{alarm_address})"
+                    )
+
+                    import threading
+
+                    def pulse_reject_dio():
+                        if self._do_control_callback:
+                            self._do_control_callback(reject_address, pulse_ms=self._reject_pulse_ms)
+                        else:
+                            from .utils import trigger_reject_pulse
+                            trigger_reject_pulse(reject_address, pulse_ms=self._reject_pulse_ms)
+
+                    def pulse_alarm_dio():
+                        if self._do_control_callback:
+                            self._do_control_callback(alarm_address, pulse_ms=self._reject_pulse_ms)
+                        else:
+                            from .utils import trigger_reject_pulse
+                            trigger_reject_pulse(alarm_address, pulse_ms=self._reject_pulse_ms)
+
+                    # Start both threads
+                    t_reject = threading.Thread(target=pulse_reject_dio, daemon=True)
+                    t_alarm = threading.Thread(target=pulse_alarm_dio, daemon=True)
+
+                    t_reject.start()
+                    t_alarm.start()
+
+                    # Wait for both to complete
+                    t_reject.join()
+                    t_alarm.join()
+                else:
+                    # Only reject, no alarm
+                    logger.info(f"[Group #{entry.group_id}] Executing DIO reject (DO{reject_address})")
+                    if self._do_control_callback:
+                        self._do_control_callback(reject_address, pulse_ms=self._reject_pulse_ms)
+                    else:
+                        from .utils import trigger_reject_pulse
+                        trigger_reject_pulse(reject_address, pulse_ms=self._reject_pulse_ms)
+
+                success = True
+                with self._stats_lock:
+                    self._stats['dio_rejects'] += 1
+
+                if alarm_address >= 0 and alarm_address != reject_address:
+                    logger.info(
+                        f"[Group #{entry.group_id}] ✅ DIO parallel pulses successful "
+                        f"(Reject DO{reject_address} + Alarm DO{alarm_address})"
+                    )
+                else:
+                    logger.info(
+                        f"[Group #{entry.group_id}] ✅ DIO pulse successful (DO{reject_address})"
+                    )
 
             # Calculate actual duration
             T_pulse_end = time.time()
@@ -404,12 +604,16 @@ class RejectScheduler:
             log_reject_end(
                 reject_count=reject_count,
                 group_id=entry.group_id,
-                do_number=entry.do_number,
+                do_number=reject_address,
+                alarm_number=alarm_address,
                 pulse_duration_ms=self._reject_pulse_ms,
                 actual_duration_ms=actual_duration_ms
             )
 
-            logger.info(f"[Group #{entry.group_id}] Reject pulse complete")
+            logger.info(
+                f"[Group #{entry.group_id}] Reject complete "
+                f"(method: {used_method}, duration: {actual_duration_ms:.2f}ms)"
+            )
 
         except Exception as e:
             logger.error(f"[Group #{entry.group_id}] Error executing reject: {e}")
@@ -438,7 +642,9 @@ class RejectScheduler:
                 logger.info(
                     f"📊 [REJECT STATS] "
                     f"Scheduled: {stats['total_scheduled']}, "
-                    f"Rejected: {stats['total_rejected']}, "
+                    f"Rejected: {stats['total_rejected']} "
+                    f"(PLC: {stats['plc_rejects']}, DIO: {stats['dio_rejects']}, "
+                    f"Fallback: {stats['plc_fallbacks']}, Reconnect: {stats['plc_reconnects']}), "
                     f"Cancelled: {stats['total_cancelled']}, "
                     f"Missed: {stats['total_missed']}, "
                     f"Max Queue: {stats['max_queue_depth']}, "

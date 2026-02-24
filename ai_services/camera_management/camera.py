@@ -255,6 +255,7 @@ class Camera:
         # Reject config (from recipe)
         self.delay_reject = 4000  # ms (default: 4s from camera to reject station)
         self.do_reject_number = 2  # DO pin number for reject (default: DO2)
+        self.do_alarm_number = -1  # DO pin number for alarm (default: -1 = disabled)
 
         # Trigger config (per-camera)
         self.trigger_mode = "continuous"  # "continuous", "software_trigger", "hardware_trigger"
@@ -1125,6 +1126,7 @@ class Camera:
             # Load reject config from recipe (recipe level, not camera level)
             self.delay_reject = recipe_data.get("delay_reject", 4000)  # ms, default 4s
             self.do_reject_number = recipe_data.get("do_reject_number", 2)  # DO2 default
+            self.do_alarm_number = recipe_data.get("do_alarm_number", -1)  # -1 = disabled
 
             # Load model thresholds from recipe
             model_thresholds = recipe_data.get("model_thresholds", {})
@@ -1158,6 +1160,8 @@ class Camera:
             logger.info(f"  - delay_trigger: {camera_config.get('delay_trigger', 'NOT SET')}")
             logger.info(f"  - delay_reject: {self.delay_reject}ms (recipe level)")
             logger.info(f"  - do_reject_number: DO{self.do_reject_number} (recipe level)")
+            alarm_status = f"DO{self.do_alarm_number}" if self.do_alarm_number >= 0 else "DISABLED"
+            logger.info(f"  - do_alarm_number: {alarm_status} (recipe level)")
 
             # Update settings
             self.update_settings(camera_config)

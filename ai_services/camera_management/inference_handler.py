@@ -858,6 +858,7 @@ class InferenceHandler:
             camera = cameras[0]
             delay_reject = camera.delay_reject  # ms
             do_reject_number = camera.do_reject_number
+            do_alarm_number = camera.do_alarm_number
 
             # Use timeout as inference_time for reject timing calculation
             success = self.reject_scheduler.schedule_reject(
@@ -865,7 +866,8 @@ class InferenceHandler:
                 T_capture_complete=T_capture_complete,
                 inference_time=timeout_seconds,
                 delay_reject=delay_reject,
-                do_number=do_reject_number
+                do_number=do_reject_number,
+                alarm_number=do_alarm_number
             )
 
             if success:
@@ -1219,6 +1221,7 @@ class InferenceHandler:
                 camera = cameras[0]
                 delay_reject = camera.delay_reject  # ms
                 do_reject_number = camera.do_reject_number
+                do_alarm_number = camera.do_alarm_number
 
                 # Schedule reject
                 success = self.reject_scheduler.schedule_reject(
@@ -1226,7 +1229,8 @@ class InferenceHandler:
                     T_capture_complete=T_capture_complete,
                     inference_time=inference_time,
                     delay_reject=delay_reject,
-                    do_number=do_reject_number
+                    do_number=do_reject_number,
+                    alarm_number=do_alarm_number
                 )
 
                 if success:

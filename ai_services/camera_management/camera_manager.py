@@ -5,6 +5,7 @@ Manages multiple camera instances and handles events
 Refactored to use separate handlers for better organization:
 - TriggerHandler: DI polling and software trigger logic
 - InferenceHandler: Inference processing and result building
+- PLCController: PLC Modbus TCP control for reject
 - utils: Common utility functions
 """
 
@@ -18,6 +19,14 @@ from .inference_handler import InferenceHandler
 from .reject_scheduler import RejectScheduler
 
 logger = logging.getLogger(__name__)
+
+# Import PLC Controller
+try:
+    from .plc_controller import PLCController
+    PLC_AVAILABLE = True
+except ImportError:
+    logger.warning("PLCController not available, PLC mode disabled")
+    PLC_AVAILABLE = False
 
 
 class CameraManager:
@@ -52,9 +61,18 @@ class CameraManager:
         # Inference mode flag (ONLINE/OFFLINE)
         self.inference_enabled = True
 
+        # Initialize PLC Controller
+        self.plc_controller = None
+        if PLC_AVAILABLE:
+            try:
+                self.plc_controller = PLCController()
+                logger.info("PLCController initialized")
+            except Exception as e:
+                logger.error(f"Failed to initialize PLCController: {e}")
+
         # Initialize handlers
         self.trigger_handler = TriggerHandler(self)
-        self.reject_scheduler = RejectScheduler()
+        self.reject_scheduler = RejectScheduler(plc_controller=self.plc_controller)
         self.inference_handler = InferenceHandler(
             reject_scheduler=self.reject_scheduler,
             trigger_handler=self.trigger_handler
@@ -270,9 +288,22 @@ class CameraManager:
                 # Start trigger polling if any cameras use Software Trigger
                 self.trigger_handler.start_polling()
 
-                # Update reject pulse duration from recipe
+                # Update reject configuration from recipe
                 reject_pulse = recipe_data.get("reject_pulse", 50.0)
-                self.reject_scheduler.set_reject_pulse(reject_pulse)
+                reject_method = recipe_data.get("reject_method", "DIO").upper()
+
+                logger.info(f"Reject config: method={reject_method}, pulse={reject_pulse}ms")
+
+                # Connect PLC if using PLC mode
+                if reject_method == "PLC" and self.plc_controller:
+                    logger.info("Connecting to PLC...")
+                    if self.plc_controller.connect():
+                        logger.info("✅ PLC connected successfully")
+                    else:
+                        logger.warning("⚠️ PLC connection failed, will fallback to DIO")
+
+                # Update reject scheduler config
+                self.reject_scheduler.set_reject_config(reject_pulse, reject_method)
 
                 # Start reject scheduler (if not already running)
                 self.reject_scheduler.start()
@@ -330,6 +361,12 @@ class CameraManager:
                 if not has_software_trigger:
                     self.trigger_handler.stop_polling()
                     logger.info("No more Software Trigger cameras, polling stopped")
+
+                # Disconnect PLC if connected
+                if self.plc_controller and self.plc_controller.is_connected():
+                    logger.info("Disconnecting from PLC...")
+                    self.plc_controller.disconnect()
+                    logger.info("PLC disconnected")
 
                 return {
                     "success": True,
@@ -591,6 +628,28 @@ class CameraManager:
                 "message": f"Inference mode set to {mode_name}"
             }
 
+    def get_reject_stats(self) -> Dict[str, Any]:
+        """
+        Get reject scheduler statistics including PLC stats
+
+        Returns:
+            Combined statistics from reject scheduler and PLC
+        """
+        stats = {
+            "reject_scheduler": self.reject_scheduler.get_stats(),
+            "plc": None
+        }
+
+        # Add PLC stats if available
+        if self.plc_controller:
+            try:
+                stats["plc"] = self.plc_controller.get_stats()
+            except Exception as e:
+                logger.error(f"Error getting PLC stats: {e}")
+                stats["plc"] = {"error": str(e)}
+
+        return stats
+
     def shutdown(self):
         """Shutdown all cameras and stop polling"""
         with self._lock:
@@ -601,6 +660,11 @@ class CameraManager:
 
             # Stop reject scheduler
             self.reject_scheduler.stop()
+
+            # Disconnect PLC if connected
+            if self.plc_controller and self.plc_controller.is_connected():
+                logger.info("Disconnecting from PLC during shutdown...")
+                self.plc_controller.disconnect()
 
             # Stop all cameras
             serial_numbers = list(self.cameras.keys())
