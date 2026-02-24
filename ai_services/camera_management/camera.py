@@ -108,7 +108,11 @@ class RingBufferSharedMemory:
         struct.pack_into("<Q", self.shm.buf, offset, 0)
         offset += 8
 
-        # reserved (44 bytes) - For future use
+        # slot_size (4 bytes) - Size of each frame slot in bytes
+        struct.pack_into("<I", self.shm.buf, offset, self.slot_size)
+        offset += 4
+
+        # reserved (40 bytes) - For future use
         # Total header: 64 bytes
 
     def write_frame(self, img_array: np.ndarray, metadata: Dict[str, Any]):

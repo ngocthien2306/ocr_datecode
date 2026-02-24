@@ -556,8 +556,12 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       const { frames } = framesResponse;
       toast.info(`Processing ${frames.length} frame${frames.length > 1 ? 's' : ''}...`);
 
-      // Process each frame
-      let processedCount = 0;
+      // Get current templates count before processing
+      const initialTemplateCount = (cameraTemplates[selectedCameraForTemplate] || []).length;
+
+      // Process each frame sequentially
+      const newTemplates: any[] = [];
+
       for (let i = 0; i < frames.length; i++) {
         const frameData = frames[i];
         const frameBase64 = frameData.frame_base64;
@@ -592,41 +596,45 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
         const { url, width, height } = await uploadResponse.json();
 
-        // Convert blob to base64 for canvas preview
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          const imageDataUrl = event.target?.result as string;
-
-          // Add new template to the selected camera's templates array
-          const currentTemplates = cameraTemplates[selectedCameraForTemplate] || [];
-          const templateName = `Frame ${currentTemplates.length + processedCount + 1}`;
-          const newTemplate = {
-            id: `template-${Date.now()}-${i}`,
-            name: templateName,
-            image: imageDataUrl, // For preview in canvas
-            image_url: url, // Server URL for submission
-            image_width: width,
-            image_height: height,
-            annotations: [],
-            center_offset_threshold_left: 50.0,
-            center_offset_threshold_right: 50.0
+        // Convert blob to base64 for canvas preview (await Promise)
+        const imageDataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            resolve(event.target?.result as string);
           };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
 
-          setCameraTemplates(prev => ({
-            ...prev,
-            [selectedCameraForTemplate]: [...(prev[selectedCameraForTemplate] || []), newTemplate]
-          }));
-
-          processedCount++;
-
-          // Auto-select last template when all frames are processed
-          if (processedCount === frames.length) {
-            const finalTemplates = cameraTemplates[selectedCameraForTemplate] || [];
-            setSelectedTemplateIndex(finalTemplates.length + frames.length - 1);
-            toast.success(`Successfully captured ${frames.length} frame${frames.length > 1 ? 's' : ''}!`);
-          }
+        // Create template
+        const templateName = `Frame ${initialTemplateCount + i + 1}`;
+        const newTemplate = {
+          id: `template-${Date.now()}-${i}`,
+          name: templateName,
+          image: imageDataUrl, // For preview in canvas
+          image_url: url, // Server URL for submission
+          image_width: width,
+          image_height: height,
+          annotations: [],
+          center_offset_threshold_left: 50.0,
+          center_offset_threshold_right: 50.0
         };
-        reader.readAsDataURL(blob);
+
+        newTemplates.push(newTemplate);
+      }
+
+      // Add all templates at once (batch update)
+      if (newTemplates.length > 0) {
+        setCameraTemplates(prev => ({
+          ...prev,
+          [selectedCameraForTemplate]: [...(prev[selectedCameraForTemplate] || []), ...newTemplates]
+        }));
+
+        // Auto-select last added template
+        setSelectedTemplateIndex(initialTemplateCount + newTemplates.length - 1);
+        toast.success(`Successfully captured ${newTemplates.length} frame${newTemplates.length > 1 ? 's' : ''}!`);
+      } else {
+        toast.error('No frames were successfully processed');
       }
 
     } catch (error: any) {

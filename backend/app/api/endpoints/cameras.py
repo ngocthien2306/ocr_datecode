@@ -624,6 +624,65 @@ async def get_latest_frames(
     }
 
 
+@router.get(
+    "/{serial_number}/ring-buffer/status",
+    summary="Get ring buffer status (debug)",
+    response_model=dict
+)
+async def get_ring_buffer_status(
+    serial_number: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Debug endpoint: Check ring buffer status
+
+    Returns:
+    - write_idx: Next write position
+    - frame_count: Number of frames in buffer (0-5)
+    - buffer_size: Max buffer size (5)
+    - frame_counter: Total frames written
+    """
+    import struct
+    from multiprocessing import shared_memory
+
+    try:
+        shm_name = f"camera_{serial_number}"
+        shm = shared_memory.SharedMemory(name=shm_name, create=False)
+
+        # Read header
+        write_idx = struct.unpack_from("<I", shm.buf, 0)[0]
+        frame_count = struct.unpack_from("<I", shm.buf, 4)[0]
+        buffer_size = struct.unpack_from("<I", shm.buf, 8)[0]
+        frame_counter = struct.unpack_from("<Q", shm.buf, 12)[0]
+        slot_size = struct.unpack_from("<I", shm.buf, 20)[0]
+
+        shm.close()
+
+        return {
+            "serial_number": serial_number,
+            "ring_buffer": {
+                "write_idx": write_idx,
+                "frame_count": frame_count,
+                "buffer_size": buffer_size,
+                "frame_counter": frame_counter,
+                "slot_size": slot_size,
+                "slot_size_mb": round(slot_size / 1024 / 1024, 2)
+            },
+            "status": "ok" if frame_count > 0 else "no_frames"
+        }
+
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Ring buffer for camera '{serial_number}' not found. Camera may not be connected."
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error reading ring buffer status: {str(e)}"
+        )
+
+
 @router.post(
     "/{serial_number}/connect",
     summary="Connect camera via WebSocket",

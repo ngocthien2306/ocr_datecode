@@ -91,9 +91,12 @@ class SharedMemoryService:
                 HEADER_SIZE = 64
                 BUFFER_SIZE = 5
 
-                # Read write_idx (index where next frame will be written)
+                # Read header fields
                 write_idx = struct.unpack_from("<I", shm.buf, 0)[0]
                 frame_count = struct.unpack_from("<I", shm.buf, 4)[0]
+                # buffer_size at offset 8 (not used)
+                # frame_counter at offset 12 (not used here)
+                slot_size = struct.unpack_from("<I", shm.buf, 20)[0]  # NEW: Read slot_size
 
                 # Check if buffer has any frames
                 if frame_count == 0:
@@ -104,7 +107,7 @@ class SharedMemoryService:
                 latest_slot_idx = (write_idx - 1) % BUFFER_SIZE
 
                 # Read frame from slot
-                result = self._read_frame_from_slot(shm, latest_slot_idx, HEADER_SIZE)
+                result = self._read_frame_from_slot(shm, latest_slot_idx, HEADER_SIZE, slot_size)
 
                 if result:
                     frame_array, metadata = result
@@ -132,7 +135,8 @@ class SharedMemoryService:
         self,
         shm: shared_memory.SharedMemory,
         slot_idx: int,
-        header_size: int
+        header_size: int,
+        slot_size: int
     ) -> Optional[Tuple[np.ndarray, Dict[str, Any]]]:
         """
         Read frame from specific ring buffer slot
@@ -141,6 +145,7 @@ class SharedMemoryService:
             shm: Shared memory instance
             slot_idx: Slot index (0-4)
             header_size: Size of ring buffer header
+            slot_size: Size of each slot in bytes (read from header)
 
         Returns:
             Tuple of (frame_array, metadata) or None
@@ -150,12 +155,8 @@ class SharedMemoryService:
         [frame_len (4B)] [frame_bytes]
         """
         try:
-            # Estimate max slot size (adjust based on camera resolution)
-            # For 1920x1200x3 = ~7MB per slot
-            MAX_SLOT_SIZE = 7 * 1024 * 1024
-
-            # Calculate slot offset
-            slot_offset = header_size + (slot_idx * MAX_SLOT_SIZE)
+            # Calculate slot offset using actual slot_size from header
+            slot_offset = header_size + (slot_idx * slot_size)
             offset = slot_offset
 
             # Read frame_idx (8 bytes)
@@ -276,6 +277,7 @@ class SharedMemoryService:
                 # Read ring buffer header
                 write_idx = struct.unpack_from("<I", shm.buf, 0)[0]
                 frame_count = struct.unpack_from("<I", shm.buf, 4)[0]
+                slot_size = struct.unpack_from("<I", shm.buf, 20)[0]  # NEW: Read slot_size
 
                 # Check if buffer has any frames
                 if frame_count == 0:
@@ -290,7 +292,7 @@ class SharedMemoryService:
                 frames = []
                 for i in range(actual_count):
                     slot_idx = (write_idx - 1 - i) % BUFFER_SIZE
-                    result = self._read_frame_from_slot(shm, slot_idx, HEADER_SIZE)
+                    result = self._read_frame_from_slot(shm, slot_idx, HEADER_SIZE, slot_size)
 
                     if result:
                         frames.append(result)
