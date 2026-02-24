@@ -1196,35 +1196,19 @@
   color: var(--text-primary);
 }
 
-/* Template Preview Section - Container for all templates (horizontal layout) */
+/* Template Preview Section - Same structure as camera-frames */
 .template-preview-section {
+  height: 350px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
   background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
   border-top: 2px solid rgba(0, 0, 0, 0.08);
-  padding: 0.75rem;
-  display: flex;
-  flex-direction: row;
-  gap: 0.75rem;
+  position: relative;
+  flex-shrink: 0;
+  gap: 1rem;
   animation: slideDown 0.3s ease-out;
-  overflow-x: auto;
-}
-
-/* Horizontal scrollbar for templates */
-.template-preview-section::-webkit-scrollbar {
-  height: 6px;
-}
-
-.template-preview-section::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.05);
-  border-radius: 10px;
-}
-
-.template-preview-section::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 10px;
-}
-
-.template-preview-section::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.3);
 }
 
 @keyframes slideDown {
@@ -1238,27 +1222,30 @@
   }
 }
 
-/* Each template item - takes equal width */
+/* Each template item - same as frame-container */
 .template-item {
-  flex: 1;
-  min-width: 300px;
+  width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
   gap: 0.5rem;
-}
-
-.template-item:not(:last-child) {
-  border-right: 1px dashed rgba(0, 0, 0, 0.15);
-  padding-right: 0.75rem;
 }
 
 .template-preview-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem;
-  background: rgba(255, 255, 255, 0.8);
+  gap: 0.4rem;
+  padding: 0.3rem 0.6rem;
+  background: rgba(255, 255, 255, 0.9);
   border-radius: 6px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 5;
+  backdrop-filter: blur(8px);
 }
 
 .template-preview-header svg {
@@ -1267,23 +1254,25 @@
 }
 
 .template-label {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   font-weight: 600;
   color: #374151;
   font-family: 'Courier New', monospace;
+  white-space: nowrap;
 }
 
+/* Template image wrapper - same as frame-aspect-wrapper */
 .template-image-wrapper {
   position: relative;
   width: 100%;
-  height: 350px;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
   background: #ffffff;
   border-radius: 8px;
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
 }
 
 .template-image {
@@ -1293,7 +1282,7 @@
   height: auto;
   object-fit: contain;
   display: block;
-  border-radius: 4px;
+  border-radius: 8px;
 }
 
 /* Log Container */
