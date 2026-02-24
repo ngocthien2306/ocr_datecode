@@ -1196,15 +1196,35 @@
   color: var(--text-primary);
 }
 
-/* Template Preview Section - Container for all templates */
+/* Template Preview Section - Container for all templates (horizontal layout) */
 .template-preview-section {
   background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
   border-top: 2px solid rgba(0, 0, 0, 0.08);
   padding: 0.75rem;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 0.75rem;
   animation: slideDown 0.3s ease-out;
+  overflow-x: auto;
+}
+
+/* Horizontal scrollbar for templates */
+.template-preview-section::-webkit-scrollbar {
+  height: 6px;
+}
+
+.template-preview-section::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 10px;
+}
+
+.template-preview-section::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 10px;
+}
+
+.template-preview-section::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
 }
 
 @keyframes slideDown {
@@ -1218,16 +1238,18 @@
   }
 }
 
-/* Each template item */
+/* Each template item - takes equal width */
 .template-item {
+  flex: 1;
+  min-width: 300px;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
 }
 
 .template-item:not(:last-child) {
-  padding-bottom: 0.75rem;
-  border-bottom: 1px dashed rgba(0, 0, 0, 0.1);
+  border-right: 1px dashed rgba(0, 0, 0, 0.15);
+  padding-right: 0.75rem;
 }
 
 .template-preview-header {
