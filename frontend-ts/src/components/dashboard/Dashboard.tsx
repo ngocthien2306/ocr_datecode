@@ -1006,6 +1006,15 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     });
   }, []);
 
+  // Auto-open InferenceRealtime overlay when realtime section is selected
+  useEffect(() => {
+    if (currentSection === 'realtime') {
+      setShowInferenceRealtime(true);
+    } else {
+      setShowInferenceRealtime(false);
+    }
+  }, [currentSection]);
+
   const fetchCameras = async () => {
     const startTime = Date.now();
     
@@ -1783,59 +1792,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
           {currentSection === 'users' && <UserManagement />}
           {currentSection === 'receipts' && <Receipts />}
-          {currentSection === 'realtime' && (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              height: '100%',
-              flexDirection: 'column',
-              gap: '1.5rem'
-            }}>
-              <div style={{ textAlign: 'center' }}>
-                <svg width="80" height="80" viewBox="0 0 24 24" fill="none" style={{ marginBottom: '1rem', color: '#667eea' }}>
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
-                  <path d="M12 6v6l4 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                </svg>
-                <h2 style={{ marginBottom: '0.5rem', color: '#1f2937' }}>Inference Realtime Monitor</h2>
-                <p style={{ color: '#6b7280', marginBottom: '1.5rem' }}>
-                  {runningRecipeId ? 'Recipe is running. Click below to open monitor.' : 'Load a recipe to start monitoring'}
-                </p>
-              </div>
-              <button
-                onClick={() => setShowInferenceRealtime(true)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.75rem',
-                  padding: '1rem 2.5rem',
-                  fontSize: '1.1rem',
-                  fontWeight: '600',
-                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '12px',
-                  cursor: 'pointer',
-                  boxShadow: '0 4px 14px rgba(102, 126, 234, 0.4)',
-                  transition: 'all 0.3s ease'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-2px)';
-                  e.currentTarget.style.boxShadow = '0 6px 20px rgba(102, 126, 234, 0.5)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '0 4px 14px rgba(102, 126, 234, 0.4)';
-                }}
-              >
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                  <rect x="2" y="3" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2"/>
-                  <path d="M8 21h8M12 17v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                </svg>
-                Open Full Monitor
-              </button>
-            </div>
-          )}
+          {currentSection === 'realtime' && null}
           {currentSection === 'cameras' && <CameraManagement />}
           {currentSection === 'historical' && <Historical />}
           {currentSection === 'logs' && <Logs />}
@@ -1864,7 +1821,10 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       {showInferenceRealtime && (
         <InferenceRealtime
           runningRecipeId={runningRecipeId}
-          onClose={() => setShowInferenceRealtime(false)}
+          onClose={() => {
+            setShowInferenceRealtime(false);
+            setCurrentSection('dashboard');
+          }}
         />
       )}
     </div>
