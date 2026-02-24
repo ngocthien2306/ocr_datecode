@@ -1696,6 +1696,12 @@
 .btn-close-inference span {
   position: relative;
   z-index: 1;
+  color: white;
+}
+
+.btn-close-inference:hover svg,
+.btn-close-inference:hover span {
+  color: white;
 }
 
 .btn-close-inference svg {
