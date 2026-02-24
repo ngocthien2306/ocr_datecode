@@ -5,6 +5,7 @@ import api from '@/services/api';
 import { receiptsAPI } from '@/services/recipes';
 import { camerasAPI } from '@/services/cameras';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import { API_BASE_URL } from '@/config/api';
 
 interface TextVerificationResult {
   region_idx: number;
@@ -191,6 +192,12 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
     onConfirm: null
   });
 
+  // Template visibility toggle
+  const [showTemplates, setShowTemplates] = useState(() => {
+    const saved = localStorage.getItem('inference_show_templates');
+    return saved === 'true'; // Default to false (hidden)
+  });
+
   // Auto scroll to bottom
   const scrollToBottom = () => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -287,6 +294,15 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
     }
   }, [isHeaderCollapsed]);
 
+  // Save template visibility to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('inference_show_templates', showTemplates.toString());
+    } catch (error) {
+      console.error('Error saving template visibility:', error);
+    }
+  }, [showTemplates]);
+
   // Update duration every second
   useEffect(() => {
     if (!recipeStartTime) return;
@@ -348,14 +364,30 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
     loadRunningRecipe();
   }, [runningRecipeId]);
 
+  
   // Subscribe to realtime inference results
   useEffect(() => {
     if (!runningRecipeId) return;
 
     socketService.connect();
 
+    function stripBase64FromResult(data: any) {
+    return {
+      ...data,
+      camera_results: data.camera_results?.map((camera: any) => ({
+        ...camera,
+        frames: camera.frames?.map((frame: any) => {
+          const { image_base64, ...frameWithoutBase64 } = frame;
+          return frameWithoutBase64;
+        })
+      }))
+    };
+  }
+
+
     const handleNewResult = (data: any) => {
-      console.log('New inference result:', data);
+      console.log('New inference result:', stripBase64FromResult(data));
+
 
       const fullResult = data as InferenceResult;
 
@@ -467,9 +499,15 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
 
           // Redirect to Recipes page after 1 second
           setTimeout(() => {
-            const recipesLink = document.querySelector('a[href="#receipts"]') as HTMLAnchorElement;
-            if (recipesLink) {
-              recipesLink.click();
+            // If onClose prop exists, use it to return to previous view
+            if (onClose) {
+              onClose();
+            } else {
+              // Fallback: try to find and click recipes link
+              const recipesLink = document.querySelector('a[href="#receipts"]') as HTMLAnchorElement;
+              if (recipesLink) {
+                recipesLink.click();
+              }
             }
           }, 1000);
         } catch (error: any) {
@@ -567,10 +605,59 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
     return 'low';
   };
 
+  // Helper: Get camera info from serial_number
+  const getCameraInfo = (serialNumber: string): { camera_id: string; location: string } | null => {
+    if (!runningRecipe?.metadata?.cameras) return null;
+
+    const camera = runningRecipe.metadata.cameras.find(
+      (cam: any) => cam.serial_number === serialNumber
+    );
+
+    if (!camera) return null;
+
+    return {
+      camera_id: camera.camera_id,
+      location: camera.location || ''
+    };
+  };
+
+  // Helper: Get template image URL from recipe metadata
+  const getTemplateImageUrl = (serialNumber: string, templateName: string): string | null => {
+    if (!runningRecipe?.metadata) return null;
+
+    // Find camera by serial_number
+    const camera = runningRecipe.metadata.cameras?.find(
+      (cam: any) => cam.serial_number === serialNumber
+    );
+    if (!camera) return null;
+
+    // Find camera_templates by camera_id
+    const cameraTemplate = runningRecipe.metadata.camera_templates?.find(
+      (ct: any) => ct.camera_id === camera.camera_id
+    );
+    if (!cameraTemplate) return null;
+
+    // Find template by name
+    const template = cameraTemplate.templates?.find(
+      (t: any) => t.name === templateName
+    );
+    if (!template) return null;
+
+    // Return full image URL with API_BASE_URL
+    const imageUrl = template.image_url;
+    // If URL already includes http, return as is, otherwise prepend API_BASE_URL
+    if (imageUrl.startsWith('http')) {
+      return imageUrl;
+    }
+    return `${API_BASE_URL}${imageUrl}`;
+  };
+
   // Render text verification table for a camera
   const renderTextVerificationTable = (cameraResult: CameraResult) => {
     // Get ALL frames with text verification (multi-template support)
     const framesWithVerification = cameraResult.frames.filter(f => f.text_verification);
+    const cameraInfo = getCameraInfo(cameraResult.serial_number);
+    const displayName = cameraInfo ? cameraInfo.camera_id : cameraResult.serial_number;
 
     if (framesWithVerification.length === 0) {
       return (
@@ -580,7 +667,9 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
               <rect x="2" y="7" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2"/>
               <circle cx="12" cy="14" r="3" stroke="currentColor" strokeWidth="2"/>
             </svg>
-            <span className="camera-serial">{cameraResult.serial_number}</span>
+            <span className="camera-serial" title={cameraInfo ? `${cameraInfo.location} (${cameraResult.serial_number})` : cameraResult.serial_number}>
+              {displayName}
+            </span>
           </div>
           <div className="no-verification-data">No text verification data</div>
         </div>
@@ -596,7 +685,9 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
               <rect x="2" y="7" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2"/>
               <circle cx="12" cy="14" r="3" stroke="currentColor" strokeWidth="2"/>
             </svg>
-            <span className="camera-serial">{cameraResult.serial_number}</span>
+            <span className="camera-serial" title={cameraInfo ? `${cameraInfo.location} (${cameraResult.serial_number})` : cameraResult.serial_number}>
+              {displayName}
+            </span>
           </div>
         </div>
 
@@ -665,6 +756,8 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
   const renderTemplateVerificationInfo = (cameraResult: CameraResult) => {
     // Get frames with template verification
     const framesWithTemplateVerification = cameraResult.frames.filter(f => f.template_verification);
+    const cameraInfo = getCameraInfo(cameraResult.serial_number);
+    const displayName = cameraInfo ? cameraInfo.camera_id : cameraResult.serial_number;
 
     if (framesWithTemplateVerification.length === 0) {
       return null;
@@ -678,7 +771,9 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
               <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/>
               <path d="M9 12l2 2 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
             </svg>
-            <span className="camera-serial">{cameraResult.serial_number}</span>
+            <span className="camera-serial" title={cameraInfo ? `${cameraInfo.location} (${cameraResult.serial_number})` : cameraResult.serial_number}>
+              {displayName}
+            </span>
             <span className="verification-type">Template Matching</span>
           </div>
         </div>
@@ -858,7 +953,19 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
       <div className="realtime-content">
         <div className="cameras-grid">
           <div className="panel-header">
-            <h3>Latest Result</h3>
+            <div className="panel-header-left">
+              <h3>Latest Result</h3>
+              {/* Template Toggle Arrow Button */}
+              <button
+                className={`btn-toggle-templates-arrow ${showTemplates ? 'expanded' : ''}`}
+                onClick={() => setShowTemplates(!showTemplates)}
+                title={showTemplates ? 'Hide templates' : 'Show templates'}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                  <path d="M19 9l-7 7-7-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+            </div>
             {latestResults?.statistics && (
               <div className="statistics-summary">
                 <div className="stat-badge stat-triggers">
@@ -953,6 +1060,9 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                           (s) => s.serial_number === cameraResult.serial_number
                         );
 
+                        // Get camera info for display
+                        const cameraInfo = getCameraInfo(cameraResult.serial_number);
+
                         return (
                           <div key={frame.frame_idx} className="frame-container">
                             <div className="frame-aspect-wrapper">
@@ -964,9 +1074,14 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                                 </div>
                               )}
                               <div className="frame-overlay">
-                                {/* Top Row: Camera Serial + Offset (center) + Pass/Fail Badge */}
+                                {/* Top Row: Camera ID + Offset (center) + Pass/Fail Badge */}
                                 <div className="frame-top-row">
-                                  <span className="camera-serial-badge">{cameraResult.serial_number}</span>
+                                  <span
+                                    className="camera-serial-badge"
+                                    title={cameraInfo ? `${cameraInfo.location} (${cameraResult.serial_number})` : cameraResult.serial_number}
+                                  >
+                                    {cameraInfo ? cameraInfo.camera_id : cameraResult.serial_number}
+                                  </span>
                                   {frame.product_verification?.center_alignment_check && (
                                     <span className="frame-offset-x">
                                       Offset: {(frame.product_verification.center_alignment_check.abs_offset_x ?? Math.abs(frame.product_verification.center_alignment_check.offset_x)).toFixed(1)}px
@@ -1000,6 +1115,26 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                                     </div>
                                   </div>
                                 )}
+
+                                {/* Bottom Right: Score and Time Stats */}
+                                {cameraStats && (
+                                  <div className="frame-stats-overlay">
+                                    <div className="stat-item">
+                                      <span className="stat-label">Score:</span>
+                                      <span className="stat-value">{(cameraStats.confidence * 100).toFixed(1)}%</span>
+                                    </div>
+                                    <div className="stat-separator">|</div>
+                                    <div className="stat-item">
+                                      <span className="stat-label">Time:</span>
+                                      <span className="stat-value">
+                                        {(
+                                          (cameraStats.timings.trt_inference || 0) +
+                                          (cameraStats.timings.postprocess || 0)
+                                        ).toFixed(1)} ms
+                                      </span>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -1007,92 +1142,37 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                       })}
                     </div>
 
-                    {cameraStats && (
-                      <>
-                        <div className="camera-stats-compact">
-                          <div className="stat-item">
-                            <span className="stat-label">Score:</span>
-                            <span className="stat-value">{(cameraStats.confidence * 100).toFixed(1)}%</span>
+                    {/* Template Preview Section */}
+                    {showTemplates && cameraResult.frames.length > 0 && cameraResult.frames[0] && (() => {
+                      const frame = cameraResult.frames[0]; // Get first frame for template
+                      const templateImageUrl = getTemplateImageUrl(cameraResult.serial_number, frame.template_name);
+                      const cameraInfo = getCameraInfo(cameraResult.serial_number);
+
+                      if (templateImageUrl) {
+                        return (
+                          <div className="template-preview-section">
+                            <div className="template-preview-header">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                                <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/>
+                                <path d="M3 9h18M9 3v18" stroke="currentColor" strokeWidth="2"/>
+                              </svg>
+                              <span className="template-label">
+                                {cameraInfo ? cameraInfo.camera_id : cameraResult.serial_number} - Template: {frame.template_name}
+                              </span>
+                            </div>
+                            <div className="template-image-wrapper">
+                              <img
+                                src={templateImageUrl}
+                                alt={`Template ${frame.template_name}`}
+                                className="template-image"
+                              />
+                            </div>
                           </div>
-                          <div className="stat-separator">|</div>
-                          <div className="stat-item">
-                            <span className="stat-label">Time:</span>
-                            <span className="stat-value">
-                              {(
-                                (cameraStats.timings.trt_inference || 0) +
-                                (cameraStats.timings.postprocess || 0)
-                              ).toFixed(1)} ms
-                            </span>
-                          </div>
-                          <div className="stat-separator">|</div>
-                          <div className="stat-item delay-editor">
-                            <span className="stat-label">Delay:</span>
-                            <input
-                              type="number"
-                              className="delay-input"
-                              value={cameraDelays[cameraResult.serial_number] || cameraResult.delay_trigger || 0}
-                              onChange={(e) => {
-                                const value = parseInt(e.target.value) || 0;
-                                setCameraDelays(prev => ({ ...prev, [cameraResult.serial_number]: value }));
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  const value = cameraDelays[cameraResult.serial_number] || cameraResult.delay_trigger || 0;
-                                  handleUpdateDelay(cameraResult.serial_number, value);
-                                }
-                              }}
-                              min="0"
-                              max="10000"
-                              step="50"
-                              disabled={updatingDelay === cameraResult.serial_number}
-                            />
-                            <span className="stat-unit">ms</span>
-                            <button
-                              className="btn-update-delay"
-                              onClick={() => {
-                                const value = cameraDelays[cameraResult.serial_number] || cameraResult.delay_trigger || 0;
-                                handleUpdateDelay(cameraResult.serial_number, value);
-                              }}
-                              disabled={updatingDelay === cameraResult.serial_number}
-                              title="Update delay trigger"
-                            >
-                              {updatingDelay === cameraResult.serial_number ? '...' : '✓'}
-                            </button>
-                          </div>
-                          {/* <button
-                            className="btn-details"
-                            onClick={(e) => {
-                              const details = e.currentTarget.parentElement?.nextElementSibling as HTMLElement;
-                              if (details) {
-                                const isHidden = details.style.display === 'none' || !details.style.display;
-                                details.style.display = isHidden ? 'block' : 'none';
-                                e.currentTarget.textContent = isHidden ? '▲' : '▼';
-                              }
-                            }}
-                          >
-                            ▼
-                          </button> */}
-                        </div>
-                        <div className="stats-details" style={{ display: 'none' }}>
-                          <div className="detail-row">
-                            <span className="stat-label">├ TRT:</span>
-                            <span className="stat-value">{cameraStats.timings.trt_inference?.toFixed(1) || 0}ms</span>
-                          </div>
-                          <div className="detail-row">
-                            <span className="stat-label">├ Pre:</span>
-                            <span className="stat-value">{cameraStats.timings.preprocess?.toFixed(1) || 0}ms</span>
-                          </div>
-                          <div className="detail-row">
-                            <span className="stat-label">├ Post:</span>
-                            <span className="stat-value">{cameraStats.timings.postprocess?.toFixed(1) || 0}ms</span>
-                          </div>
-                          <div className="detail-row">
-                            <span className="stat-label">└ Inliers:</span>
-                            <span className="stat-value">{cameraStats.inliers}/{cameraStats.total_matches}</span>
-                          </div>
-                        </div>
-                      </>
-                    )}
+                        );
+                      }
+                      return null;
+                    })()}
+
                   </div>
                 );
               })}

@@ -1158,7 +1158,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       <>
         <InferenceRealtime
           runningRecipeId={runningRecipeId}
-          onClose={() => setCurrentSection('dashboard')}
+          onClose={() => setCurrentSection('receipts')}
           embedded={false}
         />
         <ConfirmDialog
