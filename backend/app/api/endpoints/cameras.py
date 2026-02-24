@@ -3,7 +3,7 @@
 Camera API Endpoints
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from fastapi.responses import StreamingResponse, JSONResponse
 import io
 import logging
@@ -544,6 +544,84 @@ async def get_camera_frame_metadata(
 
     _, metadata = result
     return metadata
+
+
+@router.get(
+    "/{serial_number}/frames/latest",
+    summary="Get N latest frames from ring buffer",
+    response_model=dict
+)
+async def get_latest_frames(
+    serial_number: str,
+    count: int = Query(default=5, ge=1, le=5, description="Number of frames to retrieve (1-5)"),
+    quality: int = Query(default=85, ge=1, le=100, description="JPEG quality (1-100)"),
+    db=Depends(get_database),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Lấy N frames mới nhất từ ring buffer của camera.
+
+    - **serial_number**: Serial number của camera
+    - **count**: Số lượng frames cần lấy (1-5, default: 5)
+    - **quality**: JPEG quality (1-100, default: 85)
+
+    Returns: JSON với danh sách frames dạng base64 JPEG
+    """
+    import base64
+    import cv2
+
+    # Kiểm tra camera có tồn tại trong database không
+    repo = CameraRepository(db)
+    camera = await repo.get_by_serial(serial_number)
+
+    if not camera:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Camera with serial number '{serial_number}' not found"
+        )
+
+    # Đọc N frames từ ring buffer
+    frames_data = shared_memory_service.read_latest_frames(serial_number, count)
+
+    if not frames_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No frames available for camera '{serial_number}'. Please ensure camera is connected and streaming."
+        )
+
+    # Encode frames to JPEG base64
+    encoded_frames = []
+    for frame_array, metadata in frames_data:
+        try:
+            # Encode frame as JPEG
+            success, jpeg_buffer = cv2.imencode(
+                ".jpg",
+                frame_array,
+                [cv2.IMWRITE_JPEG_QUALITY, quality]
+            )
+
+            if success:
+                # Convert to base64
+                frame_base64 = base64.b64encode(jpeg_buffer.tobytes()).decode('utf-8')
+
+                encoded_frames.append({
+                    'frame_base64': frame_base64,
+                    'metadata': {
+                        'frame_idx': metadata.get('frame_idx'),
+                        'timestamp_ns': metadata.get('timestamp_ns'),
+                        'shape': metadata.get('shape'),
+                        'dtype': str(metadata.get('dtype'))
+                    }
+                })
+        except Exception as e:
+            logger.error(f"Error encoding frame: {e}")
+            continue
+
+    return {
+        'serial_number': serial_number,
+        'count': len(encoded_frames),
+        'frames': encoded_frames
+    }
 
 
 @router.post(

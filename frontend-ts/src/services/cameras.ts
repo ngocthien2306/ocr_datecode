@@ -85,6 +85,13 @@ export const camerasAPI = {
     const response = await api.get<DiscoveredCamera[]>('/cameras/discover');
     return response.data;
   },
+
+  getLatestFrames: async (serialNumber: string, count: number = 5, quality: number = 85): Promise<any> => {
+    const response = await api.get(`/cameras/${serialNumber}/frames/latest`, {
+      params: { count, quality }
+    });
+    return response.data;
+  },
 };
 
 export default camerasAPI;

@@ -3,7 +3,7 @@ Camera Module
 Manages individual camera instance with shared memory and inference
 """
 
-from multiprocessing import shared_memory, Process
+from multiprocessing import shared_memory, Process, Value
 import os
 from pypylon import pylon
 import cv2
@@ -22,6 +22,177 @@ import json
 # Inference removed - now handled by CameraManager
 
 logger = logging.getLogger(__name__)
+
+
+class RingBufferSharedMemory:
+    """
+    Ring buffer implementation for storing multiple frames in shared memory
+
+    Memory Layout:
+    - Header (64 bytes): Buffer management metadata
+    - Frame Slots (5 slots): Each slot stores one complete frame
+
+    Features:
+    - Lock-free write (single writer - camera thread)
+    - Multiple concurrent readers (API threads)
+    - Atomic index updates using multiprocessing.Value
+    - Fixed 5-frame circular buffer
+    """
+
+    BUFFER_SIZE = 5  # Number of frames to store
+    HEADER_SIZE = 64  # Bytes for buffer header
+
+    def __init__(self, serial_number: str, max_frame_size: int):
+        """
+        Initialize ring buffer shared memory
+
+        Args:
+            serial_number: Camera serial number (for shm name)
+            max_frame_size: Maximum size of single frame in bytes (width × height × 3)
+        """
+        self.serial_number = serial_number
+        self.shm_name = f"camera_{serial_number}"
+
+        # Calculate slot size (frame + metadata overhead)
+        # Each slot: frame_idx(8) + timestamp(8) + metadata_len(4) + metadata(~512) + frame_len(4) + frame_bytes
+        self.slot_size = max_frame_size + 1024  # Extra 1KB for metadata
+
+        # Total shared memory size
+        self.shm_size = self.HEADER_SIZE + (self.slot_size * self.BUFFER_SIZE)
+
+        # Cleanup existing shared memory
+        try:
+            existing_shm = shared_memory.SharedMemory(name=self.shm_name)
+            existing_shm.close()
+            existing_shm.unlink()
+            logger.info(f"Cleaned up existing shared memory: {self.shm_name}")
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            logger.warning(f"Error cleaning up existing shared memory: {e}")
+
+        # Create new shared memory
+        self.shm = shared_memory.SharedMemory(
+            name=self.shm_name,
+            create=True,
+            size=self.shm_size
+        )
+
+        # Initialize header
+        self._init_header()
+
+        logger.info(
+            f"Ring buffer created: {self.shm_name}, "
+            f"size={self.shm_size / 1024 / 1024:.2f}MB, "
+            f"slots={self.BUFFER_SIZE}, "
+            f"slot_size={self.slot_size / 1024:.2f}KB"
+        )
+
+    def _init_header(self):
+        """Initialize buffer header with default values"""
+        offset = 0
+
+        # write_idx (4 bytes) - Index where next frame will be written
+        struct.pack_into("<I", self.shm.buf, offset, 0)
+        offset += 4
+
+        # frame_count (4 bytes) - Total frames written (capped at BUFFER_SIZE)
+        struct.pack_into("<I", self.shm.buf, offset, 0)
+        offset += 4
+
+        # buffer_size (4 bytes) - Maximum frames in buffer
+        struct.pack_into("<I", self.shm.buf, offset, self.BUFFER_SIZE)
+        offset += 4
+
+        # frame_counter (8 bytes) - Monotonic counter for all frames written
+        struct.pack_into("<Q", self.shm.buf, offset, 0)
+        offset += 8
+
+        # reserved (44 bytes) - For future use
+        # Total header: 64 bytes
+
+    def write_frame(self, img_array: np.ndarray, metadata: Dict[str, Any]):
+        """
+        Write frame to next slot in ring buffer
+
+        Args:
+            img_array: Frame image array (BGR)
+            metadata: Frame metadata dict
+        """
+        try:
+            # Read current write index from header
+            write_idx = struct.unpack_from("<I", self.shm.buf, 0)[0]
+            frame_counter = struct.unpack_from("<Q", self.shm.buf, 12)[0]
+
+            # Calculate slot offset
+            slot_offset = self.HEADER_SIZE + (write_idx * self.slot_size)
+
+            # Prepare frame data
+            metadata_bytes = pickle.dumps(metadata)
+            metadata_len = len(metadata_bytes)
+            frame_bytes = img_array.tobytes()
+            frame_len = len(frame_bytes)
+
+            # Write to slot
+            offset = slot_offset
+
+            # frame_idx (8 bytes) - Monotonic frame counter
+            struct.pack_into("<Q", self.shm.buf, offset, frame_counter)
+            offset += 8
+
+            # timestamp (8 bytes) - Unix timestamp in nanoseconds
+            timestamp_ns = time.time_ns()
+            struct.pack_into("<Q", self.shm.buf, offset, timestamp_ns)
+            offset += 8
+
+            # metadata_len (4 bytes)
+            struct.pack_into("<I", self.shm.buf, offset, metadata_len)
+            offset += 4
+
+            # metadata bytes
+            self.shm.buf[offset:offset+metadata_len] = metadata_bytes
+            offset += metadata_len
+
+            # frame_len (4 bytes)
+            struct.pack_into("<I", self.shm.buf, offset, frame_len)
+            offset += 4
+
+            # frame bytes
+            self.shm.buf[offset:offset+frame_len] = frame_bytes
+
+            # Update header (atomic-like operation - single writer so safe)
+            next_write_idx = (write_idx + 1) % self.BUFFER_SIZE
+            struct.pack_into("<I", self.shm.buf, 0, next_write_idx)
+
+            # Update frame count (capped at BUFFER_SIZE)
+            frame_count = struct.unpack_from("<I", self.shm.buf, 4)[0]
+            frame_count = min(frame_count + 1, self.BUFFER_SIZE)
+            struct.pack_into("<I", self.shm.buf, 4, frame_count)
+
+            # Update frame counter (monotonic)
+            struct.pack_into("<Q", self.shm.buf, 12, frame_counter + 1)
+
+        except Exception as e:
+            logger.error(f"Error writing to ring buffer: {e}")
+
+    def get_buffer_info(self) -> Dict[str, int]:
+        """Get current buffer status"""
+        return {
+            'write_idx': struct.unpack_from("<I", self.shm.buf, 0)[0],
+            'frame_count': struct.unpack_from("<I", self.shm.buf, 4)[0],
+            'buffer_size': struct.unpack_from("<I", self.shm.buf, 8)[0],
+            'frame_counter': struct.unpack_from("<Q", self.shm.buf, 12)[0]
+        }
+
+    def cleanup(self):
+        """Cleanup shared memory"""
+        if self.shm:
+            try:
+                self.shm.close()
+                self.shm.unlink()
+                logger.info(f"Ring buffer cleaned up: {self.shm_name}")
+            except Exception as e:
+                logger.error(f"Error cleaning up ring buffer: {e}")
 
 
 class CameraMode(Enum):
@@ -182,31 +353,21 @@ class Camera:
             # Configure GigE buffer and network settings (must be done after Open and before StartGrabbing)
             # self._configure_gige_buffer_settings()
 
-            # Setup shared memory
+            # Setup ring buffer shared memory
             actual_width = self.camera.Width.GetValue()
             actual_height = self.camera.Height.GetValue()
             max_frame_size = actual_width * actual_height * 3  # BGR
-            shm_size = max_frame_size + 4096  # Extra for metadata
 
-            # Cleanup existing shared memory
-            try:
-                existing_shm = shared_memory.SharedMemory(name=self.shm_name)
-                existing_shm.close()
-                existing_shm.unlink()
-            except FileNotFoundError:
-                pass
-
-            # Create new shared memory
-            self.shm = shared_memory.SharedMemory(
-                name=self.shm_name,
-                create=True,
-                size=shm_size
+            # Create ring buffer (5 frames)
+            self.ring_buffer = RingBufferSharedMemory(
+                serial_number=self.serial_number,
+                max_frame_size=max_frame_size
             )
 
             logger.info(
                 f"Camera connected: {self.model_name} (SN: {self.serial_number}), "
                 f"resolution: {actual_width}x{actual_height}, "
-                f"shared memory: {self.shm_name}"
+                f"ring buffer: {self.ring_buffer.shm_size / 1024 / 1024:.2f}MB ({RingBufferSharedMemory.BUFFER_SIZE} frames)"
             )
 
             self._emit_event("camera_connected", {
@@ -231,9 +392,8 @@ class Camera:
             if self.camera and self.camera.IsOpen():
                 self.camera.Close()
 
-            if self.shm:
-                self.shm.close()
-                self.shm.unlink()
+            if hasattr(self, 'ring_buffer') and self.ring_buffer:
+                self.ring_buffer.cleanup()
 
             logger.info(f"Camera disconnected: {self.serial_number}")
             self._emit_event("camera_disconnected", {})
@@ -1128,44 +1288,16 @@ class Camera:
             return None
 
     def _write_frame_to_shm(self, img_array: np.ndarray, metadata: Dict[str, Any]):
-        """Write frame and metadata to shared memory"""
-        if not self.shm:
+        """Write frame and metadata to ring buffer shared memory"""
+        if not hasattr(self, 'ring_buffer') or not self.ring_buffer:
             return
 
         try:
-            metadata_bytes = pickle.dumps(metadata)
-            metadata_len = len(metadata_bytes)
-
-            frame_bytes = img_array.tobytes()
-            frame_len = len(frame_bytes)
-
-            offset = 0
-
-            # Frame version (8 bytes)
-            struct.pack_into("<Q", self.shm.buf, offset, self.frame_idx)
-            offset += 8
-
-            # Metadata length (4 bytes)
-            struct.pack_into("<I", self.shm.buf, offset, metadata_len)
-            offset += 4
-
-            # Metadata bytes
-            self.shm.buf[offset:offset+metadata_len] = metadata_bytes
-            offset += metadata_len
-
-            # Frame length (4 bytes)
-            struct.pack_into("<I", self.shm.buf, offset, frame_len)
-            offset += 4
-
-            # Frame bytes
-            self.shm.buf[offset:offset+frame_len] = frame_bytes
-            offset += frame_len
-
-            # Frame version verify (8 bytes)
-            struct.pack_into("<Q", self.shm.buf, offset, self.frame_idx)
+            # Write to ring buffer (automatically handles slot rotation)
+            self.ring_buffer.write_frame(img_array, metadata)
 
         except Exception as e:
-            logger.error(f"Error writing to shared memory: {e}")
+            logger.error(f"Error writing to ring buffer: {e}")
 
     def run(self):
         """

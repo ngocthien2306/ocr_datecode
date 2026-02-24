@@ -135,6 +135,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   const [selectedTemplateIndex, setSelectedTemplateIndex] = useState<number>(0); // Index of selected template for current camera
   const [selectedAnnotation, setSelectedAnnotation] = useState<number | null>(null);
   const [isGettingFrame, setIsGettingFrame] = useState(false);
+  const [frameCount, setFrameCount] = useState<number>(2);
   const fabricCanvasRef = useRef<any>(null);
 
   // Confirm dialog state
@@ -517,7 +518,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     }
   };
 
-  const handleGetCurrentFrame = async () => {
+  const handleGetMultipleFrames = async () => {
     if (!selectedCameraForTemplate) {
       toast.warning('Please select a camera first');
       return;
@@ -534,7 +535,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
     setIsGettingFrame(true);
     try {
-      toast.info('Fetching current frame from camera...');
+      toast.info(`Fetching ${frameCount} frame${frameCount > 1 ? 's' : ''} from camera...`);
 
       // First check if camera is connected
       const statusResponse = await camerasAPI.getCameraStatus(serialNumber);
@@ -544,78 +545,93 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         return;
       }
 
-      // Fetch current frame
-      const token = localStorage.getItem('access_token');
-      const frameUrl = `${API_BASE_URL}/api/cameras/${serialNumber}/frame?quality=95&token=${token}&t=${Date.now()}`;
+      // Fetch N frames from ring buffer
+      const framesResponse = await camerasAPI.getLatestFrames(serialNumber, frameCount, 95);
 
-      // Download the frame as blob
-      const frameResponse = await fetch(frameUrl);
-      if (!frameResponse.ok) {
-        if (frameResponse.status === 404) {
-          toast.error('Camera is not streaming. Please connect the camera in Camera Management.');
-          return;
+      if (!framesResponse || !framesResponse.frames || framesResponse.frames.length === 0) {
+        toast.error('No frames available. Camera may not be streaming.');
+        return;
+      }
+
+      const { frames } = framesResponse;
+      toast.info(`Processing ${frames.length} frame${frames.length > 1 ? 's' : ''}...`);
+
+      // Process each frame
+      let processedCount = 0;
+      for (let i = 0; i < frames.length; i++) {
+        const frameData = frames[i];
+        const frameBase64 = frameData.frame_base64;
+
+        // Convert base64 to blob
+        const byteCharacters = atob(frameBase64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let j = 0; j < byteCharacters.length; j++) {
+          byteNumbers[j] = byteCharacters.charCodeAt(j);
         }
-        throw new Error('Failed to fetch frame');
-      }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: 'image/jpeg' });
 
-      const blob = await frameResponse.blob();
+        // Upload frame to server
+        const uploadFormData = new FormData();
+        uploadFormData.append('file', blob, `camera_${serialNumber}_frame${i + 1}_${Date.now()}.jpg`);
 
-      // Upload the frame to server
-      toast.info('Uploading frame to server...');
-      const uploadFormData = new FormData();
-      uploadFormData.append('file', blob, `camera_${serialNumber}_${Date.now()}.jpg`);
+        const uploadToken = localStorage.getItem('access_token');
+        const uploadResponse = await fetch(`${API_BASE_URL}/api/recipes/templates/upload`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${uploadToken}`,
+            'Bypass-Tunnel-Reminder': 'true'
+          },
+          body: uploadFormData
+        });
 
-      const uploadToken = localStorage.getItem('access_token');
-      const uploadResponse = await fetch(`${API_BASE_URL}/api/recipes/templates/upload`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${uploadToken}`,
-          'Bypass-Tunnel-Reminder': 'true'
-        },
-        body: uploadFormData
-      });
+        if (!uploadResponse.ok) {
+          console.error(`Failed to upload frame ${i + 1}`);
+          continue;
+        }
 
-      if (!uploadResponse.ok) {
-        const errorData = await uploadResponse.json().catch(() => ({}));
-        throw new Error(errorData.detail || 'Failed to upload frame');
-      }
+        const { url, width, height } = await uploadResponse.json();
 
-      const { url, width, height } = await uploadResponse.json();
+        // Convert blob to base64 for canvas preview
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const imageDataUrl = event.target?.result as string;
 
-      // Convert blob to base64 for canvas preview
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const imageDataUrl = event.target?.result as string;
+          // Add new template to the selected camera's templates array
+          const currentTemplates = cameraTemplates[selectedCameraForTemplate] || [];
+          const templateName = `Frame ${currentTemplates.length + processedCount + 1}`;
+          const newTemplate = {
+            id: `template-${Date.now()}-${i}`,
+            name: templateName,
+            image: imageDataUrl, // For preview in canvas
+            image_url: url, // Server URL for submission
+            image_width: width,
+            image_height: height,
+            annotations: [],
+            center_offset_threshold_left: 50.0,
+            center_offset_threshold_right: 50.0
+          };
 
-        // Add new template to the selected camera's templates array
-        const currentTemplates = cameraTemplates[selectedCameraForTemplate] || [];
-        const templateName = `Frame ${currentTemplates.length + 1}`;
-        const newTemplate = {
-          id: `template-${Date.now()}`,
-          name: templateName,
-          image: imageDataUrl, // For preview in canvas
-          image_url: url, // Server URL for submission
-          image_width: width,
-          image_height: height,
-          annotations: [],
-          center_offset_threshold_left: 50.0,   // Default center alignment threshold left
-          center_offset_threshold_right: 50.0   // Default center alignment threshold right
+          setCameraTemplates(prev => ({
+            ...prev,
+            [selectedCameraForTemplate]: [...(prev[selectedCameraForTemplate] || []), newTemplate]
+          }));
+
+          processedCount++;
+
+          // Auto-select last template when all frames are processed
+          if (processedCount === frames.length) {
+            const finalTemplates = cameraTemplates[selectedCameraForTemplate] || [];
+            setSelectedTemplateIndex(finalTemplates.length + frames.length - 1);
+            toast.success(`Successfully captured ${frames.length} frame${frames.length > 1 ? 's' : ''}!`);
+          }
         };
-
-        setCameraTemplates(prev => ({
-          ...prev,
-          [selectedCameraForTemplate]: [...(prev[selectedCameraForTemplate] || []), newTemplate]
-        }));
-
-        // Auto-select the new template
-        setSelectedTemplateIndex(currentTemplates.length);
-        toast.success('Frame captured successfully!');
-      };
-      reader.readAsDataURL(blob);
+        reader.readAsDataURL(blob);
+      }
 
     } catch (error: any) {
-      console.error('Get frame error:', error);
-      toast.error(error.message || 'Failed to get current frame from camera');
+      console.error('Get frames error:', error);
+      toast.error(error.message || 'Failed to get frames from camera');
     } finally {
       setIsGettingFrame(false);
     }
@@ -1417,12 +1433,32 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                           </svg>
                           Upload Image
                         </label>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <label style={{ fontSize: '14px', fontWeight: 500 }}>Frames:</label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="5"
+                            value={frameCount}
+                            onChange={(e) => setFrameCount(Math.min(5, Math.max(1, parseInt(e.target.value) || 1)))}
+                            style={{
+                              width: '60px',
+                              padding: '6px 8px',
+                              border: '1px solid #d1d5db',
+                              borderRadius: '4px',
+                              fontSize: '14px'
+                            }}
+                            disabled={isGettingFrame}
+                          />
+                        </div>
+
                         <button
                           type="button"
                           className="btn btn-secondary"
-                          onClick={handleGetCurrentFrame}
+                          onClick={handleGetMultipleFrames}
                           disabled={isGettingFrame}
-                          title="Get current frame from camera"
+                          title={`Get ${frameCount} frame${frameCount > 1 ? 's' : ''} from camera ring buffer`}
                         >
                           {isGettingFrame ? (
                             <>
@@ -1430,7 +1466,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                 <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" opacity="0.25"/>
                                 <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="2"/>
                               </svg>
-                              Getting Frame...
+                              Getting Frames...
                             </>
                           ) : (
                             <>
@@ -1439,7 +1475,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                 <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
                                 <path d="M7 4V2M17 4V2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
                               </svg>
-                              Get Current Frame
+                              Get {frameCount} Frame{frameCount > 1 ? 's' : ''}
                             </>
                           )}
                         </button>
