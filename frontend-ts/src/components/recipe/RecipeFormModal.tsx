@@ -556,8 +556,17 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       const { frames } = framesResponse;
       toast.info(`Processing ${frames.length} frame${frames.length > 1 ? 's' : ''}...`);
 
-      // Get current templates count before processing
-      const initialTemplateCount = (cameraTemplates[selectedCameraForTemplate] || []).length;
+      // Get current templates for this camera
+      const currentTemplates = cameraTemplates[selectedCameraForTemplate] || [];
+      const initialTemplateCount = currentTemplates.length;
+
+      // Get annotations from currently selected template (if exists)
+      const currentTemplate = currentTemplates[selectedTemplateIndex];
+      const annotationsToClone = currentTemplate?.annotations || [];
+
+      if (annotationsToClone.length > 0) {
+        toast.info(`Cloning ${annotationsToClone.length} annotation${annotationsToClone.length > 1 ? 's' : ''} from current template...`);
+      }
 
       // Process each frame sequentially
       const newTemplates: any[] = [];
@@ -606,7 +615,13 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           reader.readAsDataURL(blob);
         });
 
-        // Create template
+        // Clone annotations from current template (deep copy)
+        const clonedAnnotations = annotationsToClone.map((annotation: any) => ({
+          ...annotation,
+          id: `annotation-${Date.now()}-${Math.random()}`  // Generate new unique ID
+        }));
+
+        // Create template with cloned annotations
         const templateName = `Frame ${initialTemplateCount + i + 1}`;
         const newTemplate = {
           id: `template-${Date.now()}-${i}`,
@@ -615,9 +630,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           image_url: url, // Server URL for submission
           image_width: width,
           image_height: height,
-          annotations: [],
-          center_offset_threshold_left: 50.0,
-          center_offset_threshold_right: 50.0
+          annotations: clonedAnnotations,  // Use cloned annotations
+          center_offset_threshold_left: currentTemplate?.center_offset_threshold_left || 50.0,
+          center_offset_threshold_right: currentTemplate?.center_offset_threshold_right || 50.0
         };
 
         newTemplates.push(newTemplate);
@@ -632,7 +647,13 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
         // Auto-select last added template
         setSelectedTemplateIndex(initialTemplateCount + newTemplates.length - 1);
-        toast.success(`Successfully captured ${newTemplates.length} frame${newTemplates.length > 1 ? 's' : ''}!`);
+
+        // Success message with annotation info
+        if (annotationsToClone.length > 0) {
+          toast.success(`Successfully captured ${newTemplates.length} frame${newTemplates.length > 1 ? 's' : ''} with ${annotationsToClone.length} annotation${annotationsToClone.length > 1 ? 's' : ''} cloned!`);
+        } else {
+          toast.success(`Successfully captured ${newTemplates.length} frame${newTemplates.length > 1 ? 's' : ''}!`);
+        }
       } else {
         toast.error('No frames were successfully processed');
       }
