@@ -268,11 +268,11 @@ class TemplateVerificationService:
             # Save debug images if enabled
             if self.save_debug_images:
                 cv2.imwrite(
-                    f"{self.debug_path}/template_crop_{serial_number}.png",
+                    f"{self.debug_path}/template_crop_{serial_number}_{self._debug_counter}.png",
                     cropped_template
                 )
                 cv2.imwrite(
-                    f"{self.debug_path}/target_crop_{serial_number}.png",
+                    f"{self.debug_path}/target_crop_{serial_number}_{self._debug_counter}.png",
                     cropped_target
                 )
 

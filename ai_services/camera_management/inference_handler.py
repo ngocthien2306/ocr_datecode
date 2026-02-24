@@ -248,7 +248,7 @@ class InferenceHandler:
             self.text_verification_service = TextVerificationService(
                 text_recognizer=self.text_recognizer,
                 ocr_backend=self.ocr_backend or "unknown",
-                save_debug_images=False,
+                save_debug_images=True,
                 debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result"
             )
             logger.info(f"TextVerificationService initialized with {self.ocr_backend} backend")
@@ -258,7 +258,7 @@ class InferenceHandler:
 
         # Template Verification Service
         self.template_verification_service = TemplateVerificationService(
-            save_debug_images=False,
+            save_debug_images=True,
             debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
             default_threshold=0.85
         )
