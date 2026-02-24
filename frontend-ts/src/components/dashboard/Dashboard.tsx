@@ -77,7 +77,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   const { canAccessPage } = useUser();
   const [currentSection, setCurrentSection] = useState<Section>('dashboard');
   const [isLoading, setIsLoading] = useState(true);
-  const [showInferenceRealtime, setShowInferenceRealtime] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [loadingTemplates, setLoadingTemplates] = useState<LoadingTemplates>(() => {
     return {
@@ -1006,15 +1005,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     });
   }, []);
 
-  // Auto-open InferenceRealtime overlay when realtime section is selected
-  useEffect(() => {
-    if (currentSection === 'realtime') {
-      setShowInferenceRealtime(true);
-    } else {
-      setShowInferenceRealtime(false);
-    }
-  }, [currentSection]);
-
   const fetchCameras = async () => {
     const startTime = Date.now();
     
@@ -1792,7 +1782,12 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
           {currentSection === 'users' && <UserManagement />}
           {currentSection === 'receipts' && <Receipts />}
-          {currentSection === 'realtime' && null}
+          {currentSection === 'realtime' && (
+            <InferenceRealtime
+              runningRecipeId={runningRecipeId}
+              embedded={true}
+            />
+          )}
           {currentSection === 'cameras' && <CameraManagement />}
           {currentSection === 'historical' && <Historical />}
           {currentSection === 'logs' && <Logs />}
@@ -1816,17 +1811,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
       {/* AI Agent Chat Widget */}
       <AgentChatWidget />
-
-      {/* Inference Realtime Fullscreen Overlay */}
-      {showInferenceRealtime && (
-        <InferenceRealtime
-          runningRecipeId={runningRecipeId}
-          onClose={() => {
-            setShowInferenceRealtime(false);
-            setCurrentSection('dashboard');
-          }}
-        />
-      )}
     </div>
   );
 }

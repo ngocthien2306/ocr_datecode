@@ -145,6 +145,7 @@ interface InferenceResult {
 interface InferenceRealtimeProps {
   runningRecipeId: string | null;
   onClose?: () => void;
+  embedded?: boolean; // If true, render without overlay wrapper
 }
 
 interface ConfirmDialogState {
@@ -155,7 +156,7 @@ interface ConfirmDialogState {
   onConfirm: (() => void) | null;
 }
 
-export default function InferenceRealtime({ runningRecipeId, onClose }: InferenceRealtimeProps) {
+export default function InferenceRealtime({ runningRecipeId, onClose, embedded = false }: InferenceRealtimeProps) {
   const [logs, setLogs] = useState<InferenceLog[]>([]);
   const [latestResults, setLatestResults] = useState<InferenceResult | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
@@ -713,39 +714,23 @@ export default function InferenceRealtime({ runningRecipeId, onClose }: Inferenc
     );
   };
 
-  if (!runningRecipeId) {
-    return (
-      <div className="inference-realtime-overlay">
-        <div className="inference-realtime-container">
-          <div className="inference-realtime-empty">
-            <div className="empty-state">
-              <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
-                <path d="M12 6v6l4 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-              </svg>
-              <h3>No Recipe Running</h3>
-              <p>Load a recipe from the Recipes page to start inference</p>
-            </div>
-          </div>
-          {onClose && (
-            <div className="inference-realtime-footer">
-              <button className="btn-close-inference" onClick={onClose}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                  <path d="M19 12H5M12 19l-7-7 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-                Back to Dashboard
-              </button>
-            </div>
-          )}
-        </div>
+  // Render empty state
+  const renderEmptyState = () => (
+    <div className="inference-realtime-empty">
+      <div className="empty-state">
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+          <path d="M12 6v6l4 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
+        <h3>No Recipe Running</h3>
+        <p>Load a recipe from the Recipes page to start inference</p>
       </div>
-    );
-  }
+    </div>
+  );
 
-  return (
-    <div className="inference-realtime-overlay">
-      <div className="inference-realtime-container">
-        <div className="inference-realtime">
+  // Render main content
+  const renderMainContent = () => (
+    <div className="inference-realtime">
       <div className="realtime-header">
         <div className="header-info">
           <h2>Inference Realtime Monitor</h2>
@@ -1170,9 +1155,43 @@ export default function InferenceRealtime({ runningRecipeId, onClose }: Inferenc
         confirmText="Confirm"
         cancelText="Cancel"
       />
-        </div>
+    </div>
+  );
 
-        {/* Footer with Close Button */}
+  // Return with or without overlay wrapper based on embedded prop
+  if (!runningRecipeId) {
+    if (embedded) {
+      return renderEmptyState();
+    }
+    return (
+      <div className="inference-realtime-overlay">
+        <div className="inference-realtime-container">
+          {renderEmptyState()}
+          {onClose && (
+            <div className="inference-realtime-footer">
+              <button className="btn-close-inference" onClick={onClose}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                  <path d="M19 12H5M12 19l-7-7 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                Back to Dashboard
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Main content - embedded mode (no overlay)
+  if (embedded) {
+    return renderMainContent();
+  }
+
+  // Main content - overlay mode (with backdrop and footer)
+  return (
+    <div className="inference-realtime-overlay">
+      <div className="inference-realtime-container">
+        {renderMainContent()}
         {onClose && (
           <div className="inference-realtime-footer">
             <button className="btn-close-inference" onClick={onClose}>
