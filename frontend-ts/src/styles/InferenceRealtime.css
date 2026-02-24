@@ -1638,13 +1638,12 @@
   border-top: none;
   background: transparent;
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: center;
   flex-shrink: 0;
   position: fixed;
   bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 20px;
   z-index: 1000;
 }
 
@@ -1654,7 +1653,7 @@
   gap: 0.75rem;
   padding: 1rem 2.5rem;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  color: white !important;
   border: none;
   border-radius: 10px;
   font-size: 1.05rem;
@@ -1685,6 +1684,7 @@
 .btn-close-inference:hover {
   transform: translateY(-3px);
   box-shadow: 0 8px 24px rgba(102, 126, 234, 0.45);
+  color: white !important;
 }
 
 .btn-close-inference:active {
@@ -1692,16 +1692,16 @@
   box-shadow: 0 4px 12px rgba(102, 126, 234, 0.35);
 }
 
-.btn-close-inference svg,
-.btn-close-inference span {
+.btn-close-inference svg {
   position: relative;
   z-index: 1;
-  color: white;
+  color: white !important;
+  stroke: white !important;
 }
 
-.btn-close-inference:hover svg,
-.btn-close-inference:hover span {
-  color: white;
+.btn-close-inference:hover svg {
+  color: white !important;
+  stroke: white !important;
 }
 
 .btn-close-inference svg {
