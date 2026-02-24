@@ -1,11 +1,62 @@
+/* Inference Realtime Overlay - Fullscreen */
+.inference-realtime-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  z-index: 10000; /* Above everything including sidebar */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.inference-realtime-container {
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 25px 80px rgba(0, 0, 0, 0.4);
+  max-width: 1800px;
+  width: 95vw;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(30px) scale(0.98);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
 /* Inference Realtime Monitor */
 .inference-realtime {
-  /* padding: 2rem; */
+  padding: 2rem;
   height: 100%;
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
-  /* background-color: #f8f7f9; */
+  overflow-y: auto;
+  flex: 1;
 }
 
 .inference-realtime-empty {
@@ -14,6 +65,7 @@
   justify-content: center;
   height: 100%;
   padding: 2rem;
+  flex: 1;
 }
 
 .empty-state {
@@ -1484,4 +1536,88 @@
   .time-value {
     font-size: 0.7rem;
   }
+}
+
+/* Footer with Close Button */
+.inference-realtime-footer {
+  padding: 1.5rem 2rem;
+  border-top: 2px solid #e5e7eb;
+  background: linear-gradient(180deg, #f9fafb 0%, #f3f4f6 100%);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.btn-close-inference {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 2.5rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 1.05rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 4px 16px rgba(102, 126, 234, 0.35);
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-close-inference::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(135deg, #5568d3 0%, #6a3d8f 100%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.btn-close-inference:hover::before {
+  opacity: 1;
+}
+
+.btn-close-inference:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(102, 126, 234, 0.45);
+}
+
+.btn-close-inference:active {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.35);
+}
+
+.btn-close-inference svg,
+.btn-close-inference span {
+  position: relative;
+  z-index: 1;
+}
+
+.btn-close-inference svg {
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-close-inference:hover svg {
+  transform: translateX(-6px);
+}
+
+/* Dark Mode Support for Overlay */
+body.dark-mode .inference-realtime-overlay {
+  background-color: rgba(0, 0, 0, 0.8);
+}
+
+body.dark-mode .inference-realtime-container {
+  background: #1f2937;
+  box-shadow: 0 25px 80px rgba(0, 0, 0, 0.6);
+}
+
+body.dark-mode .inference-realtime-footer {
+  background: linear-gradient(180deg, #111827 0%, #0f172a 100%);
+  border-top-color: #374151;
 }
