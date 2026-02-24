@@ -161,6 +161,10 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
   const [latestResults, setLatestResults] = useState<InferenceResult | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
   const [runningRecipe, setRunningRecipe] = useState<any>(null);
+  const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(() => {
+    const saved = localStorage.getItem('inference_header_collapsed');
+    return saved === 'true';
+  });
 
   // Initialize isOnline from localStorage (default to false/OFFLINE for safety)
   const [isOnline, setIsOnline] = useState(() => {
@@ -273,6 +277,15 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
       console.error('Error saving expanded logs:', error);
     }
   }, [expandedLogs]);
+
+  // Save header collapsed state to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('inference_header_collapsed', isHeaderCollapsed.toString());
+    } catch (error) {
+      console.error('Error saving header collapsed state:', error);
+    }
+  }, [isHeaderCollapsed]);
 
   // Update duration every second
   useEffect(() => {
@@ -731,7 +744,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
   // Render main content
   const renderMainContent = () => (
     <div className="inference-realtime">
-      <div className="realtime-header">
+      <div className={`realtime-header ${isHeaderCollapsed ? 'collapsed' : ''}`}>
         <div className="header-info">
           <h2>Inference Realtime Monitor</h2>
           {runningRecipe && (
@@ -823,6 +836,21 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
               <rect x="6" y="6" width="12" height="12" fill="currentColor"/>
             </svg>
             {isStopping ? 'Stopping...' : 'Stop Recipe'}
+          </button>
+
+          {/* Toggle Header Collapse */}
+          <button
+            className="btn-toggle-header"
+            onClick={() => setIsHeaderCollapsed(!isHeaderCollapsed)}
+            title={isHeaderCollapsed ? 'Expand header' : 'Collapse header'}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              {isHeaderCollapsed ? (
+                <path d="M19 9l-7 7-7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              ) : (
+                <path d="M5 15l7-7 7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              )}
+            </svg>
           </button>
         </div>
       </div>
