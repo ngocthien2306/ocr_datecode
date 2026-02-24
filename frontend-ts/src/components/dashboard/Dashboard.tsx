@@ -1152,11 +1152,33 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     year: 'numeric'
   });
 
+  // If realtime section, render InferenceRealtime fullscreen (no dashboard-container)
+  if (currentSection === 'realtime') {
+    return (
+      <>
+        <InferenceRealtime
+          runningRecipeId={runningRecipeId}
+          onClose={() => setCurrentSection('dashboard')}
+          embedded={false}
+        />
+        <ConfirmDialog
+          isOpen={confirmDialog.isOpen}
+          onClose={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
+          onConfirm={confirmDialog.onConfirm || (() => {})}
+          title={confirmDialog.title}
+          message={confirmDialog.message}
+          type={confirmDialog.type}
+        />
+        <AgentChatWidget />
+      </>
+    );
+  }
+
   return (
     <div className="dashboard-container">
       {/* Background for entire dashboard-container */}
       {loadingBackground.image !== 'none' && (
-        <div 
+        <div
           className="dashboard-background"
           style={{
             backgroundImage: `url(/background/${loadingBackground.image}.png)`,
@@ -1164,7 +1186,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           }}
         />
       )}
-      
+
       {/* Header */}
       <header className="dashboard-header-top">
         <div className="header-left">
@@ -1782,12 +1804,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
           {currentSection === 'users' && <UserManagement />}
           {currentSection === 'receipts' && <Receipts />}
-          {currentSection === 'realtime' && (
-            <InferenceRealtime
-              runningRecipeId={runningRecipeId}
-              embedded={true}
-            />
-          )}
           {currentSection === 'cameras' && <CameraManagement />}
           {currentSection === 'historical' && <Historical />}
           {currentSection === 'logs' && <Logs />}
