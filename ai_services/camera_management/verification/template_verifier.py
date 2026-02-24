@@ -90,6 +90,7 @@ class TemplateVerificationService:
         self.default_threshold = default_threshold
         self.max_dimension = max_dimension
         self.max_workers = max_workers
+        self._debug_counter = 0
 
         # Cache for cropped templates (key: (camera_serial, points_tuple))
         self._template_crop_cache = {}

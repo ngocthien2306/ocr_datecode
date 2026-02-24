@@ -95,6 +95,7 @@ class TextVerificationService:
         self.ocr_backend = ocr_backend
         self.save_debug_images = save_debug_images
         self.debug_path = debug_path or f"{home}/Source/ocr_datecode/ai_services/test_result"
+        self._debug_counter = 0
 
     @property
     def is_available(self) -> bool:
@@ -239,8 +240,9 @@ class TextVerificationService:
 
             # Save debug image if enabled
             if self.save_debug_images:
-                debug_file = f"{self.debug_path}/cropped_region_{serial_number}_{annotation_idx}.png"
+                debug_file = f"{self.debug_path}/cropped_region_{serial_number}_{annotation_idx}_{self._debug_counter}.png"
                 cv2.imwrite(debug_file, cropped_region)
+                self._debug_counter += 1
 
             # Run OCR
             logger.debug(f"[{serial_number}] Running OCR with {self.ocr_backend} backend...")
