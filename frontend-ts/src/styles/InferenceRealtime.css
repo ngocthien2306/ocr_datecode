@@ -574,11 +574,19 @@
 }
 
 .cameras-container.cameras-3 {
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .cameras-container.cameras-4 {
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.cameras-container.cameras-5 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.cameras-container.cameras-6 {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 /* Camera Card - Fixed height */
@@ -1180,7 +1188,10 @@
 
 /* Responsive */
 @media (max-width: 1400px) {
-  .cameras-container.cameras-3 {
+  .cameras-container.cameras-3,
+  .cameras-container.cameras-4,
+  .cameras-container.cameras-5,
+  .cameras-container.cameras-6 {
     grid-template-columns: repeat(2, 1fr);
   }
 
@@ -1201,7 +1212,9 @@
   }
 
   .cameras-container.cameras-3,
-  .cameras-container.cameras-4 {
+  .cameras-container.cameras-4,
+  .cameras-container.cameras-5,
+  .cameras-container.cameras-6 {
     grid-template-columns: repeat(2, 1fr);
   }
 
@@ -1215,7 +1228,9 @@
   /* Stack all cameras vertically on mobile */
   .cameras-container.cameras-2,
   .cameras-container.cameras-3,
-  .cameras-container.cameras-4 {
+  .cameras-container.cameras-4,
+  .cameras-container.cameras-5,
+  .cameras-container.cameras-6 {
     grid-template-columns: 1fr;
   }
 

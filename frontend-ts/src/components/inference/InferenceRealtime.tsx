@@ -913,7 +913,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
               <p>Waiting for first result...</p>
             </div>
           ) : (
-            <div className={`cameras-container cameras-${Math.min(latestResults.camera_results.length, 4)}`}>
+            <div className={`cameras-container cameras-${Math.min(latestResults.camera_results.length, 6)}`}>
               {latestResults.camera_results.map((cameraResult) => {
                 // Find per-camera stats
                 const cameraStats = latestResults.metadata?.inference_stats?.per_camera_stats?.find(
