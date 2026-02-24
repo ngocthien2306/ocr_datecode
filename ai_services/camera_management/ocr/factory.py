@@ -254,8 +254,7 @@ class TensorRTOpenOCRBackend(OCRBackendStrategy):
             return ("", 0.0)
 
         # Direct numpy array processing (no temp files needed!)
-        result = self._recognizer.recognize(image)
-        return (result['text'], result['confidence'])
+        return self._recognizer.recognize(image, return_confidence=return_confidence)
 
     def recognize_batch(
         self,
@@ -335,8 +334,7 @@ class ONNXOpenOCRBackend(OCRBackendStrategy):
             return ("", 0.0)
 
         # Direct numpy array processing (no temp files!)
-        result = self._recognizer.recognize(image)
-        return (result['text'], result['confidence'])
+        return self._recognizer.recognize(image, return_confidence=return_confidence)
 
     def recognize_batch(
         self,
