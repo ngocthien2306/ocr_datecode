@@ -104,8 +104,19 @@
   padding: 24px;
 }
 
+/* Wide modal content for all tabs */
+.inference-settings-modal .modal-content-wide {
+  padding: 24px 32px; /* More horizontal padding for wide layout */
+}
+
+/* All tab panels - 1200px max-width */
 .inference-settings-modal .tab-panel {
-  max-width: 800px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.inference-settings-modal .tab-panel-wide {
+  max-width: 1200px;
   margin: 0 auto;
 }
 
@@ -117,9 +128,10 @@
 
 .inference-settings-modal .form-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
   margin-bottom: 16px;
+  max-width: 900px; /* Center forms nicely within 1200px container */
 }
 
 .inference-settings-modal .form-group {
@@ -157,10 +169,10 @@
   font-size: 1rem;
 }
 
-/* Camera Cards */
+/* Camera Cards - Grid layout for wide display */
 .inference-settings-modal .cameras-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
   gap: 16px;
 }
 
@@ -185,9 +197,9 @@
   color: #6b7280;
 }
 
-/* Template Tab */
+/* Template Tab - override default max-width */
 .inference-settings-modal .template-panel {
-  max-width: none;
+  max-width: 1200px !important; /* Override to allow wider layout */
 }
 
 .inference-settings-modal .template-header {

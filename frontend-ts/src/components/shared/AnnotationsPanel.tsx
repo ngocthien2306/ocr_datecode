@@ -51,6 +51,8 @@ interface AnnotationsPanelProps {
   fabricCanvasRef?: React.RefObject<FabricCanvas>;
   imageWidth?: number;
   imageHeight?: number;
+  readOnlyType?: boolean; // Disable type selector
+  hideMetadata?: boolean; // Hide shape/size info
 }
 
 const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
@@ -63,7 +65,9 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
   onDeleteAnnotation,
   fabricCanvasRef,
   imageWidth,
-  imageHeight
+  imageHeight,
+  readOnlyType = false,
+  hideMetadata = false
 }) => {
   
   const handleAnnotationClick = (index: number) => {
@@ -106,6 +110,7 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
               onChange={(e) => onAnnotationTypeChange?.(index, e.target.value)}
               className="annotation-type-select"
               onClick={(e) => e.stopPropagation()}
+              disabled={readOnlyType}
             >
               {ANNOTATION_TYPES.map(type => (
                 <option key={type.value} value={type.value}>
@@ -160,28 +165,32 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
               />
             </div>
 
-            <div className="annotation-info">
-              <span className="info-label">Shape:</span>
-              <span className="info-value">{ann.shape}</span>
-            </div>
+            {!hideMetadata && (
+              <>
+                <div className="annotation-info">
+                  <span className="info-label">Shape:</span>
+                  <span className="info-value">{ann.shape}</span>
+                </div>
 
-            {ann.shape === 'rectangle' && ann.width !== undefined && ann.height !== undefined && (
-              <div className="annotation-info">
-                <span className="info-label">Size:</span>
-                <span className="info-value">
-                  {imageWidth && imageHeight
-                    ? `${Math.round(ann.width * imageWidth)} × ${Math.round(ann.height * imageHeight)}`
-                    : `${ann.width.toFixed(3)} × ${ann.height.toFixed(3)}`
-                  }
-                </span>
-              </div>
-            )}
+                {ann.shape === 'rectangle' && ann.width !== undefined && ann.height !== undefined && (
+                  <div className="annotation-info">
+                    <span className="info-label">Size:</span>
+                    <span className="info-value">
+                      {imageWidth && imageHeight
+                        ? `${Math.round(ann.width * imageWidth)} × ${Math.round(ann.height * imageHeight)}`
+                        : `${ann.width.toFixed(3)} × ${ann.height.toFixed(3)}`
+                      }
+                    </span>
+                  </div>
+                )}
 
-            {ann.shape === 'polygon' && ann.points && (
-              <div className="annotation-info">
-                <span className="info-label">Points:</span>
-                <span className="info-value">{ann.points.length}</span>
-              </div>
+                {ann.shape === 'polygon' && ann.points && (
+                  <div className="annotation-info">
+                    <span className="info-label">Points:</span>
+                    <span className="info-value">{ann.points.length}</span>
+                  </div>
+                )}
+              </>
             )}
 
             <button

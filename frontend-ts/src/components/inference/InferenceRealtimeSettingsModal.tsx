@@ -121,12 +121,12 @@ export default function InferenceRealtimeSettingsModal({
     const template = cameraTemplate.templates[selectedTemplateIndex];
     const annotations = template?.annotations || [];
 
-    // Ensure all annotations have required fields
-    return annotations.map(ann => ({
+    // Ensure all annotations have required fields with proper types
+    return annotations.map((ann: any): Annotation => ({
       ...ann,
-      type: ann.type || 'text', // Default to 'text' if not specified
-      shape: ann.shape || 'rectangle',
-      conf: ann.conf ?? 0.85
+      type: ann.type || 'text', // Required: Default to 'text' if not specified
+      shape: ann.shape || 'rectangle', // Required: Default to 'rectangle'
+      conf: ann.conf ?? 0.85 // Required: Default to 0.85
     }));
   };
 
@@ -226,9 +226,9 @@ export default function InferenceRealtimeSettingsModal({
           </button>
         </div>
 
-        <div className="modal-warning">
+        {/* <div className="modal-warning">
           ⚠️ Changes are temporary and NOT saved to database. Stop/Load recipe to restore original settings.
-        </div>
+        </div> */}
 
         <div className="modal-tabs">
           <button
@@ -251,10 +251,10 @@ export default function InferenceRealtimeSettingsModal({
           </button>
         </div>
 
-        <div className="modal-content">
+        <div className="modal-content modal-content-wide">
           {/* Basic Info Tab */}
           {activeTab === 'basic' && (
-            <div className="tab-panel">
+            <div className="tab-panel tab-panel-wide">
               <h3>Basic Information</h3>
               <div className="form-row">
                 <div className="form-group">
@@ -283,7 +283,7 @@ export default function InferenceRealtimeSettingsModal({
 
           {/* Camera Tab */}
           {activeTab === 'camera' && (
-            <div className="tab-panel">
+            <div className="tab-panel tab-panel-wide">
               <h3>Camera Settings</h3>
               {formData.cameras.length === 0 ? (
                 <div className="empty-state">No cameras configured</div>
@@ -349,7 +349,7 @@ export default function InferenceRealtimeSettingsModal({
 
           {/* Template Tab */}
           {activeTab === 'template' && (
-            <div className="tab-panel template-panel">
+            <div className="tab-panel tab-panel-wide template-panel">
               <div className="template-header">
                 <h3>Template Annotations</h3>
                 <select
@@ -424,7 +424,7 @@ export default function InferenceRealtimeSettingsModal({
 
                     <div className="annotations-sidebar">
                       <AnnotationsPanel
-                        annotations={getCurrentTemplateAnnotations()}
+                        annotations={getCurrentTemplateAnnotations() as any}
                         selectedAnnotation={selectedAnnotation}
                         onSelectAnnotation={setSelectedAnnotation}
                         onAnnotationTypeChange={handleAnnotationTypeChange}
@@ -433,6 +433,8 @@ export default function InferenceRealtimeSettingsModal({
                         onDeleteAnnotation={handleDeleteAnnotation}
                         imageWidth={getCurrentTemplate()?.image_width}
                         imageHeight={getCurrentTemplate()?.image_height}
+                        readOnlyType={true}
+                        hideMetadata={true}
                       />
                     </div>
                   </div>
