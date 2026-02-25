@@ -540,9 +540,20 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       const currentTemplates = cameraTemplates[selectedCameraForTemplate] || [];
       const initialTemplateCount = currentTemplates.length;
 
+      console.log('===== GET MULTIPLE FRAMES =====');
+      console.log(`Camera: ${selectedCameraForTemplate}`);
+      console.log(`Existing templates: ${initialTemplateCount}`);
+      currentTemplates.forEach((tmpl, idx) => {
+        console.log(`  Template ${idx}: ${tmpl.name}, Annotations: ${tmpl.annotations.length}`);
+      });
+
       // Determine if we should use cyclic mapping or single template cloning
       const numberOfTemplates = currentTemplates.length;
       const useCyclicMapping = numberOfTemplates > 1;
+
+      console.log(`Cyclic mapping: ${useCyclicMapping} (${numberOfTemplates} templates)`);
+      console.log(`Frames to capture: ${frameCount}`);
+      console.log('===============================');
 
       if (useCyclicMapping) {
         toast.info(`Cloning annotations from ${numberOfTemplates} templates in cyclic pattern...`);
@@ -602,30 +613,36 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
         // Determine which template to clone from (cyclic mapping)
         let sourceTemplate;
+        let sourceTemplateIndex = -1;
         if (useCyclicMapping) {
           // Cyclic mapping: frame[i] gets annotations from template[i % numberOfTemplates]
-          const templateIndex = i % numberOfTemplates;
-          sourceTemplate = currentTemplates[templateIndex];
+          sourceTemplateIndex = i % numberOfTemplates;
+          sourceTemplate = currentTemplates[sourceTemplateIndex];
+          console.log(`Frame ${i} → Template ${sourceTemplateIndex} (cyclic mapping)`);
         } else if (numberOfTemplates === 1) {
           // Single template: clone from the only available template
+          sourceTemplateIndex = 0;
           sourceTemplate = currentTemplates[0];
+          console.log(`Frame ${i} → Template 0 (single template)`);
         } else {
           // No templates: use empty annotations
           sourceTemplate = null;
+          console.log(`Frame ${i} → No template (empty)`);
         }
 
         const annotationsToClone = sourceTemplate?.annotations || [];
+        console.log(`Frame ${i}: Cloning ${annotationsToClone.length} annotations from template ${sourceTemplateIndex}`);
 
-        // Clone annotations from source template (deep copy)
-        const clonedAnnotations = annotationsToClone.map((annotation: any) => ({
+        // Clone annotations from source template (deep copy with unique IDs)
+        const clonedAnnotations = annotationsToClone.map((annotation: any, annIdx: number) => ({
           ...annotation,
-          id: `annotation-${Date.now()}-${Math.random()}`  // Generate new unique ID
+          id: `annotation-${Date.now()}-frame${i}-ann${annIdx}-${Math.random().toString(36).substring(2, 11)}`  // Generate unique ID
         }));
 
         // Create template with cloned annotations
         const templateName = `Frame ${initialTemplateCount + i + 1}`;
         const newTemplate = {
-          id: `template-${Date.now()}-${i}`,
+          id: `template-${Date.now()}-frame${i}-${Math.random().toString(36).substring(2, 11)}`,
           name: templateName,
           image: imageDataUrl, // For preview in canvas
           image_url: url, // Server URL for submission
@@ -641,6 +658,14 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
       // Add all templates at once (batch update)
       if (newTemplates.length > 0) {
+        console.log('===== SUMMARY =====');
+        console.log(`Total frames processed: ${newTemplates.length}`);
+        console.log(`Cyclic mapping used: ${useCyclicMapping}`);
+        newTemplates.forEach((tmpl, idx) => {
+          console.log(`  New Template ${idx}: ${tmpl.name}, Annotations: ${tmpl.annotations.length}`);
+        });
+        console.log('===================');
+
         setCameraTemplates(prev => ({
           ...prev,
           [selectedCameraForTemplate]: [...(prev[selectedCameraForTemplate] || []), ...newTemplates]
