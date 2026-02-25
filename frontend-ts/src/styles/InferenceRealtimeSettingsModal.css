@@ -265,6 +265,12 @@
   width: 100%;
 }
 
+.inference-settings-modal .inference-template-viewer {
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
 .inference-settings-modal .template-canvas {
   border: 1px solid #d1d5db;
   border-radius: 4px;

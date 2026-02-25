@@ -1,0 +1,16 @@
+/* Inference Template Viewer - Read-only canvas for viewing templates */
+.inference-template-viewer {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #1e1e1e;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.inference-template-viewer canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
