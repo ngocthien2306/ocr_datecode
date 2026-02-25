@@ -1,0 +1,57 @@
+/home/demo/Source/ocr_datecode/frontend-ts/src/components/recipe/Receipts.tsx
+có hàm   const handleLoadReceipt = async (receipt: Receipt) => {}
+Khi load xong thì nó chuyển trang sang inference để show kết quả xử lý 
+
+/home/demo/Source/ocr_datecode/frontend-ts/src/components/inference/InferenceRealtime.tsx
+
+đọc hiểu luôn page này để thiết kế 1 nút khi bật lên thì lấy data của recipe show 1 một popup, design giống 
+/home/demo/Source/ocr_datecode/frontend-ts/src/components/recipe/RecipeFormModal.tsx
+nhưng có 1 vài điểm cần tinh chỉnh lại, cần design lại 1 pupop mới dành riêng cho tab inference này 
+
+tab Basic Information
+
+cho chỉnh 2 field này 
+Delay Reject (ms)
+Reject Pulse (ms)
+
+tab Camera thì cho chỉnh các thông số sau them từng camera
+Exposure Time (μs) *
+Delay Trigger (ms) *
+Delay Interval (ms)
+Gain *
+
+tab Model thì bỏ qua
+
+tab template thì design tinh gọn lại 
+
+chỉ show frame template mà ko cho edit/ di chuyển trên frame, chỉ cho edit các bounding boxes (annotations) bên phải, sau đó bấm cập nhật (cập nhật xong thì tự động tắt popup)
+
+có 1 chỗ tôi đang chưa biết design như nào, phần update realtime này ko cần lưu vào database, chỉ cần truyền thông qua API -> gửi xuống camera service để update các tham số mới
+@router.post("/{recipe_id}/load", response_model=ReceiptLoadResponse)
+hãy check logic của hàm này 
+
+send_load_recipe sẽ gửi thông tin của recipe này qua Camera Service (/home/demo/Source/ocr_datecode/ai_services/camera_management_service.py) 
+
+
+            elif event == "load_recipe":
+                result = self.camera_manager.load_recipe(
+                    recipe_data=data["recipe"]
+                )
+                await self.ws_client.send_message({
+                    "event": "load_recipe_response",
+                    "data": result
+                })
+
+            elif event == "stop_recipe":
+                result = self.camera_manager.stop_recipe(
+                    recipe_id=data["recipe_id"]
+                )
+                await self.ws_client.send_message({
+                    "event": "stop_recipe_response",
+                    "data": result
+                })
+
+
+tôi có thể update data này realtime hay không, cần sửa những chỗ nào? hay khi mà tôi update trên popup bên inference thì nó ngầm stop và load lại recipe nhưng không lưu vào database
+
+hãy giúp tôi phân tích và đưa ra hướng giải quyết trước khi code
