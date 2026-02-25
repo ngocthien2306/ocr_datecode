@@ -901,7 +901,7 @@ export default function Receipts() {
                     <td>{receipt.productCode}</td>
                     <td>{receipt.date}</td>
                     <td>
-                      {receipt.cameraSettings && receipt.cameras?.[0] && (
+                      {receipt.cameras && receipt.cameras.length > 0 && (
                         <div style={{ fontSize: '0.85em' }}>
                           <div>Exp: {receipt.cameras[0]?.exposure_time || "N/A"}ms</div>
                           <div>Delay: {receipt.cameras[0]?.delay_trigger || "N/A"}ms</div>

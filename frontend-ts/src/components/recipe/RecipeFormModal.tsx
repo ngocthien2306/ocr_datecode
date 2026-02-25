@@ -7,7 +7,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useUser } from '@/contexts/UserContext';
 import { API_BASE_URL } from '@/config/api';
 import '@/styles/RecipeFormModal.css';
-import { Camera, Recipe, Annotation } from '@/types';
+import { Camera, Recipe, Annotation, RecipeCamera } from '@/types';
 
 interface RecipeFormModalProps {
   isOpen: boolean;
@@ -15,26 +15,6 @@ interface RecipeFormModalProps {
   onSubmit: (data: any) => void;
   recipe?: Recipe | null;
   mode?: 'create' | 'edit';
-}
-
-interface RecipeCamera {
-  camera_id: string;
-  model_name: string;
-  serial_number: string;
-  location: string;
-  exposure_time: number;
-  delay_trigger: number;
-  delay_interval: number;
-  reject_pulse: number;
-  gain: number;
-  pixel_format: string;
-  trigger_mode: string;  // 'continuous', 'software_trigger', 'hardware_trigger'
-  trigger_config: {
-    trigger_selector: string;  // 'FrameStart', 'ExposureStart', 'FrameBurstStart'
-    trigger_activation: string;  // 'RisingEdge', 'FallingEdge', 'AnyEdge'
-    di_number: number;  // Digital Input number (0-3) for software trigger
-    trigger_source: string;  // 'Line0', 'Line1', 'Line2', 'Line3' for hardware trigger
-  };
 }
 
 interface FormDataType {
@@ -560,12 +540,17 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       const currentTemplates = cameraTemplates[selectedCameraForTemplate] || [];
       const initialTemplateCount = currentTemplates.length;
 
-      // Get annotations from currently selected template (if exists)
-      const currentTemplate = currentTemplates[selectedTemplateIndex];
-      const annotationsToClone = currentTemplate?.annotations || [];
+      // Determine if we should use cyclic mapping or single template cloning
+      const numberOfTemplates = currentTemplates.length;
+      const useCyclicMapping = numberOfTemplates > 1;
 
-      if (annotationsToClone.length > 0) {
-        toast.info(`Cloning ${annotationsToClone.length} annotation${annotationsToClone.length > 1 ? 's' : ''} from current template...`);
+      if (useCyclicMapping) {
+        toast.info(`Cloning annotations from ${numberOfTemplates} templates in cyclic pattern...`);
+      } else if (numberOfTemplates === 1) {
+        const annotationsCount = currentTemplates[0]?.annotations?.length || 0;
+        if (annotationsCount > 0) {
+          toast.info(`Cloning ${annotationsCount} annotation${annotationsCount > 1 ? 's' : ''} from template...`);
+        }
       }
 
       // Process each frame sequentially
@@ -615,7 +600,23 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           reader.readAsDataURL(blob);
         });
 
-        // Clone annotations from current template (deep copy)
+        // Determine which template to clone from (cyclic mapping)
+        let sourceTemplate;
+        if (useCyclicMapping) {
+          // Cyclic mapping: frame[i] gets annotations from template[i % numberOfTemplates]
+          const templateIndex = i % numberOfTemplates;
+          sourceTemplate = currentTemplates[templateIndex];
+        } else if (numberOfTemplates === 1) {
+          // Single template: clone from the only available template
+          sourceTemplate = currentTemplates[0];
+        } else {
+          // No templates: use empty annotations
+          sourceTemplate = null;
+        }
+
+        const annotationsToClone = sourceTemplate?.annotations || [];
+
+        // Clone annotations from source template (deep copy)
         const clonedAnnotations = annotationsToClone.map((annotation: any) => ({
           ...annotation,
           id: `annotation-${Date.now()}-${Math.random()}`  // Generate new unique ID
@@ -631,8 +632,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           image_width: width,
           image_height: height,
           annotations: clonedAnnotations,  // Use cloned annotations
-          center_offset_threshold_left: currentTemplate?.center_offset_threshold_left || 50.0,
-          center_offset_threshold_right: currentTemplate?.center_offset_threshold_right || 50.0
+          center_offset_threshold_left: sourceTemplate?.center_offset_threshold_left || 50.0,
+          center_offset_threshold_right: sourceTemplate?.center_offset_threshold_right || 50.0
         };
 
         newTemplates.push(newTemplate);
@@ -649,8 +650,11 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         setSelectedTemplateIndex(initialTemplateCount + newTemplates.length - 1);
 
         // Success message with annotation info
-        if (annotationsToClone.length > 0) {
-          toast.success(`Successfully captured ${newTemplates.length} frame${newTemplates.length > 1 ? 's' : ''} with ${annotationsToClone.length} annotation${annotationsToClone.length > 1 ? 's' : ''} cloned!`);
+        if (useCyclicMapping) {
+          toast.success(`Successfully captured ${newTemplates.length} frame${newTemplates.length > 1 ? 's' : ''} with cyclic annotation mapping from ${numberOfTemplates} templates!`);
+        } else if (numberOfTemplates === 1 && currentTemplates[0]?.annotations?.length) {
+          const annotationsCount = currentTemplates[0]!.annotations.length;
+          toast.success(`Successfully captured ${newTemplates.length} frame${newTemplates.length > 1 ? 's' : ''} with ${annotationsCount} annotation${annotationsCount > 1 ? 's' : ''} cloned!`);
         } else {
           toast.success(`Successfully captured ${newTemplates.length} frame${newTemplates.length > 1 ? 's' : ''}!`);
         }
@@ -853,7 +857,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
       // Swap templates
       const updated = [...templates];
-      [updated[templateIndex], updated[newIndex]] = [updated[newIndex], updated[templateIndex]];
+      const temp = updated[templateIndex];
+      updated[templateIndex] = updated[newIndex]!;
+      updated[newIndex] = temp!;
 
       // Update selected index to follow the moved template
       if (selectedTemplateIndex === templateIndex) {
@@ -1091,6 +1097,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       value={formData.do_alarm_number.toString()}
                       onChange={handleInputChange}
                     >
+                      <option value="-1">None</option>
                       <option value="0">DO 0</option>
                       <option value="1">DO 1</option>
                       <option value="2">DO 2</option>

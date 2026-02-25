@@ -139,12 +139,32 @@ export interface ROIConfig {
   height: number;
 }
 
+export interface RecipeCamera {
+  camera_id: string;
+  model_name: string;
+  serial_number: string;
+  location: string;
+  exposure_time: number;
+  delay_trigger: number;
+  delay_interval: number;
+  reject_pulse: number;
+  gain: number;
+  pixel_format: string;
+  trigger_mode: string;  // 'continuous', 'software_trigger', 'hardware_trigger'
+  trigger_config: {
+    trigger_selector: string;  // 'FrameStart', 'ExposureStart', 'FrameBurstStart'
+    trigger_activation: string;  // 'RisingEdge', 'FallingEdge', 'AnyEdge'
+    di_number: number;  // Digital Input number (0-3) for software trigger
+    trigger_source: string;  // 'Line0', 'Line1', 'Line2', 'Line3' for hardware trigger
+  };
+}
+
 export interface Recipe {
   id: string;
   name: string;
   product_code: string;
   description?: string;
-  cameras: string[]; // Camera IDs
+  cameras: RecipeCamera[]; // Camera objects with full configuration
   camera_templates: string[]; // Template file paths
   delay_reject?: number;
   reject_pulse?: number;
@@ -214,7 +234,7 @@ export interface Receipt {
   operator: string;
   status: 'Active' | 'Inactive';
   description?: string;
-  cameras: string[];
+  cameras: RecipeCamera[];
   camera_templates: string[];
   delay_reject?: number;
   reject_pulse?: number;
