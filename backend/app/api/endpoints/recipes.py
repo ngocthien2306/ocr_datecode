@@ -11,6 +11,7 @@ import json
 import hashlib
 import io
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -1324,6 +1325,7 @@ async def update_recipe_realtime(
     # 5. Stop current recipe
     logger.info(f"🛑 [REALTIME UPDATE] Stopping recipe: {recipe.name}")
     stop_success = await send_stop_recipe(recipe_id)
+    time.sleep(2)
 
     if not stop_success:
         raise HTTPException(
