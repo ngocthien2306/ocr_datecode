@@ -4,7 +4,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { API_BASE_URL } from '@/config/api';
 import '@/styles/InferenceRealtimeSettingsModal.css';
 import type { Annotation } from '@/types';
-import { fabric } from 'fabric';
+import { Canvas as FabricCanvas, Image as FabricImage, Rect, Text, Polygon } from 'fabric';
 
 interface InferenceRealtimeSettingsModalProps {
   isOpen: boolean;
@@ -48,7 +48,7 @@ export default function InferenceRealtimeSettingsModal({
 
   // Canvas refs for rendering annotations
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const fabricCanvasRef = useRef<fabric.Canvas | null>(null);
+  const fabricCanvasRef = useRef<FabricCanvas | null>(null);
   const templateImageRef = useRef<HTMLImageElement>(null);
 
   // Load data from runningRecipe when modal opens
@@ -80,7 +80,7 @@ export default function InferenceRealtimeSettingsModal({
 
     // Initialize canvas
     if (!fabricCanvasRef.current) {
-      const canvas = new fabric.Canvas(canvasRef.current, {
+      const canvas = new FabricCanvas(canvasRef.current, {
         selection: false, // Disable selection
         hoverCursor: 'pointer',
         defaultCursor: 'default'
@@ -109,7 +109,7 @@ export default function InferenceRealtimeSettingsModal({
 
     // Load template image
     const imgUrl = `${API_BASE_URL}${currentTemplate.image_url}`;
-    fabric.Image.fromURL(imgUrl, (img) => {
+    FabricImage.fromURL(imgUrl, (img) => {
       if (!img || !canvas) return;
 
       const canvasWidth = 800;
@@ -146,14 +146,14 @@ export default function InferenceRealtimeSettingsModal({
   ]);
 
   // Render annotations on canvas (read-only, highlight selected)
-  const renderAnnotationsOnCanvas = (canvas: fabric.Canvas, imageScale: number) => {
+  const renderAnnotationsOnCanvas = (canvas: FabricCanvas, imageScale: number) => {
     const annotations = getCurrentTemplateAnnotations();
 
     annotations.forEach((ann, index) => {
       const isSelected = index === selectedAnnotation;
 
       if (ann.shape === 'rectangle' && ann.x !== undefined && ann.y !== undefined) {
-        const rect = new fabric.Rect({
+        const rect = new Rect({
           left: ann.x * imageScale,
           top: ann.y * imageScale,
           width: (ann.width || 0) * imageScale,
@@ -175,7 +175,7 @@ export default function InferenceRealtimeSettingsModal({
 
         // Add label
         if (ann.text) {
-          const label = new fabric.Text(ann.text, {
+          const label = new Text(ann.text, {
             left: ann.x * imageScale,
             top: (ann.y - 5) * imageScale,
             fontSize: 14,
@@ -192,7 +192,7 @@ export default function InferenceRealtimeSettingsModal({
           y: y * imageScale
         }));
 
-        const polygon = new fabric.Polygon(scaledPoints, {
+        const polygon = new Polygon(scaledPoints, {
           fill: 'transparent',
           stroke: isSelected ? '#3b82f6' : '#22c55e',
           strokeWidth: isSelected ? 3 : 2,
