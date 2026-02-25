@@ -1210,6 +1210,165 @@ async def set_inference_mode(
     }
 
 
+@router.post("/{recipe_id}/update-realtime")
+async def update_recipe_realtime(
+    recipe_id: str,
+    update_data: dict,
+    request: Request,
+    current_user: UserInDB = Depends(get_current_user),
+    recipe_repo: RecipeRepository = Depends(get_recipe_repository),
+    action_log_repo: ActionLogRepository = Depends(get_action_log_repository)
+):
+    """
+    Update recipe parameters in realtime WITHOUT saving to database.
+    Uses Stop + Load pattern to apply changes to Camera Management service.
+
+    This endpoint:
+    1. Loads the recipe from DB (to get full config)
+    2. Merges update_data into recipe config (in-memory only)
+    3. Stops the current running recipe
+    4. Loads the updated recipe config
+    5. Does NOT save changes to database
+
+    Supports updating:
+    - delay_reject, reject_pulse (Basic Info tab)
+    - Per-camera: exposure_time, delay_trigger, delay_interval, gain (Camera tab)
+    - Per-camera templates: annotations only (Template tab)
+
+    Args:
+        recipe_id: Recipe ID to update
+        update_data: Dictionary containing fields to update
+
+    Returns:
+        Status message with restarted flag
+    """
+    # 1. Check if CameraManagement service is connected
+    if not camera_ws_manager.is_connected():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Camera Management service is not connected"
+        )
+
+    # 2. Load recipe from DB to get full config
+    recipe = await recipe_repo.get_by_id(recipe_id)
+    if not recipe:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recipe not found"
+        )
+
+    # 3. Build base recipe dict from DB recipe
+    camera_templates = getattr(recipe, 'camera_templates', [])
+    cameras_config = getattr(recipe, 'cameras', [])
+
+    # Convert to primitive and enrich with function_type
+    cameras_primitive = _to_primitive(cameras_config)
+    enriched_cameras = _enrich_cameras_with_function_type(
+        cameras_primitive,
+        camera_templates
+    )
+
+    recipe_dict = {
+        '_id': str(recipe.id) if hasattr(recipe, 'id') else recipe_id,
+        'id': recipe_id,
+        'name': recipe.name,
+        'product_code': recipe.product_code,
+        'delay_reject': recipe.delay_reject,
+        'reject_pulse': recipe.reject_pulse if hasattr(recipe, 'reject_pulse') else 50.0,
+        'reject_method': getattr(recipe, 'reject_method', 'DIO_OUT'),
+        'do_reject_number': recipe.do_reject_number,
+        'do_alarm_number': getattr(recipe, 'do_alarm_number', 0),
+        'cameras': enriched_cameras,
+        'camera_templates': _to_primitive(camera_templates),
+        'model_thresholds': _to_primitive(getattr(recipe, 'model_thresholds', None)),
+        'camera_settings': _to_primitive(getattr(recipe, 'camera_settings', None)),
+        'template_config': _to_primitive(getattr(recipe, 'template_config', None)),
+        'roi_config': _to_primitive(getattr(recipe, 'roi_config', None)),
+    }
+
+    # 4. Merge update_data into recipe_dict (in-memory, NOT saved to DB)
+    if 'delay_reject' in update_data:
+        recipe_dict['delay_reject'] = update_data['delay_reject']
+        logger.info(f"📝 [REALTIME UPDATE] delay_reject → {update_data['delay_reject']} ms")
+
+    if 'reject_pulse' in update_data:
+        recipe_dict['reject_pulse'] = update_data['reject_pulse']
+        logger.info(f"📝 [REALTIME UPDATE] reject_pulse → {update_data['reject_pulse']} ms")
+
+    # Update camera settings
+    if 'cameras' in update_data:
+        for updated_cam in update_data['cameras']:
+            cam_id = updated_cam.get('camera_id')
+            for idx, cam in enumerate(recipe_dict['cameras']):
+                if cam.get('camera_id') == cam_id:
+                    # Merge updated fields
+                    for field in ['exposure_time', 'delay_trigger', 'delay_interval', 'gain']:
+                        if field in updated_cam:
+                            recipe_dict['cameras'][idx][field] = updated_cam[field]
+                            logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id}: {field} → {updated_cam[field]}")
+                    break
+
+    # Update templates (annotations only)
+    if 'camera_templates' in update_data:
+        for updated_ct in update_data['camera_templates']:
+            cam_id = updated_ct.get('camera_id')
+            for idx, ct in enumerate(recipe_dict['camera_templates']):
+                if ct.get('camera_id') == cam_id:
+                    # Only update annotations, preserve image URLs
+                    for tmpl_idx, tmpl in enumerate(updated_ct.get('templates', [])):
+                        if tmpl_idx < len(ct.get('templates', [])):
+                            recipe_dict['camera_templates'][idx]['templates'][tmpl_idx]['annotations'] = tmpl.get('annotations', [])
+                            logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id} Template {tmpl_idx}: Updated annotations")
+                    break
+
+    # 5. Stop current recipe
+    logger.info(f"🛑 [REALTIME UPDATE] Stopping recipe: {recipe.name}")
+    stop_success = await send_stop_recipe(recipe_id)
+
+    if not stop_success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to stop current recipe"
+        )
+
+    # 6. Load updated recipe (with merged changes)
+    logger.info(f"🔄 [REALTIME UPDATE] Loading updated recipe: {recipe.name}")
+    load_success = await send_load_recipe(recipe_dict)
+
+    if not load_success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to load updated recipe"
+        )
+
+    logger.info(f"✅ [REALTIME UPDATE] Recipe updated successfully (NOT saved to DB): {recipe.name}")
+
+    # 7. Log the action (optional - track realtime updates)
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    action_log = ActionLogCreate(
+        user_id=current_user.id,
+        username=current_user.username,
+        action_type=ActionType.UPDATE_RECIPE,
+        resource_type="recipe",
+        resource_id=recipe_id,
+        description=f"Updated recipe '{recipe.name}' in realtime (not saved to DB)",
+        new_value=update_data,
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
+    await action_log_repo.create_action_log(action_log)
+
+    return {
+        "success": True,
+        "message": "Recipe updated in realtime (not saved to database)",
+        "recipe_id": recipe_id,
+        "restarted": True,
+        "note": "Changes are temporary. Stop/Load recipe again to restore DB config."
+    }
+
+
 @router.put("/{recipe_id}", response_model=RecipeResponse)
 async def update_recipe(
     recipe_id: str,

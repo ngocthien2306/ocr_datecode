@@ -1,0 +1,363 @@
+/* Inference Realtime Settings Modal - Scoped with prefix to avoid conflicts */
+.inference-settings-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 20px;
+}
+
+.inference-settings-modal {
+  background: white;
+  border-radius: 12px;
+  width: 100%;
+  max-width: 1200px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.inference-settings-modal .modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.inference-settings-modal .modal-header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: #1f2937;
+}
+
+.inference-settings-modal .close-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 8px;
+  color: #6b7280;
+  transition: color 0.2s;
+}
+
+.inference-settings-modal .close-btn:hover {
+  color: #1f2937;
+}
+
+.inference-settings-modal .close-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.inference-settings-modal .modal-warning {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 16px 24px;
+  color: #856404;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inference-settings-modal .modal-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 24px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.inference-settings-modal .tab-btn {
+  padding: 12px 20px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #6b7280;
+  transition: all 0.2s;
+}
+
+.inference-settings-modal .tab-btn:hover {
+  color: #1f2937;
+  background: #f9fafb;
+}
+
+.inference-settings-modal .tab-btn.active {
+  color: #2563eb;
+  border-bottom-color: #2563eb;
+}
+
+.inference-settings-modal .modal-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.inference-settings-modal .tab-panel {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.inference-settings-modal .tab-panel h3 {
+  margin: 0 0 20px 0;
+  font-size: 1.25rem;
+  color: #1f2937;
+}
+
+.inference-settings-modal .form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.inference-settings-modal .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inference-settings-modal .form-group label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #374151;
+}
+
+.inference-settings-modal .form-group input,
+.inference-settings-modal .form-group select {
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  transition: border-color 0.2s;
+}
+
+.inference-settings-modal .form-group input:focus,
+.inference-settings-modal .form-group select:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.inference-settings-modal .empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: #6b7280;
+  font-size: 1rem;
+}
+
+/* Camera Cards */
+.inference-settings-modal .cameras-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.inference-settings-modal .camera-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 20px;
+  background: #f9fafb;
+}
+
+.inference-settings-modal .camera-card h4 {
+  margin: 0 0 12px 0;
+  font-size: 1.1rem;
+  color: #1f2937;
+}
+
+.inference-settings-modal .camera-info {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 16px;
+  font-size: 0.9rem;
+  color: #6b7280;
+}
+
+/* Template Tab */
+.inference-settings-modal .template-panel {
+  max-width: none;
+}
+
+.inference-settings-modal .template-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.inference-settings-modal .template-header h3 {
+  margin: 0;
+}
+
+.inference-settings-modal .template-header select {
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  min-width: 200px;
+}
+
+.inference-settings-modal .template-selector {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.inference-settings-modal .template-btn {
+  padding: 8px 16px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: white;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.inference-settings-modal .template-btn:hover {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.inference-settings-modal .template-btn.active {
+  background: #2563eb;
+  color: white;
+  border-color: #2563eb;
+}
+
+.inference-settings-modal .template-editor-layout {
+  display: grid;
+  grid-template-columns: 1fr 350px;
+  gap: 20px;
+  min-height: 500px;
+}
+
+.inference-settings-modal .template-preview {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f9fafb;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.inference-settings-modal .template-image {
+  max-width: 100%;
+  max-height: 600px;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.inference-settings-modal .no-template {
+  padding: 60px;
+  color: #9ca3af;
+  font-size: 1rem;
+}
+
+.inference-settings-modal .preview-note {
+  margin-top: 12px;
+  font-size: 0.85rem;
+  color: #6b7280;
+}
+
+.inference-settings-modal .annotations-sidebar {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: white;
+  overflow: hidden;
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+/* Modal Footer */
+.inference-settings-modal .modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.inference-settings-modal .btn-cancel,
+.inference-settings-modal .btn-submit {
+  padding: 10px 24px;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.inference-settings-modal .btn-cancel {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.inference-settings-modal .btn-cancel:hover {
+  background: #e5e7eb;
+}
+
+.inference-settings-modal .btn-submit {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  color: white;
+}
+
+.inference-settings-modal .btn-submit:hover {
+  background: linear-gradient(135deg, #1d4ed8, #1e40af);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+}
+
+.inference-settings-modal .btn-cancel:disabled,
+.inference-settings-modal .btn-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .inference-settings-modal .template-editor-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .inference-settings-modal .annotations-sidebar {
+    max-height: 400px;
+  }
+}
+
+@media (max-width: 768px) {
+  .inference-settings-modal {
+    max-width: 95%;
+    max-height: 95vh;
+  }
+
+  .inference-settings-modal .modal-header h2 {
+    font-size: 1.25rem;
+  }
+
+  .inference-settings-modal .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .inference-settings-modal .camera-info {
+    flex-direction: column;
+    gap: 8px;
+  }
+}

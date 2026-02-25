@@ -126,6 +126,41 @@ export const receiptsAPI = {
     return response.data;
   },
 
+  // Update recipe in realtime (WITHOUT saving to database)
+  // Uses Stop + Load pattern to apply changes
+  updateRecipeRealtime: async (
+    receiptId: string,
+    updateData: {
+      delay_reject?: number;
+      reject_pulse?: number;
+      cameras?: Array<{
+        camera_id: string;
+        exposure_time?: number;
+        delay_trigger?: number;
+        delay_interval?: number;
+        gain?: number;
+      }>;
+      camera_templates?: Array<{
+        camera_id: string;
+        templates: Array<{
+          annotations: any[];
+        }>;
+      }>;
+    }
+  ): Promise<{
+    success: boolean;
+    message: string;
+    recipe_id: string;
+    restarted: boolean;
+    note: string;
+  }> => {
+    const response = await api.post(
+      `/recipes/${receiptId}/update-realtime`,
+      updateData
+    );
+    return response.data;
+  },
+
   // Get latest loaded recipe
   getLatestLoadedRecipe: async (): Promise<any> => {
     try {

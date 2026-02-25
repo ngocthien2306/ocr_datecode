@@ -5,7 +5,9 @@ import api from '@/services/api';
 import { receiptsAPI } from '@/services/recipes';
 import { camerasAPI } from '@/services/cameras';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import InferenceRealtimeSettingsModal from './InferenceRealtimeSettingsModal';
 import { API_BASE_URL } from '@/config/api';
+import { useToast } from '@/contexts/ToastContext';
 
 interface TextVerificationResult {
   region_idx: number;
@@ -158,6 +160,7 @@ interface ConfirmDialogState {
 }
 
 export default function InferenceRealtime({ runningRecipeId, onClose, embedded = false }: InferenceRealtimeProps) {
+  const toast = useToast();
   const [logs, setLogs] = useState<InferenceLog[]>([]);
   const [latestResults, setLatestResults] = useState<InferenceResult | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
@@ -182,6 +185,9 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
   // Delay trigger management - track each camera's delay
   const [cameraDelays, setCameraDelays] = useState<Record<string, number>>({});
   const [updatingDelay, setUpdatingDelay] = useState<string | null>(null);
+
+  // Settings modal state
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
 
   // Confirmation dialog state
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>({
@@ -908,6 +914,20 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
             </button>
           </div>
 
+          {/* Settings Button */}
+          <button
+            className="btn-action btn-settings"
+            onClick={() => setShowSettingsModal(true)}
+            title="Realtime Settings (not saved to DB)"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
+              <path d="M12 1v6m0 6v10M1 12h6m6 0h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              <path d="M4.22 4.22l4.24 4.24m5.66 5.66l4.24 4.24M4.22 19.78l4.24-4.24m5.66-5.66l4.24-4.24" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+            Settings
+          </button>
+
           {/* Simulate Trigger */}
           <button
             className={`btn-action btn-trigger ${isSimulating ? 'simulating' : ''}`}
@@ -1248,6 +1268,31 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
           </div>
         </div>
       </div>
+
+      {/* Settings Modal */}
+      <InferenceRealtimeSettingsModal
+        isOpen={showSettingsModal}
+        onClose={() => setShowSettingsModal(false)}
+        runningRecipe={runningRecipe}
+        onUpdate={async (updatedData) => {
+          if (!runningRecipeId) return;
+
+          try {
+            await receiptsAPI.updateRecipeRealtime(runningRecipeId, updatedData);
+            toast.success('Recipe updated in realtime (not saved to database)');
+
+            // Optionally refresh running recipe data
+            const latest = await receiptsAPI.getLatestLoadedRecipe();
+            if (latest && latest.recipe_id === runningRecipeId) {
+              setRunningRecipe(latest);
+            }
+          } catch (error: any) {
+            console.error('Error updating recipe realtime:', error);
+            toast.error(error.response?.data?.detail || 'Failed to update recipe');
+            throw error;
+          }
+        }}
+      />
 
       {/* Confirm Dialog */}
       <ConfirmDialog
