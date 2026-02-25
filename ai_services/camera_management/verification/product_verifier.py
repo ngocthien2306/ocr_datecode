@@ -84,7 +84,7 @@ class ProductVerificationService:
 
         # Initialize YOLO OBB model
         if engine_path is None:
-            engine_path = f"{home}/Source/ocr_datecode/weights/best_obb.engine"
+            engine_path = f"{home}/Source/ocr_datecode/weights/best_obb_1.engine"
 
         self.obb_model = None
         if YOLO_OBB_AVAILABLE:

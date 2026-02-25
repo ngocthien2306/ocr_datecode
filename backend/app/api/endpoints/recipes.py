@@ -1405,8 +1405,6 @@ async def update_recipe(
             detail="Recipe not found"
         )
     
-
-    print(recipe_update.camera_templates)
     # If name is being updated, check for duplicates
     if recipe_update.name and recipe_update.name != existing_recipe.name:
         duplicate = await recipe_repo.get_by_name(recipe_update.name)

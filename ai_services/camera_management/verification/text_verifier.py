@@ -240,7 +240,7 @@ class TextVerificationService:
 
             # Save debug image if enabled
             if self.save_debug_images:
-                debug_file = f"{self.debug_path}/cropped_region_{serial_number}_{annotation_idx}_{self._debug_counter}.png"
+                debug_file = f"{self.debug_path}/cropped_region_{serial_number}_{annotation_idx}_{self._debug_counter}_{int(time.time())}.png"
                 cv2.imwrite(debug_file, cropped_region)
                 self._debug_counter += 1
 
@@ -361,7 +361,7 @@ class TextVerificationService:
                 if bbox.get('type') in ['text', 'datecode']
             ]
             logger.info(f"[{serial_number}] Collecting {len(text_bboxes)} text regions for batch OCR")
-            logger.info(f"[{serial_number}] transformed_bboxes {transformed_bboxes}")
+            # logger.info(f"[{serial_number}] transformed_bboxes {transformed_bboxes}")
 
             for bbox in text_bboxes:
                 annotation_idx = bbox.get('annotation_index')
