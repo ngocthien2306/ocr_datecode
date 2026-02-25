@@ -17,7 +17,7 @@
   background: white;
   border-radius: 12px;
   width: 100%;
-  max-width: 1200px;
+  max-width: 1400px; /* Increased from 1200px to 1400px for better layout */
   max-height: 90vh;
   display: flex;
   flex-direction: column;
@@ -239,9 +239,9 @@
 
 .inference-settings-modal .template-editor-layout {
   display: grid;
-  grid-template-columns: 1fr 350px;
+  grid-template-columns: 1fr 380px; /* Adjusted for better proportions */
   gap: 20px;
-  min-height: 500px;
+  min-height: 600px;
 }
 
 .inference-settings-modal .template-preview {
@@ -254,6 +254,33 @@
   align-items: center;
   justify-content: center;
   padding: 20px;
+  position: relative;
+}
+
+.inference-settings-modal .canvas-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.inference-settings-modal .template-canvas {
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  background: white;
+  cursor: default;
+}
+
+.inference-settings-modal .canvas-hint {
+  font-size: 0.85rem;
+  color: #6b7280;
+  text-align: center;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
 }
 
 .inference-settings-modal .template-image {
@@ -281,8 +308,27 @@
   border-radius: 8px;
   background: white;
   overflow: hidden;
-  max-height: 600px;
+  max-height: 650px; /* Increased to match canvas height */
   overflow-y: auto;
+}
+
+/* Scrollbar styling for annotations sidebar */
+.inference-settings-modal .annotations-sidebar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.inference-settings-modal .annotations-sidebar::-webkit-scrollbar-track {
+  background: #f3f4f6;
+  border-radius: 4px;
+}
+
+.inference-settings-modal .annotations-sidebar::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 4px;
+}
+
+.inference-settings-modal .annotations-sidebar::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
 }
 
 /* Modal Footer */
@@ -332,13 +378,21 @@
 }
 
 /* Responsive */
-@media (max-width: 1024px) {
+@media (max-width: 1200px) {
+  .inference-settings-modal {
+    max-width: 95%;
+  }
+
   .inference-settings-modal .template-editor-layout {
     grid-template-columns: 1fr;
   }
 
   .inference-settings-modal .annotations-sidebar {
     max-height: 400px;
+  }
+
+  .inference-settings-modal .template-canvas {
+    max-width: 100%;
   }
 }
 
@@ -359,5 +413,15 @@
   .inference-settings-modal .camera-info {
     flex-direction: column;
     gap: 8px;
+  }
+
+  .inference-settings-modal .template-canvas {
+    max-width: 100%;
+    height: auto;
+  }
+
+  .inference-settings-modal .canvas-hint {
+    font-size: 0.75rem;
+    padding: 6px 10px;
   }
 }

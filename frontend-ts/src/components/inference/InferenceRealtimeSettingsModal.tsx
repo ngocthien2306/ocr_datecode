@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import AnnotationsPanel from '@/components/shared/AnnotationsPanel';
 import { useToast } from '@/contexts/ToastContext';
 import { API_BASE_URL } from '@/config/api';
 import '@/styles/InferenceRealtimeSettingsModal.css';
 import type { Annotation } from '@/types';
+import { fabric } from 'fabric';
 
 interface InferenceRealtimeSettingsModalProps {
   isOpen: boolean;
@@ -45,6 +46,11 @@ export default function InferenceRealtimeSettingsModal({
   const [selectedTemplateIndex, setSelectedTemplateIndex] = useState<number>(0);
   const [selectedAnnotation, setSelectedAnnotation] = useState<number | null>(null);
 
+  // Canvas refs for rendering annotations
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fabricCanvasRef = useRef<fabric.Canvas | null>(null);
+  const templateImageRef = useRef<HTMLImageElement>(null);
+
   // Load data from runningRecipe when modal opens
   useEffect(() => {
     if (isOpen && runningRecipe?.metadata) {
@@ -67,6 +73,144 @@ export default function InferenceRealtimeSettingsModal({
       }
     }
   }, [isOpen, runningRecipe]);
+
+  // Initialize Fabric.js canvas for annotation rendering (read-only)
+  useEffect(() => {
+    if (!canvasRef.current || !isOpen || activeTab !== 'template') return;
+
+    // Initialize canvas
+    if (!fabricCanvasRef.current) {
+      const canvas = new fabric.Canvas(canvasRef.current, {
+        selection: false, // Disable selection
+        hoverCursor: 'pointer',
+        defaultCursor: 'default'
+      });
+      fabricCanvasRef.current = canvas;
+    }
+
+    return () => {
+      // Cleanup on unmount
+      if (fabricCanvasRef.current) {
+        fabricCanvasRef.current.dispose();
+        fabricCanvasRef.current = null;
+      }
+    };
+  }, [isOpen, activeTab]);
+
+  // Render template image and annotations on canvas
+  useEffect(() => {
+    if (!fabricCanvasRef.current || !isOpen || activeTab !== 'template') return;
+
+    const currentTemplate = getCurrentTemplate();
+    if (!currentTemplate?.image_url) return;
+
+    const canvas = fabricCanvasRef.current;
+    canvas.clear();
+
+    // Load template image
+    const imgUrl = `${API_BASE_URL}${currentTemplate.image_url}`;
+    fabric.Image.fromURL(imgUrl, (img) => {
+      if (!img || !canvas) return;
+
+      const canvasWidth = 800;
+      const canvasHeight = 600;
+
+      // Scale image to fit canvas
+      const scale = Math.min(
+        canvasWidth / (img.width || 1),
+        canvasHeight / (img.height || 1)
+      );
+
+      canvas.setWidth(canvasWidth);
+      canvas.setHeight(canvasHeight);
+
+      img.set({
+        scaleX: scale,
+        scaleY: scale,
+        selectable: false,
+        evented: false
+      });
+
+      canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas));
+
+      // Render annotations
+      renderAnnotationsOnCanvas(canvas, scale);
+    }, { crossOrigin: 'anonymous' });
+  }, [
+    isOpen,
+    activeTab,
+    selectedCameraForTemplate,
+    selectedTemplateIndex,
+    formData.camera_templates,
+    selectedAnnotation
+  ]);
+
+  // Render annotations on canvas (read-only, highlight selected)
+  const renderAnnotationsOnCanvas = (canvas: fabric.Canvas, imageScale: number) => {
+    const annotations = getCurrentTemplateAnnotations();
+
+    annotations.forEach((ann, index) => {
+      const isSelected = index === selectedAnnotation;
+
+      if (ann.shape === 'rectangle' && ann.x !== undefined && ann.y !== undefined) {
+        const rect = new fabric.Rect({
+          left: ann.x * imageScale,
+          top: ann.y * imageScale,
+          width: (ann.width || 0) * imageScale,
+          height: (ann.height || 0) * imageScale,
+          fill: 'transparent',
+          stroke: isSelected ? '#3b82f6' : '#22c55e',
+          strokeWidth: isSelected ? 3 : 2,
+          selectable: false,
+          evented: true,
+          hoverCursor: 'pointer'
+        });
+
+        // Click handler to select annotation
+        rect.on('mousedown', () => {
+          setSelectedAnnotation(index);
+        });
+
+        canvas.add(rect);
+
+        // Add label
+        if (ann.text) {
+          const label = new fabric.Text(ann.text, {
+            left: ann.x * imageScale,
+            top: (ann.y - 5) * imageScale,
+            fontSize: 14,
+            fill: isSelected ? '#3b82f6' : '#22c55e',
+            backgroundColor: 'rgba(255, 255, 255, 0.8)',
+            selectable: false,
+            evented: false
+          });
+          canvas.add(label);
+        }
+      } else if (ann.shape === 'polygon' && ann.points && ann.points.length > 0) {
+        const scaledPoints = ann.points.map(([x, y]) => ({
+          x: x * imageScale,
+          y: y * imageScale
+        }));
+
+        const polygon = new fabric.Polygon(scaledPoints, {
+          fill: 'transparent',
+          stroke: isSelected ? '#3b82f6' : '#22c55e',
+          strokeWidth: isSelected ? 3 : 2,
+          selectable: false,
+          evented: true,
+          hoverCursor: 'pointer'
+        });
+
+        polygon.on('mousedown', () => {
+          setSelectedAnnotation(index);
+        });
+
+        canvas.add(polygon);
+      }
+    });
+
+    canvas.renderAll();
+  };
 
   const handleInputChange = (field: string, value: any) => {
     setFormData(prev => ({
@@ -391,17 +535,15 @@ export default function InferenceRealtimeSettingsModal({
                   <div className="template-editor-layout">
                     <div className="template-preview">
                       {getCurrentTemplate()?.image_url ? (
-                        <img
-                          src={`${API_BASE_URL}${getCurrentTemplate()!.image_url}`}
-                          alt="Template"
-                          className="template-image"
-                        />
+                        <div className="canvas-container">
+                          <canvas ref={canvasRef} className="template-canvas" />
+                          <div className="canvas-hint">
+                            💡 Click on bounding box (left panel) or on canvas to select annotation
+                          </div>
+                        </div>
                       ) : (
                         <div className="no-template">No template image</div>
                       )}
-                      <div className="preview-note">
-                        📷 Template frame (read-only)
-                      </div>
                     </div>
 
                     <div className="annotations-sidebar">
