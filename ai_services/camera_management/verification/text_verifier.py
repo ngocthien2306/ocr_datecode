@@ -260,31 +260,31 @@ class TextVerificationService:
                 match = False
             else:
                 # Compare texts using similarity matching for specific patterns
-                if "BEST BEFORE" in expected_text.upper() or "PL" in expected_text.upper() or "MFG" in expected_text.upper() or "BB" in expected_text.upper():
-                    # Use similarity matching (default 80% threshold)
-                    similarity = calculate_text_similarity(recognized_text, expected_text)
-                    similarity_threshold = 0.99
-                    match = similarity >= similarity_threshold
-                    if match:
-                        recognized_text = expected_text[:]  # Override with expected text on match
+                # if "BEST BEFORE" in expected_text.upper() or "PL" in expected_text.upper() or "MFG" in expected_text.upper() or "BB" in expected_text.upper():
+                #     # Use similarity matching (default 80% threshold)
+                #     similarity = calculate_text_similarity(recognized_text, expected_text)
+                #     similarity_threshold = 0.99
+                #     match = similarity >= similarity_threshold
+                #     if match:
+                #         recognized_text = expected_text[:]  # Override with expected text on match
 
-                    logger.info(
-                        f"[{serial_number}] Annotation {annotation_idx}: "
-                        f"Using similarity matching - similarity={similarity:.2%}, "
-                        f"threshold={similarity_threshold:.2%}, match={match}"
-                    )
-                else:
+                #     logger.info(
+                #         f"[{serial_number}] Annotation {annotation_idx}: "
+                #         f"Using similarity matching - similarity={similarity:.2%}, "
+                #         f"threshold={similarity_threshold:.2%}, match={match}"
+                #     )
+                # else:
                     # Use exact match
-                    if "USsed" in recognized_text:
-                        recognized_text = recognized_text.replace("USsed", "Used")
+                if "USsed" in recognized_text:
+                    recognized_text = recognized_text.replace("USsed", "Used")
 
-                    if "Iif" in recognized_text:
-                        recognized_text = recognized_text.replace("Iif", "If")
-                        
+                if "Iif" in recognized_text:
+                    recognized_text = recognized_text.replace("Iif", "If")
+                    
 
-                    match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
-                    if match: 
-                        recognized_text = expected_text[:]
+                match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
+                if match: 
+                    recognized_text = expected_text[:]
 
             logger.info(
                 f"[{serial_number}] Annotation {annotation_idx}: "
@@ -455,30 +455,31 @@ class TextVerificationService:
                 match = False
             else:
                 # Compare texts using similarity matching for specific patterns
-                if "BEST BEFORE" in expected_text.upper() or "PL" in expected_text.upper() or "MFG" in expected_text.upper() or "BB" in expected_text.upper():
+                # if "BEST BEFORE" in expected_text.upper() or "PL" in expected_text.upper() or "MFG" in expected_text.upper() or "BB" in expected_text.upper():
 
-                    # Use similarity matching (default 80% threshold)
-                    similarity = calculate_text_similarity(recognized_text, expected_text)
-                    similarity_threshold = 0.90
-                    match = similarity >= similarity_threshold
-                    if match:
-                        recognized_text = expected_text[:]  # Override with expected text on match
-                    logger.info(
-                        f"[{serial_number}] Annotation {annotation_idx}: "
-                        f"Using similarity matching - similarity={similarity:.2%}, "
-                        f"threshold={similarity_threshold:.2%}"
-                    )
-                else:
-                    if "USsed" in recognized_text:
-                        recognized_text = recognized_text.replace("USsed", "Used")
+                #     # Use similarity matching (default 80% threshold)
+                #     similarity = calculate_text_similarity(recognized_text, expected_text)
+                #     similarity_threshold = 0.90
+                #     match = similarity >= similarity_threshold
+                #     if match:
+                #         recognized_text = expected_text[:]  # Override with expected text on match
+                #     logger.info(
+                #         f"[{serial_number}] Annotation {annotation_idx}: "
+                #         f"Using similarity matching - similarity={similarity:.2%}, "
+                #         f"threshold={similarity_threshold:.2%}"
+                #     )
+                # else:
+                
+                if "USsed" in recognized_text:
+                    recognized_text = recognized_text.replace("USsed", "Used")
 
-                    if "Iif" in recognized_text:
-                        recognized_text = recognized_text.replace("Iif", "If")
-                        
-                    # Use exact match
-                    match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
-                    if match: 
-                        recognized_text = expected_text[:]
+                if "Iif" in recognized_text:
+                    recognized_text = recognized_text.replace("Iif", "If")
+                    
+                # Use exact match
+                match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
+                if match: 
+                    recognized_text = expected_text[:]
 
             if not match:
                 camera_results[serial_number]['all_match'] = False
