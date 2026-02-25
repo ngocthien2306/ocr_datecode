@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import ReactDOM from 'react-dom';
 import Toast from '@/components/shared/Toast';
 import type { ToastMessage } from '@/types';
 
@@ -54,17 +55,20 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
   return (
     <ToastContext.Provider value={{ success, error, warning, info }}>
       {children}
-      <div className="toast-container">
-        {toasts.map(toast => (
-          <Toast
-            key={toast.id}
-            message={toast.message}
-            type={toast.type}
-            duration={toast.duration}
-            onClose={() => removeToast(toast.id)}
-          />
-        ))}
-      </div>
+      {toasts.length > 0 && ReactDOM.createPortal(
+        <div className="toast-container">
+          {toasts.map(toast => (
+            <Toast
+              key={toast.id}
+              message={toast.message}
+              type={toast.type}
+              duration={toast.duration}
+              onClose={() => removeToast(toast.id)}
+            />
+          ))}
+        </div>,
+        document.body
+      )}
     </ToastContext.Provider>
   );
 };
