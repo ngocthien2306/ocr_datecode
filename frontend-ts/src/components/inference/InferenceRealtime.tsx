@@ -1281,11 +1281,59 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
             await receiptsAPI.updateRecipeRealtime(runningRecipeId, updatedData);
             toast.success('Recipe updated in realtime (not saved to database)');
 
-            // Optionally refresh running recipe data
-            const latest = await receiptsAPI.getLatestLoadedRecipe();
-            if (latest && latest.recipe_id === runningRecipeId) {
-              setRunningRecipe(latest);
-            }
+            // Merge updatedData into runningRecipe state (since backend doesn't save to DB)
+            setRunningRecipe((prev: any) => {
+              if (!prev) return prev;
+
+              const updated = { ...prev };
+
+              // Update basic fields
+              if (updatedData.delay_reject !== undefined) {
+                updated.metadata = { ...updated.metadata, delay_reject: updatedData.delay_reject };
+              }
+              if (updatedData.reject_pulse !== undefined) {
+                updated.metadata = { ...updated.metadata, reject_pulse: updatedData.reject_pulse };
+              }
+
+              // Update cameras
+              if (updatedData.cameras && Array.isArray(updatedData.cameras)) {
+                updated.metadata = {
+                  ...updated.metadata,
+                  cameras: (updated.metadata?.cameras || []).map((cam: any) => {
+                    const updateCam = updatedData.cameras.find((c: any) => c.camera_id === cam.camera_id);
+                    if (updateCam) {
+                      return { ...cam, ...updateCam };
+                    }
+                    return cam;
+                  })
+                };
+              }
+
+              // Update camera_templates
+              if (updatedData.camera_templates && Array.isArray(updatedData.camera_templates)) {
+                updated.metadata = {
+                  ...updated.metadata,
+                  camera_templates: (updated.metadata?.camera_templates || []).map((ct: any) => {
+                    const updateCT = updatedData.camera_templates.find((c: any) => c.camera_id === ct.camera_id);
+                    if (updateCT) {
+                      return {
+                        ...ct,
+                        templates: (ct.templates || []).map((tmpl: any, idx: number) => {
+                          const updateTmpl = updateCT.templates?.[idx];
+                          if (updateTmpl) {
+                            return { ...tmpl, ...updateTmpl };
+                          }
+                          return tmpl;
+                        })
+                      };
+                    }
+                    return ct;
+                  })
+                };
+              }
+
+              return updated;
+            });
           } catch (error: any) {
             console.error('Error updating recipe realtime:', error);
             toast.error(error.response?.data?.detail || 'Failed to update recipe');

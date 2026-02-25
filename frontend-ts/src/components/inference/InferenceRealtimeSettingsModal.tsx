@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import AnnotationsPanel from '@/components/shared/AnnotationsPanel';
 import InferenceTemplateViewer from './InferenceTemplateViewer';
-import { useToast } from '@/contexts/ToastContext';
 import { API_BASE_URL } from '@/config/api';
 import '@/styles/InferenceRealtimeSettingsModal.css';
 import type { Annotation } from '@/types';
@@ -29,7 +28,6 @@ export default function InferenceRealtimeSettingsModal({
   runningRecipe,
   onUpdate
 }: InferenceRealtimeSettingsModalProps) {
-  const toast = useToast();
   const [activeTab, setActiveTab] = useState<'basic' | 'camera' | 'template'>('basic');
   const [loading, setLoading] = useState(false);
 
@@ -202,11 +200,10 @@ export default function InferenceRealtimeSettingsModal({
       };
 
       await onUpdate(updateData);
-      toast.success('Recipe updated in realtime (not saved to DB)');
       onClose();
     } catch (error: any) {
       console.error('Error updating recipe realtime:', error);
-      toast.error(error.response?.data?.detail || 'Failed to update recipe');
+      // Error toast is handled in parent component (InferenceRealtime)
     } finally {
       setLoading(false);
     }
