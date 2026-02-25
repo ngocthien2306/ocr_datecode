@@ -349,6 +349,63 @@
   background: #9ca3af;
 }
 
+/* Template Threshold Inputs */
+.inference-settings-modal .inference-template-threshold {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+
+.inference-settings-modal .inference-threshold-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #374151;
+  white-space: nowrap;
+}
+
+.inference-settings-modal .inference-threshold-inputs-row {
+  display: flex;
+  gap: 12px;
+}
+
+.inference-settings-modal .inference-threshold-input-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.inference-settings-modal .inference-threshold-input-group label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #6b7280;
+  min-width: 12px;
+}
+
+.inference-settings-modal .inference-threshold-input {
+  width: 80px;
+  padding: 6px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  text-align: center;
+  transition: border-color 0.2s;
+}
+
+.inference-settings-modal .inference-threshold-input:hover {
+  border-color: #9ca3af;
+}
+
+.inference-settings-modal .inference-threshold-input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+}
+
 /* Modal Footer */
 .inference-settings-modal .modal-footer {
   display: flex;

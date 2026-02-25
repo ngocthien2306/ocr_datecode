@@ -1315,10 +1315,17 @@ async def update_recipe_realtime(
             cam_id = updated_ct.get('camera_id')
             for idx, ct in enumerate(recipe_dict['camera_templates']):
                 if ct.get('camera_id') == cam_id:
-                    # Only update annotations, preserve image URLs
+                    # Only update annotations + center offset thresholds, preserve image URLs
                     for tmpl_idx, tmpl in enumerate(updated_ct.get('templates', [])):
                         if tmpl_idx < len(ct.get('templates', [])):
-                            recipe_dict['camera_templates'][idx]['templates'][tmpl_idx]['annotations'] = tmpl.get('annotations', [])
+                            existing_tmpl = recipe_dict['camera_templates'][idx]['templates'][tmpl_idx]
+                            existing_tmpl['annotations'] = tmpl.get('annotations', [])
+                            if 'center_offset_threshold_left' in tmpl:
+                                existing_tmpl['center_offset_threshold_left'] = tmpl['center_offset_threshold_left']
+                                logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id} Template {tmpl_idx}: center_offset_threshold_left → {tmpl['center_offset_threshold_left']}")
+                            if 'center_offset_threshold_right' in tmpl:
+                                existing_tmpl['center_offset_threshold_right'] = tmpl['center_offset_threshold_right']
+                                logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id} Template {tmpl_idx}: center_offset_threshold_right → {tmpl['center_offset_threshold_right']}")
                             logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id} Template {tmpl_idx}: Updated annotations")
                     break
 

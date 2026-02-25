@@ -85,6 +85,27 @@ export default function InferenceRealtimeSettingsModal({
     }));
   };
 
+  const handleTemplateThresholdChange = (field: 'center_offset_threshold_left' | 'center_offset_threshold_right', value: number) => {
+    if (!selectedCameraForTemplate) return;
+
+    setFormData(prev => {
+      const updatedCameraTemplates = prev.camera_templates.map(ct => {
+        if (ct.camera_id === selectedCameraForTemplate) {
+          const updatedTemplates = [...ct.templates];
+          if (updatedTemplates[selectedTemplateIndex]) {
+            updatedTemplates[selectedTemplateIndex] = {
+              ...updatedTemplates[selectedTemplateIndex],
+              [field]: value
+            };
+          }
+          return { ...ct, templates: updatedTemplates };
+        }
+        return ct;
+      });
+      return { ...prev, camera_templates: updatedCameraTemplates };
+    });
+  };
+
   const handleAnnotationsChange = (newAnnotations: Annotation[]) => {
     if (!selectedCameraForTemplate) return;
 
@@ -194,7 +215,9 @@ export default function InferenceRealtimeSettingsModal({
         camera_templates: formData.camera_templates.map(ct => ({
           camera_id: ct.camera_id,
           templates: ct.templates.map((tmpl: any) => ({
-            annotations: tmpl.annotations
+            annotations: tmpl.annotations,
+            center_offset_threshold_left: tmpl.center_offset_threshold_left,
+            center_offset_threshold_right: tmpl.center_offset_threshold_right
           }))
         }))
       };
@@ -383,6 +406,43 @@ export default function InferenceRealtimeSettingsModal({
                             {tmpl.name || `Template ${idx + 1}`}
                           </button>
                         ))}
+                    </div>
+                  )}
+
+                  {/* Center Offset Threshold */}
+                  {getCurrentTemplate() && (
+                    <div className="inference-template-threshold">
+                      <span className="inference-threshold-label">Center Offset (px):</span>
+                      <div className="inference-threshold-inputs-row">
+                        <div className="inference-threshold-input-group">
+                          <label>L</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="500"
+                            value={getCurrentTemplate()?.center_offset_threshold_left ?? 50}
+                            onChange={(e) => {
+                              const value = parseFloat(e.target.value) || 50;
+                              handleTemplateThresholdChange('center_offset_threshold_left', Math.max(0, Math.min(500, value)));
+                            }}
+                            className="inference-threshold-input"
+                          />
+                        </div>
+                        <div className="inference-threshold-input-group">
+                          <label>R</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="500"
+                            value={getCurrentTemplate()?.center_offset_threshold_right ?? 50}
+                            onChange={(e) => {
+                              const value = parseFloat(e.target.value) || 50;
+                              handleTemplateThresholdChange('center_offset_threshold_right', Math.max(0, Math.min(500, value)));
+                            }}
+                            className="inference-threshold-input"
+                          />
+                        </div>
+                      </div>
                     </div>
                   )}
 
