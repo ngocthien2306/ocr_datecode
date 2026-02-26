@@ -7,6 +7,14 @@ import { camerasAPI } from '@/services/api';
 import { receiptsAPI } from '@/services/recipes';
 import type { Camera } from '@/types';
 
+// Helper: extract numeric value from threshold (number or {parsedValue} object)
+const getThresholdNum = (val: any): string => {
+  if (val == null) return '-';
+  if (typeof val === 'number') return val.toFixed(1);
+  if (typeof val === 'object' && val.parsedValue != null) return Number(val.parsedValue).toFixed(1);
+  return '-';
+};
+
 interface InspectionResultRowProps {
   result: InferenceResultResponse;
   isExpanded: boolean;
@@ -386,6 +394,79 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
                                   </div>
                                 ))}
                               </div>
+                            </div>
+                          )}
+
+                          {/* Product Verification */}
+                          {frame.product_verification && (
+                            <div className="product-verification-section">
+                              <div className="section-title">
+                                📦 Product Verification:
+                                <span className={`verification-summary ${
+                                  frame.product_verification.skipped
+                                    ? 'na'
+                                    : frame.product_verification.match
+                                    ? 'success'
+                                    : 'error'
+                                }`}>
+                                  {frame.product_verification.skipped
+                                    ? 'Skipped'
+                                    : frame.product_verification.match
+                                    ? '✓ PASS'
+                                    : '✗ FAIL'}
+                                </span>
+                              </div>
+                              <div className="center-alignment-label">Center Alignment:</div>
+                              <div className="center-alignment-grid">
+                                <div className="alignment-item">
+                                  <span className="alignment-label">Status</span>
+                                  <span className={`alignment-value ${
+                                    frame.product_verification.center_alignment_check
+                                      ? frame.product_verification.center_alignment_check.ok ? 'success' : 'error'
+                                      : ''
+                                  }`}>
+                                    {frame.product_verification.center_alignment_check
+                                      ? frame.product_verification.center_alignment_check.ok ? '✓ OK' : '✗ FAIL'
+                                      : '-'}
+                                  </span>
+                                </div>
+                                <div className="alignment-item">
+                                  <span className="alignment-label">Offset</span>
+                                  <span className="alignment-value">
+                                    {frame.product_verification.center_alignment_check
+                                      ? `${(
+                                          frame.product_verification.center_alignment_check.abs_offset_x ??
+                                          Math.abs(frame.product_verification.center_alignment_check.offset_x)
+                                        ).toFixed(1)}px`
+                                      : '-'}
+                                  </span>
+                                </div>
+                                <div className="alignment-item">
+                                  <span className="alignment-label">Direction</span>
+                                  <span className="alignment-value">
+                                    {frame.product_verification.center_alignment_check?.direction || '-'}
+                                  </span>
+                                </div>
+                                <div className="alignment-item">
+                                  <span className="alignment-label">Threshold L</span>
+                                  <span className="alignment-value">
+                                    {frame.product_verification.center_alignment_check
+                                      ? `${getThresholdNum(frame.product_verification.center_alignment_check.threshold_left)}px`
+                                      : '-'}
+                                  </span>
+                                </div>
+                                <div className="alignment-item">
+                                  <span className="alignment-label">Threshold R</span>
+                                  <span className="alignment-value">
+                                    {frame.product_verification.center_alignment_check
+                                      ? `${getThresholdNum(frame.product_verification.center_alignment_check.threshold_right)}px`
+                                      : '-'}
+                                  </span>
+                                </div>
+                              </div>
+                              {frame.product_verification.skipped && frame.product_verification.reason && (
+                                <div className="skip-reason">{frame.product_verification.reason}</div>
+                              )}
                             </div>
                           )}
 

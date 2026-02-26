@@ -2049,6 +2049,11 @@ body.dark-mode .stat-card {
   border: 1px solid #fee2e2;
 }
 
+.verification-summary.na {
+  color: #6b7280;
+  border: 1px solid #e5e7eb;
+}
+
 /* Text Result Card */
 .text-result-card {
   margin-top: 12px;
@@ -2244,6 +2249,85 @@ body.dark-mode .template-verification-section {
 body.dark-mode .text-verification-section-v2 {
   background: #1e3a8a;
   border-left-color: #60a5fa;
+}
+
+/* Product Verification Section */
+.product-verification-section {
+  padding: 12px 14px;
+  background: #f5f3ff;
+  border-left: 3px solid #8b5cf6;
+  border-radius: 6px;
+}
+
+.center-alignment-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #6b7280;
+  margin: 6px 0 8px 0;
+}
+
+.center-alignment-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.alignment-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: white;
+  border-radius: 6px;
+  padding: 6px 12px;
+  border: 1px solid #ede9fe;
+  min-width: 80px;
+}
+
+.alignment-label {
+  font-size: 11px;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  font-weight: 500;
+}
+
+.alignment-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.alignment-value.success {
+  color: #059669;
+}
+
+.alignment-value.error {
+  color: #dc2626;
+}
+
+.skip-reason {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #9ca3af;
+  font-style: italic;
+}
+
+body.dark-mode .product-verification-section {
+  background: #2e1065;
+  border-left-color: #7c3aed;
+}
+
+body.dark-mode .alignment-item {
+  background: #1f2937;
+  border-color: #4c1d95;
+}
+
+body.dark-mode .alignment-label {
+  color: #9ca3af;
+}
+
+body.dark-mode .alignment-value {
+  color: #e5e7eb;
 }
 
 body.dark-mode .text-result-card {

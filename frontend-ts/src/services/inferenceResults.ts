@@ -23,6 +23,33 @@ export interface TemplateVerification {
   template_bbox?: any;
 }
 
+type ThresholdValue = number | { source?: string; parsedValue?: number };
+
+export interface CenterAlignmentCheck {
+  ok: boolean;
+  offset_x: number;
+  abs_offset_x?: number;
+  direction?: string;
+  threshold_left?: ThresholdValue;
+  threshold_right?: ThresholdValue;
+  threshold_used?: ThresholdValue;
+  template_center?: [number, number];
+  product_center?: any[];
+}
+
+export interface ProductVerification {
+  match: boolean;
+  skipped: boolean;
+  reason?: string;
+  center_alignment_check?: CenterAlignmentCheck;
+  wrinkled_check?: any;
+  rotation_check?: any;
+  misalignment_check?: any;
+  label_region_check?: any;
+  detected_boxes?: any;
+  timing?: any;
+}
+
 export interface FrameResult {
   frame_idx: number;
   pass_fail: string;
@@ -34,6 +61,7 @@ export interface FrameResult {
   detected_regions?: any[];
   text_verification?: TextVerification;
   template_verification?: TemplateVerification;
+  product_verification?: ProductVerification;
 }
 
 export interface CameraResult {
