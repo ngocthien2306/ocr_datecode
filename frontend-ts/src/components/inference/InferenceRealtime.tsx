@@ -1036,17 +1036,16 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                 title="Capture current frames as template"
               >
                 {isGettingLiveTemplate ? (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{animation: 'spin 1s linear infinite'}}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{animation: 'spin 1s linear infinite'}}>
                     <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="30 70" strokeLinecap="round"/>
                   </svg>
                 ) : (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                     <rect x="2" y="7" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2"/>
                     <circle cx="12" cy="14" r="3" stroke="currentColor" strokeWidth="2"/>
                     <path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2" stroke="currentColor" strokeWidth="2"/>
                   </svg>
                 )}
-                <span>Get new template</span>
               </button>
               {/* Return to Original Templates Button */}
               {Object.keys(liveTemplateFrames).length > 0 && (
@@ -1055,11 +1054,10 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                   onClick={handleReturnOriginalTemplates}
                   title="Return to original templates"
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                     <path d="M9 14l-4-4 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                     <path d="M5 10h8a6 6 0 010 12H7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
                   </svg>
-                  <span>Return</span>
                 </button>
               )}
             </div>
