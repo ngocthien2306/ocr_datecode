@@ -353,11 +353,15 @@ class ProductVerificationService:
                 product_box, transformed_bboxes, serial_number, center_offset_threshold,
                 center_offset_threshold_left, center_offset_threshold_right 
             )
+        elif self.check_center_alignment and has_label:
+            center_alignment_check = self._check_center_alignment(
+                label_box, transformed_bboxes, serial_number, center_offset_threshold,
+                center_offset_threshold_left, center_offset_threshold_right 
+            )
         elif not self.check_center_alignment:
             center_alignment_check = {'ok': True, 'skipped': True, 'reason': 'Check disabled'}
         else:
-            center_alignment_check = {'ok': True, 'skipped': True, 'reason': 'No product box detected'}
-
+            center_alignment_check = {'ok': True, 'skipped': True, 'reason': 'No product or label box detected'}
 
         # Determine overall match
         overall_match = (

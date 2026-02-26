@@ -287,7 +287,7 @@ class InferenceHandler:
             debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
             angle_threshold=3.0,  # Rotation threshold in degrees
             margin_pixels=15,     # Misalignment margin in pixels
-            conf_threshold=0.001,  # YOLO confidence threshold
+            conf_threshold=0.1,  # YOLO confidence threshold
             check_label_boundary=check_label_boundary,  # Enable/disable label boundary check
             check_misalignment=check_misalignment  # Enable/disable misalignment check
         )

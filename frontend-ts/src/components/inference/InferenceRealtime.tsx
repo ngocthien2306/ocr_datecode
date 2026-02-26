@@ -204,6 +204,10 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
     return saved === 'true'; // Default to false (hidden)
   });
 
+  // Live template snapshot - keyed by serial_number
+  const [liveTemplateFrames, setLiveTemplateFrames] = useState<{[sn: string]: string[]}>({});
+  const [isGettingLiveTemplate, setIsGettingLiveTemplate] = useState(false);
+
   // Auto scroll to bottom
   const scrollToBottom = () => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -308,6 +312,45 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
       console.error('Error saving template visibility:', error);
     }
   }, [showTemplates]);
+
+  const handleGetLiveTemplates = async () => {
+    if (!latestResults?.camera_results?.length) return;
+    setIsGettingLiveTemplate(true);
+    try {
+      const updates: {[sn: string]: string[]} = {};
+      for (const cameraResult of latestResults.camera_results) {
+        const sn = cameraResult.serial_number;
+        const count = cameraResult.frames.length || 1;
+        try {
+          const statusResponse = await camerasAPI.getCameraStatus(sn);
+          if (!statusResponse.is_connected) {
+            toast.warning(`Camera ${sn} is not connected`);
+            continue;
+          }
+          const framesResponse = await camerasAPI.getLatestFrames(sn, count, 95);
+          if (framesResponse?.frames?.length) {
+            updates[sn] = framesResponse.frames.map((f: any) => `data:image/jpeg;base64,${f.frame_base64}`);
+          }
+        } catch (err) {
+          console.error(`Failed to get frames for camera ${sn}:`, err);
+        }
+      }
+      if (Object.keys(updates).length > 0) {
+        setLiveTemplateFrames(updates);
+        toast.success('Captured live frames as template');
+      } else {
+        toast.error('Failed to get frames from any camera');
+      }
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to get live template frames');
+    } finally {
+      setIsGettingLiveTemplate(false);
+    }
+  };
+
+  const handleReturnOriginalTemplates = () => {
+    setLiveTemplateFrames({});
+  };
 
   // Update duration every second
   useEffect(() => {
@@ -985,6 +1028,40 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                   <path d="M19 9l-7 7-7-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
               </button>
+              {/* Get Live Template Button */}
+              <button
+                className="btn-get-live-template"
+                onClick={handleGetLiveTemplates}
+                disabled={isGettingLiveTemplate || !latestResults}
+                title="Capture current frames as template"
+              >
+                {isGettingLiveTemplate ? (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{animation: 'spin 1s linear infinite'}}>
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="30 70" strokeLinecap="round"/>
+                  </svg>
+                ) : (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                    <rect x="2" y="7" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2"/>
+                    <circle cx="12" cy="14" r="3" stroke="currentColor" strokeWidth="2"/>
+                    <path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2" stroke="currentColor" strokeWidth="2"/>
+                  </svg>
+                )}
+                <span>Get new template</span>
+              </button>
+              {/* Return to Original Templates Button */}
+              {Object.keys(liveTemplateFrames).length > 0 && (
+                <button
+                  className="btn-return-template"
+                  onClick={handleReturnOriginalTemplates}
+                  title="Return to original templates"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                    <path d="M9 14l-4-4 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M5 10h8a6 6 0 010 12H7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>
+                  <span>Return</span>
+                </button>
+              )}
             </div>
             {latestResults?.statistics && (
               <div className="statistics-summary">
@@ -1165,33 +1242,53 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                     {/* Template Preview Section - Show all templates */}
                     {showTemplates && cameraResult.frames.length > 0 && (
                       <div className="template-preview-section">
-                        {cameraResult.frames.map((frame, frameIdx) => {
-                          const templateImageUrl = getTemplateImageUrl(cameraResult.serial_number, frame.template_name);
-                          const cameraInfo = getCameraInfo(cameraResult.serial_number);
-
-                          if (!templateImageUrl) return null;
-
-                          return (
+                        {liveTemplateFrames[cameraResult.serial_number] ? (
+                          liveTemplateFrames[cameraResult.serial_number]!.map((imgSrc, frameIdx) => (
                             <div key={frameIdx} className="template-preview-item">
                               <div className="template-image-wrapper">
                                 <img
-                                  src={templateImageUrl}
-                                  alt={`Template ${frame.template_name}`}
+                                  src={imgSrc}
+                                  alt={`Live Frame ${frameIdx + 1}`}
                                   className="template-image"
                                 />
                                 <div className="template-preview-header">
                                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                                    <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/>
-                                    <path d="M3 9h18M9 3v18" stroke="currentColor" strokeWidth="2"/>
+                                    <rect x="2" y="7" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2"/>
+                                    <circle cx="12" cy="14" r="3" stroke="currentColor" strokeWidth="2"/>
                                   </svg>
-                                  <span className="template-label">
-                                    {frame.template_name}
-                                  </span>
+                                  <span className="template-label">Live {frameIdx + 1}</span>
                                 </div>
                               </div>
                             </div>
-                          );
-                        })}
+                          ))
+                        ) : (
+                          cameraResult.frames.map((frame, frameIdx) => {
+                            const templateImageUrl = getTemplateImageUrl(cameraResult.serial_number, frame.template_name);
+
+                            if (!templateImageUrl) return null;
+
+                            return (
+                              <div key={frameIdx} className="template-preview-item">
+                                <div className="template-image-wrapper">
+                                  <img
+                                    src={templateImageUrl}
+                                    alt={`Template ${frame.template_name}`}
+                                    className="template-image"
+                                  />
+                                  <div className="template-preview-header">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                                      <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/>
+                                      <path d="M3 9h18M9 3v18" stroke="currentColor" strokeWidth="2"/>
+                                    </svg>
+                                    <span className="template-label">
+                                      {frame.template_name}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
                       </div>
                     )}
 
