@@ -348,9 +348,6 @@ const ExportReportPanel: React.FC<ExportReportPanelProps> = ({ isOpen, onClose, 
                 </label>
               ))}
             </div>
-            <p className="ep-hint-block" style={{ marginTop: 8 }}>
-              Charts require internet. Tables are always visible.
-            </p>
           </div>
         </div>
 
