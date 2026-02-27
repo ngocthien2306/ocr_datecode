@@ -265,7 +265,7 @@ class InferenceHandler:
         logger.info("TemplateVerificationService initialized")
 
         # Product Verification Service with YOLO OBB
-        yolo_obb_engine_path = f"{home}/Source/ocr_datecode/weights/best_obb_1.engine"
+        yolo_obb_engine_path = f"{home}/Source/ocr_datecode/weights/best_bottle_obb_m_320.engine"
 
         # Configuration: save_debug_images can be "never", "on_fail", or "always"
         # Use "never" for production (fastest), "on_fail" for debugging failures

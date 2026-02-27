@@ -19,8 +19,9 @@ logger = logging.getLogger(__name__)
 
 
 class YOLOOBBTensorRT:
-    def __init__(self, engine_path: str, class_names: List[str] = None):
+    def __init__(self, engine_path: str, class_names: List[str] = None, img_size: int = 320):
         self.class_names = class_names or []
+        self.img_size = img_size
         self.logger = trt.Logger(trt.Logger.WARNING)
 
         # Load engine
@@ -56,7 +57,7 @@ class YOLOOBBTensorRT:
 
     def allocate_buffers(self, batch_size: int):
         """Allocate device memory"""
-        input_shape = (batch_size, 3, 640, 640)
+        input_shape = (batch_size, 3, self.img_size, self.img_size)
         output_shape = (batch_size, 300, 7)
 
         input_size = int(np.prod(input_shape))
@@ -78,13 +79,13 @@ class YOLOOBBTensorRT:
 
         for image in images:
             h, w = image.shape[:2]
-            scale = min(640 / w, 640 / h)
+            scale = min(self.img_size / w, self.img_size / h)
             new_w, new_h = int(w * scale), int(h * scale)
 
             resized = cv2.resize(image, (new_w, new_h))
-            padded = np.full((640, 640, 3), 114, dtype=np.uint8)
-            pad_top = (640 - new_h) // 2
-            pad_left = (640 - new_w) // 2
+            padded = np.full((self.img_size, self.img_size, 3), 114, dtype=np.uint8)
+            pad_top = (self.img_size - new_h) // 2
+            pad_left = (self.img_size - new_w) // 2
             padded[pad_top:pad_top+new_h, pad_left:pad_left+new_w] = resized
 
             rgb = cv2.cvtColor(padded, cv2.COLOR_BGR2RGB)
@@ -120,7 +121,7 @@ class YOLOOBBTensorRT:
             if batch_size < self.min_batch or batch_size > self.max_batch:
                 raise ValueError(f"Batch size {batch_size} out of range [{self.min_batch}, {self.max_batch}]")
             # Set dynamic shape
-            self.context.set_input_shape(self.input_name, (batch_size, 3, 640, 640))
+            self.context.set_input_shape(self.input_name, (batch_size, 3, self.img_size, self.img_size))
         else:
             if batch_size != self.batch_size:
                 raise ValueError(f"Batch size must be {self.batch_size}, got {batch_size}")

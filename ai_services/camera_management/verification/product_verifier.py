@@ -71,7 +71,8 @@ class ProductVerificationService:
         self.check_label_boundary = False
         self.check_misalignment = False
         self.check_center_alignment = True
-        self.check_wrinkled = False
+        self.check_wrinkled = True
+        self.wrinkle_min_area = 2000
         self.center_offset_threshold = center_offset_threshold
 
         # Validate save_debug_images option
@@ -84,7 +85,7 @@ class ProductVerificationService:
 
         # Initialize YOLO OBB model
         if engine_path is None:
-            engine_path = f"{home}/Source/ocr_datecode/weights/best_obb_1.engine"
+            engine_path = f"{home}/Source/ocr_datecode/weights/best_bottle_obb_m_320.engine"
 
         self.obb_model = None
         if YOLO_OBB_AVAILABLE:
@@ -92,6 +93,7 @@ class ProductVerificationService:
                 self.obb_model = YOLOOBBTensorRT(
                     engine_path=engine_path,
                     class_names=['product', 'label', "wrinkled"],
+                    img_size=320
                 )
                 logger.info(
                     f"YOLO OBB model loaded: {engine_path}, "
@@ -102,6 +104,23 @@ class ProductVerificationService:
                 self.obb_model = None
         else:
             logger.warning("YOLO OBB not available, product verification will be skipped")
+
+        # Initialize Wrinkled Segmenter (TRT instance segmentation)
+        self.wrinkle_seg = None
+        if self.check_wrinkled:
+            try:
+                from .wrinkle_segmenter import WrinkledSegmenterTRT
+                wrinkle_engine = (
+                    f"{home}/Source/ocr_datecode/weights/"
+                    "best_wrinkled_instance_segmentation_crop_bottle.engine"
+                )
+                self.wrinkle_seg = WrinkledSegmenterTRT(
+                    engine_path=wrinkle_engine,
+                    min_area=self.wrinkle_min_area,
+                )
+            except Exception as e:
+                logger.error(f"Failed to load WrinkledSegmenterTRT: {e}")
+                self.check_wrinkled = False
 
     def should_verify_frame(self, transformed_bboxes: List[Dict[str, Any]]) -> bool:
         has_product = any(bbox.get('type') == 'product' for bbox in transformed_bboxes)
@@ -209,6 +228,15 @@ class ProductVerificationService:
                 'timing': {'total': (time.perf_counter() - t_start) * 1000}
             } for _ in frames_data]
 
+        # ── Batch wrinkle segmentation (1 lần cho tất cả frames) ──────────────
+        t_wrinkle_start = time.perf_counter()
+        wrinkled_checks = {}
+        if self.check_wrinkled and self.wrinkle_seg is not None:
+            wrinkled_checks = self._batch_wrinkle_check(
+                frames_to_check, frame_indices, batch_results
+            )
+        t_wrinkle = (time.perf_counter() - t_wrinkle_start) * 1000
+
         # Process each frame result
         t_process_start = time.perf_counter()
         results = [{
@@ -233,7 +261,7 @@ class ProductVerificationService:
                 center_offset_threshold=data.get('center_offset_threshold'),
                 center_offset_threshold_left=data.get('center_offset_threshold_left'),
                 center_offset_threshold_right=data.get('center_offset_threshold_right'),
-
+                pre_computed_wrinkled_check=wrinkled_checks.get(orig_idx),
             )
 
             # Track if debug image was saved
@@ -251,6 +279,7 @@ class ProductVerificationService:
             'filter': t_filter,
             'yolo_inference': t_yolo,
             'yolo_details': yolo_timing,
+            'wrinkle_seg': t_wrinkle,
             'processing': t_process,
             'frames_checked': len(frames_to_check),
             'frames_total': len(frames_data)
@@ -278,12 +307,15 @@ class ProductVerificationService:
         camera: 'Camera',
         center_offset_threshold: Optional[float] = None,
         center_offset_threshold_left: Optional[float] = None,
-        center_offset_threshold_right: Optional[float] = None
+        center_offset_threshold_right: Optional[float] = None,
+        pre_computed_wrinkled_check: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         serial_number = camera.serial_number
 
-        # Check wrinkled FIRST (before any other checks)
-        if self.check_wrinkled:
+        # Wrinkled check: dùng kết quả batch đã tính sẵn (ưu tiên) hoặc tính lại
+        if pre_computed_wrinkled_check is not None:
+            wrinkled_check = pre_computed_wrinkled_check
+        elif self.check_wrinkled:
             wrinkled_check = self._check_wrinkled(
                 boxes, scores, class_ids, transformed_bboxes, serial_number
             )
@@ -540,126 +572,6 @@ class ProductVerificationService:
             'label_angle': float(np.degrees(label_angle))
         }
 
-    def _check_misalignment(
-        self,
-        label_box: Dict[str, Any],
-        transformed_bboxes: List[Dict[str, Any]],
-        serial_number: str
-    ) -> Dict[str, Any]:
-
-        # Find label region
-        label_region = next(
-            (bbox for bbox in transformed_bboxes if bbox.get('type') == 'label'),
-            None
-        )
-
-        if label_region is None:
-            logger.warning(f"[{serial_number}] No label region found in template")
-            return {
-                'ok': True,
-                'reason': 'No label region in template'
-            }
-
-        label_region_poly = np.array(label_region['points'], dtype=np.float32)
-        label_corners = label_box['corners']
-
-        # Check left and right edges
-        touches_left, left_dist = self._check_edge_touch(
-            label_corners, label_region_poly, 'left', self.margin_pixels
-        )
-        touches_right, right_dist = self._check_edge_touch(
-            label_corners, label_region_poly, 'right', self.margin_pixels
-        )
-
-        touches = touches_left or touches_right
-        ok = not touches
-
-        logger.debug(
-            f"[{serial_number}] Misalignment check: "
-            f"left={'TOUCH' if touches_left else 'OK'} ({left_dist:.1f}px), "
-            f"right={'TOUCH' if touches_right else 'OK'} ({right_dist:.1f}px), "
-            f"margin={self.margin_pixels}px, "
-            f"result={'OK' if ok else 'FAIL'}"
-        )
-
-        return {
-            'ok': bool(ok),
-            'touches': bool(touches),
-            'touches_left': bool(touches_left),
-            'touches_right': bool(touches_right),
-            'margin': int(self.margin_pixels),
-            'left_distance': float(left_dist),
-            'right_distance': float(right_dist)
-        }
-
-    def _check_label_region_boundary(
-        self,
-        product_box: Dict[str, Any],
-        transformed_bboxes: List[Dict[str, Any]],
-        serial_number: str
-    ) -> Dict[str, Any]:
-
-        # Find label region from template
-        label_region = next(
-            (bbox for bbox in transformed_bboxes if bbox.get('type') == 'label'),
-            None
-        )
-
-        if label_region is None:
-            logger.warning(f"[{serial_number}] No label region found in template")
-            return {
-                'ok': True,
-                'reason': 'No label region in template'
-            }
-
-        # Get label region polygon (template)
-        label_region_poly = np.array(label_region['points'], dtype=np.float32)
-
-        # Get detected product box corners
-        product_corners = product_box['corners']
-        if isinstance(product_corners, list):
-            product_corners = np.array(product_corners, dtype=np.float32)
-
-        # Extract left and right boundaries (x-coordinates)
-        # Label region (template) - box nhỏ bên trong (what we're checking)
-        label_x_coords = label_region_poly[:, 0]
-        label_left_x = np.min(label_x_coords)
-        label_right_x = np.max(label_x_coords)
-
-        # Product box (detected) - box lớn bên ngoài (the boundary we're checking against)
-        product_x_coords = product_corners[:, 0]
-        product_left_x = np.min(product_x_coords)
-        product_right_x = np.max(product_x_coords)
-
-        # Check if label region (nhỏ) touches/extends beyond product box (lớn) boundaries
-        # Logic: Nếu box nhỏ chạm (=) hoặc vượt (<) boundary của box lớn -> FAIL
-        touches_left = label_left_x <= product_left_x  # Box nhỏ chạm/vượt left boundary
-        touches_right = label_right_x >= product_right_x  # Box nhỏ chạm/vượt right boundary
-
-        # Calculate distances (positive = inside, negative = outside)
-        left_dist = label_left_x - product_left_x  # >0 means label is inside
-        right_dist = product_right_x - label_right_x  # >0 means label is inside
-
-        touches = touches_left or touches_right
-        ok = not touches
-
-        logger.debug(
-            f"[{serial_number}] Label region boundary check: "
-            f"left={'TOUCH' if touches_left else 'OK'} ({left_dist:.1f}px), "
-            f"right={'TOUCH' if touches_right else 'OK'} ({right_dist:.1f}px), "
-            f"result={'OK' if ok else 'FAIL'}"
-        )
-
-        return {
-            'ok': bool(ok),
-            'touches': bool(touches),
-            'touches_left': bool(touches_left),
-            'touches_right': bool(touches_right),
-            'left_distance': float(left_dist),
-            'right_distance': float(right_dist),
-            'reason': 'Label region extends beyond product box boundaries' if touches else None
-        }
-
     def _check_center_alignment(
         self,
         product_box: Dict[str, Any],
@@ -739,6 +651,124 @@ class ProductVerificationService:
             'product_center': [float(product_center_x), float(product_center_y)]
         }
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # Batch wrinkle segmentation helpers
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _batch_wrinkle_check(
+        self,
+        frames_to_check: List[Dict[str, Any]],
+        frame_indices: List[int],
+        batch_results: List,
+    ) -> Dict[int, Dict[str, Any]]:
+        """
+        Crop product region từ mỗi frame → batch predict_batch() 1 lần → build wrinkled_check.
+        Returns: {orig_idx: wrinkled_check}
+        """
+        wrinkled_checks: Dict[int, Dict[str, Any]] = {}
+        crops_info = []  # (orig_idx, crop, cx, cy, w, h, angle, crop_offset, frame_img)
+
+        for i, orig_idx in enumerate(frame_indices):
+            boxes, scores, class_ids = batch_results[i]
+            data = frames_to_check[i]
+
+            product_box = self._get_product_box(boxes, scores, class_ids, data['transformed_bboxes'])
+            if product_box is None:
+                continue
+
+            cx, cy, w, h, angle = product_box['box']
+            try:
+                crop, crop_offset = self.wrinkle_seg.crop_from_obb(
+                    data['frame_img'], cx, cy, w, h, angle
+                )
+            except Exception as e:
+                logger.warning(f"crop_from_obb failed for frame {orig_idx}: {e}")
+                continue
+
+            if crop.size == 0:
+                continue
+
+            crops_info.append((orig_idx, crop, cx, cy, w, h, angle, crop_offset, data['frame_img']))
+
+        if not crops_info:
+            return wrinkled_checks
+
+        # Batch predict tất cả crops trong 1 lần inference
+        crops = [ci[1] for ci in crops_info]
+        try:
+            seg_results, seg_timing = self.wrinkle_seg.predict_batch(
+                crops, conf_threshold=0.5, return_timing=True
+            )
+            logger.info(
+                f"[WrinkleSeg] batch={len(crops)} | "
+                f"pre={seg_timing['preprocess']:.1f}ms  "
+                f"h2d={seg_timing['h2d']:.1f}ms  "
+                f"infer={seg_timing['inference']:.1f}ms  "
+                f"d2h={seg_timing['d2h']:.1f}ms  "
+                f"post={seg_timing['postprocess']:.1f}ms  "
+                f"total={seg_timing['total']:.1f}ms  "
+                f"per_img={seg_timing['per_image']:.1f}ms"
+            )
+        except Exception as e:
+            logger.error(f"WrinkledSegmenterTRT batch predict failed: {e}")
+            return wrinkled_checks
+
+        # Build wrinkled_check per frame
+        for j, (orig_idx, crop, cx, cy, w, h, angle, crop_offset, frame_img) in enumerate(crops_info):
+            seg_boxes, seg_masks = seg_results[j]
+            wrinkled_checks[orig_idx] = self.wrinkle_seg.build_wrinkled_check(
+                seg_boxes=seg_boxes,
+                seg_masks=seg_masks,
+                cx=cx, cy=cy, w=w, h=h, angle=angle,
+                crop_offset=crop_offset,
+                frame_shape=frame_img.shape,
+            )
+
+        return wrinkled_checks
+
+    def _get_product_box(
+        self,
+        boxes: np.ndarray,
+        scores: np.ndarray,
+        class_ids: np.ndarray,
+        transformed_bboxes: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Tìm product box để crop cho wrinkle segmenter.
+        Ưu tiên: YOLO product box nằm trong template polygon.
+        Fallback: dùng trực tiếp template product polygon từ transformed_bboxes.
+        """
+        product_region = next(
+            (b for b in transformed_bboxes if b.get('type') == 'product'), None
+        )
+        if product_region is None:
+            return None
+
+        # ── Ưu tiên: YOLO detected product box ──────────────────────────────
+        if len(boxes) > 0:
+            product_poly = np.array(product_region['points'], dtype=np.float32)
+            for box, score, cls_id in zip(boxes, scores, class_ids):
+                if self.obb_model.class_names[cls_id] != 'product':
+                    continue
+                corners = self._obb_to_corners(box)
+                if self._is_box_inside_polygon(corners, product_poly):
+                    return {'box': box, 'score': float(score), 'source': 'yolo'}
+
+        # ── Fallback: dùng template product polygon ──────────────────────────
+        pts = np.array(product_region['points'], dtype=np.float32)
+        x, y, bw, bh = cv2.boundingRect(pts.astype(np.int32))
+        cx = float(x + bw / 2)
+        cy = float(y + bh / 2)
+        # angle=0 vì template polygon là axis-aligned sau khi transform
+        box_fallback = np.array([cx, cy, float(bw), float(bh), 0.0], dtype=np.float32)
+        logger.debug(
+            f"No YOLO product box — fallback to template polygon: "
+            f"cx={cx:.0f} cy={cy:.0f} w={bw} h={bh}"
+        )
+        return {'box': box_fallback, 'score': 1.0, 'source': 'template'}
+
+    # ──────────────────────────────────────────────────────────────────────────
+
     def _check_wrinkled(
         self,
         boxes: np.ndarray,
@@ -747,23 +777,6 @@ class ProductVerificationService:
         transformed_bboxes: List[Dict[str, Any]],
         serial_number: str
     ) -> Dict[str, Any]:
-        """
-        Check for wrinkled boxes inside product region.
-
-        Args:
-            boxes: All detected boxes from YOLO
-            scores: Confidence scores
-            class_ids: Class IDs
-            transformed_bboxes: Template bounding boxes (to find product region)
-            serial_number: Camera serial number
-
-        Returns:
-            Dict with:
-                - ok: bool (False if wrinkled detected)
-                - has_wrinkled: bool
-                - wrinkled_count: int
-                - wrinkled_boxes: list of detected wrinkled boxes
-        """
         # Find product region
         product_region = next(
             (bbox for bbox in transformed_bboxes if bbox.get('type') == 'product'),
@@ -812,7 +825,7 @@ class ProductVerificationService:
         )
 
         return {
-            'ok': bool(True),
+            'ok': bool(not has_wrinkled),
             'has_wrinkled': bool(has_wrinkled),
             'wrinkled_count': int(wrinkled_count),
             'wrinkled_boxes': wrinkled_boxes
@@ -936,19 +949,32 @@ class ProductVerificationService:
                     0.5, label_color, 2
                 )
 
-            # Draw wrinkled boxes (orange) if available
+            # Draw wrinkled regions (orange) — contour mask nếu có, fallback corners
             if wrinkled_check.get('has_wrinkled', False):
                 wrinkled_boxes = wrinkled_check.get('wrinkled_boxes', [])
                 wrinkled_color = (0, 165, 255)  # Orange
+                overlay = result_img.copy()
                 for idx, wrinkled_box in enumerate(wrinkled_boxes):
-                    wrinkled_corners = np.array(wrinkled_box['corners'], dtype=np.int32)
-                    cv2.polylines(result_img, [wrinkled_corners], True, wrinkled_color, 2)
-                    label_text = f"Wrinkled#{idx+1}: {wrinkled_box['score']:.2f}"
+                    contour = wrinkled_box.get('contour')
+                    if contour is not None:
+                        contour_arr = np.array(contour, dtype=np.int32)
+                        cv2.fillPoly(overlay, [contour_arr], wrinkled_color)
+                        cv2.polylines(result_img, [contour_arr], True, wrinkled_color, 2)
+                    else:
+                        wrinkled_corners = np.array(wrinkled_box['corners'], dtype=np.int32)
+                        cv2.polylines(result_img, [wrinkled_corners], True, wrinkled_color, 2)
+
+                    area     = wrinkled_box.get('area', 0)
+                    area_pct = wrinkled_box.get('area_pct', 0.0)
+                    label_text = f"Wrinkled#{idx+1}: {wrinkled_box['score']:.2f} {area}px({area_pct:.1f}%)"
+                    anchor = contour[0] if contour else wrinkled_box['corners'][0]
                     cv2.putText(
                         result_img, label_text,
-                        tuple(wrinkled_corners[0]), cv2.FONT_HERSHEY_SIMPLEX,
+                        tuple(map(int, anchor)), cv2.FONT_HERSHEY_SIMPLEX,
                         0.5, wrinkled_color, 2
                     )
+                # Semi-transparent overlay cho toàn bộ vùng wrinkled
+                cv2.addWeighted(overlay, 0.35, result_img, 0.65, 0, result_img)
 
             # Add status text
             status_color = (0, 255, 0) if overall_match else (0, 0, 255)

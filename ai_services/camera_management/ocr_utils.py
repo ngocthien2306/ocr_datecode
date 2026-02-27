@@ -198,7 +198,7 @@ def compare_texts(text1: str, text2: str, case_sensitive: bool = False, strip: b
 
     # Normalize special characters to space before removing spaces
     # OCR often confuses space with underscore, dash, punctuation, etc.
-    special_chars_to_space = ['_', '-', '－', '—', '–', ',', '.', ':', ';']  # underscore, hyphen, dashes, punctuation
+    special_chars_to_space = ['_', '-', '－', '—', '–', ',', '.', ':', ';', '--']  # underscore, hyphen, dashes, punctuation
     for char in special_chars_to_space:
         text1 = text1.replace(char, ' ')
         text2 = text2.replace(char, ' ')

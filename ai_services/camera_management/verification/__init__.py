@@ -10,9 +10,11 @@ This module contains services for verifying inference results:
 from .text_verifier import TextVerificationService
 from .template_verifier import TemplateVerificationService
 from .product_verifier import ProductVerificationService
+from .wrinkle_segmenter import WrinkledSegmenterTRT
 
 __all__ = [
     'TextVerificationService',
     'TemplateVerificationService',
-    'ProductVerificationService'
+    'ProductVerificationService',
+    'WrinkledSegmenterTRT',
 ]
