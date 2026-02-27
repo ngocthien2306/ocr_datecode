@@ -187,16 +187,25 @@ const ExportReportPanel: React.FC<ExportReportPanelProps> = ({ isOpen, onClose, 
         timeseries,
       );
 
-      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-      const url  = URL.createObjectURL(blob);
-      const newTab = window.open(url, '_blank');
-      if (!newTab) {
-        setError('Popup was blocked. Please allow popups for this site and try again.');
-        URL.revokeObjectURL(url);
-      } else {
-        // Clean up blob URL after tab has loaded
-        newTab.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
-      }
+      const dateStr  = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD
+      const filename = `report_${(PERIOD_LABELS[period] ?? period).replace(/\s+/g, '_').toLowerCase()}_${dateStr}.html`;
+
+      // Open in new tab (view)
+      const viewBlob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const viewUrl  = URL.createObjectURL(viewBlob);
+      window.open(viewUrl, '_blank');
+      setTimeout(() => URL.revokeObjectURL(viewUrl), 10_000);
+
+      // Download file
+      const dlBlob = new Blob([html], { type: 'application/octet-stream' });
+      const dlUrl  = URL.createObjectURL(dlBlob);
+      const a = document.createElement('a');
+      a.href     = dlUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(dlUrl);
     } catch (err) {
       console.error('Export report error:', err);
       setError('Failed to generate report. Please check your connection and try again.');
@@ -432,7 +441,7 @@ const ExportReportPanel: React.FC<ExportReportPanelProps> = ({ isOpen, onClose, 
               </>
             )}
           </button>
-          <p className="ep-foot-note">Opens in a new browser tab</p>
+          <p className="ep-foot-note">Opens preview tab + downloads .html</p>
         </div>
       </div>
     </>
