@@ -661,29 +661,36 @@ def draw_detected_obb_boxes(
             if not isinstance(single_box, dict):
                 continue
 
-            # Get corners
-            corners = single_box.get('corners')
-            if corners is None:
-                continue
-
-            # Convert to numpy array if needed
-            if isinstance(corners, list):
-                corners = np.array(corners, dtype=np.int32)
-            else:
-                corners = corners.astype(np.int32)
-
             # Get color
             color = colors.get(box_type, (255, 255, 255))
 
-            # Draw OBB polygon with thicker line (dashed style)
-            for i in range(4):
-                pt1 = tuple(corners[i])
-                pt2 = tuple(corners[(i + 1) % 4])
-                cv2.line(result_img, pt1, pt2, color, line_thickness + 1, cv2.LINE_AA)
+            # Wrinkled box: ưu tiên vẽ contour mask (instance seg), fallback corners (OBB)
+            contour = single_box.get('contour')
+            if box_type == 'wrinkled' and contour is not None:
+                contour_arr = np.array(contour, dtype=np.int32)
+                # Semi-transparent filled mask
+                overlay = result_img.copy()
+                cv2.fillPoly(overlay, [contour_arr], color)
+                cv2.addWeighted(overlay, 0.35, result_img, 0.65, 0, result_img)
+                # Outline
+                cv2.polylines(result_img, [contour_arr], True, color, line_thickness + 1, cv2.LINE_AA)
+            else:
+                # Fallback: vẽ OBB corners (product, label, hoặc wrinkled cũ)
+                corners = single_box.get('corners')
+                if corners is None:
+                    continue
+                if isinstance(corners, list):
+                    corners = np.array(corners, dtype=np.int32)
+                else:
+                    corners = corners.astype(np.int32)
 
-            # Draw corner points
-            for corner in corners:
-                cv2.circle(result_img, tuple(corner), max(3, line_thickness), color, -1)
+                for i in range(4):
+                    pt1 = tuple(corners[i])
+                    pt2 = tuple(corners[(i + 1) % 4])
+                    cv2.line(result_img, pt1, pt2, color, line_thickness + 1, cv2.LINE_AA)
+
+                for corner in corners:
+                    cv2.circle(result_img, tuple(corner), max(3, line_thickness), color, -1)
 
             # Prepare label text
             score = single_box.get('score', 0.0)

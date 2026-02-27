@@ -739,20 +739,20 @@ class ProductVerificationService:
         Fallback: dùng trực tiếp template product polygon từ transformed_bboxes.
         """
         product_region = next(
-            (b for b in transformed_bboxes if b.get('type') == 'product'), None
+            (b for b in transformed_bboxes if b.get('type') == 'template'), None
         )
         if product_region is None:
             return None
 
         # ── Ưu tiên: YOLO detected product box ──────────────────────────────
-        if len(boxes) > 0:
-            product_poly = np.array(product_region['points'], dtype=np.float32)
-            for box, score, cls_id in zip(boxes, scores, class_ids):
-                if self.obb_model.class_names[cls_id] != 'product':
-                    continue
-                corners = self._obb_to_corners(box)
-                if self._is_box_inside_polygon(corners, product_poly):
-                    return {'box': box, 'score': float(score), 'source': 'yolo'}
+        # if len(boxes) > 0:
+        #     product_poly = np.array(product_region['points'], dtype=np.float32)
+        #     for box, score, cls_id in zip(boxes, scores, class_ids):
+        #         if self.obb_model.class_names[cls_id] != 'product':
+        #             continue
+        #         corners = self._obb_to_corners(box)
+        #         if self._is_box_inside_polygon(corners, product_poly):
+        #             return {'box': box, 'score': float(score), 'source': 'yolo'}
 
         # ── Fallback: dùng template product polygon ──────────────────────────
         pts = np.array(product_region['points'], dtype=np.float32)
