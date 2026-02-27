@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { recipesAPI } from '@/services/recipes';
 import { inferenceResultsAPI } from '@/services/inferenceResults';
 import type { Recipe } from '@/types';
-import { generateHTMLReport, type ReportSections } from '@/utils/reportGenerator';
+import { generateHTMLReport, type ReportSections, type ReportTheme } from '@/utils/reportGenerator';
 import { getTimezoneOffset } from '@/utils/timezone';
 
 interface ExportReportPanelProps {
@@ -122,8 +122,9 @@ const ExportReportPanel: React.FC<ExportReportPanelProps> = ({ isOpen, onClose, 
   const [sections, setSections]     = useState<ReportSections>({
     kpi: true, trendChart: true, passfailChart: true, perRecipe: true,
   });
-  const [generating, setGenerating] = useState(false);
-  const [error, setError]           = useState<string | null>(null);
+  const [reportTheme, setReportTheme] = useState<ReportTheme>('industrial');
+  const [generating, setGenerating]   = useState(false);
+  const [error, setError]             = useState<string | null>(null);
 
   // Sync period when panel opens
   useEffect(() => {
@@ -178,6 +179,7 @@ const ExportReportPanel: React.FC<ExportReportPanelProps> = ({ isOpen, onClose, 
           endDate:          end_date,
           granularity:      actualGranularity,
           generatedAt:      new Date().toISOString(),
+          theme:            reportTheme,
           sections,
           selectedRecipeIds: recipeIds,
         },
@@ -326,10 +328,66 @@ const ExportReportPanel: React.FC<ExportReportPanelProps> = ({ isOpen, onClose, 
             )}
           </div>
 
-          {/* 4. Report Sections */}
+          {/* 4. Report Style */}
           <div className="ep-section">
             <div className="ep-section-label">
-              <span className="ep-step">4</span> Include Sections
+              <span className="ep-step">4</span> Report Style
+            </div>
+            <div className="ep-theme-grid">
+              {([
+                {
+                  id: 'industrial',
+                  label: 'Industrial',
+                  desc: 'White / dark header',
+                  preview: { bg: '#ffffff', header: '#1e2a3a', accent: '#2563eb', text: '#111' },
+                },
+                {
+                  id: 'dark',
+                  label: 'Dark Enterprise',
+                  desc: 'Navy / cyan accents',
+                  preview: { bg: '#0f172a', header: '#020617', accent: '#38bdf8', text: '#e2e8f0' },
+                },
+                {
+                  id: 'executive',
+                  label: 'Executive',
+                  desc: 'Light / blue strips',
+                  preview: { bg: '#eef2f7', header: '#1e3a8a', accent: '#60a5fa', text: '#1e293b' },
+                },
+              ] as { id: ReportTheme; label: string; desc: string; preview: Record<string, string> }[]).map(t => (
+                <label
+                  key={t.id}
+                  className={`ep-theme-card ${reportTheme === t.id ? 'active' : ''}`}
+                  onClick={() => setReportTheme(t.id)}
+                >
+                  {/* Mini preview */}
+                  <div className="ep-theme-preview" style={{ background: t.preview.bg }}>
+                    <div className="ep-preview-header" style={{ background: t.preview.header, borderBottom: `2px solid ${t.preview.accent}` }} />
+                    <div className="ep-preview-body">
+                      <div className="ep-preview-kpi-row">
+                        {[0,1,2,3].map(i => (
+                          <div key={i} className="ep-preview-kpi" style={{
+                            background: t.id === 'dark' ? '#1e293b' : '#fff',
+                            borderTop: t.id === 'executive' ? `3px solid ${t.preview.header}` : 'none',
+                            border: t.id === 'dark' ? `1px solid #334155` : `1px solid #e5e7eb`,
+                          }}/>
+                        ))}
+                      </div>
+                      <div className="ep-preview-bar" style={{ background: t.id === 'dark' ? '#1e293b' : '#f3f4f6', borderLeft: `3px solid ${t.preview.accent}` }}/>
+                      <div className="ep-preview-bar" style={{ background: t.id === 'dark' ? '#1e293b' : '#f3f4f6', borderLeft: `3px solid ${t.preview.header}` }}/>
+                    </div>
+                  </div>
+                  <div className="ep-theme-label">{t.label}</div>
+                  <div className="ep-theme-desc">{t.desc}</div>
+                  {reportTheme === t.id && <div className="ep-theme-check">✓</div>}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* 5. Report Sections */}
+          <div className="ep-section">
+            <div className="ep-section-label">
+              <span className="ep-step">5</span> Include Sections
             </div>
             <div className="ep-check-list">
               {([

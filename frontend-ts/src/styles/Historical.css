@@ -2735,3 +2735,81 @@ body.dark-mode .comparison-item:last-child .comparison-label {
 }
 .export-report-btn:hover { background: #4f46e5; transform: translateY(-1px); }
 .export-report-btn svg { flex-shrink: 0; }
+
+/* ── Theme selector cards ── */
+.ep-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.ep-theme-card {
+  border: 2px solid #e5e7eb;
+  border-radius: 8px;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  position: relative;
+  background: white;
+}
+.ep-theme-card:hover { border-color: #6366f1; }
+.ep-theme-card.active { border-color: #6366f1; box-shadow: 0 0 0 3px #6366f130; }
+
+/* Mini preview area */
+.ep-theme-preview {
+  height: 72px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.ep-preview-header {
+  height: 14px;
+  flex-shrink: 0;
+}
+.ep-preview-body {
+  flex: 1;
+  padding: 5px 5px 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ep-preview-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px;
+  margin-bottom: 2px;
+}
+.ep-preview-kpi {
+  height: 16px;
+  border-radius: 1px;
+}
+.ep-preview-bar {
+  height: 8px;
+  border-radius: 1px;
+}
+
+.ep-theme-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #111827;
+  padding: 5px 8px 2px;
+}
+.ep-theme-desc {
+  font-size: 11px;
+  color: #6b7280;
+  padding: 0 8px 7px;
+}
+.ep-theme-check {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  background: #6366f1;
+  color: white;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
