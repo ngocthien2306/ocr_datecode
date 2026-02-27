@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { inferenceResultsAPI } from '@/services/inferenceResults';
 import InspectionResultsTab from './historical/InspectionResultsTab';
 import ProductionAnalyticsTab from './historical/ProductionAnalyticsTab';
+import ExportReportPanel from './historical/ExportReportPanel';
 import '@/styles/Historical.css';
 
 interface SummaryStats {
@@ -21,6 +22,7 @@ const Historical: React.FC = () => {
   });
   const [dateRange, setDateRange] = useState('7days');
   const [loading, setLoading] = useState(false);
+  const [exportPanelOpen, setExportPanelOpen] = useState(false);
 
   // Fetch summary stats based on date range
   useEffect(() => {
@@ -115,6 +117,7 @@ const Historical: React.FC = () => {
   };
 
   return (
+    <>
     <div className="historical-page">
       {/* Header */}
       <div className="section-header">
@@ -140,6 +143,15 @@ const Historical: React.FC = () => {
               <path d="M21.5 2V6M21.5 6H17.5M21.5 6L18.5 3C16.8 1.5 14.5 0.5 12 0.5C5.5 0.5 0.5 5.5 0.5 12C0.5 18.5 5.5 23.5 12 23.5C17.5 23.5 22 19.5 23 14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
             Refresh
+          </button>
+          <button className="export-report-btn" onClick={() => setExportPanelOpen(true)}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <polyline points="14,2 14,8 20,8" stroke="currentColor" strokeWidth="2"/>
+              <line x1="16" y1="13" x2="8" y2="13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              <line x1="16" y1="17" x2="8" y2="17" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+            Export Report
           </button>
         </div>
       </div>
@@ -260,6 +272,13 @@ const Historical: React.FC = () => {
         </div>
       </div>
     </div>
+
+    <ExportReportPanel
+      isOpen={exportPanelOpen}
+      onClose={() => setExportPanelOpen(false)}
+      defaultDateRange={dateRange}
+    />
+    </>
   );
 };
 
