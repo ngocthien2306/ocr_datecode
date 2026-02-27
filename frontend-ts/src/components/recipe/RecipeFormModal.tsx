@@ -26,6 +26,7 @@ interface FormDataType {
   reject_method: string;
   do_reject_number: number;
   do_alarm_number: number;
+  normal_pulse_ms: number;
   is_active: boolean;
   cameras: RecipeCamera[];
   camera_settings: {
@@ -57,6 +58,7 @@ interface Template {
   annotations: Annotation[];
   center_offset_threshold_left?: number;   // Center alignment threshold left in pixels (0-500)
   center_offset_threshold_right?: number;  // Center alignment threshold right in pixels (0-500)
+  wrinkle_area?: number;                   // Minimum wrinkle region area threshold in pixels
 }
 
 interface CameraTemplates {
@@ -77,6 +79,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     reject_method: 'DIO_OUT',
     do_reject_number: 2,
     do_alarm_number: 0,
+    normal_pulse_ms: 250.0,
     is_active: true,
     cameras: [],
     camera_settings: {
@@ -182,7 +185,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               image_height: template.image_height,
               annotations: template.annotations,
               center_offset_threshold_left: template.center_offset_threshold_left ?? 50.0,   // Default to 50px
-              center_offset_threshold_right: template.center_offset_threshold_right ?? 50.0  // Default to 50px
+              center_offset_threshold_right: template.center_offset_threshold_right ?? 50.0,  // Default to 50px
+              wrinkle_area: template.wrinkle_area ?? 2000.0  // Default to 2000px
             }));
 
             // Load function_type for this camera (default to 'OCR' if not set)
@@ -217,6 +221,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         reject_method: recipeAny.reject_method || 'DIO_OUT',
         do_reject_number: recipeAny.do_reject_number !== undefined ? recipeAny.do_reject_number : 0,
         do_alarm_number: recipeAny.do_alarm_number !== undefined ? recipeAny.do_alarm_number : 0,
+        normal_pulse_ms: recipeAny.normal_pulse_ms !== undefined ? recipeAny.normal_pulse_ms : 250.0,
         is_active: recipeAny.is_active !== undefined ? recipeAny.is_active : (recipeAny.status === 'Active'),
         cameras: normalizedCameras,
         camera_settings: recipeAny.cameraSettings || recipeAny.camera_settings || {
@@ -263,6 +268,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         reject_method: 'DIO_OUT',
         do_reject_number: 2,
         do_alarm_number: 0,
+        normal_pulse_ms: 250.0,
         is_active: true,
         cameras: [],
         camera_settings: {
@@ -316,7 +322,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
     if (type === 'checkbox') {
       finalValue = checked;
-    } else if (name === 'delay_reject' || name === 'reject_pulse') {
+    } else if (name === 'delay_reject' || name === 'reject_pulse' || name === 'normal_pulse_ms') {
       finalValue = parseFloat(value) || 0;
     } else if (name === 'do_reject_number' || name === 'do_alarm_number') {
       finalValue = parseInt(value) || 0;
@@ -472,7 +478,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               image_height: template.image_height,
               annotations: template.annotations,
               center_offset_threshold_left: template.center_offset_threshold_left ?? 50.0,
-              center_offset_threshold_right: template.center_offset_threshold_right ?? 50.0
+              center_offset_threshold_right: template.center_offset_threshold_right ?? 50.0,
+              wrinkle_area: template.wrinkle_area ?? 2000.0
             }))
           });
         }
@@ -650,7 +657,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           image_height: height,
           annotations: clonedAnnotations,  // Use cloned annotations
           center_offset_threshold_left: sourceTemplate?.center_offset_threshold_left || 50.0,
-          center_offset_threshold_right: sourceTemplate?.center_offset_threshold_right || 50.0
+          center_offset_threshold_right: sourceTemplate?.center_offset_threshold_right || 50.0,
+          wrinkle_area: sourceTemplate?.wrinkle_area ?? 2000.0
         };
 
         newTemplates.push(newTemplate);
@@ -738,7 +746,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               image_height: height,
               annotations: [],
               center_offset_threshold_left: 50.0,   // Default center alignment threshold left
-              center_offset_threshold_right: 50.0   // Default center alignment threshold right
+              center_offset_threshold_right: 50.0,  // Default center alignment threshold right
+              wrinkle_area: 2000.0                  // Default wrinkle area threshold
             };
 
             setCameraTemplates(prev => ({
@@ -1131,6 +1140,22 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                     </select>
                     <small style={{display: 'block', marginTop: 4, color: '#666'}}>
                       Digital Output port for alarm output (0-4)
+                    </small>
+                  </div>
+                  <div className="form-group">
+                    <label>Normal Pulse Width (ms)</label>
+                    <input
+                      type="number"
+                      name="normal_pulse_ms"
+                      value={formData.normal_pulse_ms}
+                      onChange={handleInputChange}
+                      step="10"
+                      min="10"
+                      max="2000"
+                      placeholder="Expected pulse width per bottle (ms)"
+                    />
+                    <small style={{display: 'block', marginTop: 4, color: '#666'}}>
+                      Expected DI pulse width per bottle (ms). Stuck detected when pulse &gt; 2.0×
                     </small>
                   </div>
                 </div>
@@ -1631,6 +1656,31 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                       />
                                     </div>
                                   </div>
+                                </div>
+                                <div className="template-wrinkle-input">
+                                  <span className="threshold-label">Wrinkle Area (px²):</span>
+                                  <input
+                                    id={`wrinkle-area-${template.id}`}
+                                    type="number"
+                                    min="0"
+                                    max="100000"
+                                    step="100"
+                                    value={template.wrinkle_area ?? 2000}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      const value = parseFloat(e.target.value) || 2000;
+                                      const clampedValue = Math.max(0, value);
+                                      setCameraTemplates(prev => ({
+                                        ...prev,
+                                        [selectedCameraForTemplate]: prev[selectedCameraForTemplate]?.map((t, i) =>
+                                          i === idx ? { ...t, wrinkle_area: clampedValue } : t
+                                        ) || []
+                                      }));
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="threshold-input"
+                                    title="Minimum wrinkle region area in pixels. Wrinkles smaller than this are ignored."
+                                  />
                                 </div>
                                 <div className="template-stats">
                                   {hasTemplateRegion && <span className="stat">📐 Template</span>}

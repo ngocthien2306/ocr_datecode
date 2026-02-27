@@ -171,6 +171,7 @@ export interface Recipe {
   reject_method?: string;
   do_reject_number?: number;
   do_alarm_number?: number;
+  normal_pulse_ms?: number;
   camera_settings?: CameraSettings;
   model_thresholds?: ModelThresholds;
   template_config?: TemplateConfig;
@@ -196,6 +197,7 @@ export interface RecipeCreate {
   reject_method?: string;
   do_reject_number?: number;
   do_alarm_number?: number;
+  normal_pulse_ms?: number;
   camera_settings?: CameraSettings;
   model_thresholds?: ModelThresholds;
   template_config?: TemplateConfig;
@@ -214,6 +216,7 @@ export interface RecipeUpdate {
   reject_method?: string;
   do_reject_number?: number;
   do_alarm_number?: number;
+  normal_pulse_ms?: number;
   camera_settings?: CameraSettings;
   model_thresholds?: ModelThresholds;
   template_config?: TemplateConfig;
@@ -241,6 +244,7 @@ export interface Receipt {
   reject_method?: string;
   do_reject_number?: number;
   do_alarm_number?: number;
+  normal_pulse_ms?: number;
   cameraSettings?: CameraSettings;
   modelThresholds?: ModelThresholds;
   template_config?: TemplateConfig;

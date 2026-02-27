@@ -28,6 +28,7 @@ class TemplateImage(BaseModel):
     center_offset_threshold_left: float = Field(default=50.0, ge=0.0, le=500.0, description="Left alignment threshold in pixels (0-500)")
     center_offset_threshold_right: float = Field(default=50.0, ge=0.0, le=500.0, description="Right alignment threshold in pixels (0-500)")
     center_offset_threshold: float = Field(default=50.0, ge=0.0, le=500.0, description="Center alignment threshold in pixels (0-500)")
+    wrinkle_area: Optional[float] = Field(default=2000.0, ge=0.0, description="Minimum wrinkle region area threshold in pixels (used by wrinkle segmenter)")
 
 class CameraTemplates(BaseModel):
     """Templates configuration for a camera"""
@@ -94,6 +95,7 @@ class RecipeBase(BaseModel):
     reject_method: Optional[str] = Field(default='DIO_OUT', description="Reject output method: PLC or DIO_OUT")
     do_reject_number: Optional[int] = Field(default=2, ge=0, le=3, description="Digital Output number for reject (0-3)")
     do_alarm_number: Optional[int] = Field(default=0, ge=0, le=4, description="Digital Output number for alarm (0-4)")
+    normal_pulse_ms: Optional[float] = Field(default=250.0, ge=10.0, le=2000.0, description="Expected normal DI pulse width in ms (used for stuck bottle detection)")
 
     # Multiple cameras support (new approach)
     cameras: List[CameraConfiguration] = Field(default_factory=list, description="Camera configurations for this recipe")
@@ -125,6 +127,7 @@ class RecipeUpdate(BaseModel):
     reject_method: Optional[str] = None
     do_reject_number: Optional[int] = Field(None, ge=0, le=3)
     do_alarm_number: Optional[int] = Field(None, ge=0, le=4)
+    normal_pulse_ms: Optional[float] = Field(None, ge=10.0, le=2000.0)
     cameras: Optional[List[CameraConfiguration]] = None
     camera_templates: Optional[List[CameraTemplates]] = None
     camera_settings: Optional[CameraSettings] = None

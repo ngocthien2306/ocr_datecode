@@ -224,6 +224,7 @@ def recipe_to_response(recipe: RecipeInDB, user_names_map: dict = None) -> Recip
         reject_method=recipe.reject_method if hasattr(recipe, 'reject_method') else 'DIO_OUT',
         do_reject_number=recipe.do_reject_number if hasattr(recipe, 'do_reject_number') else 0,
         do_alarm_number=recipe.do_alarm_number if hasattr(recipe, 'do_alarm_number') else 0,
+        normal_pulse_ms=getattr(recipe, 'normal_pulse_ms', 250.0),
         cameras=cameras_data,
         camera_templates=camera_templates_data,
         camera_settings=recipe.camera_settings.model_dump() if hasattr(recipe.camera_settings, 'model_dump') and recipe.camera_settings else recipe.camera_settings,
@@ -974,6 +975,7 @@ async def load_recipe(
         'reject_method': getattr(recipe, 'reject_method', 'DIO_OUT'),
         'do_reject_number': recipe.do_reject_number,
         'do_alarm_number': getattr(recipe, 'do_alarm_number', 0),
+        'normal_pulse_ms': getattr(recipe, 'normal_pulse_ms', 250.0),
         'product_code': recipe.product_code,
         'camera_templates': _to_primitive(camera_templates),
         'model_thresholds': _to_primitive(getattr(recipe, 'model_thresholds', None)),
@@ -992,6 +994,7 @@ async def load_recipe(
         'reject_method': getattr(recipe, 'reject_method', 'DIO_OUT'),
         'do_reject_number': recipe.do_reject_number,
         'do_alarm_number': getattr(recipe, 'do_alarm_number', 0),
+        'normal_pulse_ms': getattr(recipe, 'normal_pulse_ms', 250.0),
         'cameras': enriched_cameras,  # Use enriched cameras with function_type
         'camera_templates': _to_primitive(camera_templates),
         'model_thresholds': _to_primitive(getattr(recipe, 'model_thresholds', None)),
@@ -1279,6 +1282,7 @@ async def update_recipe_realtime(
         'reject_method': getattr(recipe, 'reject_method', 'DIO_OUT'),
         'do_reject_number': recipe.do_reject_number,
         'do_alarm_number': getattr(recipe, 'do_alarm_number', 0),
+        'normal_pulse_ms': getattr(recipe, 'normal_pulse_ms', 250.0),
         'cameras': enriched_cameras,
         'camera_templates': _to_primitive(camera_templates),
         'model_thresholds': _to_primitive(getattr(recipe, 'model_thresholds', None)),
@@ -1295,6 +1299,10 @@ async def update_recipe_realtime(
     if 'reject_pulse' in update_data:
         recipe_dict['reject_pulse'] = update_data['reject_pulse']
         logger.info(f"📝 [REALTIME UPDATE] reject_pulse → {update_data['reject_pulse']} ms")
+
+    if 'normal_pulse_ms' in update_data:
+        recipe_dict['normal_pulse_ms'] = update_data['normal_pulse_ms']
+        logger.info(f"📝 [REALTIME UPDATE] normal_pulse_ms → {update_data['normal_pulse_ms']} ms")
 
     # Update camera settings
     if 'cameras' in update_data:

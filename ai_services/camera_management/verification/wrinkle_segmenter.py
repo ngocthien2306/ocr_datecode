@@ -343,6 +343,7 @@ class WrinkledSegmenterTRT:
         angle: float,
         crop_offset:  Tuple[int, int],
         frame_shape:  Tuple[int, ...],
+        min_area:     Optional[int] = None,  # per-frame override; falls back to self.min_area
     ) -> Dict[str, Any]:
         """
         Filter masks > min_area → back-project → extract contours.
@@ -351,14 +352,16 @@ class WrinkledSegmenterTRT:
           ok            : bool  (False nếu có wrinkled > min_area)
           has_wrinkled  : bool
           wrinkled_count: int
+          min_area      : int   (threshold used for this frame)
           wrinkled_boxes: list[{score, area, area_pct, contour, corners}]
         """
+        effective_min_area = min_area if min_area is not None else self.min_area
         crop_area = int(w * h)
 
         if len(seg_boxes) == 0 or seg_masks is None:
             return {
                 'ok': True, 'has_wrinkled': False,
-                'wrinkled_count': 0, 'wrinkled_boxes': []
+                'wrinkled_count': 0, 'min_area': effective_min_area, 'wrinkled_boxes': []
             }
 
         # Back-project tất cả masks về frame space
@@ -372,7 +375,7 @@ class WrinkledSegmenterTRT:
             mask_crop = seg_masks[i]
             area = int(np.sum(mask_crop > 0.5))
 
-            if area < self.min_area:
+            if area < effective_min_area:
                 continue                              # bỏ qua vùng nhỏ
 
             score = float(box[4])
@@ -407,6 +410,7 @@ class WrinkledSegmenterTRT:
             'ok'            : not has_wrinkled,
             'has_wrinkled'  : has_wrinkled,
             'wrinkled_count': len(wrinkled_boxes),
+            'min_area'      : effective_min_area,
             'wrinkled_boxes': wrinkled_boxes,
         }
 
