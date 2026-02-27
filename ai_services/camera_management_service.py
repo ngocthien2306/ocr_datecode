@@ -98,14 +98,40 @@ class CameraManagementService:
         # Special handling for frames_captured event - submit async inference
         if event_type == "frames_captured":
             cameras = data.get("cameras", [])
+            stuck_count = data.get('stuck_count', 1)
+            group_id = data.get('group_id')
+
+            if stuck_count > 1:
+                # Skip inference entirely for stuck bottles:
+                # build a proper result with encoded frames, emit, then schedule N rejects
+                pulse_width_ms = data.get('pulse_width_ms', 0.0)
+                T_capture_complete = data.get('T_capture_complete')
+                ratio = pulse_width_ms / self.camera_manager.trigger_handler.normal_pulse_ms
+                logger.warning(
+                    f"[Group #{group_id}] STUCK BOTTLES N={stuck_count} "
+                    f"(pulse={pulse_width_ms:.0f}ms, ratio={ratio:.2f}): "
+                    f"skipping inference, auto FAIL"
+                )
+                self.camera_manager.handle_stuck_capture(
+                    cameras=cameras,
+                    results=data.get("results", {}),
+                    group_id=group_id,
+                    T_capture_complete=T_capture_complete,
+                    stuck_count=stuck_count,
+                    pulse_width_ms=pulse_width_ms,
+                )
+                return  # Don't run inference
+
             results_with_metadata = {
-                'group_id': data.get('group_id'),
-                'T_capture_complete': data.get('T_capture_complete'),  # For reject timing
+                'group_id': group_id,
+                'T_capture_complete': data.get('T_capture_complete'),
+                'stuck_count': stuck_count,
+                'pulse_width_ms': data.get('pulse_width_ms', 0.0),
                 **data.get("results", {})
             }
 
             logger.info(
-                f"Frames captured (Group #{data.get('group_id')}), "
+                f"Frames captured (Group #{group_id}), "
                 f"submitting async inference for {len(cameras)} camera(s)..."
             )
 

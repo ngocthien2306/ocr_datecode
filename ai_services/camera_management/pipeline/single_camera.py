@@ -329,11 +329,13 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             # Get center_offset_threshold from template config
             # In single camera scenario with multiple templates, idx corresponds to template_idx
             center_offset_threshold = None
+            wrinkle_area = None
             if camera.templates and idx < len(camera.templates):
                 template = camera.templates[idx]
                 center_offset_threshold = template.get('center_offset_threshold', 50.0)
                 center_offset_threshold_left = template.get('center_offset_threshold_left', 50.0)
                 center_offset_threshold_right = template.get('center_offset_threshold_right', 50.0)
+                wrinkle_area = template.get('wrinkle_area', None)
 
             if result.get('success') and idx < len(frames):
                 frames_data.append({
@@ -342,14 +344,16 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     'camera': camera,
                     'center_offset_threshold': center_offset_threshold,
                     'center_offset_threshold_left': center_offset_threshold_left,
-                    'center_offset_threshold_right': center_offset_threshold_right
+                    'center_offset_threshold_right': center_offset_threshold_right,
+                    'wrinkle_area': wrinkle_area
                 })
             else:
                 frames_data.append({
                     'frame_img': None,
                     'transformed_bboxes': [],
                     'camera': camera,
-                    'center_offset_threshold': center_offset_threshold
+                    'center_offset_threshold': center_offset_threshold,
+                    'wrinkle_area': wrinkle_area
                 })
 
         # Filter valid frames for batch processing

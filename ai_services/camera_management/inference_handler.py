@@ -634,7 +634,9 @@ class InferenceHandler:
         results: Dict[str, Any],
         emit_callback,
         group_id: int = None,
-        T_capture_complete: float = None
+        T_capture_complete: float = None,
+        stuck_count: int = 1,
+        pulse_width_ms: float = 0.0
     ):
         """
         Submit inference job to thread pool (non-blocking)
@@ -645,6 +647,8 @@ class InferenceHandler:
             emit_callback: Callback to emit inference result
             group_id: Optional group ID for tracking
             T_capture_complete: Time when cameras finished capturing (for reject timing)
+            stuck_count: Number of stuck bottles detected (>1 = stuck, force FAIL)
+            pulse_width_ms: DI pulse width in ms (used to calculate per-bottle reject offset)
 
         Returns:
             job_id: Unique job identifier
@@ -674,7 +678,9 @@ class InferenceHandler:
             results=results,
             emit_callback=emit_callback,
             group_id=group_id,
-            T_capture_complete=T_capture_complete
+            T_capture_complete=T_capture_complete,
+            stuck_count=stuck_count,
+            pulse_width_ms=pulse_width_ms
         )
 
         # Track active job with timeout flags
@@ -968,7 +974,9 @@ class InferenceHandler:
         results: Dict[str, Any],
         emit_callback,
         group_id: int = None,
-        T_capture_complete: float = None
+        T_capture_complete: float = None,
+        stuck_count: int = 1,
+        pulse_width_ms: float = 0.0
     ):
         """
         Synchronous inference worker using Pipeline pattern.
@@ -1162,7 +1170,9 @@ class InferenceHandler:
                     overall_pass_fail=context.overall_pass_fail,
                     T_capture_complete=T_capture_complete,
                     inference_time=inference_time,
-                    cameras=cameras
+                    cameras=cameras,
+                    stuck_count=stuck_count,
+                    pulse_width_ms=pulse_width_ms
                 )
 
         except Exception as e:
@@ -1199,10 +1209,15 @@ class InferenceHandler:
         overall_pass_fail: str,
         T_capture_complete: float,
         inference_time: float,
-        cameras: List['Camera']
+        cameras: List['Camera'],
+        stuck_count: int = 1,
+        pulse_width_ms: float = 0.0
     ):
         """
-        Handle reject scheduling/cancellation based on inference result
+        Handle reject scheduling/cancellation based on inference result.
+
+        If stuck_count > 1 (bottles stuck together), force FAIL regardless of
+        inference result and schedule N reject pulses with per-bottle timing offset.
 
         Args:
             group_id: Group ID for tracking
@@ -1210,8 +1225,21 @@ class InferenceHandler:
             T_capture_complete: Time when cameras finished capturing
             inference_time: Inference duration in seconds
             cameras: List of cameras (to get reject config)
+            stuck_count: Number of stuck bottles detected (1 = normal)
+            pulse_width_ms: DI pulse width in ms, used to compute per-bottle offset
         """
         try:
+            # --- Stuck bottle override ---
+            if stuck_count > 1:
+                ratio = pulse_width_ms / 250.0
+                logger.warning(
+                    f"[Group #{group_id}] ⚠️ STUCK BOTTLES: "
+                    f"N={stuck_count}, pulse={pulse_width_ms:.1f}ms, ratio={ratio:.2f}. "
+                    f"Inference result '{overall_pass_fail}' overridden → FAIL. "
+                    f"Scheduling {stuck_count} rejects."
+                )
+                overall_pass_fail = "FAIL"
+
             if overall_pass_fail == "FAIL" or overall_pass_fail == "ERROR":
                 # Get reject config from first camera (recipe-level config)
                 if not cameras:
@@ -1223,28 +1251,55 @@ class InferenceHandler:
                 do_reject_number = camera.do_reject_number
                 do_alarm_number = camera.do_alarm_number
 
-                # Schedule reject
-                success = self.reject_scheduler.schedule_reject(
-                    group_id=group_id,
-                    T_capture_complete=T_capture_complete,
-                    inference_time=inference_time,
-                    delay_reject=delay_reject,
-                    do_number=do_reject_number,
-                    alarm_number=do_alarm_number
-                )
-
-                if success:
-                    logger.info(
-                        f"[Group #{group_id}] Reject scheduled "
-                        f"(delay_reject={delay_reject}ms, DO{do_reject_number})"
-                    )
+                if stuck_count > 1:
+                    # Schedule N rejects with per-bottle timing offset
+                    # Bottle i arrives at rejector (i * delta_t) seconds after bottle 0
+                    delta_t = pulse_width_ms / stuck_count / 1000.0  # seconds per bottle
+                    for i in range(stuck_count):
+                        bottle_group_id = group_id * 1000 + i
+                        fake_T_capture = T_capture_complete + i * delta_t
+                        success = self.reject_scheduler.schedule_reject(
+                            group_id=bottle_group_id,
+                            T_capture_complete=fake_T_capture,
+                            inference_time=inference_time,
+                            delay_reject=delay_reject,
+                            do_number=do_reject_number,
+                            # Alarm only on first bottle to avoid duplicate alarms
+                            alarm_number=do_alarm_number if i == 0 else -1
+                        )
+                        if success:
+                            logger.info(
+                                f"[Group #{group_id}] Stuck reject {i+1}/{stuck_count} scheduled "
+                                f"(offset +{i * delta_t * 1000:.0f}ms, "
+                                f"virtual_group={bottle_group_id})"
+                            )
+                        else:
+                            logger.error(
+                                f"[Group #{group_id}] Stuck reject {i+1}/{stuck_count} "
+                                f"FAILED to schedule (inference too slow)"
+                            )
                 else:
-                    logger.error(
-                        f"[Group #{group_id}] Failed to schedule reject "
-                        f"(inference too slow: {inference_time:.3f}s)"
+                    # Normal single-bottle reject
+                    success = self.reject_scheduler.schedule_reject(
+                        group_id=group_id,
+                        T_capture_complete=T_capture_complete,
+                        inference_time=inference_time,
+                        delay_reject=delay_reject,
+                        do_number=do_reject_number,
+                        alarm_number=do_alarm_number
                     )
+                    if success:
+                        logger.info(
+                            f"[Group #{group_id}] Reject scheduled "
+                            f"(delay_reject={delay_reject}ms, DO{do_reject_number})"
+                        )
+                    else:
+                        logger.error(
+                            f"[Group #{group_id}] Failed to schedule reject "
+                            f"(inference too slow: {inference_time:.3f}s)"
+                        )
 
-            else:  # PASS
+            else:  # PASS (and not stuck)
                 # Cancel reject if scheduled
                 cancelled = self.reject_scheduler.cancel_reject(group_id)
                 if cancelled:

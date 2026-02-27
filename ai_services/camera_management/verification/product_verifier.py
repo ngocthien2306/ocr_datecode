@@ -688,7 +688,8 @@ class ProductVerificationService:
             if crop.size == 0:
                 continue
 
-            crops_info.append((orig_idx, crop, cx, cy, w, h, angle, crop_offset, data['frame_img']))
+            wrinkle_area = data.get('wrinkle_area')  # per-frame override (None → uses self.wrinkle_min_area)
+            crops_info.append((orig_idx, crop, cx, cy, w, h, angle, crop_offset, data['frame_img'], wrinkle_area))
 
         if not crops_info:
             return wrinkled_checks
@@ -697,7 +698,7 @@ class ProductVerificationService:
         crops = [ci[1] for ci in crops_info]
         try:
             seg_results, seg_timing = self.wrinkle_seg.predict_batch(
-                crops, conf_threshold=0.5, return_timing=True
+                crops, conf_threshold=0.2, return_timing=True
             )
             logger.info(
                 f"[WrinkleSeg] batch={len(crops)} | "
@@ -713,8 +714,8 @@ class ProductVerificationService:
             logger.error(f"WrinkledSegmenterTRT batch predict failed: {e}")
             return wrinkled_checks
 
-        # Build wrinkled_check per frame
-        for j, (orig_idx, crop, cx, cy, w, h, angle, crop_offset, frame_img) in enumerate(crops_info):
+        # Build wrinkled_check per frame (each may have its own min_area threshold)
+        for j, (orig_idx, crop, cx, cy, w, h, angle, crop_offset, frame_img, wrinkle_area) in enumerate(crops_info):
             seg_boxes, seg_masks = seg_results[j]
             wrinkled_checks[orig_idx] = self.wrinkle_seg.build_wrinkled_check(
                 seg_boxes=seg_boxes,
@@ -722,6 +723,7 @@ class ProductVerificationService:
                 cx=cx, cy=cy, w=w, h=h, angle=angle,
                 crop_offset=crop_offset,
                 frame_shape=frame_img.shape,
+                min_area=wrinkle_area,  # per-frame; None → falls back to self.min_area
             )
 
         return wrinkled_checks
@@ -828,6 +830,7 @@ class ProductVerificationService:
             'ok': bool(not has_wrinkled),
             'has_wrinkled': bool(has_wrinkled),
             'wrinkled_count': int(wrinkled_count),
+            'min_area': self.wrinkle_min_area,
             'wrinkled_boxes': wrinkled_boxes
         }
 

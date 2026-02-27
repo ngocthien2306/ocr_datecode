@@ -10,9 +10,12 @@ Refactored to use separate handlers for better organization:
 """
 
 import logging
+import os
 import threading
 from typing import Dict, Any, Optional, Callable
 from datetime import datetime
+
+home = os.environ.get('HOME')
 from .camera import Camera, CameraMode
 from .trigger_handler import TriggerHandler
 from .inference_handler import InferenceHandler
@@ -281,6 +284,11 @@ class CameraManager:
                         logger.info(f"✅ {num_initialized} inference matchers initialized successfully")
                     else:
                         logger.warning("⚠️ Failed to initialize inference matchers")
+
+                # Update normal_pulse_ms from recipe (for stuck bottle detection)
+                normal_pulse_ms = recipe_data.get('normal_pulse_ms', 250.0) or 250.0
+                self.trigger_handler.normal_pulse_ms = float(normal_pulse_ms)
+                logger.info(f"normal_pulse_ms set to {self.trigger_handler.normal_pulse_ms} ms from recipe")
 
                 # Build DI camera map for Software Trigger mode
                 self.trigger_handler.build_di_camera_map()
@@ -583,16 +591,189 @@ class CameraManager:
         # Extract metadata from results if available
         group_id = results.get('group_id') if isinstance(results, dict) and 'group_id' in results else None
         T_capture_complete = results.get('T_capture_complete') if isinstance(results, dict) else None
+        stuck_count = results.get('stuck_count', 1) if isinstance(results, dict) else 1
+        pulse_width_ms = results.get('pulse_width_ms', 0.0) if isinstance(results, dict) else 0.0
 
         job_id = self.inference_handler.process_inference_async(
             cameras=cameras,
             results=results,
             emit_callback=self._emit_event,
             group_id=group_id,
-            T_capture_complete=T_capture_complete
+            T_capture_complete=T_capture_complete,
+            stuck_count=stuck_count,
+            pulse_width_ms=pulse_width_ms
         )
 
         logger.debug(f"Submitted inference job #{job_id} for {len(cameras)} camera(s)")
+
+    def handle_stuck_capture(
+        self,
+        cameras: list,
+        results: dict,
+        group_id: int,
+        T_capture_complete: float,
+        stuck_count: int,
+        pulse_width_ms: float
+    ):
+        """
+        Build and emit a properly-formatted auto-FAIL inference_result for stuck
+        bottles (same structure as normal inference), then schedule N reject pulses.
+
+        Args:
+            cameras: List of Camera objects
+            results: Capture results {serial: {'frames': [np.ndarray, ...]}}
+            group_id: Trigger group ID
+            T_capture_complete: Timestamp when primary capture completed
+            stuck_count: Number of stuck bottles (N)
+            pulse_width_ms: Total DI pulse width in ms
+        """
+        from .result_builder.builder import InferenceResultBuilder, CameraResultBuilder, FrameResultBuilder
+        from .utils import save_and_encode_frame, encode_frame_for_display
+
+        normal_pulse_ms = self.trigger_handler.normal_pulse_ms
+        ratio = pulse_width_ms / normal_pulse_ms
+        fail_reason = (
+            f"STUCK_BOTTLES: {stuck_count} chai dính nhau "
+            f"(pulse={pulse_width_ms:.0f}ms, ratio={ratio:.2f}x, normal={normal_pulse_ms:.0f}ms)"
+        )
+
+        if not cameras:
+            logger.error(f"[Group #{group_id}] handle_stuck_capture: no cameras, abort")
+            return
+
+        first_camera = cameras[0]
+        recipe_id = first_camera.recipe_id
+        recipe_name = first_camera.recipe_name
+        base_dir = f"{home}/Source/ocr_datecode/backend/uploads/inference_results"
+
+        builder = InferenceResultBuilder(
+            recipe_id=recipe_id,
+            recipe_name=recipe_name
+        ).with_overall_result("FAIL")
+
+        for camera in cameras:
+            serial = camera.serial_number
+            cam_frames = results.get(serial, {}).get('frames', [])
+
+            camera_builder = CameraResultBuilder(
+                serial_number=serial,
+                delay_trigger=camera.delay_trigger
+            )
+
+            for frame_idx, frame_img in enumerate(cam_frames):
+                frame_builder = FrameResultBuilder(
+                    frame_idx=frame_idx,
+                    template_name=f"Stuck Bottle {frame_idx + 1}"
+                ).with_inference_data("FAIL", 0.0)
+
+                try:
+                    image_path, image_base64 = save_and_encode_frame(
+                        frame_img=frame_img,
+                        serial_number=serial,
+                        recipe_id=recipe_id,
+                        pass_fail="FAIL",
+                        frame_idx=frame_idx,
+                        base_dir=base_dir,
+                    )
+                    frame_builder.set_encoded_image(image_path, image_base64)
+                except Exception as e:
+                    logger.error(
+                        f"[Group #{group_id}] Failed to encode stuck frame "
+                        f"camera={serial} idx={frame_idx}: {e}"
+                    )
+
+                camera_builder.add_frame(frame_builder.build())
+
+            camera_result = camera_builder.build()
+            builder.add_camera_result(camera_result)
+            frames = camera_result.frames
+            builder.add_camera_stats(
+                serial_number=serial,
+                avg_confidence=0.0,
+                total_inliers=0,
+                total_matches=0,
+                timings={},
+                pass_count=0,
+                fail_count=len(frames),
+                error_count=0
+            )
+
+        result = builder.build()
+        # Attach stuck-specific info into metadata so it flows through to DB / frontend
+        result['group_id'] = group_id
+        result.setdefault('metadata', {})['stuck_info'] = {
+            'fail_reason': fail_reason,
+            'stuck_count': stuck_count,
+            'pulse_width_ms': pulse_width_ms,
+        }
+
+        self._emit_event("inference_result", result)
+
+        # Schedule N reject pulses (one per stuck bottle)
+        self.schedule_stuck_reject(
+            group_id=group_id,
+            T_capture_complete=T_capture_complete,
+            stuck_count=stuck_count,
+            pulse_width_ms=pulse_width_ms,
+            cameras=cameras,
+        )
+
+    def schedule_stuck_reject(
+        self,
+        group_id: int,
+        T_capture_complete: float,
+        stuck_count: int,
+        pulse_width_ms: float,
+        cameras: list
+    ):
+        """
+        Schedule N reject pulses for N stuck bottles (bypasses inference).
+
+        Bottle i arrives at reject station delta_t seconds after bottle 0,
+        where delta_t = pulse_width_ms / stuck_count / 1000.
+
+        Args:
+            group_id: Original group ID (virtual IDs = group_id*1000 + i)
+            T_capture_complete: Timestamp when primary capture completed
+            stuck_count: Number of stuck bottles (N)
+            pulse_width_ms: Total DI pulse width in ms
+            cameras: Camera list (used to get delay_reject / do_number config)
+        """
+        if not cameras or not self.reject_scheduler or not T_capture_complete:
+            logger.error(f"[Group #{group_id}] schedule_stuck_reject: missing params, abort")
+            return
+
+        camera = cameras[0]
+        delay_reject = camera.delay_reject        # ms
+        do_reject_number = camera.do_reject_number
+        do_alarm_number = camera.do_alarm_number
+        delta_t_sec = (pulse_width_ms / stuck_count) / 1000.0  # seconds per bottle
+
+        logger.warning(
+            f"[Group #{group_id}] Scheduling {stuck_count} stuck-bottle rejects "
+            f"(delta_t={delta_t_sec*1000:.0f}ms, DO{do_reject_number})"
+        )
+
+        for i in range(stuck_count):
+            fake_T_capture = T_capture_complete + i * delta_t_sec
+            bottle_group_id = group_id * 1000 + i
+            success = self.reject_scheduler.schedule_reject(
+                group_id=bottle_group_id,
+                T_capture_complete=fake_T_capture,
+                inference_time=0.0,          # no inference for stuck
+                delay_reject=delay_reject,
+                do_number=do_reject_number,
+                alarm_number=do_alarm_number if i == 0 else -1  # alarm once only
+            )
+            if success:
+                logger.info(
+                    f"[Group #{group_id}] Stuck reject {i+1}/{stuck_count} scheduled "
+                    f"(+{i * delta_t_sec * 1000:.0f}ms offset, vgroup={bottle_group_id})"
+                )
+            else:
+                logger.error(
+                    f"[Group #{group_id}] Stuck reject {i+1}/{stuck_count} FAILED to schedule"
+                )
 
     def set_inference_mode(self, enabled: bool) -> Dict[str, Any]:
         """

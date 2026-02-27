@@ -16,6 +16,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Default nominal pulse width (ms) — overridden per-recipe via normal_pulse_ms field
+_DEFAULT_NORMAL_PULSE_MS = 250.0
+
 
 class TriggerHandler:
     """
@@ -54,6 +57,22 @@ class TriggerHandler:
         self._active_timers: List[threading.Timer] = []
         self._timer_counter = 0
         self._timer_lock = threading.Lock()
+
+        # Pulse width measurement: track rising edge timestamp per DI pin
+        self._pulse_start_times: Dict[int, Optional[float]] = {
+            0: None, 1: None, 2: None, 3: None
+        }
+        self._pulse_logger: Optional[logging.Logger] = None
+
+        # Normal pulse width per recipe (ms) — used for stuck bottle detection
+        self.normal_pulse_ms: float = _DEFAULT_NORMAL_PULSE_MS
+
+        # Stuck bottle tracking: link DI pin → last triggered group_id
+        self._last_group_id_by_di: Dict[int, Optional[int]] = {
+            0: None, 1: None, 2: None, 3: None
+        }
+        # {group_id: {'stuck_count': N, 'pulse_width_ms': float}}
+        self._stuck_info: Dict[int, Dict] = {}
 
         # Capture group tracking for multi-camera sync with different delays
         self._capture_groups: Dict[int, Dict] = {}
@@ -124,6 +143,7 @@ class TriggerHandler:
                 return
 
             self._polling = True
+            self._setup_pulse_logger()
             self._polling_thread = threading.Thread(
                 target=self._polling_loop,
                 daemon=True,
@@ -294,6 +314,43 @@ class TriggerHandler:
             file_handler.close()
             logger.info("Monitoring loop stopped")
 
+    def _setup_pulse_logger(self):
+        """Setup dedicated file logger for pulse width measurements"""
+        import os
+        log_dir = '/home/demo/Source/ocr_datecode/ai_services/logs'
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, 'pulse_width.log')
+
+        pulse_logger = logging.getLogger('pulse_width')
+        pulse_logger.setLevel(logging.INFO)
+        pulse_logger.propagate = False
+
+        # Avoid duplicate handlers if called multiple times
+        if not pulse_logger.handlers:
+            file_handler = logging.FileHandler(log_file, mode='a')
+            file_handler.setLevel(logging.INFO)
+            formatter = logging.Formatter(
+                '%(asctime)s.%(msecs)03d | %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S'
+            )
+            file_handler.setFormatter(formatter)
+            pulse_logger.addHandler(file_handler)
+
+        self._pulse_logger = pulse_logger
+        logger.info(f"Pulse width logging to: {log_file}")
+
+    def _log_pulse_width(self, di_number: int, rise_time: float, fall_time: float,
+                         stuck_count: int = 1):
+        """Log a single pulse width measurement"""
+        if self._pulse_logger is None:
+            return
+        pulse_width_ms = (fall_time - rise_time) * 1000.0
+        stuck_str = f" | STUCK N={stuck_count} (ratio={pulse_width_ms/self.normal_pulse_ms:.2f})" \
+                    if stuck_count > 1 else ""
+        self._pulse_logger.info(
+            f"DI{di_number} | pulse_width={pulse_width_ms:.3f}ms | normal={self.normal_pulse_ms:.0f}ms{stuck_str}"
+        )
+
     def _polling_loop(self):
         """Main polling loop - runs at 100Hz"""
         poll_interval = 0.01  # 10ms = 100Hz
@@ -315,6 +372,67 @@ class TriggerHandler:
                     # Get previous value
                     previous_value = self.previous_di_values[di_number]
 
+                    # Pulse width measurement (independent of trigger activation)
+                    if previous_value is not None and current_value != previous_value:
+                        if previous_value == 0 and current_value == 1:
+                            # Rising edge: record start time
+                            self._pulse_start_times[di_number] = time.time()
+                        elif previous_value == 1 and current_value == 0:
+                            # Falling edge: compute pulse width and detect stuck bottles
+                            start_t = self._pulse_start_times[di_number]
+                            if start_t is not None:
+                                fall_time = time.time()
+                                pulse_width_ms = (fall_time - start_t) * 1000.0
+                                ratio = pulse_width_ms / self.normal_pulse_ms
+                                stuck_count = round(ratio) if ratio > 1.5 else 1
+
+                                self._log_pulse_width(di_number, start_t, fall_time, stuck_count)
+
+                                if stuck_count > 1:
+                                    gid = self._last_group_id_by_di.get(di_number)
+                                    if gid is not None:
+                                        self._stuck_info[gid] = {
+                                            'stuck_count': stuck_count,
+                                            'pulse_width_ms': pulse_width_ms
+                                        }
+                                        logger.warning(
+                                            f"DI{di_number} STUCK BOTTLES: "
+                                            f"pulse={pulse_width_ms:.1f}ms, "
+                                            f"ratio={ratio:.2f}, N={stuck_count} "
+                                            f"(group #{gid})"
+                                        )
+
+                                        # Schedule secondary captures for bottles 2..N
+                                        # cameras here is List[Tuple[Camera, str]] from di_camera_map
+                                        cameras_list = [cam for cam, _ in cameras]
+                                        if cameras_list:
+                                            delay_trigger_ms = cameras_list[0].delay_trigger
+                                            for i in range(1, stuck_count):
+                                                # Delay from NOW (falling edge) for bottle i+1
+                                                extra_ms = delay_trigger_ms + i * self.normal_pulse_ms - pulse_width_ms
+                                                if extra_ms < 0:
+                                                    logger.warning(
+                                                        f"DI{di_number} stuck bottle {i+1}/{stuck_count}: "
+                                                        f"capture window already missed ({extra_ms:.0f}ms)"
+                                                    )
+                                                    continue
+                                                timer = threading.Timer(
+                                                    interval=extra_ms / 1000.0,
+                                                    function=self._capture_stuck_secondary,
+                                                    args=(cameras_list, gid, i + 1, stuck_count)
+                                                )
+                                                timer.daemon = True
+                                                timer.name = f"StuckTimer-{gid}-b{i+1}"
+                                                with self._timer_lock:
+                                                    self._active_timers.append(timer)
+                                                timer.start()
+                                                logger.info(
+                                                    f"DI{di_number} stuck capture {i+1}/{stuck_count} "
+                                                    f"scheduled in {extra_ms:.0f}ms"
+                                                )
+
+                                self._pulse_start_times[di_number] = None
+
                     # Check if any camera's trigger activation matches
                     # (all cameras on same DI should have same activation, but check first one)
                     if cameras:
@@ -330,9 +448,10 @@ class TriggerHandler:
                             with self._stats_lock:
                                 self._stats['total_triggers'] += 1
 
-                            # Trigger all cameras on this DI pin simultaneously
+                            # Trigger all cameras and record group_id for stuck linking
                             camera_list = [cam for cam, _ in cameras]
-                            self.trigger_cameras_group(camera_list)
+                            group_id = self.trigger_cameras_group(camera_list)
+                            self._last_group_id_by_di[di_number] = group_id
 
                     # Update previous value
                     self.previous_di_values[di_number] = current_value
@@ -365,7 +484,7 @@ class TriggerHandler:
         """
         if not cameras:
             logger.warning("trigger_cameras_group called with empty camera list")
-            return
+            return 0
 
         # Generate unique group ID
         with self._timer_lock:
@@ -448,6 +567,8 @@ class TriggerHandler:
             f"Returning to polling loop."
         )
 
+        return group_id
+
     def _capture_and_register(self, camera: 'Camera', group_id: int):
         """
         Timer callback for single camera capture
@@ -517,11 +638,18 @@ class TriggerHandler:
                     cameras_list = group['cameras']
                     results_dict = group['results']
 
+                    # Attach stuck bottle info if detected (falling edge set this before capture completes)
+                    stuck_info = self._stuck_info.pop(group_id, None)
+                    stuck_count = stuck_info['stuck_count'] if stuck_info else 1
+                    stuck_pulse_ms = stuck_info['pulse_width_ms'] if stuck_info else 0.0
+
                     self.camera_manager._emit_event("frames_captured", {
                         "group_id": group_id,
                         "cameras": cameras_list,
                         "results": results_dict,
-                        "T_capture_complete": T_capture_complete  # ← NEW! For reject timing
+                        "T_capture_complete": T_capture_complete,
+                        "stuck_count": stuck_count,
+                        "pulse_width_ms": stuck_pulse_ms
                     })
 
                     # Cancel timeout timer before cleanup
@@ -555,6 +683,55 @@ class TriggerHandler:
             # Cleanup timer from active list
             with self._timer_lock:
                 self._active_timers = [t for t in self._active_timers if t.is_alive()]
+
+    def _capture_stuck_secondary(
+        self,
+        cameras: List['Camera'],
+        primary_group_id: int,
+        bottle_index: int,
+        total_bottles: int
+    ):
+        """
+        Capture a secondary stuck bottle (bottle 2..N).
+        No inference, no reject scheduling — just capture and log the image.
+        Called by timer scheduled at falling edge detection.
+        """
+        logger.info(
+            f"[Group #{primary_group_id}] STUCK secondary capture "
+            f"{bottle_index}/{total_bottles} firing"
+        )
+        for camera in cameras:
+            try:
+                result = camera.execute_software_trigger_immediate()
+                if result.get('success'):
+                    logger.info(
+                        f"[Group #{primary_group_id}] STUCK bottle {bottle_index}/{total_bottles} "
+                        f"Camera {camera.serial_number}: "
+                        f"{result.get('frame_count', 0)} frame(s) captured (log only, no inference)"
+                    )
+                else:
+                    logger.error(
+                        f"[Group #{primary_group_id}] STUCK bottle {bottle_index}/{total_bottles} "
+                        f"Camera {camera.serial_number} failed: {result.get('error')}"
+                    )
+
+                # Emit event so frontend can log/display the image
+                self.camera_manager._emit_event("stuck_bottle_captured", {
+                    "group_id": primary_group_id,
+                    "bottle_index": bottle_index,
+                    "total_bottles": total_bottles,
+                    "camera_serial": camera.serial_number,
+                    "result": result,
+                })
+
+            except Exception as e:
+                logger.error(
+                    f"[Group #{primary_group_id}] Error in stuck secondary capture "
+                    f"bottle {bottle_index}/{total_bottles}: {e}"
+                )
+            finally:
+                with self._timer_lock:
+                    self._active_timers = [t for t in self._active_timers if t.is_alive()]
 
     def _group_timeout(self, group_id: int):
         """
