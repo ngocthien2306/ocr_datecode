@@ -2,7 +2,7 @@
 Trigger Handler Module
 Handles DI polling and software trigger logic
 """
-
+import os
 import logging
 import threading
 import time
@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # Default nominal pulse width (ms) — overridden per-recipe via normal_pulse_ms field
 _DEFAULT_NORMAL_PULSE_MS = 250.0
 
+home = os.environ.get('HOME')
 
 class TriggerHandler:
     """
@@ -320,8 +321,8 @@ class TriggerHandler:
 
     def _setup_pulse_logger(self):
         """Setup dedicated file logger for pulse width measurements"""
-        import os
-        log_dir = '/home/demo/Source/ocr_datecode/ai_services/logs'
+
+        log_dir = f"{home}/Source/ocr_datecode/ai_services/logs"
         os.makedirs(log_dir, exist_ok=True)
         log_file = os.path.join(log_dir, 'pulse_width.log')
 
