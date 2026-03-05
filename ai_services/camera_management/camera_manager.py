@@ -286,7 +286,7 @@ class CameraManager:
                         logger.warning("⚠️ Failed to initialize inference matchers")
 
                 # Update normal_pulse_ms from recipe (for stuck bottle detection)
-                normal_pulse_ms = recipe_data.get('normal_pulse_ms', 250.0) or 250.0
+                normal_pulse_ms = recipe_data.get('normal_pulse_ms', 250.0) or 100000.0
                 if float(normal_pulse_ms) < 1:
                     logger.info(f"Ignoring invalid normal_pulse_ms={normal_pulse_ms}ms in recipe")
                     normal_pulse_ms = 100000.0

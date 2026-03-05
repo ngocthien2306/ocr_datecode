@@ -523,7 +523,7 @@ class RejectScheduler:
                                 self._stats['plc_fallbacks'] += 1
 
             # Execute DIO only when method is DIO (no fallback from PLC failure)
-            if method == "DIO":
+            if method == "DIO_OUT":
                 # Check if reject and alarm use same address
                 if alarm_address >= 0 and alarm_address == reject_address:
                     logger.info(
