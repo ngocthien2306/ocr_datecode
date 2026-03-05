@@ -698,7 +698,7 @@ class ProductVerificationService:
         crops = [ci[1] for ci in crops_info]
         try:
             seg_results, seg_timing = self.wrinkle_seg.predict_batch(
-                crops, conf_threshold=0.2, return_timing=True
+                crops, conf_threshold=0.4, return_timing=True
             )
             logger.info(
                 f"[WrinkleSeg] batch={len(crops)} | "

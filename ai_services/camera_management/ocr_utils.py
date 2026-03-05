@@ -215,9 +215,9 @@ def compare_texts(text1: str, text2: str, case_sensitive: bool = False, strip: b
     text1 = re.sub(r'[^A-Za-z0-9]+$', '', text1)
     text2 = re.sub(r'[^A-Za-z0-9]+$', '', text2)
 
-    # if not case_sensitive:
-    # text1 = text1.upper()
-    # text2 = text2.upper()
+    if case_sensitive:
+        text1 = text1.upper()
+        text2 = text2.upper()
 
     # Compare character by character, treating O/0 as equivalent
     if len(text1) != len(text2):

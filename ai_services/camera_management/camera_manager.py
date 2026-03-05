@@ -287,6 +287,10 @@ class CameraManager:
 
                 # Update normal_pulse_ms from recipe (for stuck bottle detection)
                 normal_pulse_ms = recipe_data.get('normal_pulse_ms', 250.0) or 250.0
+                if float(normal_pulse_ms) < 1:
+                    logger.info(f"Ignoring invalid normal_pulse_ms={normal_pulse_ms}ms in recipe")
+                    normal_pulse_ms = 100000.0
+
                 self.trigger_handler.normal_pulse_ms = float(normal_pulse_ms)
                 logger.info(f"normal_pulse_ms set to {self.trigger_handler.normal_pulse_ms} ms from recipe")
 
@@ -709,14 +713,9 @@ class CameraManager:
 
         self._emit_event("inference_result", result)
 
-        # Schedule N reject pulses (one per stuck bottle)
-        self.schedule_stuck_reject(
-            group_id=group_id,
-            T_capture_complete=T_capture_complete,
-            stuck_count=stuck_count,
-            pulse_width_ms=pulse_width_ms,
-            cameras=cameras,
-        )
+        # NOTE: Reject scheduling for stuck bottles is handled entirely in
+        # trigger_handler.py (proactive during HIGH pulse + remaining at falling edge).
+        # Do NOT call schedule_stuck_reject here to avoid double-scheduling.
 
     def schedule_stuck_reject(
         self,
@@ -755,7 +754,9 @@ class CameraManager:
         )
 
         for i in range(stuck_count):
-            fake_T_capture = T_capture_complete + i * delta_t_sec
+            # i=0 → trailing bottle (exits camera at T_capture_complete, arrives LAST at reject station)
+            # i=N-1 → leading bottle (exited camera pulse_width_ms earlier, arrives FIRST)
+            fake_T_capture = T_capture_complete - i * delta_t_sec
             bottle_group_id = group_id * 1000 + i
             success = self.reject_scheduler.schedule_reject(
                 group_id=bottle_group_id,

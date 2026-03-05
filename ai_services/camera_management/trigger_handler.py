@@ -74,6 +74,10 @@ class TriggerHandler:
         # {group_id: {'stuck_count': N, 'pulse_width_ms': float}}
         self._stuck_info: Dict[int, Dict] = {}
 
+        # Proactive stuck reject scheduling: how many rejects already scheduled
+        # during the current HIGH pulse (before falling edge), per DI pin
+        self._proactive_rejects_per_di: Dict[int, int] = {0: 0, 1: 0, 2: 0, 3: 0}
+
         # Capture group tracking for multi-camera sync with different delays
         self._capture_groups: Dict[int, Dict] = {}
         self._group_lock = threading.Lock()
@@ -375,8 +379,9 @@ class TriggerHandler:
                     # Pulse width measurement (independent of trigger activation)
                     if previous_value is not None and current_value != previous_value:
                         if previous_value == 0 and current_value == 1:
-                            # Rising edge: record start time
+                            # Rising edge: record start time, reset proactive counter
                             self._pulse_start_times[di_number] = time.time()
+                            self._proactive_rejects_per_di[di_number] = 0
                         elif previous_value == 1 and current_value == 0:
                             # Falling edge: compute pulse width and detect stuck bottles
                             start_t = self._pulse_start_times[di_number]
@@ -431,6 +436,34 @@ class TriggerHandler:
                                                     f"scheduled in {extra_ms:.0f}ms"
                                                 )
 
+                                        # Schedule rejects for bottles NOT yet scheduled proactively
+                                        already_proactive = self._proactive_rejects_per_di[di_number]
+                                        if cameras_list and self.camera_manager.reject_scheduler:
+                                            cam0 = cameras_list[0]
+                                            delay_rej = int(cam0.delay_reject)
+                                            do_num = cam0.do_reject_number
+                                            alarm_num = cam0.do_alarm_number
+                                            scheduled_now = 0
+                                            for k in range(already_proactive, stuck_count):
+                                                T_bottle = start_t + k * self.normal_pulse_ms / 1000.0
+                                                bgid = gid * 1000 + k
+                                                ok = self.camera_manager.reject_scheduler.schedule_reject(
+                                                    group_id=bgid,
+                                                    T_capture_complete=T_bottle,
+                                                    inference_time=0.0,
+                                                    delay_reject=delay_rej,
+                                                    do_number=do_num,
+                                                    alarm_number=alarm_num if (k == 0 and already_proactive == 0) else -1
+                                                )
+                                                if ok:
+                                                    scheduled_now += 1
+                                            logger.warning(
+                                                f"[Group #{gid}] Stuck N={stuck_count}: "
+                                                f"{already_proactive} proactive + {scheduled_now} at fall "
+                                                f"= {already_proactive + scheduled_now} rejects total"
+                                            )
+                                        self._proactive_rejects_per_di[di_number] = 0
+
                                 self._pulse_start_times[di_number] = None
 
                     # Check if any camera's trigger activation matches
@@ -450,11 +483,49 @@ class TriggerHandler:
 
                             # Trigger all cameras and record group_id for stuck linking
                             camera_list = [cam for cam, _ in cameras]
-                            group_id = self.trigger_cameras_group(camera_list)
+                            group_id = self.trigger_cameras_group(camera_list, di_number=di_number)
                             self._last_group_id_by_di[di_number] = group_id
 
                     # Update previous value
                     self.previous_di_values[di_number] = current_value
+
+                    # Proactive stuck reject scheduling: fires while DI is still HIGH
+                    # Each time a new full bottle-interval completes, schedule its reject immediately
+                    # so early bottles aren't missed by the time the falling edge is detected.
+                    if previous_value == 1 and current_value == 1:
+                        start_t = self._pulse_start_times[di_number]
+                        if start_t is not None and self.camera_manager.reject_scheduler:
+                            duration_ms = (time.time() - start_t) * 1000.0
+                            ratio = duration_ms / self.normal_pulse_ms
+                            if ratio > 1.5:
+                                confirmed = int(ratio)   # bottles fully past camera
+                                already = self._proactive_rejects_per_di[di_number]
+                                if confirmed > already:
+                                    cameras_list = [cam for cam, _ in cameras]
+                                    gid = self._last_group_id_by_di.get(di_number)
+                                    if gid is not None and cameras_list:
+                                        cam0 = cameras_list[0]
+                                        delay_rej = int(cam0.delay_reject)
+                                        do_num = cam0.do_reject_number
+                                        alarm_num = cam0.do_alarm_number
+                                        for k in range(already, confirmed):
+                                            T_bottle = start_t + k * self.normal_pulse_ms / 1000.0
+                                            bgid = gid * 1000 + k
+                                            ok = self.camera_manager.reject_scheduler.schedule_reject(
+                                                group_id=bgid,
+                                                T_capture_complete=T_bottle,
+                                                inference_time=0.0,
+                                                delay_reject=delay_rej,
+                                                do_number=do_num,
+                                                alarm_number=alarm_num if (k == 0 and already == 0) else -1
+                                            )
+                                            t_in = T_bottle + delay_rej / 1000.0 - time.time()
+                                            logger.info(
+                                                f"[Proactive Stuck] DI{di_number} bottle {k+1} reject "
+                                                f"{'scheduled' if ok else 'FAILED'} "
+                                                f"(fires in {t_in*1000:.0f}ms)"
+                                            )
+                                        self._proactive_rejects_per_di[di_number] = confirmed
 
                 # Sleep to maintain 100Hz
                 elapsed = time.time() - loop_start
@@ -468,12 +539,15 @@ class TriggerHandler:
         finally:
             logger.info("Trigger polling loop stopped")
 
-    def trigger_cameras_group(self, cameras: List['Camera']):
+    def trigger_cameras_group(self, cameras: List['Camera'], di_number: Optional[int] = None):
         """
         Multi-camera synchronization with individual delays
 
         Args:
             cameras: List of Camera objects to trigger
+            di_number: DI pin that triggered this group (None for simulated triggers).
+                       Used in _capture_and_register to detect large-N stuck bottles
+                       where pulse_width > delay_trigger (cameras complete before falling edge).
 
         Flow:
             1. Create capture group with unique ID
@@ -511,7 +585,8 @@ class TriggerHandler:
                 'completed_count': 0,
                 'group_lock': threading.Lock(),
                 'created_at': time.time(),
-                'timeout_timer': None  # Will be set after creation
+                'timeout_timer': None,  # Will be set after creation
+                'di_number': di_number  # DI pin that triggered this group (for stuck detection)
             }
 
         # Schedule individual timer for each camera based on its delay_trigger
@@ -643,6 +718,26 @@ class TriggerHandler:
                     stuck_count = stuck_info['stuck_count'] if stuck_info else 1
                     stuck_pulse_ms = stuck_info['pulse_width_ms'] if stuck_info else 0.0
 
+                    # Race condition fix: when pulse_width > delay_trigger, cameras complete
+                    # BEFORE the falling edge, so _stuck_info has not been set yet.
+                    # Detect this by checking if DI is still HIGH at capture-complete time.
+                    if stuck_info is None:
+                        di_num = group.get('di_number')
+                        if di_num is not None:
+                            pulse_start = self._pulse_start_times.get(di_num)
+                            if pulse_start is not None:
+                                # DI is still HIGH → pulse_width > delay_trigger → stuck case
+                                current_duration_ms = (T_capture_complete - pulse_start) * 1000.0
+                                estimated_n = int(current_duration_ms / self.normal_pulse_ms) + 1
+                                if estimated_n >= 2:
+                                    stuck_count = estimated_n
+                                    stuck_pulse_ms = current_duration_ms
+                                    logger.warning(
+                                        f"[Group #{group_id}] DI{di_num} still HIGH at capture-complete "
+                                        f"(duration={current_duration_ms:.0f}ms, estimated N≥{estimated_n}). "
+                                        f"Marking as STUCK (final count will be confirmed at falling edge)."
+                                    )
+
                     self.camera_manager._emit_event("frames_captured", {
                         "group_id": group_id,
                         "cameras": cameras_list,
@@ -716,12 +811,14 @@ class TriggerHandler:
                     )
 
                 # Emit event so frontend can log/display the image
+                # NOTE: strip 'frames' (np.ndarray list) — not JSON-serializable
                 self.camera_manager._emit_event("stuck_bottle_captured", {
                     "group_id": primary_group_id,
                     "bottle_index": bottle_index,
                     "total_bottles": total_bottles,
                     "camera_serial": camera.serial_number,
-                    "result": result,
+                    "success": result.get("success", False),
+                    "frame_count": result.get("frame_count", 0),
                 })
 
             except Exception as e:

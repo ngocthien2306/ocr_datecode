@@ -9,6 +9,7 @@ import logging
 import time
 import os
 import cv2
+import numpy as np
 from difflib import SequenceMatcher
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from dataclasses import dataclass, field
@@ -17,11 +18,64 @@ from ..ocr_utils import crop_text_region, compare_texts
 
 if TYPE_CHECKING:
     from ..camera import Camera
-    import numpy as np
 
 logger = logging.getLogger(__name__)
 
 home = os.environ.get('HOME')
+
+AUGMENT_SIMILARITY_THRESHOLD = 0.70
+
+
+def augment_laser_text(img_bgr: np.ndarray) -> dict:
+    """
+    Generate 5 enhanced versions optimized for difficult backgrounds (laser-engraved, low contrast).
+    Copied from tests/test_trt_inference.py.
+
+    Returns:
+        dict with keys: 'original', 'clahe', 'bg_subtract', 'unsharp_clahe', 'tophat'
+    """
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(4, 4))
+    results = {'original': img_bgr.copy()}
+
+    # 1. CLAHE – adaptive local contrast enhancement
+    lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    lab_eq = cv2.merge([clahe.apply(l), a, b])
+    results['clahe'] = cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
+
+    # 2. Background subtraction – amplify residual text signal
+    bg = cv2.GaussianBlur(gray, (51, 51), 0)
+    diff_amp = cv2.convertScaleAbs(cv2.subtract(gray, bg), alpha=8)
+    results['bg_subtract'] = cv2.cvtColor(diff_amp, cv2.COLOR_GRAY2BGR)
+
+    # 3. Unsharp masking + CLAHE
+    blurred = cv2.GaussianBlur(gray, (0, 0), 3)
+    unsharp = cv2.addWeighted(gray, 2.0, blurred, -1.0, 0)
+    results['unsharp_clahe'] = cv2.cvtColor(clahe.apply(unsharp), cv2.COLOR_GRAY2BGR)
+
+    # 4. Morphological TOPHAT – extracts bright regions smaller than kernel
+    kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 20))
+    tophat = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, kernel_morph)
+    tophat_eq = cv2.convertScaleAbs(tophat, alpha=6)
+    results['tophat'] = cv2.cvtColor(clahe.apply(tophat_eq), cv2.COLOR_GRAY2BGR)
+
+    return results
+
+
+def _apply_text_corrections(text: str) -> str:
+    """Apply common OCR correction rules before comparison."""
+    if "BE" in text:
+        text = text.replace("BE", "BB")
+    if "RL" in text:
+        text = text.replace("RL", "PL")
+    if "Pt" in text:
+        text = text.replace("Pt", "PL")
+    if "USsed" in text:
+        text = text.replace("USsed", "Used")
+    if "Iif" in text:
+        text = text.replace("Iif", "If")
+    return text
 
 
 @dataclass
@@ -394,7 +448,8 @@ class TextVerificationService:
                         'annotation_idx': annotation_idx,
                         'conf_threshold': conf_threshold,
                         'expected_text': expected_text,
-                        'camera': task['camera']
+                        'camera': task['camera'],
+                        'cropped_region': cropped_region  # kept for augment retry
                     })
                 except Exception as e:
                     logger.error(f"[{serial_number}] Error cropping annotation {annotation_idx}: {e}")
@@ -417,6 +472,10 @@ class TextVerificationService:
 
             if hasattr(self.text_recognizer, 'recognize_batch'):
                 ocr_results = self.text_recognizer.recognize_batch(all_cropped_regions)
+                # ocr_results = [
+                #     self.text_recognizer.recognize(img, return_confidence=True)
+                #     for img in all_cropped_regions
+                # ]
             else:
                 # Fallback to sequential
                 ocr_results = [
@@ -459,34 +518,38 @@ class TextVerificationService:
                 )
                 match = False
             else:
-                # Compare texts using similarity matching for specific patterns
-                if "BEST BEFORE" in expected_text.upper() or "PL" in expected_text.upper() or "MFG" in expected_text.upper():
+                recognized_text = _apply_text_corrections(recognized_text)
+                match = compare_texts(recognized_text, expected_text, case_sensitive=True, strip=True)
+                if match:
+                    recognized_text = expected_text[:]
 
-                    # Use similarity matching (default 80% threshold)
-                    similarity = calculate_text_similarity(recognized_text, expected_text)
-                    similarity_threshold = 0.90
-                    match = similarity >= similarity_threshold
-                    if match:
-                        recognized_text = expected_text[:]  # Override with expected text on match
+            logger.info(
+                f"[{serial_number}] Annotation {annotation_idx}: "
+                f"expected='{expected_text}', recognized='{recognized_text}', "
+                f"match={match}, conf={confidence:.2%}"
+            )
+
+            # ========== AUGMENT RETRY for failed regions ==========
+            if not match:
+                similarity = calculate_text_similarity(recognized_text, expected_text)
+                if similarity >= AUGMENT_SIMILARITY_THRESHOLD:
                     logger.info(
                         f"[{serial_number}] Annotation {annotation_idx}: "
-                        f"Using similarity matching - similarity={similarity:.2%}, "
-                        f"threshold={similarity_threshold:.2%}"
+                        f"FAIL but similarity={similarity:.2%} >= {AUGMENT_SIMILARITY_THRESHOLD:.0%}, "
+                        f"retrying with augmentation..."
+                    )
+                    match, recognized_text = self._augment_retry(
+                        cropped_region=meta['cropped_region'],
+                        expected_text=expected_text,
+                        serial_number=serial_number,
+                        annotation_idx=annotation_idx,
                     )
                 else:
-                    if "BE" in recognized_text:
-                        recognized_text = recognized_text.replace("BE", "BB")
-
-                    if "USsed" in recognized_text:
-                        recognized_text = recognized_text.replace("USsed", "Used")
-
-                    if "Iif" in recognized_text:
-                        recognized_text = recognized_text.replace("Iif", "If")
-                    
-                # Use exact match
-                match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
-                if match: 
-                    recognized_text = expected_text[:]
+                    logger.info(
+                        f"[{serial_number}] Annotation {annotation_idx}: "
+                        f"FAIL and similarity={similarity:.2%} < {AUGMENT_SIMILARITY_THRESHOLD:.0%}, "
+                        f"skip augment retry (likely background/noise)"
+                    )
 
             if not match:
                 camera_results[serial_number]['all_match'] = False
@@ -500,13 +563,70 @@ class TextVerificationService:
                 'threshold': conf_threshold
             })
 
+        return camera_results
+
+    def _augment_retry(
+        self,
+        cropped_region: np.ndarray,
+        expected_text: str,
+        serial_number: str,
+        annotation_idx: int,
+    ):
+        """
+        Run OCR on 5 augmented versions of cropped_region (batch per region).
+        Returns (match, recognized_text) of the first matching version,
+        or (False, best_recognized_text) if none match.
+        """
+        aug_versions = augment_laser_text(cropped_region)
+        aug_names = list(aug_versions.keys())
+        aug_images = list(aug_versions.values())
+
+        try:
+            t0 = time.time()
+            if hasattr(self.text_recognizer, 'recognize_batch'):
+                aug_results = self.text_recognizer.recognize_batch(aug_images)
+            else:
+                aug_results = [
+                    self.text_recognizer.recognize(img, return_confidence=True)
+                    for img in aug_images
+                ]
+            elapsed = (time.time() - t0) * 1000
             logger.info(
                 f"[{serial_number}] Annotation {annotation_idx}: "
-                f"expected='{expected_text}', recognized='{recognized_text}', "
-                f"match={match}, conf={confidence:.2%}"
+                f"augment batch ({len(aug_images)} versions) in {elapsed:.1f}ms"
+            )
+        except Exception as e:
+            logger.error(f"[{serial_number}] Annotation {annotation_idx}: augment OCR failed: {e}")
+            return False, ""
+
+        best_text = ""
+        best_conf = -1.0
+
+        for ver_name, (aug_text, aug_conf) in zip(aug_names, aug_results):
+            aug_recognized = _apply_text_corrections(aug_text.strip())
+            aug_match = compare_texts(aug_recognized, expected_text, case_sensitive=True, strip=True)
+
+            logger.info(
+                f"[{serial_number}] Annotation {annotation_idx} "
+                f"augment[{ver_name}]: '{aug_recognized}' conf={aug_conf:.2%} match={aug_match}"
             )
 
-        return camera_results
+            if aug_match:
+                logger.info(
+                    f"[{serial_number}] Annotation {annotation_idx}: "
+                    f"PASS via augment[{ver_name}]"
+                )
+                return True, expected_text[:]
+
+            if aug_conf > best_conf:
+                best_conf = aug_conf
+                best_text = aug_recognized
+
+        logger.info(
+            f"[{serial_number}] Annotation {annotation_idx}: "
+            f"still FAIL after augment retry, best='{best_text}' conf={best_conf:.2%}"
+        )
+        return False, best_text
 
     @staticmethod
     def update_bboxes_with_recognized_text(

@@ -437,49 +437,51 @@ class RejectScheduler:
             if method == "PLC":
                 # Check prerequisites
                 if not PLC_AVAILABLE:
-                    logger.warning(
-                        f"[Group #{entry.group_id}] ⚠️ PLC mode requested but PLCController not available "
-                        f"(import failed), fallback to DIO"
+                    logger.error(
+                        f"[Group #{entry.group_id}] ❌ PLC mode requested but PLCController not available "
+                        f"(import failed), skipping reject"
                     )
-                    used_method = "DIO"
                     with self._stats_lock:
                         self._stats['plc_fallbacks'] += 1
                 elif not self._plc_controller:
-                    logger.warning(
-                        f"[Group #{entry.group_id}] ⚠️ PLC mode requested but PLCController not initialized, "
-                        f"fallback to DIO"
+                    logger.error(
+                        f"[Group #{entry.group_id}] ❌ PLC mode requested but PLCController not initialized, "
+                        f"skipping reject"
                     )
-                    used_method = "DIO"
                     with self._stats_lock:
                         self._stats['plc_fallbacks'] += 1
                 else:
                     logger.info(f"[Group #{entry.group_id}] Attempting PLC reject (D{reject_address})")
 
-                    # Check PLC connection
+                    # Check PLC connection — try reconnect once if disconnected
                     if not self._plc_controller.is_connected():
                         logger.warning(
-                            f"[Group #{entry.group_id}] ⚠️ PLC not connected, attempting reconnect..."
+                            f"[Group #{entry.group_id}] ⚠️ PLC not connected, attempting reconnect (up to 3 times)..."
                         )
 
-                        # Retry connect once
-                        reconnect_success = self._plc_controller.connect()
+                        reconnect_success = False
+                        for attempt in range(1, 4):
+                            reconnect_success = self._plc_controller.connect()
+                            if reconnect_success:
+                                logger.info(
+                                    f"[Group #{entry.group_id}] ✅ PLC reconnected (attempt {attempt}/3)"
+                                )
+                                with self._stats_lock:
+                                    self._stats['plc_reconnects'] += 1
+                                break
+                            logger.warning(
+                                f"[Group #{entry.group_id}] ⚠️ PLC reconnect attempt {attempt}/3 failed"
+                            )
 
                         if not reconnect_success:
-                            logger.warning(
-                                f"[Group #{entry.group_id}] ❌ PLC reconnect failed, fallback to DIO"
+                            logger.error(
+                                f"[Group #{entry.group_id}] ❌ PLC reconnect failed after 3 attempts, skipping reject"
                             )
-                            used_method = "DIO"
                             with self._stats_lock:
                                 self._stats['plc_fallbacks'] += 1
-                        else:
-                            logger.info(
-                                f"[Group #{entry.group_id}] ✅ PLC reconnected successfully"
-                            )
-                            with self._stats_lock:
-                                self._stats['plc_reconnects'] += 1
 
                     # Execute PLC if connected
-                    if self._plc_controller.is_connected() and used_method == "PLC":
+                    if self._plc_controller.is_connected():
                         # Check if reject and alarm use same address
                         if alarm_address >= 0 and alarm_address == reject_address:
                             logger.info(
@@ -515,14 +517,13 @@ class RejectScheduler:
                                 self._stats['plc_rejects'] += 1
                         else:
                             logger.error(
-                                f"[Group #{entry.group_id}] ❌ PLC pulse failed, fallback to DIO"
+                                f"[Group #{entry.group_id}] ❌ PLC pulse failed, skipping reject"
                             )
-                            used_method = "DIO"
                             with self._stats_lock:
                                 self._stats['plc_fallbacks'] += 1
 
-            # Fallback to DIO if PLC failed or method is DIO
-            if used_method == "DIO" or not success:
+            # Execute DIO only when method is DIO (no fallback from PLC failure)
+            if method == "DIO":
                 # Check if reject and alarm use same address
                 if alarm_address >= 0 and alarm_address == reject_address:
                     logger.info(
@@ -595,20 +596,25 @@ class RejectScheduler:
             T_pulse_end = time.time()
             actual_duration_ms = (T_pulse_end - T_pulse_start) * 1000
 
-            # Update stats
-            with self._stats_lock:
-                self._stats['total_rejected'] += 1
+            if success:
+                # Update stats and log only when reject actually fired
+                with self._stats_lock:
+                    self._stats['total_rejected'] += 1
 
-            # Log reject end with timing
-            from .utils import log_reject_end
-            log_reject_end(
-                reject_count=reject_count,
-                group_id=entry.group_id,
-                do_number=reject_address,
-                alarm_number=alarm_address,
-                pulse_duration_ms=self._reject_pulse_ms,
-                actual_duration_ms=actual_duration_ms
-            )
+                from .utils import log_reject_end
+                log_reject_end(
+                    reject_count=reject_count,
+                    group_id=entry.group_id,
+                    do_number=reject_address,
+                    alarm_number=alarm_address,
+                    pulse_duration_ms=self._reject_pulse_ms,
+                    actual_duration_ms=actual_duration_ms
+                )
+            else:
+                logger.warning(
+                    f"[Group #{entry.group_id}] ⚠️ Reject SKIPPED "
+                    f"(method={method}, PLC unavailable/failed)"
+                )
 
             logger.info(
                 f"[Group #{entry.group_id}] Reject complete "
