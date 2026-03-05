@@ -4,6 +4,7 @@ import InferenceTemplateViewer from './InferenceTemplateViewer';
 import { API_BASE_URL } from '@/config/api';
 import '@/styles/InferenceRealtimeSettingsModal.css';
 import type { Annotation } from '@/types';
+import { validateRealtimeSettings, hasValidationErrors } from '@/utils/recipeValidation';
 
 interface InferenceRealtimeSettingsModalProps {
   isOpen: boolean;
@@ -30,6 +31,7 @@ export default function InferenceRealtimeSettingsModal({
 }: InferenceRealtimeSettingsModalProps) {
   const [activeTab, setActiveTab] = useState<'basic' | 'camera' | 'template'>('basic');
   const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   // Form data state
   const [formData, setFormData] = useState({
@@ -75,11 +77,13 @@ export default function InferenceRealtimeSettingsModal({
   };
 
   const handleCameraChange = (cameraId: string, field: string, value: any) => {
+    const parsed = parseFloat(value);
+    const finalValue = isNaN(parsed) ? undefined : parsed;
     setFormData(prev => ({
       ...prev,
       cameras: prev.cameras.map(cam =>
         cam.camera_id === cameraId
-          ? { ...cam, [field]: parseFloat(value) || value }
+          ? { ...cam, [field]: finalValue }
           : cam
       )
     }));
@@ -199,6 +203,23 @@ export default function InferenceRealtimeSettingsModal({
   };
 
   const handleSubmit = async () => {
+    const validationErrors = validateRealtimeSettings({
+      delay_reject: formData.delay_reject,
+      reject_pulse: formData.reject_pulse,
+      cameras: formData.cameras,
+    });
+    if (hasValidationErrors(validationErrors)) {
+      setErrors(validationErrors);
+      const keys = Object.keys(validationErrors);
+      if (keys.some(k => ['delay_reject', 'reject_pulse'].includes(k))) {
+        setActiveTab('basic');
+      } else if (keys.some(k => k.startsWith('cameras'))) {
+        setActiveTab('camera');
+      }
+      return;
+    }
+    setErrors({});
+
     setLoading(true);
     try {
       // Build update data (only changed fields)
@@ -285,7 +306,9 @@ export default function InferenceRealtimeSettingsModal({
                     onChange={(e) => handleInputChange('delay_reject', parseFloat(e.target.value) || 0)}
                     step="0.1"
                     min="0"
+                    className={errors.delay_reject ? 'error' : ''}
                   />
+                  {errors.delay_reject && <span className="error-message">{errors.delay_reject}</span>}
                 </div>
                 <div className="form-group">
                   <label>Reject Pulse (ms)</label>
@@ -295,7 +318,9 @@ export default function InferenceRealtimeSettingsModal({
                     onChange={(e) => handleInputChange('reject_pulse', parseFloat(e.target.value) || 0)}
                     step="0.1"
                     min="0"
+                    className={errors.reject_pulse ? 'error' : ''}
                   />
+                  {errors.reject_pulse && <span className="error-message">{errors.reject_pulse}</span>}
                 </div>
               </div>
             </div>
@@ -325,7 +350,11 @@ export default function InferenceRealtimeSettingsModal({
                             onChange={(e) => handleCameraChange(camera.camera_id, 'exposure_time', e.target.value)}
                             step="0.1"
                             min="0"
+                            className={errors[`cameras.${index}.exposure_time`] ? 'error' : ''}
                           />
+                          {errors[`cameras.${index}.exposure_time`] && (
+                            <span className="error-message">{errors[`cameras.${index}.exposure_time`]}</span>
+                          )}
                         </div>
                         <div className="form-group">
                           <label>Delay Trigger (ms) *</label>
@@ -335,7 +364,11 @@ export default function InferenceRealtimeSettingsModal({
                             onChange={(e) => handleCameraChange(camera.camera_id, 'delay_trigger', e.target.value)}
                             step="0.1"
                             min="0"
+                            className={errors[`cameras.${index}.delay_trigger`] ? 'error' : ''}
                           />
+                          {errors[`cameras.${index}.delay_trigger`] && (
+                            <span className="error-message">{errors[`cameras.${index}.delay_trigger`]}</span>
+                          )}
                         </div>
                       </div>
                       <div className="form-row">
@@ -347,7 +380,11 @@ export default function InferenceRealtimeSettingsModal({
                             onChange={(e) => handleCameraChange(camera.camera_id, 'delay_interval', e.target.value)}
                             step="10"
                             min="0"
+                            className={errors[`cameras.${index}.delay_interval`] ? 'error' : ''}
                           />
+                          {errors[`cameras.${index}.delay_interval`] && (
+                            <span className="error-message">{errors[`cameras.${index}.delay_interval`]}</span>
+                          )}
                         </div>
                         <div className="form-group">
                           <label>Gain *</label>
@@ -357,7 +394,11 @@ export default function InferenceRealtimeSettingsModal({
                             onChange={(e) => handleCameraChange(camera.camera_id, 'gain', e.target.value)}
                             step="0.1"
                             min="0"
+                            className={errors[`cameras.${index}.gain`] ? 'error' : ''}
                           />
+                          {errors[`cameras.${index}.gain`] && (
+                            <span className="error-message">{errors[`cameras.${index}.gain`]}</span>
+                          )}
                         </div>
                       </div>
                     </div>

@@ -8,6 +8,10 @@ import { useUser } from '@/contexts/UserContext';
 import { API_BASE_URL } from '@/config/api';
 import '@/styles/RecipeFormModal.css';
 import { Camera, Recipe, Annotation, RecipeCamera } from '@/types';
+import {
+  validateRecipeForm, hasValidationErrors, parseApiErrors,
+  type ValidationMode, type RecipeFormInput,
+} from '@/utils/recipeValidation';
 
 interface RecipeFormModalProps {
   isOpen: boolean;
@@ -402,11 +406,13 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   };
 
   const handleCameraConfigChange = (cameraId: string, field: string, value: any) => {
+    const parsed = parseFloat(value);
+    const finalValue = isNaN(parsed) ? undefined : parsed;
     setFormData(prev => ({
       ...prev,
-      cameras: prev.cameras.map(cam => 
-        cam.camera_id === cameraId 
-          ? { ...cam, [field]: parseFloat(value) || value }
+      cameras: prev.cameras.map(cam =>
+        cam.camera_id === cameraId
+          ? { ...cam, [field]: finalValue }
           : cam
       )
     }));
@@ -429,33 +435,42 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     }));
   };
 
-  const validateForm = () => {
-    const newErrors: Record<string, string> = {};
-    if (!formData.name.trim()) newErrors.name = 'Recipe name is required';
-    if (!formData.product_code.trim()) newErrors.product_code = 'Product code is required';
-    if (formData.camera_settings.exposure_time <= 0) newErrors.exposure_time = 'Must be greater than 0';
-    if (formData.camera_settings.delay_trigger < 0) newErrors.delay_trigger = 'Cannot be negative';
-    if (formData.model_thresholds.detection_threshold < 0 || formData.model_thresholds.detection_threshold > 1) {
-      newErrors.detection_threshold = 'Must be between 0 and 1';
-    }
-    if (formData.model_thresholds.recognition_threshold < 0 || formData.model_thresholds.recognition_threshold > 1) {
-      newErrors.recognition_threshold = 'Must be between 0 and 1';
-    }
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
   const handleSubmit = async (e: any) => {
     e.preventDefault();
-    if (!validateForm()) return;
+
+    const validationInput: RecipeFormInput = {
+      basicInfo: {
+        name: formData.name,
+        product_code: formData.product_code,
+        description: formData.description,
+        do_reject_number: formData.do_reject_number,
+        normal_pulse_ms: formData.normal_pulse_ms,
+      },
+      cameras: formData.cameras,
+      modelThresholds: formData.model_thresholds,
+    };
+
+    const validationErrors = validateRecipeForm(validationInput, mode as ValidationMode);
+    if (hasValidationErrors(validationErrors)) {
+      setErrors(validationErrors);
+      const keys = Object.keys(validationErrors);
+      if (keys.some(k => ['name', 'product_code', 'description', 'do_reject_number', 'normal_pulse_ms'].includes(k))) {
+        setActiveTab('basic');
+      } else if (keys.some(k => k.startsWith('cameras'))) {
+        setActiveTab('camera');
+      } else if (keys.some(k => k.startsWith('model_thresholds'))) {
+        setActiveTab('model');
+      }
+      return;
+    }
 
     // Validate all camera templates before submission
-    const validationErrors = validateTemplates();
-    if (validationErrors.length > 0) {
+    const templateErrors = validateTemplates();
+    if (templateErrors.length > 0) {
       setConfirmDialog({
         isOpen: true,
         title: 'Template Validation Failed',
-        message: `${validationErrors.join('\n')}\n\nEach template must have:\n• 1 "template" region (required)\n• At least 1 annotation: text, barcode, or datecode (required)\n• crop_area (optional)`,
+        message: `${templateErrors.join('\n')}\n\nEach template must have:\n• 1 "template" region (required)\n• At least 1 annotation: text, barcode, or datecode (required)\n• crop_area (optional)`,
         type: 'warning',
         onConfirm: null
       });
@@ -499,7 +514,30 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       handleClose();
     } catch (error: any) {
       console.error('Submit error:', error);
-      setErrors({ submit: error.response?.data?.detail || 'Failed to save recipe' });
+      const status = error.response?.status;
+      const detail = error.response?.data?.detail;
+
+      if (status === 422 && detail) {
+        // Parse Pydantic validation errors → show inline on fields
+        const { fieldErrors, unhandled } = parseApiErrors(detail);
+        if (hasValidationErrors(fieldErrors)) {
+          setErrors(fieldErrors);
+          // Auto-navigate to the tab that has the first error
+          const keys = Object.keys(fieldErrors);
+          if (keys.some(k => ['name', 'product_code', 'description', 'do_reject_number', 'normal_pulse_ms'].includes(k))) {
+            setActiveTab('basic');
+          } else if (keys.some(k => k.startsWith('cameras'))) {
+            setActiveTab('camera');
+          } else if (keys.some(k => k.startsWith('model_thresholds'))) {
+            setActiveTab('model');
+          }
+        }
+        unhandled.forEach(msg => toast.error(msg));
+      } else {
+        // Generic server/network error → toast
+        const msg = typeof detail === 'string' ? detail : 'Failed to save recipe';
+        toast.error(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -1080,7 +1118,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                   <div className="form-group">
                     <label>Description</label>
                     <textarea name="description" value={formData.description} onChange={handleInputChange}
-                             placeholder="Enter recipe description" rows={3} />
+                             placeholder="Enter recipe description" rows={3}
+                             className={errors.description ? 'error' : ''} />
+                    {errors.description && <span className="error-message">{errors.description}</span>}
                   </div>
                   <div className="form-group">
                     <label>Delay Reject (ms)</label>
@@ -1150,10 +1190,12 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       value={formData.normal_pulse_ms}
                       onChange={handleInputChange}
                       step="10"
-                      min="10"
-                      max="2000"
+                      min="0"
+                      max="999999"
                       placeholder="Expected pulse width per bottle (ms)"
+                      className={errors.normal_pulse_ms ? 'error' : ''}
                     />
+                    {errors.normal_pulse_ms && <span className="error-message">{errors.normal_pulse_ms}</span>}
                     <small style={{display: 'block', marginTop: 4, color: '#666'}}>
                       Expected DI pulse width per bottle (ms). Stuck detected when pulse &gt; 2.0×
                     </small>
@@ -1202,6 +1244,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                   </div>
                 </div>
 
+                {errors.cameras && <span className="error-message">{errors.cameras}</span>}
+
                 {formData.cameras.length === 0 ? (
                   <div className="empty-state">
                     <p>No cameras configured for this recipe</p>
@@ -1242,13 +1286,17 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                           <div className="form-row">
                             <div className="form-group">
                               <label>Exposure Time (μs) <span className="required">*</span></label>
-                              <input 
-                                type="number" 
+                              <input
+                                type="number"
                                 value={camera.exposure_time}
                                 onChange={(e) => handleCameraConfigChange(camera.camera_id, 'exposure_time', e.target.value)}
-                                step="0.1" 
-                                min="0" 
+                                step="0.1"
+                                min="0"
+                                className={errors[`cameras.${index}.exposure_time`] ? 'error' : ''}
                               />
+                              {errors[`cameras.${index}.exposure_time`] && (
+                                <span className="error-message">{errors[`cameras.${index}.exposure_time`]}</span>
+                              )}
                             </div>
                             <div className="form-group">
                               <label>Delay Trigger (ms) <span className="required">*</span></label>
@@ -1258,7 +1306,11 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                 onChange={(e) => handleCameraConfigChange(camera.camera_id, 'delay_trigger', e.target.value)}
                                 step="0.1"
                                 min="0"
+                                className={errors[`cameras.${index}.delay_trigger`] ? 'error' : ''}
                               />
+                              {errors[`cameras.${index}.delay_trigger`] && (
+                                <span className="error-message">{errors[`cameras.${index}.delay_trigger`]}</span>
+                              )}
                             </div>
                             <div className="form-group">
                               <label>Delay Interval (ms)</label>
@@ -1269,18 +1321,26 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                 step="10"
                                 min="0"
                                 placeholder="500"
+                                className={errors[`cameras.${index}.delay_interval`] ? 'error' : ''}
                               />
+                              {errors[`cameras.${index}.delay_interval`] && (
+                                <span className="error-message">{errors[`cameras.${index}.delay_interval`]}</span>
+                              )}
                               <small className="form-help-text">Delay between frames (for multi-template)</small>
                             </div>
                             <div className="form-group">
                               <label>Gain <span className="required">*</span></label>
-                              <input 
-                                type="number" 
+                              <input
+                                type="number"
                                 value={camera.gain}
                                 onChange={(e) => handleCameraConfigChange(camera.camera_id, 'gain', e.target.value)}
-                                step="0.1" 
-                                min="0" 
+                                step="0.1"
+                                min="0"
+                                className={errors[`cameras.${index}.gain`] ? 'error' : ''}
                               />
+                              {errors[`cameras.${index}.gain`] && (
+                                <span className="error-message">{errors[`cameras.${index}.gain`]}</span>
+                              )}
                             </div>
                           </div>
 
@@ -1399,15 +1459,21 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                     <label>Detection Threshold <span className="required">*</span> <span className="hint">(0.0 - 1.0)</span></label>
                     <input type="number" value={formData.model_thresholds.detection_threshold}
                            onChange={(e) => handleModelThresholdChange('detection_threshold', e.target.value)}
-                           step="0.01" min="0" max="1" className={errors.detection_threshold ? 'error' : ''} />
-                    {errors.detection_threshold && <span className="error-message">{errors.detection_threshold}</span>}
+                           step="0.01" min="0" max="1"
+                           className={errors['model_thresholds.detection_threshold'] ? 'error' : ''} />
+                    {errors['model_thresholds.detection_threshold'] && (
+                      <span className="error-message">{errors['model_thresholds.detection_threshold']}</span>
+                    )}
                   </div>
                   <div className="form-group">
                     <label>Recognition Threshold <span className="required">*</span> <span className="hint">(0.0 - 1.0)</span></label>
                     <input type="number" value={formData.model_thresholds.recognition_threshold}
                            onChange={(e) => handleModelThresholdChange('recognition_threshold', e.target.value)}
-                           step="0.01" min="0" max="1" className={errors.recognition_threshold ? 'error' : ''} />
-                    {errors.recognition_threshold && <span className="error-message">{errors.recognition_threshold}</span>}
+                           step="0.01" min="0" max="1"
+                           className={errors['model_thresholds.recognition_threshold'] ? 'error' : ''} />
+                    {errors['model_thresholds.recognition_threshold'] && (
+                      <span className="error-message">{errors['model_thresholds.recognition_threshold']}</span>
+                    )}
                   </div>
                 </div>
                 <div className="form-row">
@@ -1415,8 +1481,11 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                     <label>Matching Threshold <span className="required">*</span> <span className="hint">(0.0 - 1.0)</span></label>
                     <input type="number" value={formData.model_thresholds.matching_threshold}
                            onChange={(e) => handleModelThresholdChange('matching_threshold', e.target.value)}
-                           step="0.01" min="0" max="1" className={errors.matching_threshold ? 'error' : ''} />
-                    {errors.matching_threshold && <span className="error-message">{errors.matching_threshold}</span>}
+                           step="0.01" min="0" max="1"
+                           className={errors['model_thresholds.matching_threshold'] ? 'error' : ''} />
+                    {errors['model_thresholds.matching_threshold'] && (
+                      <span className="error-message">{errors['model_thresholds.matching_threshold']}</span>
+                    )}
                     <small className="field-description">Template similarity threshold for verification (default: 0.85)</small>
                   </div>
                 </div>
@@ -1424,12 +1493,20 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                   <div className="form-group">
                     <label>Min Text Size (px)</label>
                     <input type="number" value={formData.model_thresholds.min_text_size || ''}
-                           onChange={(e) => handleModelThresholdChange('min_text_size', e.target.value)} min="1" />
+                           onChange={(e) => handleModelThresholdChange('min_text_size', e.target.value)} min="1"
+                           className={errors['model_thresholds.min_text_size'] ? 'error' : ''} />
+                    {errors['model_thresholds.min_text_size'] && (
+                      <span className="error-message">{errors['model_thresholds.min_text_size']}</span>
+                    )}
                   </div>
                   <div className="form-group">
                     <label>Max Text Size (px)</label>
                     <input type="number" value={formData.model_thresholds.max_text_size || ''}
-                           onChange={(e) => handleModelThresholdChange('max_text_size', e.target.value)} min="1" />
+                           onChange={(e) => handleModelThresholdChange('max_text_size', e.target.value)} min="1"
+                           className={errors['model_thresholds.max_text_size'] ? 'error' : ''} />
+                    {errors['model_thresholds.max_text_size'] && (
+                      <span className="error-message">{errors['model_thresholds.max_text_size']}</span>
+                    )}
                   </div>
                 </div>
               </div>

@@ -102,7 +102,7 @@ class RecipeBase(BaseModel):
     reject_method: Optional[str] = Field(default='DIO_OUT', description="Reject output method: PLC or DIO_OUT")
     do_reject_number: Optional[int] = Field(default=2, ge=0, le=3, description="Digital Output number for reject (0-3)")
     do_alarm_number: Optional[int] = Field(default=0, ge=0, le=4, description="Digital Output number for alarm (0-4)")
-    normal_pulse_ms: Optional[float] = Field(default=250.0, ge=10.0, le=2000.0, description="Expected normal DI pulse width in ms (used for stuck bottle detection)")
+    normal_pulse_ms: Optional[float] = Field(default=250.0, ge=0.0, le=999999.0, description="Expected normal DI pulse width in ms (used for stuck bottle detection)")
 
     # Multiple cameras support (new approach)
     cameras: List[CameraConfiguration] = Field(default_factory=list, description="Camera configurations for this recipe")
