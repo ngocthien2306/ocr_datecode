@@ -11,9 +11,20 @@ INTERFACE = "eth1"
 USER_HOME = "/home/suntech"
 LOG_DIR = os.path.join(USER_HOME, "Source/ocr_datecode/logs")
 LOG_FILE = os.path.join(LOG_DIR, "camera_check.log")
+SUDO_PASSWORD = "1"
 
 MAX_ATTEMPTS = 10
 GRAB_TIMEOUT_MS = 5000
+
+
+def sudo_run(cmd):
+    """Run a sudo command with auto password via stdin."""
+    subprocess.run(
+        ["sudo", "-S"] + cmd,
+        input=SUDO_PASSWORD + "\n",
+        text=True,
+        stderr=subprocess.DEVNULL,  # suppress password prompt on stderr
+    )
 
 
 def setup_logger():
@@ -30,13 +41,13 @@ def setup_logger():
 
 def reset_interface(iface):
     logging.info(f"Resetting {iface}...")
-    subprocess.run(["sudo", "ip", "link", "set", iface, "down"])
+    sudo_run(["ip", "link", "set", iface, "down"])
     time.sleep(2)
-    subprocess.run(["sudo", "ip", "link", "set", iface, "up"])
+    sudo_run(["ip", "link", "set", iface, "up"])
     logging.info(f"Waiting 20s for {iface} to come up...")
     time.sleep(20)
     # Flush stale ARP entries so camera IP resolves fresh
-    subprocess.run(["sudo", "ip", "neigh", "flush", "dev", iface])
+    sudo_run(["ip", "neigh", "flush", "dev", iface])
     time.sleep(2)
 
 
