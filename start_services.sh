@@ -17,6 +17,20 @@ LOG_DIR="${USER_HOME}/Source/ocr_datecode/logs"
 # Create log directory
 mkdir -p "$LOG_DIR"
 
+# === STEP 0: Camera Check (only for suntech machine) ===
+if [ "$USER_HOME" = "/home/suntech" ]; then
+    echo "📷 Running camera health check before starting services..."
+    echo "   Log: $LOG_DIR/camera_check.log"
+    SCRIPT_DIR="${USER_HOME}/Source/ocr_datecode"
+    if python3 "${SCRIPT_DIR}/camera_check_eth1.py"; then
+        echo "✅ Camera check passed. Starting services..."
+    else
+        echo "❌ Camera check failed. Aborting service startup."
+        exit 1
+    fi
+    echo ""
+fi
+
 # Check if directories exist
 for dir in "$BACKEND_DIR" "$FRONTEND_DIR" "$AI_SERVICES_DIR"; do
     if [ ! -d "$dir" ]; then
