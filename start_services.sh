@@ -19,15 +19,41 @@ mkdir -p "$LOG_DIR"
 
 # === STEP 0: Camera Check (only for suntech machine) ===
 if [ "$USER_HOME" = "/home/suntech" ]; then
-    echo "📷 Running camera health check before starting services..."
-    echo "   Log: $LOG_DIR/camera_check.log"
     SCRIPT_DIR="${USER_HOME}/Source/ocr_datecode"
-    if python3 "${SCRIPT_DIR}/camera_check_eth1.py"; then
-        echo "✅ Camera check passed. Starting services..."
+    TMPFILE=$(mktemp /tmp/cam_check_exit_XXXX)
+
+    # Ensure display is available for terminal window
+    export DISPLAY="${DISPLAY:-:0}"
+    export XAUTHORITY="${USER_HOME}/.Xauthority"
+
+    TERMINAL_CMD="python3 '${SCRIPT_DIR}/camera_check_eth1.py'; \
+EXIT=\$?; echo \$EXIT > '${TMPFILE}'; \
+if [ \$EXIT -eq 0 ]; then \
+    echo ''; echo '>>> Camera OK! Services will start in 3 seconds...'; sleep 3; \
+else \
+    echo ''; echo '>>> Camera check FAILED. Press Enter to close.'; read; \
+fi"
+
+    echo "📷 Opening camera health check terminal..."
+    if command -v gnome-terminal &>/dev/null; then
+        gnome-terminal --wait --title="Camera Health Check - eth1" -- bash -c "$TERMINAL_CMD"
+    elif command -v xterm &>/dev/null; then
+        xterm -title "Camera Health Check - eth1" -geometry 120x35 -e bash -c "$TERMINAL_CMD"
     else
+        echo "⚠️  No GUI terminal found, running inline..."
+        python3 "${SCRIPT_DIR}/camera_check_eth1.py"
+        echo $? > "${TMPFILE}"
+    fi
+
+    CAMERA_EXIT=$(cat "${TMPFILE}" 2>/dev/null || echo "1")
+    rm -f "${TMPFILE}"
+
+    if [ "$CAMERA_EXIT" != "0" ]; then
         echo "❌ Camera check failed. Aborting service startup."
         exit 1
     fi
+
+    echo "✅ Camera check passed. Starting services..."
     echo ""
 fi
 
