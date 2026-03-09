@@ -94,12 +94,49 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             matchers = [matcher_or_list]
             num_templates = 1
 
-        # Prepare inputs
+        # For Check_Color: rotate FULL frames BEFORE crop (single YOLO pass per frame)
+        # Rotated frames replace context.results so verify_results + result_builder
+        # automatically use them for OCR crop and display output.
+        use_obb_rotation = (
+            camera.function_type == 'Check_Color'
+            and context.obb_rotation_service
+            and context.obb_rotation_service.available
+        )
+        frame_rotation_matrices = [None] * len(frames)
+
+        if use_obb_rotation:
+            from ..preprocessing.obb_rotator import transform_crop_area
+            rotated_frames = []
+            for idx, frame in enumerate(frames):
+                frame_tag = f"{serial_number}/frame{idx}"
+                rotated, M = context.obb_rotation_service.rotate_frame(
+                    frame, frame_tag=frame_tag
+                )
+                rotated_frames.append(rotated)
+                frame_rotation_matrices[idx] = M  # None means rotation failed → original used
+
+            if context.obb_rotation_service.inverse_transform:
+                # inverse_transform=True: output dùng ảnh gốc, bbox sẽ được inverse về tọa độ gốc
+                # → KHÔNG replace frames trong context (giữ ảnh gốc cho display/OCR output)
+                pass
+            else:
+                # inverse_transform=False: output dùng ảnh đã xoay
+                # → replace frames để verify/display dùng ảnh xoay
+                context.results[serial_number]['frames'] = rotated_frames
+
+            frames = rotated_frames  # superpoint luôn dùng ảnh đã xoay
+
+        # Prepare inputs: crop from (rotated or original) frame
         target_imgs = []
         crop_areas = []
 
         for idx, (frame, matcher) in enumerate(zip(frames[:num_templates], matchers)):
             crop_area = getattr(matcher, 'crop_area', None)
+
+            # Transform crop_area coords into rotated frame space (if rotation succeeded)
+            M = frame_rotation_matrices[idx] if idx < len(frame_rotation_matrices) else None
+            if M is not None and crop_area:
+                crop_area = transform_crop_area(crop_area, M)
 
             if self._crop_func and crop_area:
                 frame_for_inference = self._crop_func(frame, crop_area)
@@ -116,6 +153,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             'matchers': matchers,
             'target_imgs': target_imgs,
             'crop_areas': crop_areas,
+            'rotation_matrices': frame_rotation_matrices,
             'is_multi_template': is_multi_template
         }
 
@@ -128,6 +166,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
         matchers = preprocessed['matchers']
         target_imgs = preprocessed['target_imgs']
         crop_areas = preprocessed['crop_areas']
+        rotation_matrices = preprocessed.get('rotation_matrices', [None] * len(target_imgs))
 
         try:
             # Use first matcher for batch inference
@@ -142,12 +181,24 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 logger.error(f"Batch inference failed: {batch_result.get('error')}")
                 return None
 
-            # Transform results back to full image coordinates
+            # Transform results back to full frame coordinates:
+            # 1. crop offset (cropped-rotated → full-rotated)
+            # 2. inverse rotation (full-rotated → full-original)
             transformed_results = []
             for idx, result in enumerate(batch_result['results']):
+                # Step 1: offset back from (rotated) crop area → full rotated frame coords
                 crop_area = crop_areas[idx]
                 if self._transform_func:
                     result = self._transform_func(result, crop_area)
+
+                # Step 2: inverse rotation → original frame coords (if enabled)
+                M = rotation_matrices[idx] if idx < len(rotation_matrices) else None
+                if (M is not None
+                        and context.obb_rotation_service
+                        and context.obb_rotation_service.inverse_transform):
+                    from ..preprocessing.obb_rotator import inverse_transform_bboxes
+                    result = inverse_transform_bboxes(result, M)
+
                 transformed_results.append(result)
 
             return {
@@ -205,7 +256,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
 
             # Text verification
             if (result.get('success') and
-                camera.function_type == 'Check_Type_Product' and
+                camera.function_type in ('Check_Type_Product', 'Check_Color') and
                 context.text_verification_service):
 
                 frame_expected_texts = camera.expected_texts.get(idx, {})
@@ -257,10 +308,11 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                         if bbox.get('type') == 'template':
                             bbox['verification_status'] = 'fail'
 
-            # Product verification (UPDATED - use batch results)
+            # Product verification — skip for Check_Color
             frame_result['product_verification'] = None
             if (result.get('success') and
                 context.product_verification_service and
+                camera.function_type != 'Check_Color' and
                 idx < len(product_verification_results)):
 
                 product_verification = product_verification_results[idx]

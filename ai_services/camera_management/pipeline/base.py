@@ -40,6 +40,7 @@ class PipelineContext:
     text_verification_service: Any = None
     template_verification_service: Any = None
     product_verification_service: Any = None
+    obb_rotation_service: Any = None
 
     # Callbacks
     emit_callback: Optional[Callable] = None

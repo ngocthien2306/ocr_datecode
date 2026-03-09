@@ -103,7 +103,7 @@ def draw_obb(image: np.ndarray, boxes: np.ndarray, scores: np.ndarray, class_ids
 def main(top_k=10):
     class_names = ['bottle_cap', 'text_box']
     model = YOLOOBBInference("weights/yolo26_bottle_obb.onnx", class_names)
-    image = cv2.imread('data/2026-01-31/21135389/fail_f0_20260131_102257618581_org.jpg')
+    image = cv2.imread('test_image/bottle2.jpg')
 
     results = model.predict([image], conf_threshold=0.4)
     boxes, scores, class_ids = results[0]
@@ -202,7 +202,8 @@ def main(top_k=10):
             axes[1].axis('off')
 
             plt.tight_layout()
-            plt.show()
+            # plt.show()
+            plt.savefig('rotate_text_obb_result.png')
         else:
             print("Không tìm thấy text_box")
     else:

@@ -92,6 +92,11 @@ export const camerasAPI = {
     });
     return response.data;
   },
+
+  rotateFrames: async (frames: { frame_base64: string; metadata: any }[], quality: number = 90): Promise<any> => {
+    const response = await api.post('/cameras/frames/rotate', { frames, quality });
+    return response.data;
+  },
 };
 
 export default camerasAPI;

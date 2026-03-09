@@ -26,6 +26,9 @@ from .result_builder import InferenceResultBuilder
 # Import pipeline (Template Method Pattern)
 from .pipeline import PipelineContext, SingleCameraPipeline, MultiCameraPipeline
 
+# Import OBB rotation service for Check_Color
+from .preprocessing import OBBRotationService
+
 if TYPE_CHECKING:
     from .camera import Camera
 
@@ -83,6 +86,9 @@ class InferenceHandler:
         # Text recognizer for Check_Type_Product function
         self.text_recognizer = None
         self.ocr_backend = None
+
+        # OBB rotation service for Check_Color function
+        self.obb_rotation_service = None
 
         # Reject scheduler reference
         self.reject_scheduler = reject_scheduler
@@ -296,6 +302,16 @@ class InferenceHandler:
             f"debug_mode={product_debug_mode}, check_misalignment={check_misalignment}, "
             f"check_label_boundary={check_label_boundary}"
         )
+
+        # OBB Rotation Service for Check_Color function type
+        obb_rotation_engine = f"{home}/Source/ocr_datecode/weights/yolo26_bottle_obb.engine"
+        self.obb_rotation_service = OBBRotationService(
+            engine_path=obb_rotation_engine,
+            conf_threshold=0.4,
+            inverse_transform=True
+        )
+        logger.info(f"OBBRotationService initialized: {obb_rotation_engine}")
+        logger.info(f"OBBRotationService available: {self.obb_rotation_service.available}")
 
     def init_matchers(self, cameras: List['Camera']):
         """
@@ -1041,6 +1057,7 @@ class InferenceHandler:
                 text_verification_service=self.text_verification_service,
                 template_verification_service=self.template_verification_service,
                 product_verification_service=self.product_verification_service,
+                obb_rotation_service=self.obb_rotation_service,
                 emit_callback=emit_callback,
                 statistics=statistics
             )

@@ -123,6 +123,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   const [selectedAnnotation, setSelectedAnnotation] = useState<number | null>(null);
   const [isGettingFrame, setIsGettingFrame] = useState(false);
   const [frameCount, setFrameCount] = useState<number>(2);
+  const [autoRotate, setAutoRotate] = useState(false);
+  const [rotatingTemplateIdx, setRotatingTemplateIdx] = useState<number | null>(null);
   const fabricCanvasRef = useRef<any>(null);
 
   // Confirm dialog state
@@ -576,7 +578,25 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         return;
       }
 
-      const { frames } = framesResponse;
+      let { frames } = framesResponse;
+
+      // Auto-rotate: gửi frames lên BE để detect OBB và xoay
+      if (autoRotate) {
+        toast.info(`Auto-rotating ${frames.length} frame${frames.length > 1 ? 's' : ''}...`);
+        try {
+          const rotatedResponse = await camerasAPI.rotateFrames(frames, 95);
+          if (rotatedResponse?.frames?.length > 0) {
+            frames = rotatedResponse.frames;
+            toast.success(`Rotated ${frames.length} frame${frames.length > 1 ? 's' : ''} successfully`);
+          } else {
+            toast.warning('Rotation returned no frames, using original');
+          }
+        } catch (rotateErr) {
+          toast.warning('Auto-rotate failed, using original frames');
+          console.error('Rotate error:', rotateErr);
+        }
+      }
+
       toast.info(`Processing ${frames.length} frame${frames.length > 1 ? 's' : ''}...`);
 
       // Get current templates for this camera
@@ -945,6 +965,95 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     });
   };
   
+  const handleRotateTemplate = async (templateIndex: number) => {
+    if (!selectedCameraForTemplate) return;
+    const templates = cameraTemplates[selectedCameraForTemplate] || [];
+    const template = templates[templateIndex];
+    if (!template?.image) return;
+
+    setRotatingTemplateIdx(templateIndex);
+    try {
+      // 1. Resolve image to base64 — template.image may be a data URL or an HTTP URL
+      let base64: string;
+      if (template.image.startsWith('data:')) {
+        base64 = template.image.replace(/^data:image\/\w+;base64,/, '');
+      } else {
+        // HTTP URL (e.g. loaded from server in edit mode) — fetch and convert
+        const token = localStorage.getItem('access_token');
+        const imgRes = await fetch(template.image, {
+          headers: { Authorization: `Bearer ${token}`, 'Bypass-Tunnel-Reminder': 'true' },
+        });
+        if (!imgRes.ok) throw new Error('Failed to fetch template image');
+        const imgBlob = await imgRes.blob();
+        base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve((reader.result as string).replace(/^data:image\/\w+;base64,/, ''));
+          reader.onerror = reject;
+          reader.readAsDataURL(imgBlob);
+        });
+      }
+
+      // 2. Rotate via OBB detection
+      const rotatedResponse = await camerasAPI.rotateFrames(
+        [{ frame_base64: base64, metadata: {} }],
+        95
+      );
+
+      if (!rotatedResponse?.frames?.length) {
+        toast.warning('Rotation returned no result');
+        return;
+      }
+
+      const rotatedBase64: string = rotatedResponse.frames[0].frame_base64;
+      const rotatedDataUrl = `data:image/jpeg;base64,${rotatedBase64}`;
+
+      // 2. Upload rotated image to server to get a persistent image_url
+      const byteCharacters = atob(rotatedBase64);
+      const byteArray = new Uint8Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteArray[i] = byteCharacters.charCodeAt(i);
+      }
+      const blob = new Blob([byteArray], { type: 'image/jpeg' });
+      const uploadForm = new FormData();
+      uploadForm.append('file', blob, `${template.name}_rotated.jpg`);
+
+      const token = localStorage.getItem('access_token');
+      const uploadRes = await fetch(`${API_BASE_URL}/api/recipes/templates/upload`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Bypass-Tunnel-Reminder': 'true' },
+        body: uploadForm,
+      });
+
+      if (!uploadRes.ok) {
+        throw new Error('Failed to upload rotated image');
+      }
+
+      const { url, width, height } = await uploadRes.json();
+
+      // 3. Update template with rotated image + new server URL
+      setCameraTemplates(prev => {
+        const updated = [...(prev[selectedCameraForTemplate] || [])];
+        if (updated[templateIndex]) {
+          updated[templateIndex] = {
+            ...updated[templateIndex],
+            image: rotatedDataUrl,
+            image_url: url,
+            image_width: width,
+            image_height: height,
+          };
+        }
+        return { ...prev, [selectedCameraForTemplate]: updated };
+      });
+
+      toast.success(`Template "${template.name}" rotated`);
+    } catch (err) {
+      toast.error('Failed to rotate template image');
+      console.error('Rotate template error:', err);
+    } finally {
+      setRotatingTemplateIdx(null);
+    }
+  };
+
   // Use certain helper functions in no-op effects to prevent 'declared but never read' TS warnings
   useEffect(() => {
     // keep reference to handleCameraSettingChange to avoid unused variable warning
@@ -1543,7 +1652,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       >
                         {/* <option value="OCR">OCR (Text Recognition)</option> */}
                         <option value="Check_Type_Product">Check Type Product</option>
-                        <option value="Check_Color">Check Color</option>
+                        <option value="Check_Color">Rotate Bottle</option>
                         {/* <option value="Check_Defect">Check Defect</option>
                         <option value="Check_Position">Check Position</option>
                         <option value="Barcode_Detection">Barcode Detection</option>
@@ -1640,6 +1749,20 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                             </>
                           )}
                         </button>
+
+                        <label
+                          style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px', userSelect: 'none' }}
+                          title="Detect bottle orientation via OBB model and rotate frames upright before creating templates"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={autoRotate}
+                            onChange={(e) => setAutoRotate(e.target.checked)}
+                            disabled={isGettingFrame}
+                            style={{ width: '14px', height: '14px', cursor: 'pointer' }}
+                          />
+                          Auto-rotate
+                        </label>
                       </div>
                       <span className="template-info">
                         Camera: {selectedCameraForTemplate} |
@@ -1801,6 +1924,27 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                                     <path d="M12 5v14M19 12l-7 7-7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                                   </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-move-template"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleRotateTemplate(idx);
+                                  }}
+                                  disabled={rotatingTemplateIdx !== null}
+                                  title="Rotate image via OBB detection"
+                                >
+                                  {rotatingTemplateIdx === idx ? (
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="spin">
+                                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" opacity="0.25"/>
+                                      <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="2"/>
+                                    </svg>
+                                  ) : (
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                                      <path d="M4 12a8 8 0 018-8V2l4 4-4 4V8a6 6 0 100 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                    </svg>
+                                  )}
                                 </button>
                                 <button
                                   type="button"

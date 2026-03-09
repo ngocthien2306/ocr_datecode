@@ -624,6 +624,86 @@ async def get_latest_frames(
     }
 
 
+@router.post(
+    "/frames/rotate",
+    summary="Rotate frames using OBB detection",
+    response_model=dict
+)
+async def rotate_frames(
+    payload: dict,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Nhận danh sách frames (base64 JPEG), detect OBB, xoay từng frame để text nằm chính diện.
+
+    Body:
+        frames: list of { frame_base64: str, metadata: dict }
+
+    Returns: JSON cùng format với /frames/latest nhưng frames đã được xoay.
+    """
+    import base64
+    import cv2
+    import numpy as np
+    from app.services.rotate_obb_service import get_rotate_obb_model, rotate_frame
+
+    frames_input = payload.get("frames", [])
+    if not frames_input:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No frames provided"
+        )
+
+    model = get_rotate_obb_model()
+    if model is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="OBB rotation model is not available"
+        )
+
+    quality = payload.get("quality", 90)
+    rotated_frames = []
+
+    for item in frames_input:
+        try:
+            frame_base64 = item.get("frame_base64", "")
+            metadata = item.get("metadata", {})
+
+            # Decode base64 → numpy array
+            img_bytes = base64.b64decode(frame_base64)
+            img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+            frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+
+            if frame is None:
+                logger.warning("Failed to decode frame, skipping")
+                continue
+
+            # Rotate
+            rotated = rotate_frame(frame, model)
+
+            # Encode back to base64 JPEG
+            success, jpeg_buffer = cv2.imencode(
+                ".jpg", rotated,
+                [cv2.IMWRITE_JPEG_QUALITY, quality]
+            )
+            if not success:
+                logger.warning("Failed to encode rotated frame, skipping")
+                continue
+
+            rotated_frames.append({
+                "frame_base64": base64.b64encode(jpeg_buffer.tobytes()).decode("utf-8"),
+                "metadata": metadata
+            })
+
+        except Exception as e:
+            logger.error(f"Error rotating frame: {e}")
+            continue
+
+    return {
+        "count": len(rotated_frames),
+        "frames": rotated_frames
+    }
+
+
 @router.get(
     "/{serial_number}/ring-buffer/status",
     summary="Get ring buffer status (debug)",
