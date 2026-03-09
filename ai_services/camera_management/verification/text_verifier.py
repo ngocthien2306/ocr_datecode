@@ -340,7 +340,12 @@ class TextVerificationService:
                 if "Iif" in recognized_text:
                     recognized_text = recognized_text.replace("Iif", "If")
                     
+                if "Fo" in recognized_text:
+                    recognized_text = recognized_text.replace("Fo", "FO")
 
+                if "oR" in recognized_text:
+                    recognized_text = recognized_text.replace("oR", "OR")
+                    
                 match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
                 if match: 
                     recognized_text = expected_text[:]
