@@ -50,7 +50,7 @@ class YOLOOBBTensorRT:
 
     def allocate_buffers(self, batch_size: int):
         """Allocate device memory"""
-        input_shape = (batch_size, 3, 640, 640)
+        input_shape = (batch_size, 3, 320, 320)
         output_shape = (batch_size, 300, 7)
 
         input_size = int(np.prod(input_shape))
@@ -72,13 +72,13 @@ class YOLOOBBTensorRT:
 
         for image in images:
             h, w = image.shape[:2]
-            scale = min(640 / w, 640 / h)
+            scale = min(320 / w, 320 / h)
             new_w, new_h = int(w * scale), int(h * scale)
 
             resized = cv2.resize(image, (new_w, new_h))
-            padded = np.full((640, 640, 3), 114, dtype=np.uint8)
-            pad_top = (640 - new_h) // 2
-            pad_left = (640 - new_w) // 2
+            padded = np.full((320, 320, 3), 114, dtype=np.uint8)
+            pad_top = (320 - new_h) // 2
+            pad_left = (320 - new_w) // 2
             padded[pad_top:pad_top+new_h, pad_left:pad_left+new_w] = resized
 
             rgb = cv2.cvtColor(padded, cv2.COLOR_BGR2RGB)
@@ -114,7 +114,7 @@ class YOLOOBBTensorRT:
             if batch_size < self.min_batch or batch_size > self.max_batch:
                 raise ValueError(f"Batch size {batch_size} out of range [{self.min_batch}, {self.max_batch}]")
             # Set dynamic shape
-            self.context.set_input_shape(self.input_name, (batch_size, 3, 640, 640))
+            self.context.set_input_shape(self.input_name, (batch_size, 3, 320, 320))
         else:
             if batch_size != self.batch_size:
                 raise ValueError(f"Batch size must be {self.batch_size}, got {batch_size}")
@@ -203,15 +203,15 @@ class YOLOOBBTensorRT:
 def main():
     # Initialize
     model = YOLOOBBTensorRT(
-        engine_path="weights/best_obb.engine",
-        class_names=['bottle', 'label', 'wrinkled']
+        engine_path="weights/best_bottle_obb_m_320.engine",
+        class_names=['bottle', 'label']
     )
 
     print(f"\n=== TensorRT OBB Inference ===")
 
     # Test single image
     print("\n--- Single Image ---")
-    image = cv2.imread('/home/demo/Source/ocr_datecode/data/22376896_2026-01-23_fail_f0_20260123_150800636714_org.jpg')
+    image = cv2.imread('test1.jpg')
     results, timing = model.predict([image], conf_threshold=0.1, return_timing=True)
 
     boxes, scores, class_ids = results[0]
@@ -234,7 +234,7 @@ def main():
 
     # Test batch
     print("\n--- Batch Inference (4 images) ---")
-    images = [cv2.imread('/home/demo/Source/ocr_datecode/data/22376896_2026-01-23_fail_f0_20260123_150800636714_org.jpg') for _ in range(2)]
+    images = [cv2.imread('test1.jpg') for _ in range(2)]
     results, timing = model.predict(images, conf_threshold=0.3, return_timing=True)
 
     for i, (boxes, scores, _) in enumerate(results):
