@@ -140,6 +140,21 @@ def calculate_confidence(preds: np.ndarray) -> float:
     return float(np.mean(max_probs))
 
 
+def _order_points(pts: np.ndarray) -> np.ndarray:
+    """
+    Order 4 points as [top-left, top-right, bottom-right, bottom-left].
+    Works regardless of the original drawing order.
+    """
+    ordered = np.zeros((4, 2), dtype=np.float32)
+    s = pts.sum(axis=1)
+    ordered[0] = pts[np.argmin(s)]   # TL: smallest x+y
+    ordered[2] = pts[np.argmax(s)]   # BR: largest x+y
+    diff = np.diff(pts, axis=1)
+    ordered[1] = pts[np.argmin(diff)]  # TR: smallest x-y
+    ordered[3] = pts[np.argmax(diff)]  # BL: largest x-y
+    return ordered
+
+
 def crop_text_region(frame_img: np.ndarray, points: list) -> np.ndarray:
     """
     Crop text region from frame using perspective transform
@@ -151,26 +166,29 @@ def crop_text_region(frame_img: np.ndarray, points: list) -> np.ndarray:
     Returns:
         Cropped and warped region (numpy array)
     """
-    # Convert points to numpy array
     pts = np.array(points, dtype=np.float32)
 
-    # Get bounding rect width/height
-    rect = cv2.boundingRect(pts)
-    width = rect[2]
-    height = rect[3]
+    # Reorder points to TL, TR, BR, BL regardless of original drawing order
+    pts = _order_points(pts)
+    tl, tr, br, bl = pts
 
-    # Destination points for perspective transform
+    # Compute destination size from actual edge lengths (not AABB)
+    width_top = np.linalg.norm(tr - tl)
+    width_bot = np.linalg.norm(br - bl)
+    width = int(max(width_top, width_bot))
+
+    height_left = np.linalg.norm(bl - tl)
+    height_right = np.linalg.norm(br - tr)
+    height = int(max(height_left, height_right))
+
     dst_pts = np.array([
         [0, 0],
-        [width, 0],
-        [width, height],
-        [0, height]
+        [width - 1, 0],
+        [width - 1, height - 1],
+        [0, height - 1]
     ], dtype=np.float32)
 
-    # Compute perspective transform matrix
     M = cv2.getPerspectiveTransform(pts, dst_pts)
-
-    # Warp perspective
     warped = cv2.warpPerspective(frame_img, M, (width, height))
 
     return warped
