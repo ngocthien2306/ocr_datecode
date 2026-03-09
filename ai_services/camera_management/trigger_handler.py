@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Default nominal pulse width (ms) — overridden per-recipe via normal_pulse_ms field
-_DEFAULT_NORMAL_PULSE_MS = 250.0
+_DEFAULT_NORMAL_PULSE_MS = 100000.0  # Internal default: treated as "disabled" until recipe sets a real value
 
 home = os.environ.get('HOME')
 

@@ -83,7 +83,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     reject_method: 'DIO_OUT',
     do_reject_number: 2,
     do_alarm_number: 0,
-    normal_pulse_ms: 250.0,
+    normal_pulse_ms: 0,
     is_active: true,
     cameras: [],
     camera_settings: {
@@ -225,7 +225,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         reject_method: recipeAny.reject_method || 'DIO_OUT',
         do_reject_number: recipeAny.do_reject_number !== undefined ? recipeAny.do_reject_number : 0,
         do_alarm_number: recipeAny.do_alarm_number !== undefined ? recipeAny.do_alarm_number : 0,
-        normal_pulse_ms: recipeAny.normal_pulse_ms !== undefined ? recipeAny.normal_pulse_ms : 250.0,
+        normal_pulse_ms: recipeAny.normal_pulse_ms !== undefined ? recipeAny.normal_pulse_ms : 0,
         is_active: recipeAny.is_active !== undefined ? recipeAny.is_active : (recipeAny.status === 'Active'),
         cameras: normalizedCameras,
         camera_settings: recipeAny.cameraSettings || recipeAny.camera_settings || {
@@ -272,7 +272,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         reject_method: 'DIO_OUT',
         do_reject_number: 2,
         do_alarm_number: 0,
-        normal_pulse_ms: 250.0,
+        normal_pulse_ms: 0,
         is_active: true,
         cameras: [],
         camera_settings: {
@@ -406,13 +406,11 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   };
 
   const handleCameraConfigChange = (cameraId: string, field: string, value: any) => {
-    const parsed = parseFloat(value);
-    const finalValue = isNaN(parsed) ? undefined : parsed;
     setFormData(prev => ({
       ...prev,
       cameras: prev.cameras.map(cam =>
         cam.camera_id === cameraId
-          ? { ...cam, [field]: finalValue }
+          ? { ...cam, [field]: parseFloat(value) || value }
           : cam
       )
     }));
