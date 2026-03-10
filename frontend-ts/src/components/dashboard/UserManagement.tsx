@@ -35,7 +35,7 @@ interface ValidationErrors {
 
 const UserManagement: React.FC = () => {
   const toast = useToast();
-  const { canPerformAction } = useUser();
+  const { canPerformAction, user: currentUser } = useUser();
   const [users, setUsers] = useState<User[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -70,6 +70,11 @@ const UserManagement: React.FC = () => {
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [showResetPasswordModal, setShowResetPasswordModal] = useState(false);
+
+  const [showChangeOwnPasswordModal, setShowChangeOwnPasswordModal] = useState(false);
+  const [oldPassword, setOldPassword] = useState('');
+  const [newOwnPassword, setNewOwnPassword] = useState('');
+  const [confirmNewOwnPassword, setConfirmNewOwnPassword] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -284,7 +289,7 @@ const UserManagement: React.FC = () => {
     try {
       if (editingUser) {
         const updateData: UserUpdate = {
-          email: formData.email,
+          email: formData.email || undefined,
           full_name: formData.full_name,
           phone_number: formData.phone_number || undefined,
           avatar_url: formData.avatar_url!,
@@ -295,7 +300,13 @@ const UserManagement: React.FC = () => {
         await usersAPI.updateUser((editingUser as any)._id || (editingUser as any).id, updateData);
         toast.success('User updated successfully!');
       } else {
-        await usersAPI.createUser(formData as UserCreate);
+        const createData: UserCreate = {
+          ...formData,
+          email: formData.email || undefined,
+          phone_number: formData.phone_number || undefined,
+          avatar_url: formData.avatar_url ?? undefined,
+        };
+        await usersAPI.createUser(createData);
         toast.success('User created successfully!');
       }
 
@@ -423,6 +434,49 @@ const UserManagement: React.FC = () => {
     setResetPasswordUser(null);
     setNewPassword('');
     setConfirmNewPassword('');
+  };
+
+  const handleChangeOwnPasswordClick = () => {
+    setOldPassword('');
+    setNewOwnPassword('');
+    setConfirmNewOwnPassword('');
+    setShowChangeOwnPasswordModal(true);
+  };
+
+  const handleChangeOwnPasswordSubmit = async () => {
+    if (!oldPassword.trim()) {
+      toast.error('Current password is required');
+      return;
+    }
+    if (!newOwnPassword.trim()) {
+      toast.error('New password is required');
+      return;
+    }
+    if (newOwnPassword.length < 6) {
+      toast.error('New password must be at least 6 characters long');
+      return;
+    }
+    if (newOwnPassword !== confirmNewOwnPassword) {
+      toast.error('Passwords do not match');
+      return;
+    }
+    try {
+      await usersAPI.changePassword(oldPassword, newOwnPassword);
+      toast.success('Password changed successfully');
+      setShowChangeOwnPasswordModal(false);
+      setOldPassword('');
+      setNewOwnPassword('');
+      setConfirmNewOwnPassword('');
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Failed to change password');
+    }
+  };
+
+  const handleChangeOwnPasswordCancel = () => {
+    setShowChangeOwnPasswordModal(false);
+    setOldPassword('');
+    setNewOwnPassword('');
+    setConfirmNewOwnPassword('');
   };
 
   const filteredUsers = users.filter(user =>
@@ -709,6 +763,7 @@ const UserManagement: React.FC = () => {
               <th>Username</th>
               <th>Name</th>
               <th>Email</th>
+              <th>Phone Number</th>
               <th>Role</th>
               <th>Status</th>
               <th>Last Login</th>
@@ -745,7 +800,8 @@ const UserManagement: React.FC = () => {
                   </td>
                   <td>{user.username}</td>
                   <td>{user.full_name || '-'}</td>
-                  <td>{user.email}</td>
+                  <td>{user.email || '-'}</td>
+                  <td>{user.phone_number || '-'}</td>
                   <td>
                     <span className={`role-badge ${user.role}`}>
                       {user.role}
@@ -771,7 +827,7 @@ const UserManagement: React.FC = () => {
                           </svg>
                         </button>
                       )}
-                      {canPerformAction('changePasswords') && (user.role === 'operator' || user.role === 'supervisor') && (
+                      {canPerformAction('changePasswords') && (user.role === 'operator' || user.role === 'supervisor' || user.role === 'admin') && (
                         <button
                           className="action-btn reset-password"
                           onClick={() => handleResetPasswordClick(user)}
@@ -781,6 +837,18 @@ const UserManagement: React.FC = () => {
                             <rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke="currentColor" strokeWidth="2"/>
                             <circle cx="12" cy="16" r="1" stroke="currentColor" strokeWidth="2"/>
                             <path d="M7 11V7a5 5 0 0110 0v4" stroke="currentColor" strokeWidth="2"/>
+                          </svg>
+                        </button>
+                      )}
+                      {((user as any)._id === (currentUser as any)?._id || (user as any).id === currentUser?.id) && (
+                        <button
+                          className="action-btn reset-password"
+                          onClick={handleChangeOwnPasswordClick}
+                          title="Change My Password"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                            <path d="M12 17v1m-4-4h8M5 11V7a7 7 0 0114 0v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            <rect x="3" y="11" width="18" height="11" rx="2" stroke="currentColor" strokeWidth="2"/>
                           </svg>
                         </button>
                       )}
@@ -870,6 +938,68 @@ const UserManagement: React.FC = () => {
               </button>
               <button className="btn-primary" onClick={handleResetPasswordSubmit}>
                 Reset Password
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Change Own Password Modal */}
+      {showChangeOwnPasswordModal && (
+        <div className="modal-overlay" onClick={handleChangeOwnPasswordCancel}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Change My Password</h3>
+              <button className="modal-close" onClick={handleChangeOwnPasswordCancel}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                  <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label htmlFor="old-password">Current Password *</label>
+                <input
+                  type="password"
+                  id="old-password"
+                  value={oldPassword}
+                  onChange={(e) => setOldPassword(e.target.value)}
+                  placeholder="Enter current password"
+                  className="form-input"
+                  autoFocus
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="new-own-password">New Password *</label>
+                <input
+                  type="password"
+                  id="new-own-password"
+                  value={newOwnPassword}
+                  onChange={(e) => setNewOwnPassword(e.target.value)}
+                  placeholder="Enter new password"
+                  className="form-input"
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="confirm-own-password">Confirm New Password *</label>
+                <input
+                  type="password"
+                  id="confirm-own-password"
+                  value={confirmNewOwnPassword}
+                  onChange={(e) => setConfirmNewOwnPassword(e.target.value)}
+                  placeholder="Confirm new password"
+                  className="form-input"
+                />
+              </div>
+              <div className="password-requirements">
+                <small>Password must be at least 6 characters long</small>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn-secondary" onClick={handleChangeOwnPasswordCancel}>
+                Cancel
+              </button>
+              <button className="btn-primary" onClick={handleChangeOwnPasswordSubmit}>
+                Change Password
               </button>
             </div>
           </div>

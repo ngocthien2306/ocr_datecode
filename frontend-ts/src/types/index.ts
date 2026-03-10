@@ -15,7 +15,7 @@ export interface User {
 
 export interface UserCreate {
   username: string;
-  email: string;
+  email?: string;
   password: string;
   full_name: string;
   phone_number?: string;
