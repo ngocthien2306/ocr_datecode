@@ -313,6 +313,62 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
     }
   }, [showTemplates]);
 
+  // Draw detected_regions (polygon bboxes) onto a live frame image using canvas
+  const drawDetectedRegionsOnImage = (
+    imageSrc: string,
+    detectedRegions: any[]
+  ): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(img, 0, 0);
+
+        detectedRegions.forEach((region) => {
+          const points: [number, number][] = region.points;
+          if (!points || points.length < 2) return;
+
+          // Color by type
+          let color = '#ff9800'; // orange default
+          if (region.type === 'template') color = '#00bcd4'; // cyan
+          else if (region.type === 'text') color = '#4caf50'; // green
+
+          ctx.beginPath();
+          ctx.moveTo(points[0][0], points[0][1]);
+          for (let i = 1; i < points.length; i++) {
+            ctx.lineTo(points[i][0], points[i][1]);
+          }
+          ctx.closePath();
+          ctx.strokeStyle = color;
+          ctx.lineWidth = Math.max(2, img.width / 400);
+          ctx.stroke();
+
+          // Label: show text or annotation_index for non-template regions
+          if (region.type !== 'template') {
+            const minX = Math.min(...points.map((p) => p[0]));
+            const minY = Math.min(...points.map((p) => p[1]));
+            const label =
+              region.text
+                ? `[${region.annotation_index ?? ''}] ${region.text}`
+                : region.type;
+            const fontSize = Math.max(12, img.width / 80);
+            ctx.font = `bold ${fontSize}px monospace`;
+            ctx.fillStyle = color;
+            const labelY = minY > fontSize + 4 ? minY - 4 : minY + fontSize + 4;
+            ctx.fillText(label, minX + 2, labelY);
+          }
+        });
+
+        resolve(canvas.toDataURL('image/jpeg', 0.92));
+      };
+      img.onerror = () => resolve(imageSrc); // fallback: return original
+      img.src = imageSrc;
+    });
+  };
+
   const handleGetLiveTemplates = async () => {
     if (!latestResults?.camera_results?.length) return;
     setIsGettingLiveTemplate(true);
@@ -329,7 +385,18 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
           }
           const framesResponse = await camerasAPI.getLatestFrames(sn, count, 95);
           if (framesResponse?.frames?.length) {
-            updates[sn] = framesResponse.frames.map((f: any) => `data:image/jpeg;base64,${f.frame_base64}`);
+            const annotatedFrames: string[] = [];
+            for (let i = 0; i < framesResponse.frames.length; i++) {
+              const rawSrc = `data:image/jpeg;base64,${framesResponse.frames[i].frame_base64}`;
+              const detectedRegions = cameraResult.frames[i]?.detected_regions;
+              if (detectedRegions?.length) {
+                const annotated = await drawDetectedRegionsOnImage(rawSrc, detectedRegions);
+                annotatedFrames.push(annotated);
+              } else {
+                annotatedFrames.push(rawSrc);
+              }
+            }
+            updates[sn] = annotatedFrames;
           }
         } catch (err) {
           console.error(`Failed to get frames for camera ${sn}:`, err);
