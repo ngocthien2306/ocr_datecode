@@ -183,7 +183,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   // Delay trigger management - track each camera's delay
-  const [cameraDelays, setCameraDelays] = useState<Record<string, number>>({});
+  const [_cameraDelays, setCameraDelays] = useState<Record<string, number>>({});
   const [updatingDelay, setUpdatingDelay] = useState<string | null>(null);
 
   // Settings modal state
@@ -313,10 +313,28 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
     }
   }, [showTemplates]);
 
-  // Draw detected_regions (polygon bboxes) onto a live frame image using canvas
+  // Get crop_area annotation (relative coords) for a specific camera+template from recipe metadata
+  const getCropAreaForFrame = (sn: string, templateName?: string): { x: number; y: number; width: number; height: number } | null => {
+    const camera = runningRecipe?.metadata?.cameras?.find((c: any) => c.serial_number === sn);
+    if (!camera) return null;
+    const cameraTemplate = runningRecipe?.metadata?.camera_templates?.find(
+      (ct: any) => ct.camera_id === camera.camera_id
+    );
+    if (!cameraTemplate) return null;
+    const template = templateName
+      ? cameraTemplate.templates?.find((t: any) => t.name === templateName)
+      : cameraTemplate.templates?.[0];
+    if (!template) return null;
+    const cropAnn = template.annotations?.find((a: any) => a.type === 'crop_area');
+    if (!cropAnn) return null;
+    return { x: cropAnn.x, y: cropAnn.y, width: cropAnn.width, height: cropAnn.height };
+  };
+
+  // Draw crop_area (relative coords) and detected_regions (absolute pixel coords) onto a live frame
   const drawDetectedRegionsOnImage = (
     imageSrc: string,
-    detectedRegions: any[]
+    detectedRegions: any[],
+    cropArea?: { x: number; y: number; width: number; height: number } | null
   ): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -327,33 +345,50 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
         const ctx = canvas.getContext('2d')!;
         ctx.drawImage(img, 0, 0);
 
+        const lw = Math.max(2, img.width / 400);
+
+        // Draw crop_area as dashed yellow rectangle (relative → absolute)
+        if (cropArea) {
+          const cx = cropArea.x * img.width;
+          const cy = cropArea.y * img.height;
+          const cw = cropArea.width * img.width;
+          const ch = cropArea.height * img.height;
+          ctx.save();
+          ctx.strokeStyle = '#ffeb3b';
+          ctx.lineWidth = lw;
+          ctx.setLineDash([Math.max(6, img.width / 200), Math.max(3, img.width / 400)]);
+          ctx.strokeRect(cx, cy, cw, ch);
+          ctx.restore();
+        }
+
+        // Draw detected_regions polygons (absolute pixel coords)
         detectedRegions.forEach((region) => {
           const points: [number, number][] = region.points;
           if (!points || points.length < 2) return;
 
-          // Color by type
           let color = '#ff9800'; // orange default
           if (region.type === 'template') color = '#00bcd4'; // cyan
           else if (region.type === 'text') color = '#4caf50'; // green
 
           ctx.beginPath();
-          ctx.moveTo(points[0][0], points[0][1]);
+          const [x0, y0] = points[0] as [number, number];
+          ctx.moveTo(x0, y0);
           for (let i = 1; i < points.length; i++) {
-            ctx.lineTo(points[i][0], points[i][1]);
+            const [xi, yi] = points[i] as [number, number];
+            ctx.lineTo(xi, yi);
           }
           ctx.closePath();
           ctx.strokeStyle = color;
-          ctx.lineWidth = Math.max(2, img.width / 400);
+          ctx.lineWidth = lw;
           ctx.stroke();
 
-          // Label: show text or annotation_index for non-template regions
+          // Label for non-template regions
           if (region.type !== 'template') {
             const minX = Math.min(...points.map((p) => p[0]));
             const minY = Math.min(...points.map((p) => p[1]));
-            const label =
-              region.text
-                ? `[${region.annotation_index ?? ''}] ${region.text}`
-                : region.type;
+            const label = region.text
+              ? `[${region.annotation_index ?? ''}] ${region.text}`
+              : region.type;
             const fontSize = Math.max(12, img.width / 80);
             ctx.font = `bold ${fontSize}px monospace`;
             ctx.fillStyle = color;
@@ -388,13 +423,11 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
             const annotatedFrames: string[] = [];
             for (let i = 0; i < framesResponse.frames.length; i++) {
               const rawSrc = `data:image/jpeg;base64,${framesResponse.frames[i].frame_base64}`;
-              const detectedRegions = cameraResult.frames[i]?.detected_regions;
-              if (detectedRegions?.length) {
-                const annotated = await drawDetectedRegionsOnImage(rawSrc, detectedRegions);
-                annotatedFrames.push(annotated);
-              } else {
-                annotatedFrames.push(rawSrc);
-              }
+              const correspondingFrame = cameraResult.frames[i];
+              const detectedRegions = correspondingFrame?.detected_regions ?? [];
+              const cropArea = getCropAreaForFrame(sn, correspondingFrame?.template_name);
+              const annotated = await drawDetectedRegionsOnImage(rawSrc, detectedRegions, cropArea);
+              annotatedFrames.push(annotated);
             }
             updates[sn] = annotatedFrames;
           }
@@ -665,7 +698,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
     }
   };
 
-  const handleUpdateDelay = async (serialNumber: string, newDelay: number) => {
+  const _handleUpdateDelay = async (serialNumber: string, newDelay: number) => {
     if (updatingDelay || newDelay < 0 || newDelay > 10000) return;
 
     setUpdatingDelay(serialNumber);
