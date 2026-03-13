@@ -10,7 +10,7 @@ interface AnnotationType {
 
 const ANNOTATION_TYPES: AnnotationType[] = [
   { value: 'text', label: 'Text OCR', color: '#50fa7b', needsText: true },
-  { value: 'barcode', label: 'Barcode', color: '#ffdc5c', needsText: false },
+  // { value: 'barcode', label: 'Barcode', color: '#ffdc5c', needsText: false },
   { value: 'template', label: 'Template Match', color: '#ff5555', needsText: false },
   { value: 'crop_area', label: 'Crop Area', color: '#ff64ff', needsText: false },
   { value: 'datecode', label: 'Date Code', color: '#5096ff', needsText: true },

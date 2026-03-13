@@ -205,8 +205,12 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
   });
 
   // Live template snapshot - keyed by serial_number
+  // liveTemplateFrames: annotated (overlay drawn) for display
+  // liveRawFrames: raw base64 for upload
   const [liveTemplateFrames, setLiveTemplateFrames] = useState<{[sn: string]: string[]}>({});
+  const [liveRawFrames, setLiveRawFrames] = useState<{[sn: string]: string[]}>({});
   const [isGettingLiveTemplate, setIsGettingLiveTemplate] = useState(false);
+  const [settingTemplateKey, setSettingTemplateKey] = useState<string | null>(null); // "sn_frameIdx"
 
   // Auto scroll to bottom
   const scrollToBottom = () => {
@@ -409,6 +413,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
     setIsGettingLiveTemplate(true);
     try {
       const updates: {[sn: string]: string[]} = {};
+      const rawUpdates: {[sn: string]: string[]} = {};
       for (const cameraResult of latestResults.camera_results) {
         const sn = cameraResult.serial_number;
         const count = cameraResult.frames.length || 1;
@@ -421,8 +426,10 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
           const framesResponse = await camerasAPI.getLatestFrames(sn, count, 95);
           if (framesResponse?.frames?.length) {
             const annotatedFrames: string[] = [];
+            const rawFrames: string[] = [];
             for (let i = 0; i < framesResponse.frames.length; i++) {
               const rawSrc = `data:image/jpeg;base64,${framesResponse.frames[i].frame_base64}`;
+              rawFrames.push(rawSrc);
               const correspondingFrame = cameraResult.frames[i];
               const detectedRegions = correspondingFrame?.detected_regions ?? [];
               const cropArea = getCropAreaForFrame(sn, correspondingFrame?.template_name);
@@ -430,6 +437,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
               annotatedFrames.push(annotated);
             }
             updates[sn] = annotatedFrames;
+            rawUpdates[sn] = rawFrames;
           }
         } catch (err) {
           console.error(`Failed to get frames for camera ${sn}:`, err);
@@ -437,6 +445,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
       }
       if (Object.keys(updates).length > 0) {
         setLiveTemplateFrames(updates);
+        setLiveRawFrames(rawUpdates);
         toast.success('Captured live frames as template');
       } else {
         toast.error('Failed to get frames from any camera');
@@ -450,6 +459,174 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
 
   const handleReturnOriginalTemplates = () => {
     setLiveTemplateFrames({});
+    setLiveRawFrames({});
+  };
+
+  // Build new annotations by merging recipe shape info + detected_regions coords + text_verification text
+  const buildNewAnnotations = (
+    recipeAnnotations: any[],
+    detectedRegions: any[],
+    textVerification: any,
+    uploadWidth: number,
+    uploadHeight: number
+  ): any[] => {
+    return recipeAnnotations.map((ann: any, idx: number) => {
+      // crop_area: keep as-is (fixed zone, no coordinate update)
+      if (ann.type === 'crop_area') return ann;
+
+      // Find matching detected region
+      let detected: any = null;
+      if (ann.type === 'template') {
+        detected = detectedRegions.find((d: any) => d.type === 'template');
+      } else {
+        detected = detectedRegions.find((d: any) => d.annotation_index === idx);
+      }
+
+      // Not detected → keep original annotation as safe fallback
+      if (!detected) return ann;
+
+      // Convert absolute polygon → axis-aligned bounding rect → relative coords
+      const pts: [number, number][] = detected.points;
+      const minX = Math.min(...pts.map((p) => p[0]));
+      const maxX = Math.max(...pts.map((p) => p[0]));
+      const minY = Math.min(...pts.map((p) => p[1]));
+      const maxY = Math.max(...pts.map((p) => p[1]));
+
+      const newAnn: any = {
+        ...ann, // keep type, shape, conf and all other fields
+        x: minX / uploadWidth,
+        y: minY / uploadHeight,
+        width: (maxX - minX) / uploadWidth,
+        height: (maxY - minY) / uploadHeight,
+        points: null,
+      };
+
+      // Update text from text_verification.expected for text/datecode types
+      if (ann.type === 'text' || ann.type === 'datecode') {
+        const tvResult = textVerification?.results?.find(
+          (r: any) => r.annotation_idx === idx
+        );
+        if (tvResult?.expected !== undefined) {
+          newAnn.text = tvResult.expected;
+        }
+      }
+
+      return newAnn;
+    });
+  };
+
+  // Upload a raw base64 frame to /templates/upload and return {url, width, height}
+  const uploadRawFrame = async (rawBase64: string): Promise<{ url: string; width: number; height: number }> => {
+    const res = await fetch(rawBase64);
+    const blob = await res.blob();
+    const file = new File([blob], `live_template_${Date.now()}.jpg`, { type: 'image/jpeg' });
+    const formData = new FormData();
+    formData.append('file', file);
+    const token = localStorage.getItem('access_token');
+    const uploadRes = await fetch(`${API_BASE_URL}/api/recipes/templates/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Bypass-Tunnel-Reminder': 'true' },
+      body: formData,
+    });
+    if (!uploadRes.ok) {
+      const err = await uploadRes.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to upload template image');
+    }
+    return uploadRes.json();
+  };
+
+  // Set live captured frame as new template (realtime, no DB save)
+  const handleSetAsTemplate = async (sn: string, frameIdx: number) => {
+    const key = `${sn}_${frameIdx}`;
+    if (settingTemplateKey === key) return;
+
+    const rawSrc = liveRawFrames[sn]?.[frameIdx];
+    if (!rawSrc) { toast.error('No raw frame captured'); return; }
+    if (!latestResults || !runningRecipeId) { toast.error('No inference result available'); return; }
+
+    setSettingTemplateKey(key);
+    try {
+      // 1. Upload raw frame
+      const { url: newImageUrl, width: uploadWidth, height: uploadHeight } = await uploadRawFrame(rawSrc);
+
+      // 2. Find camera and its result frame
+      const cameraResult = latestResults.camera_results.find((c) => c.serial_number === sn);
+      const inferenceFrame = cameraResult?.frames[frameIdx];
+      const detectedRegions: any[] = inferenceFrame?.detected_regions ?? [];
+      const textVerification = inferenceFrame?.text_verification;
+
+      // 3. Get recipe annotations for this frame (by template_name)
+      const recipeCam = runningRecipe?.metadata?.cameras?.find((c: any) => c.serial_number === sn);
+      const recipeCT = runningRecipe?.metadata?.camera_templates?.find(
+        (ct: any) => ct.camera_id === recipeCam?.camera_id
+      );
+      const templateName = inferenceFrame?.template_name;
+      const recipeTemplate = templateName
+        ? recipeCT?.templates?.find((t: any) => t.name === templateName)
+        : recipeCT?.templates?.[frameIdx];
+      const recipeAnnotations: any[] = recipeTemplate?.annotations ?? [];
+
+      // 4. Build new annotations
+      const newAnnotations = buildNewAnnotations(
+        recipeAnnotations, detectedRegions, textVerification, uploadWidth, uploadHeight
+      );
+
+      // 5. Build full payload from runningRecipe (preserves all previous realtime changes)
+      const cameras = (runningRecipe?.metadata?.cameras ?? []).map((cam: any) => ({
+        camera_id: cam.camera_id,
+        exposure_time: cam.exposure_time,
+        delay_trigger: cam.delay_trigger,
+        delay_interval: cam.delay_interval,
+        gain: cam.gain,
+      }));
+
+      const cameraTemplates = (runningRecipe?.metadata?.camera_templates ?? []).map((ct: any) => ({
+        camera_id: ct.camera_id,
+        templates: (ct.templates ?? []).map((t: any, tIdx: number) => {
+          const isTarget = ct.camera_id === recipeCam?.camera_id &&
+            (templateName ? t.name === templateName : tIdx === frameIdx);
+          return {
+            annotations: isTarget ? newAnnotations : (t.annotations ?? []),
+            image_url: isTarget ? newImageUrl : t.image_url,
+            image_width: isTarget ? uploadWidth : t.image_width,
+            image_height: isTarget ? uploadHeight : t.image_height,
+            center_offset_threshold_left: t.center_offset_threshold_left,
+            center_offset_threshold_right: t.center_offset_threshold_right,
+          };
+        }),
+      }));
+
+      // 6. Call update-realtime with full payload
+      await receiptsAPI.updateRecipeRealtime(runningRecipeId, {
+        delay_reject: runningRecipe?.metadata?.delay_reject,
+        reject_pulse: runningRecipe?.metadata?.reject_pulse,
+        cameras,
+        camera_templates: cameraTemplates,
+      });
+
+      // 7. Update runningRecipe state so subsequent calls remain consistent
+      setRunningRecipe((prev: any) => {
+        if (!prev) return prev;
+        const updatedCTs = (prev.metadata?.camera_templates ?? []).map((ct: any) => {
+          if (ct.camera_id !== recipeCam?.camera_id) return ct;
+          return {
+            ...ct,
+            templates: (ct.templates ?? []).map((t: any, tIdx: number) => {
+              const isTarget = templateName ? t.name === templateName : tIdx === frameIdx;
+              if (!isTarget) return t;
+              return { ...t, image_url: newImageUrl, image_width: uploadWidth, image_height: uploadHeight, annotations: newAnnotations };
+            }),
+          };
+        });
+        return { ...prev, metadata: { ...prev.metadata, camera_templates: updatedCTs } };
+      });
+
+      toast.success(`Template updated: ${templateName ?? `Frame ${frameIdx + 1}`}`);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to set template');
+    } finally {
+      setSettingTemplateKey(null);
+    }
   };
 
   // Update duration every second
@@ -1341,25 +1518,51 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                     {showTemplates && cameraResult.frames.length > 0 && (
                       <div className="template-preview-section">
                         {liveTemplateFrames[cameraResult.serial_number] ? (
-                          liveTemplateFrames[cameraResult.serial_number]!.map((imgSrc, frameIdx) => (
-                            <div key={frameIdx} className="template-preview-item">
-                              <div className="template-image-wrapper">
-                                <img
-                                  src={imgSrc}
-                                  alt={`Live Frame ${frameIdx + 1}`}
-                                  className="template-image"
-                                />
-                                <div className="template-preview-header">
-                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                                    <rect x="2" y="7" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2"/>
-                                    <circle cx="12" cy="14" r="3" stroke="currentColor" strokeWidth="2"/>
-                                  </svg>
-                                  <span className="template-label">Live {frameIdx + 1}</span>
+                          // Live frames (annotated overlay) + "Set as Template" button per frame
+                          liveTemplateFrames[cameraResult.serial_number]!.map((imgSrc, frameIdx) => {
+                            const key = `${cameraResult.serial_number}_${frameIdx}`;
+                            const isSetting = settingTemplateKey === key;
+                            const templateName = cameraResult.frames[frameIdx]?.template_name;
+                            return (
+                              <div key={frameIdx} className="template-preview-item">
+                                <div className="template-image-wrapper">
+                                  <img
+                                    src={imgSrc}
+                                    alt={`Live Frame ${frameIdx + 1}`}
+                                    className="template-image"
+                                  />
+                                  <div className="template-preview-header">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                                      <rect x="2" y="7" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2"/>
+                                      <circle cx="12" cy="14" r="3" stroke="currentColor" strokeWidth="2"/>
+                                    </svg>
+                                    <span className="template-label">Live {templateName ?? frameIdx + 1}</span>
+                                  </div>
+                                  {/* Set as Template button */}
+                                  <button
+                                    className={`btn-set-as-template ${isSetting ? 'loading' : ''}`}
+                                    onClick={() => handleSetAsTemplate(cameraResult.serial_number, frameIdx)}
+                                    disabled={isSetting || !!settingTemplateKey}
+                                    title="Upload this frame as new template with updated annotations"
+                                  >
+                                    {isSetting ? (
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" style={{animation: 'spin 1s linear infinite'}}>
+                                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="30 70" strokeLinecap="round"/>
+                                      </svg>
+                                    ) : (
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                                        <path d="M9 12l2 2 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                                        <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/>
+                                      </svg>
+                                    )}
+                                    {isSetting ? 'Setting...' : 'Set as Template'}
+                                  </button>
                                 </div>
                               </div>
-                            </div>
-                          ))
+                            );
+                          })
                         ) : (
+                          // Original template images from recipe
                           cameraResult.frames.map((frame, frameIdx) => {
                             const templateImageUrl = getTemplateImageUrl(cameraResult.serial_number, frame.template_name);
 

@@ -1317,13 +1317,12 @@ async def update_recipe_realtime(
                             logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id}: {field} → {updated_cam[field]}")
                     break
 
-    # Update templates (annotations only)
+    # Update templates (annotations + optional image replacement)
     if 'camera_templates' in update_data:
         for updated_ct in update_data['camera_templates']:
             cam_id = updated_ct.get('camera_id')
             for idx, ct in enumerate(recipe_dict['camera_templates']):
                 if ct.get('camera_id') == cam_id:
-                    # Only update annotations + center offset thresholds, preserve image URLs
                     for tmpl_idx, tmpl in enumerate(updated_ct.get('templates', [])):
                         if tmpl_idx < len(ct.get('templates', [])):
                             existing_tmpl = recipe_dict['camera_templates'][idx]['templates'][tmpl_idx]
@@ -1334,6 +1333,14 @@ async def update_recipe_realtime(
                             if 'center_offset_threshold_right' in tmpl:
                                 existing_tmpl['center_offset_threshold_right'] = tmpl['center_offset_threshold_right']
                                 logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id} Template {tmpl_idx}: center_offset_threshold_right → {tmpl['center_offset_threshold_right']}")
+                            # Support online template image replacement
+                            if 'image_url' in tmpl:
+                                existing_tmpl['image_url'] = tmpl['image_url']
+                                logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id} Template {tmpl_idx}: image_url → {tmpl['image_url']}")
+                            if 'image_width' in tmpl:
+                                existing_tmpl['image_width'] = tmpl['image_width']
+                            if 'image_height' in tmpl:
+                                existing_tmpl['image_height'] = tmpl['image_height']
                             logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id} Template {tmpl_idx}: Updated annotations")
                     break
 

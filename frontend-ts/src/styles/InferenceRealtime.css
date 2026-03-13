@@ -1348,6 +1348,42 @@
   border-radius: 8px;
 }
 
+/* Set as Template button - overlaid at bottom of live template image */
+.btn-set-as-template {
+  position: absolute;
+  bottom: 0.4rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: rgba(16, 185, 129, 0.85);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  backdrop-filter: blur(4px);
+  transition: background 0.2s ease, opacity 0.2s ease;
+  z-index: 2;
+}
+
+.btn-set-as-template:hover:not(:disabled) {
+  background: rgba(5, 150, 105, 0.95);
+}
+
+.btn-set-as-template:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-set-as-template.loading {
+  background: rgba(107, 114, 128, 0.8);
+}
+
 /* Log Container */
 .log-container {
   flex: 1;

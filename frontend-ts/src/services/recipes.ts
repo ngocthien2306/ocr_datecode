@@ -144,6 +144,11 @@ export const receiptsAPI = {
         camera_id: string;
         templates: Array<{
           annotations: any[];
+          image_url?: string;
+          image_width?: number;
+          image_height?: number;
+          center_offset_threshold_left?: number;
+          center_offset_threshold_right?: number;
         }>;
       }>;
     }
