@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 # Weights path relative to this file: backend/app/services/ → up 4 levels → project root
 _WEIGHTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "weights"
-_DEFAULT_MODEL_PATH = _WEIGHTS_DIR / "yolo26_bottle_obb.onnx"
+_DEFAULT_MODEL_PATH = _WEIGHTS_DIR / "best_bottle_m.onnx"
 _CLASS_NAMES = ["bottle_cap", "text_box"]
 
 
@@ -106,18 +106,54 @@ def _rotate_image_by_obb(image: np.ndarray, box: np.ndarray) -> Tuple[np.ndarray
     return rotated, angle_deg, M
 
 
-def _transform_center(cx: float, cy: float, M: np.ndarray) -> Tuple[float, float]:
-    """Transform một điểm center theo ma trận affine."""
-    pt = np.array([cx, cy, 1.0])
-    new_pt = M @ pt
-    return new_pt[0], new_pt[1]
+def _compute_need_flip(cap_box: np.ndarray, text_box: np.ndarray, angle_deg: float) -> bool:
+    """Kiểm tra cần flip 180° không bằng cách tính vị trí text sau xoay (không xoay thật)."""
+    cx, cy = float(cap_box[0]), float(cap_box[1])
+    tx, ty = float(text_box[0]), float(text_box[1])
+    M = cv2.getRotationMatrix2D((cx, cy), angle_deg, 1.0)
+    new_text = M @ np.array([tx, ty, 1.0])
+    return float(new_text[1]) < cy
+
+
+def _rotate_cap_region_only(image: np.ndarray, cap_box: np.ndarray, angle_deg: float,
+                             need_flip: bool = False, margin: int = 20) -> np.ndarray:
+    """
+    Chỉ xoay vùng nắp chai (circular mask), background giữ nguyên.
+    Trả về full image với cap đã xoay tại chỗ.
+    """
+    cx, cy, w, h, _ = cap_box
+    radius = int(min(w, h) / 2)
+    total_angle = angle_deg + (180 if need_flip else 0)
+
+    crop_r = radius + margin
+    x1 = max(0, int(cx - crop_r))
+    y1 = max(0, int(cy - crop_r))
+    x2 = min(image.shape[1], int(cx + crop_r))
+    y2 = min(image.shape[0], int(cy + crop_r))
+
+    crop = image[y1:y2, x1:x2].copy()
+    local_cx = float(cx - x1)
+    local_cy = float(cy - y1)
+
+    M = cv2.getRotationMatrix2D((local_cx, local_cy), total_angle, 1.0)
+    crop_rotated = cv2.warpAffine(crop, M, (crop.shape[1], crop.shape[0]),
+                                   flags=cv2.INTER_LINEAR, borderValue=(114, 114, 114))
+
+    mask = np.zeros(crop.shape[:2], dtype=np.uint8)
+    cv2.circle(mask, (int(local_cx), int(local_cy)), radius, 255, -1)
+
+    result_crop = crop.copy()
+    result_crop[mask > 0] = crop_rotated[mask > 0]
+
+    full_result = image.copy()
+    full_result[y1:y2, x1:x2] = result_crop
+    return full_result
 
 
 def rotate_frame(image: np.ndarray, model: YOLOOBBInference) -> np.ndarray:
     """
-    Detect OBB trên frame, xoay để text nằm chính diện.
-    Nếu không detect được text_box → trả về ảnh gốc.
-    Không vẽ OBB lên ảnh trả về.
+    Detect OBB trên frame, chỉ xoay vùng nắp chai (circular mask), background giữ nguyên.
+    Nếu không detect được text_box + bottle_cap → trả về ảnh gốc.
     """
     results = model.predict([image], conf_threshold=0.2)
     boxes, scores, class_ids = results[0]
@@ -133,28 +169,22 @@ def rotate_frame(image: np.ndarray, model: YOLOOBBInference) -> np.ndarray:
         (i for i, c in enumerate(class_ids) if model.class_names[int(c)] == "bottle_cap"), None
     )
 
-    if text_box_idx is None:
-        logger.debug("No text_box detected, returning original frame")
+    if text_box_idx is None or bottle_cap_idx is None:
+        logger.debug("text_box or bottle_cap not detected, returning original frame")
         return image
 
-    # Xoay lần 1 theo angle của text_box
-    rotated, angle_deg, M = _rotate_image_by_obb(image, boxes[text_box_idx])
+    text_box = boxes[text_box_idx]
+    cap_box = boxes[bottle_cap_idx]
 
-    # Kiểm tra vị trí text_box vs bottle_cap sau xoay → flip 180° nếu cần
-    if bottle_cap_idx is not None:
-        text_cx, text_cy = _transform_center(boxes[text_box_idx][0], boxes[text_box_idx][1], M)
-        cap_cx, cap_cy = _transform_center(boxes[bottle_cap_idx][0], boxes[bottle_cap_idx][1], M)
+    _, _, tw, th, text_angle = text_box
+    angle_deg = text_angle * 180 / np.pi
+    if th > tw:
+        angle_deg += 90
 
-        if text_cy < cap_cy:
-            h_img, w_img = rotated.shape[:2]
-            M_flip = cv2.getRotationMatrix2D((w_img / 2, h_img / 2), 180, 1.0)
-            rotated = cv2.warpAffine(rotated, M_flip, (w_img, h_img),
-                                     flags=cv2.INTER_LINEAR, borderValue=(114, 114, 114))
-            logger.debug(f"Rotated {angle_deg:.1f}° + 180° flip")
-        else:
-            logger.debug(f"Rotated {angle_deg:.1f}°")
-
-    return rotated
+    need_flip = _compute_need_flip(cap_box, text_box, angle_deg)
+    result = _rotate_cap_region_only(image, cap_box, angle_deg, need_flip, margin=20)
+    logger.debug(f"Cap rotated {angle_deg:.1f}°{'+ 180°' if need_flip else ''}")
+    return result
 
 
 # ─── Singleton ────────────────────────────────────────────────────────────────

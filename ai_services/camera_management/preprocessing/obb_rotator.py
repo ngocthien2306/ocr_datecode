@@ -68,6 +68,50 @@ except ImportError as e:
 
 # ─── Helper functions (ported from tests/rotate_text_obb_trt.py) ──────────────
 
+def rotate_cap_region_only(image: np.ndarray, cap_box: np.ndarray, angle_deg: float,
+                            need_flip: bool = False, margin: int = 20) -> np.ndarray:
+    """
+    Chỉ xoay vùng nắp chai (circular mask), background giữ nguyên.
+    Trả về full image với cap đã xoay tại chỗ.
+    """
+    cx, cy, w, h, _ = cap_box
+    radius = int(min(w, h) / 2)
+    total_angle = angle_deg + (180 if need_flip else 0)
+
+    crop_r = radius + margin
+    x1 = max(0, int(cx - crop_r))
+    y1 = max(0, int(cy - crop_r))
+    x2 = min(image.shape[1], int(cx + crop_r))
+    y2 = min(image.shape[0], int(cy + crop_r))
+
+    crop = image[y1:y2, x1:x2].copy()
+    local_cx = float(cx - x1)
+    local_cy = float(cy - y1)
+
+    M = cv2.getRotationMatrix2D((local_cx, local_cy), total_angle, 1.0)
+    crop_rotated = cv2.warpAffine(crop, M, (crop.shape[1], crop.shape[0]),
+                                   flags=cv2.INTER_LINEAR, borderValue=(114, 114, 114))
+
+    mask = np.zeros(crop.shape[:2], dtype=np.uint8)
+    cv2.circle(mask, (int(local_cx), int(local_cy)), radius, 255, -1)
+
+    result_crop = crop.copy()
+    result_crop[mask > 0] = crop_rotated[mask > 0]
+
+    full_result = image.copy()
+    full_result[y1:y2, x1:x2] = result_crop
+    return full_result
+
+
+def compute_need_flip(cap_box: np.ndarray, text_box: np.ndarray, angle_deg: float) -> bool:
+    """Kiểm tra cần flip 180° không bằng cách tính vị trí text sau xoay (không xoay thật)."""
+    cx, cy = float(cap_box[0]), float(cap_box[1])
+    tx, ty = float(text_box[0]), float(text_box[1])
+    M = cv2.getRotationMatrix2D((cx, cy), angle_deg, 1.0)
+    new_text = M @ np.array([tx, ty, 1.0])
+    return float(new_text[1]) < cy
+
+
 def rotate_image_by_obb(image: np.ndarray, box: np.ndarray) -> Tuple[np.ndarray, float, np.ndarray]:
     """
     Xoay ảnh để vùng text nằm chính diện dựa vào OBB.
@@ -257,43 +301,37 @@ class OBBRotationService:
                  if self.CLASS_NAMES[int(c)] == 'bottle_cap'), None
             )
 
-            if text_box_idx is None:
+            if text_box_idx is None or bottle_cap_idx is None:
                 self._rot_logger.info(
-                    f"{tag}FAIL — text_box not detected "
-                    f"(found {len(boxes)} boxes, no text_box, infer={infer_ms:.1f}ms)"
+                    f"{tag}FAIL — text_box or bottle_cap not detected "
+                    f"(found {len(boxes)} boxes, infer={infer_ms:.1f}ms)"
                 )
                 return frame, None
 
-            # Bước 1: xoay theo text_box
-            rotated, angle_used, M1 = rotate_image_by_obb(frame, boxes[text_box_idx])
-            transformed_boxes = transform_boxes(boxes, M1)
-            M_combined = M1
-            flipped = False
+            text_box = boxes[text_box_idx]
+            cap_box  = boxes[bottle_cap_idx]
 
-            # Bước 2: flip 180° nếu text nằm trên bottle_cap
-            if bottle_cap_idx is not None:
-                text_cy = transformed_boxes[text_box_idx][1]
-                cap_cy  = transformed_boxes[bottle_cap_idx][1]
+            # Tính góc xoay từ text_box
+            _, _, tw, th, text_angle = text_box
+            angle_deg = text_angle * 180 / np.pi
+            if th > tw:
+                angle_deg += 90
 
-                if text_cy < cap_cy:
-                    h_img, w_img = rotated.shape[:2]
-                    M_flip = cv2.getRotationMatrix2D((w_img / 2, h_img / 2), 180, 1.0)
-                    rotated = cv2.warpAffine(rotated, M_flip, (w_img, h_img),
-                                             flags=cv2.INTER_LINEAR,
-                                             borderValue=(114, 114, 114))
-                    M_combined = _combine_affine(M_flip, M1)
-                    flipped = True
+            # Kiểm tra flip bằng ma trận (không xoay thật)
+            flipped = compute_need_flip(cap_box, text_box, angle_deg)
 
-            total_angle = angle_used + (180.0 if flipped else 0.0)
+            # Chỉ xoay vùng cap (circular mask), background giữ nguyên
+            result = rotate_cap_region_only(frame, cap_box, angle_deg, flipped)
+
+            total_angle = angle_deg + (180.0 if flipped else 0.0)
             flip_str    = " + flip180" if flipped else ""
-            cap_str     = f"cap_detected=True" if bottle_cap_idx is not None else "cap_detected=False"
 
             self._rot_logger.info(
-                f"{tag}OK — angle={angle_used:.1f}°{flip_str} total={total_angle:.1f}°  "
-                f"{cap_str}  infer={infer_ms:.1f}ms"
+                f"{tag}OK — angle={angle_deg:.1f}°{flip_str} total={total_angle:.1f}°  "
+                f"cap_only=True  infer={infer_ms:.1f}ms"
             )
 
-            return rotated, M_combined
+            return result, None
 
         except Exception as e:
             logger.error(f"OBBRotationService.rotate_frame error: {e}")

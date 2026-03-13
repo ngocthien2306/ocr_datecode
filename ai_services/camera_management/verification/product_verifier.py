@@ -589,7 +589,7 @@ class ProductVerificationService:
 
         # Find template region from transformed_bboxes
         template_region = next(
-            (bbox for bbox in transformed_bboxes if bbox.get('type') == 'template'),
+            (bbox for bbox in transformed_bboxes if bbox.get('type') == 'label'),
             None
         )
 

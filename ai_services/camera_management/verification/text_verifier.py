@@ -75,6 +75,8 @@ def _apply_text_corrections(text: str) -> str:
         text = text.replace("USsed", "Used")
     if "Iif" in text:
         text = text.replace("Iif", "If")
+
+
     return text
 
 
@@ -345,7 +347,20 @@ class TextVerificationService:
 
                 if "oR" in recognized_text:
                     recognized_text = recognized_text.replace("oR", "OR")
-                    
+                
+                if "MRR" in recognized_text:
+                    recognized_text = recognized_text.replace("MRR", "MAR")
+                
+                if "HAR" in recognized_text:    
+                    recognized_text = recognized_text.replace("HAR", "MAR")
+                
+                if "HRR" in recognized_text:    
+                    recognized_text = recognized_text.replace("HRR", "MAR")
+                
+                if "RL" in recognized_text:
+                    recognized_text = recognized_text.replace("RL", "PL")
+                
+
                 match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
                 if match: 
                     recognized_text = expected_text[:]

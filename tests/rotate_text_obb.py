@@ -4,6 +4,66 @@ from test_label_onnx import YOLOOBBInference
 from rapidocr_onnxruntime import RapidOCR
 import matplotlib.pyplot as plt
 
+def rotate_cap_region_only(image: np.ndarray, cap_box: np.ndarray, angle_deg: float,
+                            need_flip: bool = False, margin: int = 20) -> tuple:
+    """
+    Crop vùng nắp chai (radius + margin), xoay nội dung bên trong vòng tròn.
+    - Dùng circular mask thay OBB rectangle → tránh background góc bị xoay theo
+    - text_box tự xoay theo vì nằm bên trong vùng tròn
+    Returns:
+        result_crop: ảnh crop (cap + margin) với cap đã xoay, background ngoài tròn giữ nguyên
+        full_result: full image với cap đã xoay tại chỗ
+    """
+    cx, cy, w, h, _ = cap_box
+    radius = int(min(w, h) / 2)
+    total_angle = angle_deg + (180 if need_flip else 0)
+
+    # Vùng crop: hình vuông bao quanh cap + margin
+    crop_r = radius + margin
+    x1 = max(0, int(cx - crop_r))
+    y1 = max(0, int(cy - crop_r))
+    x2 = min(image.shape[1], int(cx + crop_r))
+    y2 = min(image.shape[0], int(cy + crop_r))
+
+    crop = image[y1:y2, x1:x2].copy()
+    local_cx = float(cx - x1)
+    local_cy = float(cy - y1)
+
+    # Xoay crop quanh tâm cap (tọa độ local)
+    M = cv2.getRotationMatrix2D((local_cx, local_cy), total_angle, 1.0)
+    crop_rotated = cv2.warpAffine(crop, M, (crop.shape[1], crop.shape[0]),
+                                   flags=cv2.INTER_LINEAR,
+                                   borderValue=(114, 114, 114))
+
+    # Circular mask: chỉ lấy vùng tròn của cap, không lấy góc OBB
+    mask = np.zeros(crop.shape[:2], dtype=np.uint8)
+    cv2.circle(mask, (int(local_cx), int(local_cy)), radius, 255, -1)
+
+    # Blend: background crop gốc + vùng tròn đã xoay (text_box xoay theo tự động)
+    result_crop = crop.copy()
+    result_crop[mask > 0] = crop_rotated[mask > 0]
+
+    # Paste lại vào full image
+    full_result = image.copy()
+    full_result[y1:y2, x1:x2] = result_crop
+
+    return result_crop, full_result
+
+
+def compute_need_flip(cap_box: np.ndarray, text_box: np.ndarray, angle_deg: float) -> bool:
+    """
+    Kiểm tra xem có cần xoay thêm 180° không.
+    Xoay quanh tâm cap → cap center giữ nguyên, chỉ text center dịch chuyển.
+    """
+    cx, cy, _, _, _ = cap_box
+    tx, ty = text_box[0], text_box[1]
+
+    M = cv2.getRotationMatrix2D((cx, cy), angle_deg, 1.0)
+    new_text = M @ np.array([tx, ty, 1])
+    # Text nằm trên tâm cap (y nhỏ hơn) → ngược chiều → cần flip
+    return new_text[1] < cy
+
+
 def rotate_image_by_obb(image: np.ndarray, box: np.ndarray):
     """
     Xoay ảnh để vùng text nằm chính diện dựa vào OBB
@@ -103,7 +163,7 @@ def draw_obb(image: np.ndarray, boxes: np.ndarray, scores: np.ndarray, class_ids
 def main(top_k=10):
     class_names = ['bottle_cap', 'text_box']
     model = YOLOOBBInference("weights/yolo26_bottle_obb.onnx", class_names)
-    image = cv2.imread('test_image/bottle2.jpg')
+    image = cv2.imread('test_image/bottle6.jpg')
 
     results = model.predict([image], conf_threshold=0.4)
     boxes, scores, class_ids = results[0]
@@ -129,9 +189,10 @@ def main(top_k=10):
             if class_names[int(class_id)] == 'bottle_cap' and bottle_cap_idx is None:
                 bottle_cap_idx = i
 
-        if text_box_idx is not None:
-            box = boxes[text_box_idx]
-            cx, cy, w, h, angle = box
+        if text_box_idx is not None and bottle_cap_idx is not None:
+            text_box = boxes[text_box_idx]
+            cap_box = boxes[bottle_cap_idx]
+            cx, cy, w, h, angle = text_box
             angle_deg = angle * 180 / np.pi
 
             print(f"\n=== Phân tích Text Box ===")
@@ -139,73 +200,54 @@ def main(top_k=10):
             print(f"Width: {w:.1f}, Height: {h:.1f}")
             print(f"Angle (rad): {angle:.4f}")
             print(f"Angle (deg): {angle_deg:.2f}°")
-            print(f"w > h: {w > h}")
-            print(f"h > w: {h > w}")
+            if h > w:
+                angle_deg += 90
+                print(f"h > w → điều chỉnh angle: {angle_deg:.2f}°")
 
             # Vẽ OBB lên ảnh gốc
             original_with_obb = draw_obb(image, boxes, scores, class_ids, class_names)
 
-            # Xoay lần 1
-            rotated, angle, M = rotate_image_by_obb(image, boxes[text_box_idx])
-
-            # Transform boxes theo ma trận xoay
-            transformed_boxes = transform_boxes(boxes, M)
-
-            # Kiểm tra vị trí text_box so với bottle_cap sau khi xoay
-            need_flip = False
-            if bottle_cap_idx is not None:
-                text_cy = transformed_boxes[text_box_idx][1]
-                cap_cy = transformed_boxes[bottle_cap_idx][1]
-
-                print(f"\n=== Kiểm tra vị trí sau xoay ===")
-                print(f"Text box center Y: {text_cy:.1f}")
-                print(f"Bottle cap center Y: {cap_cy:.1f}")
-
-                # Nếu text nằm trên bottle cap (y nhỏ hơn) → xoay thêm 180°
-                if text_cy < cap_cy:
-                    need_flip = True
-                    print("Text nằm TRÊN bottle cap → Cần xoay thêm 180°")
-                else:
-                    print("Text nằm DƯỚI bottle cap → Giữ nguyên")
-
-            # Nếu cần xoay thêm 180°
+            # Kiểm tra need_flip (không cần xoay toàn ảnh, tính bằng ma trận)
+            need_flip = compute_need_flip(cap_box, text_box, angle_deg)
+            print(f"\n=== Kiểm tra chiều text ===")
             if need_flip:
-                h_img, w_img = rotated.shape[:2]
-                M_flip = cv2.getRotationMatrix2D((w_img/2, h_img/2), 180, 1.0)
-                rotated = cv2.warpAffine(rotated, M_flip, (w_img, h_img),
-                                        flags=cv2.INTER_LINEAR, borderValue=(114,114,114))
-                transformed_boxes = transform_boxes(transformed_boxes, M_flip)
-                print("Đã xoay thêm 180°")
+                print("Text ngược chiều → Cần xoay thêm 180°")
+            else:
+                print("Text đúng chiều → Giữ nguyên")
 
-            # Vẽ OBB lên ảnh đã xoay
-            rotated_with_obb = draw_obb(rotated, transformed_boxes, scores, class_ids, class_names)
+            # Chỉ xoay vùng nắp chai (circular mask), background giữ nguyên
+            MARGIN = 20  # pixel margin quanh cap
+            result_crop, full_result = rotate_cap_region_only(
+                image, cap_box, angle_deg, need_flip, margin=MARGIN
+            )
+            print(f"\nXoay tổng: {angle_deg:.1f}° + {180 if need_flip else 0}°")
 
-            # Vẽ đường tham chiếu
-            if bottle_cap_idx is not None:
-                cap_cy = int(transformed_boxes[bottle_cap_idx][1])
-                cv2.line(rotated_with_obb, (0, cap_cy), (rotated.shape[1], cap_cy), (255, 0, 255), 2)
+            # Hiển thị 3 ảnh: gốc | crop cap đã xoay | full image với cap đã xoay
+            fig, axes = plt.subplots(1, 3, figsize=(18, 6))
 
-            print(f"\nXoay tổng: {angle:.1f}° + {180 if need_flip else 0}° = {angle + (180 if need_flip else 0):.1f}°")
-
-            # Hiển thị 2 ảnh cạnh nhau
-            fig, axes = plt.subplots(1, 2, figsize=(15, 8))
-
-            # Ảnh gốc
+            # Ảnh gốc với OBB
             axes[0].imshow(cv2.cvtColor(original_with_obb, cv2.COLOR_BGR2RGB))
-            axes[0].set_title(f'Original (angle: {angle_deg:.2f}°)', fontsize=14)
+            axes[0].set_title(f'Original (angle: {angle_deg:.2f}°)', fontsize=12)
             axes[0].axis('off')
 
-            # Ảnh đã xoay
-            axes[1].imshow(cv2.cvtColor(rotated_with_obb, cv2.COLOR_BGR2RGB))
-            title = f'Rotated ({angle:.1f}°{"+ 180°" if need_flip else ""})'
-            axes[1].set_title(title, fontsize=14)
+            # Crop cap đã xoay (vòng tròn, background margin giữ nguyên)
+            axes[1].imshow(cv2.cvtColor(result_crop, cv2.COLOR_BGR2RGB))
+            title_crop = f'Cap crop (r+{MARGIN}px, circular mask)'
+            axes[1].set_title(title_crop, fontsize=12)
             axes[1].axis('off')
+
+            # Full image với cap đã xoay tại chỗ
+            full_with_obb = draw_obb(full_result, boxes, scores, class_ids, class_names)
+            axes[2].imshow(cv2.cvtColor(full_with_obb, cv2.COLOR_BGR2RGB))
+            title_full = f'Full image cap rotated ({angle_deg:.1f}°{"+ 180°" if need_flip else ""})'
+            axes[2].set_title(title_full, fontsize=12)
+            axes[2].axis('off')
 
             plt.tight_layout()
             # plt.show()
             plt.savefig('rotate_text_obb_result.png')
         else:
-            print("Không tìm thấy text_box")
+            print("Không tìm thấy text_box hoặc bottle_cap")
     else:
         print("Không detect được box nào")
 

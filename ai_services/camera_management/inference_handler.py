@@ -304,11 +304,11 @@ class InferenceHandler:
         )
 
         # OBB Rotation Service for Check_Color function type
-        obb_rotation_engine = f"{home}/Source/ocr_datecode/weights/yolo26_bottle_obb.engine"
+        obb_rotation_engine = f"{home}/Source/ocr_datecode/weights/best_bottle_m.engine"
         self.obb_rotation_service = OBBRotationService(
             engine_path=obb_rotation_engine,
-            conf_threshold=0.4,
-            inverse_transform=True
+            conf_threshold=0.25,
+            inverse_transform=False
         )
         logger.info(f"OBBRotationService initialized: {obb_rotation_engine}")
         logger.info(f"OBBRotationService available: {self.obb_rotation_service.available}")
