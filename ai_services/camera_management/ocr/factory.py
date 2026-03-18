@@ -452,6 +452,8 @@ class OCRBackendFactory:
             env_model = os.getenv("OCR_MODEL", "openocr").lower()
             model_type = OCRModelType.OPENOCR_REPSVTR if env_model == "openocr" else OCRModelType.PADDLEV5
 
+        model_type = OCRModelType.PADDLEV5
+
         # Determine which backend to use
         selected_backend = None
 
