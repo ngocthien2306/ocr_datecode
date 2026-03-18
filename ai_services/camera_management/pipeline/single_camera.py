@@ -7,6 +7,7 @@ Handles inference for single camera scenarios:
 """
 
 import logging
+import time
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 
 from .base import InferencePipelineTemplate, PipelineContext
@@ -255,6 +256,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             }
 
             # Text verification
+            t_ocr_ms = 0.0
             if (result.get('success') and
                 camera.function_type in ('Check_Type_Product', 'Check_Color') and
                 context.text_verification_service):
@@ -262,12 +264,14 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 frame_expected_texts = camera.expected_texts.get(idx, {})
 
                 if frame_expected_texts:
+                    t_ocr_start = time.perf_counter()
                     text_verification = context.text_verification_service.verify_text_regions(
                         frame_img=frame,
                         transformed_bboxes=frame_result['transformed_bboxes'],
                         expected_texts=frame_expected_texts,
                         camera=camera
                     )
+                    t_ocr_ms = (time.perf_counter() - t_ocr_start) * 1000
                     frame_result['text_verification'] = text_verification
 
                     # Update bboxes with recognized text
@@ -325,6 +329,24 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     for bbox in frame_result['transformed_bboxes']:
                         if bbox.get('type') == 'product':
                             bbox['verification_status'] = 'fail'
+
+            # Merge verification timings into frame_result['timings']
+            timings = dict(frame_result['timings'])
+            if t_ocr_ms > 0:
+                timings['ocr_ms'] = t_ocr_ms
+            template_verif = frame_result.get('template_verification') or {}
+            if template_verif.get('timing'):
+                timings['template_verification_ms'] = template_verif['timing'].get('total_ms', 0.0)
+            product_verif = frame_result.get('product_verification') or {}
+            if product_verif.get('timing'):
+                timings['product_verification_ms'] = product_verif['timing'].get('total', 0.0)
+            timings['total'] = (
+                timings.get('total', 0.0)
+                + timings.get('ocr_ms', 0.0)
+                + timings.get('template_verification_ms', 0.0)
+                + timings.get('product_verification_ms', 0.0)
+            )
+            frame_result['timings'] = timings
 
             # Determine final pass/fail
             text_ok = (frame_result['text_verification'] is None or

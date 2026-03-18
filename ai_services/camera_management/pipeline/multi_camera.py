@@ -6,6 +6,7 @@ All cameras are processed in a single batch inference call.
 """
 
 import logging
+import time
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 
 from .base import InferencePipelineTemplate, PipelineContext
@@ -198,10 +199,15 @@ class MultiCameraPipeline(InferencePipelineTemplate):
 
         # Batch OCR
         batch_ocr_results = {}
+        t_ocr_ms = 0.0
+        ocr_serial_numbers = set()
         if ocr_tasks and context.text_verification_service:
+            ocr_serial_numbers = {task['serial_number'] for task in ocr_tasks}
+            t_ocr_start = time.perf_counter()
             batch_ocr_results = context.text_verification_service.batch_verify_multi_camera(
                 ocr_tasks
             )
+            t_ocr_ms = (time.perf_counter() - t_ocr_start) * 1000
 
         # Batch Product Verification
         batch_product_results = self._batch_verify_products(
@@ -280,6 +286,24 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     for bbox in camera_result['transformed_bboxes']:
                         if bbox.get('type') == 'product':
                             bbox['verification_status'] = 'fail'
+
+            # Merge verification timings into camera_result['timings']
+            timings = dict(camera_result['timings'])
+            if serial_number in ocr_serial_numbers:
+                timings['ocr_ms'] = t_ocr_ms
+            template_verif = camera_result.get('template_verification') or {}
+            if template_verif.get('timing'):
+                timings['template_verification_ms'] = template_verif['timing'].get('total_ms', 0.0)
+            product_verif = camera_result.get('product_verification') or {}
+            if product_verif.get('timing'):
+                timings['product_verification_ms'] = product_verif['timing'].get('total', 0.0)
+            timings['total'] = (
+                timings.get('total', 0.0)
+                + timings.get('ocr_ms', 0.0)
+                + timings.get('template_verification_ms', 0.0)
+                + timings.get('product_verification_ms', 0.0)
+            )
+            camera_result['timings'] = timings
 
             # Determine pass/fail
             text_ok = (camera_result['text_verification'] is None or

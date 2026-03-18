@@ -1501,7 +1501,9 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                                       <span className="stat-value">
                                         {(
                                           (cameraStats.timings.trt_inference || 0) +
-                                          (cameraStats.timings.postprocess || 0)
+                                          (cameraStats.timings.postprocess || 0) +
+                                          (cameraStats.timings.product_verification_ms || 0) +
+                                          (cameraStats.timings.text_verification_ms || 0)
                                         ).toFixed(1)} ms
                                       </span>
                                     </div>
