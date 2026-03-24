@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
-import { inferenceResultsAPI, type InferenceResultResponse } from '@/services/inferenceResults';
+import { inferenceResultsAPI, type InferenceResultResponse, type FailReason, type CenterDirection } from '@/services/inferenceResults';
 import { recipesAPI } from '@/services/api';
 import type { Recipe } from '@/types';
 import InspectionResultRow from './InspectionResultRow';
@@ -31,6 +31,11 @@ const InspectionResultsTab: React.FC<InspectionResultsTabProps> = ({ dateRange }
   const [customStartDate, setCustomStartDate] = useState<Date | null>(null);
   const [customEndDate, setCustomEndDate] = useState<Date | null>(null);
   const [useCustomDateRange, setUseCustomDateRange] = useState(false);
+
+  // Fail reason filters
+  const [failReasons, setFailReasons] = useState<Set<FailReason>>(new Set());
+  const [wrinkledMinArea, setWrinkledMinArea] = useState<string>('');
+  const [centerDirection, setCenterDirection] = useState<CenterDirection>('any');
 
   // Confirm dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -87,7 +92,7 @@ const InspectionResultsTab: React.FC<InspectionResultsTabProps> = ({ dateRange }
   // Fetch results when filters change
   useEffect(() => {
     fetchResults();
-  }, [dateRange, currentPage, pageSize, selectedRecipe, statusFilter, useCustomDateRange, customStartDate, customEndDate]);
+  }, [dateRange, currentPage, pageSize, selectedRecipe, statusFilter, useCustomDateRange, customStartDate, customEndDate, failReasons, wrinkledMinArea, centerDirection]);
 
   const fetchRecipes = async () => {
     try {
@@ -122,6 +127,16 @@ const InspectionResultsTab: React.FC<InspectionResultsTabProps> = ({ dateRange }
         filters.pass_fail = statusFilter;
       }
 
+      if (failReasons.size > 0) {
+        filters.fail_reasons = Array.from(failReasons).join(',');
+        if (failReasons.has('wrinkled') && wrinkledMinArea !== '') {
+          filters.wrinkled_min_area = Number(wrinkledMinArea);
+        }
+        if (failReasons.has('center') && centerDirection !== 'any') {
+          filters.center_direction = centerDirection;
+        }
+      }
+
       // Fetch results
       const data = await inferenceResultsAPI.getResults(filters);
 
@@ -136,6 +151,15 @@ const InspectionResultsTab: React.FC<InspectionResultsTabProps> = ({ dateRange }
       const countFilters: any = { start_date, end_date };
       if (selectedRecipe !== 'all') countFilters.recipe_id = selectedRecipe;
       if (statusFilter !== 'all') countFilters.pass_fail = statusFilter;
+      if (failReasons.size > 0) {
+        countFilters.fail_reasons = Array.from(failReasons).join(',');
+        if (failReasons.has('wrinkled') && wrinkledMinArea !== '') {
+          countFilters.wrinkled_min_area = Number(wrinkledMinArea);
+        }
+        if (failReasons.has('center') && centerDirection !== 'any') {
+          countFilters.center_direction = centerDirection;
+        }
+      }
 
       const countData = await inferenceResultsAPI.getCount(countFilters);
       setTotalCount(countData.count);
@@ -278,6 +302,19 @@ const InspectionResultsTab: React.FC<InspectionResultsTabProps> = ({ dateRange }
   };
 
   // Get user role for permissions
+  const toggleFailReason = (reason: FailReason) => {
+    setFailReasons(prev => {
+      const next = new Set(prev);
+      if (next.has(reason)) {
+        next.delete(reason);
+      } else {
+        next.add(reason);
+      }
+      return next;
+    });
+    setCurrentPage(1);
+  };
+
   const getUserRole = (): string => {
     try {
       const userStr = localStorage.getItem('user');
@@ -328,97 +365,151 @@ const InspectionResultsTab: React.FC<InspectionResultsTabProps> = ({ dateRange }
 
       {/* Filters */}
       <div className="filters-bar">
-        <div className="filter-group">
-          <label>Recipe:</label>
-          <select value={selectedRecipe} onChange={(e) => {
-            setSelectedRecipe(e.target.value);
-            setCurrentPage(1); // Reset to first page
-          }}>
-            <option value="all">All Recipes</option>
-            {recipes.map((recipe) => (
-              <option key={recipe.id} value={recipe.id}>
-                {recipe.name}
-              </option>
+
+        {/* ── Row 1: Primary filters ── */}
+        <div className="filter-row">
+          <div className="filter-group">
+            <label>Recipe:</label>
+            <select value={selectedRecipe} onChange={(e) => {
+              setSelectedRecipe(e.target.value);
+              setCurrentPage(1);
+            }}>
+              <option value="all">All Recipes</option>
+              {recipes.map((recipe) => (
+                <option key={recipe.id} value={recipe.id}>{recipe.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="filter-group">
+            <label>Status:</label>
+            <select value={statusFilter} onChange={(e) => {
+              setStatusFilter(e.target.value as 'all' | 'PASS' | 'FAIL');
+              setCurrentPage(1);
+            }}>
+              <option value="all">All</option>
+              <option value="PASS">PASS</option>
+              <option value="FAIL">FAIL</option>
+            </select>
+          </div>
+
+          <div className="filter-group-divider" />
+
+          <div className="filter-group">
+            <label>
+              <input
+                type="checkbox"
+                checked={useCustomDateRange}
+                onChange={(e) => {
+                  setUseCustomDateRange(e.target.checked);
+                  setCurrentPage(1);
+                }}
+                className="custom-date-checkbox"
+              />
+              Custom Date ({getTimezoneDisplay()}):
+            </label>
+          </div>
+
+          {useCustomDateRange && (
+            <>
+              <div className="filter-group">
+                <label>From:</label>
+                <DatePicker
+                  selected={customStartDate}
+                  onChange={(date: Date | null) => { setCustomStartDate(date); setCurrentPage(1); }}
+                  showTimeSelect
+                  timeFormat="HH:mm"
+                  timeIntervals={15}
+                  dateFormat="dd/MM/yyyy HH:mm"
+                  placeholderText="Start date & time"
+                  className="custom-datepicker-input"
+                  calendarClassName="custom-datepicker-calendar"
+                />
+              </div>
+              <div className="filter-group">
+                <label>To:</label>
+                <DatePicker
+                  selected={customEndDate}
+                  onChange={(date: Date | null) => { setCustomEndDate(date); setCurrentPage(1); }}
+                  showTimeSelect
+                  timeFormat="HH:mm"
+                  timeIntervals={15}
+                  dateFormat="dd/MM/yyyy HH:mm"
+                  placeholderText="End date & time"
+                  className="custom-datepicker-input"
+                  calendarClassName="custom-datepicker-calendar"
+                  minDate={customStartDate || undefined}
+                />
+              </div>
+            </>
+          )}
+
+          <button className="dashboard-btn" onClick={fetchResults}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M21.5 2V6M21.5 6H17.5M21.5 6L18.5 3C16.8 1.5 14.5 0.5 12 0.5C5.5 0.5 0.5 5.5 0.5 12C0.5 18.5 5.5 23.5 12 23.5C17.5 23.5 22 19.5 23 14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Apply
+          </button>
+        </div>
+
+        {/* ── Row 2: Fail Reason ── */}
+        <div className="filter-row filter-row--secondary">
+          <span className="fail-section-label">Fail Reason:</span>
+
+          <div className="fail-pills">
+            {([
+              { key: 'text',     label: 'Text Verify' },
+              { key: 'template', label: 'Template' },
+              { key: 'wrinkled', label: 'Wrinkled' },
+              { key: 'center',   label: 'Center Align' },
+            ] as { key: FailReason; label: string }[]).map(({ key, label }) => (
+              <button
+                key={key}
+                className={`fail-pill${failReasons.has(key) ? ' fail-pill--active' : ''}`}
+                onClick={() => toggleFailReason(key)}
+              >
+                <span className="fail-pill-dot" />
+                {label}
+              </button>
             ))}
-          </select>
+          </div>
+
+          {failReasons.has('wrinkled') && (
+            <>
+              <span className="filter-sub-sep">›</span>
+              <div className="filter-sub-group">
+                <label>Min Area (px²):</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={wrinkledMinArea}
+                  placeholder="e.g. 2000"
+                  onChange={(e) => { setWrinkledMinArea(e.target.value); setCurrentPage(1); }}
+                  className="fail-reason-input"
+                />
+              </div>
+            </>
+          )}
+
+          {failReasons.has('center') && (
+            <>
+              <span className="filter-sub-sep">›</span>
+              <div className="filter-sub-group">
+                <label>Direction:</label>
+                <select
+                  className="fail-sub-select"
+                  value={centerDirection}
+                  onChange={(e) => { setCenterDirection(e.target.value as CenterDirection); setCurrentPage(1); }}
+                >
+                  <option value="any">Any</option>
+                  <option value="left">Left</option>
+                  <option value="right">Right</option>
+                </select>
+              </div>
+            </>
+          )}
         </div>
 
-        <div className="filter-group">
-          <label>Status:</label>
-          <select value={statusFilter} onChange={(e) => {
-            setStatusFilter(e.target.value as 'all' | 'PASS' | 'FAIL');
-            setCurrentPage(1);
-          }}>
-            <option value="all">All</option>
-            <option value="PASS">PASS</option>
-            <option value="FAIL">FAIL</option>
-          </select>
-        </div>
-
-        <div className="filter-group-divider"></div>
-
-        <div className="filter-group">
-          <label>
-            <input
-              type="checkbox"
-              checked={useCustomDateRange}
-              onChange={(e) => {
-                setUseCustomDateRange(e.target.checked);
-                setCurrentPage(1);
-              }}
-              className="custom-date-checkbox"
-            />
-            Custom Date Range ({getTimezoneDisplay()}):
-          </label>
-        </div>
-
-        {useCustomDateRange && (
-          <>
-            <div className="filter-group">
-              <label>From:</label>
-              <DatePicker
-                selected={customStartDate}
-                onChange={(date: Date | null) => {
-                  setCustomStartDate(date);
-                  setCurrentPage(1);
-                }}
-                showTimeSelect
-                timeFormat="HH:mm"
-                timeIntervals={15}
-                dateFormat="dd/MM/yyyy HH:mm"
-                placeholderText="Select start date & time"
-                className="custom-datepicker-input"
-                calendarClassName="custom-datepicker-calendar"
-              />
-            </div>
-
-            <div className="filter-group">
-              <label>To:</label>
-              <DatePicker
-                selected={customEndDate}
-                onChange={(date: Date | null) => {
-                  setCustomEndDate(date);
-                  setCurrentPage(1);
-                }}
-                showTimeSelect
-                timeFormat="HH:mm"
-                timeIntervals={15}
-                dateFormat="dd/MM/yyyy HH:mm"
-                placeholderText="Select end date & time"
-                className="custom-datepicker-input"
-                calendarClassName="custom-datepicker-calendar"
-                minDate={customStartDate || undefined}
-              />
-            </div>
-          </>
-        )}
-
-        <button className="dashboard-btn" onClick={fetchResults}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <path d="M21.5 2V6M21.5 6H17.5M21.5 6L18.5 3C16.8 1.5 14.5 0.5 12 0.5C5.5 0.5 0.5 5.5 0.5 12C0.5 18.5 5.5 23.5 12 23.5C17.5 23.5 22 19.5 23 14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          Apply Filter
-        </button>
       </div>
 
       {/* Results Table */}

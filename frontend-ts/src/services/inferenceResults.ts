@@ -105,6 +105,9 @@ export interface InferenceResultResponse {
   created_at: string;
 }
 
+export type FailReason = 'text' | 'template' | 'wrinkled' | 'center';
+export type CenterDirection = 'left' | 'right' | 'any';
+
 export interface InferenceResultFilters {
   skip?: number;
   limit?: number;
@@ -112,6 +115,12 @@ export interface InferenceResultFilters {
   pass_fail?: 'PASS' | 'FAIL';
   start_date?: string;
   end_date?: string;
+  /** Comma-separated: text,template,wrinkled,center */
+  fail_reasons?: string;
+  /** Min wrinkle area in px² (requires 'wrinkled' in fail_reasons) */
+  wrinkled_min_area?: number;
+  /** Direction filter for center_alignment_check (requires 'center' in fail_reasons) */
+  center_direction?: CenterDirection;
 }
 
 // Statistics interfaces

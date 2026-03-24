@@ -309,42 +309,189 @@
 /* Filters Bar */
 .filters-bar {
   display: flex;
-  gap: 16px;
-  align-items: center;
-  padding: 16px;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
   background: #f9fafb;
   border-radius: 8px;
   border: 1px solid #e5e7eb;
+  overflow: hidden;
 }
 
-.filter-group {
+/* ── Filter rows ── */
+.filter-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  padding: 10px 14px;
 }
 
-.filter-group label {
-  font-size: 14px;
-  font-weight: 500;
-  color: #4b5563;
-  white-space: nowrap;
+.filter-row--secondary {
+  border-top: 1px solid #e5e7eb;
+  background: #f3f4f6;
+  padding: 8px 14px;
+}
+
+/* ── Filter group (label + control) ── */
+.filter-group {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
+.filter-group label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #4b5563;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* ── Unified control height ── */
+.filter-group select,
+.filter-group input[type="number"],
+.filter-group input[type="text"],
+.custom-datepicker-input,
+.fail-reason-input,
+.fail-sub-select {
+  height: 34px;
+  box-sizing: border-box;
+  font-size: 13px;
+  font-family: inherit;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background-color: white;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.filter-group select,
+.fail-sub-select {
+  padding: 0 28px 0 10px;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%236B7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+
+.filter-group select {
+  min-width: 140px;
+}
+
+.filter-group select:focus,
+.filter-group input:focus,
+.fail-reason-input:focus,
+.fail-sub-select:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.12);
+}
+
 .custom-date-checkbox {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   cursor: pointer;
   accent-color: #6366f1;
 }
 
 .filter-group-divider {
   width: 1px;
-  height: 32px;
+  height: 28px;
   background-color: #d1d5db;
-  margin: 0 8px;
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+/* ── Fail Reason pills ── */
+.fail-section-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #4b5563;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.fail-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.fail-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 14px;
+  border: 1px solid #d1d5db;
+  background: white;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.fail-pill:hover {
+  border-color: #818cf8;
+  color: #4f46e5;
+  background: #eef2ff;
+}
+
+.fail-pill--active {
+  border-color: #6366f1;
+  background: #6366f1;
+  color: white;
+}
+
+.fail-pill--active:hover {
+  background: #4f46e5;
+  border-color: #4f46e5;
+  color: white;
+}
+
+.fail-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+/* ── Sub-options (area / direction) ── */
+.filter-sub-sep {
+  color: #9ca3af;
+  font-size: 14px;
+  margin: 0 2px;
+}
+
+.filter-sub-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.filter-sub-group label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.fail-reason-input {
+  width: 88px;
+  padding: 0 8px;
+}
+
+.fail-sub-select {
+  padding: 0 28px 0 10px;
+  min-width: 90px;
 }
 
 /* ==================== React DatePicker Custom Styles ==================== */
@@ -556,25 +703,6 @@
   display: inline-block;
 }
 
-.filter-group select {
-  padding: 8px 32px 8px 12px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  font-size: 14px;
-  background-color: white;
-  cursor: pointer;
-  min-width: 150px;
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%236B7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-}
-
-.filter-group select:focus {
-  outline: none;
-  border-color: #6366f1;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-}
 
 /* Results Table Container */
 .results-table-container {
@@ -1319,9 +1447,10 @@
     padding: 16px;
   }
 
-  .filters-bar {
+  .filter-row {
     flex-direction: column;
     align-items: stretch;
+    gap: 8px;
   }
 
   .filter-group {
@@ -1329,8 +1458,18 @@
     align-items: stretch;
   }
 
-  .filter-group select {
+  .filter-group select,
+  .fail-sub-select,
+  .custom-datepicker-input {
     width: 100%;
+  }
+
+  .filter-group-divider {
+    display: none;
+  }
+
+  .fail-pills {
+    flex-wrap: wrap;
   }
 
   .results-table-container {
@@ -1444,11 +1583,23 @@ body.dark-mode .filters-bar {
   border-color: #404040;
 }
 
-body.dark-mode .filter-group label {
+body.dark-mode .filter-row--secondary {
+  background: #252525;
+  border-color: #3a3a3a;
+}
+
+body.dark-mode .filter-group label,
+body.dark-mode .fail-section-label {
   color: #e5e7eb;
 }
 
+body.dark-mode .filter-sub-group label {
+  color: #9ca3af;
+}
+
 body.dark-mode .filter-group select,
+body.dark-mode .fail-sub-select,
+body.dark-mode .fail-reason-input,
 body.dark-mode .custom-datepicker-input {
   background-color: #333333;
   border-color: #404040;
@@ -1456,9 +1607,28 @@ body.dark-mode .custom-datepicker-input {
 }
 
 body.dark-mode .filter-group select:hover,
+body.dark-mode .fail-sub-select:hover,
 body.dark-mode .custom-datepicker-input:hover {
   border-color: #2788dd;
   background-color: #3a3a3a;
+}
+
+body.dark-mode .fail-pill {
+  background: #2d2d2d;
+  border-color: #404040;
+  color: #9ca3af;
+}
+
+body.dark-mode .fail-pill:hover {
+  background: #312e81;
+  border-color: #818cf8;
+  color: #c7d2fe;
+}
+
+body.dark-mode .fail-pill--active {
+  background: #4f46e5;
+  border-color: #6366f1;
+  color: white;
 }
 
 /* Bulk Actions */

@@ -36,20 +36,22 @@ async def get_inference_results(
     pass_fail: Optional[str] = Query(None, regex="^(PASS|FAIL)$"),
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
+    fail_reasons: Optional[str] = Query(None, description="Comma-separated: text,template,wrinkled,center"),
+    wrinkled_min_area: Optional[float] = Query(None, ge=0, description="Min wrinkle area (px²)"),
+    center_direction: Optional[str] = Query(None, regex="^(left|right|any)$", description="Center offset direction"),
     db=Depends(get_database),
     current_user: dict = Depends(get_current_user)
 ):
     """
     Get all inference results with pagination and filters.
 
-    - **skip**: Number of records to skip
-    - **limit**: Maximum number of records to return (max 500)
-    - **recipe_id**: Filter by recipe ID
-    - **pass_fail**: Filter by result (PASS or FAIL)
-    - **start_date**: Filter by start date (ISO format)
-    - **end_date**: Filter by end date (ISO format)
+    - **fail_reasons**: Comma-separated list — `text`, `template`, `wrinkled`, `center` (AND logic)
+    - **wrinkled_min_area**: Only match wrinkled boxes with area >= value (requires `wrinkled` in fail_reasons)
+    - **center_direction**: `left`, `right`, or `any` (requires `center` in fail_reasons)
     """
     repo = InferenceResultRepository(db)
+
+    fail_reason_list = [r.strip() for r in fail_reasons.split(",")] if fail_reasons else None
 
     results = await repo.get_all(
         skip=skip,
@@ -57,7 +59,10 @@ async def get_inference_results(
         recipe_id=recipe_id,
         pass_fail=pass_fail,
         start_date=start_date,
-        end_date=end_date
+        end_date=end_date,
+        fail_reasons=fail_reason_list,
+        wrinkled_min_area=wrinkled_min_area,
+        center_direction=center_direction,
     )
 
     return results
@@ -72,6 +77,9 @@ async def get_inference_results_count(
     pass_fail: Optional[str] = Query(None, regex="^(PASS|FAIL)$"),
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
+    fail_reasons: Optional[str] = Query(None, description="Comma-separated: text,template,wrinkled,center"),
+    wrinkled_min_area: Optional[float] = Query(None, ge=0),
+    center_direction: Optional[str] = Query(None, regex="^(left|right|any)$"),
     db=Depends(get_database),
     current_user: dict = Depends(get_current_user)
 ):
@@ -82,11 +90,16 @@ async def get_inference_results_count(
     """
     repo = InferenceResultRepository(db)
 
+    fail_reason_list = [r.strip() for r in fail_reasons.split(",")] if fail_reasons else None
+
     count = await repo.count(
         recipe_id=recipe_id,
         pass_fail=pass_fail,
         start_date=start_date,
-        end_date=end_date
+        end_date=end_date,
+        fail_reasons=fail_reason_list,
+        wrinkled_min_area=wrinkled_min_area,
+        center_direction=center_direction,
     )
 
     return {
@@ -95,7 +108,10 @@ async def get_inference_results_count(
             "recipe_id": recipe_id,
             "pass_fail": pass_fail,
             "start_date": start_date,
-            "end_date": end_date
+            "end_date": end_date,
+            "fail_reasons": fail_reason_list,
+            "wrinkled_min_area": wrinkled_min_area,
+            "center_direction": center_direction,
         }
     }
 

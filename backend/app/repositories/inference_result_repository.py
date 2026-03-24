@@ -108,30 +108,17 @@ class InferenceResultRepository:
             logger.error(f"Error getting result by ID {result_id}: {e}")
             return None
 
-    async def get_all(
+    def _build_query(
         self,
-        skip: int = 0,
-        limit: int = 100,
         recipe_id: Optional[str] = None,
         pass_fail: Optional[str] = None,
         start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None
-    ) -> List[InferenceResultResponse]:
-        """
-        Get all inference results with filters
-
-        Args:
-            skip: Number to skip
-            limit: Max number to return
-            recipe_id: Filter by recipe ID
-            pass_fail: Filter by pass/fail status
-            start_date: Filter by start date
-            end_date: Filter by end date
-
-        Returns:
-            List of results
-        """
-        # Build filter query
+        end_date: Optional[datetime] = None,
+        fail_reasons: Optional[List[str]] = None,
+        wrinkled_min_area: Optional[float] = None,
+        center_direction: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Build MongoDB filter query from params."""
         query: Dict[str, Any] = {}
 
         if recipe_id:
@@ -148,10 +135,64 @@ class InferenceResultRepository:
                 date_filter["$lte"] = end_date
             query["timestamp"] = date_filter
 
-        # Query database
-        cursor = self.collection.find(query).sort(
-            "timestamp", -1
-        ).skip(skip).limit(limit)
+        if fail_reasons:
+            conditions: List[Dict[str, Any]] = []
+            for reason in fail_reasons:
+                if reason == "text":
+                    conditions.append(
+                        {"camera_results.frames.text_verification.all_match": False}
+                    )
+                elif reason == "template":
+                    conditions.append(
+                        {"camera_results.frames.template_verification.match": False}
+                    )
+                elif reason == "wrinkled":
+                    wrinkled_cond: Dict[str, Any] = {
+                        "camera_results.frames.product_verification.wrinkled_check.ok": False
+                    }
+                    if wrinkled_min_area is not None:
+                        wrinkled_cond[
+                            "camera_results.frames.product_verification.wrinkled_check.wrinkled_boxes.area"
+                        ] = {"$gte": wrinkled_min_area}
+                    conditions.append(wrinkled_cond)
+                elif reason == "center":
+                    center_cond: Dict[str, Any] = {
+                        "camera_results.frames.product_verification.center_alignment_check.ok": False
+                    }
+                    if center_direction and center_direction != "any":
+                        center_cond[
+                            "camera_results.frames.product_verification.center_alignment_check.direction"
+                        ] = center_direction
+                    conditions.append(center_cond)
+
+            if conditions:
+                query["$and"] = conditions
+
+        return query
+
+    async def get_all(
+        self,
+        skip: int = 0,
+        limit: int = 100,
+        recipe_id: Optional[str] = None,
+        pass_fail: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        fail_reasons: Optional[List[str]] = None,
+        wrinkled_min_area: Optional[float] = None,
+        center_direction: Optional[str] = None,
+    ) -> List[InferenceResultResponse]:
+        query = self._build_query(
+            recipe_id=recipe_id,
+            pass_fail=pass_fail,
+            start_date=start_date,
+            end_date=end_date,
+            fail_reasons=fail_reasons,
+            wrinkled_min_area=wrinkled_min_area,
+            center_direction=center_direction,
+        )
+
+        cursor = self.collection.find(query).sort("timestamp", -1).skip(skip).limit(limit)
 
         results = []
         async for doc in cursor:
@@ -165,37 +206,20 @@ class InferenceResultRepository:
         recipe_id: Optional[str] = None,
         pass_fail: Optional[str] = None,
         start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None
+        end_date: Optional[datetime] = None,
+        fail_reasons: Optional[List[str]] = None,
+        wrinkled_min_area: Optional[float] = None,
+        center_direction: Optional[str] = None,
     ) -> int:
-        """
-        Count inference results with filters
-
-        Args:
-            recipe_id: Filter by recipe ID
-            pass_fail: Filter by pass/fail status
-            start_date: Filter by start date
-            end_date: Filter by end date
-
-        Returns:
-            Count of results
-        """
-        # Build filter query
-        query: Dict[str, Any] = {}
-
-        if recipe_id:
-            query["recipe_id"] = recipe_id
-
-        if pass_fail:
-            query["product_pass_fail"] = pass_fail
-
-        if start_date or end_date:
-            date_filter: Dict[str, Any] = {}
-            if start_date:
-                date_filter["$gte"] = start_date
-            if end_date:
-                date_filter["$lte"] = end_date
-            query["timestamp"] = date_filter
-
+        query = self._build_query(
+            recipe_id=recipe_id,
+            pass_fail=pass_fail,
+            start_date=start_date,
+            end_date=end_date,
+            fail_reasons=fail_reasons,
+            wrinkled_min_area=wrinkled_min_area,
+            center_direction=center_direction,
+        )
         return await self.collection.count_documents(query)
 
     async def delete_by_id(self, result_id: str) -> bool:
