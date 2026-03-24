@@ -348,17 +348,17 @@ class TextVerificationService:
                 if "oR" in recognized_text:
                     recognized_text = recognized_text.replace("oR", "OR")
                 
-                if "MRR" in recognized_text:
-                    recognized_text = recognized_text.replace("MRR", "MAR")
+                # if "MRR" in recognized_text:
+                #     recognized_text = recognized_text.replace("MRR", "MAR")
                 
-                if "HAR" in recognized_text:    
-                    recognized_text = recognized_text.replace("HAR", "MAR")
+                # if "HAR" in recognized_text:    
+                #     recognized_text = recognized_text.replace("HAR", "MAR")
                 
-                if "HRR" in recognized_text:    
-                    recognized_text = recognized_text.replace("HRR", "MAR")
+                # if "HRR" in recognized_text:    
+                #     recognized_text = recognized_text.replace("HRR", "MAR")
                 
-                if "RL" in recognized_text:
-                    recognized_text = recognized_text.replace("RL", "PL")
+                # if "RL" in recognized_text:
+                #     recognized_text = recognized_text.replace("RL", "PL")
                 
 
                 match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
