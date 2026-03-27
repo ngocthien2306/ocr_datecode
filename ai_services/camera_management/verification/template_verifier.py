@@ -237,10 +237,8 @@ class TemplateVerificationService:
                     f"Bounds: ({min_x:.0f},{min_y:.0f})→({max_x:.0f},{max_y:.0f}), "
                     f"Frame: {frame_w}x{frame_h}. Skipping template verification."
                 )
-                return self._build_result(
-                    serial_number,
-                    False,
-                    0.0,
+                return self._build_error_result(
+                    similarity_threshold,
                     method,
                     template_bbox=transformed_template_bbox,
                     error=f'Invalid bbox (crop={crop_width}x{crop_height})'

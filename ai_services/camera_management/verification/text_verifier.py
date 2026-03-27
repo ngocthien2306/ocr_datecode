@@ -14,7 +14,7 @@ from difflib import SequenceMatcher
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from dataclasses import dataclass, field
 
-from ..ocr_utils import crop_text_region, compare_texts
+from ..ocr_utils import crop_text_region, compare_texts, compare_texts_smart
 
 if TYPE_CHECKING:
     from ..camera import Camera
@@ -573,14 +573,13 @@ class TextVerificationService:
                     match = False
                 else:
                     recognized_text = _apply_text_corrections(recognized_text)
-                    match = compare_texts(recognized_text, expected_text, case_sensitive=True, strip=True)
+                    match = compare_texts_smart(recognized_text, expected_text, max_diff=1, case_sensitive=True, strip=True)
                     if match:
                         recognized_text = expected_text[:]
             else:
                 recognized_text = _apply_text_corrections(recognized_text)
-                match = compare_texts(recognized_text, expected_text, case_sensitive=True, strip=True)
-                if match:
-                    recognized_text = expected_text[:]
+                match = compare_texts_smart(recognized_text, expected_text, max_diff=1, case_sensitive=True, strip=True)
+
 
             logger.info(
                 f"[{serial_number}] Annotation {annotation_idx}: "
@@ -609,6 +608,8 @@ class TextVerificationService:
                         f"FAIL and similarity={similarity:.2%} < {AUGMENT_SIMILARITY_THRESHOLD:.0%}, "
                         f"skip augment retry (likely background/noise)"
                     )
+            if match:
+                recognized_text = expected_text[:]
 
             if not match:
                 camera_results[serial_number]['all_match'] = False
@@ -667,7 +668,7 @@ class TextVerificationService:
             else:
                 aug_text, aug_conf = aug_result
             aug_recognized = _apply_text_corrections(aug_text.strip())
-            aug_match = compare_texts(aug_recognized, expected_text, case_sensitive=True, strip=True)
+            aug_match = compare_texts_smart(aug_recognized, expected_text, max_diff=1, case_sensitive=True, strip=True)
 
             logger.info(
                 f"[{serial_number}] Annotation {annotation_idx} "

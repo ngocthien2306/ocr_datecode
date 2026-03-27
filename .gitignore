@@ -190,3 +190,4 @@ weights/best_bottle_obb_m_320.engine
 weights/yolo26_bottle_obb.onnx
 weights/yolo26_label_seg.onnx
 bottle_data/
+datecodes/

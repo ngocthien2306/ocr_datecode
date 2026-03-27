@@ -252,6 +252,45 @@ def compare_texts(text1: str, text2: str, case_sensitive: bool = False, strip: b
     return True
 
 
+def _clean_for_compare(text: str) -> str:
+    """Keep only alphanumeric characters, uppercase."""
+    return ''.join(c for c in text if c.isalnum()).upper()
+
+
+def compare_texts_smart(expected: str, predicted: str, max_diff: int = 1, case_sensitive=True, strip=True) -> bool:
+    """
+    Tolerant text comparison with bypass logic for OCR noise.
+
+    Cleaning: strip everything that is not a letter or digit (handles all
+    special characters: # : . _ - space / \\ * @ ! etc.) then uppercase.
+
+    Steps:
+      1. Clean both sides (keep only alnum, uppercase).
+      2. Exact match after cleaning          → "MATCH"
+      3. Length differs                      → "FAIL"   (missing/extra chars)
+      4. Same length, exactly 1 char diff    → "BYPASS" (single substitution)
+      5. Same length, 2+ char diffs          → "FAIL"
+
+    Returns:
+        True  – exact match or 1-char substitution (MATCH / BYPASS)
+        False – length mismatch or 2+ char differences (FAIL)
+    """
+    if not expected:
+        return True
+
+    ce = _clean_for_compare(expected)
+    cp = _clean_for_compare(predicted)
+
+    if ce == cp:
+        return True
+
+    if len(ce) != len(cp):
+        return False
+
+    diffs = sum(a != b for a, b in zip(ce, cp))
+    return diffs <= max_diff
+
+
 def draw_text_on_image(
     image: np.ndarray,
     text: str,
