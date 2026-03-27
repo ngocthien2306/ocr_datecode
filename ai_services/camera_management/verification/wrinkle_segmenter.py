@@ -361,7 +361,8 @@ class WrinkledSegmenterTRT:
         if len(seg_boxes) == 0 or seg_masks is None:
             return {
                 'ok': True, 'has_wrinkled': False,
-                'wrinkled_count': 0, 'min_area': effective_min_area, 'wrinkled_boxes': []
+                'wrinkled_count': 0, 'total_area': 0,
+                'min_area': effective_min_area, 'wrinkled_boxes': []
             }
 
         # Back-project tất cả masks về frame space
@@ -374,9 +375,6 @@ class WrinkledSegmenterTRT:
             # Tính area trong crop space (consistent với min_area threshold)
             mask_crop = seg_masks[i]
             area = int(np.sum(mask_crop > 0.5))
-
-            if area < effective_min_area:
-                continue                              # bỏ qua vùng nhỏ
 
             score = float(box[4])
             area_pct = area / max(crop_area, 1) * 100
@@ -398,18 +396,20 @@ class WrinkledSegmenterTRT:
                 'corners' : corners,   # 4 corners of bounding rect in frame space
             })
 
-        has_wrinkled = len(wrinkled_boxes) > 0
+        total_area = sum(b['area'] for b in wrinkled_boxes)
+        has_wrinkled = total_area >= effective_min_area
 
         if has_wrinkled:
             logger.info(
                 f"Wrinkled detected: {len(wrinkled_boxes)} region(s), "
-                f"areas={[b['area'] for b in wrinkled_boxes]}px"
+                f"total_area={total_area}px areas={[b['area'] for b in wrinkled_boxes]}px"
             )
 
         return {
             'ok'            : not has_wrinkled,
             'has_wrinkled'  : has_wrinkled,
             'wrinkled_count': len(wrinkled_boxes),
+            'total_area'    : total_area,
             'min_area'      : effective_min_area,
             'wrinkled_boxes': wrinkled_boxes,
         }

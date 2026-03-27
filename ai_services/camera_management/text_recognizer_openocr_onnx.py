@@ -161,8 +161,38 @@ class TextRecognizerOpenOCRONNX:
 
         text = ''.join(char_list)
         confidence = float(np.mean(conf_list)) if conf_list else 0.0
+        char_confs = [(c, cf) for c, cf in zip(char_list, conf_list) if c.isalnum()]
 
-        return {'text': text, 'confidence': confidence}
+        return {'text': text, 'confidence': confidence, 'char_confs': char_confs}
+
+    def recognize_with_char_conf(self, image: np.ndarray) -> tuple:
+        """
+        Recognize text và trả về per-character confidence (chỉ alnum).
+
+        Returns:
+            (text, avg_conf, char_confs)
+            char_confs: list of (char, conf) — chỉ chữ/số, bỏ ký tự đặc biệt
+        """
+        input_data = self.preprocess_numpy(image)
+        output = self.session.run([self.output_name], {self.input_name: input_data})[0]
+
+        preds_idx  = np.argmax(output, axis=2)[0]
+        preds_prob = np.max(output, axis=2)[0]
+
+        char_list, conf_list = [], []
+        last_idx = 0
+        for i, idx in enumerate(preds_idx):
+            if idx != 0 and idx != last_idx:
+                if idx < len(self.character):
+                    label = self.character[idx]
+                    char_list.append(label)
+                    conf_list.append(float(preds_prob[i]))
+            last_idx = idx
+
+        text     = ''.join(char_list)
+        avg_conf = float(np.mean(conf_list)) if conf_list else 0.0
+        char_confs = [(c, cf) for c, cf in zip(char_list, conf_list) if c.isalnum()]
+        return text, avg_conf, char_confs
 
     def recognize(self, image: np.ndarray, return_confidence: bool = True) -> tuple:
         """

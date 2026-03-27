@@ -293,6 +293,57 @@ class TextRecognizerTRT:
 
         return text, float(avg_confidence)
 
+    def recognize_with_char_conf(self, image: np.ndarray) -> tuple:
+        """
+        Recognize text và trả về per-character confidence (chỉ alnum).
+
+        Returns:
+            (text, avg_conf, char_confs)
+            char_confs: list of (char, conf) — chỉ chữ/số, bỏ ký tự đặc biệt
+        """
+        tensor = self.preprocess(image)
+        input_shape = tensor.shape
+
+        inputs, outputs, bindings = self._allocate_buffers(input_shape)
+        np.copyto(inputs[0].host, tensor.ravel())
+        cuda.memcpy_htod_async(inputs[0].device, inputs[0].host, self.stream)
+
+        if self.use_new_api:
+            self.context.execute_async_v3(stream_handle=self.stream.handle)
+        else:
+            self.context.execute_async_v2(bindings=bindings, stream_handle=self.stream.handle)
+
+        cuda.memcpy_dtoh_async(outputs[0].host, outputs[0].device, self.stream)
+        self.stream.synchronize()
+
+        if self.use_new_api:
+            output_shape = self.context.get_tensor_shape(self.output_name)
+        else:
+            output_shape = self.context.get_binding_shape(1)
+        if isinstance(output_shape, tuple):
+            output_shape = list(output_shape)
+
+        preds = outputs[0].host.reshape(output_shape)
+        pred  = preds[0]  # (T, C)
+
+        best_path = np.argmax(pred, axis=-1)
+        best_prob = pred[np.arange(len(pred)), best_path]
+
+        decoded_chars, char_confs = [], []
+        prev_idx = -1
+        for t, char_idx in enumerate(best_path):
+            if char_idx != 0 and char_idx != prev_idx:
+                if char_idx < len(self.char_list):
+                    label = self.char_list[char_idx]
+                    decoded_chars.append(label)
+                    if label.isalnum():
+                        char_confs.append((label, float(best_prob[t])))
+            prev_idx = char_idx
+
+        text     = ''.join(decoded_chars)
+        avg_conf = float(np.mean(best_prob)) if len(best_prob) > 0 else 0.0
+        return text, avg_conf, char_confs
+
     def recognize(self, image: np.ndarray, return_confidence: bool = True):
         """
         Recognize text from cropped image using TensorRT
@@ -372,8 +423,8 @@ class TextRecognizerTRT:
         """
         results = []
         for img in images:
-            text, confidence = self.recognize(img, return_confidence=True)
-            results.append((text, float(confidence)))
+            text, confidence, char_confs = self.recognize_with_char_conf(img)
+            results.append({"text": text, "confidence": confidence, "char_confs": char_confs})
         return results
 
 

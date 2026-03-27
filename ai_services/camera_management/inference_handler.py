@@ -16,6 +16,18 @@ from .verification import TextVerificationService, TemplateVerificationService, 
 
 # Import OCR backend factory (Strategy Pattern)
 from .ocr import OCRBackendFactory, OCRBackendType
+from .ocr.factory import OCRModelType, OCRConfig
+
+# ── Chọn model OCR tại đây ────────────────────────────────────────────────
+# OCRModelType.SVTRV2_CTC      → SVTRv2 CTC (6625 classes, width=320)
+# OCRModelType.OPENOCR_REPSVTR → OpenOCR RepSVTR
+# OCRModelType.PADDLEV5        → PaddleV5 (legacy)
+OCR_MODEL_TYPE = OCRModelType.SVTRV2_CTC
+
+# OCRBackendType.AUTO      → tự chọn TRT nếu có engine, fallback ONNX
+# OCRBackendType.TENSORRT  → bắt buộc dùng .engine (pycuda)
+# OCRBackendType.ONNX      → dùng ONNX Runtime (device trong OCRConfig)
+OCR_BACKEND_TYPE = OCRBackendType.AUTO
 
 # Import matcher factory
 from .matchers import MatcherFactory
@@ -149,7 +161,10 @@ class InferenceHandler:
             # AUTO selection with fixed TensorRT (no more CUDA context conflict!)
             # Priority: OpenOCR TensorRT > OpenOCR ONNX > PaddleV5 TensorRT > PaddleV5 ONNX
             # Note: TensorRT OpenOCR now uses pre-allocated buffers (like YOLO OBB) - NO CONFLICT!
-            self._ocr_backend_instance = OCRBackendFactory.create(OCRBackendType.AUTO)
+            self._ocr_backend_instance = OCRBackendFactory.create(
+                backend_type=OCR_BACKEND_TYPE,
+                model_type=OCR_MODEL_TYPE,
+            )
 
             if self._ocr_backend_instance is not None:
                 self.text_recognizer = self._ocr_backend_instance

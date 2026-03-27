@@ -65,10 +65,10 @@ def augment_laser_text(img_bgr: np.ndarray) -> dict:
 
 def _apply_text_corrections(text: str) -> str:
     """Apply common OCR correction rules before comparison."""
-    if "BE" in text:
-        text = text.replace("BE", "BB")
-    if "RL" in text:
-        text = text.replace("RL", "PL")
+    # if "BE" in text:
+    #     text = text.replace("BE", "BB")
+    # if "RL" in text:
+    #     text = text.replace("RL", "PL")
     if "Pt" in text:
         text = text.replace("Pt", "PL")
     if "USsed" in text:
@@ -141,7 +141,8 @@ class TextVerificationService:
         text_recognizer: Any,
         ocr_backend: str,
         save_debug_images: bool = True,
-        debug_path: Optional[str] = None
+        debug_path: Optional[str] = None,
+        use_char_conf_check: bool = False,
     ):
         """
         Initialize TextVerificationService.
@@ -157,6 +158,7 @@ class TextVerificationService:
         self.save_debug_images = save_debug_images
         self.debug_path = debug_path or f"{home}/Source/ocr_datecode/ai_services/test_result"
         self._debug_counter = 0
+        self.use_char_conf_check = use_char_conf_check
 
     @property
     def is_available(self) -> bool:
@@ -319,7 +321,21 @@ class TextVerificationService:
                     f"treating as NO MATCH"
                 )
                 match = False
+            elif self.use_char_conf_check and hasattr(self.text_recognizer, 'recognize_with_char_conf'):
+                _, _, char_confs = self.text_recognizer.recognize_with_char_conf(cropped_region)
+                low_chars = [(c, cf) for c, cf in char_confs if cf < conf_threshold]
+                if low_chars:
+                    logger.warning(
+                        f"[{serial_number}] Annotation {annotation_idx}: "
+                        f"Low per-char conf {low_chars}, treating as NO MATCH"
+                    )
+                    match = False
+                else:
+                    match = None  # tiếp tục so sánh text bên dưới
             else:
+                match = None  # tiếp tục so sánh text bên dưới
+
+            if match is None:
                 # Compare texts using similarity matching for specific patterns
                 # if "BEST BEFORE" in expected_text.upper() or "PL" in expected_text.upper() or "MFG" in expected_text.upper() or "BB" in expected_text.upper():
                 #     # Use similarity matching (default 80% threshold)
@@ -521,7 +537,14 @@ class TextVerificationService:
             for task in ocr_tasks
         }
 
-        for i, (text, confidence) in enumerate(ocr_results):
+        for i, result in enumerate(ocr_results):
+            if isinstance(result, dict):
+                text, confidence = result["text"], result["confidence"]
+                batch_char_confs = result.get("char_confs")
+            else:
+                text, confidence = result
+                batch_char_confs = None
+
             meta = all_metadata[i]
             serial_number = meta['serial_number']
             annotation_idx = meta['annotation_idx']
@@ -537,6 +560,22 @@ class TextVerificationService:
                     f"Low confidence {confidence:.2%} < threshold {conf_threshold:.2%}"
                 )
                 match = False
+            elif self.use_char_conf_check:
+                char_confs = batch_char_confs  # dùng từ batch, không infer lại
+                if char_confs is None and hasattr(self.text_recognizer, 'recognize_with_char_conf'):
+                    _, _, char_confs = self.text_recognizer.recognize_with_char_conf(meta['cropped_region'])
+                low_chars = [(c, cf) for c, cf in (char_confs or []) if cf < conf_threshold]
+                if low_chars:
+                    logger.warning(
+                        f"[{serial_number}] Annotation {annotation_idx}: "
+                        f"Low per-char conf {low_chars}, treating as NO MATCH"
+                    )
+                    match = False
+                else:
+                    recognized_text = _apply_text_corrections(recognized_text)
+                    match = compare_texts(recognized_text, expected_text, case_sensitive=True, strip=True)
+                    if match:
+                        recognized_text = expected_text[:]
             else:
                 recognized_text = _apply_text_corrections(recognized_text)
                 match = compare_texts(recognized_text, expected_text, case_sensitive=True, strip=True)
@@ -622,7 +661,11 @@ class TextVerificationService:
         best_text = ""
         best_conf = -1.0
 
-        for ver_name, (aug_text, aug_conf) in zip(aug_names, aug_results):
+        for ver_name, aug_result in zip(aug_names, aug_results):
+            if isinstance(aug_result, dict):
+                aug_text, aug_conf = aug_result["text"], aug_result["confidence"]
+            else:
+                aug_text, aug_conf = aug_result
             aug_recognized = _apply_text_corrections(aug_text.strip())
             aug_match = compare_texts(aug_recognized, expected_text, case_sensitive=True, strip=True)
 

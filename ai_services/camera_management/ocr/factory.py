@@ -29,7 +29,8 @@ class OCRBackendType(Enum):
 class OCRModelType(Enum):
     """Available OCR model architectures"""
     PADDLEV5 = "paddlev5"           # Legacy model (old)
-    OPENOCR_REPSVTR = "openocr"     # New model (default)
+    OPENOCR_REPSVTR = "openocr"     # OpenOCR RepSVTR
+    SVTRV2_CTC = "svtrv2"           # SVTRv2 CTC (6625 classes, width=320)
 
 
 @dataclass
@@ -37,11 +38,12 @@ class OCRConfig:
     """Configuration for OCR backend"""
     model_path: str
     dict_path: str
-    model_type: OCRModelType = OCRModelType.OPENOCR_REPSVTR  # Default to new model
+    model_type: OCRModelType = OCRModelType.OPENOCR_REPSVTR
     use_gpu: bool = True
     min_width: int = 50
     max_width: int = 2000
-    batch_size: int = 4  # Optimal batch size from benchmark
+    batch_size: int = 4
+    device: str = "cuda"    # For ONNX backends: 'cpu' | 'cuda' | 'trt'
 
 
 # ============================================================================
@@ -264,11 +266,7 @@ class TensorRTOpenOCRBackend(OCRBackendStrategy):
             return [("", 0.0) for _ in images]
 
         # Direct numpy array batch processing
-        results = self._recognizer.recognize_batch(
-            images,
-            use_true_batch=True
-        )
-        return [(r['text'], r['confidence']) for r in results]
+        return self._recognizer.recognize_batch(images, use_true_batch=True)
 
 
 class ONNXOpenOCRBackend(OCRBackendStrategy):
@@ -344,8 +342,93 @@ class ONNXOpenOCRBackend(OCRBackendStrategy):
             return [("", 0.0) for _ in images]
 
         # Direct numpy array batch processing
-        results = self._recognizer.recognize_batch(images, batch_size=self._batch_size)
-        return [(r['text'], r['confidence']) for r in results]
+        return self._recognizer.recognize_batch(images, batch_size=self._batch_size)
+
+
+class SVTRv2ONNXBackend(OCRBackendStrategy):
+    """ONNX Runtime backend for SVTRv2 CTC model (device: cpu/cuda/trt EP)."""
+
+    def __init__(self, config: OCRConfig):
+        self._config = config
+        self._recognizer = None
+        self._available = False
+        try:
+            from ..text_recognizer_svtrv2_onnx import TextRecognizerSVTRv2ONNX
+            if not os.path.exists(config.model_path):
+                raise FileNotFoundError(f"ONNX model not found: {config.model_path}")
+            if not os.path.exists(config.dict_path):
+                raise FileNotFoundError(f"Dict not found: {config.dict_path}")
+            self._recognizer = TextRecognizerSVTRv2ONNX(
+                onnx_path=config.model_path,
+                dict_path=config.dict_path,
+                device=config.device,
+            )
+            self._available = True
+            logger.info(f"SVTRv2ONNXBackend initialized: {config.model_path} (device={config.device})")
+        except Exception as e:
+            logger.error(f"Failed to initialize SVTRv2ONNXBackend: {e}")
+
+    @property
+    def backend_name(self) -> str:
+        return f"svtrv2_onnx_{self._config.device}"
+
+    @property
+    def is_available(self) -> bool:
+        return self._available and self._recognizer is not None
+
+    def recognize(self, image: np.ndarray, return_confidence: bool = True) -> Tuple[str, float]:
+        if not self.is_available:
+            return ("", 0.0)
+        return self._recognizer.recognize(image, return_confidence=return_confidence)
+
+    def recognize_batch(self, images: List[np.ndarray]) -> List[Tuple[str, float]]:
+        if not self.is_available:
+            return [("", 0.0) for _ in images]
+        return self._recognizer.recognize_batch(images, batch_size=self._config.batch_size)
+
+
+class SVTRv2TRTBackend(OCRBackendStrategy):
+    """Pure TensorRT backend for SVTRv2 CTC model (.engine file, pycuda)."""
+
+    def __init__(self, config: OCRConfig):
+        self._config = config
+        self._recognizer = None
+        self._available = False
+        try:
+            from ..text_recognizer_svtrv2_trt import TextRecognizerSVTRv2TRT, TENSORRT_AVAILABLE
+            if not TENSORRT_AVAILABLE:
+                logger.warning("TensorRT not available for SVTRv2")
+                return
+            if not os.path.exists(config.model_path):
+                raise FileNotFoundError(f"Engine not found: {config.model_path}")
+            if not os.path.exists(config.dict_path):
+                raise FileNotFoundError(f"Dict not found: {config.dict_path}")
+            self._recognizer = TextRecognizerSVTRv2TRT(
+                engine_path=config.model_path,
+                dict_path=config.dict_path,
+            )
+            self._available = True
+            logger.info(f"SVTRv2TRTBackend initialized: {config.model_path}")
+        except Exception as e:
+            logger.error(f"Failed to initialize SVTRv2TRTBackend: {e}")
+
+    @property
+    def backend_name(self) -> str:
+        return "svtrv2_trt"
+
+    @property
+    def is_available(self) -> bool:
+        return self._available and self._recognizer is not None
+
+    def recognize(self, image: np.ndarray, return_confidence: bool = True) -> Tuple[str, float]:
+        if not self.is_available:
+            return ("", 0.0)
+        return self._recognizer.recognize(image, return_confidence=return_confidence)
+
+    def recognize_batch(self, images: List[np.ndarray]) -> List[Tuple[str, float]]:
+        if not self.is_available:
+            return [("", 0.0) for _ in images]
+        return self._recognizer.recognize_batch(images, batch_size=self._config.batch_size)
 
 
 # ============================================================================
@@ -375,6 +458,30 @@ class OCRBackendFactory:
     LEGACY_ONNX_MODEL = f"{home}/Source/ocr_datecode/languages/english/rec.onnx"
     LEGACY_DICT_PATH = f"{home}/Source/ocr_datecode/languages/english/dict.txt"
 
+    # SVTRv2 CTC paths
+    SVTRV2_TRT_ENGINE = f"{home}/Source/ocr_datecode/languages/english/rec_model_fp32.engine"
+    SVTRV2_ONNX_MODEL = f"{home}/Source/ocr_datecode/languages/english/rec_model.onnx"
+    SVTRV2_DICT_PATH  = f"{home}/Source/ocr_datecode/languages/english/ppocr_keys_v1.txt"
+
+    # -----------------------------------------------------------------------
+    # Registry: (model_type, backend_type) → (AdapterClass, model_path, dict_path, extra_kwargs)
+    # To add a new model: add 2 entries here + paths above.
+    # -----------------------------------------------------------------------
+    _REGISTRY = None   # built lazily to avoid circular imports
+
+    @classmethod
+    def _get_registry(cls) -> dict:
+        if cls._REGISTRY is None:
+            cls._REGISTRY = {
+                (OCRModelType.SVTRV2_CTC,      OCRBackendType.TENSORRT): (SVTRv2TRTBackend,  cls.SVTRV2_TRT_ENGINE,  cls.SVTRV2_DICT_PATH,  {}),
+                (OCRModelType.SVTRV2_CTC,      OCRBackendType.ONNX):     (SVTRv2ONNXBackend, cls.SVTRV2_ONNX_MODEL,  cls.SVTRV2_DICT_PATH,  {"device": "cuda"}),
+                (OCRModelType.OPENOCR_REPSVTR, OCRBackendType.TENSORRT): (TensorRTOpenOCRBackend, cls.DEFAULT_TRT_ENGINE, cls.DEFAULT_DICT_PATH, {}),
+                (OCRModelType.OPENOCR_REPSVTR, OCRBackendType.ONNX):     (ONNXOpenOCRBackend,     cls.DEFAULT_ONNX_MODEL, cls.DEFAULT_DICT_PATH, {}),
+                (OCRModelType.PADDLEV5,        OCRBackendType.TENSORRT): (TensorRTOCRBackend, cls.LEGACY_TRT_ENGINE,  cls.LEGACY_DICT_PATH,  {}),
+                (OCRModelType.PADDLEV5,        OCRBackendType.ONNX):     (ONNXOCRBackend,     cls.LEGACY_ONNX_MODEL,  cls.LEGACY_DICT_PATH,  {}),
+            }
+        return cls._REGISTRY
+
     @classmethod
     def check_availability(cls) -> dict:
         """
@@ -384,39 +491,32 @@ class OCRBackendFactory:
             Dict with backend availability status
         """
         result = {
-            'tensorrt_openocr': False,
-            'onnx_openocr': False,
-            'tensorrt_paddlev5': False,  # Legacy
-            'onnx_paddlev5': False,      # Legacy
+            'tensorrt_openocr':  False,
+            'onnx_openocr':      False,
+            'tensorrt_paddlev5': False,
+            'onnx_paddlev5':     False,
+            'tensorrt_svtrv2':   False,
+            'onnx_svtrv2':       False,
         }
 
-        # Check OpenOCR TensorRT (NEW - Priority 1)
+        trt_ok, onnx_ok = False, False
         try:
-            import tensorrt
-            result['tensorrt_openocr'] = os.path.exists(cls.DEFAULT_TRT_ENGINE) and os.path.exists(cls.DEFAULT_DICT_PATH)
+            import tensorrt  # noqa: F401
+            trt_ok = True
+        except Exception:
+            pass
+        try:
+            import onnxruntime  # noqa: F401
+            onnx_ok = True
         except Exception:
             pass
 
-        # Check OpenOCR ONNX (NEW - Priority 2)
-        try:
-            import onnxruntime
-            result['onnx_openocr'] = os.path.exists(cls.DEFAULT_ONNX_MODEL) and os.path.exists(cls.DEFAULT_DICT_PATH)
-        except Exception:
-            pass
-
-        # Check PaddleV5 TensorRT (LEGACY - Priority 3)
-        try:
-            from ..text_recognizer_trt import TENSORRT_AVAILABLE
-            result['tensorrt_paddlev5'] = TENSORRT_AVAILABLE and os.path.exists(cls.LEGACY_TRT_ENGINE)
-        except Exception:
-            pass
-
-        # Check PaddleV5 ONNX (LEGACY - Priority 4)
-        try:
-            import onnxruntime
-            result['onnx_paddlev5'] = os.path.exists(cls.LEGACY_ONNX_MODEL)
-        except Exception:
-            pass
+        result['tensorrt_openocr']  = trt_ok  and os.path.exists(cls.DEFAULT_TRT_ENGINE) and os.path.exists(cls.DEFAULT_DICT_PATH)
+        result['onnx_openocr']      = onnx_ok and os.path.exists(cls.DEFAULT_ONNX_MODEL) and os.path.exists(cls.DEFAULT_DICT_PATH)
+        result['tensorrt_paddlev5'] = trt_ok  and os.path.exists(cls.LEGACY_TRT_ENGINE)  and os.path.exists(cls.LEGACY_DICT_PATH)
+        result['onnx_paddlev5']     = onnx_ok and os.path.exists(cls.LEGACY_ONNX_MODEL)  and os.path.exists(cls.LEGACY_DICT_PATH)
+        result['tensorrt_svtrv2']   = trt_ok  and os.path.exists(cls.SVTRV2_TRT_ENGINE)  and os.path.exists(cls.SVTRV2_DICT_PATH)
+        result['onnx_svtrv2']       = onnx_ok and os.path.exists(cls.SVTRV2_ONNX_MODEL)  and os.path.exists(cls.SVTRV2_DICT_PATH)
 
         return result
 
@@ -444,123 +544,71 @@ class OCRBackendFactory:
             3. TensorRT PaddleV5 (legacy, ~40 imgs/sec)
             4. ONNX PaddleV5 (legacy, ~10 imgs/sec)
         """
-        availability = cls.check_availability()
-        logger.info(f"OCR Backend availability: {availability}")
-
-        # Get model preference from environment or parameter
+        # Default model type if not specified
         if model_type is None:
-            env_model = os.getenv("OCR_MODEL", "openocr").lower()
-            model_type = OCRModelType.OPENOCR_REPSVTR if env_model == "openocr" else OCRModelType.PADDLEV5
+            model_type = OCRModelType.PADDLEV5
 
-        model_type = OCRModelType.PADDLEV5
+        registry = cls._get_registry()
 
-        # Determine which backend to use
-        selected_backend = None
-
-        if backend_type == OCRBackendType.AUTO:
-            # Priority: OpenOCR TensorRT > OpenOCR ONNX > PaddleV5 TensorRT > PaddleV5 ONNX
-            if model_type == OCRModelType.OPENOCR_REPSVTR:
-                if availability['tensorrt_openocr']:
-                    selected_backend = 'tensorrt_openocr'
-                elif availability['onnx_openocr']:
-                    selected_backend = 'onnx_openocr'
-                elif availability['tensorrt_paddlev5']:
-                    logger.warning("OpenOCR not available, falling back to PaddleV5 TensorRT")
-                    selected_backend = 'tensorrt_paddlev5'
-                elif availability['onnx_paddlev5']:
-                    logger.warning("OpenOCR not available, falling back to PaddleV5 ONNX")
-                    selected_backend = 'onnx_paddlev5'
-            else:
-                # Legacy PaddleV5 requested
-                if availability['tensorrt_paddlev5']:
-                    selected_backend = 'tensorrt_paddlev5'
-                elif availability['onnx_paddlev5']:
-                    selected_backend = 'onnx_paddlev5'
-                elif availability['tensorrt_openocr']:
-                    logger.warning("PaddleV5 not available, falling back to OpenOCR TensorRT")
-                    selected_backend = 'tensorrt_openocr'
-                elif availability['onnx_openocr']:
-                    logger.warning("PaddleV5 not available, falling back to OpenOCR ONNX")
-                    selected_backend = 'onnx_openocr'
-
-            if selected_backend is None:
-                logger.error("No OCR backend available")
+        # ── Manual selection ────────────────────────────────────────────────
+        if backend_type != OCRBackendType.AUTO:
+            key = (model_type, backend_type)
+            if key not in registry:
+                logger.error(f"No backend registered for {model_type} + {backend_type}")
                 return None
-
-        elif backend_type == OCRBackendType.TENSORRT:
-            # Manual TensorRT selection
-            if model_type == OCRModelType.OPENOCR_REPSVTR and availability['tensorrt_openocr']:
-                selected_backend = 'tensorrt_openocr'
-            elif availability['tensorrt_paddlev5']:
-                selected_backend = 'tensorrt_paddlev5'
-            else:
-                logger.error("TensorRT backend not available")
-                return None
-
-        elif backend_type == OCRBackendType.ONNX:
-            # Manual ONNX selection
-            if model_type == OCRModelType.OPENOCR_REPSVTR and availability['onnx_openocr']:
-                selected_backend = 'onnx_openocr'
-            elif availability['onnx_paddlev5']:
-                selected_backend = 'onnx_paddlev5'
-            else:
-                logger.error("ONNX backend not available")
-                return None
-
-        # Create configuration if not provided
-        if config is None:
-            if selected_backend == 'tensorrt_openocr':
+            AdapterCls, default_model, default_dict, extra = registry[key]
+            if config is None:
                 config = OCRConfig(
-                    model_path=cls.DEFAULT_TRT_ENGINE,
-                    dict_path=cls.DEFAULT_DICT_PATH,
-                    model_type=OCRModelType.OPENOCR_REPSVTR,
-                    use_gpu=True,
-                    batch_size=4  # Optimal from benchmark
+                    model_path=default_model,
+                    dict_path=default_dict,
+                    model_type=model_type,
+                    **{k: v for k, v in extra.items() if k in OCRConfig.__dataclass_fields__},
                 )
-            elif selected_backend == 'onnx_openocr':
-                config = OCRConfig(
-                    model_path=cls.DEFAULT_ONNX_MODEL,
-                    dict_path=cls.DEFAULT_DICT_PATH,
-                    model_type=OCRModelType.OPENOCR_REPSVTR,
-                    use_gpu=True,
-                    batch_size=4
-                )
-            elif selected_backend == 'tensorrt_paddlev5':
-                config = OCRConfig(
-                    model_path=cls.LEGACY_TRT_ENGINE,
-                    dict_path=cls.LEGACY_DICT_PATH,
-                    model_type=OCRModelType.PADDLEV5,
-                    use_gpu=True,
-                    batch_size=1
-                )
-            else:  # onnx_paddlev5
-                config = OCRConfig(
-                    model_path=cls.LEGACY_ONNX_MODEL,
-                    dict_path=cls.LEGACY_DICT_PATH,
-                    model_type=OCRModelType.PADDLEV5,
-                    use_gpu=True,
-                    batch_size=1
-                )
-
-        # Create backend instance
-        if selected_backend == 'tensorrt_openocr':
-            backend = TensorRTOpenOCRBackend(config)
-        elif selected_backend == 'onnx_openocr':
-            backend = ONNXOpenOCRBackend(config)
-        elif selected_backend == 'tensorrt_paddlev5':
-            backend = TensorRTOCRBackend(config)
-        elif selected_backend == 'onnx_paddlev5':
-            backend = ONNXOCRBackend(config)
-        else:
-            logger.error(f"Unknown backend: {selected_backend}")
+            backend = AdapterCls(config)
+            if backend.is_available:
+                logger.info(f"✅ OCR backend: {backend.backend_name}")
+                return backend
+            logger.error(f"❌ Failed to init {AdapterCls.__name__}")
             return None
 
-        if backend.is_available:
-            logger.info(f"✅ Created OCR backend: {backend.backend_name} ({config.model_type.value})")
-            return backend
-        else:
-            logger.error(f"❌ Failed to initialize {selected_backend}")
-            return None
+        # ── AUTO: prefer TensorRT over ONNX for the requested model ────────
+        availability = cls.check_availability()
+        logger.info(f"OCR availability: {availability}")
+
+        # Priority order per model type
+        _auto_priority = {
+            OCRModelType.SVTRV2_CTC:      [OCRBackendType.TENSORRT, OCRBackendType.ONNX],
+            OCRModelType.OPENOCR_REPSVTR: [OCRBackendType.TENSORRT, OCRBackendType.ONNX],
+            OCRModelType.PADDLEV5:        [OCRBackendType.TENSORRT, OCRBackendType.ONNX],
+        }
+        _avail_key = {
+            (OCRModelType.SVTRV2_CTC,      OCRBackendType.TENSORRT): 'tensorrt_svtrv2',
+            (OCRModelType.SVTRV2_CTC,      OCRBackendType.ONNX):     'onnx_svtrv2',
+            (OCRModelType.OPENOCR_REPSVTR, OCRBackendType.TENSORRT): 'tensorrt_openocr',
+            (OCRModelType.OPENOCR_REPSVTR, OCRBackendType.ONNX):     'onnx_openocr',
+            (OCRModelType.PADDLEV5,        OCRBackendType.TENSORRT): 'tensorrt_paddlev5',
+            (OCRModelType.PADDLEV5,        OCRBackendType.ONNX):     'onnx_paddlev5',
+        }
+
+        for bt in _auto_priority.get(model_type, []):
+            key = (model_type, bt)
+            avail_key = _avail_key.get(key)
+            if avail_key and availability.get(avail_key):
+                AdapterCls, default_model, default_dict, extra = registry[key]
+                if config is None:
+                    config = OCRConfig(
+                        model_path=default_model,
+                        dict_path=default_dict,
+                        model_type=model_type,
+                        **{k: v for k, v in extra.items() if k in OCRConfig.__dataclass_fields__},
+                    )
+                backend = AdapterCls(config)
+                if backend.is_available:
+                    logger.info(f"✅ OCR backend (auto): {backend.backend_name}")
+                    return backend
+
+        logger.error(f"No available OCR backend for model_type={model_type}")
+        return None
 
     @classmethod
     def create_from_env(cls) -> Optional[OCRBackendStrategy]:

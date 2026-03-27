@@ -252,8 +252,73 @@ class TextRecognizerOpenOCRTRT:
 
         text = ''.join(char_list)
         confidence = float(np.mean(conf_list)) if conf_list else 0.0
+        char_confs = [(c, cf) for c, cf in zip(char_list, conf_list) if c.isalnum()]
 
-        return {'text': text, 'confidence': confidence}
+        return {'text': text, 'confidence': confidence, 'char_confs': char_confs}
+
+    def recognize_with_char_conf(self, image: np.ndarray) -> tuple:
+        """
+        Recognize text và trả về per-character confidence (chỉ alnum).
+
+        Returns:
+            (text, avg_conf, char_confs)
+            char_confs: list of (char, conf) — chỉ chữ/số, bỏ ký tự đặc biệt
+        """
+        batch_size = 1
+        preprocessed = self.preprocess_numpy(image)
+        max_width = preprocessed.shape[3]
+
+        batch_data = np.zeros((1, 3, 48, max_width), dtype=np.float32)
+        batch_data[0, :, :, :max_width] = preprocessed[0]
+
+        if self.use_new_api:
+            self.context.set_input_shape(self.input_name, batch_data.shape)
+        else:
+            self.context.set_binding_shape(0, batch_data.shape)
+
+        np.copyto(self.h_input[:batch_data.size], batch_data.ravel())
+        cuda.memcpy_htod_async(self.d_input, self.h_input, self.stream)
+
+        if self.use_new_api:
+            self.context.set_tensor_address(self.input_name, int(self.d_input))
+            self.context.set_tensor_address(self.output_name, int(self.d_output))
+            self.context.execute_async_v3(stream_handle=self.stream.handle)
+        else:
+            self.context.execute_async_v2(
+                bindings=[int(self.d_input), int(self.d_output)],
+                stream_handle=self.stream.handle
+            )
+
+        self.stream.synchronize()
+
+        if self.use_new_api:
+            output_shape = self.context.get_tensor_shape(self.output_name)
+        else:
+            output_shape = self.context.get_binding_shape(1)
+
+        output_size = int(np.prod(output_shape))
+        cuda.memcpy_dtoh_async(self.h_output, self.d_output, self.stream)
+        self.stream.synchronize()
+
+        output = self.h_output[:output_size].reshape(output_shape)  # (1, T, C)
+
+        preds_idx  = np.argmax(output, axis=2)[0]
+        preds_prob = np.max(output, axis=2)[0]
+
+        char_list, conf_list = [], []
+        last_idx = 0
+        for i, idx in enumerate(preds_idx):
+            if idx != 0 and idx != last_idx:
+                if idx < len(self.character):
+                    label = self.character[idx]
+                    char_list.append(label)
+                    conf_list.append(float(preds_prob[i]))
+            last_idx = idx
+
+        text     = ''.join(char_list)
+        avg_conf = float(np.mean(conf_list)) if conf_list else 0.0
+        char_confs = [(c, cf) for c, cf in zip(char_list, conf_list) if c.isalnum()]
+        return text, avg_conf, char_confs
 
     def recognize(self, image: np.ndarray, return_confidence: bool = True) -> tuple:
         """

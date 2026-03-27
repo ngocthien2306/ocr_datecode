@@ -102,6 +102,55 @@ class TextRecognizer:
         exp_x = np.exp(x - np.max(x, axis=-1, keepdims=True))
         return exp_x / np.sum(exp_x, axis=-1, keepdims=True)
     
+    def _decode_with_char_confs(self, pred_single):
+        """Decode single prediction [T, C] → (text, avg_conf, char_confs)"""
+        best_path = np.argmax(pred_single, axis=-1)
+        best_prob = pred_single[np.arange(len(pred_single)), best_path]
+        decoded_chars, char_confs = [], []
+        prev_idx = -1
+        for t, char_idx in enumerate(best_path):
+            if char_idx != 0 and char_idx != prev_idx:
+                if char_idx < len(self.char_list):
+                    label = self.char_list[char_idx]
+                    decoded_chars.append(label)
+                    if label.isalnum():
+                        char_confs.append((label, float(best_prob[t])))
+            prev_idx = char_idx
+        text = ''.join(decoded_chars)
+        avg_conf = float(np.mean(best_prob)) if len(best_prob) > 0 else 0.0
+        return text, avg_conf, char_confs
+
+    def recognize_with_char_conf(self, image):
+        """
+        Recognize text và trả về per-character confidence (chỉ alnum).
+
+        Returns:
+            (text, avg_conf, char_confs)
+            char_confs: list of (char, conf) — chỉ chữ/số, bỏ ký tự đặc biệt
+        """
+        tensor = self.preprocess(image)
+        preds = self.session.run([self.output_name], {self.input_name: tensor})[0]
+        pred = preds[0]  # (T, C)
+
+        best_path = np.argmax(pred, axis=-1)
+        best_prob = pred[np.arange(len(pred)), best_path]
+
+        decoded_chars, char_confs = [], []
+        prev_idx = -1
+        for t, char_idx in enumerate(best_path):
+            if char_idx != 0 and char_idx != prev_idx:
+                if char_idx < len(self.char_list):
+                    label = self.char_list[char_idx]
+                    decoded_chars.append(label)
+                    if label.isalnum():
+                        char_confs.append((label, float(best_prob[t])))
+            prev_idx = char_idx
+
+        text = ''.join(decoded_chars)
+        all_conf = [float(best_prob[t]) for t in range(len(best_path))]
+        avg_conf = float(np.mean(all_conf)) if all_conf else 0.0
+        return text, avg_conf, char_confs
+
     def recognize(self, image, return_confidence=True):
         tensor = self.preprocess(image)
         preds = self.session.run([self.output_name], {self.input_name: tensor})[0]
@@ -135,9 +184,9 @@ class TextRecognizer:
         
         results = []
         for i in range(len(images)):
-            text, confidence = self.decode_ctc_with_confidence(preds[i:i+1])
-            results.append((text, float(confidence)))
-        
+            text, avg_conf, char_confs = self._decode_with_char_confs(preds[i])
+            results.append({"text": text, "confidence": avg_conf, "char_confs": char_confs})
+
         return results
 
 # if __name__ == '__main__':
