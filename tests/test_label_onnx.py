@@ -22,7 +22,7 @@ class YOLOOBBInference:
         output_shape = self.session.get_outputs()[0].shape
         self.has_builtin_nms = (len(output_shape) == 3 and output_shape[1] == 300)
 
-    def preprocess(self, images: List[np.ndarray], input_size: Tuple[int, int] = (640, 640)):
+    def preprocess(self, images: List[np.ndarray], input_size: Tuple[int, int] = (320, 320)):
         """Preprocess images with letterbox padding"""
         batch_tensor = []
         scales = []
@@ -190,7 +190,7 @@ class YOLOOBBInference:
 def main():
     # Initialize model
     model = YOLOOBBInference(
-        model_path="weights/yolo26n-obb-label.onnx",
+        model_path="weights/best-3.onnx",
         class_names=['bottle', 'label', "wrinkled"]
     )
 
@@ -198,7 +198,7 @@ def main():
 
     # Single image inference with timing
     print("\n=== Single Image Inference ===")
-    image = cv2.imread('test.jpg')
+    image = cv2.imread('/home/demo/Source/ocr_datecode/backend/uploads/inference_results/69c4891ca70901e2a320fb94/2026-03-26/40767171/fail_f0_20260326_033835934715_org.jpg')
     results, timing = model.predict([image], conf_threshold=0.3, return_timing=True)
 
     boxes, scores, class_ids = results[0]
@@ -220,7 +220,7 @@ def main():
 
     # Batch inference with timing
     print("\n=== Batch Inference (3 images) ===")
-    images = [cv2.imread('test.jpg') for _ in range(3)]
+    images = [cv2.imread('test_image/test1.jpg') for _ in range(3)]
     for _ in range(10):   
         batch_results, timing = model.predict(images, conf_threshold=0.6, return_timing=True)
 
@@ -239,4 +239,4 @@ if __name__ == "__main__":
     main()
  
 
-# /usr/src/tensorrt/bin/trtexec --onnx=weights/best_obb.onnx --saveEngine=weights/best_obb.engine --fp16 --minShapes=images:1x3x640x640 --optShapes=images:4x3x640x640 --maxShapes=images:8x3x640x640
+# /usr/src/tensorrt/bin/trtexec --onnx=weights/best-3.onnx --saveEngine=weights/best_bottle_l.engine --fp16 --minShapes=images:1x3x320x320 --optShapes=images:4x3x320x320 --maxShapes=images:8x3x320x320

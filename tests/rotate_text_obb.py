@@ -1,5 +1,7 @@
 import cv2
 import numpy as np
+import time
+import threading
 from test_label_onnx import YOLOOBBInference
 from rapidocr_onnxruntime import RapidOCR
 import matplotlib.pyplot as plt
@@ -50,18 +52,110 @@ def rotate_cap_region_only(image: np.ndarray, cap_box: np.ndarray, angle_deg: fl
     return result_crop, full_result
 
 
-def compute_need_flip(cap_box: np.ndarray, text_box: np.ndarray, angle_deg: float) -> bool:
+def crop_text_region(cap_crop: np.ndarray, cap_box: np.ndarray,
+                     text_box: np.ndarray, total_angle: float, margin: int = 20) -> np.ndarray:
     """
-    Kiểm tra xem có cần xoay thêm 180° không.
-    Xoay quanh tâm cap → cap center giữ nguyên, chỉ text center dịch chuyển.
+    Crop chỉ vùng text từ cap_crop đã xoay.
+    Tính vị trí tâm text sau khi xoay để không cần chạy OCR trên toàn cap.
     """
-    cx, cy, _, _, _ = cap_box
-    tx, ty = text_box[0], text_box[1]
+    cx, cy, cap_w, cap_h, _ = cap_box
+    crop_r = int(min(cap_w, cap_h) / 2) + margin
+    x1_cap = max(0, int(cx - crop_r))
+    y1_cap = max(0, int(cy - crop_r))
 
-    M = cv2.getRotationMatrix2D((cx, cy), angle_deg, 1.0)
-    new_text = M @ np.array([tx, ty, 1])
-    # Text nằm trên tâm cap (y nhỏ hơn) → ngược chiều → cần flip
-    return new_text[1] < cy
+    tx, ty, tw, th = text_box[0], text_box[1], text_box[2], text_box[3]
+    local_tx = tx - x1_cap
+    local_ty = ty - y1_cap
+    local_cx = float(cx - x1_cap)
+    local_cy = float(cy - y1_cap)
+
+    M = cv2.getRotationMatrix2D((local_cx, local_cy), total_angle, 1.0)
+    new_center = M @ np.array([local_tx, local_ty, 1.0])
+
+    pad = int(max(tw, th) * 0.15)
+    half_w = int(max(tw, th) / 2) + pad
+    half_h = int(min(tw, th) / 2) + pad
+
+    nx, ny = int(new_center[0]), int(new_center[1])
+    h_c, w_c = cap_crop.shape[:2]
+    return cap_crop[max(0, ny - half_h):min(h_c, ny + half_h),
+                    max(0, nx - half_w):min(w_c, nx + half_w)]
+
+
+def detect_flip_by_density(text_crop: np.ndarray, threshold: float = 1.15) -> tuple[bool, str]:
+    """
+    Cách 1 – Pixel density comparison (~0.1ms).
+    Phù hợp với date code 2 dòng không đều nhau:
+      Dòng 1 "BEST BY DD MMM YYYY" (dài) phải ở trên.
+      Dòng 2 "PL XXXXXX" (ngắn) ở dưới.
+    Nếu nửa dưới dày đặc hơn → dòng dài đang ở dưới → cần flip.
+    Returns (need_flip, confidence: 'sure'/'unsure')
+    """
+    gray = cv2.cvtColor(text_crop, cv2.COLOR_BGR2GRAY) if text_crop.ndim == 3 else text_crop.copy()
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    h = binary.shape[0]
+    upper = float(np.sum(binary[:h // 2]))
+    lower = float(np.sum(binary[h // 2:]))
+    if lower > upper * threshold:
+        return True, 'sure'
+    if upper > lower * threshold:
+        return False, 'sure'
+    return False, 'unsure'   # 2 dòng gần bằng nhau → không chắc
+
+
+def detect_flip_by_gradient(text_crop: np.ndarray) -> tuple[bool, str]:
+    """
+    Cách 2 – Horizontal gradient / baseline detection (~0.5ms).
+    Baseline của text (cạnh dưới ký tự) tạo SobelY dương (dark→light đi xuống).
+    Cap-height (cạnh trên ký tự) tạo SobelY âm.
+    Text đúng chiều: baseline ở nửa dưới → tổng SobelY dương của nửa dưới lớn hơn nửa trên.
+    Hoạt động tốt nhất với text 1 dòng.
+    """
+    gray = cv2.cvtColor(text_crop, cv2.COLOR_BGR2GRAY) if text_crop.ndim == 3 else text_crop.copy()
+    blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+    sobel_y = cv2.Sobel(blurred, cv2.CV_64F, 0, 1, ksize=3)
+    h = sobel_y.shape[0]
+    upper_pos = float(np.sum(sobel_y[:h // 2][sobel_y[:h // 2] > 0]))
+    lower_pos = float(np.sum(sobel_y[h // 2:][sobel_y[h // 2:] > 0]))
+    # Baseline ở nửa trên → dương nhiều ở trên → text ngược → cần flip
+    ratio = upper_pos / (lower_pos + 1e-6)
+    if ratio > 1.2:
+        return True, 'sure'
+    if ratio < 0.8:
+        return False, 'sure'
+    return False, 'unsure'
+
+
+def ocr_confidence(crop: np.ndarray, ocr_engine) -> float:
+    """Trả về tổng confidence OCR trên ảnh crop."""
+    result, _ = ocr_engine(crop)
+    if result is None:
+        return 0.0
+    return sum(float(line[2]) for line in result)
+
+
+def pick_flip_by_ocr(cap_crop_0: np.ndarray, cap_crop_180: np.ndarray,
+                     cap_box: np.ndarray, text_box: np.ndarray,
+                     angle_deg: float, margin: int, ocr_engine) -> bool:
+    """
+    Chạy OCR song song trên 2 text crop (0° và 180°).
+    Trả về True nếu chiều 180° cho confidence cao hơn.
+    """
+    text_crop_0   = crop_text_region(cap_crop_0,   cap_box, text_box, angle_deg,         margin)
+    text_crop_180 = crop_text_region(cap_crop_180, cap_box, text_box, angle_deg + 180.0, margin)
+
+    results = [0.0, 0.0]
+
+    def run_ocr(idx, crop):
+        results[idx] = ocr_confidence(crop, ocr_engine)
+
+    t0   = threading.Thread(target=run_ocr, args=(0, text_crop_0))
+    t180 = threading.Thread(target=run_ocr, args=(1, text_crop_180))
+    t0.start();   t180.start()
+    t0.join();    t180.join()
+
+    print(f"  OCR conf 0°: {results[0]:.3f} | 180°: {results[1]:.3f}")
+    return results[1] > results[0]
 
 
 def rotate_image_by_obb(image: np.ndarray, box: np.ndarray):
@@ -162,8 +256,9 @@ def draw_obb(image: np.ndarray, boxes: np.ndarray, scores: np.ndarray, class_ids
 
 def main(top_k=10):
     class_names = ['bottle_cap', 'text_box']
-    model = YOLOOBBInference("weights/yolo26_bottle_obb.onnx", class_names)
-    image = cv2.imread('test_image/bottle6.jpg')
+    model = YOLOOBBInference("weights/best_bottle_text.onnx", class_names)
+    ocr = RapidOCR()
+    image = cv2.imread('test_image/bottle9.jpg')
 
     results = model.predict([image], conf_threshold=0.4)
     boxes, scores, class_ids = results[0]
@@ -207,20 +302,56 @@ def main(top_k=10):
             # Vẽ OBB lên ảnh gốc
             original_with_obb = draw_obb(image, boxes, scores, class_ids, class_names)
 
-            # Kiểm tra need_flip (không cần xoay toàn ảnh, tính bằng ma trận)
-            need_flip = compute_need_flip(cap_box, text_box, angle_deg)
-            print(f"\n=== Kiểm tra chiều text ===")
-            if need_flip:
-                print("Text ngược chiều → Cần xoay thêm 180°")
-            else:
-                print("Text đúng chiều → Giữ nguyên")
+            MARGIN = 20
 
-            # Chỉ xoay vùng nắp chai (circular mask), background giữ nguyên
-            MARGIN = 20  # pixel margin quanh cap
-            result_crop, full_result = rotate_cap_region_only(
-                image, cap_box, angle_deg, need_flip, margin=MARGIN
-            )
-            print(f"\nXoay tổng: {angle_deg:.1f}° + {180 if need_flip else 0}°")
+            MARGIN = 20
+
+            # --- Bước 1: xoay cap (chỉ cần 1 lần cho flip=False) ---
+            t0 = time.perf_counter()
+            crop_0, full_0 = rotate_cap_region_only(image, cap_box, angle_deg, False, margin=MARGIN)
+            t_rotate = time.perf_counter() - t0
+
+            # Crop vùng text nhỏ (dùng chung cho cả 3 cách)
+            text_crop = crop_text_region(crop_0, cap_box, text_box, angle_deg, MARGIN)
+
+            # --- Cách 1: Density comparison ---
+            t0 = time.perf_counter()
+            flip_density, conf_density = detect_flip_by_density(text_crop)
+            t_density = time.perf_counter() - t0
+
+            # --- Cách 2: Gradient analysis ---
+            t0 = time.perf_counter()
+            flip_gradient, conf_gradient = detect_flip_by_gradient(text_crop)
+            t_gradient = time.perf_counter() - t0
+
+            # --- Cách 3: OCR parallel (fallback khi 2 cách trên unsure) ---
+            t0 = time.perf_counter()
+            crop_180, full_180 = rotate_cap_region_only(image, cap_box, angle_deg, True, margin=MARGIN)
+            text_crop_180 = crop_text_region(crop_180, cap_box, text_box, angle_deg + 180.0, MARGIN)
+            flip_ocr = pick_flip_by_ocr(crop_0, crop_180, cap_box, text_box, angle_deg, MARGIN, ocr)
+            t_ocr = time.perf_counter() - t0
+
+            # --- Quyết định cuối: ưu tiên density nếu sure, fallback OCR ---
+            if conf_density == 'sure':
+                need_flip = flip_density
+                method_used = 'density'
+            elif conf_gradient == 'sure':
+                need_flip = flip_gradient
+                method_used = 'gradient'
+            else:
+                need_flip = flip_ocr
+                method_used = 'ocr'
+
+            result_crop = crop_180 if need_flip else crop_0
+            full_result = full_180 if need_flip else full_0
+
+            print(f"\n=== Flip detection benchmark ===")
+            print(f"  [density]  need_flip={flip_density} ({conf_density})  {t_density*1000:.2f}ms")
+            print(f"  [gradient] need_flip={flip_gradient} ({conf_gradient})  {t_gradient*1000:.2f}ms")
+            print(f"  [ocr]      need_flip={flip_ocr}  {t_ocr*1000:.1f}ms")
+            print(f"  → Dùng: [{method_used}] need_flip={need_flip}")
+            print(f"\n[Timing]  rotate: {t_rotate*1000:.1f}ms")
+            print(f"Xoay tổng: {angle_deg:.1f}° + {180 if need_flip else 0}°")
 
             # Hiển thị 3 ảnh: gốc | crop cap đã xoay | full image với cap đã xoay
             fig, axes = plt.subplots(1, 3, figsize=(18, 6))

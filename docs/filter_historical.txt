@@ -1,0 +1,805 @@
+{
+  "_id": "69c128133b985776374cfbd9",
+  "recipe_id": "69c0efb30700293edfd62c7a",
+  "recipe_name": "SEA SALT SEL DE MER 850G",
+  "product_pass_fail": "FAIL",
+  "camera_results": [
+    {
+      "camera_id": "40733814",
+      "serial_number": "40733814",
+      "pass_fail": "FAIL",
+      "frames": [
+        {
+          "template_id": null,
+          "template_name": "Frame 2",
+          "frame_idx": 0,
+          "pass_fail": "FAIL",
+          "confidence": 0.5124555160142349,
+          "image_path": "inference_results/69c0efb30700293edfd62c7a/2026-03-23/40733814/fail_f0_20260323_114627121494_viz.jpg",
+          "detected_regions": [
+            {
+              "type": "template",
+              "points": [
+                [
+                  805.1924133300781,
+                  177.81922912597656
+                ],
+                [
+                  1336.83544921875,
+                  184.9850311279297
+                ],
+                [
+                  1341.5372924804688,
+                  988.3115844726562
+                ],
+                [
+                  815.5810241699219,
+                  1009.093505859375
+                ]
+              ],
+              "conf": 0.58
+            },
+            {
+              "type": "text",
+              "points": [
+                [
+                  956.5910034179688,
+                  472.1082763671875
+                ],
+                [
+                  1202.8839721679688,
+                  470.797119140625
+                ],
+                [
+                  1203.3363037109375,
+                  530.671142578125
+                ],
+                [
+                  957.2385559082031,
+                  532.944580078125
+                ]
+              ],
+              "text": "sea",
+              "annotation_index": 2,
+              "conf": 0.75
+            },
+            {
+              "type": "text",
+              "points": [
+                [
+                  960.2306213378906,
+                  529.8776245117188
+                ],
+                [
+                  1183.755615234375,
+                  527.8564453125
+                ],
+                [
+                  1184.3702392578125,
+                  606.6597900390625
+                ],
+                [
+                  961.0785827636719,
+                  609.8278198242188
+                ]
+              ],
+              "text": "SALT",
+              "annotation_index": 3,
+              "conf": 0.75
+            },
+            {
+              "type": "label",
+              "points": [
+                [
+                  801.1393432617188,
+                  183.95635986328125
+                ],
+                [
+                  1335.9067993164062,
+                  190.953369140625
+                ],
+                [
+                  1340.6121826171875,
+                  993.234130859375
+                ],
+                [
+                  811.5592651367188,
+                  1014.3089599609375
+                ]
+              ],
+              "text": "",
+              "annotation_index": 4,
+              "conf": 0.85
+            },
+            {
+              "type": "product",
+              "points": [
+                [
+                  722.7323760986328,
+                  64.54495239257812
+                ],
+                [
+                  1410.1475219726562,
+                  78.69730377197266
+                ],
+                [
+                  1415.4642944335938,
+                  1157.1485595703125
+                ],
+                [
+                  737.9578857421875,
+                  1191.6329345703125
+                ]
+              ],
+              "text": "",
+              "annotation_index": 5,
+              "conf": 0.85,
+              "verification_status": "fail"
+            },
+            {
+              "type": "text",
+              "points": [
+                [
+                  1039.4622192382812,
+                  943.3980102539062
+                ],
+                [
+                  1133.2025146484375,
+                  940.0387573242188
+                ],
+                [
+                  1133.5639038085938,
+                  982.6582641601562
+                ],
+                [
+                  1039.87646484375,
+                  986.2755126953125
+                ]
+              ],
+              "text": "850 g",
+              "annotation_index": 6,
+              "conf": 0.85
+            }
+          ],
+          "timings": {
+            "total": 357.6808237512523,
+            "trt_inference": 132.89618492126465,
+            "preprocess": 1.7189979553222656,
+            "postprocess": 45.89414596557617,
+            "ocr_ms": 38.53583499949309,
+            "template_verification_ms": 82.48908600035065,
+            "product_verification_ms": 53.56068600030994
+          },
+          "text_verification": {
+            "all_match": true,
+            "results": [
+              {
+                "annotation_idx": 2,
+                "expected": "sea",
+                "recognized": "sea",
+                "match": true,
+                "confidence": 0.998046875,
+                "threshold": 0.75
+              },
+              {
+                "annotation_idx": 3,
+                "expected": "SALT",
+                "recognized": "SALT",
+                "match": true,
+                "confidence": 0.970458984375,
+                "threshold": 0.75
+              },
+              {
+                "annotation_idx": 6,
+                "expected": "850 g",
+                "recognized": "850 g",
+                "match": true,
+                "confidence": 0.998046875,
+                "threshold": 0.85
+              }
+            ]
+          },
+          "template_verification": {
+            "match": true,
+            "similarity": 0.9283407926559448,
+            "threshold": 0.58,
+            "method": "TM_CCOEFF_NORMED",
+            "template_bbox": {
+              "type": "template",
+              "points": [
+                [
+                  805.1924133300781,
+                  177.81922912597656
+                ],
+                [
+                  1336.83544921875,
+                  184.9850311279297
+                ],
+                [
+                  1341.5372924804688,
+                  988.3115844726562
+                ],
+                [
+                  815.5810241699219,
+                  1009.093505859375
+                ]
+              ],
+              "conf": 0.58
+            },
+            "timing": {
+              "crop_ms": 3.8332399999490008,
+              "resize_ms": 0.585435999710171,
+              "opt_resize_ms": 3.857974000311515,
+              "matching_ms": 1.3719170001422754,
+              "total_ms": 82.48908600035065
+            }
+          },
+          "product_verification": {
+            "match": false,
+            "skipped": false,
+            "wrinkled_check": {
+              "ok": false,
+              "has_wrinkled": true,
+              "wrinkled_count": 1,
+              "min_area": 2000.0,
+              "wrinkled_boxes": [
+                {
+                  "score": 0.40185546875,
+                  "class": "wrinkled",
+                  "area": 8006,
+                  "area_pct": 1.79,
+                  "contour": [
+                    [
+                      910,
+                      572
+                    ],
+                    [
+                      910,
+                      625
+                    ],
+                    [
+                      909,
+                      626
+                    ],
+                    [
+                      900,
+                      626
+                    ],
+                    [
+                      900,
+                      766
+                    ],
+                    [
+                      899,
+                      767
+                    ],
+                    [
+                      889,
+                      767
+                    ],
+                    [
+                      889,
+                      781
+                    ],
+                    [
+                      931,
+                      781
+                    ],
+                    [
+                      931,
+                      723
+                    ],
+                    [
+                      932,
+                      722
+                    ],
+                    [
+                      942,
+                      722
+                    ],
+                    [
+                      942,
+                      572
+                    ]
+                  ],
+                  "corners": [
+                    [
+                      889,
+                      572
+                    ],
+                    [
+                      943,
+                      572
+                    ],
+                    [
+                      943,
+                      782
+                    ],
+                    [
+                      889,
+                      782
+                    ]
+                  ]
+                }
+              ]
+            },
+            "rotation_check": {
+              "ok": true,
+              "skipped": true,
+              "reason": "Check disabled"
+            },
+            "misalignment_check": {
+              "ok": true,
+              "skipped": true,
+              "reason": "Check disabled"
+            },
+            "label_region_check": {
+              "ok": true,
+              "skipped": true,
+              "reason": "Check disabled"
+            },
+            "center_alignment_check": {
+              "ok": true,
+              "offset_x": 9.9456787109375,
+              "abs_offset_x": 9.9456787109375,
+              "direction": "left",
+              "threshold_left": 14.0,
+              "threshold_right": 25.0,
+              "threshold_used": 14.0,
+              "template_center": [
+                1072.3043212890625,
+                595.6131591796875
+              ],
+              "product_center": [
+                1082.25,
+                603.0
+              ]
+            },
+            "detected_boxes": {
+              "label": {
+                "box": [
+                  1082.25,
+                  603.0,
+                  543.375,
+                  801.0,
+                  -0.002819061279296875
+                ],
+                "score": 0.9892578125,
+                "class": "label",
+                "corners": [
+                  [
+                    809.4345703125,
+                    203.2675018310547
+                  ],
+                  [
+                    1352.807373046875,
+                    201.73570251464844
+                  ],
+                  [
+                    1355.0654296875,
+                    1002.7324829101562
+                  ],
+                  [
+                    811.692626953125,
+                    1004.2642822265625
+                  ]
+                ]
+              },
+              "wrinkled": [
+                {
+                  "score": 0.40185546875,
+                  "class": "wrinkled",
+                  "area": 8006,
+                  "area_pct": 1.79,
+                  "contour": [
+                    [
+                      910,
+                      572
+                    ],
+                    [
+                      910,
+                      625
+                    ],
+                    [
+                      909,
+                      626
+                    ],
+                    [
+                      900,
+                      626
+                    ],
+                    [
+                      900,
+                      766
+                    ],
+                    [
+                      899,
+                      767
+                    ],
+                    [
+                      889,
+                      767
+                    ],
+                    [
+                      889,
+                      781
+                    ],
+                    [
+                      931,
+                      781
+                    ],
+                    [
+                      931,
+                      723
+                    ],
+                    [
+                      932,
+                      722
+                    ],
+                    [
+                      942,
+                      722
+                    ],
+                    [
+                      942,
+                      572
+                    ]
+                  ],
+                  "corners": [
+                    [
+                      889,
+                      572
+                    ],
+                    [
+                      943,
+                      572
+                    ],
+                    [
+                      943,
+                      782
+                    ],
+                    [
+                      889,
+                      782
+                    ]
+                  ]
+                }
+              ]
+            },
+            "timing": {
+              "total": 53.56068600030994,
+              "filter": 0.006912000571901444,
+              "yolo_inference": 20.13820000047417,
+              "yolo_details": {
+                "preprocess": 1.4807739999014302,
+                "h2d": 0.2068999992843601,
+                "inference": 18.07240699963586,
+                "d2h": 0.06866799958515912,
+                "postprocess": 0.22811400049249642,
+                "total": 20.056862998899305,
+                "per_image": 20.056862998899305
+              },
+              "wrinkle_seg": 32.82447399942612,
+              "processing": 0.5846359999850392,
+              "frames_checked": 1,
+              "frames_total": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "camera_id": "40767174",
+      "serial_number": "40767174",
+      "pass_fail": "PASS",
+      "frames": [
+        {
+          "template_id": null,
+          "template_name": "Frame 2",
+          "frame_idx": 0,
+          "pass_fail": "PASS",
+          "confidence": 0.6827956989247311,
+          "image_path": null,
+          "detected_regions": [
+            {
+              "type": "template",
+              "points": [
+                [
+                  581.6763610839844,
+                  433.21744537353516
+                ],
+                [
+                  1386.368408203125,
+                  418.79299545288086
+                ],
+                [
+                  1402.6534423828125,
+                  568.3186492919922
+                ],
+                [
+                  575.8544616699219,
+                  586.1773376464844
+                ]
+              ],
+              "conf": 0.3
+            },
+            {
+              "type": "datecode",
+              "points": [
+                [
+                  663.1867980957031,
+                  422.13568687438965
+                ],
+                [
+                  873.6873168945312,
+                  418.4111576080322
+                ],
+                [
+                  874.6723022460938,
+                  483.1708221435547
+                ],
+                [
+                  661.6723327636719,
+                  487.27364349365234
+                ]
+              ],
+              "text": "BB/MA",
+              "annotation_index": 2,
+              "conf": 0.6
+            },
+            {
+              "type": "datecode",
+              "points": [
+                [
+                  660.6479187011719,
+                  487.2933807373047
+                ],
+                [
+                  1011.0979614257812,
+                  480.54298400878906
+                ],
+                [
+                  1013.851318359375,
+                  549.5958404541016
+                ],
+                [
+                  659.0137329101562,
+                  557.0264739990234
+                ]
+              ],
+              "text": "PL 230362",
+              "annotation_index": 3,
+              "conf": 0.6
+            },
+            {
+              "type": "datecode",
+              "points": [
+                [
+                  891.7874755859375,
+                  421.91394805908203
+                ],
+                [
+                  1254.2684326171875,
+                  415.46675872802734
+                ],
+                [
+                  1259.3004150390625,
+                  474.79308319091797
+                ],
+                [
+                  892.896484375,
+                  481.84210205078125
+                ]
+              ],
+              "text": "2029 MR 22",
+              "annotation_index": 4,
+              "conf": 0.85
+            }
+          ],
+          "timings": {
+            "total": 258.39852075023373,
+            "trt_inference": 132.89618492126465,
+            "preprocess": 1.577615737915039,
+            "postprocess": 42.32907295227051,
+            "ocr_ms": 38.53583499949309,
+            "template_verification_ms": 36.767468999642006,
+            "product_verification_ms": 0.0
+          },
+          "text_verification": {
+            "all_match": true,
+            "results": [
+              {
+                "annotation_idx": 2,
+                "expected": "BB/MA",
+                "recognized": "BB/MA",
+                "match": true,
+                "confidence": 0.999804675579071,
+                "threshold": 0.6
+              },
+              {
+                "annotation_idx": 3,
+                "expected": "PL 230362",
+                "recognized": "PL 230362",
+                "match": true,
+                "confidence": 0.9718967080116272,
+                "threshold": 0.6
+              },
+              {
+                "annotation_idx": 4,
+                "expected": "2029 MR 22",
+                "recognized": "2029 MR 22",
+                "match": true,
+                "confidence": 0.9593750238418579,
+                "threshold": 0.85
+              }
+            ]
+          },
+          "template_verification": {
+            "match": true,
+            "similarity": 0.7675053477287292,
+            "threshold": 0.3,
+            "method": "TM_CCOEFF_NORMED",
+            "template_bbox": {
+              "type": "template",
+              "points": [
+                [
+                  581.6763610839844,
+                  433.21744537353516
+                ],
+                [
+                  1386.368408203125,
+                  418.79299545288086
+                ],
+                [
+                  1402.6534423828125,
+                  568.3186492919922
+                ],
+                [
+                  575.8544616699219,
+                  586.1773376464844
+                ]
+              ],
+              "conf": 0.3
+            },
+            "timing": {
+              "crop_ms": 1.6393240002798848,
+              "resize_ms": 3.6506269998426433,
+              "opt_resize_ms": 1.1734010004147422,
+              "matching_ms": 0.38682500053255353,
+              "total_ms": 36.767468999642006
+            }
+          },
+          "product_verification": {
+            "match": true,
+            "skipped": true,
+            "reason": "No product or label region in template",
+            "timing": {
+              "total": 0.0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "statistics": {
+    "total_triggers": 1336,
+    "total_inferences": 1336,
+    "total_pass": 1336,
+    "total_fail": 0,
+    "total_reject": 406,
+    "per_camera": [
+      {
+        "serial_number": "40733814",
+        "pass_count": 928,
+        "fail_count": 407,
+        "error_count": 0,
+        "total_pass_count": 928,
+        "total_fail_count": 407,
+        "total_error_count": 0,
+        "camera_pass_fail": "FAIL"
+      },
+      {
+        "serial_number": "40767174",
+        "pass_count": 1310,
+        "fail_count": 25,
+        "error_count": 0,
+        "total_pass_count": 1310,
+        "total_fail_count": 25,
+        "total_error_count": 0,
+        "camera_pass_fail": "FAIL"
+      }
+    ]
+  },
+  "metadata": {
+    "total_cameras": 2,
+    "total_frames": 2,
+    "inference_stats": {
+      "avg_confidence": 0.597625607469483,
+      "total_inliers": 271,
+      "total_matches": 467,
+      "per_camera_stats": [
+        {
+          "serial_number": "40733814",
+          "pass_fail": "FAIL",
+          "confidence": 0.5124555160142349,
+          "inliers": 144,
+          "total_matches": 281,
+          "timings": {
+            "total": 357.6808237512523,
+            "trt_inference": 132.89618492126465,
+            "preprocess": 1.7189979553222656,
+            "postprocess": 45.89414596557617,
+            "ocr_ms": 38.53583499949309,
+            "template_verification_ms": 82.48908600035065,
+            "product_verification_ms": 53.56068600030994
+          },
+          "frame_stats": {
+            "total_frames": 1,
+            "pass_count": 0,
+            "fail_count": 1,
+            "error_count": 0,
+            "avg_confidence": 0.5124555160142349
+          },
+          "cumulative_stats": {
+            "pass_count": 928,
+            "fail_count": 407,
+            "error_count": 0
+          }
+        },
+        {
+          "serial_number": "40767174",
+          "pass_fail": "FAIL",
+          "confidence": 0.6827956989247311,
+          "inliers": 127,
+          "total_matches": 186,
+          "timings": {
+            "total": 258.39852075023373,
+            "trt_inference": 132.89618492126465,
+            "preprocess": 1.577615737915039,
+            "postprocess": 42.32907295227051,
+            "ocr_ms": 38.53583499949309,
+            "template_verification_ms": 36.767468999642006,
+            "product_verification_ms": 0.0
+          },
+          "frame_stats": {
+            "total_frames": 1,
+            "pass_count": 1,
+            "fail_count": 0,
+            "error_count": 0,
+            "avg_confidence": 0.6827956989247311
+          },
+          "cumulative_stats": {
+            "pass_count": 1310,
+            "fail_count": 25,
+            "error_count": 0
+          }
+        }
+      ],
+      "overall_timings": {
+        "total": 357.6808237512523,
+        "trt_inference": 132.89618492126465,
+        "preprocess": 1.7189979553222656,
+        "postprocess": 45.89414596557617,
+        "ocr_ms": 38.53583499949309,
+        "template_verification_ms": 82.48908600035065,
+        "product_verification_ms": 53.56068600030994
+      }
+    }
+  },
+  "timestamp": "2026-03-23T11:46:27.144000",
+  "created_at": "2026-03-23T11:46:27.144000"
+}
+
+/home/demo/Source/ocr_datecode/frontend-ts/src/components/dashboard/historical/InspectionResultsTab.tsx
+<button className="dashboard-btn" onClick={fetchResults}>
+chỗ const data = await inferenceResultsAPI.getResults(filters);
+
+call api bên BE 
+/home/demo/Source/ocr_datecode/backend/app/api/endpoints/inference_results.py
+tôi muốn bổ sung thêm 1 vài option để filter search để biết record nào fail do text_verification, template_verification hay là product_verification
+với product_verification thì hãy filter 2 loại fail do wrinkled_check hay center_alignment_check. Có thể search and nhiều điều kiện vừa fail do text_verification, template_verification và product_verification
+với type wrinkled_check thì filter theo area, do center_alignment_check check lệch trái hay phải 
+
+
+  python backend/scripts/crop_fail_datecodes.py --recipe_id 69c4891ca70901e2a320fb94 --limit 1 --output_dir /datecodes
+  python predict_folder_report.py --engine languages/english/rec_model_fp32.engine --folder ./datecodes

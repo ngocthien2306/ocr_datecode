@@ -203,7 +203,7 @@ class YOLOOBBTensorRT:
 def main():
     # Initialize
     model = YOLOOBBTensorRT(
-        engine_path="weights/best_bottle_obb_m_320.engine",
+        engine_path="weights/best_bottle_obb_l_320.engine",
         class_names=['bottle', 'label']
     )
 
@@ -211,7 +211,7 @@ def main():
 
     # Test single image
     print("\n--- Single Image ---")
-    image = cv2.imread('test1.jpg')
+    image = cv2.imread('/home/demo/Source/ocr_datecode/backend/uploads/inference_results/69c4891ca70901e2a320fb94/2026-03-26/40767171/fail_f0_20260326_033835934715_org.jpg')
     results, timing = model.predict([image], conf_threshold=0.1, return_timing=True)
 
     boxes, scores, class_ids = results[0]
@@ -234,7 +234,7 @@ def main():
 
     # Test batch
     print("\n--- Batch Inference (4 images) ---")
-    images = [cv2.imread('test1.jpg') for _ in range(2)]
+    images = [cv2.imread('/home/demo/Source/ocr_datecode/backend/uploads/inference_results/69c4891ca70901e2a320fb94/2026-03-26/40767171/fail_f0_20260326_033835934715_org.jpg') for _ in range(2)]
     results, timing = model.predict(images, conf_threshold=0.3, return_timing=True)
 
     for i, (boxes, scores, _) in enumerate(results):
