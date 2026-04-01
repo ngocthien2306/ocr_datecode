@@ -17,8 +17,8 @@ LOG_DIR="${USER_HOME}/Source/ocr_datecode/logs"
 # Create log directory
 mkdir -p "$LOG_DIR"
 
-# === STEP 0: Camera Check (only for suntech machine) ===
-if [ "$USER_HOME" = "/home/suntech" ]; then
+# === STEP 0: Camera Check ===
+if [ "$USER_HOME" = "/home/suntech" ] || [ "$USER_HOME" = "/home/demo" ]; then
     SCRIPT_DIR="${USER_HOME}/Source/ocr_datecode"
     TMPFILE=$(mktemp /tmp/cam_check_exit_XXXX)
 
@@ -26,22 +26,30 @@ if [ "$USER_HOME" = "/home/suntech" ]; then
     export DISPLAY="${DISPLAY:-:0}"
     export XAUTHORITY="${USER_HOME}/.Xauthority"
 
-    TERMINAL_CMD="python3 '${SCRIPT_DIR}/camera_check_eth1.py'; \
+    if [ "$USER_HOME" = "/home/demo" ]; then
+        CAM_SCRIPT="camera_check_all.py"
+        CAM_TITLE="Camera Health Check - ALL"
+    else
+        CAM_SCRIPT="camera_check_eth1.py"
+        CAM_TITLE="Camera Health Check - eth1"
+    fi
+
+    TERMINAL_CMD="python3 '${SCRIPT_DIR}/${CAM_SCRIPT}'; \
 EXIT=\$?; echo \$EXIT > '${TMPFILE}'; \
 if [ \$EXIT -eq 0 ]; then \
     echo ''; echo '>>> Camera OK! Services will start in 3 seconds...'; sleep 3; \
 else \
-    echo ''; echo '>>> Camera check FAILED. Press Enter to close.'; read; \
+    echo ''; echo '>>> Camera check FAILED. System reboot was triggered.'; sleep 6; \
 fi"
 
     echo "📷 Opening camera health check terminal..."
     if command -v gnome-terminal &>/dev/null; then
-        gnome-terminal --wait --title="Camera Health Check - eth1" -- bash -c "$TERMINAL_CMD"
+        gnome-terminal --wait --title="$CAM_TITLE" -- bash -c "$TERMINAL_CMD"
     elif command -v xterm &>/dev/null; then
-        xterm -title "Camera Health Check - eth1" -geometry 120x35 -e bash -c "$TERMINAL_CMD"
+        xterm -title "$CAM_TITLE" -geometry 120x35 -e bash -c "$TERMINAL_CMD"
     else
         echo "⚠️  No GUI terminal found, running inline..."
-        python3 "${SCRIPT_DIR}/camera_check_eth1.py"
+        python3 "${SCRIPT_DIR}/${CAM_SCRIPT}"
         echo $? > "${TMPFILE}"
     fi
 

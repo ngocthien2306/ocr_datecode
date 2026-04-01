@@ -22,7 +22,7 @@ from .ocr.factory import OCRModelType, OCRConfig
 # OCRModelType.SVTRV2_CTC      → SVTRv2 CTC (6625 classes, width=320)
 # OCRModelType.OPENOCR_REPSVTR → OpenOCR RepSVTR
 # OCRModelType.PADDLEV5        → PaddleV5 (legacy)
-OCR_MODEL_TYPE = OCRModelType.SVTRV2_CTC
+OCR_MODEL_TYPE = OCRModelType.PADDLEV5
 
 # OCRBackendType.AUTO      → tự chọn TRT nếu có engine, fallback ONNX
 # OCRBackendType.TENSORRT  → bắt buộc dùng .engine (pycuda)
@@ -286,7 +286,7 @@ class InferenceHandler:
         logger.info("TemplateVerificationService initialized")
 
         # Product Verification Service with YOLO OBB
-        yolo_obb_engine_path = f"{home}/Source/ocr_datecode/weights/best_bottle_obb_m_320.engine"
+        yolo_obb_engine_path = f"{home}/Source/ocr_datecode/weights/best_bottle_obb_l_320.engine"
 
         # Configuration: save_debug_images can be "never", "on_fail", or "always"
         # Use "never" for production (fastest), "on_fail" for debugging failures
@@ -308,7 +308,7 @@ class InferenceHandler:
             debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
             angle_threshold=3.0,  # Rotation threshold in degrees
             margin_pixels=15,     # Misalignment margin in pixels
-            conf_threshold=0.1,  # YOLO confidence threshold
+            conf_threshold=0.001,  # YOLO confidence threshold
             check_label_boundary=check_label_boundary,  # Enable/disable label boundary check
             check_misalignment=check_misalignment  # Enable/disable misalignment check
         )

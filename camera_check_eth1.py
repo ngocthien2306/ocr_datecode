@@ -158,7 +158,17 @@ def main():
         logging.warning(f"Grab failed. Resetting {INTERFACE} and retrying...")
         reset_interface(INTERFACE)
 
-    logging.error(f"[FATAL] Camera still not working after {MAX_ATTEMPTS} attempts. Giving up.")
+    logging.error(f"[FATAL] Camera still not working after {MAX_ATTEMPTS} attempts. Tiến hành reboot...")
+    for i in range(5, 0, -1):
+        logging.info(f"  Reboot trong {i} giây...")
+        time.sleep(1)
+    logging.info("Rebooting now...")
+    subprocess.run(
+        ["sudo", "-S", "reboot"],
+        input=SUDO_PASSWORD + "\n",
+        text=True,
+        stderr=subprocess.DEVNULL,
+    )
     sys.exit(1)
 
 
