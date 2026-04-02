@@ -22,7 +22,7 @@ from .ocr.factory import OCRModelType, OCRConfig
 # OCRModelType.SVTRV2_CTC      → SVTRv2 CTC (6625 classes, width=320)
 # OCRModelType.OPENOCR_REPSVTR → OpenOCR RepSVTR
 # OCRModelType.PADDLEV5        → PaddleV5 (legacy)
-OCR_MODEL_TYPE = OCRModelType.SVTRV2_CTC
+OCR_MODEL_TYPE = OCRModelType.PADDLEV5
 
 # OCRBackendType.AUTO      → tự chọn TRT nếu có engine, fallback ONNX
 # OCRBackendType.TENSORRT  → bắt buộc dùng .engine (pycuda)
@@ -270,7 +270,9 @@ class InferenceHandler:
                 text_recognizer=self.text_recognizer,
                 ocr_backend=self.ocr_backend or "unknown",
                 save_debug_images=True,
-                debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result"
+                debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
+                use_char_conf_check=True,
+                use_sim_check=True,
             )
             logger.info(f"TextVerificationService initialized with {self.ocr_backend} backend")
         else:

@@ -264,12 +264,21 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 frame_expected_texts = camera.expected_texts.get(idx, {})
 
                 if frame_expected_texts:
+                    # Get template_img + original_bboxes for sim check
+                    sim_template_img = None
+                    sim_original_bboxes = None
+                    if hasattr(matcher, 'template_img') and hasattr(matcher, 'other_bboxes'):
+                        sim_template_img = matcher.template_img
+                        sim_original_bboxes = matcher.other_bboxes
+
                     t_ocr_start = time.perf_counter()
                     text_verification = context.text_verification_service.verify_text_regions(
                         frame_img=frame,
                         transformed_bboxes=frame_result['transformed_bboxes'],
                         expected_texts=frame_expected_texts,
-                        camera=camera
+                        camera=camera,
+                        template_img=sim_template_img,
+                        original_bboxes=sim_original_bboxes,
                     )
                     t_ocr_ms = (time.perf_counter() - t_ocr_start) * 1000
                     frame_result['text_verification'] = text_verification

@@ -188,14 +188,26 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             if camera.function_type == 'Check_Type_Product':
                 frame_expected_texts = camera.expected_texts.get(0, {})
                 if frame_expected_texts:
-                    ocr_tasks.append({
+                    # Get matcher for sim check (template_img + original_bboxes)
+                    matcher = context.camera_matchers.get(serial_number)
+                    if isinstance(matcher, list):
+                        matcher = matcher[0]
+
+                    ocr_task = {
                         'serial_number': serial_number,
                         'frame_img': frames[0],
                         'transformed_bboxes': result.get('transformed_bboxes', []),
                         'expected_texts': frame_expected_texts,
                         'camera': camera,
-                        'recognition_threshold': getattr(camera, 'recognition_threshold', 0.5)
-                    })
+                        'recognition_threshold': getattr(camera, 'recognition_threshold', 0.5),
+                    }
+
+                    # Attach template_img + original_bboxes for sim check
+                    if matcher and hasattr(matcher, 'template_img') and hasattr(matcher, 'other_bboxes'):
+                        ocr_task['template_img'] = matcher.template_img
+                        ocr_task['original_bboxes'] = matcher.other_bboxes
+
+                    ocr_tasks.append(ocr_task)
 
         # Batch OCR
         batch_ocr_results = {}
