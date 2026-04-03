@@ -16,6 +16,8 @@ interface TextVerificationResult {
   match: boolean;
   confidence: number;
   threshold: number;
+  match_sim: number;
+  similarity: number;
 }
 
 interface TextVerification {
@@ -1042,7 +1044,9 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                       <th className="col-recognized">Recognized</th>
                       <th className="col-match">Match</th>
                       <th className="col-confidence">Conf</th>
+                      <th className="col-confidence">Sim</th>
                       <th className="col-threshold-ocr">Conf</th>
+
                     </tr>
                   </thead>
                   <tbody>
@@ -1061,8 +1065,13 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                             {(result.confidence * 100).toFixed(1)}%
                           </span>
                         </td>
+                        <td className="col-confidence">
+                          <span className={`confidence-value ${getConfidenceClass(result.similarity)}`}>
+                            {(result.similarity * 100).toFixed(1)}%
+                          </span>
+                        </td>
                         <td className="col-threshold-ocr"> 
-                            <span className={`confidence-value ${getConfidenceClass(result.threshold)}`}>
+                          <span className={`confidence-value ${getConfidenceClass(result.threshold)}`}>
                             {(result.threshold * 100).toFixed(1)}%
                           </span>
                         </td>
