@@ -81,6 +81,235 @@ def _apply_text_corrections(text: str) -> str:
     return text
 
 
+# ── Character-level quality analysis ──────────────────────────────────────
+
+def _segment_characters_from_image(img: np.ndarray) -> list:
+    """
+    Segment characters from a BGR image.
+    Returns list of cropped char images (BGR), sorted left-to-right.
+    """
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+    _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    h_img, w_img = img.shape[:2]
+    min_char_height = h_img * 0.3
+    min_char_width = 3
+
+    boxes = []
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        if h >= min_char_height and w >= min_char_width:
+            boxes.append((x, y, w, h))
+    boxes.sort(key=lambda b: b[0])
+
+    # Merge overlapping boxes
+    merged = []
+    for box in boxes:
+        if merged and box[0] < merged[-1][0] + merged[-1][2]:
+            px, py, pw, ph = merged[-1]
+            nx = min(px, box[0])
+            ny = min(py, box[1])
+            nx2 = max(px + pw, box[0] + box[2])
+            ny2 = max(py + ph, box[1] + box[3])
+            merged[-1] = (nx, ny, nx2 - nx, ny2 - ny)
+        else:
+            merged.append(box)
+
+    # Split wide boxes
+    if merged:
+        widths = [b[2] for b in merged]
+        median_w = float(np.median(widths))
+        final_boxes = []
+        for box in merged:
+            x, y, w, h = box
+            if w < median_w * 1.5:
+                final_boxes.append(box)
+            else:
+                roi = thresh[y:y+h, x:x+w]
+                v_proj = np.sum(roi, axis=0) / 255
+                n_chars = max(2, round(w / median_w))
+                split_pts = []
+                for ci in range(1, n_chars):
+                    ex = int(ci * w / n_chars)
+                    sw = max(3, int(median_w * 0.3))
+                    left = max(1, ex - sw)
+                    right = min(w - 1, ex + sw)
+                    if left < right:
+                        split_pts.append(left + int(np.argmin(v_proj[left:right])))
+                split_pts = sorted(set(split_pts))
+                prev = 0
+                subs = []
+                for sp in split_pts:
+                    if sp - prev > 3:
+                        subs.append((x + prev, y, sp - prev, h))
+                    prev = sp
+                if w - prev > 3:
+                    subs.append((x + prev, y, w - prev, h))
+                final_boxes.extend(subs if len(subs) > 1 else [box])
+    else:
+        final_boxes = merged
+
+    padding = 2
+    char_imgs = []
+    for (x, y, w, h) in final_boxes:
+        x1, y1 = max(0, x - padding), max(0, y - padding)
+        x2, y2 = min(w_img, x + w + padding), min(h_img, y + h + padding)
+        char_imgs.append(img[y1:y2, x1:x2])
+
+    return char_imgs
+
+
+def _ssim_cv(gray1: np.ndarray, gray2: np.ndarray) -> float:
+    """SSIM tính bằng OpenCV (không cần skimage)."""
+    C1 = (0.01 * 255) ** 2
+    C2 = (0.03 * 255) ** 2
+    f1 = gray1.astype(np.float64)
+    f2 = gray2.astype(np.float64)
+    mu1 = cv2.GaussianBlur(f1, (11, 11), 1.5)
+    mu2 = cv2.GaussianBlur(f2, (11, 11), 1.5)
+    mu1_sq, mu2_sq, mu1_mu2 = mu1 ** 2, mu2 ** 2, mu1 * mu2
+    sigma1_sq = cv2.GaussianBlur(f1 ** 2, (11, 11), 1.5) - mu1_sq
+    sigma2_sq = cv2.GaussianBlur(f2 ** 2, (11, 11), 1.5) - mu2_sq
+    sigma12 = cv2.GaussianBlur(f1 * f2, (11, 11), 1.5) - mu1_mu2
+    ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / \
+               ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
+    return float(np.mean(ssim_map))
+
+
+def _char_quality(tmpl_char: np.ndarray, tgt_char: np.ndarray, size=(64, 64)) -> dict:
+    """Compute per-char quality metrics: SSIM, sharpness, edge, stroke, CC."""
+    t1 = cv2.resize(cv2.cvtColor(tmpl_char, cv2.COLOR_BGR2GRAY), size)
+    t2 = cv2.resize(cv2.cvtColor(tgt_char, cv2.COLOR_BGR2GRAY), size)
+
+    sim = _ssim_cv(t1, t2)
+
+    # Sharpness (Laplacian variance)
+    sharp_t = float(np.var(cv2.Laplacian(t1, cv2.CV_64F)))
+    sharp_g = float(np.var(cv2.Laplacian(t2, cv2.CV_64F)))
+    sharp_ratio = sharp_g / (sharp_t + 1e-8)
+
+    # Edge density (Canny)
+    edge_t = float(np.sum(cv2.Canny(t1, 50, 150) > 0))
+    edge_g = float(np.sum(cv2.Canny(t2, 50, 150) > 0))
+    n_pixels = t1.size
+    edge_ratio = (edge_g / n_pixels) / (edge_t / n_pixels + 1e-8)
+
+    # Stroke density
+    _, bw1 = cv2.threshold(t1, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    _, bw2 = cv2.threshold(t2, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    stroke_t = float(np.sum(bw1 > 0)) / bw1.size
+    stroke_g = float(np.sum(bw2 > 0)) / bw2.size
+    stroke_ratio = stroke_g / (stroke_t + 1e-8)
+
+    # Connected components
+    cc_t = cv2.connectedComponents(bw1)[0] - 1
+    cc_g = cv2.connectedComponents(bw2)[0] - 1
+
+    # Defect detection
+    defects = []
+    if sim < 0.5:
+        defects.append("SAI_KY_TU")
+    if sharp_ratio < 0.25:
+        defects.append("LEM")
+    if edge_ratio > 1.5 and stroke_ratio > 1.3:
+        defects.append("IN_CHONG")
+    if cc_g > cc_t + 2:
+        defects.append("GAY_NET")
+    if stroke_ratio < 0.5:
+        defects.append("MAT_NET")
+
+    return {
+        "ssim": sim, "sharp_ratio": sharp_ratio, "edge_ratio": edge_ratio,
+        "stroke_ratio": stroke_ratio, "cc_tmpl": cc_t, "cc_tgt": cc_g,
+        "defects": defects,
+    }
+
+
+def _save_char_comparison(tmpl_img, tgt_img, tmpl_chars, tgt_chars, char_results, output_path):
+    """Save visual comparison image to disk."""
+    n = len(char_results)
+    if n == 0:
+        return
+    cell_w, cell_h = 64, 64
+    gap = 4
+    label_w = 70
+    info_h = 40
+
+    # Full images section
+    full_w = max(350, label_w + n * (cell_w + gap) + gap)
+    tmpl_r = cv2.resize(tmpl_img, (full_w, int(tmpl_img.shape[0] * full_w / tmpl_img.shape[1])))
+    tgt_r = cv2.resize(tgt_img, (full_w, int(tgt_img.shape[0] * full_w / tgt_img.shape[1])))
+
+    # 4 rows of chars + info row
+    grid_h = 4 * (cell_h + gap) + gap
+    total_h = tmpl_r.shape[0] + tgt_r.shape[0] + gap * 5 + 32 + grid_h + info_h
+    canvas = np.ones((total_h, full_w, 3), dtype=np.uint8) * 40
+
+    y = gap
+    cv2.putText(canvas, "TEMPLATE", (4, y + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (180, 180, 180), 1)
+    y += 16
+    canvas[y:y + tmpl_r.shape[0], :tmpl_r.shape[1]] = tmpl_r
+    y += tmpl_r.shape[0] + gap
+    cv2.putText(canvas, "TARGET", (4, y + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (180, 180, 180), 1)
+    y += 16
+    canvas[y:y + tgt_r.shape[0], :tgt_r.shape[1]] = tgt_r
+    y += tgt_r.shape[0] + gap * 2
+
+    grid_y = y
+    for ri, label in enumerate(["Tmpl", "TmplThr", "Target", "TgtThr"]):
+        ry = grid_y + ri * (cell_h + gap)
+        cv2.putText(canvas, label, (4, ry + cell_h // 2 + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (160, 160, 160), 1)
+
+    for idx, cr in enumerate(char_results):
+        x_off = label_w + idx * (cell_w + gap)
+        if x_off + cell_w > full_w:
+            break
+        defects = cr["defects"]
+        border = (0, 0, 255) if defects else (0, 200, 0)
+        i = cr["idx"]
+
+        # Row 0: template char
+        ry0 = grid_y
+        cv2.putText(canvas, str(i), (x_off + cell_w // 2 - 4, ry0 - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (200, 200, 200), 1)
+        t_c = cv2.resize(tmpl_chars[i], (cell_w, cell_h))
+        canvas[ry0:ry0+cell_h, x_off:x_off+cell_w] = t_c
+
+        # Row 1: template thresh
+        ry1 = grid_y + (cell_h + gap)
+        g1 = cv2.cvtColor(tmpl_chars[i], cv2.COLOR_BGR2GRAY)
+        _, bw1 = cv2.threshold(cv2.resize(g1, (cell_w, cell_h)), 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        canvas[ry1:ry1+cell_h, x_off:x_off+cell_w] = cv2.cvtColor(bw1, cv2.COLOR_GRAY2BGR)
+
+        # Row 2: target char
+        ry2 = grid_y + 2 * (cell_h + gap)
+        t_g = cv2.resize(tgt_chars[i], (cell_w, cell_h))
+        canvas[ry2:ry2+cell_h, x_off:x_off+cell_w] = t_g
+        cv2.rectangle(canvas, (x_off-1, ry2-1), (x_off+cell_w, ry2+cell_h), border, 2)
+
+        # Row 3: target thresh
+        ry3 = grid_y + 3 * (cell_h + gap)
+        g2 = cv2.cvtColor(tgt_chars[i], cv2.COLOR_BGR2GRAY)
+        _, bw2 = cv2.threshold(cv2.resize(g2, (cell_w, cell_h)), 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        canvas[ry3:ry3+cell_h, x_off:x_off+cell_w] = cv2.cvtColor(bw2, cv2.COLOR_GRAY2BGR)
+        cv2.rectangle(canvas, (x_off-1, ry3-1), (x_off+cell_w, ry3+cell_h), border, 2)
+
+        # Info row
+        y_info = grid_y + 4 * (cell_h + gap)
+        color = border
+        cv2.putText(canvas, f"S:{cr['ssim']:.2f}", (x_off, y_info + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.25, color, 1)
+        if defects:
+            cv2.putText(canvas, "+".join(defects[:2]), (x_off, y_info + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.22, (0, 0, 255), 1)
+        else:
+            cv2.putText(canvas, "OK", (x_off, y_info + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 200, 0), 1)
+
+    cv2.imwrite(output_path, canvas)
+
+
 @dataclass
 class TextVerificationResult:
     """Result of text verification for a single annotation"""
@@ -221,6 +450,7 @@ class TextVerificationService:
     ) -> Dict[str, Any]:
         """
         Compute similarity for a single text/datecode region.
+        Also runs per-character quality analysis and saves comparison image.
         Used as a unit of work for ThreadPoolExecutor.
         """
         t_start = time.perf_counter()
@@ -247,15 +477,58 @@ class TextVerificationService:
             cropped_template_r, _ = self._resize_for_matching(cropped_template, self.SIM_MAX_DIMENSION)
             cropped_target_r, _ = self._resize_for_matching(cropped_target, self.SIM_MAX_DIMENSION)
 
-            # Calculate similarity
+            # Calculate region similarity
             similarity = self._calculate_sim(cropped_template_r, cropped_target_r)
             match_sim = bool(similarity >= conf_threshold)
+
+            # ── Per-character quality analysis (threaded) ──
+            t_char_start = time.perf_counter()
+            tmpl_chars = _segment_characters_from_image(cropped_template)
+            tgt_chars = _segment_characters_from_image(cropped_target)
+            n_pairs = min(len(tmpl_chars), len(tgt_chars))
+
+            char_results = []
+            if n_pairs > 0:
+                with ThreadPoolExecutor(max_workers=min(n_pairs, self.SIM_MAX_WORKERS)) as pool:
+                    metrics_list = list(pool.map(
+                        lambda i: _char_quality(tmpl_chars[i], tgt_chars[i]),
+                        range(n_pairs)
+                    ))
+                for i, m in enumerate(metrics_list):
+                    char_results.append({"idx": i, **m})
+
+            t_char_ms = (time.perf_counter() - t_char_start) * 1000
+
+            # Count defects
+            total_defects = sum(1 for cr in char_results if cr["defects"])
+            defect_summary = {}
+            for cr in char_results:
+                for d in cr["defects"]:
+                    defect_summary[d] = defect_summary.get(d, 0) + 1
+
+            # Save comparison image to debug folder
+            if self.save_debug_images and n_pairs > 0:
+                try:
+                    ts = int(time.time())
+                    out_path = os.path.join(
+                        self.debug_path,
+                        f"char_quality_{serial_number}_{annotation_idx}_{ts}.png"
+                    )
+                    _save_char_comparison(
+                        cropped_template, cropped_target,
+                        tmpl_chars, tgt_chars, char_results, out_path
+                    )
+                except Exception as e_save:
+                    logger.warning(f"[{serial_number}] Failed to save char comparison: {e_save}")
 
             elapsed = (time.perf_counter() - t_start) * 1000
             logger.info(
                 f"[{serial_number}] Sim check annotation {annotation_idx}: "
                 f"similarity={similarity:.4f}, threshold={conf_threshold}, "
-                f"match_sim={match_sim}, time={elapsed:.1f}ms"
+                f"match_sim={match_sim}, "
+                f"chars={n_pairs} (tmpl={len(tmpl_chars)}, tgt={len(tgt_chars)}), "
+                f"defects={total_defects}/{n_pairs} {defect_summary}, "
+                f"char_analysis={t_char_ms:.1f}ms, total={elapsed:.1f}ms"
             )
 
             return {
@@ -264,6 +537,10 @@ class TextVerificationService:
                 'similarity': similarity,
                 'threshold': conf_threshold,
                 'time_ms': elapsed,
+                'char_count': n_pairs,
+                'char_defects': total_defects,
+                'defect_summary': defect_summary,
+                'char_results': char_results,
             }
         except Exception as e:
             elapsed = (time.perf_counter() - t_start) * 1000
