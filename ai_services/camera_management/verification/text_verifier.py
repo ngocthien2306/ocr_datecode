@@ -91,6 +91,8 @@ def _segment_characters_from_image(img: np.ndarray) -> list:
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (3, 3), 0)
     _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    if np.mean(thresh) > 127:
+        thresh = cv2.bitwise_not(thresh)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
 
@@ -181,56 +183,182 @@ def _ssim_cv(gray1: np.ndarray, gray2: np.ndarray) -> float:
     return float(np.mean(ssim_map))
 
 
+# ── Helpers ported from test_segment.py ───────────────────────────────────
+
+def _tight_crop(thresh: np.ndarray) -> np.ndarray:
+    """Crop to foreground bounding box, removing excess padding."""
+    coords = np.where(thresh > 0)
+    if len(coords[0]) == 0:
+        return thresh
+    y0, y1 = int(coords[0].min()), int(coords[0].max())
+    x0, x1 = int(coords[1].min()), int(coords[1].max())
+    return thresh[y0:y1 + 1, x0:x1 + 1]
+
+
+def _deskew_char(thresh_char: np.ndarray, max_angle: float = 15.0) -> np.ndarray:
+    """Rotate upright. Skip if angle > max_angle to avoid wrong rotation on L/J/F."""
+    coords = np.column_stack(np.where(thresh_char > 0))
+    if len(coords) < 10:
+        return thresh_char
+    angle = cv2.minAreaRect(coords[:, ::-1].astype(np.float32))[2]
+    if angle < -45:
+        angle += 90
+    if abs(angle) > max_angle:
+        return thresh_char
+    h, w = thresh_char.shape
+    M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+    return cv2.warpAffine(thresh_char, M, (w, h), flags=cv2.INTER_NEAREST, borderValue=0)
+
+
+def _fit_to_square(img: np.ndarray, size: tuple) -> np.ndarray:
+    """Resize keeping aspect ratio, pad with black. Prevents I/l/1 distortion."""
+    h, w = img.shape[:2]
+    if h == 0 or w == 0:
+        return np.zeros((size[1], size[0]), dtype=np.uint8)
+    scale = min(size[0] / w, size[1] / h)
+    nw = max(1, int(round(w * scale)))
+    nh = max(1, int(round(h * scale)))
+    resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_NEAREST)
+    canvas = np.zeros((size[1], size[0]), dtype=np.uint8)
+    yo = (size[1] - nh) // 2
+    xo = (size[0] - nw) // 2
+    canvas[yo:yo + nh, xo:xo + nw] = resized
+    return canvas
+
+
+def _center_by_centroid(mask: np.ndarray, size: tuple) -> np.ndarray:
+    """Place mask in canvas so its centroid is centered."""
+    H, W = size[1], size[0]
+    canvas = np.zeros((H, W), dtype=np.uint8)
+    ys, xs = np.where(mask > 0)
+    if len(xs) == 0:
+        return canvas
+    cy, cx = float(ys.mean()), float(xs.mean())
+    h, w = mask.shape
+    yo = int(round(H / 2 - cy))
+    xo = int(round(W / 2 - cx))
+    y1s, y1e = max(0, yo), min(H, yo + h)
+    x1s, x1e = max(0, xo), min(W, xo + w)
+    y2s = max(0, -yo)
+    x2s = max(0, -xo)
+    y2e = y2s + (y1e - y1s)
+    x2e = x2s + (x1e - x1s)
+    if y1e > y1s and x1e > x1s:
+        canvas[y1s:y1e, x1s:x1e] = mask[y2s:y2e, x2s:x2e]
+    return canvas
+
+
+def _iou_binary(a: np.ndarray, b: np.ndarray) -> float:
+    """IoU of two same-size binary masks."""
+    inter = int(np.count_nonzero((a > 0) & (b > 0)))
+    union = int(np.count_nonzero((a > 0) | (b > 0)))
+    return inter / union if union > 0 else 0.0
+
+
 def _char_quality(tmpl_char: np.ndarray, tgt_char: np.ndarray, size=(64, 64)) -> dict:
-    """Compute per-char quality metrics: SSIM, sharpness, edge, stroke, CC."""
-    t1 = cv2.resize(cv2.cvtColor(tmpl_char, cv2.COLOR_BGR2GRAY), size)
-    t2 = cv2.resize(cv2.cvtColor(tgt_char, cv2.COLOR_BGR2GRAY), size)
+    """
+    Per-character quality analysis (ported from test_segment.py).
 
-    sim = _ssim_cv(t1, t2)
+    Pipeline: BGR → thresh → tight_crop → deskew → fit_to_square
+    Metrics:
+      1. Blurred Template Matching (TM_CCOEFF_NORMED, σ=1.2, multi-scale)
+         — tolerates sub-pixel misalignment and stroke-width variation
+      2. IoU after centroid alignment
+         — robust shape comparison for binary masks
+      3. Pixel ratio confidence — detects ink amount change
+    tm_conf = max(blur_TM, IoU) so the stronger metric wins.
+    final confidence = min(tm_conf, pixel_conf).
 
-    # Sharpness (Laplacian variance)
-    sharp_t = float(np.var(cv2.Laplacian(t1, cv2.CV_64F)))
-    sharp_g = float(np.var(cv2.Laplacian(t2, cv2.CV_64F)))
+    Defect detection retained for production use.
+    """
+    def _to_thresh(img: np.ndarray) -> np.ndarray:
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+        _, th = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        if np.mean(th) > 127:
+            th = cv2.bitwise_not(th)
+        return th
+
+    tmpl_thresh = _to_thresh(tmpl_char)
+    tgt_thresh = _to_thresh(tgt_char)
+
+    # Preprocess
+    t1 = _fit_to_square(_deskew_char(_tight_crop(tmpl_thresh)), size)
+    g2_deskewed = _deskew_char(_tight_crop(tgt_thresh))
+    t2_base = _fit_to_square(g2_deskewed, size)
+
+    # (1) Pixel confidence
+    px1 = int(np.count_nonzero(t1))
+    px2 = int(np.count_nonzero(t2_base))
+    pixel_ratio = px2 / (px1 + 1e-6)
+    deviation = abs(pixel_ratio - 1.0)
+    pixel_conf = float(np.clip(1.0 - deviation * (1.0 / 1.4), 0.0, 1.0))
+
+    # (2) Blurred multi-scale Template Matching
+    t1_blur = cv2.GaussianBlur(t1.astype(np.float32), (0, 0), sigmaX=1.2)
+    best_tm = 0.0
+    for scale in [0.85, 0.92, 1.0, 1.08, 1.15]:
+        s = (max(t1.shape[1], int(size[0] * scale)),
+             max(t1.shape[0], int(size[1] * scale)))
+        t2 = _fit_to_square(g2_deskewed, s)
+        t2_blur = cv2.GaussianBlur(t2.astype(np.float32), (0, 0), sigmaX=1.2)
+        result = cv2.matchTemplate(t2_blur, t1_blur, cv2.TM_CCOEFF_NORMED)
+        best_tm = max(best_tm, float(result.max()))
+    blur_tm = float(np.clip(best_tm, 0.0, 1.0))
+
+    # (3) IoU after centroid alignment (dilate to forgive jagged edges)
+    a = _center_by_centroid(_tight_crop(t1), size)
+    b = _center_by_centroid(_tight_crop(t2_base), size)
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    a = cv2.dilate(a, k, iterations=1)
+    b = cv2.dilate(b, k, iterations=1)
+    iou = _iou_binary(a, b)
+
+    tm_conf = max(blur_tm, iou)
+    confidence = min(tm_conf, pixel_conf)
+
+    # Sharpness from BGR for LEM detection
+    g1 = cv2.cvtColor(tmpl_char, cv2.COLOR_BGR2GRAY) if len(tmpl_char.shape) == 3 else tmpl_char
+    g2 = cv2.cvtColor(tgt_char, cv2.COLOR_BGR2GRAY) if len(tgt_char.shape) == 3 else tgt_char
+    g1 = cv2.resize(g1, size)
+    g2 = cv2.resize(g2, size)
+    sharp_t = float(np.var(cv2.Laplacian(g1, cv2.CV_64F)))
+    sharp_g = float(np.var(cv2.Laplacian(g2, cv2.CV_64F)))
     sharp_ratio = sharp_g / (sharp_t + 1e-8)
 
-    # Edge density (Canny)
-    edge_t = float(np.sum(cv2.Canny(t1, 50, 150) > 0))
-    edge_g = float(np.sum(cv2.Canny(t2, 50, 150) > 0))
-    n_pixels = t1.size
-    edge_ratio = (edge_g / n_pixels) / (edge_t / n_pixels + 1e-8)
-
-    # Stroke density
-    _, bw1 = cv2.threshold(t1, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    _, bw2 = cv2.threshold(t2, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    stroke_t = float(np.sum(bw1 > 0)) / bw1.size
-    stroke_g = float(np.sum(bw2 > 0)) / bw2.size
-    stroke_ratio = stroke_g / (stroke_t + 1e-8)
-
-    # Connected components
-    cc_t = cv2.connectedComponents(bw1)[0] - 1
-    cc_g = cv2.connectedComponents(bw2)[0] - 1
+    # Connected components for GAY_NET
+    cc_t = cv2.connectedComponents(t1)[0] - 1
+    cc_g = cv2.connectedComponents(t2_base)[0] - 1
 
     # Defect detection
     defects = []
-    if sim < 0.5:
+    if confidence < 0.5:
         defects.append("SAI_KY_TU")
     if sharp_ratio < 0.25:
         defects.append("LEM")
-    if edge_ratio > 1.5 and stroke_ratio > 1.3:
+    if pixel_ratio > 1.3 and iou > 0.6:
         defects.append("IN_CHONG")
     if cc_g > cc_t + 2:
         defects.append("GAY_NET")
-    if stroke_ratio < 0.5:
+    if pixel_ratio < 0.5:
         defects.append("MAT_NET")
 
     return {
-        "ssim": sim, "sharp_ratio": sharp_ratio, "edge_ratio": edge_ratio,
-        "stroke_ratio": stroke_ratio, "cc_tmpl": cc_t, "cc_tgt": cc_g,
+        "confidence": round(confidence, 4),
+        "tm_conf": round(tm_conf, 4),
+        "blur_tm": round(blur_tm, 4),
+        "iou": round(iou, 4),
+        "pixel_conf": round(pixel_conf, 3),
+        "px_tmpl": px1,
+        "px_tgt": px2,
+        "sharp_ratio": round(sharp_ratio, 4),
+        "cc_tmpl": cc_t,
+        "cc_tgt": cc_g,
         "defects": defects,
     }
 
 
-def _save_char_comparison(tmpl_img, tgt_img, tmpl_chars, tgt_chars, char_results, output_path):
+def _save_char_comparison(tmpl_img, tgt_img, tmpl_chars, tgt_chars, char_results, output_path, conf_threshold=0.75):
     """Save visual comparison image to disk."""
     n = len(char_results)
     if n == 0:
@@ -265,47 +393,65 @@ def _save_char_comparison(tmpl_img, tgt_img, tmpl_chars, tgt_chars, char_results
         ry = grid_y + ri * (cell_h + gap)
         cv2.putText(canvas, label, (4, ry + cell_h // 2 + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (160, 160, 160), 1)
 
+    def _fit_char(src, w, h):
+        """Resize giữ aspect ratio, pad nền canvas (40) để fill ô cell."""
+        ih, iw = src.shape[:2]
+        scale = min(w / iw, h / ih)
+        nw, nh = max(1, int(iw * scale)), max(1, int(ih * scale))
+        resized = cv2.resize(src, (nw, nh))
+        cell = np.ones((h, w, 3), dtype=np.uint8) * 40
+        yo = (h - nh) // 2
+        xo = (w - nw) // 2
+        cell[yo:yo + nh, xo:xo + nw] = resized if len(resized.shape) == 3 else cv2.cvtColor(resized, cv2.COLOR_GRAY2BGR)
+        return cell
+
+    def _make_thresh(bgr):
+        """BGR → thresh có background normalization."""
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (3, 3), 0)
+        _, th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        if np.mean(th) > 127:
+            th = cv2.bitwise_not(th)
+        return th
+
     for idx, cr in enumerate(char_results):
         x_off = label_w + idx * (cell_w + gap)
         if x_off + cell_w > full_w:
             break
         defects = cr["defects"]
-        border = (0, 0, 255) if defects else (0, 200, 0)
+        is_pass = cr["confidence"] >= conf_threshold
+        border = (0, 200, 0) if is_pass else (0, 0, 255)
         i = cr["idx"]
 
-        # Row 0: template char
+        # Row 0: template char (aspect ratio preserved)
         ry0 = grid_y
         cv2.putText(canvas, str(i), (x_off + cell_w // 2 - 4, ry0 - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (200, 200, 200), 1)
-        t_c = cv2.resize(tmpl_chars[i], (cell_w, cell_h))
-        canvas[ry0:ry0+cell_h, x_off:x_off+cell_w] = t_c
+        canvas[ry0:ry0+cell_h, x_off:x_off+cell_w] = _fit_char(tmpl_chars[i], cell_w, cell_h)
 
-        # Row 1: template thresh
+        # Row 1: template thresh (with background normalization)
         ry1 = grid_y + (cell_h + gap)
-        g1 = cv2.cvtColor(tmpl_chars[i], cv2.COLOR_BGR2GRAY)
-        _, bw1 = cv2.threshold(cv2.resize(g1, (cell_w, cell_h)), 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        canvas[ry1:ry1+cell_h, x_off:x_off+cell_w] = cv2.cvtColor(bw1, cv2.COLOR_GRAY2BGR)
+        bw1 = _make_thresh(tmpl_chars[i])
+        canvas[ry1:ry1+cell_h, x_off:x_off+cell_w] = _fit_char(cv2.cvtColor(bw1, cv2.COLOR_GRAY2BGR), cell_w, cell_h)
 
-        # Row 2: target char
+        # Row 2: target char (aspect ratio preserved)
         ry2 = grid_y + 2 * (cell_h + gap)
-        t_g = cv2.resize(tgt_chars[i], (cell_w, cell_h))
-        canvas[ry2:ry2+cell_h, x_off:x_off+cell_w] = t_g
+        canvas[ry2:ry2+cell_h, x_off:x_off+cell_w] = _fit_char(tgt_chars[i], cell_w, cell_h)
         cv2.rectangle(canvas, (x_off-1, ry2-1), (x_off+cell_w, ry2+cell_h), border, 2)
 
-        # Row 3: target thresh
+        # Row 3: target thresh (with background normalization)
         ry3 = grid_y + 3 * (cell_h + gap)
-        g2 = cv2.cvtColor(tgt_chars[i], cv2.COLOR_BGR2GRAY)
-        _, bw2 = cv2.threshold(cv2.resize(g2, (cell_w, cell_h)), 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        canvas[ry3:ry3+cell_h, x_off:x_off+cell_w] = cv2.cvtColor(bw2, cv2.COLOR_GRAY2BGR)
+        bw2 = _make_thresh(tgt_chars[i])
+        canvas[ry3:ry3+cell_h, x_off:x_off+cell_w] = _fit_char(cv2.cvtColor(bw2, cv2.COLOR_GRAY2BGR), cell_w, cell_h)
         cv2.rectangle(canvas, (x_off-1, ry3-1), (x_off+cell_w, ry3+cell_h), border, 2)
 
-        # Info row
+        # Info row: confidence + PASS/FAIL + defects
         y_info = grid_y + 4 * (cell_h + gap)
-        color = border
-        cv2.putText(canvas, f"S:{cr['ssim']:.2f}", (x_off, y_info + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.25, color, 1)
+        cv2.putText(canvas, f"C:{cr['confidence']:.2f}", (x_off, y_info + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.25, border, 1)
         if defects:
             cv2.putText(canvas, "+".join(defects[:2]), (x_off, y_info + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.22, (0, 0, 255), 1)
         else:
-            cv2.putText(canvas, "OK", (x_off, y_info + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 200, 0), 1)
+            label = "PASS" if is_pass else "FAIL"
+            cv2.putText(canvas, label, (x_off, y_info + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.28, border, 1)
 
     cv2.imwrite(output_path, canvas)
 
@@ -466,21 +612,6 @@ class TextVerificationService:
                 cropped_template = crop_text_region(template_img, original_points)
                 self._sim_crop_cache[cache_key] = cropped_template
 
-            # Resize target to match template size if needed
-            if cropped_template.shape != cropped_target.shape:
-                cropped_target = cv2.resize(
-                    cropped_target,
-                    (cropped_template.shape[1], cropped_template.shape[0])
-                )
-
-            # Resize for faster matching
-            cropped_template_r, _ = self._resize_for_matching(cropped_template, self.SIM_MAX_DIMENSION)
-            cropped_target_r, _ = self._resize_for_matching(cropped_target, self.SIM_MAX_DIMENSION)
-
-            # Calculate region similarity
-            similarity = self._calculate_sim(cropped_template_r, cropped_target_r)
-            match_sim = bool(similarity >= conf_threshold)
-
             # ── Per-character quality analysis (threaded) ──
             t_char_start = time.perf_counter()
             tmpl_chars = _segment_characters_from_image(cropped_template)
@@ -499,6 +630,17 @@ class TextVerificationService:
 
             t_char_ms = (time.perf_counter() - t_char_start) * 1000
 
+            # Similarity = min confidence across all char pairs (weakest link)
+            # If char counts mismatch, penalize to 0
+            if n_pairs == 0:
+                similarity = 0.0
+            elif len(tmpl_chars) != len(tgt_chars):
+                similarity = 0.0
+            else:
+                similarity = float(min(cr["confidence"] for cr in char_results))
+
+            match_sim = bool(similarity >= conf_threshold)
+
             # Count defects
             total_defects = sum(1 for cr in char_results if cr["defects"])
             defect_summary = {}
@@ -516,7 +658,8 @@ class TextVerificationService:
                     )
                     _save_char_comparison(
                         cropped_template, cropped_target,
-                        tmpl_chars, tgt_chars, char_results, out_path
+                        tmpl_chars, tgt_chars, char_results, out_path,
+                        conf_threshold=conf_threshold
                     )
                 except Exception as e_save:
                     logger.warning(f"[{serial_number}] Failed to save char comparison: {e_save}")
