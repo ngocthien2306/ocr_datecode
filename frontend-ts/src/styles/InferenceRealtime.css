@@ -2119,14 +2119,34 @@ body.dark-mode .inference-realtime-footer {
 
 .char-images-cell {
   overflow-x: auto;
+  max-width: 100%;
+  /* Hiện thanh kéo ngang ngay cả khi không hover */
+  scrollbar-width: thin;
+  scrollbar-color: #94a3b8 #f1f5f9;
+}
+
+.char-images-cell::-webkit-scrollbar {
+  height: 6px;
+}
+
+.char-images-cell::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 3px;
+}
+
+.char-images-cell::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 3px;
 }
 
 .char-comparison-strip {
   display: flex;
   flex-direction: row;
+  flex-wrap: nowrap;
   gap: 6px;
-  padding: 4px 0;
+  padding: 4px 0 8px;
   align-items: flex-start;
+  width: max-content;
 }
 
 .char-comparison-cell {
