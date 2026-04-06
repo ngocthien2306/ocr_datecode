@@ -123,6 +123,11 @@ class TensorRTOCRBackend(OCRBackendStrategy):
             # Fallback to sequential
             return [self.recognize(img) for img in images]
 
+    def recognize_with_char_conf(self, image: np.ndarray) -> tuple:
+        if not self.is_available:
+            return ("", 0.0, [])
+        return self._recognizer.recognize_with_char_conf(image)
+
 
 class ONNXOCRBackend(OCRBackendStrategy):
     """
@@ -191,6 +196,11 @@ class ONNXOCRBackend(OCRBackendStrategy):
         else:
             # Fallback to sequential
             return [self.recognize(img) for img in images]
+
+    def recognize_with_char_conf(self, image: np.ndarray) -> tuple:
+        if not self.is_available:
+            return ("", 0.0, [])
+        return self._recognizer.recognize_with_char_conf(image)
 
 
 class TensorRTOpenOCRBackend(OCRBackendStrategy):
@@ -268,6 +278,11 @@ class TensorRTOpenOCRBackend(OCRBackendStrategy):
         # Direct numpy array batch processing
         return self._recognizer.recognize_batch(images, use_true_batch=True)
 
+    def recognize_with_char_conf(self, image: np.ndarray) -> tuple:
+        if not self.is_available:
+            return ("", 0.0, [])
+        return self._recognizer.recognize_with_char_conf(image)
+
 
 class ONNXOpenOCRBackend(OCRBackendStrategy):
     """
@@ -344,6 +359,11 @@ class ONNXOpenOCRBackend(OCRBackendStrategy):
         # Direct numpy array batch processing
         return self._recognizer.recognize_batch(images, batch_size=self._batch_size)
 
+    def recognize_with_char_conf(self, image: np.ndarray) -> tuple:
+        if not self.is_available:
+            return ("", 0.0, [])
+        return self._recognizer.recognize_with_char_conf(image)
+
 
 class SVTRv2ONNXBackend(OCRBackendStrategy):
     """ONNX Runtime backend for SVTRv2 CTC model (device: cpu/cuda/trt EP)."""
@@ -385,6 +405,11 @@ class SVTRv2ONNXBackend(OCRBackendStrategy):
         if not self.is_available:
             return [("", 0.0) for _ in images]
         return self._recognizer.recognize_batch(images, batch_size=self._config.batch_size)
+
+    def recognize_with_char_conf(self, image: np.ndarray) -> tuple:
+        if not self.is_available:
+            return ("", 0.0, [])
+        return self._recognizer.recognize_with_char_conf(image)
 
 
 class SVTRv2TRTBackend(OCRBackendStrategy):
@@ -429,6 +454,11 @@ class SVTRv2TRTBackend(OCRBackendStrategy):
         if not self.is_available:
             return [("", 0.0) for _ in images]
         return self._recognizer.recognize_batch(images, batch_size=self._config.batch_size)
+
+    def recognize_with_char_conf(self, image: np.ndarray) -> tuple:
+        if not self.is_available:
+            return ("", 0.0, [])
+        return self._recognizer.recognize_with_char_conf(image)
 
 
 # ============================================================================
