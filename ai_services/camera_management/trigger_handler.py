@@ -90,6 +90,7 @@ class TriggerHandler:
             'total_groups_completed': 0,  # Groups that completed successfully
             'total_groups_timeout': 0,    # Groups that timed out
             'total_inferences': 0,        # Total inference runs
+            'total_capture_failures': 0,  # Camera capture failures (trigger received but no image)
         }
         self._stats_lock = threading.Lock()
 
@@ -97,6 +98,15 @@ class TriggerHandler:
         # Structure: {serial_number: {'total_pass': N, 'total_fail': M, 'total_error': K}}
         self._per_camera_cumulative_stats: Dict[str, Dict[str, int]] = {}
         self._camera_cumulative_lock = threading.Lock()
+
+        # Auto-restart on consecutive capture failures per camera
+        _CAPTURE_FAIL_RESTART_N = 1          # consecutive failures before restart
+        _CAPTURE_FAIL_COOLDOWN_S = 20.0      # minimum seconds between restarts
+        self._capture_fail_restart_n = _CAPTURE_FAIL_RESTART_N
+        self._capture_fail_cooldown_s = _CAPTURE_FAIL_COOLDOWN_S
+        self._consecutive_capture_failures: Dict[str, int] = {}  # {serial_number: count}
+        self._last_restart_time: float = 0.0
+        self._restart_lock = threading.Lock()
 
         # Statistics monitoring thread
         self._monitoring = False
@@ -289,11 +299,13 @@ class TriggerHandler:
                 success_rate = (completed / total_groups * 100) if total_groups > 0 else 0.0
 
                 # Log to file
+                capture_failures = stats['total_capture_failures']
                 stats_logger.info(
                     f"Triggers: {stats['total_triggers']} | "
                     f"Groups: {total_groups} created, {completed} completed, {timeout} timeout | "
                     f"Success: {success_rate:.1f}% | "
                     f"Inferences: {stats['total_inferences']} | "
+                    f"CaptureFailures: {capture_failures} | "
                     f"Active: {active_groups} groups, {active_timers} timers"
                 )
 
@@ -306,6 +318,7 @@ class TriggerHandler:
                     f"📊 [STATS] Triggers={stats['total_triggers']}, "
                     f"Groups={completed}/{total_groups} ({success_rate:.1f}%), "
                     f"Inferences={stats['total_inferences']}, "
+                    f"CaptureFail={capture_failures}, "
                     f"Active={active_groups}g/{active_timers}t"
                 )
 
@@ -689,11 +702,17 @@ class TriggerHandler:
                         f"{result.get('frame_count', 0)} frames. "
                         f"Progress: {completed}/{expected}"
                     )
+                    # Reset consecutive failure counter on success
+                    with self._restart_lock:
+                        self._consecutive_capture_failures.pop(camera.serial_number, None)
                 else:
                     logger.error(
                         f"[Group #{group_id}] Camera {camera.serial_number} failed: "
                         f"{result.get('error')}. Progress: {completed}/{expected}"
                     )
+                    with self._stats_lock:
+                        self._stats['total_capture_failures'] += 1
+                    self._handle_capture_failure(camera.serial_number, group_id)
 
                 # Check if all cameras completed
                 if completed >= expected:
@@ -1116,3 +1135,78 @@ class TriggerHandler:
                 sn: stats.copy()
                 for sn, stats in self._per_camera_cumulative_stats.items()
             }
+
+    def _handle_capture_failure(self, serial_number: str, group_id: int):
+        """
+        Track consecutive capture failures per camera.
+        If a single camera fails N times in a row, trigger service restart
+        (subject to cooldown).
+        """
+        with self._restart_lock:
+            count = self._consecutive_capture_failures.get(serial_number, 0) + 1
+            self._consecutive_capture_failures[serial_number] = count
+
+            logger.warning(
+                f"[Group #{group_id}] Camera {serial_number} consecutive failures: "
+                f"{count}/{self._capture_fail_restart_n}"
+            )
+
+            if count >= self._capture_fail_restart_n:
+                now = time.time()
+                elapsed = now - self._last_restart_time
+                if elapsed < self._capture_fail_cooldown_s:
+                    remaining = self._capture_fail_cooldown_s - elapsed
+                    logger.warning(
+                        f"[Group #{group_id}] Camera {serial_number} reached {count} consecutive "
+                        f"failures but cooldown active ({remaining:.0f}s remaining). Skip restart."
+                    )
+                    return
+
+                logger.error(
+                    f"[Group #{group_id}] Camera {serial_number} failed {count} times consecutively. "
+                    f"Triggering service restart!"
+                )
+                self._last_restart_time = now
+                self._consecutive_capture_failures[serial_number] = 0
+                # Run restart in background thread to not block capture loop
+                t = threading.Thread(
+                    target=self._restart_service,
+                    args=(serial_number,),
+                    daemon=True,
+                    name="ServiceRestartThread"
+                )
+                t.start()
+
+    def _restart_service(self, trigger_camera: str):
+        """
+        Execute 'sudo systemctl restart ocr-all' with auto password input.
+        Called in a background thread.
+        """
+        import subprocess
+        service = "ocr-all"
+        logger.warning(
+            f"[AUTO-RESTART] Camera {trigger_camera} triggered service restart → "
+            f"sudo systemctl restart {service}"
+        )
+        try:
+            result = subprocess.run(
+                ['sudo', '-S', 'systemctl', 'restart', service],
+                input='1\n',
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            if result.returncode == 0:
+                logger.warning(
+                    f"[AUTO-RESTART] Service '{service}' restarted successfully "
+                    f"(triggered by camera {trigger_camera})"
+                )
+            else:
+                logger.error(
+                    f"[AUTO-RESTART] Restart failed (rc={result.returncode}): "
+                    f"{result.stderr.strip()}"
+                )
+        except subprocess.TimeoutExpired:
+            logger.error(f"[AUTO-RESTART] Restart command timed out after 30s")
+        except Exception as e:
+            logger.error(f"[AUTO-RESTART] Restart exception: {e}")
