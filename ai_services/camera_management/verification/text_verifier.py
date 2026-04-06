@@ -83,6 +83,36 @@ def _apply_text_corrections(text: str) -> str:
 
 # ── Character-level quality analysis ──────────────────────────────────────
 
+def _split_wide_box(thresh_roi, box, median_w):
+    """Split a box that is too wide using vertical projection."""
+    x, y, w, h = box
+    if w < median_w * 1.5:
+        return [box]
+    roi = thresh_roi[y:y+h, x:x+w]
+    v_proj = np.sum(roi, axis=0) / 255
+    n_chars = max(2, round(w / median_w))
+    split_points = []
+    for i in range(1, n_chars):
+        expected_x = int(i * w / n_chars)
+        search_w = max(3, int(median_w * 0.3))
+        left = max(1, expected_x - search_w)
+        right = min(w - 1, expected_x + search_w)
+        if left < right:
+            window = v_proj[left:right]
+            best = left + np.argmin(window)
+            split_points.append(best)
+    split_points = sorted(set(split_points))
+    sub_boxes = []
+    prev = 0
+    for sp in split_points:
+        if sp - prev > 3:
+            sub_boxes.append((x + prev, y, sp - prev, h))
+        prev = sp
+    if w - prev > 3:
+        sub_boxes.append((x + prev, y, w - prev, h))
+    return sub_boxes if len(sub_boxes) > 1 else [box]
+
+
 def _segment_characters_from_image(img: np.ndarray) -> list:
     """
     Segment characters from a BGR image.
@@ -109,7 +139,6 @@ def _segment_characters_from_image(img: np.ndarray) -> list:
             boxes.append((x, y, w, h))
     boxes.sort(key=lambda b: b[0])
 
-    # Merge overlapping boxes
     merged = []
     for box in boxes:
         if merged and box[0] < merged[-1][0] + merged[-1][2]:
@@ -122,37 +151,13 @@ def _segment_characters_from_image(img: np.ndarray) -> list:
         else:
             merged.append(box)
 
-    # Split wide boxes
     if merged:
         widths = [b[2] for b in merged]
         median_w = float(np.median(widths))
         final_boxes = []
         for box in merged:
-            x, y, w, h = box
-            if w < median_w * 1.5:
-                final_boxes.append(box)
-            else:
-                roi = thresh[y:y+h, x:x+w]
-                v_proj = np.sum(roi, axis=0) / 255
-                n_chars = max(2, round(w / median_w))
-                split_pts = []
-                for ci in range(1, n_chars):
-                    ex = int(ci * w / n_chars)
-                    sw = max(3, int(median_w * 0.3))
-                    left = max(1, ex - sw)
-                    right = min(w - 1, ex + sw)
-                    if left < right:
-                        split_pts.append(left + int(np.argmin(v_proj[left:right])))
-                split_pts = sorted(set(split_pts))
-                prev = 0
-                subs = []
-                for sp in split_pts:
-                    if sp - prev > 3:
-                        subs.append((x + prev, y, sp - prev, h))
-                    prev = sp
-                if w - prev > 3:
-                    subs.append((x + prev, y, w - prev, h))
-                final_boxes.extend(subs if len(subs) > 1 else [box])
+            sub = _split_wide_box(thresh, box, median_w)
+            final_boxes.extend(sub)
     else:
         final_boxes = merged
 
@@ -165,25 +170,6 @@ def _segment_characters_from_image(img: np.ndarray) -> list:
 
     return char_imgs
 
-
-def _ssim_cv(gray1: np.ndarray, gray2: np.ndarray) -> float:
-    """SSIM tính bằng OpenCV (không cần skimage)."""
-    C1 = (0.01 * 255) ** 2
-    C2 = (0.03 * 255) ** 2
-    f1 = gray1.astype(np.float64)
-    f2 = gray2.astype(np.float64)
-    mu1 = cv2.GaussianBlur(f1, (11, 11), 1.5)
-    mu2 = cv2.GaussianBlur(f2, (11, 11), 1.5)
-    mu1_sq, mu2_sq, mu1_mu2 = mu1 ** 2, mu2 ** 2, mu1 * mu2
-    sigma1_sq = cv2.GaussianBlur(f1 ** 2, (11, 11), 1.5) - mu1_sq
-    sigma2_sq = cv2.GaussianBlur(f2 ** 2, (11, 11), 1.5) - mu2_sq
-    sigma12 = cv2.GaussianBlur(f1 * f2, (11, 11), 1.5) - mu1_mu2
-    ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / \
-               ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
-    return float(np.mean(ssim_map))
-
-
-# ── Helpers ported from test_segment.py ───────────────────────────────────
 
 def _tight_crop(thresh: np.ndarray) -> np.ndarray:
     """Crop to foreground bounding box, removing excess padding."""
@@ -262,13 +248,9 @@ def _char_quality(tmpl_char: np.ndarray, tgt_char: np.ndarray, size=(64, 64)) ->
     Pipeline: BGR → thresh → tight_crop → deskew → fit_to_square
     Metrics:
       1. Blurred Template Matching (TM_CCOEFF_NORMED, σ=1.2, multi-scale)
-         — tolerates sub-pixel misalignment and stroke-width variation
       2. IoU after centroid alignment
-         — robust shape comparison for binary masks
-      3. Pixel ratio confidence — detects ink amount change
-    tm_conf = max(blur_TM, IoU) so the stronger metric wins.
-    final confidence = min(tm_conf, pixel_conf).
-
+      3. Pixel ratio confidence
+    tm_conf = max(blur_TM, IoU). final confidence = min(tm_conf, pixel_conf).
     Defect detection retained for production use.
     """
     def _to_thresh(img: np.ndarray) -> np.ndarray:
@@ -282,7 +264,6 @@ def _char_quality(tmpl_char: np.ndarray, tgt_char: np.ndarray, size=(64, 64)) ->
     tmpl_thresh = _to_thresh(tmpl_char)
     tgt_thresh = _to_thresh(tgt_char)
 
-    # Preprocess
     t1 = _fit_to_square(_deskew_char(_tight_crop(tmpl_thresh)), size)
     g2_deskewed = _deskew_char(_tight_crop(tgt_thresh))
     t2_base = _fit_to_square(g2_deskewed, size)
@@ -306,7 +287,7 @@ def _char_quality(tmpl_char: np.ndarray, tgt_char: np.ndarray, size=(64, 64)) ->
         best_tm = max(best_tm, float(result.max()))
     blur_tm = float(np.clip(best_tm, 0.0, 1.0))
 
-    # (3) IoU after centroid alignment (dilate to forgive jagged edges)
+    # (3) IoU after centroid alignment
     a = _center_by_centroid(_tight_crop(t1), size)
     b = _center_by_centroid(_tight_crop(t2_base), size)
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
@@ -359,99 +340,121 @@ def _char_quality(tmpl_char: np.ndarray, tgt_char: np.ndarray, size=(64, 64)) ->
 
 
 def _save_char_comparison(tmpl_img, tgt_img, tmpl_chars, tgt_chars, char_results, output_path, conf_threshold=0.75):
-    """Save visual comparison image to disk."""
+    """Save visual comparison strip — layout identical to test_segment.py:
+      Row 1: ORIG TEMPLATE  |  ORIG TARGET        (side by side)
+      Row 2: THRESH TEMPLATE | THRESH TARGET       (side by side)
+      Row 3: template chars  (80×80 per char)
+      Row 4: target chars    (80×80, green/red border)
+      Row 5: confidence + PASS/FAIL per char
+      Banner: overall PASS/FAIL
+    """
     n = len(char_results)
     if n == 0:
         return
-    cell_w, cell_h = 64, 64
+
+    cell_w, cell_h = 80, 80
     gap = 4
-    label_w = 70
-    info_h = 40
+    score_h = 40
+    strip_w = n * (cell_w + gap) + gap
 
-    # Full images section
-    full_w = max(350, label_w + n * (cell_w + gap) + gap)
-    tmpl_r = cv2.resize(tmpl_img, (full_w, int(tmpl_img.shape[0] * full_w / tmpl_img.shape[1])))
-    tgt_r = cv2.resize(tgt_img, (full_w, int(tgt_img.shape[0] * full_w / tgt_img.shape[1])))
+    orig_h = 120
+    orig_section_h = (orig_h + gap) * 2 + gap
+    char_strip_h = 2 * (cell_h + gap) + score_h + gap * 2
+    total_h = orig_section_h + char_strip_h
+    total_w = max(strip_w, 200)
 
-    # 4 rows of chars + info row
-    grid_h = 4 * (cell_h + gap) + gap
-    total_h = tmpl_r.shape[0] + tgt_r.shape[0] + gap * 5 + 32 + grid_h + info_h
-    canvas = np.ones((total_h, full_w, 3), dtype=np.uint8) * 40
+    canvas = np.ones((total_h, total_w, 3), dtype=np.uint8) * 50
 
-    y = gap
-    cv2.putText(canvas, "TEMPLATE", (4, y + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (180, 180, 180), 1)
-    y += 16
-    canvas[y:y + tmpl_r.shape[0], :tmpl_r.shape[1]] = tmpl_r
-    y += tmpl_r.shape[0] + gap
-    cv2.putText(canvas, "TARGET", (4, y + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (180, 180, 180), 1)
-    y += 16
-    canvas[y:y + tgt_r.shape[0], :tgt_r.shape[1]] = tgt_r
-    y += tgt_r.shape[0] + gap * 2
+    def place_image(src, y_start, x_start, w, h):
+        img_bgr = cv2.cvtColor(src, cv2.COLOR_GRAY2BGR) if len(src.shape) == 2 else src
+        ih, iw = img_bgr.shape[:2]
+        scale = w / iw
+        nw = w
+        nh = min(h, max(1, int(ih * scale)))
+        resized = cv2.resize(img_bgr, (nw, nh))
+        canvas[y_start:y_start + nh, x_start:x_start + nw] = resized
 
-    grid_y = y
-    for ri, label in enumerate(["Tmpl", "TmplThr", "Target", "TgtThr"]):
-        ry = grid_y + ri * (cell_h + gap)
-        cv2.putText(canvas, label, (4, ry + cell_h // 2 + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (160, 160, 160), 1)
-
-    def _fit_char(src, w, h):
-        """Resize giữ aspect ratio, pad nền canvas (40) để fill ô cell."""
-        ih, iw = src.shape[:2]
-        scale = min(w / iw, h / ih)
-        nw, nh = max(1, int(iw * scale)), max(1, int(ih * scale))
-        resized = cv2.resize(src, (nw, nh))
-        cell = np.ones((h, w, 3), dtype=np.uint8) * 40
-        yo = (h - nh) // 2
-        xo = (w - nw) // 2
-        cell[yo:yo + nh, xo:xo + nw] = resized if len(resized.shape) == 3 else cv2.cvtColor(resized, cv2.COLOR_GRAY2BGR)
-        return cell
-
-    def _make_thresh(bgr):
-        """BGR → thresh có background normalization."""
-        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    def make_full_thresh(bgr):
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY) if len(bgr.shape) == 3 else bgr
         blur = cv2.GaussianBlur(gray, (3, 3), 0)
         _, th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         if np.mean(th) > 127:
             th = cv2.bitwise_not(th)
         return th
 
+    def fit_char(src, w, h):
+        img = src if len(src.shape) == 3 else cv2.cvtColor(src, cv2.COLOR_GRAY2BGR)
+        ih, iw = img.shape[:2]
+        scale = min(w / iw, h / ih)
+        nw, nh = max(1, int(iw * scale)), max(1, int(ih * scale))
+        resized = cv2.resize(img, (nw, nh))
+        cell = np.ones((h, w, 3), dtype=np.uint8) * 50
+        yo = (h - nh) // 2
+        xo = (w - nw) // 2
+        cell[yo:yo + nh, xo:xo + nw] = resized
+        return cell
+
+    tmpl_thresh = make_full_thresh(tmpl_img)
+    tgt_thresh = make_full_thresh(tgt_img)
+    half_w = total_w // 2
+
+    # Row 1: original images side by side
+    y0 = gap
+    place_image(tmpl_img, y0, 0, half_w, orig_h)
+    place_image(tgt_img, y0, half_w, half_w, orig_h)
+    cv2.line(canvas, (half_w, y0), (half_w, y0 + orig_h), (120, 120, 120), 1)
+    cv2.putText(canvas, "ORIG TEMPLATE", (4, y0 + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
+    cv2.putText(canvas, "ORIG TARGET", (half_w + 4, y0 + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
+
+    # Row 2: thresh images side by side
+    y1 = y0 + orig_h + gap
+    place_image(tmpl_thresh, y1, 0, half_w, orig_h)
+    place_image(tgt_thresh, y1, half_w, half_w, orig_h)
+    cv2.line(canvas, (half_w, y1), (half_w, y1 + orig_h), (120, 120, 120), 1)
+    cv2.putText(canvas, "THRESH TEMPLATE", (4, y1 + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
+    cv2.putText(canvas, "THRESH TARGET", (half_w + 4, y1 + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
+
+    # Char rows
+    y_base = orig_section_h
+    cv2.putText(canvas, "TEMPLATE", (2, y_base + gap + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
+    cv2.putText(canvas, "TARGET", (2, y_base + gap * 2 + cell_h + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
+
     for idx, cr in enumerate(char_results):
-        x_off = label_w + idx * (cell_w + gap)
-        if x_off + cell_w > full_w:
+        x_off = gap + idx * (cell_w + gap)
+        if x_off + cell_w > total_w:
             break
-        defects = cr["defects"]
-        is_pass = cr["confidence"] >= conf_threshold
-        border = (0, 200, 0) if is_pass else (0, 0, 255)
         i = cr["idx"]
+        is_pass = cr["confidence"] >= conf_threshold
+        color = (0, 220, 0) if is_pass else (0, 0, 255)
 
-        # Row 0: template char (aspect ratio preserved)
-        ry0 = grid_y
-        cv2.putText(canvas, str(i), (x_off + cell_w // 2 - 4, ry0 - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (200, 200, 200), 1)
-        canvas[ry0:ry0+cell_h, x_off:x_off+cell_w] = _fit_char(tmpl_chars[i], cell_w, cell_h)
+        # Template char row
+        canvas[y_base + gap:y_base + gap + cell_h, x_off:x_off + cell_w] = fit_char(tmpl_chars[i], cell_w, cell_h)
 
-        # Row 1: template thresh (with background normalization)
-        ry1 = grid_y + (cell_h + gap)
-        bw1 = _make_thresh(tmpl_chars[i])
-        canvas[ry1:ry1+cell_h, x_off:x_off+cell_w] = _fit_char(cv2.cvtColor(bw1, cv2.COLOR_GRAY2BGR), cell_w, cell_h)
+        # Target char row + border
+        tgt_y0 = y_base + gap * 2 + cell_h
+        tgt_y1 = tgt_y0 + cell_h
+        canvas[tgt_y0:tgt_y1, x_off:x_off + cell_w] = fit_char(tgt_chars[i], cell_w, cell_h)
+        cv2.rectangle(canvas, (x_off, tgt_y0), (x_off + cell_w, tgt_y1), color, 2)
 
-        # Row 2: target char (aspect ratio preserved)
-        ry2 = grid_y + 2 * (cell_h + gap)
-        canvas[ry2:ry2+cell_h, x_off:x_off+cell_w] = _fit_char(tgt_chars[i], cell_w, cell_h)
-        cv2.rectangle(canvas, (x_off-1, ry2-1), (x_off+cell_w, ry2+cell_h), border, 2)
+        # Score row
+        y_text = y_base + gap * 3 + cell_h * 2
+        cv2.putText(canvas, f"{cr['confidence']:.2f}", (x_off + 2, y_text + 14),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+        label = "PASS" if is_pass else "FAIL"
+        cv2.putText(canvas, label, (x_off + 2, y_text + 28),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
 
-        # Row 3: target thresh (with background normalization)
-        ry3 = grid_y + 3 * (cell_h + gap)
-        bw2 = _make_thresh(tgt_chars[i])
-        canvas[ry3:ry3+cell_h, x_off:x_off+cell_w] = _fit_char(cv2.cvtColor(bw2, cv2.COLOR_GRAY2BGR), cell_w, cell_h)
-        cv2.rectangle(canvas, (x_off-1, ry3-1), (x_off+cell_w, ry3+cell_h), border, 2)
-
-        # Info row: confidence + PASS/FAIL + defects
-        y_info = grid_y + 4 * (cell_h + gap)
-        cv2.putText(canvas, f"C:{cr['confidence']:.2f}", (x_off, y_info + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.25, border, 1)
-        if defects:
-            cv2.putText(canvas, "+".join(defects[:2]), (x_off, y_info + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.22, (0, 0, 255), 1)
-        else:
-            label = "PASS" if is_pass else "FAIL"
-            cv2.putText(canvas, label, (x_off, y_info + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.28, border, 1)
+    # Overall PASS/FAIL banner
+    overall_pass = all(cr["confidence"] >= conf_threshold for cr in char_results)
+    banner_color = (0, 180, 0) if overall_pass else (0, 0, 220)
+    banner_label = "PASS" if overall_pass else "FAIL"
+    banner_h = 28
+    banner = np.ones((banner_h, total_w, 3), dtype=np.uint8)
+    banner[:] = banner_color
+    text_size = cv2.getTextSize(banner_label, cv2.FONT_HERSHEY_DUPLEX, 0.8, 2)[0]
+    tx = (total_w - text_size[0]) // 2
+    cv2.putText(banner, banner_label, (tx, 21), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 2)
+    canvas = np.vstack([canvas, banner])
 
     cv2.imwrite(output_path, canvas)
 
