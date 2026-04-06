@@ -459,7 +459,7 @@ class OCRBackendFactory:
     LEGACY_DICT_PATH = f"{home}/Source/ocr_datecode/languages/english/dict.txt"
 
     # SVTRv2 CTC paths
-    SVTRV2_TRT_ENGINE = f"{home}/Source/ocr_datecode/languages/english/rec_model_fp32.engine"
+    SVTRV2_TRT_ENGINE = f"{home}/Source/ocr_datecode/languages/english/rec_model_fp16.engine"
     SVTRV2_ONNX_MODEL = f"{home}/Source/ocr_datecode/languages/english/rec_model.onnx"
     SVTRV2_DICT_PATH  = f"{home}/Source/ocr_datecode/languages/english/ppocr_keys_v1.txt"
 

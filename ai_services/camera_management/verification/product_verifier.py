@@ -865,8 +865,12 @@ class ProductVerificationService:
         box_corners: np.ndarray,
         polygon: np.ndarray
     ) -> bool:
+        # Only check X axis: box corners must be within polygon's X range.
+        # Y axis (height) is ignored.
+        poly_x = polygon[:, 0]
+        x_min, x_max = float(poly_x.min()), float(poly_x.max())
         for corner in box_corners:
-            if cv2.pointPolygonTest(polygon, tuple(corner), False) < 0:
+            if corner[0] < x_min or corner[0] > x_max:
                 return False
         return True
 
