@@ -314,9 +314,10 @@ def _char_quality(tmpl_char: np.ndarray, tgt_char: np.ndarray, size=(64, 64)) ->
     sharp_g = float(np.var(cv2.Laplacian(g2, cv2.CV_64F)))
     sharp_ratio = sharp_g / (sharp_t + 1e-8)
 
-    # Connected components for GAY_NET
-    cc_t = cv2.connectedComponents(t1)[0] - 1
-    cc_g = cv2.connectedComponents(t2_base)[0] - 1
+    # Connected components for GAY_NET — tính trên tight_crop của thresh gốc,
+    # KHÔNG trên t1/t2_base (đã qua fit_to_square INTER_NEAREST → stroke mỏng bị đứt giả tạo)
+    cc_t = cv2.connectedComponents(_tight_crop(tmpl_thresh))[0] - 1
+    cc_g = cv2.connectedComponents(_tight_crop(tgt_thresh))[0] - 1
 
     # Defect detection
     defects = []
