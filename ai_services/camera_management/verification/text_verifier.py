@@ -782,9 +782,13 @@ class TextVerificationService:
                 cv2.imwrite(debug_file, cropped_region)
                 self._debug_counter += 1
 
-            # Run OCR
+            # Run OCR (single inference - get char_confs nếu cần, tránh double infer)
             logger.debug(f"[{serial_number}] Running OCR with {self.ocr_backend} backend...")
-            text, confidence = self.text_recognizer.recognize(cropped_region, return_confidence=True)
+            if self.use_char_conf_check and hasattr(self.text_recognizer, 'recognize_with_char_conf'):
+                text, confidence, char_confs = self.text_recognizer.recognize_with_char_conf(cropped_region)
+            else:
+                text, confidence = self.text_recognizer.recognize(cropped_region, return_confidence=True)
+                char_confs = None
             recognized_text = text.strip()
             logger.debug(f"[{serial_number}] OCR result: '{recognized_text}' (conf: {confidence:.2%})")
 
@@ -796,9 +800,8 @@ class TextVerificationService:
                     f"treating as NO MATCH"
                 )
                 match = False
-            elif self.use_char_conf_check and hasattr(self.text_recognizer, 'recognize_with_char_conf'):
-                _, _, char_confs = self.text_recognizer.recognize_with_char_conf(cropped_region)
-                low_chars = [(c, cf) for c, cf in char_confs if cf < conf_threshold]
+            elif self.use_char_conf_check and char_confs is not None:
+                low_chars = [(c, cf) for c, cf in char_confs if c.isalnum() and cf < conf_threshold]
                 if low_chars:
                     logger.warning(
                         f"[{serial_number}] Annotation {annotation_idx}: "
@@ -1134,7 +1137,7 @@ class TextVerificationService:
                 char_confs = batch_char_confs  # dùng từ batch, không infer lại
                 if char_confs is None and hasattr(self.text_recognizer, 'recognize_with_char_conf'):
                     _, _, char_confs = self.text_recognizer.recognize_with_char_conf(meta['cropped_region'])
-                low_chars = [(c, cf) for c, cf in (char_confs or []) if cf < conf_threshold]
+                low_chars = [(c, cf) for c, cf in (char_confs or []) if c.isalnum() and cf < conf_threshold]
                 if low_chars:
                     logger.warning(
                         f"[{serial_number}] Annotation {annotation_idx}: "
@@ -1170,6 +1173,7 @@ class TextVerificationService:
                         expected_text=expected_text,
                         serial_number=serial_number,
                         annotation_idx=annotation_idx,
+                        conf_threshold=conf_threshold,
                     )
                 else:
                     logger.info(
@@ -1219,6 +1223,7 @@ class TextVerificationService:
         expected_text: str,
         serial_number: str,
         annotation_idx: int,
+        conf_threshold: float = 0.8,
     ):
         """
         Run OCR on 5 augmented versions of cropped_region (batch per region).
@@ -1253,8 +1258,10 @@ class TextVerificationService:
         for ver_name, aug_result in zip(aug_names, aug_results):
             if isinstance(aug_result, dict):
                 aug_text, aug_conf = aug_result["text"], aug_result["confidence"]
+                aug_char_confs = aug_result.get("char_confs")
             else:
                 aug_text, aug_conf = aug_result
+                aug_char_confs = None
             aug_recognized = _apply_text_corrections(aug_text.strip())
             aug_match = compare_texts(aug_recognized, expected_text, case_sensitive=True, strip=True)
 
@@ -1264,6 +1271,17 @@ class TextVerificationService:
             )
 
             if aug_match:
+                if self.use_char_conf_check and aug_char_confs is not None:
+                    low_chars = [(c, cf) for c, cf in aug_char_confs if c.isalnum() and cf < conf_threshold]
+                    if low_chars:
+                        logger.info(
+                            f"[{serial_number}] Annotation {annotation_idx}: "
+                            f"augment[{ver_name}] text match but low char conf {low_chars}, skip"
+                        )
+                        if aug_conf > best_conf:
+                            best_conf = aug_conf
+                            best_text = aug_recognized
+                        continue
                 logger.info(
                     f"[{serial_number}] Annotation {annotation_idx}: "
                     f"PASS via augment[{ver_name}]"
