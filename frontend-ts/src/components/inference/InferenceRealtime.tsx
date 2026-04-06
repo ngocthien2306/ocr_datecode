@@ -9,6 +9,11 @@ import InferenceRealtimeSettingsModal from './InferenceRealtimeSettingsModal';
 import { API_BASE_URL } from '@/config/api';
 import { useToast } from '@/contexts/ToastContext';
 
+interface CharConf {
+  char: string;
+  conf: number;
+}
+
 interface TextVerificationResult {
   region_idx: number;
   expected: string;
@@ -18,6 +23,7 @@ interface TextVerificationResult {
   threshold: number;
   match_sim: number;
   similarity: number;
+  char_confs?: CharConf[] | null;
 }
 
 interface TextVerification {
@@ -180,6 +186,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
 
   const [isStopping, setIsStopping] = useState(false);
   const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
+  const [expandedCharConfs, setExpandedCharConfs] = useState<Set<string>>(new Set());
   const [recipeStartTime, setRecipeStartTime] = useState<Date | null>(null);
   const [currentDuration, setCurrentDuration] = useState<string>('00:00:00');
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -1050,33 +1057,72 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                     </tr>
                   </thead>
                   <tbody>
-                    {verification.results.map((result) => (
-                      <tr key={result.region_idx} className={result.match ? '' : 'mismatch-row'}>
-                        <td className="col-region">{result.region_idx}</td>
-                        <td className="col-expected">{result.expected || '—'}</td>
-                        <td className="col-recognized">{result.recognized || '—'}</td>
-                        <td className="col-match">
-                          <span className={`match-icon ${result.match ? 'match' : 'no-match'}`}>
-                            {result.match ? '✓' : '✗'}
-                          </span>
-                        </td>
-                        <td className="col-confidence">
-                          <span className={`confidence-value ${getConfidenceClass(result.confidence)}`}>
-                            {(result.confidence * 100).toFixed(1)}%
-                          </span>
-                        </td>
-                        <td className="col-confidence">
-                          <span className={`confidence-value ${getConfidenceClass(result.similarity)}`}>
-                            {(result.similarity * 100).toFixed(1)}%
-                          </span>
-                        </td>
-                        <td className="col-threshold-ocr"> 
-                          <span className={`confidence-value ${getConfidenceClass(result.threshold)}`}>
-                            {(result.threshold * 100).toFixed(1)}%
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
+                    {verification.results.map((result) => {
+                      const charConfsKey = `${cameraResult.serial_number}-${frame.frame_idx}-${result.region_idx}`;
+                      const isCharConfsExpanded = expandedCharConfs.has(charConfsKey);
+                      const hasCharConfs = result.char_confs && result.char_confs.length > 0;
+                      return (
+                        <>
+                          <tr key={result.region_idx} className={result.match ? '' : 'mismatch-row'}>
+                            <td className="col-region">{result.region_idx}</td>
+                            <td className="col-expected">{result.expected || '—'}</td>
+                            <td className="col-recognized">
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <span>{result.recognized || '—'}</span>
+                                {hasCharConfs && (
+                                  <button
+                                    className="char-conf-toggle-btn"
+                                    onClick={() => setExpandedCharConfs(prev => {
+                                      const next = new Set(prev);
+                                      if (next.has(charConfsKey)) next.delete(charConfsKey);
+                                      else next.add(charConfsKey);
+                                      return next;
+                                    })}
+                                    title="Per-character confidence"
+                                  >
+                                    {isCharConfsExpanded ? '▲' : '▼'}
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                            <td className="col-match">
+                              <span className={`match-icon ${result.match ? 'match' : 'no-match'}`}>
+                                {result.match ? '✓' : '✗'}
+                              </span>
+                            </td>
+                            <td className="col-confidence">
+                              <span className={`confidence-value ${getConfidenceClass(result.confidence)}`}>
+                                {(result.confidence * 100).toFixed(1)}%
+                              </span>
+                            </td>
+                            <td className="col-confidence">
+                              <span className={`confidence-value ${getConfidenceClass(result.similarity)}`}>
+                                {(result.similarity * 100).toFixed(1)}%
+                              </span>
+                            </td>
+                            <td className="col-threshold-ocr">
+                              <span className={`confidence-value ${getConfidenceClass(result.threshold)}`}>
+                                {(result.threshold * 100).toFixed(1)}%
+                              </span>
+                            </td>
+                          </tr>
+                          {hasCharConfs && isCharConfsExpanded && (
+                            <tr key={`${result.region_idx}-char-confs`} className={result.match ? 'char-conf-row' : 'char-conf-row mismatch-row'}>
+                              <td colSpan={7} className="char-conf-cell">
+                                <div className="char-conf-list">
+                                  {result.char_confs!.map((cc, i) => (
+                                    <div key={i} className={`char-conf-badge ${getConfidenceClass(cc.conf)}`}>
+                                      <span className="char-conf-char">{cc.char}</span>
+                                      <span className="char-conf-pct">{(cc.conf * 100).toFixed(0)}%</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

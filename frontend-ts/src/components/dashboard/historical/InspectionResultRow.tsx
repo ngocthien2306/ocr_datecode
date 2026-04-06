@@ -37,6 +37,17 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
   // Image modal state
   const [modalImage, setModalImage] = useState<{ src: string; alt: string } | null>(null);
 
+  // Per-character confidence expand state
+  const [expandedCharConfs, setExpandedCharConfs] = useState<Set<string>>(new Set());
+
+  const toggleCharConfs = (key: string) => {
+    setExpandedCharConfs(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
   // Camera lookup map
   const [cameraMap, setCameraMap] = useState<Map<string, Camera>>(new Map());
 
@@ -370,29 +381,56 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
                                   marginTop: '12px'
                                 }}
                               >
-                                {frame.text_verification.results.map((textResult, textIdx) => (
-                                  <div
-                                    key={textIdx}
-                                    className={`text-result-card ${textResult.match ? 'match' : 'mismatch'}`}
-                                  >
-                                    <div className="text-result-header-v2">
-                                      <span className="region-label">Region {textResult.annotation_idx}:</span>
-                                      <span className={`match-badge ${textResult.match ? 'success' : 'error'}`}>
-                                        {textResult.match ? '✓' : '✗'} {(textResult.confidence * 100).toFixed(1)}%
-                                      </span>
-                                    </div>
-                                    <div className="text-comparison-v2">
-                                      <div className="text-line">
-                                        <span className="text-label">Expected:</span>
-                                        <span className="text-value">"{textResult.expected}"</span>
+                                {frame.text_verification.results.map((textResult, textIdx) => {
+                                  const charConfsKey = `${cameraResult.serial_number}-${frameIdx}-${textResult.annotation_idx ?? textIdx}`;
+                                  const isCharConfsExpanded = expandedCharConfs.has(charConfsKey);
+                                  const hasCharConfs = textResult.char_confs && textResult.char_confs.length > 0;
+                                  return (
+                                    <div
+                                      key={textIdx}
+                                      className={`text-result-card ${textResult.match ? 'match' : 'mismatch'}`}
+                                    >
+                                      <div className="text-result-header-v2">
+                                        <span className="region-label">Region {textResult.annotation_idx}:</span>
+                                        <span className={`match-badge ${textResult.match ? 'success' : 'error'}`}>
+                                          {textResult.match ? '✓' : '✗'} {(textResult.confidence * 100).toFixed(1)}%
+                                        </span>
                                       </div>
-                                      <div className="text-line">
-                                        <span className="text-label">Recognized:</span>
-                                        <span className="text-value">"{textResult.recognized || '(empty)'}"</span>
+                                      <div className="text-comparison-v2">
+                                        <div className="text-line">
+                                          <span className="text-label">Expected:</span>
+                                          <span className="text-value">"{textResult.expected}"</span>
+                                        </div>
+                                        <div className="text-line">
+                                          <span className="text-label">Recognized:</span>
+                                          <span className="text-value">"{textResult.recognized || '(empty)'}"</span>
+                                          {hasCharConfs && (
+                                            <button
+                                              className="char-conf-toggle-btn"
+                                              onClick={() => toggleCharConfs(charConfsKey)}
+                                              title="Per-character confidence"
+                                            >
+                                              {isCharConfsExpanded ? '▲' : '▼'}
+                                            </button>
+                                          )}
+                                        </div>
                                       </div>
+                                      {hasCharConfs && isCharConfsExpanded && (
+                                        <div className="char-conf-list" style={{ marginTop: '8px' }}>
+                                          {textResult.char_confs.map((cc: { char: string; conf: number }, i: number) => {
+                                            const cls = cc.conf >= 0.8 ? 'high' : cc.conf >= 0.5 ? 'medium' : 'low';
+                                            return (
+                                              <div key={i} className={`char-conf-badge ${cls}`}>
+                                                <span className="char-conf-char">{cc.char}</span>
+                                                <span className="char-conf-pct">{(cc.conf * 100).toFixed(0)}%</span>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
                                     </div>
-                                  </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             </div>
                           )}
