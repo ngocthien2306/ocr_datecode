@@ -988,7 +988,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
   };
 
   // Render text verification table for a camera
-  const renderTextVerificationTable = (cameraResult: CameraResult) => {
+  const renderTextVerificationTable = (cameraResult: CameraResult, logId: string) => {
     // Get ALL frames with text verification (multi-template support)
     const framesWithVerification = cameraResult.frames.filter(f => f.text_verification);
     const cameraInfo = getCameraInfo(cameraResult.serial_number);
@@ -1058,7 +1058,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                   </thead>
                   <tbody>
                     {verification.results.map((result) => {
-                      const charConfsKey = `${cameraResult.serial_number}-${frame.frame_idx}-${result.region_idx}`;
+                      const charConfsKey = `${logId}-${cameraResult.serial_number}-${frame.frame_idx}-${result.region_idx}`;
                       const isCharConfsExpanded = expandedCharConfs.has(charConfsKey);
                       const hasCharConfs = result.char_confs && result.char_confs.length > 0;
                       return (
@@ -1700,7 +1700,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                             <div className="verification-label">Text Verification Details:</div>
                             {log.inferenceResult.camera_results.map((cameraResult) => (
                               <div key={cameraResult.serial_number}>
-                                {renderTextVerificationTable(cameraResult)}
+                                {renderTextVerificationTable(cameraResult, log.id)}
                               </div>
                             ))}
                           </div>

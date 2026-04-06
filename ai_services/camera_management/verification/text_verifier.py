@@ -873,7 +873,7 @@ class TextVerificationService:
                 'confidence': confidence,
                 'threshold': conf_threshold,
                 'char_confs': [
-                    {'char': c, 'conf': round(cf, 4)} for c, cf in char_confs
+                    {'char': c, 'conf': round(cf, 4)} for c, cf in char_confs if c.isalnum()
                 ] if char_confs else None,
             }
 
@@ -1199,7 +1199,7 @@ class TextVerificationService:
                 'confidence': confidence,
                 'threshold': conf_threshold,
                 'char_confs': [
-                    {'char': c, 'conf': round(cf, 4)} for c, cf in char_confs
+                    {'char': c, 'conf': round(cf, 4)} for c, cf in char_confs if c.isalnum()
                 ] if char_confs else None,
             }
 
