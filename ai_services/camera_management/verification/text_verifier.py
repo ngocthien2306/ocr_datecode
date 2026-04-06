@@ -256,10 +256,15 @@ def _char_quality(tmpl_char: np.ndarray, tgt_char: np.ndarray, size=(64, 64)) ->
     """
     def _to_thresh(img: np.ndarray) -> np.ndarray:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
-        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+        # Blur mạnh hơn để normalize stroke width trước Otsu
+        # (3,3) quá nhỏ → chữ mờ và chữ nét cho mask khác nhau nhiều, đặc biệt B/D/O)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
         _, th = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         if np.mean(th) > 127:
             th = cv2.bitwise_not(th)
+        # Morphological closing: lấp holes nhỏ do stroke mỏng, chuẩn hóa enclosed regions (B, D, O)
+        k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        th = cv2.morphologyEx(th, cv2.MORPH_CLOSE, k_close, iterations=1)
         return th
 
     tmpl_thresh = _to_thresh(tmpl_char)
@@ -289,9 +294,10 @@ def _char_quality(tmpl_char: np.ndarray, tgt_char: np.ndarray, size=(64, 64)) ->
     blur_tm = float(np.clip(best_tm, 0.0, 1.0))
 
     # (3) IoU after centroid alignment
+    # Dilation 5×5 để tha thứ stroke width khác nhau (B/D/O có enclosed regions nhạy cảm)
     a = _center_by_centroid(_tight_crop(t1), size)
     b = _center_by_centroid(_tight_crop(t2_base), size)
-    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     a = cv2.dilate(a, k, iterations=1)
     b = cv2.dilate(b, k, iterations=1)
     iou = _iou_binary(a, b)

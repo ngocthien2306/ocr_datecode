@@ -206,6 +206,18 @@ def compute_char_quality(tmpl_char, tgt_char, size=(64, 64)):
     3. IoU sau centroid alignment: chuẩn shape comparison cho ảnh nhị phân
     tm_conf = max(blur_TM, IoU) → metric nào "giỏi" thắng, không bị kéo xuống.
     """
+    def _to_thresh_norm(raw):
+        """Blur(5,5) + Otsu + morphClose — normalize stroke width cho B/D/O."""
+        blurred = cv.GaussianBlur(raw, (5, 5), 0)
+        _, th = cv.threshold(blurred, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU)
+        if np.mean(th) > 127:
+            th = cv.bitwise_not(th)
+        k = cv.getStructuringElement(cv.MORPH_ELLIPSE, (3, 3))
+        return cv.morphologyEx(th, cv.MORPH_CLOSE, k, iterations=1)
+
+    tmpl_char = _to_thresh_norm(tmpl_char)
+    tgt_char  = _to_thresh_norm(tgt_char)
+
     t1 = fit_to_square(deskew_char(tight_crop(tmpl_char)), size)
     g2_deskewed = deskew_char(tight_crop(tgt_char))
     t2_base = fit_to_square(g2_deskewed, size)
@@ -233,8 +245,8 @@ def compute_char_quality(tmpl_char, tgt_char, size=(64, 64)):
     # --- (3) IoU sau centroid alignment ---
     a = _center_by_centroid(tight_crop(t1),       size)
     b = _center_by_centroid(tight_crop(t2_base),  size)
-    # Đóng nét nhỏ để tha thứ răng cưa biên
-    k = cv.getStructuringElement(cv.MORPH_ELLIPSE, (3, 3))
+    # Dilation 5×5 để tha thứ stroke width khác nhau (B/D/O nhạy cảm với enclosed regions)
+    k = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5))
     a = cv.dilate(a, k, iterations=1)
     b = cv.dilate(b, k, iterations=1)
     iou = _iou(a, b)
