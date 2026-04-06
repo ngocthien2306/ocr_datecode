@@ -854,6 +854,7 @@ class TextVerificationService:
                     result['match_sim'] = sim_result['match_sim']
                     result['similarity'] = sim_result.get('similarity', 0.0)
                     result['char_results'] = sim_result.get('char_results', [])
+                    result['match'] = result['match'] and sim_result['match_sim']
                     logger.info(
                         f"[{serial_number}] Annotation {ann_idx}: "
                         f"FINAL match={result['match']}, match_sim={sim_result['match_sim']}, "
@@ -866,9 +867,7 @@ class TextVerificationService:
 
             verification_results.append(result)
 
-            ocr_pass = result.get('match', False)
-            sim_pass = result.get('match_sim', True) if self.use_sim_check else True
-            if not (ocr_pass and sim_pass):
+            if not result.get('match', False):
                 all_match = False
 
         return {
@@ -1372,9 +1371,10 @@ class TextVerificationService:
                     region_result['similarity'] = sim_result.get('similarity', 0.0)
                     region_result['char_results'] = sim_result.get('char_results', [])
                     sim_pass = sim_result['match_sim']
+                    region_result['match'] = match and sim_pass
                     logger.info(
                         f"[{serial_number}] Annotation {annotation_idx}: "
-                        f"FINAL match={match}, match_sim={sim_result['match_sim']}, "
+                        f"FINAL match={region_result['match']}, match_sim={sim_result['match_sim']}, "
                         f"similarity={sim_result.get('similarity', 0.0):.4f}"
                     )
                 else:

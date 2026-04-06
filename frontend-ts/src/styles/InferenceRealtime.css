@@ -2114,7 +2114,7 @@ body.dark-mode .inference-realtime-footer {
 /* ── Character visual comparison strip ─────────────────────────────────── */
 .char-images-row td {
   padding: 0.5rem 0.875rem 0.75rem;
-  background: #0f172a;
+  background: #f8fafc;
 }
 
 .char-images-cell {
@@ -2136,8 +2136,9 @@ body.dark-mode .inference-realtime-footer {
   gap: 3px;
   padding: 4px;
   border-radius: 6px;
-  background: #1e293b;
+  background: #fff;
   min-width: 52px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
 
 .char-img {
@@ -2145,22 +2146,22 @@ body.dark-mode .inference-realtime-footer {
   height: 48px;
   object-fit: contain;
   border-radius: 3px;
-  background: #000;
+  background: #fff;
   display: block;
   image-rendering: pixelated;
 }
 
 .char-img-tmpl {
-  opacity: 0.75;
-  border: 1px solid #334155;
+  opacity: 0.85;
+  border: 1px solid #cbd5e1;
 }
 
 .char-img-pass {
-  border: 2px solid #22c55e;
+  border: 2px solid #16a34a;
 }
 
 .char-img-fail {
-  border: 2px solid #ef4444;
+  border: 2px solid #dc2626;
 }
 
 .char-cell-score {
@@ -2173,16 +2174,16 @@ body.dark-mode .inference-realtime-footer {
 }
 
 .score-pass {
-  color: #22c55e;
+  color: #16a34a;
 }
 
 .score-fail {
-  color: #ef4444;
+  color: #dc2626;
 }
 
 .char-cell-defects {
   font-size: 0.55rem;
-  color: #f97316;
+  color: #ea580c;
   text-align: center;
   max-width: 52px;
   overflow: hidden;
@@ -2191,9 +2192,9 @@ body.dark-mode .inference-realtime-footer {
 }
 
 .char-cell-pass {
-  border: 1px solid #166534;
+  border: 1px solid #bbf7d0;
 }
 
 .char-cell-fail {
-  border: 1px solid #7f1d1d;
+  border: 1px solid #fecaca;
 }
