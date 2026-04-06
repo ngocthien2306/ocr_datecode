@@ -14,6 +14,17 @@ interface CharConf {
   conf: number;
 }
 
+interface CharResult {
+  idx: number;
+  confidence: number;
+  tm_conf: number;
+  iou: number;
+  pixel_conf: number;
+  defects: string[];
+  tmpl_char_b64: string;
+  tgt_char_b64: string;
+}
+
 interface TextVerificationResult {
   region_idx: number;
   expected: string;
@@ -21,9 +32,10 @@ interface TextVerificationResult {
   match: boolean;
   confidence: number;
   threshold: number;
-  match_sim: number;
+  match_sim: boolean;
   similarity: number;
   char_confs?: CharConf[] | null;
+  char_results?: CharResult[];
 }
 
 interface TextVerification {
@@ -187,6 +199,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
   const [isStopping, setIsStopping] = useState(false);
   const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
   const [expandedCharConfs, setExpandedCharConfs] = useState<Set<string>>(new Set());
+  const [expandedCharImages, setExpandedCharImages] = useState<Set<string>>(new Set());
   const [recipeStartTime, setRecipeStartTime] = useState<Date | null>(null);
   const [currentDuration, setCurrentDuration] = useState<string>('00:00:00');
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -1058,9 +1071,13 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                   </thead>
                   <tbody>
                     {verification.results.map((result) => {
-                      const charConfsKey = `${logId}-${cameraResult.serial_number}-${frame.frame_idx}-${result.region_idx}`;
+                      const rowKey = `${logId}-${cameraResult.serial_number}-${frame.frame_idx}-${result.region_idx}`;
+                      const charConfsKey = rowKey;
+                      const charImagesKey = `${rowKey}-imgs`;
                       const isCharConfsExpanded = expandedCharConfs.has(charConfsKey);
+                      const isCharImagesExpanded = expandedCharImages.has(charImagesKey);
                       const hasCharConfs = result.char_confs && result.char_confs.length > 0;
+                      const hasCharImages = result.char_results && result.char_results.length > 0;
                       return (
                         <>
                           <tr key={result.region_idx} className={result.match ? '' : 'mismatch-row'}>
@@ -1078,7 +1095,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                                       else next.add(charConfsKey);
                                       return next;
                                     })}
-                                    title="Per-character confidence"
+                                    title="Per-character OCR confidence"
                                   >
                                     {isCharConfsExpanded ? '▲' : '▼'}
                                   </button>
@@ -1096,9 +1113,25 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                               </span>
                             </td>
                             <td className="col-confidence">
-                              <span className={`confidence-value ${getConfidenceClass(result.similarity)}`}>
-                                {(result.similarity * 100).toFixed(1)}%
-                              </span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <span className={`confidence-value ${getConfidenceClass(result.similarity)}`}>
+                                  {result.similarity != null ? (result.similarity * 100).toFixed(1) + '%' : '—'}
+                                </span>
+                                {hasCharImages && (
+                                  <button
+                                    className="char-conf-toggle-btn"
+                                    onClick={() => setExpandedCharImages(prev => {
+                                      const next = new Set(prev);
+                                      if (next.has(charImagesKey)) next.delete(charImagesKey);
+                                      else next.add(charImagesKey);
+                                      return next;
+                                    })}
+                                    title="Visual character comparison"
+                                  >
+                                    {isCharImagesExpanded ? '▲' : '▼'}
+                                  </button>
+                                )}
+                              </div>
                             </td>
                             <td className="col-threshold-ocr">
                               <span className={`confidence-value ${getConfidenceClass(result.threshold)}`}>
@@ -1106,6 +1139,8 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                               </span>
                             </td>
                           </tr>
+
+                          {/* Per-character OCR confidence row */}
                           {hasCharConfs && isCharConfsExpanded && (
                             <tr key={`${result.region_idx}-char-confs`} className={result.match ? 'char-conf-row' : 'char-conf-row mismatch-row'}>
                               <td colSpan={7} className="char-conf-cell">
@@ -1116,6 +1151,42 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                                       <span className="char-conf-pct">{(cc.conf * 100).toFixed(0)}%</span>
                                     </div>
                                   ))}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+
+                          {/* Visual character comparison row */}
+                          {hasCharImages && isCharImagesExpanded && (
+                            <tr key={`${result.region_idx}-char-images`} className="char-images-row">
+                              <td colSpan={7} className="char-images-cell">
+                                <div className="char-comparison-strip">
+                                  {result.char_results!.map((cr) => {
+                                    const isPass = cr.confidence >= (result.threshold ?? 0.75);
+                                    return (
+                                      <div key={cr.idx} className={`char-comparison-cell ${isPass ? 'char-cell-pass' : 'char-cell-fail'}`}>
+                                        <img
+                                          src={`data:image/png;base64,${cr.tmpl_char_b64}`}
+                                          className="char-img char-img-tmpl"
+                                          title="Template"
+                                        />
+                                        <img
+                                          src={`data:image/png;base64,${cr.tgt_char_b64}`}
+                                          className={`char-img char-img-tgt ${isPass ? 'char-img-pass' : 'char-img-fail'}`}
+                                          title="Target"
+                                        />
+                                        <div className={`char-cell-score ${isPass ? 'score-pass' : 'score-fail'}`}>
+                                          <span>{(cr.confidence * 100).toFixed(0)}%</span>
+                                          <span>{isPass ? 'PASS' : 'FAIL'}</span>
+                                        </div>
+                                        {cr.defects.length > 0 && (
+                                          <div className="char-cell-defects" title={cr.defects.join(', ')}>
+                                            {cr.defects[0]}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               </td>
                             </tr>

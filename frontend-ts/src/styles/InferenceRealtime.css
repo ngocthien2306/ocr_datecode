@@ -2110,3 +2110,90 @@ body.dark-mode .inference-realtime-container {
 body.dark-mode .inference-realtime-footer {
   background: transparent;
 }
+
+/* ── Character visual comparison strip ─────────────────────────────────── */
+.char-images-row td {
+  padding: 0.5rem 0.875rem 0.75rem;
+  background: #0f172a;
+}
+
+.char-images-cell {
+  overflow-x: auto;
+}
+
+.char-comparison-strip {
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  padding: 4px 0;
+  align-items: flex-start;
+}
+
+.char-comparison-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  border-radius: 6px;
+  background: #1e293b;
+  min-width: 52px;
+}
+
+.char-img {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  border-radius: 3px;
+  background: #000;
+  display: block;
+  image-rendering: pixelated;
+}
+
+.char-img-tmpl {
+  opacity: 0.75;
+  border: 1px solid #334155;
+}
+
+.char-img-pass {
+  border: 2px solid #22c55e;
+}
+
+.char-img-fail {
+  border: 2px solid #ef4444;
+}
+
+.char-cell-score {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.2;
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+
+.score-pass {
+  color: #22c55e;
+}
+
+.score-fail {
+  color: #ef4444;
+}
+
+.char-cell-defects {
+  font-size: 0.55rem;
+  color: #f97316;
+  text-align: center;
+  max-width: 52px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.char-cell-pass {
+  border: 1px solid #166534;
+}
+
+.char-cell-fail {
+  border: 1px solid #7f1d1d;
+}
