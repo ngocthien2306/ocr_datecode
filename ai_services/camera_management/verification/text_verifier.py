@@ -5,6 +5,7 @@ Handles OCR-based text verification for inference results.
 Supports both single-camera and multi-camera batch processing.
 """
 
+import base64
 import logging
 import time
 import os
@@ -459,6 +460,12 @@ def _save_char_comparison(tmpl_img, tgt_img, tmpl_chars, tgt_chars, char_results
     cv2.imwrite(output_path, canvas)
 
 
+def _img_to_b64(img: np.ndarray) -> str:
+    """Encode BGR image to base64 PNG string for FE display."""
+    _, buf = cv2.imencode('.png', img)
+    return base64.b64encode(buf).decode('utf-8')
+
+
 @dataclass
 class TextVerificationResult:
     """Result of text verification for a single annotation"""
@@ -629,7 +636,12 @@ class TextVerificationService:
                         range(n_pairs)
                     ))
                 for i, m in enumerate(metrics_list):
-                    char_results.append({"idx": i, **m})
+                    char_results.append({
+                        "idx": i,
+                        **m,
+                        "tmpl_char_b64": _img_to_b64(tmpl_chars[i]),
+                        "tgt_char_b64":  _img_to_b64(tgt_chars[i]),
+                    })
 
             t_char_ms = (time.perf_counter() - t_char_start) * 1000
 
@@ -841,6 +853,7 @@ class TextVerificationService:
                 if sim_result:
                     result['match_sim'] = sim_result['match_sim']
                     result['similarity'] = sim_result.get('similarity', 0.0)
+                    result['char_results'] = sim_result.get('char_results', [])
                     logger.info(
                         f"[{serial_number}] Annotation {ann_idx}: "
                         f"FINAL match={result['match']}, match_sim={sim_result['match_sim']}, "
@@ -849,10 +862,13 @@ class TextVerificationService:
                 else:
                     result['match_sim'] = None
                     result['similarity'] = None
+                    result['char_results'] = []
 
             verification_results.append(result)
 
-            if not result.get('match', False):
+            ocr_pass = result.get('match', False)
+            sim_pass = result.get('match_sim', True) if self.use_sim_check else True
+            if not (ocr_pass and sim_pass):
                 all_match = False
 
         return {
@@ -1333,9 +1349,6 @@ class TextVerificationService:
             if match:
                 recognized_text = expected_text[:]
 
-            if not match:
-                camera_results[serial_number]['all_match'] = False
-
             # Build result dict
             region_result = {
                 'annotation_idx': annotation_idx,
@@ -1350,12 +1363,15 @@ class TextVerificationService:
             }
 
             # Merge sim result if available
+            sim_pass = True
             if self.use_sim_check:
                 sim_key = (serial_number, annotation_idx)
                 sim_result = sim_results_map.get(sim_key)
                 if sim_result:
                     region_result['match_sim'] = sim_result['match_sim']
                     region_result['similarity'] = sim_result.get('similarity', 0.0)
+                    region_result['char_results'] = sim_result.get('char_results', [])
+                    sim_pass = sim_result['match_sim']
                     logger.info(
                         f"[{serial_number}] Annotation {annotation_idx}: "
                         f"FINAL match={match}, match_sim={sim_result['match_sim']}, "
@@ -1364,6 +1380,10 @@ class TextVerificationService:
                 else:
                     region_result['match_sim'] = None
                     region_result['similarity'] = None
+                    region_result['char_results'] = []
+
+            if not (match and sim_pass):
+                camera_results[serial_number]['all_match'] = False
 
             camera_results[serial_number]['results'].append(region_result)
 
