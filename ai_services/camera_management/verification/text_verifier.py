@@ -871,7 +871,10 @@ class TextVerificationService:
                 'recognized': recognized_text,
                 'match': match,
                 'confidence': confidence,
-                'threshold': conf_threshold
+                'threshold': conf_threshold,
+                'char_confs': [
+                    {'char': c, 'conf': round(cf, 4)} for c, cf in char_confs
+                ] if char_confs else None,
             }
 
         except Exception as e:
@@ -1125,6 +1128,7 @@ class TextVerificationService:
             expected_text = meta['expected_text']
 
             recognized_text = text.strip()
+            char_confs = batch_char_confs  # khởi tạo, có thể được cập nhật bên dưới
 
             # Check confidence threshold
             if confidence < conf_threshold:
@@ -1134,7 +1138,6 @@ class TextVerificationService:
                 )
                 match = False
             elif self.use_char_conf_check:
-                char_confs = batch_char_confs  # dùng từ batch, không infer lại
                 if char_confs is None and hasattr(self.text_recognizer, 'recognize_with_char_conf'):
                     _, _, char_confs = self.text_recognizer.recognize_with_char_conf(meta['cropped_region'])
                 low_chars = [(c, cf) for c, cf in (char_confs or []) if c.isalnum() and cf < conf_threshold]
@@ -1194,7 +1197,10 @@ class TextVerificationService:
                 'recognized': recognized_text,
                 'match': match,
                 'confidence': confidence,
-                'threshold': conf_threshold
+                'threshold': conf_threshold,
+                'char_confs': [
+                    {'char': c, 'conf': round(cf, 4)} for c, cf in char_confs
+                ] if char_confs else None,
             }
 
             # Merge sim result if available
