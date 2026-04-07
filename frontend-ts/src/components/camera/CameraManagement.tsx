@@ -617,7 +617,7 @@ const CameraManagement: React.FC = () => {
                   />
                 </div>
 
-                <div className="form-group">
+                {/* <div className="form-group">
                   <label>Max Frame Rate (fps)</label>
                   <input
                     type="number"
@@ -627,7 +627,7 @@ const CameraManagement: React.FC = () => {
                     onChange={handleFormChange}
                     placeholder="40.0"
                   />
-                </div>
+                </div> */}
 
                 <div className="form-group">
                   <label>Pixel Format</label>
@@ -831,7 +831,7 @@ const CameraManagement: React.FC = () => {
               <th>Status</th>
               <th>Location</th>
               <th>IP Address</th>
-              <th>Frame Rate</th>
+              {/* <th>Frame Rate</th> */}
               <th>Actions</th>
             </tr>
           </thead>
@@ -882,7 +882,7 @@ const CameraManagement: React.FC = () => {
                       <code className="ip-address">{camera.ip_address}</code>
                     ) : '-'}
                   </td>
-                  <td>{(camera as any).max_frame_rate || 40.0} fps</td>
+                  {/* <td>{(camera as any).max_frame_rate || 40.0} fps</td> */}
                   <td>
                     <div className="action-buttons">
                       <button
