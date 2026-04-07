@@ -207,7 +207,15 @@ async def update_user(
             detail="User not found"
         )
 
-    user = await user_repo.update_user(user_id, user_update)
+    try:
+        user = await user_repo.update_user(user_id, user_update)
+    except DuplicateKeyError as e:
+        error_str = str(e).lower()
+        if "email" in error_str:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+        if "username" in error_str:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already registered")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Duplicate value error")
 
     if not user:
         raise HTTPException(
