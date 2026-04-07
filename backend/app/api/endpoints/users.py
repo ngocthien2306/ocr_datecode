@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from pymongo.errors import DuplicateKeyError
 from typing import List
 from app.db.mongodb import get_database
 from app.repositories.user_repository import UserRepository
@@ -39,7 +40,16 @@ async def create_user(
         )
 
     # Create user
-    user = await user_repo.create_user(user_create)
+    try:
+        user = await user_repo.create_user(user_create)
+    except DuplicateKeyError as e:
+        detail = e.details or {}
+        key_value = detail.get("keyValue", {})
+        if "email" in key_value:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+        if "username" in key_value:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already registered")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Duplicate value error")
 
     # Log the action
     client_ip = request.client.host if request.client else None

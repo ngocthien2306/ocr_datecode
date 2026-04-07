@@ -125,4 +125,4 @@ class UserRepository:
     async def create_indexes(self):
         """Create database indexes"""
         await self.collection.create_index("username", unique=True)
-        await self.collection.create_index("email", unique=True)
+        await self.collection.create_index("email", unique=True, sparse=True)
