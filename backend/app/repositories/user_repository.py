@@ -13,6 +13,10 @@ class UserRepository:
         """Create a new user"""
         user_dict = user.model_dump()
         user_dict["hashed_password"] = get_password_hash(user_dict.pop("password"))
+        # Remove None optional fields so sparse unique indexes (email) work correctly
+        for field in ("email", "phone_number", "avatar_url"):
+            if user_dict.get(field) is None:
+                user_dict.pop(field, None)
         user_dict["created_at"] = datetime.utcnow()
         user_dict["updated_at"] = datetime.utcnow()
         user_dict["last_login"] = None
