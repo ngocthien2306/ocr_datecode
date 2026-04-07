@@ -429,6 +429,11 @@ export default function Receipts() {
   };
 
   const handleDeleteReceipt = async (receipt: Receipt) => {
+    if (receipt.id === runningRecipeId) {
+      toast.warning(`Recipe "${receipt.name}" is currently running. Please stop it before deleting.`);
+      return;
+    }
+
     setConfirmDialog({
       isOpen: true,
       title: 'Delete Recipe',
@@ -452,6 +457,12 @@ export default function Receipts() {
   const handleDeleteSelected = async () => {
     if (selectedIds.length === 0) {
       toast.warning('Please select at least one receipt to delete.');
+      return;
+    }
+
+    if (runningRecipeId && selectedIds.includes(runningRecipeId)) {
+      const runningRecipe = receipts.find(r => r.id === runningRecipeId);
+      toast.warning(`Recipe "${runningRecipe?.name ?? runningRecipeId}" is currently running. Please stop it before deleting.`);
       return;
     }
 
