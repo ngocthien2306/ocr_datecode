@@ -45,7 +45,7 @@ async def create_user(
     except DuplicateKeyError as e:
         detail = e.details or {}
         key_value = detail.get("keyValue", {})
-        if "email" in key_value:
+        if "email" in key_value and key_value.get("email") is not None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
         if "username" in key_value:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already registered")
