@@ -1,6 +1,8 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.db.mongodb import connect_to_mongo, close_mongo_connection, get_database
@@ -88,6 +90,16 @@ app = FastAPI(
     version=settings.APP_VERSION,
     lifespan=lifespan
 )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    first_error = exc.errors()[0]
+    field = first_error["loc"][-1] if first_error.get("loc") else "field"
+    msg = first_error.get("msg", "Invalid value")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": f"{field}: {msg}"}
+    )
 
 app.add_middleware(
     CORSMiddleware,
