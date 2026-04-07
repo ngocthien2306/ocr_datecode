@@ -43,11 +43,10 @@ async def create_user(
     try:
         user = await user_repo.create_user(user_create)
     except DuplicateKeyError as e:
-        detail = e.details or {}
-        key_value = detail.get("keyValue", {})
-        if "email" in key_value and key_value.get("email") is not None:
+        error_str = str(e).lower()
+        if "email" in error_str:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
-        if "username" in key_value:
+        if "username" in error_str:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already registered")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Duplicate value error")
 
