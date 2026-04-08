@@ -390,7 +390,7 @@ class ProductVerificationService:
             center_alignment_check = {'ok': True, 'skipped': True, 'reason': 'Check disabled'}
         else:
             center_alignment_check = {'ok': True, 'skipped': True, 'reason': 'No product or label box detected'}
-            
+
         # Determine overall match
         overall_match = (
             wrinkled_check['ok'] and
@@ -627,13 +627,13 @@ class ProductVerificationService:
         abs_offset_x = abs(offset_x)
 
         if offset_x > 0:
-            direction = 'right'
-            threshold_used = threshold_right
-            ok = abs_offset_x <= threshold_right
-        else:
             direction = 'left'
             threshold_used = threshold_left
             ok = abs_offset_x <= threshold_left
+        else:
+            direction = 'right'
+            threshold_used = threshold_right
+            ok = abs_offset_x <= threshold_right
 
         logger.debug(
             f"[{serial_number}] Center alignment check (ref={reference_source}): "
