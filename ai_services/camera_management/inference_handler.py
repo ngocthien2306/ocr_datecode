@@ -272,7 +272,7 @@ class InferenceHandler:
                 save_debug_images=True,
                 debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
                 use_char_conf_check=False,
-                use_sim_check=True,
+                use_sim_check=False,
             )
             logger.info(f"TextVerificationService initialized with {self.ocr_backend} backend")
         else:
