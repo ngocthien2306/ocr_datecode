@@ -382,19 +382,15 @@ class ProductVerificationService:
         # Check center alignment - requires product_box
         if self.check_center_alignment and has_product:
             center_alignment_check = self._check_center_alignment(
-                product_box, transformed_bboxes, serial_number, center_offset_threshold,
-                center_offset_threshold_left, center_offset_threshold_right 
-            )
-        elif self.check_center_alignment and has_label:
-            center_alignment_check = self._check_center_alignment(
-                label_box, transformed_bboxes, serial_number, center_offset_threshold,
-                center_offset_threshold_left, center_offset_threshold_right 
+                product_box, transformed_bboxes, serial_number,
+                center_offset_threshold, center_offset_threshold_left, center_offset_threshold_right,
+                label_box=label_box if has_label else None,
             )
         elif not self.check_center_alignment:
             center_alignment_check = {'ok': True, 'skipped': True, 'reason': 'Check disabled'}
         else:
             center_alignment_check = {'ok': True, 'skipped': True, 'reason': 'No product or label box detected'}
-
+            
         # Determine overall match
         overall_match = (
             wrinkled_check['ok'] and
@@ -579,60 +575,69 @@ class ProductVerificationService:
         serial_number: str,
         center_offset_threshold: Optional[float] = None,
         center_offset_threshold_left: Optional[float] = None,
-        center_offset_threshold_right: Optional[float] = None
+        center_offset_threshold_right: Optional[float] = None,
+        label_box: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-
         # Use provided thresholds or fall back to default
         default_threshold = center_offset_threshold if center_offset_threshold is not None else self.center_offset_threshold
         threshold_left = center_offset_threshold_left if center_offset_threshold_left is not None else default_threshold
         threshold_right = center_offset_threshold_right if center_offset_threshold_right is not None else default_threshold
 
-        # Find template region from transformed_bboxes
-        template_region = next(
-            (bbox for bbox in transformed_bboxes if bbox.get('type') == 'label'),
-            None
-        )
+        # --- Xác định reference center: ưu tiên label_box, fallback template_region ---
+        reference_source = None
 
-        if template_region is None:
-            logger.warning(f"[{serial_number}] No template region found in transformed_bboxes")
-            return {
-                'ok': True,
-                'skipped': True,
-                'reason': 'No template region in transformed_bboxes'
-            }
+        if label_box is not None:
+            ref_corners = label_box.get('corners')
+            if ref_corners is not None:
+                if isinstance(ref_corners, list):
+                    ref_corners = np.array(ref_corners, dtype=np.float32)
+                ref_center_x = np.mean(ref_corners[:, 0])
+                ref_center_y = np.mean(ref_corners[:, 1])
+                reference_source = 'label_box'
 
-        # Get template region polygon
-        template_poly = np.array(template_region['points'], dtype=np.float32)
-        template_center_x = np.mean(template_poly[:, 0])
-        template_center_y = np.mean(template_poly[:, 1])
+        if reference_source is None:
+            # Fallback: tìm template region từ transformed_bboxes
+            template_region = next(
+                (bbox for bbox in transformed_bboxes if bbox.get('type') == 'label'),
+                None
+            )
+            if template_region is None:
+                logger.warning(f"[{serial_number}] No label_box and no template region found")
+                return {
+                    'ok': True,
+                    'skipped': True,
+                    'reason': 'No label_box and no template region in transformed_bboxes'
+                }
+            template_poly = np.array(template_region['points'], dtype=np.float32)
+            ref_center_x = np.mean(template_poly[:, 0])
+            ref_center_y = np.mean(template_poly[:, 1])
+            reference_source = 'template_region'
 
-        # Get detected product box corners
+        # --- Tâm của product box ---
         product_corners = product_box['corners']
         if isinstance(product_corners, list):
             product_corners = np.array(product_corners, dtype=np.float32)
-
         product_center_x = np.mean(product_corners[:, 0])
         product_center_y = np.mean(product_corners[:, 1])
 
-        # Calculate offset on x-axis (positive = product is to the right of template)
-        offset_x = product_center_x - template_center_x
+        # --- Tính độ lệch theo X ---
+        # offset_x > 0: product nằm bên PHẢI reference
+        # offset_x < 0: product nằm bên TRÁI reference
+        offset_x = product_center_x - ref_center_x
         abs_offset_x = abs(offset_x)
 
-        # Determine direction and check against appropriate threshold
         if offset_x > 0:
-            # Product is to the LEFT of template center
-            direction = 'left'
-            threshold_used = threshold_left
-            ok = abs_offset_x <= threshold_left
-        else:
-            # Product is to the RIGHT of template center (or centered)
             direction = 'right'
             threshold_used = threshold_right
             ok = abs_offset_x <= threshold_right
+        else:
+            direction = 'left'
+            threshold_used = threshold_left
+            ok = abs_offset_x <= threshold_left
 
         logger.debug(
-            f"[{serial_number}] Center alignment check: "
-            f"template_center=({template_center_x:.1f}, {template_center_y:.1f}), "
+            f"[{serial_number}] Center alignment check (ref={reference_source}): "
+            f"ref_center=({ref_center_x:.1f}, {ref_center_y:.1f}), "
             f"product_center=({product_center_x:.1f}, {product_center_y:.1f}), "
             f"offset_x={offset_x:.1f}px ({direction}), "
             f"threshold_left={threshold_left}px, threshold_right={threshold_right}px, "
@@ -647,7 +652,7 @@ class ProductVerificationService:
             'threshold_left': float(threshold_left),
             'threshold_right': float(threshold_right),
             'threshold_used': float(threshold_used),
-            'template_center': [float(template_center_x), float(template_center_y)],
+            'template_center': [float(ref_center_x), float(ref_center_y)],  # ref = label_box hoặc template_region
             'product_center': [float(product_center_x), float(product_center_y)]
         }
 
