@@ -31,6 +31,7 @@ class OCRModelType(Enum):
     PADDLEV5 = "paddlev5"           # Legacy model (old)
     OPENOCR_REPSVTR = "openocr"     # OpenOCR RepSVTR
     SVTRV2_CTC = "svtrv2"           # SVTRv2 CTC (6625 classes, width=320)
+    SMTR = "smtr"                   # SMTR dual-head (GTC + CTC, dynamic width)
 
 
 @dataclass
@@ -412,6 +413,98 @@ class SVTRv2ONNXBackend(OCRBackendStrategy):
         return self._recognizer.recognize_with_char_conf(image)
 
 
+class SMTRONNXBackend(OCRBackendStrategy):
+    def __init__(self, config: OCRConfig):
+        self._config = config
+        self._recognizer = None
+        self._available = False
+        try:
+            from ..text_recognizer_smtr_onnx import TextRecognizerSMTRONNX
+            if not os.path.exists(config.model_path):
+                raise FileNotFoundError(f"ONNX model not found: {config.model_path}")
+            if not os.path.exists(config.dict_path):
+                raise FileNotFoundError(f"Dict not found: {config.dict_path}")
+            self._recognizer = TextRecognizerSMTRONNX(
+                onnx_path=config.model_path,
+                dict_path=config.dict_path,
+                device=config.device,
+            )
+            self._available = True
+            logger.info(f"SMTRONNXBackend initialized: {config.model_path}")
+        except Exception as e:
+            logger.error(f"Failed to init SMTRONNXBackend: {e}")
+
+    @property
+    def backend_name(self) -> str:
+        return f"smtr_onnx_{self._config.device}"
+
+    @property
+    def is_available(self) -> bool:
+        return self._available and self._recognizer is not None
+
+    def recognize(self, image: np.ndarray, return_confidence: bool = True):
+        if not self.is_available:
+            return [("", 0.0, []), ("", 0.0, [])]
+        return self._recognizer.recognize(image)
+
+    def recognize_batch(self, images: List[np.ndarray]):
+        if not self.is_available:
+            return [[("", 0.0, []), ("", 0.0, [])] for _ in images]
+        return self._recognizer.recognize_batch(images)
+
+    def recognize_with_char_conf(self, image: np.ndarray):
+        if not self.is_available:
+            return [("", 0.0, []), ("", 0.0, [])]
+        return self._recognizer.recognize_with_char_conf(image)
+
+
+class SMTRTRTBackend(OCRBackendStrategy):
+    def __init__(self, config: OCRConfig):
+        self._config = config
+        self._recognizer = None
+        self._available = False
+        try:
+            from ..text_recognizer_smtr_trt import TextRecognizerSMTRTRT, TENSORRT_AVAILABLE
+            if not TENSORRT_AVAILABLE:
+                logger.warning("TensorRT not available for SMTR")
+                return
+            if not os.path.exists(config.model_path):
+                raise FileNotFoundError(f"Engine not found: {config.model_path}")
+            if not os.path.exists(config.dict_path):
+                raise FileNotFoundError(f"Dict not found: {config.dict_path}")
+            self._recognizer = TextRecognizerSMTRTRT(
+                engine_path=config.model_path,
+                dict_path=config.dict_path,
+            )
+            self._available = True
+            logger.info(f"SMTRTRTBackend initialized: {config.model_path}")
+        except Exception as e:
+            logger.error(f"Failed to init SMTRTRTBackend: {e}")
+
+    @property
+    def backend_name(self) -> str:
+        return "smtr_trt"
+
+    @property
+    def is_available(self) -> bool:
+        return self._available and self._recognizer is not None
+
+    def recognize(self, image: np.ndarray, return_confidence: bool = True):
+        if not self.is_available:
+            return [("", 0.0, []), ("", 0.0, [])]
+        return self._recognizer.recognize(image)
+
+    def recognize_batch(self, images: List[np.ndarray]):
+        if not self.is_available:
+            return [[("", 0.0, []), ("", 0.0, [])] for _ in images]
+        return self._recognizer.recognize_batch(images)
+
+    def recognize_with_char_conf(self, image: np.ndarray):
+        if not self.is_available:
+            return [("", 0.0, []), ("", 0.0, [])]
+        return self._recognizer.recognize_with_char_conf(image)
+
+
 class SVTRv2TRTBackend(OCRBackendStrategy):
     """Pure TensorRT backend for SVTRv2 CTC model (.engine file, pycuda)."""
 
@@ -493,6 +586,11 @@ class OCRBackendFactory:
     SVTRV2_ONNX_MODEL = f"{home}/Source/ocr_datecode/languages/english/rec_model.onnx"
     SVTRV2_DICT_PATH  = f"{home}/Source/ocr_datecode/languages/english/ppocr_keys_v1.txt"
 
+    # SMTR dual-head paths
+    SMTR_TRT_ENGINE = f"{home}/Source/ocr_datecode/languages/english/rec_smtr_fp16.engine"
+    SMTR_ONNX_MODEL = f"{home}/Source/ocr_datecode/languages/english/rec_smtr_fp16.onnx"
+    SMTR_DICT_PATH  = f"{home}/Source/ocr_datecode/languages/english/EN_symbol_dict.txt"
+
     # -----------------------------------------------------------------------
     # Registry: (model_type, backend_type) → (AdapterClass, model_path, dict_path, extra_kwargs)
     # To add a new model: add 2 entries here + paths above.
@@ -503,6 +601,8 @@ class OCRBackendFactory:
     def _get_registry(cls) -> dict:
         if cls._REGISTRY is None:
             cls._REGISTRY = {
+                (OCRModelType.SMTR,            OCRBackendType.TENSORRT): (SMTRTRTBackend,    cls.SMTR_TRT_ENGINE,    cls.SMTR_DICT_PATH,    {}),
+                (OCRModelType.SMTR,            OCRBackendType.ONNX):     (SMTRONNXBackend,   cls.SMTR_ONNX_MODEL,    cls.SMTR_DICT_PATH,    {"device": "cuda"}),
                 (OCRModelType.SVTRV2_CTC,      OCRBackendType.TENSORRT): (SVTRv2TRTBackend,  cls.SVTRV2_TRT_ENGINE,  cls.SVTRV2_DICT_PATH,  {}),
                 (OCRModelType.SVTRV2_CTC,      OCRBackendType.ONNX):     (SVTRv2ONNXBackend, cls.SVTRV2_ONNX_MODEL,  cls.SVTRV2_DICT_PATH,  {"device": "cuda"}),
                 (OCRModelType.OPENOCR_REPSVTR, OCRBackendType.TENSORRT): (TensorRTOpenOCRBackend, cls.DEFAULT_TRT_ENGINE, cls.DEFAULT_DICT_PATH, {}),
@@ -527,6 +627,8 @@ class OCRBackendFactory:
             'onnx_paddlev5':     False,
             'tensorrt_svtrv2':   False,
             'onnx_svtrv2':       False,
+            'tensorrt_smtr':     False,
+            'onnx_smtr':         False,
         }
 
         trt_ok, onnx_ok = False, False
@@ -547,6 +649,8 @@ class OCRBackendFactory:
         result['onnx_paddlev5']     = onnx_ok and os.path.exists(cls.LEGACY_ONNX_MODEL)  and os.path.exists(cls.LEGACY_DICT_PATH)
         result['tensorrt_svtrv2']   = trt_ok  and os.path.exists(cls.SVTRV2_TRT_ENGINE)  and os.path.exists(cls.SVTRV2_DICT_PATH)
         result['onnx_svtrv2']       = onnx_ok and os.path.exists(cls.SVTRV2_ONNX_MODEL)  and os.path.exists(cls.SVTRV2_DICT_PATH)
+        result['tensorrt_smtr']     = trt_ok  and os.path.exists(cls.SMTR_TRT_ENGINE)    and os.path.exists(cls.SMTR_DICT_PATH)
+        result['onnx_smtr']         = onnx_ok and os.path.exists(cls.SMTR_ONNX_MODEL)    and os.path.exists(cls.SMTR_DICT_PATH)
 
         return result
 
@@ -607,11 +711,14 @@ class OCRBackendFactory:
 
         # Priority order per model type
         _auto_priority = {
+            OCRModelType.SMTR:            [OCRBackendType.TENSORRT, OCRBackendType.ONNX],
             OCRModelType.SVTRV2_CTC:      [OCRBackendType.TENSORRT, OCRBackendType.ONNX],
             OCRModelType.OPENOCR_REPSVTR: [OCRBackendType.TENSORRT, OCRBackendType.ONNX],
             OCRModelType.PADDLEV5:        [OCRBackendType.TENSORRT, OCRBackendType.ONNX],
         }
         _avail_key = {
+            (OCRModelType.SMTR,            OCRBackendType.TENSORRT): 'tensorrt_smtr',
+            (OCRModelType.SMTR,            OCRBackendType.ONNX):     'onnx_smtr',
             (OCRModelType.SVTRV2_CTC,      OCRBackendType.TENSORRT): 'tensorrt_svtrv2',
             (OCRModelType.SVTRV2_CTC,      OCRBackendType.ONNX):     'onnx_svtrv2',
             (OCRModelType.OPENOCR_REPSVTR, OCRBackendType.TENSORRT): 'tensorrt_openocr',

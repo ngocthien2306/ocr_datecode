@@ -19,10 +19,11 @@ from .ocr import OCRBackendFactory, OCRBackendType
 from .ocr.factory import OCRModelType, OCRConfig
 
 # ── Chọn model OCR tại đây ────────────────────────────────────────────────
+# OCRModelType.SMTR            → SMTR dual-head GTC+CTC (dynamic width) ← MỚI
 # OCRModelType.SVTRV2_CTC      → SVTRv2 CTC (6625 classes, width=320)
 # OCRModelType.OPENOCR_REPSVTR → OpenOCR RepSVTR
 # OCRModelType.PADDLEV5        → PaddleV5 (legacy)
-OCR_MODEL_TYPE = OCRModelType.PADDLEV5
+OCR_MODEL_TYPE = OCRModelType.SMTR
 
 # OCRBackendType.AUTO      → tự chọn TRT nếu có engine, fallback ONNX
 # OCRBackendType.TENSORRT  → bắt buộc dùng .engine (pycuda)
@@ -288,7 +289,7 @@ class InferenceHandler:
         logger.info("TemplateVerificationService initialized")
 
         # Product Verification Service with YOLO OBB
-        yolo_obb_engine_path = f"{home}/Source/ocr_datecode/weights/best_bottle_obb_l_320.engine"
+        yolo_obb_engine_path = f"{home}/Source/ocr_datecode/weights/best_bottle_m_320_new.engine"
 
         # Configuration: save_debug_images can be "never", "on_fail", or "always"
         # Use "never" for production (fastest), "on_fail" for debugging failures

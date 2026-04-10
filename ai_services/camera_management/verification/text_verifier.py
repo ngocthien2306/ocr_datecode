@@ -17,6 +17,7 @@ from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from dataclasses import dataclass, field
 
 from ..ocr_utils import crop_text_region, compare_texts, compare_texts_smart
+from ..smtr_utils import _to_candidates
 
 if TYPE_CHECKING:
     from ..camera import Camera
@@ -80,6 +81,32 @@ def _apply_text_corrections(text: str) -> str:
 
 
     return text
+
+
+def _pick_winning_candidate(candidates, conf_threshold, use_char_conf_check, expected_text, case_sensitive=True):
+    passing = []
+    for text, conf, cc in candidates:
+        if conf < conf_threshold:
+            continue
+        if use_char_conf_check and cc is not None:
+            if any(c.isalnum() and cf < conf_threshold for c, cf in cc):
+                continue
+        passing.append((_apply_text_corrections(text.strip()), conf, cc))
+
+    if not passing:
+        best = max(candidates, key=lambda x: x[1])
+        return False, _apply_text_corrections(best[0].strip()), best[1], best[2]
+
+    matched = [
+        (t, c, cc) for t, c, cc in passing
+        if compare_texts(t, expected_text, case_sensitive=case_sensitive, strip=True)
+    ]
+    if matched:
+        winner = max(matched, key=lambda x: x[1])
+        return True, expected_text[:], winner[1], winner[2]
+
+    best = max(passing, key=lambda x: x[1])
+    return False, best[0], best[1], best[2]
 
 
 # ── Character-level quality analysis ──────────────────────────────────────
@@ -953,79 +980,15 @@ class TextVerificationService:
             # Run OCR (single inference - get char_confs nếu cần, tránh double infer)
             logger.debug(f"[{serial_number}] Running OCR with {self.ocr_backend} backend...")
             if self.use_char_conf_check and hasattr(self.text_recognizer, 'recognize_with_char_conf'):
-                text, confidence, char_confs = self.text_recognizer.recognize_with_char_conf(cropped_region)
+                raw = self.text_recognizer.recognize_with_char_conf(cropped_region)
             else:
-                text, confidence = self.text_recognizer.recognize(cropped_region, return_confidence=True)
-                char_confs = None
-            recognized_text = text.strip()
+                raw = self.text_recognizer.recognize(cropped_region, return_confidence=True)
+
+            candidates = _to_candidates(raw)
+            match, recognized_text, confidence, char_confs = _pick_winning_candidate(
+                candidates, conf_threshold, self.use_char_conf_check, expected_text, case_sensitive=False
+            )
             logger.debug(f"[{serial_number}] OCR result: '{recognized_text}' (conf: {confidence:.2%})")
-
-            # Check confidence threshold
-            if confidence < conf_threshold:
-                logger.warning(
-                    f"[{serial_number}] Annotation {annotation_idx}: "
-                    f"Low confidence {confidence:.2%} < threshold {conf_threshold:.2%}, "
-                    f"treating as NO MATCH"
-                )
-                match = False
-            elif self.use_char_conf_check and char_confs is not None:
-                low_chars = [(c, cf) for c, cf in char_confs if c.isalnum() and cf < conf_threshold]
-                if low_chars:
-                    logger.warning(
-                        f"[{serial_number}] Annotation {annotation_idx}: "
-                        f"Low per-char conf {low_chars}, treating as NO MATCH"
-                    )
-                    match = False
-                else:
-                    match = None  # tiếp tục so sánh text bên dưới
-            else:
-                match = None  # tiếp tục so sánh text bên dưới
-
-            if match is None:
-                # Compare texts using similarity matching for specific patterns
-                # if "BEST BEFORE" in expected_text.upper() or "PL" in expected_text.upper() or "MFG" in expected_text.upper() or "BB" in expected_text.upper():
-                #     # Use similarity matching (default 80% threshold)
-                #     similarity = calculate_text_similarity(recognized_text, expected_text)
-                #     similarity_threshold = 0.90
-                #     match = similarity >= similarity_threshold
-                #     if match:
-                #         recognized_text = expected_text[:]  # Override with expected text on match
-
-                #     logger.info(
-                #         f"[{serial_number}] Annotation {annotation_idx}: "
-                #         f"Using similarity matching - similarity={similarity:.2%}, "
-                #         f"threshold={similarity_threshold:.2%}, match={match}"
-                #     )
-                # else:
-                # Use exact match
-                if "USsed" in recognized_text:
-                    recognized_text = recognized_text.replace("USsed", "Used")
-
-                if "Iif" in recognized_text:
-                    recognized_text = recognized_text.replace("Iif", "If")
-                    
-                if "Fo" in recognized_text:
-                    recognized_text = recognized_text.replace("Fo", "FO")
-
-                if "oR" in recognized_text:
-                    recognized_text = recognized_text.replace("oR", "OR")
-                
-                # if "MRR" in recognized_text:
-                #     recognized_text = recognized_text.replace("MRR", "MAR")
-                
-                # if "HAR" in recognized_text:    
-                #     recognized_text = recognized_text.replace("HAR", "MAR")
-                
-                # if "HRR" in recognized_text:    
-                #     recognized_text = recognized_text.replace("HRR", "MAR")
-                
-                # if "RL" in recognized_text:
-                #     recognized_text = recognized_text.replace("RL", "PL")
-                
-
-                match = compare_texts(recognized_text, expected_text, case_sensitive=False, strip=True)
-                if match: 
-                    recognized_text = expected_text[:]
 
             logger.info(
                 f"[{serial_number}] Annotation {annotation_idx}: "
@@ -1282,47 +1245,21 @@ class TextVerificationService:
         }
 
         for i, result in enumerate(ocr_results):
-            if isinstance(result, dict):
-                text, confidence = result["text"], result["confidence"]
-                batch_char_confs = result.get("char_confs")
-            else:
-                text, confidence = result
-                batch_char_confs = None
-
             meta = all_metadata[i]
             serial_number = meta['serial_number']
             annotation_idx = meta['annotation_idx']
             conf_threshold = meta['conf_threshold']
             expected_text = meta['expected_text']
 
-            recognized_text = text.strip()
-            char_confs = batch_char_confs  # khởi tạo, có thể được cập nhật bên dưới
+            candidates = _to_candidates(result)
+            if self.use_char_conf_check and all(cc is None for _, _, cc in candidates):
+                if hasattr(self.text_recognizer, 'recognize_with_char_conf'):
+                    raw = self.text_recognizer.recognize_with_char_conf(meta['cropped_region'])
+                    candidates = _to_candidates(raw)
 
-            # Check confidence threshold
-            if confidence < conf_threshold:
-                logger.warning(
-                    f"[{serial_number}] Annotation {annotation_idx}: "
-                    f"Low confidence {confidence:.2%} < threshold {conf_threshold:.2%}"
-                )
-                match = False
-            elif self.use_char_conf_check:
-                if char_confs is None and hasattr(self.text_recognizer, 'recognize_with_char_conf'):
-                    _, _, char_confs = self.text_recognizer.recognize_with_char_conf(meta['cropped_region'])
-                low_chars = [(c, cf) for c, cf in (char_confs or []) if c.isalnum() and cf < conf_threshold]
-                if low_chars:
-                    logger.warning(
-                        f"[{serial_number}] Annotation {annotation_idx}: "
-                        f"Low per-char conf {low_chars}, treating as NO MATCH"
-                    )
-                    match = False
-                else:
-                    recognized_text = _apply_text_corrections(recognized_text)
-                    match = compare_texts(recognized_text, expected_text, case_sensitive=True, strip=True)
-                    if match:
-                        recognized_text = expected_text[:]
-            else:
-                recognized_text = _apply_text_corrections(recognized_text)
-                match = compare_texts(recognized_text, expected_text, case_sensitive=True, strip=True)
+            match, recognized_text, confidence, char_confs = _pick_winning_candidate(
+                candidates, conf_threshold, self.use_char_conf_check, expected_text, case_sensitive=True
+            )
 
             logger.info(
                 f"[{serial_number}] Annotation {annotation_idx}: "
@@ -1435,38 +1372,17 @@ class TextVerificationService:
         best_conf = -1.0
 
         for ver_name, aug_result in zip(aug_names, aug_results):
-            if isinstance(aug_result, dict):
-                aug_text, aug_conf = aug_result["text"], aug_result["confidence"]
-                aug_char_confs = aug_result.get("char_confs")
-            else:
-                aug_text, aug_conf = aug_result
-                aug_char_confs = None
-            aug_recognized = _apply_text_corrections(aug_text.strip())
-            aug_match = compare_texts(aug_recognized, expected_text, case_sensitive=True, strip=True)
-
+            candidates = _to_candidates(aug_result)
+            aug_match, aug_recognized, aug_conf, _ = _pick_winning_candidate(
+                candidates, conf_threshold, self.use_char_conf_check, expected_text, case_sensitive=True
+            )
             logger.info(
                 f"[{serial_number}] Annotation {annotation_idx} "
                 f"augment[{ver_name}]: '{aug_recognized}' conf={aug_conf:.2%} match={aug_match}"
             )
-
             if aug_match:
-                if self.use_char_conf_check and aug_char_confs is not None:
-                    low_chars = [(c, cf) for c, cf in aug_char_confs if c.isalnum() and cf < conf_threshold]
-                    if low_chars:
-                        logger.info(
-                            f"[{serial_number}] Annotation {annotation_idx}: "
-                            f"augment[{ver_name}] text match but low char conf {low_chars}, skip"
-                        )
-                        if aug_conf > best_conf:
-                            best_conf = aug_conf
-                            best_text = aug_recognized
-                        continue
-                logger.info(
-                    f"[{serial_number}] Annotation {annotation_idx}: "
-                    f"PASS via augment[{ver_name}]"
-                )
+                logger.info(f"[{serial_number}] Annotation {annotation_idx}: PASS via augment[{ver_name}]")
                 return True, expected_text[:]
-
             if aug_conf > best_conf:
                 best_conf = aug_conf
                 best_text = aug_recognized
