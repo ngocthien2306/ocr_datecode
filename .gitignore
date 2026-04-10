@@ -191,3 +191,5 @@ weights/yolo26_bottle_obb.onnx
 weights/yolo26_label_seg.onnx
 bottle_data/
 datecodes/
+backend/scripts/cropped_datecodes_all
+trt_cache/

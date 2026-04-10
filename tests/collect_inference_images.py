@@ -25,9 +25,9 @@ class InferenceImageCollector:
         source_root: str,
         target_folder: str,
         camera_ids: List[str],
-        min_date: str = "2026-01-20",
-        max_date: str = "2026-01-28",
-        images_per_camera_per_day: Tuple[int, int] = (35, 55),
+        min_date: str = "2026-03-25",
+        max_date: str = "2026-04-10",
+        images_per_camera_per_day: Tuple[int, int] = (15, 25),
     ):
         self.source_root = Path(source_root)
         self.target_folder = Path(target_folder)
@@ -290,10 +290,10 @@ def main():
     # Configuration
     SOURCE_ROOT = "/home/demo/Source/ocr_datecode/backend/uploads/inference_results"
     TARGET_FOLDER = "/home/demo/Source/ocr_datecode/data"
-    CAMERA_IDS = ["40733814", "22376896"]
-    MIN_DATE = "2026-01-20"
-    MAX_DATE = "2026-01-28"
-    IMAGES_PER_CAMERA_PER_DAY = (30, 50)  # (min, max) per day per camera
+    CAMERA_IDS = ["40733814", "40767171"]
+    MIN_DATE = "2026-03-25"
+    MAX_DATE = "2026-04-10"
+    IMAGES_PER_CAMERA_PER_DAY = (15, 25)  # (min, max) per day per camera
 
     # Create collector instance
     collector = InferenceImageCollector(

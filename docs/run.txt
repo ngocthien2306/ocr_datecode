@@ -13,3 +13,5 @@ export PATH=$CUDA_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 
 pip3 install pycuda --user
+
+ffmpeg -f x11grab -video_size 1920x1080 -i :0.0 -c:v libx264 -pix_fmt yuv420p test_terminal.mp4
