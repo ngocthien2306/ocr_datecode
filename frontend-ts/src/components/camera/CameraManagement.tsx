@@ -59,6 +59,7 @@ const CameraManagement: React.FC = () => {
   const [availableCameras, setAvailableCameras] = useState<DiscoveredCamera[]>([]);
   const [loadingDiscover, setLoadingDiscover] = useState(false);
   const [manualInput, setManualInput] = useState(false);
+  const [originalSerialNumber, setOriginalSerialNumber] = useState<string>('');
 
   const [formData, setFormData] = useState<CameraFormData>({
     camera_id: '',
@@ -350,12 +351,14 @@ const CameraManagement: React.FC = () => {
     }
   };
 
-  const openEditModal = (camera: Camera) => {
+  const openEditModal = async (camera: Camera) => {
+    const serial = (camera as any).serial_number || getCameraKey(camera) || '';
     setEditingCamera(camera);
+    setOriginalSerialNumber(serial);
     setFormData({
       camera_id: getCameraKey(camera),
       model_name: (camera as any).model_name || camera.name || '',
-      serial_number: (camera as any).serial_number || getCameraKey(camera) || '',
+      serial_number: serial,
       resolution_width: (camera as any).resolution_width || camera.settings?.width || 1920,
       resolution_height: (camera as any).resolution_height || camera.settings?.height || 1200,
       is_connected: !!camera.is_connected,
@@ -367,6 +370,19 @@ const CameraManagement: React.FC = () => {
       pixel_format: (camera as any).pixel_format || 'Mono8'
     });
     setViewMode('form');
+    setManualInput(false);
+
+    // Discover available cameras for potential hardware replacement
+    setLoadingDiscover(true);
+    try {
+      const discovered = await camerasAPI.discoverCameras();
+      setAvailableCameras(discovered);
+    } catch (err: any) {
+      console.error('Error discovering cameras:', err);
+      setAvailableCameras([]);
+    } finally {
+      setLoadingDiscover(false);
+    }
   };
 
   const handleBackToListFromForm = () => {
@@ -500,15 +516,76 @@ const CameraManagement: React.FC = () => {
                 <div className="form-group">
                   <label>Serial Number *</label>
                   {editingCamera ? (
-                    <input
-                      type="text"
-                      name="serial_number"
-                      value={formData.serial_number}
-                      onChange={handleFormChange}
-                      placeholder="40123456"
-                      required
-                      disabled
-                    />
+                    <>
+                      {loadingDiscover ? (
+                        <div className="select-loading">
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="spin">
+                            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" opacity="0.25"/>
+                            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="2"/>
+                          </svg>
+                          <span>Discovering cameras...</span>
+                        </div>
+                      ) : manualInput ? (
+                        <input
+                          type="text"
+                          name="serial_number"
+                          value={formData.serial_number}
+                          onChange={handleFormChange}
+                          placeholder="Enter serial number manually"
+                          required
+                        />
+                      ) : (
+                        <select
+                          name="serial_number"
+                          value={formData.serial_number}
+                          onChange={(e) => {
+                            const selectedSerial = e.target.value;
+                            const cam = availableCameras.find(c => c.serial_number === selectedSerial);
+                            if (cam) {
+                              setFormData(prev => ({
+                                ...prev,
+                                serial_number: cam.serial_number,
+                                model_name: cam.model_name,
+                                ip_address: cam.ip_address || prev.ip_address,
+                                resolution_width: cam.resolution_width,
+                                resolution_height: cam.resolution_height,
+                              }));
+                            } else {
+                              setFormData(prev => ({ ...prev, serial_number: selectedSerial }));
+                            }
+                          }}
+                          required
+                        >
+                          <option value={originalSerialNumber}>
+                            {originalSerialNumber} (current)
+                          </option>
+                          {availableCameras.map(cam => (
+                            <option key={cam.serial_number} value={cam.serial_number}>
+                              {cam.model_name} ({cam.serial_number})
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      {!loadingDiscover && formData.serial_number !== originalSerialNumber && (
+                        <small className="form-hint warning">
+                          Serial number changed. All recipes using this camera will automatically use the new hardware after next load.
+                        </small>
+                      )}
+                      {!loadingDiscover && (
+                        <button
+                          type="button"
+                          className="toggle-input-btn"
+                          onClick={() => {
+                            setManualInput(!manualInput);
+                            if (manualInput) {
+                              setFormData(prev => ({ ...prev, serial_number: originalSerialNumber }));
+                            }
+                          }}
+                        >
+                          {manualInput ? 'Select from list' : 'Enter manually'}
+                        </button>
+                      )}
+                    </>
                   ) : (
                     <>
                       {loadingDiscover ? (

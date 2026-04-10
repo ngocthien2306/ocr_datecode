@@ -306,6 +306,34 @@ def _enrich_cameras_with_function_type(cameras_config, camera_templates_list):
     return enriched_cameras
 
 
+async def _resolve_camera_serials(cameras: list, camera_repo) -> list:
+    """
+    Resolve stale serial_number/model_name in cameras list using current Camera table data.
+
+    For each camera, lookup by camera_id → override serial_number and model_name
+    with current values. This ensures recipes work correctly after camera hardware replacement.
+    """
+    resolved = []
+    for cam in cameras:
+        cam_copy = dict(cam)
+        camera_id = cam_copy.get('camera_id')
+        if camera_id:
+            current = await camera_repo.get_by_id(camera_id)
+            if current:
+                old_serial = cam_copy.get('serial_number')
+                new_serial = current.get('serial_number')
+                if old_serial and new_serial and old_serial != new_serial:
+                    logger.info(
+                        f"[RESOLVE] Camera {camera_id}: serial {old_serial} → {new_serial}"
+                    )
+                if new_serial:
+                    cam_copy['serial_number'] = new_serial
+                if current.get('model_name'):
+                    cam_copy['model_name'] = current['model_name']
+        resolved.append(cam_copy)
+    return resolved
+
+
 @router.post("/", response_model=RecipeResponse, status_code=status.HTTP_201_CREATED)
 async def create_recipe(
     recipe: RecipeCreate,
@@ -438,6 +466,18 @@ async def get_latest_load(
     item = await load_repo.get_latest_running()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No running recipe")
+
+    # Resolve stale camera serials in the snapshot using current Camera table data
+    try:
+        from app.repositories.camera_repository import CameraRepository as _CameraRepo
+        _camera_repo = _CameraRepo(get_database())
+        metadata = item.get('metadata') or {}
+        cameras = metadata.get('cameras') or []
+        if cameras:
+            metadata['cameras'] = await _resolve_camera_serials(cameras, _camera_repo)
+            item['metadata'] = metadata
+    except Exception as e:
+        logger.warning(f"[RESOLVE] Failed to resolve camera serials in latest load: {e}")
 
     return item
 @router.get("/loads")
@@ -966,6 +1006,11 @@ async def load_recipe(
         camera_templates_list
     )
 
+    # Resolve stale serial_number/model_name using current Camera table data
+    from app.repositories.camera_repository import CameraRepository as _CameraRepo
+    _camera_repo = _CameraRepo(get_database())
+    enriched_cameras = await _resolve_camera_serials(enriched_cameras, _camera_repo)
+
     # Build metadata snapshot (will be used for both storage and inference)
     metadata = {
         'recipe_id': recipe_id,
@@ -1271,6 +1316,11 @@ async def update_recipe_realtime(
         cameras_primitive,
         camera_templates
     )
+
+    # Resolve stale serial_number/model_name using current Camera table data
+    from app.repositories.camera_repository import CameraRepository as _CameraRepo
+    _camera_repo = _CameraRepo(get_database())
+    enriched_cameras = await _resolve_camera_serials(enriched_cameras, _camera_repo)
 
     recipe_dict = {
         '_id': str(recipe.id) if hasattr(recipe, 'id') else recipe_id,
