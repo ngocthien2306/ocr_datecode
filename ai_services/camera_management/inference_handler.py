@@ -23,7 +23,7 @@ from .ocr.factory import OCRModelType, OCRConfig
 # OCRModelType.SVTRV2_CTC      → SVTRv2 CTC (6625 classes, width=320)
 # OCRModelType.OPENOCR_REPSVTR → OpenOCR RepSVTR
 # OCRModelType.PADDLEV5        → PaddleV5 (legacy)
-OCR_MODEL_TYPE = OCRModelType.SMTR
+OCR_MODEL_TYPE = OCRModelType.OPENOCR_REPSVTR
 
 # OCRBackendType.AUTO      → tự chọn TRT nếu có engine, fallback ONNX
 # OCRBackendType.TENSORRT  → bắt buộc dùng .engine (pycuda)
