@@ -347,64 +347,84 @@ export default function Receipts() {
   };
 
   const handleLoadReceipt = async (receipt: Receipt) => {
+    // Check if another recipe is already running
+    if (runningRecipeId && runningRecipeId !== receipt.id) {
+      const runningRecipe = receipts.find(r => r.id === runningRecipeId);
+      const runningName = runningRecipe ? `"${runningRecipe.name}"` : `(ID: ${runningRecipeId})`;
+      setConfirmDialog({
+        isOpen: true,
+        title: 'Recipe Already Running',
+        message: `Recipe ${runningName} is currently running.\n\nDo you want to stop it and load "${receipt.name}" (${receipt.productCode}) instead?`,
+        type: 'warning',
+        onConfirm: async () => {
+          await doLoadRecipe(receipt);
+        }
+      });
+      return;
+    }
+
     setConfirmDialog({
       isOpen: true,
       title: 'Load Recipe',
       message: `Load recipe "${receipt.name}" (${receipt.productCode})?\n\nThis will load the recipe configuration into the system.`,
       type: 'info',
       onConfirm: async () => {
-        try {
-          const data = await receiptsAPI.loadReceipt(receipt.id);
-
-          // Show loading animation with progress on success
-          setShowLoadingAnimation(true);
-          setLoadingProgress(0);
-
-          // Animate progress from 0 to 100%
-          const progressInterval = setInterval(() => {
-            setLoadingProgress(prev => {
-              if (prev >= 100) {
-                clearInterval(progressInterval);
-                return 100;
-              }
-              // Smooth acceleration
-              const increment = prev < 30 ? 2 : prev < 70 ? 3 : 5;
-              return Math.min(prev + increment, 100);
-            });
-          }, 50);
-
-          setTimeout(async () => {
-            clearInterval(progressInterval);
-            setShowLoadingAnimation(false);
-            setLoadingProgress(0);
-            setRunningRecipeId(receipt.id); // Set running recipe
-
-            // Set inference mode to OFFLINE by default when loading recipe
-            try {
-              await receiptsAPI.setInferenceMode(receipt.id, false);
-              // Save OFFLINE state to localStorage for UI persistence
-              localStorage.setItem('inference_mode_online', 'false');
-              console.log('[LoadRecipe] Set inference mode to OFFLINE and saved to localStorage');
-            } catch (error) {
-              console.error('[LoadRecipe] Failed to set inference mode to OFFLINE:', error);
-            }
-
-            // Redirect to Realtime tab
-            const realtimeLink = document.querySelector('a[href="#realtime"]') as HTMLAnchorElement;
-            if (realtimeLink) {
-              realtimeLink.click();
-            }
-          }, 3000);
-
-          toast.success(`Recipe "${receipt.name}" loaded and recorded (event id: ${data.id}).`);
-          await loadReceipts();
-        } catch (error: any) {
-          console.error('Error loading receipt:', error);
-          const msg = error?.response?.data?.detail || 'Failed to load receipt. Please try again.';
-          toast.error(msg);
-        }
+        await doLoadRecipe(receipt);
       }
     });
+  };
+
+  const doLoadRecipe = async (receipt: Receipt) => {
+    try {
+      const data = await receiptsAPI.loadReceipt(receipt.id);
+
+      // Show loading animation with progress on success
+      setShowLoadingAnimation(true);
+      setLoadingProgress(0);
+
+      // Animate progress from 0 to 100%
+      const progressInterval = setInterval(() => {
+        setLoadingProgress(prev => {
+          if (prev >= 100) {
+            clearInterval(progressInterval);
+            return 100;
+          }
+          // Smooth acceleration
+          const increment = prev < 30 ? 2 : prev < 70 ? 3 : 5;
+          return Math.min(prev + increment, 100);
+        });
+      }, 50);
+
+      setTimeout(async () => {
+        clearInterval(progressInterval);
+        setShowLoadingAnimation(false);
+        setLoadingProgress(0);
+        setRunningRecipeId(receipt.id); // Set running recipe
+
+        // Set inference mode to OFFLINE by default when loading recipe
+        try {
+          await receiptsAPI.setInferenceMode(receipt.id, false);
+          // Save OFFLINE state to localStorage for UI persistence
+          localStorage.setItem('inference_mode_online', 'false');
+          console.log('[LoadRecipe] Set inference mode to OFFLINE and saved to localStorage');
+        } catch (error) {
+          console.error('[LoadRecipe] Failed to set inference mode to OFFLINE:', error);
+        }
+
+        // Redirect to Realtime tab
+        const realtimeLink = document.querySelector('a[href="#realtime"]') as HTMLAnchorElement;
+        if (realtimeLink) {
+          realtimeLink.click();
+        }
+      }, 3000);
+
+      toast.success(`Recipe "${receipt.name}" loaded and recorded (event id: ${data.id}).`);
+      await loadReceipts();
+    } catch (error: any) {
+      console.error('Error loading receipt:', error);
+      const msg = error?.response?.data?.detail || 'Failed to load receipt. Please try again.';
+      toast.error(msg);
+    }
   };
 
   const handleStopReceipt = async (receipt: Receipt) => {
