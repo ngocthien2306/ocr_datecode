@@ -266,6 +266,8 @@ class CameraManager:
                         error_msg = f"Failed to load recipe to camera {serial_number}"
                         logger.error(error_msg)
                         errors.append(error_msg)
+                        # Camera likely disconnected — trigger service restart
+                        self.trigger_handler._handle_capture_failure(serial_number, group_id=0)
 
                 success = len(loaded_cameras) > 0
 
