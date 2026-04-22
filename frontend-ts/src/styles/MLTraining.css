@@ -746,6 +746,8 @@ body.dark-mode .ml-segment-item.selected { background: #1e2641; }
 body.dark-mode .ml-label-badge.ok   { background: #14532d; color: #4ade80; }
 body.dark-mode .ml-label-badge.ng   { background: #7f1d1d; color: #fca5a5; }
 body.dark-mode .ml-label-badge.none { background: #1f2937; color: #6b7280; }
+body.dark-mode .ml-segment-item select { background: #141722; }
+body.dark-mode .ml-segment-item select option { background: #141722; color: #e2e8f0; }
 
 body.dark-mode .ml-train-left          { background: #141722; border-right-color: #2d3148; }
 body.dark-mode .ml-train-right         { background: #0f1117; }
