@@ -24,4 +24,9 @@ motor>=3.3.0
 pymongo>=4.5.0
 # jetson-stats
 
+# ML Training
+scikit-learn>=1.4.0
+joblib>=1.3.0
+opencv-python-headless>=4.8.0
+
 

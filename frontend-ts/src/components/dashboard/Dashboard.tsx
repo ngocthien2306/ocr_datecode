@@ -3,6 +3,7 @@ import '@/styles/Dashboard.css';
 import UserManagement from './UserManagement';
 import Receipts from '../recipe/Receipts';
 import InferenceRealtime from '../inference/InferenceRealtime';
+import MLTrainingPage from '../ml-training/MLTrainingPage';
 import Historical from './Historical';
 import Settings from './Settings';
 import Logs from './Logs';
@@ -37,7 +38,7 @@ interface DashboardProps {
   onLogout: () => void;
 }
 
-type Section = 'dashboard' | 'users' | 'receipts' | 'realtime' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation' | 'system';
+type Section = 'dashboard' | 'users' | 'receipts' | 'realtime' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation' | 'system' | 'ml-training';
 
 type LoadingTemplate = 'camera-vision' | 'users' | 'receipts' | 'cameras' | 'historical' | 'settings' | 'logs' | 'documentation' | 'spinner' | 'pulse' | 'radar' | 'grid' | 'circuit' | 'barcode' | 'ocr' | 'dots' | 'waves' | 'ocr-scanner' | 'barcode-scanner' | 'neural-network' | 'qr-detector' | 'industrial-factory' | 'ai-vision-pipeline' | 'neural-processing' | 'system-io';
 
@@ -1152,6 +1153,16 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     year: 'numeric'
   });
 
+  // If ml-training section, render MLTrainingPage fullscreen
+  if (currentSection === 'ml-training') {
+    return (
+      <>
+        <MLTrainingPage onClose={() => setCurrentSection('dashboard')} />
+        <AgentChatWidget />
+      </>
+    );
+  }
+
   // If realtime section, render InferenceRealtime fullscreen (no dashboard-container)
   if (currentSection === 'realtime') {
     return (
@@ -1392,6 +1403,18 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
           <h3>Action</h3>
           <nav className="action-menu">
+            <a
+              href="#ml-training"
+              className={`nav-item ${currentSection === 'ml-training' ? 'active' : ''}`}
+              onClick={(e) => { e.preventDefault(); handleSectionChange('ml-training'); }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2L2 7l10 5 10-5-10-5z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+                <path d="M2 17l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+                <path d="M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+              </svg>
+              ML Training
+            </a>
             {canAccessPage('logs') && (
               <a
                 href="#logs"

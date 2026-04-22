@@ -12,7 +12,7 @@ from app.repositories.action_log_repository import ActionLogRepository
 import logging
 from pathlib import Path
 
-from app.api.endpoints import auth, users, recipes, cameras, upload, action_logs, inference_results, trigger_simulator, agent, jetson_monitoring, storage
+from app.api.endpoints import auth, users, recipes, cameras, upload, action_logs, inference_results, trigger_simulator, agent, jetson_monitoring, storage, ml_training
 from app.api.websocket import camera_ws
 from app.services.socketio_service import socket_app
 
@@ -121,6 +121,7 @@ app.include_router(trigger_simulator.router, prefix="/api", tags=["Trigger Simul
 app.include_router(agent.router, prefix="/api", tags=["AI Agent"])
 app.include_router(jetson_monitoring.router, prefix="/api", tags=["Jetson Monitoring"])
 app.include_router(storage.router, prefix="/api", tags=["Storage Management"])
+app.include_router(ml_training.router, prefix="/api", tags=["ML Training"])
 
 # WebSocket endpoints
 app.include_router(camera_ws.router, tags=["WebSocket"])
@@ -129,6 +130,12 @@ app.include_router(camera_ws.router, tags=["WebSocket"])
 UPLOADS_DIR = Path(__file__).parent.parent / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/api/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
+
+# Serve ML project files (images, models) as static
+ML_FILES_DIR = Path(__file__).parent.parent / ".." / "public" / "ml_projects"
+ML_FILES_DIR = ML_FILES_DIR.resolve()
+ML_FILES_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/api/ml-files", StaticFiles(directory=str(ML_FILES_DIR)), name="ml-files")
 
 
 @app.get("/")
