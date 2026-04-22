@@ -42,6 +42,10 @@ export default function LabelTab({ project, onRefresh }: Props) {
   const [segmenting, setSegmenting]         = useState(false);
   const [saving, setSaving]                 = useState(false);
   const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
+  const [selectedSegId, setSelectedSegId]   = useState<string | null>(null);
+
+  // Ref to scroll panel to focused segment
+  const panelRef = useRef<HTMLDivElement>(null);
 
   // ── Refs so canvas handlers always see current values (no stale closures) ──
   const drawModeRef         = useRef<DrawMode>('select');
@@ -73,6 +77,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
     setSelectedFile(filename);
     setRegions([]);
     setSelectedRegionId(null);
+    setSelectedSegId(null);
     setDrawMode('select');
 
     try {
@@ -208,22 +213,20 @@ export default function LabelTab({ project, onRefresh }: Props) {
         return;
       }
 
-      // Click on segment → cycle label
+      // Click on segment → focus it in panel (no label cycling)
       if (!isDrawingRef.current && opt.target) {
         const obj = opt.target as AnnotatedRect;
         if (obj._segmentId && obj._regionId) {
           const ptr = canvas.getScenePoint(e);
           const dist = Math.hypot(ptr.x - mouseDnPosRef.current.x, ptr.y - mouseDnPosRef.current.y);
           if (dist < 5) {
-            const next: Label = obj._label === null ? 'OK' : obj._label === 'OK' ? 'NG' : null;
-            obj._label = next;
-            const color = segColor(next);
-            obj.set({ stroke: color, fill: `${color}33`, cornerColor: color, borderColor: color });
-            canvas.renderAll();
-            setRegions(prev => prev.map(r => r.id !== obj._regionId ? r : {
-              ...r,
-              segments: r.segments.map(s => s.id === obj._segmentId ? { ...s, label: next } : s),
-            }));
+            setSelectedSegId(obj._segmentId!);
+            setSelectedRegionId(obj._regionId!);
+            // Scroll panel to this segment
+            setTimeout(() => {
+              const el = document.getElementById(`seg-${obj._segmentId}`);
+              el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }, 0);
           }
         }
       }
@@ -699,8 +702,10 @@ export default function LabelTab({ project, onRefresh }: Props) {
               {region.segments.map((seg, si) => (
                 <div
                   key={seg.id}
-                  className="ml-segment-item"
+                  id={`seg-${seg.id}`}
+                  className={`ml-segment-item${selectedSegId === seg.id ? ' selected' : ''}`}
                   style={{ paddingLeft: '18px', fontSize: '11px', gap: '6px' }}
+                  onClick={() => { setSelectedSegId(seg.id); setSelectedRegionId(region.id); }}
                 >
                   {/* Color dot */}
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: segColor(seg.label ?? null), flexShrink: 0, display: 'inline-block' }} />
