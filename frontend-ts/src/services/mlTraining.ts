@@ -1,4 +1,7 @@
-import api from './http';
+import api, { API_BASE_URL } from './http';
+
+// Server origin (e.g. "http://localhost:8000") — used to build static image URLs
+const SERVER_ORIGIN = API_BASE_URL.replace(/\/api\/?$/, '');
 
 // ──────── Types ────────────────────────────────────────────────────────────
 
@@ -92,6 +95,16 @@ export interface PredictResult {
   crop_b64: string;
 }
 
+// ──────── Static URL builders ──────────────────────────────────────────────
+
+/** Full URL to a camera snapshot image (served from /public/images_temp) */
+export const cameraImageUrl = (filename: string) =>
+  `${SERVER_ORIGIN}/api/camera-images/${encodeURIComponent(filename)}`;
+
+/** Full URL to a project image (served from /public/ml_projects/{id}/images) */
+export const projectImageUrl = (projectId: string, filename: string) =>
+  `${SERVER_ORIGIN}/api/ml-files/${projectId}/images/${encodeURIComponent(filename)}`;
+
 // ──────── API client ───────────────────────────────────────────────────────
 
 export const mlTrainingAPI = {
@@ -117,11 +130,15 @@ export const mlTrainingAPI = {
 
   // Available images (from /public/images_temp snapshot)
   listAvailableImages: () =>
-    api.get<AvailableImage[]>('/ml/available-images').then(r => r.data),
+    api.get<{ filename: string }[]>('/ml/available-images').then(r =>
+      r.data.map(img => ({ filename: img.filename, url: cameraImageUrl(img.filename) }))
+    ),
 
   // Project images
   listProjectImages: (projectId: string) =>
-    api.get<ProjectImage[]>(`/ml/projects/${projectId}/images`).then(r => r.data),
+    api.get<{ filename: string; has_annotation: boolean }[]>(`/ml/projects/${projectId}/images`).then(r =>
+      r.data.map(img => ({ ...img, url: projectImageUrl(projectId, img.filename) }))
+    ),
 
   copyImages: (projectId: string, filenames: string[]) =>
     api.post(`/ml/projects/${projectId}/images/copy`, { filenames }).then(r => r.data),
@@ -138,9 +155,9 @@ export const mlTrainingAPI = {
     api.delete(`/ml/projects/${projectId}/images/${encodeURIComponent(filename)}`).then(r => r.data),
 
   getImageMeta: (projectId: string, filename: string) =>
-    api.get<{ filename: string; url: string; width: number; height: number }>(
+    api.get<{ filename: string; width: number; height: number }>(
       `/ml/projects/${projectId}/images/${encodeURIComponent(filename)}/meta`
-    ).then(r => r.data),
+    ).then(r => ({ ...r.data, url: projectImageUrl(projectId, filename) })),
 
   // Segmentation
   segmentRegion: (projectId: string, filename: string, region: { x: number; y: number; w: number; h: number }) =>
