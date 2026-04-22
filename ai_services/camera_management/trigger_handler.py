@@ -10,6 +10,7 @@ from typing import Dict, List, Tuple, Optional, TYPE_CHECKING
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .utils import read_di_value, check_trigger_edge
+from .image_saver import ImageSaveWorker
 
 if TYPE_CHECKING:
     from .camera import Camera
@@ -701,6 +702,11 @@ class TriggerHandler:
                         f"[Group #{group_id}] Camera {camera.serial_number} captured "
                         f"{result.get('frame_count', 0)} frames. "
                         f"Progress: {completed}/{expected}"
+                    )
+                    # Save frames to disk (non-blocking background thread)
+                    ImageSaveWorker.instance().enqueue(
+                        camera.serial_number,
+                        result.get('frames', [])
                     )
                     # Reset consecutive failure counter on success
                     with self._restart_lock:
