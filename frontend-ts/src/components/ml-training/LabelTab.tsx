@@ -44,6 +44,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
   const [selectedSegId, setSelectedSegId]   = useState<string | null>(null);
+  const [expandedRegions, setExpandedRegions] = useState<Set<string>>(new Set());
 
   const autoSaveTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isInitLoadRef  = useRef(true); // skip auto-save on first load from server
@@ -71,6 +72,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
     loadImages();
     setSelectedFile(null);
     setRegions([]);
+    setExpandedRegions(new Set());
   }, [project.id]);
 
   // ── Select image → load into canvas ──────────────────────────────────────
@@ -81,6 +83,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
     setSelectedRegionId(null);
     setSelectedSegId(null);
     setDrawMode('select');
+    setExpandedRegions(new Set());
 
     try {
       const [imgMeta, annData] = await Promise.all([
@@ -109,6 +112,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
 
       if (annData.regions.length > 0) {
         setRegions(annData.regions);
+        setExpandedRegions(new Set(annData.regions.map(r => r.id)));
         _renderAllRegions(canvas, annData.regions, imageBoundsRef.current);
       }
       // Allow auto-save after initial data is settled
@@ -262,6 +266,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
         rect.set({ selectable: false, evented: false, hasControls: false });
         canvas.renderAll();
         setRegions(prev => [...prev, { id: regionId, x: normX, y: normY, w: normW, h: normH, segments: [] }]);
+        setExpandedRegions(prev => new Set([...prev, regionId]));
         setSelectedRegionId(regionId);
         setDrawMode('select');
 
@@ -509,8 +514,10 @@ export default function LabelTab({ project, onRefresh }: Props) {
     canvas.renderAll();
   }, []);
 
-  const deleteRegion = useCallback((regionId: string) => {
+  const deleteRegion = useCallback((regionId: string, segCount: number) => {
+    if (segCount > 0 && !confirm(`Delete this region and all ${segCount} char(s) inside?`)) return;
     setRegions(prev => prev.filter(r => r.id !== regionId));
+    setExpandedRegions(prev => { const n = new Set(prev); n.delete(regionId); return n; });
     if (selectedRegionId === regionId) setSelectedRegionId(null);
   }, [selectedRegionId]);
 
@@ -708,7 +715,17 @@ export default function LabelTab({ project, onRefresh }: Props) {
             </div>
           )}
 
-          {regions.map((region, ri) => (
+          {regions.map((region, ri) => {
+            const isExpanded = expandedRegions.has(region.id);
+            const toggleExpand = (e: React.MouseEvent) => {
+              e.stopPropagation();
+              setExpandedRegions(prev => {
+                const n = new Set(prev);
+                n.has(region.id) ? n.delete(region.id) : n.add(region.id);
+                return n;
+              });
+            };
+            return (
             <div key={region.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
 
               {/* Region header */}
@@ -720,37 +737,43 @@ export default function LabelTab({ project, onRefresh }: Props) {
                   borderLeft: selectedRegionId === region.id ? `3px solid ${REGION_COLOR}` : '3px solid transparent',
                 }}
               >
+                {/* Expand/collapse chevron */}
+                <button
+                  onClick={toggleExpand}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', color: '#94a3b8', flexShrink: 0, lineHeight: 1 }}
+                  title={isExpanded ? 'Collapse' : 'Expand'}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" style={{ transition: 'transform .15s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                    <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </button>
+
                 <span style={{ fontSize: '12px', fontWeight: 600, color: REGION_COLOR }}>
                   Region {ri + 1}
-                  {region.segments.length > 0 && (
-                    <span style={{ fontWeight: 400, color: '#94a3b8', marginLeft: 4 }}>
-                      ({region.segments.length})
-                    </span>
-                  )}
+                  <span style={{ fontWeight: 400, color: '#94a3b8', marginLeft: 4 }}>
+                    ({region.segments.length})
+                  </span>
                 </span>
-                <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                  {/* Bulk label buttons — shown when region has segments */}
+                <div style={{ display: 'flex', gap: '4px', alignItems: 'center', marginLeft: 'auto' }}>
+                  {/* Bulk label select — shown when region has segments */}
                   {region.segments.length > 0 && (
-                    <>
-                      <button
-                        className="ml-btn ml-btn-sm"
-                        style={{ padding: '2px 6px', fontSize: '10px', background: '#dcfce7', color: SEG_OK_COLOR, border: `1px solid ${SEG_OK_COLOR}` }}
-                        title="Set all chars to OK"
-                        onClick={e => { e.stopPropagation(); handleBulkLabel(region.id, 'OK'); }}
-                      >All OK</button>
-                      <button
-                        className="ml-btn ml-btn-sm"
-                        style={{ padding: '2px 6px', fontSize: '10px', background: '#fee2e2', color: SEG_NG_COLOR, border: `1px solid ${SEG_NG_COLOR}` }}
-                        title="Set all chars to NG"
-                        onClick={e => { e.stopPropagation(); handleBulkLabel(region.id, 'NG'); }}
-                      >All NG</button>
-                      <button
-                        className="ml-btn ml-btn-sm"
-                        style={{ padding: '2px 6px', fontSize: '10px', background: '#f1f5f9', color: '#6b7280', border: '1px solid #94a3b8' }}
-                        title="Reset all char labels"
-                        onClick={e => { e.stopPropagation(); handleBulkLabel(region.id, null); }}
-                      >Reset</button>
-                    </>
+                    <select
+                      value=""
+                      onClick={e => e.stopPropagation()}
+                      onChange={e => {
+                        const v = e.target.value;
+                        if (v === 'OK' || v === 'NG') handleBulkLabel(region.id, v);
+                        else if (v === 'reset') handleBulkLabel(region.id, null);
+                        e.target.value = '';
+                      }}
+                      style={{ fontSize: '10px', padding: '2px 4px', borderRadius: '4px', border: '1px solid #94a3b8', background: '#f1f5f9', color: '#374151', cursor: 'pointer', outline: 'none' }}
+                      title="Set all chars label"
+                    >
+                      <option value="" disabled>All…</option>
+                      <option value="OK">All OK</option>
+                      <option value="NG">All NG</option>
+                      <option value="reset">Reset</option>
+                    </select>
                   )}
                   {region.segments.length === 0 && (
                     <button
@@ -773,14 +796,14 @@ export default function LabelTab({ project, onRefresh }: Props) {
                   </button>
                   <button
                     style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0 2px', fontSize: '13px' }}
-                    onClick={e => { e.stopPropagation(); deleteRegion(region.id); }}
-                    title="Delete region"
+                    onClick={e => { e.stopPropagation(); deleteRegion(region.id, region.segments.length); }}
+                    title="Delete region (and all chars inside)"
                   >✕</button>
                 </div>
               </div>
 
-              {/* Segments */}
-              {region.segments.map((seg, si) => (
+              {/* Segments — collapsible */}
+              {isExpanded && region.segments.map((seg, si) => (
                 <div
                   key={seg.id}
                   id={`seg-${seg.id}`}
@@ -829,7 +852,8 @@ export default function LabelTab({ project, onRefresh }: Props) {
                 </div>
               ))}
             </div>
-          ))}
+          );})}
+
         </div>
       </div>
     </div>
