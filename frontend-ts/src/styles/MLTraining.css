@@ -259,7 +259,7 @@
 .ml-btn-danger:hover:not(:disabled)    { background: #fecaca; }
 .ml-btn-sm { padding: 4px 8px; font-size: 11px; }
 
-/* ── Image grid (FIX: align-content start so rows don't stretch) ── */
+/* ── Image grid ── */
 .ml-image-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
@@ -267,14 +267,20 @@
   padding: 10px;
   overflow-y: auto;
   flex: 1;
-  align-content: start;   /* KEY: prevents rows from stretching to fill height */
+  align-content: start;
 }
 
-/* ── Image thumbnail ── */
+/* ── Image thumbnail
+     padding-bottom: 100% trick → forces grid row height = column width (square)
+     even when all children are position:absolute (no in-flow content).
+     aspect-ratio alone fails in this case because absolute children don't
+     contribute to the grid track sizing.
+── */
 .ml-image-thumb {
   position: relative;
   width: 100%;
-  aspect-ratio: 1 / 1;
+  height: 0;
+  padding-bottom: 100%;
   border-radius: 6px;
   overflow: hidden;
   cursor: pointer;
@@ -282,7 +288,7 @@
   transition: border-color .12s;
   background: #e2e8f0;
 }
-.ml-image-thumb:hover  { border-color: #2563eb; }
+.ml-image-thumb:hover    { border-color: #2563eb; }
 .ml-image-thumb.selected { border-color: #2563eb; }
 .ml-image-thumb.annotated::after {
   content: '';
@@ -292,6 +298,7 @@
   background: #22c55e;
   border-radius: 50%;
   border: 1px solid #fff;
+  z-index: 1;
 }
 
 .ml-image-thumb img {

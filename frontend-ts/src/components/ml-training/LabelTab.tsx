@@ -43,6 +43,10 @@ export default function LabelTab({ project, onRefresh }: Props) {
   const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
   const [imageSize, setImageSize] = useState<{ w: number; h: number }>({ w: 1, h: 1 });
 
+  // drawModeRef MUST be declared before the canvas init useEffect so handlers can read current value
+  const drawModeRef = useRef<DrawMode>('select');
+  useEffect(() => { drawModeRef.current = drawMode; }, [drawMode]);
+
   // Drawing state
   const drawStartRef = useRef<{ x: number; y: number } | null>(null);
   const drawRectRef = useRef<AnnotatedRect | null>(null);
@@ -123,7 +127,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
     fabricRef.current = canvas;
 
     const handleMouseDown = (e: any) => {
-      if (isDrawingRef.current || drawMode !== 'draw-region') return;
+      if (isDrawingRef.current || drawModeRef.current !== 'draw-region') return;
       const bounds = imageBoundsRef.current;
       if (!bounds) return;
       const pointer = canvas.getScenePoint(e.e);
@@ -231,9 +235,6 @@ export default function LabelTab({ project, onRefresh }: Props) {
     return () => { canvas.dispose(); fabricRef.current = null; };
   }, []);
 
-  // Keep drawMode accessible inside canvas handlers via ref
-  const drawModeRef = useRef(drawMode);
-  useEffect(() => { drawModeRef.current = drawMode; }, [drawMode]);
 
   // ── Render all regions on canvas ──────────────────────────────────────
   function _renderAllRegions(
@@ -435,16 +436,15 @@ export default function LabelTab({ project, onRefresh }: Props) {
           </div>
         </div>
 
-        {!selectedFile ? (
-          <div className="ml-empty-state" style={{ flex: 1 }}>
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" style={{opacity:.4}}><rect x="9" y="4" width="12" height="16" rx="2" stroke="currentColor" strokeWidth="2"/><path d="M9 12H3m0 0l3-3m-3 3l3 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
-            Select an image to start labeling
-          </div>
-        ) : (
-          <div className="ml-canvas-wrapper" ref={containerRef} style={{ cursor: drawMode === 'draw-region' ? 'crosshair' : 'default' }}>
-            <canvas ref={canvasRef} />
-          </div>
-        )}
+        <div className="ml-canvas-wrapper" ref={containerRef} style={{ cursor: drawMode === 'draw-region' ? 'crosshair' : 'default' }}>
+          <canvas ref={canvasRef} />
+          {!selectedFile && (
+            <div className="ml-empty-state" style={{ position: 'absolute', inset: 0 }}>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" style={{opacity:.4}}><rect x="9" y="4" width="12" height="16" rx="2" stroke="currentColor" strokeWidth="2"/><path d="M9 12H3m0 0l3-3m-3 3l3 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+              Select an image to start labeling
+            </div>
+          )}
+        </div>
 
         {selectedFile && drawMode === 'draw-region' && (
           <div style={{ padding: '6px 12px', background: '#1a1d27', borderTop: '1px solid #2d3148', fontSize: '11px', color: '#f59e0b' }}>
