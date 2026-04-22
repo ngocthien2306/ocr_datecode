@@ -41,11 +41,12 @@ export default function LabelTab({ project, onRefresh }: Props) {
   const [drawMode, setDrawMode]             = useState<DrawMode>('select');
   const [segmenting, setSegmenting]         = useState(false);
   const [saving, setSaving]                 = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
   const [selectedSegId, setSelectedSegId]   = useState<string | null>(null);
 
-  // Ref to scroll panel to focused segment
-  const panelRef = useRef<HTMLDivElement>(null);
+  const autoSaveTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isInitLoadRef  = useRef(true); // skip auto-save on first load from server
 
   // ── Refs so canvas handlers always see current values (no stale closures) ──
   const drawModeRef         = useRef<DrawMode>('select');
@@ -74,6 +75,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
 
   // ── Select image → load into canvas ──────────────────────────────────────
   const selectImage = useCallback(async (filename: string) => {
+    isInitLoadRef.current = true; // suppress auto-save during this load
     setSelectedFile(filename);
     setRegions([]);
     setSelectedRegionId(null);
@@ -109,8 +111,11 @@ export default function LabelTab({ project, onRefresh }: Props) {
         setRegions(annData.regions);
         _renderAllRegions(canvas, annData.regions, imageBoundsRef.current);
       }
+      // Allow auto-save after initial data is settled
+      setTimeout(() => { isInitLoadRef.current = false; }, 100);
     } catch (e) {
       console.error('Failed to load image', e);
+      isInitLoadRef.current = false;
     }
   }, [project.id]);
 
@@ -463,6 +468,47 @@ export default function LabelTab({ project, onRefresh }: Props) {
     }
   }, [project.id, selectedFile, regions, loadImages, onRefresh]);
 
+  // ── Auto-save (debounced 1.5 s after any regions change) ─────────────────
+  useEffect(() => {
+    if (!selectedFile) return;
+    if (isInitLoadRef.current) return; // skip the first load from server
+
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    setAutoSaveStatus('idle');
+
+    autoSaveTimer.current = setTimeout(async () => {
+      setAutoSaveStatus('saving');
+      try {
+        await mlTrainingAPI.saveAnnotation(project.id, selectedFile, regions);
+        await loadImages();
+        onRefresh();
+        setAutoSaveStatus('saved');
+        setTimeout(() => setAutoSaveStatus('idle'), 1500);
+      } catch {
+        setAutoSaveStatus('idle');
+      }
+    }, 1500);
+
+    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+  }, [regions]);
+
+  // ── Bulk label all segments in a region ───────────────────────────────────
+  const handleBulkLabel = useCallback((regionId: string, label: Label) => {
+    setRegions(prev => prev.map(r => r.id !== regionId ? r : {
+      ...r, segments: r.segments.map(s => ({ ...s, label })),
+    }));
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    canvas.getObjects().forEach(o => {
+      const obj = o as AnnotatedRect;
+      if (obj._regionId !== regionId || !obj._segmentId) return;
+      const color = segColor(label);
+      obj._label = label;
+      obj.set({ stroke: color, fill: `${color}33`, cornerColor: color, borderColor: color });
+    });
+    canvas.renderAll();
+  }, []);
+
   const deleteRegion = useCallback((regionId: string) => {
     setRegions(prev => prev.filter(r => r.id !== regionId));
     if (selectedRegionId === regionId) setSelectedRegionId(null);
@@ -594,7 +640,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
             </svg>
           </button>
 
-          {/* Stats + Save */}
+          {/* Stats + Auto-save indicator + Save */}
           {selectedFile && (
             <div style={{ marginLeft: 'auto', display: 'flex', gap: '10px', alignItems: 'center' }}>
               <span style={{ fontSize: '11px', display: 'flex', gap: '8px' }}>
@@ -602,6 +648,15 @@ export default function LabelTab({ project, onRefresh }: Props) {
                 <span style={{ color: SEG_NG_COLOR }}>{ngCount} NG</span>
                 {unlabeledCount > 0 && <span style={{ color: '#6b7280' }}>{unlabeledCount} ?</span>}
               </span>
+              {autoSaveStatus === 'saving' && (
+                <span style={{ fontSize: '11px', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <span className="ml-loading-spinner" style={{ width: 10, height: 10, borderWidth: 2 }} />
+                  Saving…
+                </span>
+              )}
+              {autoSaveStatus === 'saved' && (
+                <span style={{ fontSize: '11px', color: SEG_OK_COLOR }}>✓ Saved</span>
+              )}
               <button className="ml-btn ml-btn-primary ml-btn-sm" onClick={handleSave} disabled={saving}>
                 {saving ? 'Saving...' : <>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
@@ -635,7 +690,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
           <div style={{ padding: '5px 12px', background: '#1a1d27', borderTop: '1px solid #2d3148', fontSize: '11px', color: '#6b7280', display: 'flex', gap: '16px' }}>
             {drawMode === 'draw-region' && <span style={{ color: REGION_COLOR }}>Draw a rectangle around a character region → Auto Segment</span>}
             {drawMode === 'draw-char'   && <span style={{ color: SEG_UNLABELED }}>Draw a single character box manually{selectedRegionId ? '' : ' (will create new region)'}</span>}
-            {drawMode === 'select'      && <span>Scroll to zoom · Space+drag to pan · Click char to cycle label · Drag to move/resize</span>}
+            {drawMode === 'select'      && <span>Scroll to zoom · Space+drag to pan · Click char to focus in panel · Drag to move/resize</span>}
           </div>
         )}
       </div>
@@ -660,7 +715,10 @@ export default function LabelTab({ project, onRefresh }: Props) {
               <div
                 className={`ml-segment-item ${selectedRegionId === region.id ? 'selected' : ''}`}
                 onClick={() => setSelectedRegionId(prev => prev === region.id ? null : region.id)}
-                style={{ background: selectedRegionId === region.id ? '#fef9ec' : '#f8fafc' }}
+                style={{
+                  background: selectedRegionId === region.id ? '#fef3c7' : '#f8fafc',
+                  borderLeft: selectedRegionId === region.id ? `3px solid ${REGION_COLOR}` : '3px solid transparent',
+                }}
               >
                 <span style={{ fontSize: '12px', fontWeight: 600, color: REGION_COLOR }}>
                   Region {ri + 1}
@@ -671,6 +729,29 @@ export default function LabelTab({ project, onRefresh }: Props) {
                   )}
                 </span>
                 <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                  {/* Bulk label buttons — shown when region has segments */}
+                  {region.segments.length > 0 && (
+                    <>
+                      <button
+                        className="ml-btn ml-btn-sm"
+                        style={{ padding: '2px 6px', fontSize: '10px', background: '#dcfce7', color: SEG_OK_COLOR, border: `1px solid ${SEG_OK_COLOR}` }}
+                        title="Set all chars to OK"
+                        onClick={e => { e.stopPropagation(); handleBulkLabel(region.id, 'OK'); }}
+                      >All OK</button>
+                      <button
+                        className="ml-btn ml-btn-sm"
+                        style={{ padding: '2px 6px', fontSize: '10px', background: '#fee2e2', color: SEG_NG_COLOR, border: `1px solid ${SEG_NG_COLOR}` }}
+                        title="Set all chars to NG"
+                        onClick={e => { e.stopPropagation(); handleBulkLabel(region.id, 'NG'); }}
+                      >All NG</button>
+                      <button
+                        className="ml-btn ml-btn-sm"
+                        style={{ padding: '2px 6px', fontSize: '10px', background: '#f1f5f9', color: '#6b7280', border: '1px solid #94a3b8' }}
+                        title="Reset all char labels"
+                        onClick={e => { e.stopPropagation(); handleBulkLabel(region.id, null); }}
+                      >Reset</button>
+                    </>
+                  )}
                   {region.segments.length === 0 && (
                     <button
                       className="ml-btn ml-btn-success ml-btn-sm"
@@ -704,7 +785,14 @@ export default function LabelTab({ project, onRefresh }: Props) {
                   key={seg.id}
                   id={`seg-${seg.id}`}
                   className={`ml-segment-item${selectedSegId === seg.id ? ' selected' : ''}`}
-                  style={{ paddingLeft: '18px', fontSize: '11px', gap: '6px' }}
+                  style={{
+                    paddingLeft: '18px',
+                    fontSize: '11px',
+                    gap: '6px',
+                    background: selectedSegId === seg.id ? '#eff6ff' : undefined,
+                    borderLeft: selectedSegId === seg.id ? `3px solid ${segColor(seg.label ?? null)}` : '3px solid transparent',
+                    boxShadow: selectedSegId === seg.id ? 'inset 0 0 0 1px #bfdbfe' : undefined,
+                  }}
                   onClick={() => { setSelectedSegId(seg.id); setSelectedRegionId(region.id); }}
                 >
                   {/* Color dot */}
