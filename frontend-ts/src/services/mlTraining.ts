@@ -16,12 +16,12 @@ export interface MLProject {
 
 export interface AvailableImage {
   filename: string;
-  thumbnail_b64: string;
+  url: string;
 }
 
 export interface ProjectImage {
   filename: string;
-  thumbnail_b64: string;
+  url: string;
   has_annotation: boolean;
 }
 
@@ -111,7 +111,11 @@ export const mlTrainingAPI = {
   deleteProject: (id: string) =>
     api.delete(`/ml/projects/${id}`).then(r => r.data),
 
-  // Available images (from /public/images buffer)
+  // Snapshot camera buffer → stable temp folder for current session
+  snapshotImages: () =>
+    api.post<{ copied: number; filenames: string[] }>('/ml/snapshot-images').then(r => r.data),
+
+  // Available images (from /public/images_temp snapshot)
   listAvailableImages: () =>
     api.get<AvailableImage[]>('/ml/available-images').then(r => r.data),
 
@@ -133,9 +137,9 @@ export const mlTrainingAPI = {
   deleteImage: (projectId: string, filename: string) =>
     api.delete(`/ml/projects/${projectId}/images/${encodeURIComponent(filename)}`).then(r => r.data),
 
-  getImageB64: (projectId: string, filename: string) =>
-    api.get<{ filename: string; image_b64: string; width: number; height: number }>(
-      `/ml/projects/${projectId}/images/${encodeURIComponent(filename)}`
+  getImageMeta: (projectId: string, filename: string) =>
+    api.get<{ filename: string; url: string; width: number; height: number }>(
+      `/ml/projects/${projectId}/images/${encodeURIComponent(filename)}/meta`
     ).then(r => r.data),
 
   // Segmentation

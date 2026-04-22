@@ -74,12 +74,12 @@ export default function LabelTab({ project, onRefresh }: Props) {
     setDrawMode('select');
 
     try {
-      const [imgData, annData] = await Promise.all([
-        mlTrainingAPI.getImageB64(project.id, filename),
+      const [imgMeta, annData] = await Promise.all([
+        mlTrainingAPI.getImageMeta(project.id, filename),
         mlTrainingAPI.getAnnotation(project.id, filename),
       ]);
 
-      setImageSize({ w: imgData.width, h: imgData.height });
+      setImageSize({ w: imgMeta.width, h: imgMeta.height });
 
       const canvas = fabricRef.current;
       if (!canvas || !containerRef.current) return;
@@ -87,16 +87,15 @@ export default function LabelTab({ project, onRefresh }: Props) {
       // Clear canvas
       canvas.clear();
 
-      // Load image
-      const dataUrl = `data:image/jpeg;base64,${imgData.image_b64}`;
-      const img = await FabricImage.fromURL(dataUrl, { crossOrigin: 'anonymous' });
+      // Load image via static URL (no base64 encoding needed)
+      const img = await FabricImage.fromURL(imgMeta.url, { crossOrigin: 'anonymous' });
 
       const cw = containerRef.current.clientWidth;
       const ch = containerRef.current.clientHeight;
-      const scale = Math.min((cw - 40) / imgData.width, (ch - 40) / imgData.height);
+      const scale = Math.min((cw - 40) / imgMeta.width, (ch - 40) / imgMeta.height);
       img.scale(scale);
-      const left = (cw - imgData.width * scale) / 2;
-      const top = (ch - imgData.height * scale) / 2;
+      const left = (cw - imgMeta.width * scale) / 2;
+      const top = (ch - imgMeta.height * scale) / 2;
       img.set({ left, top, selectable: false, evented: false });
 
       canvas.backgroundImage = img;
@@ -370,8 +369,9 @@ export default function LabelTab({ project, onRefresh }: Props) {
             >
               <img
                 className="ml-label-image-thumb"
-                src={`data:image/jpeg;base64,${img.thumbnail_b64}`}
+                src={img.url}
                 alt={img.filename}
+                loading="lazy"
               />
               <span className="ml-label-image-name">{img.filename}</span>
             </div>

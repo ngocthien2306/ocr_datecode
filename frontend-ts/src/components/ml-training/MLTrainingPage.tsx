@@ -37,7 +37,11 @@ export default function MLTrainingPage({ onClose }: Props) {
     }
   }, [activeProject]);
 
-  useEffect(() => { loadProjects(); }, []);
+  useEffect(() => {
+    // Snapshot camera buffer once when ML Training page opens
+    mlTrainingAPI.snapshotImages().catch(e => console.warn('Snapshot failed', e));
+    loadProjects();
+  }, []);
 
   // ── Create project ─────────────────────────────────────────────────────
   const handleCreateProject = async () => {

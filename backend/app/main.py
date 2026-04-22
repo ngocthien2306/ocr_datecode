@@ -137,6 +137,12 @@ ML_FILES_DIR = ML_FILES_DIR.resolve()
 ML_FILES_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/api/ml-files", StaticFiles(directory=str(ML_FILES_DIR)), name="ml-files")
 
+# Serve camera snapshot (stable copy for ML Training session)
+CAMERA_IMAGES_TEMP_DIR = Path(__file__).parent.parent / ".." / "public" / "images_temp"
+CAMERA_IMAGES_TEMP_DIR = CAMERA_IMAGES_TEMP_DIR.resolve()
+CAMERA_IMAGES_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/api/camera-images", StaticFiles(directory=str(CAMERA_IMAGES_TEMP_DIR)), name="camera-images")
+
 
 @app.get("/")
 async def root():

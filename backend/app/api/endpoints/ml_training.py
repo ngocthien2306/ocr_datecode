@@ -41,8 +41,14 @@ router = APIRouter()
 _PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent
 ML_BASE = _PROJECT_ROOT / "public" / "ml_projects"
 PUBLIC_IMAGES_DIR = _PROJECT_ROOT / "public" / "images"
+IMAGES_TEMP_DIR = _PROJECT_ROOT / "public" / "images_temp"
 
 ML_BASE.mkdir(parents=True, exist_ok=True)
+IMAGES_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+# Static URL prefixes (served by main.py mounts)
+_CAMERA_STATIC_PREFIX = "/api/camera-images"
+_ML_FILES_STATIC_PREFIX = "/api/ml-files"
 
 
 def _project_dir(project_id: str) -> Path:
@@ -73,20 +79,17 @@ def _allowed(filename: str) -> bool:
 
 
 def _sync_image_count(repo: MLTrainingRepository, project_id: str):
-    """Helper: schedule image count refresh (to be called in background)."""
     images_dir = _images_dir(project_id)
     count = len([f for f in images_dir.glob("*") if f.suffix.lower() in ALLOWED_EXTS]) if images_dir.exists() else 0
     return count
 
 
-def _img_thumbnail_b64(path: Path, size: int = 120) -> str:
+def _image_dimensions(path: Path) -> tuple[int, int]:
+    """Return (width, height) of an image file without encoding it."""
     img = cv.imread(str(path))
     if img is None:
-        return ""
-    h, w = img.shape[:2]
-    scale = size / max(h, w)
-    img = cv.resize(img, (max(1, int(w * scale)), max(1, int(h * scale))))
-    return img_to_b64(img, quality=70)
+        return 0, 0
+    return img.shape[1], img.shape[0]
 
 
 # ════════════════════════════════════════ PROJECTS ════════════════════════
@@ -153,27 +156,51 @@ async def delete_project(
     return {"ok": True}
 
 
+# ════════════════════════════════════════ SNAPSHOT ════════════════════════
+
+@router.post("/ml/snapshot-images", tags=["ML Training"])
+async def snapshot_images(
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """
+    Copy /public/images → /public/images_temp so the ML session has a stable
+    snapshot that won't be affected by the rolling 100-image buffer updates.
+    """
+    if IMAGES_TEMP_DIR.exists():
+        shutil.rmtree(IMAGES_TEMP_DIR)
+    IMAGES_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not PUBLIC_IMAGES_DIR.exists():
+        return {"copied": 0, "filenames": []}
+
+    copied = []
+    for f in PUBLIC_IMAGES_DIR.glob("*"):
+        if f.suffix.lower() in ALLOWED_EXTS:
+            shutil.copy2(f, IMAGES_TEMP_DIR / f.name)
+            copied.append(f.name)
+
+    logger.info(f"[ML] Snapshot: copied {len(copied)} images to images_temp")
+    return {"copied": len(copied), "filenames": copied}
+
+
 # ════════════════════════════════════════ AVAILABLE IMAGES ════════════════
 
 @router.get("/ml/available-images", tags=["ML Training"])
 async def list_available_images(
     current_user: UserInDB = Depends(get_current_user),
 ):
-    """List images in /public/images (the rolling 100-image buffer from cameras)."""
-    if not PUBLIC_IMAGES_DIR.exists():
+    """List images from the stable snapshot in /public/images_temp."""
+    if not IMAGES_TEMP_DIR.exists():
         return []
     files = sorted(
-        [f for f in PUBLIC_IMAGES_DIR.glob("*") if f.suffix.lower() in ALLOWED_EXTS],
+        [f for f in IMAGES_TEMP_DIR.glob("*") if f.suffix.lower() in ALLOWED_EXTS],
         key=lambda f: f.name,
         reverse=True,
     )
-    result = []
-    for f in files:
-        result.append({
-            "filename": f.name,
-            "thumbnail_b64": _img_thumbnail_b64(f),
-        })
-    return result
+    return [
+        {"filename": f.name, "url": f"{_CAMERA_STATIC_PREFIX}/{f.name}"}
+        for f in files
+    ]
 
 
 # ════════════════════════════════════════ PROJECT IMAGES ══════════════════
@@ -200,14 +227,14 @@ async def list_project_images(
         for r in a.regions for seg in r.segments
     )}
 
-    result = []
-    for f in files:
-        result.append({
+    return [
+        {
             "filename": f.name,
-            "thumbnail_b64": _img_thumbnail_b64(f),
+            "url": f"{_ML_FILES_STATIC_PREFIX}/{project_id}/images/{f.name}",
             "has_annotation": f.name in annotated,
-        })
-    return result
+        }
+        for f in files
+    ]
 
 
 @router.post("/ml/projects/{project_id}/images/copy", tags=["ML Training"])
@@ -231,7 +258,8 @@ async def copy_images_to_project(
     images_dir.mkdir(parents=True, exist_ok=True)
     copied = []
     for fn in filenames:
-        src = PUBLIC_IMAGES_DIR / fn
+        # Read from the stable snapshot, not the rolling buffer
+        src = IMAGES_TEMP_DIR / fn
         if not src.exists() or not _allowed(fn):
             continue
         dst = images_dir / fn
@@ -294,24 +322,24 @@ async def delete_project_image(
     return {"ok": True}
 
 
-@router.get("/ml/projects/{project_id}/images/{filename}", tags=["ML Training"])
-async def get_project_image_b64(
+@router.get("/ml/projects/{project_id}/images/{filename}/meta", tags=["ML Training"])
+async def get_project_image_meta(
     project_id: str,
     filename: str,
     current_user: UserInDB = Depends(get_current_user),
 ):
-    """Return a project image as base64 (for canvas display)."""
+    """Return image URL + natural dimensions (for canvas scaling in Label tab)."""
     path = _images_dir(project_id) / filename
     if not path.exists():
         raise HTTPException(404, "Image not found")
-    img = cv.imread(str(path))
-    if img is None:
+    w, h = _image_dimensions(path)
+    if w == 0:
         raise HTTPException(500, "Cannot read image")
     return {
         "filename": filename,
-        "image_b64": img_to_b64(img, quality=90),
-        "width": img.shape[1],
-        "height": img.shape[0],
+        "url": f"{_ML_FILES_STATIC_PREFIX}/{project_id}/images/{filename}",
+        "width": w,
+        "height": h,
     }
 
 
