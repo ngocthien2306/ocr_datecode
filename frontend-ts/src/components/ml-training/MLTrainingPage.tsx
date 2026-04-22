@@ -83,11 +83,28 @@ export default function MLTrainingPage({ onClose }: Props) {
     } catch { /* ignore */ }
   }, [activeProject]);
 
-  const tabs: { id: TabId; label: string; icon: string }[] = [
-    { id: 'images', label: 'Images', icon: '🖼️' },
-    { id: 'label',  label: 'Label',  icon: '🏷️' },
-    { id: 'train',  label: 'Train',  icon: '🧠' },
-  ];
+  const TAB_ICONS: Record<TabId, React.ReactNode> = {
+    images: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+        <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/>
+        <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/>
+        <path d="M21 15l-5-5L5 21" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+      </svg>
+    ),
+    label: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+        <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+        <circle cx="7" cy="7" r="1.5" fill="currentColor"/>
+      </svg>
+    ),
+    train: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+        <path d="M12 2L2 7l10 5 10-5-10-5z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+        <path d="M2 17l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+        <path d="M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+      </svg>
+    ),
+  };
 
   return (
     <div className="ml-training-overlay">
@@ -101,23 +118,26 @@ export default function MLTrainingPage({ onClose }: Props) {
             </span>
           )}
         </div>
-        <button className="ml-close-btn" onClick={onClose}>✕ Close</button>
+        <button className="ml-close-btn" onClick={onClose}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+          Close
+        </button>
       </div>
 
       {/* Tabs */}
       <div className="ml-training-tabs">
-        {tabs.map(t => (
+        {(['images', 'label', 'train'] as TabId[]).map(id => (
           <button
-            key={t.id}
-            className={`ml-tab-btn ${tab === t.id ? 'active' : ''}`}
-            onClick={() => setTab(t.id)}
+            key={id}
+            className={`ml-tab-btn ${tab === id ? 'active' : ''}`}
+            onClick={() => setTab(id)}
           >
-            <span>{t.icon}</span>
-            {t.label}
-            {t.id === 'images' && activeProject && (
+            {TAB_ICONS[id]}
+            {id.charAt(0).toUpperCase() + id.slice(1)}
+            {id === 'images' && activeProject && (
               <span className="ml-tab-count">{activeProject.image_count}</span>
             )}
-            {t.id === 'label' && activeProject && (
+            {id === 'label' && activeProject && (
               <span className="ml-tab-count">{activeProject.labeled_count}</span>
             )}
           </button>
@@ -167,7 +187,7 @@ export default function MLTrainingPage({ onClose }: Props) {
             )}
             {!loadingProjects && projects.length === 0 && (
               <div className="ml-empty-state" style={{ padding: '20px' }}>
-                <span className="ml-empty-icon">📁</span>
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" style={{opacity:.4}}><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
                 No projects yet
               </div>
             )}
@@ -197,7 +217,7 @@ export default function MLTrainingPage({ onClose }: Props) {
         <div className="ml-tab-content">
           {!activeProject ? (
             <div className="ml-empty-state" style={{ flex: 1 }}>
-              <span className="ml-empty-icon">👈</span>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" style={{opacity:.4}}><path d="M9 12H3m0 0l3-3m-3 3l3 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><rect x="9" y="4" width="12" height="16" rx="2" stroke="currentColor" strokeWidth="2"/></svg>
               Select or create a project to get started
             </div>
           ) : (

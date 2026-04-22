@@ -216,7 +216,10 @@ export default function TrainTab({ project, onRefresh }: Props) {
           onClick={handleTrain}
           disabled={!canTrain}
         >
-          {training ? '⏳ Training...' : '🚀 Start Training'}
+          {training
+            ? <><span className="ml-loading-spinner" style={{width:14,height:14,borderWidth:2}}/> Training...</>
+            : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/></svg> Start Training</>
+          }
         </button>
 
         {!canTrain && !training && (
@@ -275,7 +278,10 @@ export default function TrainTab({ project, onRefresh }: Props) {
             Labeled Crops
           </span>
           <button className="ml-btn ml-btn-secondary ml-btn-sm" onClick={loadCrops} disabled={loadingCrops}>
-            {loadingCrops ? '...' : '↻ Refresh'}
+            {loadingCrops
+              ? <span className="ml-loading-spinner" style={{width:12,height:12,borderWidth:2}}/>
+              : <><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M1 4v6h6M23 20v-6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> Refresh</>
+            }
           </button>
         </div>
 
@@ -285,7 +291,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
             <div className="ml-empty-state"><div className="ml-loading-spinner" /></div>
           ) : crops.length === 0 ? (
             <div className="ml-empty-state">
-              <span className="ml-empty-icon">🏷️</span>
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" style={{opacity:.4}}><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/><circle cx="7" cy="7" r="1.5" fill="currentColor"/></svg>
               No labeled characters yet. Go to Label tab to annotate images.
             </div>
           ) : (
@@ -368,7 +374,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
                   className="ml-btn ml-btn-secondary ml-btn-sm"
                   onClick={() => predictInputRef.current?.click()}
                 >
-                  📁 Choose Image
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg> Choose Image
                 </button>
                 {predictFile && (
                   <span style={{ fontSize: '11px', color: '#9ca3af' }}>{predictFile.name}</span>
@@ -379,7 +385,10 @@ export default function TrainTab({ project, onRefresh }: Props) {
                     onClick={handlePredict}
                     disabled={predicting}
                   >
-                    {predicting ? '⏳ Predicting...' : '▶ Run'}
+                    {predicting
+                      ? <><span className="ml-loading-spinner" style={{width:12,height:12,borderWidth:2}}/> Predicting...</>
+                      : <><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/></svg> Run</>
+                    }
                   </button>
                 )}
                 <input

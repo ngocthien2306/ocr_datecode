@@ -357,7 +357,8 @@ export default function LabelTab({ project, onRefresh }: Props) {
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {images.length === 0 && (
             <div className="ml-empty-state" style={{ padding: '20px' }}>
-              <span className="ml-empty-icon">🖼️</span>No images
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" style={{opacity:.4}}><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><path d="M21 15l-5-5L5 21" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
+              No images
             </div>
           )}
           {images.map(img => (
@@ -385,7 +386,8 @@ export default function LabelTab({ project, onRefresh }: Props) {
             onClick={() => setDrawMode('select')}
             title="Select / pan (V)"
           >
-            ↖ Select
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M4 4l7 18 3-7 7-3L4 4z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
+            Select
           </button>
           <button
             className={`ml-btn ml-btn-sm ${drawMode === 'draw-region' ? 'ml-btn-primary' : 'ml-btn-secondary'}`}
@@ -393,7 +395,8 @@ export default function LabelTab({ project, onRefresh }: Props) {
             disabled={!selectedFile}
             title="Draw region (R)"
           >
-            ▭ Draw Region
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="12" rx="1" stroke="currentColor" strokeWidth="2"/></svg>
+            Draw Region
           </button>
           <div className="ml-canvas-toolbar-sep" />
           {selectedRegionId && (
@@ -402,16 +405,22 @@ export default function LabelTab({ project, onRefresh }: Props) {
               onClick={() => handleSegment(selectedRegionId)}
               disabled={segmenting}
             >
-              {segmenting ? '⏳ Segmenting...' : '⚡ Auto Segment'}
+              {segmenting ? <><span className="ml-loading-spinner" style={{width:12,height:12,borderWidth:2}}/> Segmenting...</> : <><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg> Auto Segment</>}
             </button>
           )}
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
             {selectedFile && (
               <>
                 <span style={{ fontSize: '11px', color: '#6b7280' }}>
-                  <span style={{ color: '#22c55e' }}>✓{okCount} OK</span>
+                  <span style={{ color: '#22c55e', display:'flex', alignItems:'center', gap:3 }}>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    {okCount} OK
+                  </span>
                   {' · '}
-                  <span style={{ color: '#ef4444' }}>✗{ngCount} NG</span>
+                  <span style={{ color: '#ef4444', display:'flex', alignItems:'center', gap:3 }}>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/></svg>
+                    {ngCount} NG
+                  </span>
                   {unlabeledCount > 0 && ` · ${unlabeledCount} unlabeled`}
                 </span>
                 <button
@@ -419,7 +428,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
                   onClick={handleSave}
                   disabled={saving}
                 >
-                  {saving ? 'Saving...' : '💾 Save'}
+                  {saving ? 'Saving...' : <><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/><polyline points="17 21 17 13 7 13 7 21" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/><polyline points="7 3 7 8 15 8" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg> Save</>}
                 </button>
               </>
             )}
@@ -428,7 +437,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
 
         {!selectedFile ? (
           <div className="ml-empty-state" style={{ flex: 1 }}>
-            <span className="ml-empty-icon">👈</span>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" style={{opacity:.4}}><rect x="9" y="4" width="12" height="16" rx="2" stroke="currentColor" strokeWidth="2"/><path d="M9 12H3m0 0l3-3m-3 3l3 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
             Select an image to start labeling
           </div>
         ) : (
@@ -479,7 +488,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
                       onClick={e => { e.stopPropagation(); setSelectedRegionId(region.id); handleSegment(region.id); }}
                       disabled={segmenting}
                     >
-                      ⚡ Segment
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg> Segment
                     </button>
                   ) : (
                     <span style={{ fontSize: '10px', color: '#6b7280' }}>{region.segments.length} chars</span>
