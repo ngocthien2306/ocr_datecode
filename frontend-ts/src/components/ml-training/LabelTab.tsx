@@ -99,7 +99,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
       img.set({ left, top, selectable: false, evented: false });
 
       canvas.backgroundImage = img;
-      imageBoundsRef.current = { left, top, width: imgData.width * scale, height: imgData.height * scale };
+      imageBoundsRef.current = { left, top, width: imgMeta.width * scale, height: imgMeta.height * scale };
       canvas.renderAll();
 
       // Restore saved annotations
