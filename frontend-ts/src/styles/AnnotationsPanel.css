@@ -31,26 +31,6 @@
   text-transform: uppercase;
 }
 
-.collapse-all-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  background: rgba(139, 92, 246, 0.15);
-  border: 1px solid rgba(139, 92, 246, 0.3);
-  border-radius: 5px;
-  color: #c4b5fd;
-  cursor: pointer;
-  transition: all 0.2s;
-  padding: 0;
-}
-
-.collapse-all-btn:hover {
-  background: rgba(139, 92, 246, 0.3);
-  border-color: #8b5cf6;
-}
-
 /* Annotations list */
 .annotations-list {
   display: flex;
@@ -447,12 +427,6 @@ body:not(.dark-mode) .annotations-panel-header {
 }
 
 body:not(.dark-mode) .annotations-panel-header h3 {
-  color: #7c3aed;
-}
-
-body:not(.dark-mode) .collapse-all-btn {
-  background: rgba(139, 92, 246, 0.08);
-  border-color: rgba(139, 92, 246, 0.2);
   color: #7c3aed;
 }
 

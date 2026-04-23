@@ -71,12 +71,9 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
   readOnlyType = false,
   hideMetadata = false
 }) => {
-  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [showMetadata, setShowMetadata] = useState(false);
 
   const handleAnnotationClick = (index: number) => {
-    // Toggle expand: click again to collapse
-    setExpandedIndex(prev => prev === index ? null : index);
     onSelectAnnotation?.(index);
 
     if (fabricCanvasRef?.current) {
@@ -90,32 +87,16 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
     }
   };
 
-  const isExpanded = (index: number) =>
-    expandedIndex === index || selectedAnnotation === index;
-
   return (
     <div className="annotations-panel">
       <div className="annotations-panel-header">
         <h3>Bounding Boxes ({annotations.length})</h3>
-        {annotations.length > 0 && (
-          <button
-            type="button"
-            className="collapse-all-btn"
-            onClick={() => setExpandedIndex(null)}
-            title="Collapse All"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-              <path d="M4 14H10V20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M20 10H14V4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </button>
-        )}
       </div>
       <div className="annotations-list">
         {annotations.map((ann, index) => {
           const typeConfig = ANNOTATION_TYPES.find(t => t.value === ann.type);
           const color = typeConfig?.color || '#ffffff';
-          const expanded = isExpanded(index);
+          const expanded = selectedAnnotation === index;
 
           return (
             <div
