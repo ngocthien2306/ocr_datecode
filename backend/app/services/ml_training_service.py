@@ -121,23 +121,22 @@ def build_dataset(
     annotations: List[MLAnnotationInDB],
     images_dir: Path,
     augment_factor: int = 0,
-) -> Tuple[np.ndarray, np.ndarray, int, int]:
+) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray], int, int]:
     """
-    Build (X, y) dataset from project annotations.
+    Build (X, y, crops_raw) dataset from project annotations.
 
     Returns:
         X: feature matrix
         y: labels (1=OK, 0=NG)
-        n_ok: count of OK samples (before augmentation)
-        n_ng: count of real NG samples
+        crops_raw: list of raw crop images, same order as X/y rows
+        n_ok: count of real OK samples
+        n_ng: count of real+synthetic NG samples
     """
     ok_imgs: List[np.ndarray] = []
     ng_imgs: List[np.ndarray] = []
 
     for ann in annotations:
-        filename = ann.filename
-        img_path = images_dir / filename
-
+        img_path = images_dir / ann.filename
         for region in ann.regions:
             for seg in region.segments:
                 if seg.label not in ("OK", "NG"):
@@ -171,13 +170,16 @@ def build_dataset(
         y_ng = np.zeros(len(X_ng), dtype=np.int32)
         X = np.vstack([X_ok, X_ng])
         y = np.concatenate([y_ok, y_ng])
+        crops_all: List[np.ndarray] = ok_imgs + all_ng
     else:
         X = X_ok
         y = y_ok
+        crops_all = list(ok_imgs)
 
-    # Shuffle
+    # Shuffle — keep crops in sync
     idx = np.random.permutation(len(X))
-    return X[idx], y[idx], len(ok_imgs), len(all_ng)
+    crops_shuffled = [crops_all[i] for i in idx]
+    return X[idx], y[idx], crops_shuffled, len(ok_imgs), len(all_ng)
 
 
 def train_model(
@@ -188,52 +190,70 @@ def train_model(
 ) -> Dict[str, Any]:
     """
     Train a classifier and save it to disk.
+    Also saves the test-set crops with predictions to a sidecar JSON file.
     Returns metrics dict.
     """
+    import json
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 
-    X, y, n_ok, n_ng = build_dataset(annotations, images_dir, request.augment_factor)
+    X, y, crops_raw, n_ok, n_ng = build_dataset(annotations, images_dir, request.augment_factor)
 
     if len(X) < 4:
         raise ValueError(f"Need at least 4 samples, got {len(X)}.")
 
-    # Split
+    # Split — pass crops_raw alongside X/y so indices stay in sync
     test_size = min(request.test_split, 0.4)
     if len(np.unique(y)) > 1:
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=42, stratify=y,
+        X_train, X_test, y_train, y_test, _, crops_test = train_test_split(
+            X, y, crops_raw, test_size=test_size, random_state=42, stratify=y,
         )
     else:
-        # Only one class: skip test split
+        # Only one class — no meaningful split; use all crops for display
         X_train, X_test, y_train, y_test = X, X, y, y
+        crops_test = crops_raw
 
-    # Build classifier
+    # Build & train classifier
     clf = _build_classifier(request)
     clf.fit(X_train, y_train)
 
     # Evaluate
     y_pred_train = clf.predict(X_train)
-    y_pred_test = clf.predict(X_test)
+    y_pred_test  = clf.predict(X_test)
     acc_train = float(accuracy_score(y_train, y_pred_train))
-    acc_test = float(accuracy_score(y_test, y_pred_test))
+    acc_test  = float(accuracy_score(y_test,  y_pred_test))
 
-    cm = confusion_matrix(y_test, y_pred_test).tolist()
+    cm     = confusion_matrix(y_test, y_pred_test).tolist()
     report = classification_report(y_test, y_pred_test,
                                    target_names=["NG", "OK"], zero_division=0)
 
-    # Save model
+    # Build per-crop test-set records (saved as sidecar JSON)
+    proba_test = clf.predict_proba(X_test)
+    test_set_items = []
+    for crop_img, true_y, pred_y, proba in zip(crops_test, y_test, y_pred_test, proba_test):
+        p_ok = float(proba[1]) if len(proba) > 1 else float(proba[0])
+        test_set_items.append({
+            "crop_b64":   img_to_b64(crop_img),
+            "true_label": "OK" if int(true_y) == 1 else "NG",
+            "pred_label": "OK" if int(pred_y) == 1 else "NG",
+            "prob_ok":    round(p_ok, 4),
+            "correct":    bool(true_y == pred_y),
+        })
+
+    # Save model + sidecar JSON
     model_save_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(clf, str(model_save_path))
+    test_set_path = model_save_path.parent / f"{model_save_path.stem}_test_set.json"
+    test_set_path.write_text(json.dumps(test_set_items))
 
     return {
         "accuracy_train": acc_train,
-        "accuracy_test": acc_test,
-        "n_ok": n_ok,
-        "n_ng": n_ng,
-        "n_total": len(X),
+        "accuracy_test":  acc_test,
+        "n_ok":           n_ok,
+        "n_ng":           n_ng,
+        "n_total":        len(X),
         "confusion_matrix": cm,
-        "report": report,
+        "report":         report,
     }
 
 

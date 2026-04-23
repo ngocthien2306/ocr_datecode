@@ -102,11 +102,12 @@ export interface PredictResult {
   crop_b64: string;
 }
 
-export interface TestSetImageResult {
-  filename: string;
-  predictions: PredictResult[];
-  ok_count: number;
-  ng_count: number;
+export interface TestSetCropResult {
+  crop_b64: string;
+  true_label: 'OK' | 'NG';
+  pred_label: 'OK' | 'NG';
+  prob_ok: number;
+  correct: boolean;
 }
 
 // ──────── Static URL builders ──────────────────────────────────────────────
@@ -227,9 +228,8 @@ export const mlTrainingAPI = {
     ).then(r => r.data);
   },
 
-  testSet: (projectId: string, modelId: string) =>
-    api.post<{ results: TestSetImageResult[]; model_id: string; image_count: number }>(
-      `/ml/projects/${projectId}/test-set`,
-      { model_id: modelId }
+  getTestSetCrops: (projectId: string, modelId: string) =>
+    api.get<{ crops: TestSetCropResult[]; count: number }>(
+      `/ml/projects/${projectId}/models/${modelId}/test-set-crops`
     ).then(r => r.data),
 };

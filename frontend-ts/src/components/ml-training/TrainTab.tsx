@@ -1,12 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   mlTrainingAPI,
-  projectImageUrl,
   LabeledCrop,
   SyntheticCrop,
   MLModel,
   MLProject,
-  TestSetImageResult,
+  TestSetCropResult,
   TrainRequest,
 } from '@/services/mlTraining';
 
@@ -75,87 +74,41 @@ function CropGrid({ items, emptyText }: { items: Array<{ crop_b64: string; label
   );
 }
 
-// ── Test-set accordion item ────────────────────────────────────────────────
-function TestSetImageRow({
-  projectId,
-  item,
-}: {
-  projectId: string;
-  item: TestSetImageResult;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const hasNg = item.ng_count > 0;
-
+// ── Single test-set crop card ──────────────────────────────────────────────
+function TestSetCropCard({ item }: { item: TestSetCropResult }) {
+  const wrong = !item.correct;
   return (
     <div style={{
-      border: '1px solid',
-      borderColor: hasNg ? 'rgba(248,113,113,.3)' : '#2d3148',
-      borderRadius: '8px',
-      overflow: 'hidden',
-      background: '#141722',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px',
+      padding: '5px', borderRadius: '7px', background: '#1a1d27',
+      border: `1px solid ${wrong ? 'rgba(248,113,113,.5)' : '#2d3148'}`,
+      position: 'relative',
     }}>
-      {/* Header row */}
-      <button
-        onClick={() => setExpanded(e => !e)}
-        style={{
-          width: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
-          padding: '8px 10px',
-          background: 'transparent',
-          border: 'none',
-          cursor: 'pointer',
-          textAlign: 'left',
-        }}
-      >
-        {/* Thumbnail */}
-        <img
-          src={projectImageUrl(projectId, item.filename)}
-          alt={item.filename}
-          style={{ width: '48px', height: '34px', objectFit: 'cover', borderRadius: '4px', flexShrink: 0, background: '#0f1117' }}
-        />
-        {/* Filename */}
-        <span style={{ flex: 1, fontSize: '12px', color: '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {item.filename}
-        </span>
-        {/* Counts */}
-        <span style={{ fontSize: '11px', color: '#4ade80', background: 'rgba(74,222,128,.1)', padding: '2px 7px', borderRadius: '10px', flexShrink: 0 }}>
-          OK {item.ok_count}
-        </span>
-        {item.ng_count > 0 && (
-          <span style={{ fontSize: '11px', color: '#f87171', background: 'rgba(248,113,113,.1)', padding: '2px 7px', borderRadius: '10px', flexShrink: 0 }}>
-            NG {item.ng_count}
-          </span>
-        )}
-        {/* Chevron */}
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-          style={{ flexShrink: 0, color: '#6b7280', transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}>
-          <polyline points="6 9 12 15 18 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-
-      {/* Expanded predictions */}
-      {expanded && item.predictions.length > 0 && (
-        <div style={{ padding: '0 10px 10px', borderTop: '1px solid #2d3148' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', paddingTop: '8px' }}>
-            {item.predictions.map((p, i) => (
-              <div key={i} style={{
-                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px',
-                padding: '4px', background: '#1a1d27', borderRadius: '6px',
-                border: `1px solid ${p.label === 'NG' ? 'rgba(248,113,113,.4)' : '#2d3148'}`,
-              }}>
-                <img src={`data:image/jpeg;base64,${p.crop_b64}`} alt={`pred-${i}`}
-                  style={{ width: '40px', height: '28px', objectFit: 'contain', background: '#0f1117', borderRadius: '3px' }} />
-                <span className={`ml-label-badge ${p.label === 'OK' ? 'ok' : 'ng'}`} style={{ fontSize: '9px', padding: '1px 5px' }}>
-                  {p.label}
-                </span>
-                <span style={{ fontSize: '9px', color: '#6b7280' }}>{(p.prob_ok * 100).toFixed(0)}%</span>
-              </div>
-            ))}
-          </div>
+      {/* Wrong indicator */}
+      {wrong && (
+        <div style={{
+          position: 'absolute', top: '-5px', right: '-5px',
+          width: '14px', height: '14px', borderRadius: '50%',
+          background: '#f87171', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="none">
+            <path d="M18 6L6 18M6 6l12 12" stroke="white" strokeWidth="3" strokeLinecap="round" />
+          </svg>
         </div>
       )}
+      <img src={`data:image/jpeg;base64,${item.crop_b64}`} alt="crop"
+        style={{ width: '44px', height: '30px', objectFit: 'contain', background: '#0f1117', borderRadius: '3px', display: 'block' }} />
+      {/* True → Pred */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+        <span className={`ml-label-badge ${item.true_label === 'OK' ? 'ok' : 'ng'}`}
+          style={{ fontSize: '9px', padding: '1px 4px' }}>{item.true_label}</span>
+        <svg width="8" height="8" viewBox="0 0 24 24" fill="none">
+          <path d="M5 12h14M12 5l7 7-7 7" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className={`ml-label-badge ${item.pred_label === 'OK' ? 'ok' : 'ng'}`}
+          style={{ fontSize: '9px', padding: '1px 4px', opacity: wrong ? 1 : 0.7 }}>{item.pred_label}</span>
+      </div>
+      <span style={{ fontSize: '9px', color: '#6b7280' }}>{(item.prob_ok * 100).toFixed(0)}% OK</span>
     </div>
   );
 }
@@ -201,9 +154,10 @@ export default function TrainTab({ project, onRefresh }: Props) {
   const [predictResults, setPredictResults] = useState<any[] | null>(null);
   const predictInputRef = useRef<HTMLInputElement>(null);
 
-  // Test set
-  const [testSetResults, setTestSetResults] = useState<TestSetImageResult[]>([]);
-  const [runningTestSet, setRunningTestSet] = useState(false);
+  // Test set crops
+  const [testSetCrops, setTestSetCrops] = useState<TestSetCropResult[]>([]);
+  const [loadingTestSet, setLoadingTestSet] = useState(false);
+  const [testSetFilter, setTestSetFilter] = useState<'all' | 'correct' | 'wrong'>('all');
 
   // ── Load crops ────────────────────────────────────────────────────────
   const loadCrops = useCallback(async () => {
@@ -238,7 +192,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
   const handleModelCompleted = useCallback((modelId: string) => {
     setSelectedModelId(modelId);
     setResultsTab('metrics');
-    setTestSetResults([]);
+    setTestSetCrops([]);
   }, []);
 
   // ── Preview synthetic ─────────────────────────────────────────────────
@@ -258,7 +212,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
   const handleTrain = async () => {
     setTraining(true);
     setPredictResults(null);
-    setTestSetResults([]);
+    setTestSetCrops([]);
     try {
       const req: TrainRequest = { algorithm, augment_factor: augmentFactor, n_estimators: nEstimators, max_iter: maxIter, C: svmC };
       const { model_id } = await mlTrainingAPI.startTraining(project.id, req);
@@ -295,18 +249,23 @@ export default function TrainTab({ project, onRefresh }: Props) {
     } finally { setPredicting(false); }
   };
 
-  // ── Run test set ──────────────────────────────────────────────────────
-  const handleRunTestSet = async () => {
-    if (!selectedModel) return;
-    setRunningTestSet(true);
-    setTestSetResults([]);
+  // ── Load test set crops ───────────────────────────────────────────────
+  const loadTestSetCrops = useCallback(async (modelId: string) => {
+    setLoadingTestSet(true);
+    setTestSetCrops([]);
     try {
-      const data = await mlTrainingAPI.testSet(project.id, selectedModel.id);
-      setTestSetResults(data.results);
-    } catch (e: any) {
-      alert(e?.response?.data?.detail ?? 'Test set failed');
-    } finally { setRunningTestSet(false); }
-  };
+      const data = await mlTrainingAPI.getTestSetCrops(project.id, modelId);
+      setTestSetCrops(data.crops);
+    } catch { /* ignore */ }
+    finally { setLoadingTestSet(false); }
+  }, [project.id]);
+
+  // Auto-load when switching to test set tab or changing model
+  useEffect(() => {
+    if (resultsTab === 'testset' && selectedModel) {
+      loadTestSetCrops(selectedModel.id);
+    }
+  }, [resultsTab, selectedModel?.id]);
 
   // ── Stats ──────────────────────────────────────────────────────────────
   const okCrops  = crops.filter(c => c.label === 'OK');
@@ -539,7 +498,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
                   onChange={e => {
                     setSelectedModelId(e.target.value);
                     setPredictResults(null);
-                    setTestSetResults([]);
+                    setTestSetCrops([]);
                   }}
                 >
                   {completedModels.map(m => (
@@ -660,41 +619,85 @@ export default function TrainTab({ project, onRefresh }: Props) {
                   )}
 
                   {/* ── Test Set tab ── */}
-                  {resultsTab === 'testset' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <button className="ml-btn ml-btn-primary ml-btn-sm"
-                          onClick={handleRunTestSet} disabled={runningTestSet} style={{ padding: '7px 14px' }}>
-                          {runningTestSet
-                            ? <><span className="ml-loading-spinner" style={{ width: 12, height: 12, borderWidth: 2 }} /> Running...</>
-                            : <><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" /></svg> Run Test Set</>
-                          }
-                        </button>
-                        {testSetResults.length > 0 && !runningTestSet && (
-                          <span style={{ fontSize: '11px', color: '#6b7280' }}>
-                            {testSetResults.length} images ·{' '}
-                            <span style={{ color: '#4ade80' }}>
-                              OK {testSetResults.reduce((a, r) => a + r.ok_count, 0)}
-                            </span>
-                            {' · '}
-                            <span style={{ color: '#f87171' }}>
-                              NG {testSetResults.reduce((a, r) => a + r.ng_count, 0)}
-                            </span>
-                          </span>
+                  {resultsTab === 'testset' && (() => {
+                    const correct = testSetCrops.filter(c => c.correct);
+                    const wrong   = testSetCrops.filter(c => !c.correct);
+                    const shown   = testSetFilter === 'all' ? testSetCrops
+                                  : testSetFilter === 'correct' ? correct : wrong;
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        {loadingTestSet ? (
+                          <div className="ml-empty-state" style={{ minHeight: '100px' }}>
+                            <div className="ml-loading-spinner" />
+                          </div>
+                        ) : testSetCrops.length === 0 ? (
+                          <div style={{ fontSize: '12px', color: '#6b7280', textAlign: 'center', padding: '32px 0' }}>
+                            Train a model to generate test-set crops.
+                          </div>
+                        ) : (
+                          <>
+                            {/* Summary stats */}
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '12px', color: '#9ca3af' }}>
+                                {testSetCrops.length} crops
+                              </span>
+                              <span style={{ fontSize: '12px', color: '#4ade80' }}>
+                                ✓ {correct.length} correct
+                              </span>
+                              {wrong.length > 0 && (
+                                <span style={{ fontSize: '12px', color: '#f87171' }}>
+                                  ✗ {wrong.length} wrong
+                                </span>
+                              )}
+                              <span style={{ fontSize: '11px', color: '#6b7280', marginLeft: 'auto' }}>
+                                {((correct.length / testSetCrops.length) * 100).toFixed(1)}%
+                              </span>
+                              <button className="ml-btn ml-btn-secondary ml-btn-sm"
+                                onClick={() => loadTestSetCrops(selectedModel!.id)} disabled={loadingTestSet}>
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
+                                  <path d="M1 4v6h6M23 20v-6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                  <path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              </button>
+                            </div>
+
+                            {/* Filter chips */}
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              {([
+                                { key: 'all',     label: `All (${testSetCrops.length})` },
+                                { key: 'correct', label: `Correct (${correct.length})` },
+                                { key: 'wrong',   label: `Wrong (${wrong.length})` },
+                              ] as const).map(f => (
+                                <button key={f.key} onClick={() => setTestSetFilter(f.key)} style={{
+                                  padding: '3px 10px', fontSize: '11px', borderRadius: '12px',
+                                  border: '1px solid', cursor: 'pointer', transition: 'all .12s',
+                                  borderColor: testSetFilter === f.key
+                                    ? (f.key === 'wrong' ? '#f87171' : f.key === 'correct' ? '#4ade80' : '#3b82f6')
+                                    : '#2d3148',
+                                  background: testSetFilter === f.key
+                                    ? (f.key === 'wrong' ? 'rgba(248,113,113,.12)' : f.key === 'correct' ? 'rgba(74,222,128,.12)' : 'rgba(59,130,246,.12)')
+                                    : 'transparent',
+                                  color: testSetFilter === f.key
+                                    ? (f.key === 'wrong' ? '#f87171' : f.key === 'correct' ? '#4ade80' : '#60a5fa')
+                                    : '#6b7280',
+                                }}>{f.label}</button>
+                              ))}
+                            </div>
+
+                            {/* Crops grid */}
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                              {shown.map((item, i) => (
+                                <TestSetCropCard key={i} item={item} />
+                              ))}
+                              {shown.length === 0 && (
+                                <div style={{ fontSize: '12px', color: '#6b7280', padding: '16px 0' }}>No crops match this filter.</div>
+                              )}
+                            </div>
+                          </>
                         )}
                       </div>
-
-                      {testSetResults.length === 0 && !runningTestSet && (
-                        <div style={{ fontSize: '12px', color: '#6b7280', textAlign: 'center', padding: '24px 0' }}>
-                          Click "Run Test Set" to predict all project images.
-                        </div>
-                      )}
-
-                      {testSetResults.map(item => (
-                        <TestSetImageRow key={item.filename} projectId={project.id} item={item} />
-                      ))}
-                    </div>
-                  )}
+                    );
+                  })()}
                 </>
               )}
             </div>

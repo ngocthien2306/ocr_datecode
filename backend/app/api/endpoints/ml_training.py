@@ -21,7 +21,6 @@ from app.models.ml_training import (
     MLProjectCreate,
     MLProjectUpdate,
     SyntheticPreviewRequest,
-    TestSetRequest,
     TrainRequest,
 )
 from app.models.user import UserInDB
@@ -587,42 +586,27 @@ async def predict(
     }
 
 
-@router.post("/ml/projects/{project_id}/test-set", tags=["ML Training"])
-async def test_set_predict(
+@router.get("/ml/projects/{project_id}/models/{model_id}/test-set-crops", tags=["ML Training"])
+async def get_test_set_crops(
     project_id: str,
-    request: TestSetRequest,
+    model_id: str,
     repo: MLTrainingRepository = Depends(get_repo),
     current_user: UserInDB = Depends(get_current_user),
 ):
-    """Run prediction on all project images using a specific model."""
+    """
+    Return the test-split crops saved during training, with true & predicted labels.
+    Each item: { crop_b64, true_label, pred_label, prob_ok, correct }
+    """
+    import json as _json
     all_models = await repo.list_models(project_id)
-    model_record = next((m for m in all_models if m.id == request.model_id), None)
+    model_record = next((m for m in all_models if m.id == model_id), None)
     if not model_record:
         raise HTTPException(404, "Model not found")
-    if model_record.status != "completed":
-        raise HTTPException(400, "Model is not trained yet")
 
     model_path = Path(model_record.model_path)
-    if not model_path.exists():
-        raise HTTPException(500, "Model file not found on disk")
+    test_set_path = model_path.parent / f"{model_path.stem}_test_set.json"
+    if not test_set_path.exists():
+        return {"crops": [], "count": 0}
 
-    images_dir = _images_dir(project_id)
-    valid_ext = {".jpg", ".jpeg", ".png", ".bmp"}
-    image_files = sorted(
-        f for f in images_dir.iterdir() if f.suffix.lower() in valid_ext
-    )
-
-    loop = asyncio.get_event_loop()
-    out = []
-    for img_path in image_files:
-        preds = await loop.run_in_executor(
-            None, predict_on_image, model_path, img_path, None, 0.5
-        )
-        out.append({
-            "filename": img_path.name,
-            "predictions": preds,
-            "ok_count": sum(1 for p in preds if p["label"] == "OK"),
-            "ng_count": sum(1 for p in preds if p["label"] == "NG"),
-        })
-
-    return {"results": out, "model_id": request.model_id, "image_count": len(out)}
+    items = _json.loads(test_set_path.read_text())
+    return {"crops": items, "count": len(items)}
