@@ -75,28 +75,28 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
     results = []
     for _ in range(n):
         aug = gray.copy()
-        choice = np.random.randint(0, 6)
+        choice = np.random.randint(0, 5)
         if choice == 0:
             noise = np.random.normal(0, 60, aug.shape).astype(np.int16)
             aug = np.clip(aug.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+        # elif choice == 1:
+        #     k = np.random.choice([7, 9, 11, 13])
+        #     aug = cv.GaussianBlur(aug, (k, k), 0)
         elif choice == 1:
-            k = np.random.choice([7, 9, 11, 13])
-            aug = cv.GaussianBlur(aug, (k, k), 0)
-        elif choice == 2:
             rh = max(2, h // 3)
             rw = max(2, w // 3)
             ry = np.random.randint(0, max(1, h - rh))
             rx = np.random.randint(0, max(1, w - rw))
             aug[ry:ry + rh, rx:rx + rw] = 0
-        elif choice == 3:
+        elif choice == 2:
             k = np.random.randint(3, 6)
             kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
             aug = cv.erode(aug, kernel, iterations=1)
-        elif choice == 4:
-            k = np.random.randint(3, 6)
+        elif choice == 3:
+            k = np.random.randint(4, 8)
             kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
             aug = cv.dilate(aug, kernel, iterations=1)
-        elif choice == 5:
+        elif choice == 4:
             dx = np.random.randint(-w // 3, w // 3 + 1)
             dy = np.random.randint(-h // 3, h // 3 + 1)
             M = np.float32([[1, 0, dx], [0, 1, dy]])
