@@ -168,12 +168,15 @@ export default function Receipts() {
         template_config: recipe.template_config,
         roi_config: recipe.roi_config,
         is_active: recipe.is_active,
+        ocr_model_type: recipe.ocr_model_type || '',
+        ml_project_id: recipe.ml_project_id || '',
+        ml_model_id: recipe.ml_model_id || '',
         createdAt: recipe.created_at || new Date().toISOString(),
         updatedAt: recipe.updated_at || new Date().toISOString()
       }));
 
       setReceipts(transformedReceipts);
-      
+
       // Calculate total pages
       const countData = await receiptsAPI.getReceiptsCount(true);
       setTotalPages(Math.ceil(countData.count / itemsPerPage));
@@ -232,6 +235,9 @@ export default function Receipts() {
         template_config: recipe.template_config,
         roi_config: recipe.roi_config,
         is_active: recipe.is_active,
+        ocr_model_type: recipe.ocr_model_type || '',
+        ml_project_id: recipe.ml_project_id || '',
+        ml_model_id: recipe.ml_model_id || '',
         createdAt: recipe.created_at || new Date().toISOString(),
         updatedAt: recipe.updated_at || new Date().toISOString()
       }));
@@ -333,6 +339,9 @@ export default function Receipts() {
         template_config: clonedRecipe.template_config,
         roi_config: clonedRecipe.roi_config,
         is_active: clonedRecipe.is_active,
+        ocr_model_type: clonedRecipe.ocr_model_type || '',
+        ml_project_id: clonedRecipe.ml_project_id || '',
+        ml_model_id: clonedRecipe.ml_model_id || '',
         createdAt: clonedRecipe.created_at || new Date().toISOString(),
         updatedAt: clonedRecipe.updated_at || new Date().toISOString()
       };

@@ -177,6 +177,9 @@ export interface Recipe {
   template_config?: TemplateConfig;
   roi_config?: ROIConfig;
   is_active: boolean;
+  ocr_model_type?: string;
+  ml_project_id?: string;
+  ml_model_id?: string;
   created_by?: string;
   updated_by?: string;
   created_by_name?: string;  // Full name of creator
@@ -250,6 +253,9 @@ export interface Receipt {
   template_config?: TemplateConfig;
   roi_config?: ROIConfig;
   is_active: boolean;
+  ocr_model_type?: string;
+  ml_project_id?: string;
+  ml_model_id?: string;
   createdAt: string;
   updatedAt: string;
 }
