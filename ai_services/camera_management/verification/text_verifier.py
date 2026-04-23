@@ -312,6 +312,376 @@ class TextVerificationService:
                 'error': str(e),
             }
 
+    # ── Shared core: batch OCR + parallel sim + parallel ML + augment retry ──
+
+    def _run_ocr_batch_with_checks(
+        self,
+        ocr_items: List[Dict[str, Any]],
+        sim_items: List[Dict[str, Any]],
+        ml_items: List[Dict[str, Any]],
+        case_sensitive: bool = True,
+    ) -> Dict[Tuple[str, int], Dict[str, Any]]:
+        """
+        Batch OCR across all items, run sim+ML checks in parallel, merge,
+        and apply augment retry for failed regions.
+
+        Item dict shapes:
+          ocr_items: serial_number, annotation_idx, conf_threshold,
+                     expected_text, cropped_region
+          sim_items: serial_number, annotation_idx, conf_threshold,
+                     frame_img, template_img, transformed_points, original_points
+          ml_items:  serial_number, annotation_idx, conf_threshold,
+                     frame_img, transformed_points, ml_project_id, ml_model_id
+
+        Returns: {(serial_number, annotation_idx) -> region_result}
+        """
+        if not ocr_items:
+            return {}
+
+        # --- Launch sim future (parallel with OCR) ---
+        sim_results_map: Dict[Tuple[str, int], Dict[str, Any]] = {}
+        sim_future = None
+        sim_executor_outer = None
+        if sim_items:
+            logger.info(
+                f"Sim check ENABLED: {len(sim_items)} regions "
+                f"(workers={self.SIM_MAX_WORKERS})"
+            )
+
+            def _run_all_sim():
+                t_sim_start = time.perf_counter()
+                out: Dict[Tuple[str, int], Dict[str, Any]] = {}
+                with ThreadPoolExecutor(max_workers=self.SIM_MAX_WORKERS) as pool:
+                    futs = {
+                        pool.submit(
+                            self._compute_single_sim,
+                            s['frame_img'], s['template_img'],
+                            s['transformed_points'], s['original_points'],
+                            s['serial_number'], s['annotation_idx'],
+                            s['conf_threshold'],
+                        ): (s['serial_number'], s['annotation_idx'])
+                        for s in sim_items
+                    }
+                    for fut in as_completed(futs):
+                        key = futs[fut]
+                        try:
+                            out[key] = fut.result()
+                        except Exception as e:
+                            logger.error(f"Sim thread error {key}: {e}")
+                            out[key] = {
+                                'annotation_idx': key[1],
+                                'match_sim': False,
+                                'similarity': 0.0,
+                                'error': str(e),
+                            }
+                t_sim_total = (time.perf_counter() - t_sim_start) * 1000
+                logger.info(
+                    f"Sim check ALL complete: {len(sim_items)} regions in {t_sim_total:.1f}ms"
+                )
+                return out
+
+            sim_executor_outer = ThreadPoolExecutor(max_workers=1)
+            sim_future = sim_executor_outer.submit(_run_all_sim)
+
+        # --- Launch ML future (parallel with OCR) ---
+        ml_results_map: Dict[Tuple[str, int], Dict[str, Any]] = {}
+        ml_future = None
+        ml_executor_outer = None
+        if ml_items:
+            logger.info(
+                f"ML classify ENABLED: {len(ml_items)} regions "
+                f"(workers={self.SIM_MAX_WORKERS})"
+            )
+
+            def _run_all_ml():
+                t_ml_start = time.perf_counter()
+                out: Dict[Tuple[str, int], Dict[str, Any]] = {}
+                with ThreadPoolExecutor(max_workers=self.SIM_MAX_WORKERS) as pool:
+                    futs = {
+                        pool.submit(
+                            self._compute_single_ml,
+                            m['frame_img'], m['transformed_points'],
+                            m['serial_number'], m['annotation_idx'],
+                            m['conf_threshold'],
+                            m['ml_project_id'], m['ml_model_id'],
+                        ): (m['serial_number'], m['annotation_idx'])
+                        for m in ml_items
+                    }
+                    for fut in as_completed(futs):
+                        key = futs[fut]
+                        try:
+                            out[key] = fut.result()
+                        except Exception as e:
+                            logger.error(f"ML thread error {key}: {e}")
+                            out[key] = {
+                                'annotation_idx': key[1],
+                                'ml_pass': False,
+                                'p_ok': 0.0,
+                                'label': 'NG',
+                                'error': str(e),
+                            }
+                t_ml_total = (time.perf_counter() - t_ml_start) * 1000
+                logger.info(
+                    f"ML classify ALL complete: {len(ml_items)} regions in {t_ml_total:.1f}ms"
+                )
+                return out
+
+            ml_executor_outer = ThreadPoolExecutor(max_workers=1)
+            ml_future = ml_executor_outer.submit(_run_all_ml)
+
+        # --- Batch OCR on main thread ---
+        crops = [it['cropped_region'] for it in ocr_items]
+        logger.info(f"Running BATCH OCR on {len(crops)} regions")
+
+        try:
+            t0 = time.perf_counter()
+            if hasattr(self.text_recognizer, 'recognize_batch'):
+                ocr_results = self.text_recognizer.recognize_batch(crops)
+            else:
+                ocr_results = [
+                    self.text_recognizer.recognize(img, return_confidence=True)
+                    for img in crops
+                ]
+            ocr_time = (time.perf_counter() - t0) * 1000
+            logger.info(f"Batch OCR complete: {len(crops)} regions in {ocr_time:.1f}ms")
+        except Exception as e:
+            logger.error(f"Batch OCR failed: {e}")
+            import traceback
+            traceback.print_exc()
+            if sim_future:
+                sim_future.cancel()
+                sim_executor_outer.shutdown(wait=False)
+            if ml_future:
+                ml_future.cancel()
+                ml_executor_outer.shutdown(wait=False)
+            return {
+                (it['serial_number'], it['annotation_idx']): {
+                    'annotation_idx': it['annotation_idx'],
+                    'expected': it['expected_text'],
+                    'recognized': '',
+                    'match': False,
+                    'confidence': 0.0,
+                    'threshold': it['conf_threshold'],
+                    'error': str(e),
+                }
+                for it in ocr_items
+            }
+
+        # --- Wait futures ---
+        if sim_future:
+            try:
+                sim_results_map = sim_future.result(timeout=10)
+            except Exception as e:
+                logger.error(f"Sim future error: {e}")
+            finally:
+                sim_executor_outer.shutdown(wait=False)
+
+        if ml_future:
+            try:
+                ml_results_map = ml_future.result(timeout=10)
+            except Exception as e:
+                logger.error(f"ML future error: {e}")
+            finally:
+                ml_executor_outer.shutdown(wait=False)
+
+        # --- Merge per-region: pick candidate → augment retry → sim → ml ---
+        region_map: Dict[Tuple[str, int], Dict[str, Any]] = {}
+        has_sim = bool(sim_items)
+        has_ml = bool(ml_items)
+
+        for item, ocr_res in zip(ocr_items, ocr_results):
+            serial = item['serial_number']
+            ann_idx = item['annotation_idx']
+            conf_thr = item['conf_threshold']
+            expected = item['expected_text']
+            cropped = item['cropped_region']
+
+            candidates = _to_candidates(ocr_res)
+            if self.use_char_conf_check and all(cc is None for _, _, cc in candidates):
+                if hasattr(self.text_recognizer, 'recognize_with_char_conf'):
+                    raw = self.text_recognizer.recognize_with_char_conf(cropped)
+                    candidates = _to_candidates(raw)
+
+            match, recognized, confidence, char_confs = pick_winning_candidate(
+                candidates, conf_thr, self.use_char_conf_check, expected,
+                case_sensitive=case_sensitive,
+            )
+            logger.info(
+                f"[{serial}] Annotation {ann_idx}: expected='{expected}', "
+                f"recognized='{recognized}', match={match}, conf={confidence:.2%}"
+            )
+
+            # Augment retry for failed regions with near-similar text
+            if not match:
+                sim_score = calculate_text_similarity(recognized, expected)
+                if sim_score >= AUGMENT_SIMILARITY_THRESHOLD:
+                    logger.info(
+                        f"[{serial}] Annotation {ann_idx}: FAIL but similarity={sim_score:.2%} "
+                        f">= {AUGMENT_SIMILARITY_THRESHOLD:.0%}, retrying with augmentation..."
+                    )
+                    match, recognized = self._augment_retry(
+                        cropped_region=cropped,
+                        expected_text=expected,
+                        serial_number=serial,
+                        annotation_idx=ann_idx,
+                        conf_threshold=conf_thr,
+                    )
+                else:
+                    logger.info(
+                        f"[{serial}] Annotation {ann_idx}: FAIL and similarity={sim_score:.2%} "
+                        f"< {AUGMENT_SIMILARITY_THRESHOLD:.0%}, skip augment retry"
+                    )
+            if match:
+                recognized = expected[:]
+
+            region = {
+                'annotation_idx': ann_idx,
+                'expected': expected,
+                'recognized': recognized,
+                'match': match,
+                'confidence': confidence,
+                'threshold': conf_thr,
+                'char_confs': [
+                    {'char': c, 'conf': round(cf, 4)} for c, cf in char_confs if c.isalnum()
+                ] if char_confs else None,
+            }
+
+            key = (serial, ann_idx)
+
+            # Merge sim
+            if has_sim:
+                sim_res = sim_results_map.get(key)
+                if sim_res:
+                    region['match_sim'] = sim_res['match_sim']
+                    region['similarity'] = sim_res.get('similarity', 0.0)
+                    region['char_results'] = sim_res.get('char_results', [])
+                    region['match'] = region['match'] and sim_res['match_sim']
+                    logger.info(
+                        f"[{serial}] Annotation {ann_idx}: FINAL match={region['match']}, "
+                        f"match_sim={sim_res['match_sim']}, "
+                        f"similarity={sim_res.get('similarity', 0.0):.4f}"
+                    )
+                else:
+                    region['match_sim'] = None
+                    region['similarity'] = None
+                    region['char_results'] = []
+
+            # Merge ML
+            if has_ml:
+                ml_res = ml_results_map.get(key)
+                if ml_res:
+                    region['ml_pass'] = ml_res['ml_pass']
+                    region['ml_p_ok'] = ml_res.get('p_ok', 0.0)
+                    region['ml_label'] = ml_res.get('label', 'NG')
+                    region['match'] = region['match'] and ml_res['ml_pass']
+                    logger.info(
+                        f"[{serial}] Annotation {ann_idx}: FINAL match={region['match']}, "
+                        f"ml_pass={ml_res['ml_pass']}, ml_label={ml_res.get('label')}, "
+                        f"p_ok={ml_res.get('p_ok', 0.0):.4f}"
+                    )
+                else:
+                    region['ml_pass'] = None
+                    region['ml_p_ok'] = None
+                    region['ml_label'] = None
+
+            region_map[key] = region
+
+        return region_map
+
+    # ── Helper: build ocr/sim/ml items from a single (camera, template) context ──
+
+    def _build_items_for_camera(
+        self,
+        serial_number: str,
+        frame_img: np.ndarray,
+        transformed_bboxes: List[Dict[str, Any]],
+        expected_texts: Dict[int, str],
+        camera: 'Camera',
+        template_img: Optional[np.ndarray],
+        original_bboxes: Optional[List[Dict[str, Any]]],
+    ):
+        """Return (ocr_items, sim_items, ml_items, text_bboxes) for one camera/template."""
+        text_bboxes = [
+            b for b in transformed_bboxes
+            if b.get('type') in ['text', 'datecode']
+        ]
+
+        use_sim_task = self.use_sim_check and template_img is not None
+        original_bbox_map: Dict[int, Dict[str, Any]] = {}
+        if use_sim_task:
+            for ob in (original_bboxes or []):
+                if ob.get('type') in ['text', 'datecode']:
+                    idx = ob.get('annotation_index')
+                    if idx is not None:
+                        original_bbox_map[idx] = ob
+
+        ml_project_id = getattr(camera, 'ml_project_id', None)
+        ml_model_id = getattr(camera, 'ml_model_id', None)
+        use_ml_task = bool(self.ml_classifier_service and ml_project_id and ml_model_id)
+
+        ocr_items: List[Dict[str, Any]] = []
+        sim_items: List[Dict[str, Any]] = []
+        ml_items: List[Dict[str, Any]] = []
+
+        for bbox in text_bboxes:
+            ann_idx = bbox.get('annotation_index')
+            if ann_idx is None:
+                continue
+            points = bbox.get('points', [])
+            if len(points) < 4:
+                continue
+            conf_threshold = bbox.get('conf', 0.8)
+            expected_text = expected_texts.get(ann_idx, '')
+
+            try:
+                cropped = crop_text_region(frame_img, points)
+            except Exception as e:
+                logger.error(f"[{serial_number}] Error cropping ann {ann_idx}: {e}")
+                continue
+
+            if self.save_debug_images:
+                try:
+                    debug_file = f"{self.debug_path}/cropped_region_{serial_number}_{ann_idx}.png"
+                    cv2.imwrite(debug_file, cropped)
+                except Exception as e_save:
+                    logger.debug(f"[{serial_number}] Save debug crop failed: {e_save}")
+
+            ocr_items.append({
+                'serial_number': serial_number,
+                'annotation_idx': ann_idx,
+                'conf_threshold': conf_threshold,
+                'expected_text': expected_text,
+                'cropped_region': cropped,
+            })
+
+            if use_sim_task and ann_idx in original_bbox_map:
+                orig_points = original_bbox_map[ann_idx].get('points', [])
+                if len(orig_points) >= 4:
+                    sim_items.append({
+                        'frame_img': frame_img,
+                        'template_img': template_img,
+                        'transformed_points': points,
+                        'original_points': orig_points,
+                        'serial_number': serial_number,
+                        'annotation_idx': ann_idx,
+                        'conf_threshold': conf_threshold,
+                    })
+
+            if use_ml_task:
+                ml_items.append({
+                    'frame_img': frame_img,
+                    'transformed_points': points,
+                    'serial_number': serial_number,
+                    'annotation_idx': ann_idx,
+                    'conf_threshold': conf_threshold,
+                    'ml_project_id': ml_project_id,
+                    'ml_model_id': ml_model_id,
+                })
+
+        return ocr_items, sim_items, ml_items, text_bboxes
+
+    # ── Public API: single camera (one template) ──
+
     def verify_text_regions(
         self,
         frame_img: 'np.ndarray',
@@ -323,378 +693,61 @@ class TextVerificationService:
         original_bboxes: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
-        Verify text in transformed regions match expected texts.
-
-        Args:
-            frame_img: Captured frame (numpy array)
-            transformed_bboxes: List of transformed bbox dicts from matcher
-            expected_texts: Dict mapping annotation_idx -> expected_text
-            camera: Camera object for logging
-            recognition_threshold: Minimum OCR confidence threshold
-            template_img: Reference template image (for sim check)
-            original_bboxes: Original bboxes from template (for sim check)
-
-        Returns:
-            {
-                'all_match': bool,
-                'results': [
-                    {
-                        'annotation_idx': 0,
-                        'expected': '123',
-                        'recognized': '123',
-                        'match': True,
-                        'match_sim': True,   # only when use_sim_check=True
-                        'similarity': 0.92,  # only when use_sim_check=True
-                        'confidence': 0.95,
-                        'threshold': 0.8
-                    },
-                    ...
-                ]
-            }
+        Verify text regions for a single (camera, template) invocation.
+        Uses batch OCR internally — no per-region looping.
         """
         if not self.is_available:
             logger.warning("OCR model not available, skipping text verification")
             return {'all_match': False, 'results': []}
 
-        verification_results = []
-        all_match = True
         serial_number = camera.serial_number
 
-        # Filter only text type bboxes
-        text_bboxes = [
-            bbox for bbox in transformed_bboxes
-            if bbox.get('type') in ['text', 'datecode']
-        ]
+        ocr_items, sim_items, ml_items, text_bboxes = self._build_items_for_camera(
+            serial_number=serial_number,
+            frame_img=frame_img,
+            transformed_bboxes=transformed_bboxes,
+            expected_texts=expected_texts,
+            camera=camera,
+            template_img=template_img,
+            original_bboxes=original_bboxes,
+        )
 
         logger.info(f"[{serial_number}] Verifying {len(text_bboxes)} text regions")
         logger.info(f"[{serial_number}] Expected texts dict: {expected_texts}")
         logger.info(
             f"[{serial_number}] Text bbox annotation indices: "
-            f"{[bbox.get('annotation_index') for bbox in text_bboxes]}"
+            f"{[b.get('annotation_index') for b in text_bboxes]}"
         )
 
-        # Build original bbox lookup for sim check
-        original_bbox_map = {}
-        if self.use_sim_check and template_img is not None and original_bboxes:
-            for ob in original_bboxes:
-                if ob.get('type') in ['text', 'datecode']:
-                    ob_idx = ob.get('annotation_index')
-                    if ob_idx is not None:
-                        original_bbox_map[ob_idx] = ob
+        if not ocr_items:
+            return {'all_match': False, 'results': []}
 
-        # Collect sim tasks
-        sim_tasks_local = []
-        if self.use_sim_check and template_img is not None and original_bbox_map:
-            for bbox in text_bboxes:
-                annotation_idx = bbox.get('annotation_index')
-                if annotation_idx is None:
-                    continue
-                original_bbox = original_bbox_map.get(annotation_idx)
-                if not original_bbox:
-                    continue
-                points = bbox.get('points', [])
-                original_points = original_bbox.get('points', [])
-                if len(points) >= 4 and len(original_points) >= 4:
-                    conf_threshold = bbox.get('conf', 0.8)
-                    sim_tasks_local.append({
-                        'frame_img': frame_img,
-                        'template_img': template_img,
-                        'transformed_points': points,
-                        'original_points': original_points,
-                        'serial_number': serial_number,
-                        'annotation_idx': annotation_idx,
-                        'conf_threshold': conf_threshold,
-                    })
+        region_map = self._run_ocr_batch_with_checks(
+            ocr_items, sim_items, ml_items, case_sensitive=False,
+        )
 
-        # Run sim checks in parallel (non-blocking with OCR below)
-        sim_results_map = {}
-        if sim_tasks_local:
-            logger.info(
-                f"[{serial_number}] Sim check: {len(sim_tasks_local)} regions "
-                f"(workers={self.SIM_MAX_WORKERS})"
-            )
-            with ThreadPoolExecutor(max_workers=self.SIM_MAX_WORKERS) as sim_executor:
-                futures = {
-                    sim_executor.submit(
-                        self._compute_single_sim,
-                        st['frame_img'],
-                        st['template_img'],
-                        st['transformed_points'],
-                        st['original_points'],
-                        st['serial_number'],
-                        st['annotation_idx'],
-                        st['conf_threshold'],
-                    ): st['annotation_idx']
-                    for st in sim_tasks_local
-                }
-                for future in as_completed(futures):
-                    ann_idx = futures[future]
-                    try:
-                        sim_results_map[ann_idx] = future.result()
-                    except Exception as e:
-                        logger.error(f"[{serial_number}] Sim check thread error ann {ann_idx}: {e}")
-
-        # ── ML classification (only when camera has ml_project_id + ml_model_id) ──
-        ml_project_id = getattr(camera, 'ml_project_id', None)
-        ml_model_id = getattr(camera, 'ml_model_id', None)
-        use_ml = bool(self.ml_classifier_service and ml_project_id and ml_model_id)
-        ml_results_map: Dict[int, Dict[str, Any]] = {}
-        ml_future = None
-        ml_executor_outer = None
-
-        if use_ml:
-            ml_tasks_local = []
-            for bbox in text_bboxes:
-                ann_idx = bbox.get('annotation_index')
-                if ann_idx is None:
-                    continue
-                points = bbox.get('points', [])
-                if len(points) < 4:
-                    continue
-                ml_tasks_local.append({
-                    'transformed_points': points,
-                    'annotation_idx': ann_idx,
-                    'conf_threshold': bbox.get('conf', 0.8),
-                })
-
-            if ml_tasks_local:
-                logger.info(
-                    f"[{serial_number}] ML classify: {len(ml_tasks_local)} regions "
-                    f"(project={ml_project_id}, model={ml_model_id})"
-                )
-
-                def _run_all_ml():
-                    out: Dict[int, Dict[str, Any]] = {}
-                    with ThreadPoolExecutor(max_workers=self.SIM_MAX_WORKERS) as ml_pool:
-                        futs = {
-                            ml_pool.submit(
-                                self._compute_single_ml,
-                                frame_img,
-                                mt['transformed_points'],
-                                serial_number,
-                                mt['annotation_idx'],
-                                mt['conf_threshold'],
-                                ml_project_id,
-                                ml_model_id,
-                            ): mt['annotation_idx']
-                            for mt in ml_tasks_local
-                        }
-                        for fut in as_completed(futs):
-                            aid = futs[fut]
-                            try:
-                                out[aid] = fut.result()
-                            except Exception as e:
-                                logger.error(
-                                    f"[{serial_number}] ML thread error ann {aid}: {e}"
-                                )
-                    return out
-
-                # Run ML in background, join after OCR loop (parallel with OCR)
-                ml_executor_outer = ThreadPoolExecutor(max_workers=1)
-                ml_future = ml_executor_outer.submit(_run_all_ml)
-
-        # Wait for ML future to finish (started in parallel with OCR above)
-        if ml_future is not None:
-            try:
-                ml_results_map = ml_future.result(timeout=10)
-            except Exception as e:
-                logger.error(f"[{serial_number}] ML future error: {e}")
-                ml_results_map = {}
-            finally:
-                if ml_executor_outer is not None:
-                    ml_executor_outer.shutdown(wait=False)
-
-        for bbox in text_bboxes:
-            result = self._verify_single_text_region(
-                frame_img=frame_img,
-                bbox=bbox,
-                expected_texts=expected_texts,
-                serial_number=serial_number,
-                recognition_threshold=recognition_threshold
-            )
-
-            # Merge sim result
-            if self.use_sim_check:
-                ann_idx = bbox.get('annotation_index')
-                sim_result = sim_results_map.get(ann_idx)
-                if sim_result:
-                    result['match_sim'] = sim_result['match_sim']
-                    result['similarity'] = sim_result.get('similarity', 0.0)
-                    result['char_results'] = sim_result.get('char_results', [])
-                    result['match'] = result['match'] and sim_result['match_sim']
-                    logger.info(
-                        f"[{serial_number}] Annotation {ann_idx}: "
-                        f"FINAL match={result['match']}, match_sim={sim_result['match_sim']}, "
-                        f"similarity={sim_result.get('similarity', 0.0):.4f}"
-                    )
-                else:
-                    result['match_sim'] = None
-                    result['similarity'] = None
-                    result['char_results'] = []
-
-            # Merge ML classification result
-            if use_ml:
-                ann_idx = bbox.get('annotation_index')
-                ml_result = ml_results_map.get(ann_idx)
-                if ml_result:
-                    result['ml_pass'] = ml_result['ml_pass']
-                    result['ml_p_ok'] = ml_result.get('p_ok', 0.0)
-                    result['ml_label'] = ml_result.get('label', 'NG')
-                    result['match'] = result['match'] and ml_result['ml_pass']
-                    logger.info(
-                        f"[{serial_number}] Annotation {ann_idx}: "
-                        f"FINAL match={result['match']}, ml_pass={ml_result['ml_pass']}, "
-                        f"ml_label={ml_result.get('label')}, p_ok={ml_result.get('p_ok', 0.0):.4f}"
-                    )
-                else:
-                    result['ml_pass'] = None
-                    result['ml_p_ok'] = None
-                    result['ml_label'] = None
-
-            verification_results.append(result)
-
-            if not result.get('match', False):
+        results: List[Dict[str, Any]] = []
+        all_match = True
+        for item in ocr_items:
+            key = (item['serial_number'], item['annotation_idx'])
+            r = region_map.get(key)
+            if r is None:
+                continue
+            results.append(r)
+            if not r.get('match', False):
                 all_match = False
 
-        return {
-            'all_match': all_match,
-            'results': verification_results
-        }
+        return {'all_match': all_match, 'results': results}
 
-    def _verify_single_text_region(
-        self,
-        frame_img: 'np.ndarray',
-        bbox: Dict[str, Any],
-        expected_texts: Dict[int, str],
-        serial_number: str,
-        recognition_threshold: float
-    ) -> Dict[str, Any]:
-        """
-        Verify a single text region.
-
-        Args:
-            frame_img: Input frame
-            bbox: Bounding box dict with 'points', 'annotation_index', etc.
-            expected_texts: Dict mapping annotation_idx -> expected_text
-            serial_number: Camera serial number for logging
-            recognition_threshold: Minimum confidence threshold
-
-        Returns:
-            Result dict with verification details
-        """
-        annotation_idx = bbox.get('annotation_index')
-        conf_threshold = bbox.get('conf', 0.8)
-        expected_text = ''
-
-        try:
-            if annotation_idx is None:
-                logger.warning(f"[{serial_number}] Bbox missing annotation_index, skipping")
-                return {
-                    'annotation_idx': None,
-                    'expected': '',
-                    'recognized': '',
-                    'match': False,
-                    'confidence': 0.0,
-                    'threshold': conf_threshold,
-                    'error': 'Missing annotation_index'
-                }
-
-            # Get expected text using annotation_index
-            expected_text = expected_texts.get(annotation_idx, '')
-            logger.info(
-                f"[{serial_number}] Processing annotation {annotation_idx}: "
-                f"expected_text='{expected_text}'"
-            )
-
-            # Validate bbox points
-            points = bbox.get('points', [])
-            if len(points) < 4:
-                logger.warning(f"[{serial_number}] Invalid points for annotation {annotation_idx}")
-                return {
-                    'annotation_idx': annotation_idx,
-                    'expected': expected_text,
-                    'recognized': '',
-                    'match': False,
-                    'confidence': 0.0,
-                    'threshold': conf_threshold,
-                    'error': 'Invalid bbox points'
-                }
-
-            # Crop text region
-            cropped_region = crop_text_region(frame_img, points)
-
-            # Save debug image if enabled
-            if self.save_debug_images:
-                debug_file = f"{self.debug_path}/cropped_region_{serial_number}_{annotation_idx}_{self._debug_counter}_{int(time.time())}.png"
-                cv2.imwrite(debug_file, cropped_region)
-                self._debug_counter += 1
-
-            # Run OCR (single inference - get char_confs nếu cần, tránh double infer)
-            logger.debug(f"[{serial_number}] Running OCR with {self.ocr_backend} backend...")
-            if self.use_char_conf_check and hasattr(self.text_recognizer, 'recognize_with_char_conf'):
-                raw = self.text_recognizer.recognize_with_char_conf(cropped_region)
-            else:
-                raw = self.text_recognizer.recognize(cropped_region, return_confidence=True)
-
-            candidates = _to_candidates(raw)
-            match, recognized_text, confidence, char_confs = pick_winning_candidate(
-                candidates, conf_threshold, self.use_char_conf_check, expected_text, case_sensitive=False
-            )
-            logger.debug(f"[{serial_number}] OCR result: '{recognized_text}' (conf: {confidence:.2%})")
-
-            logger.info(
-                f"[{serial_number}] Annotation {annotation_idx}: "
-                f"expected='{expected_text}', recognized='{recognized_text}', "
-                f"match={match}, conf={confidence:.2%}"
-            )
-
-            return {
-                'annotation_idx': annotation_idx,
-                'expected': expected_text,
-                'recognized': recognized_text,
-                'match': match,
-                'confidence': confidence,
-                'threshold': conf_threshold,
-                'char_confs': [
-                    {'char': c, 'conf': round(cf, 4)} for c, cf in char_confs if c.isalnum()
-                ] if char_confs else None,
-            }
-
-        except Exception as e:
-            logger.error(f"[{serial_number}] Error verifying annotation {annotation_idx}: {e}")
-            import traceback
-            traceback.print_exc()
-
-            return {
-                'annotation_idx': annotation_idx,
-                'expected': expected_text,
-                'recognized': '',
-                'match': False,
-                'confidence': 0.0,
-                'threshold': conf_threshold,
-                'error': str(e)
-            }
+    # ── Public API: multi camera batch ──
 
     def batch_verify_multi_camera(
         self,
-        ocr_tasks: List[Dict[str, Any]]
+        ocr_tasks: List[Dict[str, Any]],
     ) -> Dict[str, Dict[str, Any]]:
         """
-        Batch OCR verification for ALL cameras at once.
-
-        Args:
-            ocr_tasks: List of tasks, each containing:
-                {
-                    'serial_number': str,
-                    'frame_img': np.ndarray,
-                    'transformed_bboxes': list,
-                    'expected_texts': dict,
-                    'camera': Camera,
-                    'recognition_threshold': float
-                }
-
-        Returns:
-            Dict mapping serial_number -> verification_result
+        Batch OCR verification across multiple cameras (1 template per camera).
+        Wraps all cameras' regions into a single OCR batch call.
         """
         if not self.is_available:
             logger.warning("OCR model not available, skipping batch text verification")
@@ -703,388 +756,50 @@ class TextVerificationService:
                 for task in ocr_tasks
             }
 
-        # ========== PHASE 1: Collect ALL text regions from ALL cameras ==========
-        all_cropped_regions = []
-        all_metadata = []
-        sim_tasks = []  # Similarity check tasks (only when use_sim_check=True)
-        ml_tasks = []   # ML classify tasks (only when camera has ml_project_id + ml_model_id)
+        ocr_items_all: List[Dict[str, Any]] = []
+        sim_items_all: List[Dict[str, Any]] = []
+        ml_items_all: List[Dict[str, Any]] = []
 
         for task in ocr_tasks:
             serial_number = task['serial_number']
-            frame_img = task['frame_img']
-            transformed_bboxes = task['transformed_bboxes']
-            expected_texts = task['expected_texts']
-            template_img = task.get('template_img')        # for sim check
-            original_bboxes = task.get('original_bboxes', [])  # for sim check
-            camera_obj = task.get('camera')
-
-            # ML classify eligibility (per-camera): needs service + ml_project_id + ml_model_id
-            ml_project_id = getattr(camera_obj, 'ml_project_id', None)
-            ml_model_id = getattr(camera_obj, 'ml_model_id', None)
-            use_ml_for_task = bool(
-                self.ml_classifier_service and ml_project_id and ml_model_id
+            logger.info(f"[{serial_number}] Collecting regions for batch OCR")
+            ocr_items, sim_items, ml_items, _ = self._build_items_for_camera(
+                serial_number=serial_number,
+                frame_img=task['frame_img'],
+                transformed_bboxes=task['transformed_bboxes'],
+                expected_texts=task['expected_texts'],
+                camera=task.get('camera'),
+                template_img=task.get('template_img'),
+                original_bboxes=task.get('original_bboxes', []),
             )
+            ocr_items_all.extend(ocr_items)
+            sim_items_all.extend(sim_items)
+            ml_items_all.extend(ml_items)
 
-            # Build lookup: annotation_index -> original bbox (for sim check)
-            original_bbox_map = {}
-            if self.use_sim_check and template_img is not None:
-                for ob in original_bboxes:
-                    if ob.get('type') in ['text', 'datecode']:
-                        ob_idx = ob.get('annotation_index')
-                        if ob_idx is not None:
-                            original_bbox_map[ob_idx] = ob
-
-            # Filter text bboxes
-            text_bboxes = [
-                bbox for bbox in transformed_bboxes
-                if bbox.get('type') in ['text', 'datecode']
-            ]
-            logger.info(f"[{serial_number}] Collecting {len(text_bboxes)} text regions for batch OCR")
-
-            for bbox in text_bboxes:
-                annotation_idx = bbox.get('annotation_index')
-                if annotation_idx is None:
-                    continue
-
-                points = bbox.get('points', [])
-                if len(points) < 4:
-                    continue
-
-                conf_threshold = bbox.get('conf', 0.8)
-                expected_text = expected_texts.get(annotation_idx, '')
-
-                try:
-                    cropped_region = crop_text_region(frame_img, points)
-
-                    # Save debug image if enabled
-                    if self.save_debug_images:
-                        debug_file = f"{self.debug_path}/cropped_region_{serial_number}_{annotation_idx}.png"
-                        cv2.imwrite(debug_file, cropped_region)
-
-                    all_cropped_regions.append(cropped_region)
-                    all_metadata.append({
-                        'serial_number': serial_number,
-                        'annotation_idx': annotation_idx,
-                        'conf_threshold': conf_threshold,
-                        'expected_text': expected_text,
-                        'camera': task['camera'],
-                        'cropped_region': cropped_region  # kept for augment retry
-                    })
-
-                    # Collect sim task if enabled and original bbox exists
-                    if self.use_sim_check and template_img is not None:
-                        original_bbox = original_bbox_map.get(annotation_idx)
-                        if original_bbox:
-                            original_points = original_bbox.get('points', [])
-                            if len(original_points) >= 4:
-                                sim_tasks.append({
-                                    'frame_img': frame_img,
-                                    'template_img': template_img,
-                                    'transformed_points': points,
-                                    'original_points': original_points,
-                                    'serial_number': serial_number,
-                                    'annotation_idx': annotation_idx,
-                                    'conf_threshold': conf_threshold,
-                                })
-
-                    # Collect ML classify task (1 bbox = 1 char, no char segmentation)
-                    if use_ml_for_task:
-                        ml_tasks.append({
-                            'frame_img': frame_img,
-                            'transformed_points': points,
-                            'serial_number': serial_number,
-                            'annotation_idx': annotation_idx,
-                            'conf_threshold': conf_threshold,
-                            'ml_project_id': ml_project_id,
-                            'ml_model_id': ml_model_id,
-                        })
-
-                except Exception as e:
-                    logger.error(f"[{serial_number}] Error cropping annotation {annotation_idx}: {e}")
-
-        if not all_cropped_regions:
+        if not ocr_items_all:
             logger.warning("No valid text regions to process")
             return {
                 task['serial_number']: {'all_match': True, 'results': []}
                 for task in ocr_tasks
             }
 
-        # ========== PHASE 2: OCR batch + Sim checks IN PARALLEL ==========
-        t_phase2_start = time.perf_counter()
-
-        # --- Thread A: Sim checks (parallel per region) ---
-        sim_results_map = {}  # (serial_number, annotation_idx) -> sim result
-        sim_future = None
-
-        if self.use_sim_check and sim_tasks:
-            logger.info(
-                f"Sim check ENABLED: {len(sim_tasks)} regions to check "
-                f"(workers={self.SIM_MAX_WORKERS})"
-            )
-
-            def _run_all_sim_checks():
-                t_sim_start = time.perf_counter()
-                results = {}
-                with ThreadPoolExecutor(max_workers=self.SIM_MAX_WORKERS) as sim_executor:
-                    futures = {
-                        sim_executor.submit(
-                            self._compute_single_sim,
-                            st['frame_img'],
-                            st['template_img'],
-                            st['transformed_points'],
-                            st['original_points'],
-                            st['serial_number'],
-                            st['annotation_idx'],
-                            st['conf_threshold'],
-                        ): (st['serial_number'], st['annotation_idx'])
-                        for st in sim_tasks
-                    }
-                    for future in as_completed(futures):
-                        key = futures[future]
-                        try:
-                            results[key] = future.result()
-                        except Exception as e:
-                            logger.error(f"Sim check thread error {key}: {e}")
-                            results[key] = {
-                                'annotation_idx': key[1],
-                                'match_sim': False,
-                                'similarity': 0.0,
-                                'error': str(e),
-                            }
-                t_sim_total = (time.perf_counter() - t_sim_start) * 1000
-                logger.info(
-                    f"Sim check ALL complete: {len(sim_tasks)} regions in {t_sim_total:.1f}ms"
-                )
-                return results
-
-            # Submit sim checks to run concurrently with OCR
-            sim_executor_outer = ThreadPoolExecutor(max_workers=1)
-            sim_future = sim_executor_outer.submit(_run_all_sim_checks)
-        elif self.use_sim_check:
-            logger.info("Sim check ENABLED but no valid sim tasks (missing template_img or original_bboxes)")
-
-        # --- Thread A2: ML classify (parallel per region, per-camera enabled) ---
-        ml_results_map: Dict[Tuple[str, int], Dict[str, Any]] = {}
-        ml_future = None
-        ml_executor_outer = None
-
-        if ml_tasks:
-            logger.info(
-                f"ML classify ENABLED: {len(ml_tasks)} regions to classify "
-                f"(workers={self.SIM_MAX_WORKERS})"
-            )
-
-            def _run_all_ml_checks():
-                t_ml_start = time.perf_counter()
-                results: Dict[Tuple[str, int], Dict[str, Any]] = {}
-                with ThreadPoolExecutor(max_workers=self.SIM_MAX_WORKERS) as ml_pool:
-                    futs = {
-                        ml_pool.submit(
-                            self._compute_single_ml,
-                            mt['frame_img'],
-                            mt['transformed_points'],
-                            mt['serial_number'],
-                            mt['annotation_idx'],
-                            mt['conf_threshold'],
-                            mt['ml_project_id'],
-                            mt['ml_model_id'],
-                        ): (mt['serial_number'], mt['annotation_idx'])
-                        for mt in ml_tasks
-                    }
-                    for fut in as_completed(futs):
-                        key = futs[fut]
-                        try:
-                            results[key] = fut.result()
-                        except Exception as e:
-                            logger.error(f"ML classify thread error {key}: {e}")
-                            results[key] = {
-                                'annotation_idx': key[1],
-                                'ml_pass': False,
-                                'p_ok': 0.0,
-                                'label': 'NG',
-                                'error': str(e),
-                            }
-                t_ml_total = (time.perf_counter() - t_ml_start) * 1000
-                logger.info(
-                    f"ML classify ALL complete: {len(ml_tasks)} regions in {t_ml_total:.1f}ms"
-                )
-                return results
-
-            ml_executor_outer = ThreadPoolExecutor(max_workers=1)
-            ml_future = ml_executor_outer.submit(_run_all_ml_checks)
-
-        # --- Thread B (main thread): OCR batch ---
-        logger.info(
-            f"Running BATCH OCR on {len(all_cropped_regions)} regions "
-            f"from {len(ocr_tasks)} cameras"
+        region_map = self._run_ocr_batch_with_checks(
+            ocr_items_all, sim_items_all, ml_items_all, case_sensitive=True,
         )
 
-        try:
-            t0 = time.perf_counter()
-
-            if hasattr(self.text_recognizer, 'recognize_batch'):
-                ocr_results = self.text_recognizer.recognize_batch(all_cropped_regions)
-            else:
-                ocr_results = [
-                    self.text_recognizer.recognize(img, return_confidence=True)
-                    for img in all_cropped_regions
-                ]
-
-            ocr_time = (time.perf_counter() - t0) * 1000
-            logger.info(f"Batch OCR complete: {len(all_cropped_regions)} regions in {ocr_time:.1f}ms")
-
-        except Exception as e:
-            logger.error(f"Batch OCR failed: {e}")
-            import traceback
-            traceback.print_exc()
-            # Cancel sim future if running
-            if sim_future:
-                sim_future.cancel()
-                sim_executor_outer.shutdown(wait=False)
-            # Cancel ml future if running
-            if ml_future:
-                ml_future.cancel()
-                if ml_executor_outer is not None:
-                    ml_executor_outer.shutdown(wait=False)
-            return {
-                task['serial_number']: {'all_match': False, 'results': [], 'error': str(e)}
-                for task in ocr_tasks
-            }
-
-        # --- Wait for sim checks to finish (if running) ---
-        if sim_future:
-            try:
-                sim_results_map = sim_future.result(timeout=10)
-            except Exception as e:
-                logger.error(f"Sim check future error: {e}")
-                sim_results_map = {}
-            finally:
-                sim_executor_outer.shutdown(wait=False)
-
-        # --- Wait for ML checks to finish (if running) ---
-        if ml_future:
-            try:
-                ml_results_map = ml_future.result(timeout=10)
-            except Exception as e:
-                logger.error(f"ML classify future error: {e}")
-                ml_results_map = {}
-            finally:
-                if ml_executor_outer is not None:
-                    ml_executor_outer.shutdown(wait=False)
-
-        t_phase2_total = (time.perf_counter() - t_phase2_start) * 1000
-        logger.info(
-            f"Phase 2 (OCR + Sim + ML parallel) complete: {t_phase2_total:.1f}ms"
-        )
-
-        # ========== PHASE 3: Distribute results back to cameras ==========
         camera_results = {
             task['serial_number']: {'all_match': True, 'results': []}
             for task in ocr_tasks
         }
-
-        for i, result in enumerate(ocr_results):
-            meta = all_metadata[i]
-            serial_number = meta['serial_number']
-            annotation_idx = meta['annotation_idx']
-            conf_threshold = meta['conf_threshold']
-            expected_text = meta['expected_text']
-
-            candidates = _to_candidates(result)
-            if self.use_char_conf_check and all(cc is None for _, _, cc in candidates):
-                if hasattr(self.text_recognizer, 'recognize_with_char_conf'):
-                    raw = self.text_recognizer.recognize_with_char_conf(meta['cropped_region'])
-                    candidates = _to_candidates(raw)
-
-            match, recognized_text, confidence, char_confs = pick_winning_candidate(
-                candidates, conf_threshold, self.use_char_conf_check, expected_text, case_sensitive=True
-            )
-
-            logger.info(
-                f"[{serial_number}] Annotation {annotation_idx}: "
-                f"expected='{expected_text}', recognized='{recognized_text}', "
-                f"match={match}, conf={confidence:.2%}"
-            )
-
-            # ========== AUGMENT RETRY for failed regions ==========
-            if not match:
-                similarity = calculate_text_similarity(recognized_text, expected_text)
-                if similarity >= AUGMENT_SIMILARITY_THRESHOLD:
-                    logger.info(
-                        f"[{serial_number}] Annotation {annotation_idx}: "
-                        f"FAIL but similarity={similarity:.2%} >= {AUGMENT_SIMILARITY_THRESHOLD:.0%}, "
-                        f"retrying with augmentation..."
-                    )
-                    match, recognized_text = self._augment_retry(
-                        cropped_region=meta['cropped_region'],
-                        expected_text=expected_text,
-                        serial_number=serial_number,
-                        annotation_idx=annotation_idx,
-                        conf_threshold=conf_threshold,
-                    )
-                else:
-                    logger.info(
-                        f"[{serial_number}] Annotation {annotation_idx}: "
-                        f"FAIL and similarity={similarity:.2%} < {AUGMENT_SIMILARITY_THRESHOLD:.0%}, "
-                        f"skip augment retry (likely background/noise)"
-                    )
-            if match:
-                recognized_text = expected_text[:]
-
-            # Build result dict
-            region_result = {
-                'annotation_idx': annotation_idx,
-                'expected': expected_text,
-                'recognized': recognized_text,
-                'match': match,
-                'confidence': confidence,
-                'threshold': conf_threshold,
-                'char_confs': [
-                    {'char': c, 'conf': round(cf, 4)} for c, cf in char_confs if c.isalnum()
-                ] if char_confs else None,
-            }
-
-            # Merge sim result if available
-            sim_pass = True
-            if self.use_sim_check:
-                sim_key = (serial_number, annotation_idx)
-                sim_result = sim_results_map.get(sim_key)
-                if sim_result:
-                    region_result['match_sim'] = sim_result['match_sim']
-                    region_result['similarity'] = sim_result.get('similarity', 0.0)
-                    region_result['char_results'] = sim_result.get('char_results', [])
-                    sim_pass = sim_result['match_sim']
-                    region_result['match'] = match and sim_pass
-                    logger.info(
-                        f"[{serial_number}] Annotation {annotation_idx}: "
-                        f"FINAL match={region_result['match']}, match_sim={sim_result['match_sim']}, "
-                        f"similarity={sim_result.get('similarity', 0.0):.4f}"
-                    )
-                else:
-                    region_result['match_sim'] = None
-                    region_result['similarity'] = None
-                    region_result['char_results'] = []
-
-            # Merge ML classify result if available (per-camera, keyed by serial+ann)
-            ml_pass = True
-            ml_key = (serial_number, annotation_idx)
-            ml_result = ml_results_map.get(ml_key) if ml_results_map else None
-            if ml_result:
-                region_result['ml_pass'] = ml_result['ml_pass']
-                region_result['ml_p_ok'] = ml_result.get('p_ok', 0.0)
-                region_result['ml_label'] = ml_result.get('label', 'NG')
-                ml_pass = ml_result['ml_pass']
-                region_result['match'] = region_result['match'] and ml_pass
-                logger.info(
-                    f"[{serial_number}] Annotation {annotation_idx}: "
-                    f"FINAL match={region_result['match']}, ml_pass={ml_pass}, "
-                    f"ml_label={ml_result.get('label')}, p_ok={ml_result.get('p_ok', 0.0):.4f}"
-                )
-
-            if not (match and sim_pass and ml_pass):
-                camera_results[serial_number]['all_match'] = False
-
-            camera_results[serial_number]['results'].append(region_result)
+        for item in ocr_items_all:
+            serial = item['serial_number']
+            ann_idx = item['annotation_idx']
+            r = region_map.get((serial, ann_idx))
+            if r is None:
+                continue
+            camera_results[serial]['results'].append(r)
+            if not r.get('match', False):
+                camera_results[serial]['all_match'] = False
 
         return camera_results
 
