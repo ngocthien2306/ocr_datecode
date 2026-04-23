@@ -319,7 +319,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
     canvas.on('object:modified', (e) => {
       isModifyingRef.current = false;
       const obj    = e.target as AnnotatedRect;
-      if (!obj._segmentId || !obj._regionId) return;
+      if (!obj._regionId) return;
       const bounds = imageBoundsRef.current;
       if (!bounds) return;
 
@@ -334,10 +334,18 @@ export default function LabelTab({ project, onRefresh }: Props) {
       const nw = w / bounds.width;
       const nh = h / bounds.height;
 
-      setRegions(prev => prev.map(r => r.id !== obj._regionId ? r : {
-        ...r,
-        segments: r.segments.map(s => s.id === obj._segmentId ? { ...s, x: nx, y: ny, w: nw, h: nh } : s),
-      }));
+      if (obj._segmentId) {
+        // Segment moved/resized
+        setRegions(prev => prev.map(r => r.id !== obj._regionId ? r : {
+          ...r,
+          segments: r.segments.map(s => s.id === obj._segmentId ? { ...s, x: nx, y: ny, w: nw, h: nh } : s),
+        }));
+      } else if (obj._isRegion) {
+        // Region box itself moved/resized
+        setRegions(prev => prev.map(r => r.id !== obj._regionId ? r : {
+          ...r, x: nx, y: ny, w: nw, h: nh,
+        }));
+      }
     });
 
     // ── Space key pan ───────────────────────────────────────────────────────
@@ -384,7 +392,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
     toRemove.forEach(o => canvas.remove(o));
 
     regionList.forEach(region => {
-      // Region outline (not selectable — just visual)
+      // Region outline — selectable so user can move/resize before segmenting
       const regionRect = new Rect({
         left:   bounds.left + region.x * bounds.width,
         top:    bounds.top  + region.y * bounds.height,
@@ -392,7 +400,13 @@ export default function LabelTab({ project, onRefresh }: Props) {
         height: region.h * bounds.height,
         stroke: REGION_COLOR, strokeWidth: 2,
         fill: `${REGION_COLOR}12`,
-        selectable: false, evented: false, hasControls: false,
+        selectable: true, evented: true,
+        hasControls: true,
+        cornerSize: 8,
+        cornerColor: REGION_COLOR,
+        borderColor: REGION_COLOR,
+        transparentCorners: false,
+        lockRotation: true,
       }) as AnnotatedRect;
       regionRect._isRegion = true;
       regionRect._regionId = region.id;
@@ -589,9 +603,22 @@ export default function LabelTab({ project, onRefresh }: Props) {
               key={img.filename}
               className={`ml-label-image-item ${selectedFile === img.filename ? 'active' : ''} ${img.has_annotation ? 'has-label' : ''}`}
               onClick={() => selectImage(img.filename)}
+              style={{ position: 'relative' }}
             >
               <img className="ml-label-image-thumb" src={img.url} alt={img.filename} loading="lazy" />
               <span className="ml-label-image-name">{img.filename}</span>
+              {/* Annotation done badge */}
+              {img.has_annotation && (
+                <span title="Annotated" style={{
+                  position: 'absolute', top: 4, right: 4,
+                  width: 16, height: 16, borderRadius: '50%',
+                  background: SEG_OK_COLOR,
+                  border: '2px solid #fff',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '9px', color: '#fff', fontWeight: 700, lineHeight: 1,
+                  flexShrink: 0,
+                }}>✓</span>
+              )}
             </div>
           ))}
         </div>
