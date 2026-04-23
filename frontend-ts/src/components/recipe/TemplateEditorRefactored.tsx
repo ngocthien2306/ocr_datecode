@@ -417,41 +417,11 @@ export default function TemplateEditor({
         return;
       }
 
-      // Handle count mismatch - add new or remove deleted annotations
+      // Handle count mismatch - always full reload to keep indices in sync
+      // This handles both insert (splice) and delete (filter) correctly
       if (existingObjects.length !== annotations.length) {
-        if (existingObjects.length < annotations.length) {
-          // New annotations added - only add the new ones
-          console.log('Adding new annotations');
-          for (let i = existingObjects.length; i < annotations.length; i++) {
-            const ann = annotations[i];
-            if (!ann) return;
-            let typeConfig = TYPE_CONFIGS.find(t => t.value === ann.type);
-            if (!typeConfig && TYPE_CONFIGS.length > 0) typeConfig = TYPE_CONFIGS[0];
-            const color = typeConfig ? typeConfig.color : '#fff';
-            console.log('Creating new object:', { index: i, type: ann.type, color, shape: (ann as any).shape });
-            let obj;
-            // pass canvas reference via a shallow copy so objectUtils can convert relative coords
-            const annForCanvas = { ...(ann as any), _canvas: canvas } as any;
-            if ((ann as any).shape === 'rectangle') {
-              obj = objectUtils.createRectangleObject(annForCanvas, i, color);
-            } else if ((ann as any).shape === 'polygon') {
-              obj = objectUtils.createPolygonObject(annForCanvas, i, color);
-              setupPolygonControls(obj, color);
-            }
-            if (obj) {
-              canvas.add(obj);
-              const annAny = annForCanvas as any;
-              const label = objectUtils.createLabel(annForCanvas, annAny.x || (annAny.points && annAny.points[0][0]), annAny.y || (annAny.points && annAny.points[0][1]), color, i);
-              canvas.add(label);
-            }
-          }
-          canvas.requestRenderAll();
-        } else {
-          // Annotations removed - this should have been handled by deleteByIndex reindexing
-          // If we still see mismatch here, force full reload
-          console.warn('Unexpected count mismatch after deletion - forcing full reload');
-          loadAnnotations(canvas);
-        }
+        console.log('Count mismatch detected, full reload:', existingObjects.length, '→', annotations.length);
+        loadAnnotations(canvas);
         return;
       }
       
