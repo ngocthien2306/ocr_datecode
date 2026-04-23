@@ -304,8 +304,8 @@ export const setupCanvasPanning = (canvas: any): void => {
     let zoom = canvas.getZoom();
     zoom *= 0.999 ** delta;
     
-    if (zoom > 3) zoom = 3;
-    if (zoom < 0.5) zoom = 0.5;
+    if (zoom > 10) zoom = 10;
+    if (zoom < 0.1) zoom = 0.1;
     
     canvas.zoomToPoint({ x: opt.e.offsetX, y: opt.e.offsetY }, zoom);
     opt.e.preventDefault();
@@ -316,11 +316,11 @@ export const setupCanvasPanning = (canvas: any): void => {
 /**
  * Set canvas zoom
  * @param {fabric.Canvas} canvas 
- * @param {number} zoom - Zoom level (0.5 to 3)
+ * @param {number} zoom - Zoom level (0.1 to 10)
  */
 export const setCanvasZoom = (canvas: any, zoom: number): void => {
   if (!canvas) return;
-  canvas.setZoom(Math.min(Math.max(zoom, 0.5), 3));
+  canvas.setZoom(Math.min(Math.max(zoom, 0.1), 10));
   canvas.requestRenderAll();
 };
 

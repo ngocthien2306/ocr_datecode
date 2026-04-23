@@ -140,6 +140,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   const [frameCount, setFrameCount] = useState<number>(2);
   const [autoRotate, setAutoRotate] = useState(false);
   const [rotatingTemplateIdx, setRotatingTemplateIdx] = useState<number | null>(null);
+  const [filmstripExpanded, setFilmstripExpanded] = useState(true);
   const fabricCanvasRef = useRef<any>(null);
 
   // Confirm dialog state
@@ -1934,252 +1935,151 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       </span>
                     </div>
 
-                    {/* Templates List */}
-                    {(cameraTemplates[selectedCameraForTemplate]?.length || 0) > 0 && (
-                      <div className="templates-list">
-                        {cameraTemplates[selectedCameraForTemplate]?.map((template, idx) => {
-                          const hasTemplateRegion = template.annotations.some((ann: any) => ann.type === 'template');
-                          const hasRequiredAnnotation = template.annotations.some((ann: any) => 
-                            ['text', 'barcode', 'datecode'].includes(ann.type)
-                          );
-                          const hasCropArea = template.annotations.some((ann: any) => ann.type === 'crop_area');
-                          const isValid = hasTemplateRegion && hasRequiredAnnotation;
-                          
-                          return (
-                            <div 
-                              key={template.id} 
-                              className={`template-item ${idx === selectedTemplateIndex ? 'active' : ''} ${!isValid ? 'invalid' : ''}`}
-                              onClick={() => setSelectedTemplateIndex(idx)}
-                            >
-                              <div className="template-thumbnail">
-                                <img src={template.image} alt={template.name} />
-                                {!isValid && (
-                                  <div className="warning-badge" title="Missing required regions">⚠️</div>
-                                )}
-                              </div>
-                              <div className="template-details">
-                                <input
-                                  type="text"
-                                  value={template.name}
-                                  onChange={(e) => {
-                                    e.stopPropagation();
-                                    handleRenameTemplate(idx, e.target.value);
-                                  }}
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="template-name-input"
-                                />
-                                <div className="template-threshold-input">
-                                  <span className="threshold-label">Center Offset (px):</span>
-                                  <div className="threshold-inputs-row">
-                                    <div className="threshold-input-group">
-                                      <label htmlFor={`threshold-left-${template.id}`}>L</label>
-                                      <input
-                                        id={`threshold-left-${template.id}`}
-                                        type="number"
-                                        min="0"
-                                        max="500"
-                                        value={template.center_offset_threshold_left ?? 50}
-                                        onChange={(e) => {
-                                          e.stopPropagation();
-                                          const value = parseFloat(e.target.value) || 50;
-                                          const clampedValue = Math.max(0, Math.min(500, value));
-                                          setCameraTemplates(prev => ({
-                                            ...prev,
-                                            [selectedCameraForTemplate]: prev[selectedCameraForTemplate]?.map((t, i) =>
-                                              i === idx ? { ...t, center_offset_threshold_left: clampedValue } : t
-                                            ) || []
-                                          }));
-                                        }}
-                                        onClick={(e) => e.stopPropagation()}
-                                        className="threshold-input"
-                                      />
-                                    </div>
-                                    <div className="threshold-input-group">
-                                      <label htmlFor={`threshold-right-${template.id}`}>R</label>
-                                      <input
-                                        id={`threshold-right-${template.id}`}
-                                        type="number"
-                                        min="0"
-                                        max="500"
-                                        value={template.center_offset_threshold_right ?? 50}
-                                        onChange={(e) => {
-                                          e.stopPropagation();
-                                          const value = parseFloat(e.target.value) || 50;
-                                          const clampedValue = Math.max(0, Math.min(500, value));
-                                          setCameraTemplates(prev => ({
-                                            ...prev,
-                                            [selectedCameraForTemplate]: prev[selectedCameraForTemplate]?.map((t, i) =>
-                                              i === idx ? { ...t, center_offset_threshold_right: clampedValue } : t
-                                            ) || []
-                                          }));
-                                        }}
-                                        onClick={(e) => e.stopPropagation()}
-                                        className="threshold-input"
-                                      />
-                                    </div>
-                                  </div>
-                                </div>
-                                <div className="template-wrinkle-input">
-                                  <span className="threshold-label">Wrinkle Area (px²):</span>
-                                  <input
-                                    id={`wrinkle-area-${template.id}`}
-                                    type="number"
-                                    min="0"
-                                    max="100000"
-                                    step="100"
-                                    value={template.wrinkle_area ?? 2000}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      const value = parseFloat(e.target.value) || 2000;
-                                      const clampedValue = Math.max(0, value);
-                                      setCameraTemplates(prev => ({
-                                        ...prev,
-                                        [selectedCameraForTemplate]: prev[selectedCameraForTemplate]?.map((t, i) =>
-                                          i === idx ? { ...t, wrinkle_area: clampedValue } : t
-                                        ) || []
-                                      }));
-                                    }}
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="threshold-input"
-                                    title="Minimum wrinkle region area in pixels. Wrinkles smaller than this are ignored."
-                                  />
-                                </div>
-                                <div className="template-stats">
-                                  {hasTemplateRegion && <span className="stat">📐 Template</span>}
-                                  <span className="stat">
-                                    {template.annotations.filter(a => ['text', 'barcode', 'datecode'].includes(a.type!)).length} 
-                                    {' '}regions
-                                  </span>
-                                  {hasCropArea && <span className="stat crop">✂️ Crop</span>}
-                                </div>
-                                {!isValid && (
-                                  <div className="validation-error">
-                                    {!hasTemplateRegion && '⚠️ Missing "template" region'}
-                                    {!hasTemplateRegion && !hasRequiredAnnotation && ' • '}
-                                    {!hasRequiredAnnotation && '⚠️ Missing text/barcode/datecode'}
-                                  </div>
-                                )}
-                              </div>
-                              <div className="template-actions">
-                                <button
-                                  type="button"
-                                  className="btn-move-template"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleMoveTemplate(idx, 'up');
-                                  }}
-                                  disabled={idx === 0}
-                                  title="Move up"
-                                >
-                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                                    <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                  </svg>
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn-move-template"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleMoveTemplate(idx, 'down');
-                                  }}
-                                  disabled={idx === (cameraTemplates[selectedCameraForTemplate]?.length || 0) - 1}
-                                  title="Move down"
-                                >
-                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                                    <path d="M12 5v14M19 12l-7 7-7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                  </svg>
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn-move-template"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleRotateTemplate(idx);
-                                  }}
-                                  disabled={rotatingTemplateIdx !== null}
-                                  title="Rotate image via OBB detection"
-                                >
-                                  {rotatingTemplateIdx === idx ? (
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="spin">
-                                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" opacity="0.25"/>
-                                      <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="2"/>
-                                    </svg>
-                                  ) : (
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                                      <path d="M4 12a8 8 0 018-8V2l4 4-4 4V8a6 6 0 100 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                    </svg>
-                                  )}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn-delete-template"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setConfirmDialog({
-                                      isOpen: true,
-                                      title: 'Delete Template',
-                                      message: `Are you sure you want to delete ${template.name}?\n\nThis action cannot be undone.`,
-                                      type: 'danger',
-                                      onConfirm: () => {
-                                        handleDeleteTemplate(idx);
-                                      }
-                                    });
-                                  }}
-                                  title="Delete template"
-                                  style={{ display: canPerformAction('deleteTemplate', 'template') ? 'block' : 'none' }}
-                                >
-                                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                                    <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                    <path d="M10 11v6M14 11v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                                  </svg>
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                    {/* 3-column layout: Filmstrip | Canvas | Annotations */}
+                    <div className="template-workspace">
+                      {/* Filmstrip sidebar */}
+                      {(cameraTemplates[selectedCameraForTemplate]?.length || 0) > 0 && (
+                        <div className={`template-filmstrip ${filmstripExpanded ? 'expanded' : 'collapsed'}`}>
+                          <button
+                            type="button"
+                            className="filmstrip-toggle"
+                            onClick={() => setFilmstripExpanded(prev => !prev)}
+                            title={filmstripExpanded ? 'Collapse' : 'Expand'}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                              <path d={filmstripExpanded ? 'M15 18l-6-6 6-6' : 'M9 6l6 6-6 6'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          </button>
+                          <div className="filmstrip-list">
+                            {cameraTemplates[selectedCameraForTemplate]?.map((template, idx) => {
+                              const hasTemplateRegion = template.annotations.some((ann: any) => ann.type === 'template');
+                              const hasRequiredAnnotation = template.annotations.some((ann: any) =>
+                                ['text', 'barcode', 'datecode'].includes(ann.type)
+                              );
+                              const hasCropArea = template.annotations.some((ann: any) => ann.type === 'crop_area');
+                              const isValid = hasTemplateRegion && hasRequiredAnnotation;
 
-                    {getCurrentTemplateImage() ? (
-                      <div className="template-editor-layout">
-                        <div className="template-editor-canvas">
-                          <TemplateEditor
-                            templateImage={getCurrentTemplateImage()}
-                            annotations={getCurrentAnnotations() as any}
-                            onAnnotationsChange={handleAnnotationsChange}
-                            selectedAnnotation={selectedAnnotation}
-                            onSelectAnnotation={setSelectedAnnotation}
-                            fabricCanvasRef={fabricCanvasRef}
-                          />
+                              return (
+                                <div
+                                  key={template.id}
+                                  className={`filmstrip-item ${idx === selectedTemplateIndex ? 'active' : ''} ${!isValid ? 'invalid' : ''}`}
+                                  onClick={() => setSelectedTemplateIndex(idx)}
+                                >
+                                  <div className="filmstrip-thumbnail">
+                                    <img src={template.image} alt={template.name} />
+                                    <span className="filmstrip-index">{idx + 1}</span>
+                                    {!isValid && <span className="filmstrip-warn" title="Missing required regions">!</span>}
+                                  </div>
+
+                                  {filmstripExpanded && (
+                                    <div className="filmstrip-details">
+                                      <input
+                                        type="text"
+                                        value={template.name}
+                                        onChange={(e) => { e.stopPropagation(); handleRenameTemplate(idx, e.target.value); }}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="filmstrip-name-input"
+                                      />
+                                      <div className="filmstrip-settings">
+                                        <div className="filmstrip-setting-row">
+                                          <span className="filmstrip-setting-label">Offset L/R:</span>
+                                          <input type="number" min="0" max="500"
+                                            value={template.center_offset_threshold_left ?? 50}
+                                            onChange={(e) => { e.stopPropagation(); const v = Math.max(0, Math.min(500, parseFloat(e.target.value) || 50)); setCameraTemplates(prev => ({ ...prev, [selectedCameraForTemplate]: prev[selectedCameraForTemplate]?.map((t, i) => i === idx ? { ...t, center_offset_threshold_left: v } : t) || [] })); }}
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="filmstrip-setting-input"
+                                          />
+                                          <input type="number" min="0" max="500"
+                                            value={template.center_offset_threshold_right ?? 50}
+                                            onChange={(e) => { e.stopPropagation(); const v = Math.max(0, Math.min(500, parseFloat(e.target.value) || 50)); setCameraTemplates(prev => ({ ...prev, [selectedCameraForTemplate]: prev[selectedCameraForTemplate]?.map((t, i) => i === idx ? { ...t, center_offset_threshold_right: v } : t) || [] })); }}
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="filmstrip-setting-input"
+                                          />
+                                        </div>
+                                        <div className="filmstrip-setting-row">
+                                          <span className="filmstrip-setting-label">Wrinkle:</span>
+                                          <input type="number" min="0" max="100000" step="100"
+                                            value={template.wrinkle_area ?? 2000}
+                                            onChange={(e) => { e.stopPropagation(); const v = Math.max(0, parseFloat(e.target.value) || 2000); setCameraTemplates(prev => ({ ...prev, [selectedCameraForTemplate]: prev[selectedCameraForTemplate]?.map((t, i) => i === idx ? { ...t, wrinkle_area: v } : t) || [] })); }}
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="filmstrip-setting-input wide"
+                                            title="Minimum wrinkle region area (px²)"
+                                          />
+                                        </div>
+                                        <div className="filmstrip-stats">
+                                          {hasTemplateRegion && <span className="stat">T</span>}
+                                          <span className="stat">{template.annotations.filter(a => ['text', 'barcode', 'datecode'].includes(a.type!)).length}R</span>
+                                          {hasCropArea && <span className="stat crop">C</span>}
+                                        </div>
+                                      </div>
+                                      <div className="filmstrip-actions">
+                                        <button type="button" className="filmstrip-action-btn" onClick={(e) => { e.stopPropagation(); handleMoveTemplate(idx, 'up'); }} disabled={idx === 0} title="Move up">
+                                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                        </button>
+                                        <button type="button" className="filmstrip-action-btn" onClick={(e) => { e.stopPropagation(); handleMoveTemplate(idx, 'down'); }} disabled={idx === (cameraTemplates[selectedCameraForTemplate]?.length || 0) - 1} title="Move down">
+                                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M19 12l-7 7-7-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                        </button>
+                                        <button type="button" className="filmstrip-action-btn" onClick={(e) => { e.stopPropagation(); handleRotateTemplate(idx); }} disabled={rotatingTemplateIdx !== null} title="Rotate">
+                                          {rotatingTemplateIdx === idx ? (
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" className="spin"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="2"/></svg>
+                                          ) : (
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M4 12a8 8 0 018-8V2l4 4-4 4V8a6 6 0 100 6" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                          )}
+                                        </button>
+                                        <button type="button" className="filmstrip-action-btn danger" onClick={(e) => { e.stopPropagation(); setConfirmDialog({ isOpen: true, title: 'Delete Template', message: `Delete ${template.name}?`, type: 'danger', onConfirm: () => handleDeleteTemplate(idx) }); }} title="Delete" style={{ display: canPerformAction('deleteTemplate', 'template') ? 'flex' : 'none' }}>
+                                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/></svg>
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
-                        <div className="template-editor-sidebar">
-                          <AnnotationsPanel
-                            annotations={getCurrentAnnotations() as any}
-                            selectedAnnotation={selectedAnnotation}
-                            onSelectAnnotation={setSelectedAnnotation}
-                            onAnnotationTypeChange={handleAnnotationTypeChange}
-                            onAnnotationTextChange={handleAnnotationTextChange}
-                            onAnnotationConfChange={handleAnnotationConfChange}
-                            onDeleteAnnotation={handleDeleteAnnotation}
-                            onAutoSegment={handleAutoSegment}
-                            segmenting={segmenting}
-                            fabricCanvasRef={fabricCanvasRef}
-                            imageWidth={getCurrentTemplate()?.image_width}
-                            imageHeight={getCurrentTemplate()?.image_height}
-                          />
+                      )}
+
+                      {/* Canvas + Annotations */}
+                      {getCurrentTemplateImage() ? (
+                        <div className="template-editor-layout">
+                          <div className="template-editor-canvas">
+                            <TemplateEditor
+                              templateImage={getCurrentTemplateImage()}
+                              annotations={getCurrentAnnotations() as any}
+                              onAnnotationsChange={handleAnnotationsChange}
+                              selectedAnnotation={selectedAnnotation}
+                              onSelectAnnotation={setSelectedAnnotation}
+                              fabricCanvasRef={fabricCanvasRef}
+                            />
+                          </div>
+                          <div className="template-editor-sidebar">
+                            <AnnotationsPanel
+                              annotations={getCurrentAnnotations() as any}
+                              selectedAnnotation={selectedAnnotation}
+                              onSelectAnnotation={setSelectedAnnotation}
+                              onAnnotationTypeChange={handleAnnotationTypeChange}
+                              onAnnotationTextChange={handleAnnotationTextChange}
+                              onAnnotationConfChange={handleAnnotationConfChange}
+                              onDeleteAnnotation={handleDeleteAnnotation}
+                              onAutoSegment={handleAutoSegment}
+                              segmenting={segmenting}
+                              fabricCanvasRef={fabricCanvasRef}
+                              imageWidth={getCurrentTemplate()?.image_width}
+                              imageHeight={getCurrentTemplate()?.image_height}
+                            />
+                          </div>
                         </div>
-                      </div>
-                    ) : (
-                      <div className="template-placeholder">
-                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                          <rect x="3" y="3" width="18" height="18" rx="2" strokeWidth="2"/>
-                          <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/>
-                          <polyline points="21,15 16,10 5,21" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                        </svg>
-                        <p>No templates added yet</p>
-                        <p className="hint">Click "Add Template Image" to get started</p>
-                      </div>
-                    )}
+                      ) : (
+                        <div className="template-placeholder">
+                          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <rect x="3" y="3" width="18" height="18" rx="2" strokeWidth="2"/>
+                            <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/>
+                            <polyline points="21,15 16,10 5,21" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                          <p>No templates added yet</p>
+                        </div>
+                      )}
+                    </div>
                   </>
                 )}
               </div>
