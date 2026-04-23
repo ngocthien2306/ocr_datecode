@@ -116,6 +116,20 @@ class TextVerificationService:
         """Check if OCR is available"""
         return self.text_recognizer is not None
 
+    def _get_max_batch(self) -> int:
+        """Resolve OCR engine max batch size. Falls back to 8 if unknown."""
+        cached = getattr(self, '_cached_max_batch', None)
+        if cached is not None:
+            return cached
+        mb = getattr(self.text_recognizer, 'max_batch', None)
+        if mb is None:
+            inner = getattr(self.text_recognizer, '_recognizer', None)
+            if inner is not None:
+                mb = getattr(inner, 'max_batch', None)
+        mb = int(mb) if mb else 8
+        self._cached_max_batch = mb
+        return mb
+
     def _resize_for_matching(self, img: np.ndarray, max_dim: int) -> tuple:
         """Resize image if larger than max_dim for faster matching."""
         if max_dim <= 0:
@@ -429,21 +443,34 @@ class TextVerificationService:
             ml_executor_outer = ThreadPoolExecutor(max_workers=1)
             ml_future = ml_executor_outer.submit(_run_all_ml)
 
-        # --- Batch OCR on main thread ---
+        # --- Batch OCR on main thread (auto-chunk by engine max_batch) ---
         crops = [it['cropped_region'] for it in ocr_items]
-        logger.info(f"Running BATCH OCR on {len(crops)} regions")
+        max_batch = self._get_max_batch()
+        has_batch_api = hasattr(self.text_recognizer, 'recognize_batch')
+        logger.info(
+            f"Running BATCH OCR on {len(crops)} regions "
+            f"(chunked by max_batch={max_batch})"
+        )
 
         try:
             t0 = time.perf_counter()
-            if hasattr(self.text_recognizer, 'recognize_batch'):
-                ocr_results = self.text_recognizer.recognize_batch(crops)
+            ocr_results: List[Any] = []
+            if has_batch_api:
+                for i in range(0, len(crops), max_batch):
+                    chunk = crops[i:i + max_batch]
+                    chunk_results = self.text_recognizer.recognize_batch(chunk)
+                    ocr_results.extend(chunk_results)
             else:
                 ocr_results = [
                     self.text_recognizer.recognize(img, return_confidence=True)
                     for img in crops
                 ]
             ocr_time = (time.perf_counter() - t0) * 1000
-            logger.info(f"Batch OCR complete: {len(crops)} regions in {ocr_time:.1f}ms")
+            n_chunks = (len(crops) + max_batch - 1) // max_batch if has_batch_api else len(crops)
+            logger.info(
+                f"Batch OCR complete: {len(crops)} regions in {n_chunks} chunk(s), "
+                f"{ocr_time:.1f}ms"
+            )
         except Exception as e:
             logger.error(f"Batch OCR failed: {e}")
             import traceback
