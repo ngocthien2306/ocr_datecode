@@ -73,21 +73,21 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
     gray = _to_gray(char_img)
     h, w = gray.shape[:2]
     results = []
-    for _ in range(n):
+    num_aug_types = 6
+    choices = np.random.choice(num_aug_types, size=n, replace=n > num_aug_types)
+    for choice in choices:
         aug = gray.copy()
-        choice = np.random.randint(0, 4)
         if choice == 0:
             noise = np.random.normal(0, 30, aug.shape).astype(np.int16)
             aug = np.clip(aug.astype(np.int16) + noise, 0, 255).astype(np.uint8)
-        # elif choice == 1:
-        #     k = np.random.choice([7, 9, 11, 13])
-        #     aug = cv.GaussianBlur(aug, (k, k), 0)
         elif choice == 1:
-            rh = max(2, h // 3)
-            rw = max(2, w // 3)
-            ry = np.random.randint(0, max(1, h - rh))
-            rx = np.random.randint(0, max(1, w - rw))
-            aug[ry:ry + rh, rx:rx + rw] = 0
+            num_cuts = np.random.randint(1, 4)
+            for _c in range(num_cuts):
+                rh = np.random.randint(max(2, h // 6), max(3, h // 3))
+                rw = np.random.randint(max(2, w // 6), max(3, w // 3))
+                ry = np.random.randint(0, max(1, h - rh))
+                rx = np.random.randint(0, max(1, w - rw))
+                aug[ry:ry + rh, rx:rx + rw] = 0
         elif choice == 2:
             k = np.random.randint(4, 7)
             kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
@@ -100,7 +100,10 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
             dx = np.random.randint(-w // 3, w // 3 + 1)
             dy = np.random.randint(-h // 3, h // 3 + 1)
             M = np.float32([[1, 0, dx], [0, 1, dy]])
-            aug = cv.warpAffine(aug, M, (w, h), borderValue=0)
+            aug = cv.warpAffine(aug, M, (w, h), borderValue=255)
+        elif choice == 5:
+            k = np.random.choice([11, 13, 15, 17])
+            aug = cv.GaussianBlur(aug, (k, k), 0)
         results.append(aug)
     return results
 
