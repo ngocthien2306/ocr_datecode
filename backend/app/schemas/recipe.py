@@ -111,6 +111,11 @@ class RecipeBase(BaseModel):
     roi_config: Optional[Dict[str, Any]] = Field(None, description="Region of interest configuration")
     is_active: bool = True
 
+    # OCR / ML model selection
+    ocr_model_type: Optional[str] = Field(default=None, description="OCR model type: SMTR, SVTRV2_CTC, OPENOCR_REPSVTR, PADDLEV5")
+    ml_project_id: Optional[str] = Field(default=None, description="ML Training project ID for quality inspection")
+    ml_model_id: Optional[str] = Field(default=None, description="Trained ML model ID within the ML project")
+
 
 class RecipeCreate(RecipeBase):
     """Schema for creating a new recipe"""
@@ -135,6 +140,9 @@ class RecipeUpdate(BaseModel):
     template_config: Optional[Dict[str, Any]] = None
     roi_config: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = None
+    ocr_model_type: Optional[str] = None
+    ml_project_id: Optional[str] = None
+    ml_model_id: Optional[str] = None
 
 
 class RecipeInDB(RecipeBase):
@@ -161,3 +169,4 @@ class RecipeResponse(RecipeBase):
 
     class Config:
         from_attributes = True
+        populate_by_name = True

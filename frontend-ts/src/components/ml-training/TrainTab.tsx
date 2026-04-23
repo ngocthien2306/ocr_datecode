@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   mlTrainingAPI,
   LabeledCrop,
@@ -31,7 +31,7 @@ function LazyImage({ src, alt }: { src: string; alt: string }) {
     const el = ref.current;
     if (!el) return;
     const obs = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) { setVisible(true); obs.disconnect(); } },
+      ([entry]) => { if (entry!.isIntersecting) { setVisible(true); obs.disconnect(); } },
       { rootMargin: '300px' }
     );
     obs.observe(el);

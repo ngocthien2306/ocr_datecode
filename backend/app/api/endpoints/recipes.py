@@ -232,6 +232,9 @@ def recipe_to_response(recipe: RecipeInDB, user_names_map: dict = None) -> Recip
         template_config=recipe.template_config,
         roi_config=recipe.roi_config,
         is_active=recipe.is_active,
+        ocr_model_type=getattr(recipe, 'ocr_model_type', None),
+        ml_project_id=getattr(recipe, 'ml_project_id', None),
+        ml_model_id=getattr(recipe, 'ml_model_id', None),
         created_by=recipe.created_by,
         updated_by=recipe.updated_by,
         created_by_name=created_by_name,
@@ -881,15 +884,20 @@ async def clone_recipe(
         description=original_recipe.description,
         cameras=to_dict(original_recipe.cameras) or [],
         camera_templates=to_dict(original_recipe.camera_templates) or [],
-        delay_reject=original_recipe.delay_reject,
+        delay_reject=getattr(original_recipe, 'delay_reject', 100.0),
+        reject_pulse=getattr(original_recipe, 'reject_pulse', 50.0),
         reject_method=getattr(original_recipe, 'reject_method', 'DIO_OUT'),
-        do_reject_number=original_recipe.do_reject_number,
+        do_reject_number=getattr(original_recipe, 'do_reject_number', 0),
         do_alarm_number=getattr(original_recipe, 'do_alarm_number', 0),
+        normal_pulse_ms=getattr(original_recipe, 'normal_pulse_ms', 0.0),
         camera_settings=to_dict(original_recipe.camera_settings),
         model_thresholds=to_dict(original_recipe.model_thresholds),
         template_config=original_recipe.template_config,
         roi_config=original_recipe.roi_config,
-        is_active=original_recipe.is_active
+        is_active=original_recipe.is_active,
+        ocr_model_type=getattr(original_recipe, 'ocr_model_type', None),
+        ml_project_id=getattr(original_recipe, 'ml_project_id', None),
+        ml_model_id=getattr(original_recipe, 'ml_model_id', None),
     )
 
     # Create the cloned recipe

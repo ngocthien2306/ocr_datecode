@@ -3,6 +3,7 @@ import TemplateEditor from './TemplateEditorRefactored';
 import AnnotationsPanel from '@/components/shared/AnnotationsPanel';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import { camerasAPI } from '@/services/api';
+import { mlTrainingAPI, MLProject, MLModel } from '@/services/mlTraining';
 import { useToast } from '@/contexts/ToastContext';
 import { useUser } from '@/contexts/UserContext';
 import { API_BASE_URL } from '@/config/api';
@@ -50,6 +51,9 @@ interface FormDataType {
   };
   template_config: any;
   roi_config: any;
+  ocr_model_type: string;
+  ml_project_id: string;
+  ml_model_id: string;
 }
 
 interface Template {
@@ -102,7 +106,10 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       max_text_size: 200
     },
     template_config: null,
-    roi_config: null
+    roi_config: null,
+    ocr_model_type: '',
+    ml_project_id: '',
+    ml_model_id: '',
   });
 
   const [templateImage, setTemplateImage] = useState<string | null>(null);
@@ -114,6 +121,12 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   const [availableCameras, setAvailableCameras] = useState<Camera[]>([]);
   const [loadingCameras, setLoadingCameras] = useState(false);
   const [selectedCameraForAdd, setSelectedCameraForAdd] = useState<string>('');
+
+  // ML project / model states
+  const [mlProjects, setMlProjects] = useState<MLProject[]>([]);
+  const [mlModels, setMlModels] = useState<MLModel[]>([]);
+  const [loadingMlProjects, setLoadingMlProjects] = useState(false);
+  const [loadingMlModels, setLoadingMlModels] = useState(false);
   
   // Template editor states - now supports multiple templates per camera
   const [selectedCameraForTemplate, setSelectedCameraForTemplate] = useState<string>('');
@@ -244,7 +257,10 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           max_text_size: 200
         },
         template_config: recipeAny.template_config || null,
-        roi_config: recipeAny.roi_config || null
+        roi_config: recipeAny.roi_config || null,
+        ocr_model_type: recipeAny.ocr_model_type || '',
+        ml_project_id: recipeAny.ml_project_id || '',
+        ml_model_id: recipeAny.ml_model_id || '',
       });
 
       if (recipeAny.template_config?.template_image) {
@@ -293,7 +309,10 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           max_text_size: 200
         },
         template_config: null,
-        roi_config: null
+        roi_config: null,
+        ocr_model_type: '',
+        ml_project_id: '',
+        ml_model_id: '',
       });
       setTemplateImage(null);
       setAnnotations([]);
@@ -307,8 +326,18 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   useEffect(() => {
     if (isOpen) {
       loadAvailableCameras();
+      loadMlProjects();
     }
   }, [isOpen]);
+
+  // Load ML models whenever ml_project_id changes
+  useEffect(() => {
+    if (formData.ml_project_id) {
+      loadMlModels(formData.ml_project_id);
+    } else {
+      setMlModels([]);
+    }
+  }, [formData.ml_project_id]);
 
   const loadAvailableCameras = async () => {
     setLoadingCameras(true);
@@ -319,6 +348,31 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       console.error('Failed to load cameras:', error);
     } finally {
       setLoadingCameras(false);
+    }
+  };
+
+  const loadMlProjects = async () => {
+    setLoadingMlProjects(true);
+    try {
+      const data = await mlTrainingAPI.listProjects();
+      setMlProjects(data);
+    } catch (error) {
+      console.error('Failed to load ML projects:', error);
+    } finally {
+      setLoadingMlProjects(false);
+    }
+  };
+
+  const loadMlModels = async (projectId: string) => {
+    setLoadingMlModels(true);
+    try {
+      const data = await mlTrainingAPI.listModels(projectId);
+      // Only show completed models
+      setMlModels(data.filter(m => m.status === 'completed'));
+    } catch (error) {
+      console.error('Failed to load ML models:', error);
+    } finally {
+      setLoadingMlModels(false);
     }
   };
 
@@ -1560,7 +1614,66 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
             {activeTab === 'model' && (
               <div className="form-section">
-                <h3>Model Thresholds</h3>
+                {/* ── OCR Model Selection ── */}
+                <h3>OCR Model</h3>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>OCR Model Type</label>
+                    <select
+                      name="ocr_model_type"
+                      value={formData.ocr_model_type}
+                      onChange={(e) => setFormData(prev => ({ ...prev, ocr_model_type: e.target.value }))}
+                    >
+                      <option value="">-- Default --</option>
+                      <option value="SMTR">SMTR (large-x)</option>
+                      <option value="SVTRV2_CTC">SVTRV2_CTC (large)</option>
+                      <option value="OPENOCR_REPSVTR">OPENOCR_REPSVTR (medium)</option>
+                      <option value="PADDLEV5">PADDLEV5 (small)</option>
+                    </select>
+                    <small className="field-description">OCR recognition backbone used for text reading</small>
+                  </div>
+                </div>
+
+                {/* ── ML Quality Inspection Model ── */}
+                <h3 style={{ marginTop: '1.5rem' }}>ML Quality Inspection</h3>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>ML Training Project</label>
+                    <select
+                      value={formData.ml_project_id}
+                      onChange={(e) => setFormData(prev => ({ ...prev, ml_project_id: e.target.value, ml_model_id: '' }))}
+                      disabled={loadingMlProjects}
+                    >
+                      <option value="">-- None --</option>
+                      {mlProjects.map(p => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                    {loadingMlProjects && <small className="field-description">Loading projects…</small>}
+                  </div>
+                  <div className="form-group">
+                    <label>Trained Model</label>
+                    <select
+                      value={formData.ml_model_id}
+                      onChange={(e) => setFormData(prev => ({ ...prev, ml_model_id: e.target.value }))}
+                      disabled={!formData.ml_project_id || loadingMlModels}
+                    >
+                      <option value="">-- None --</option>
+                      {mlModels.map(m => (
+                        <option key={m.id} value={m.id}>
+                          {m.algorithm.toUpperCase()} · acc {(m.metrics.accuracy_test * 100).toFixed(1)}% · {new Date(m.created_at).toLocaleDateString()}
+                        </option>
+                      ))}
+                    </select>
+                    {loadingMlModels && <small className="field-description">Loading models…</small>}
+                    {formData.ml_project_id && !loadingMlModels && mlModels.length === 0 && (
+                      <small className="field-description" style={{ color: 'var(--color-warning, #f59e0b)' }}>No completed models in this project yet</small>
+                    )}
+                  </div>
+                </div>
+
+                {/* ── Model Thresholds ── */}
+                <h3 style={{ marginTop: '1.5rem' }}>Model Thresholds</h3>
                 <div className="form-row">
                   <div className="form-group">
                     <label>Detection Threshold <span className="required">*</span> <span className="hint">(0.0 - 1.0)</span></label>
