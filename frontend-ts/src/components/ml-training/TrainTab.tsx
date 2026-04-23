@@ -131,6 +131,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
   const [nEstimators, setNEstimators] = useState(100);
   const [maxIter, setMaxIter] = useState(500);
   const [svmC, setSvmC] = useState(1.0);
+  const [threshold, setThreshold] = useState(50); // percent, 0–100
 
   // Training state
   const [training, setTraining] = useState(false);
@@ -214,7 +215,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
     setPredictResults(null);
     setTestSetCrops([]);
     try {
-      const req: TrainRequest = { algorithm, augment_factor: augmentFactor, n_estimators: nEstimators, max_iter: maxIter, C: svmC };
+      const req: TrainRequest = { algorithm, augment_factor: augmentFactor, threshold: threshold / 100, n_estimators: nEstimators, max_iter: maxIter, C: svmC };
       const { model_id } = await mlTrainingAPI.startTraining(project.id, req);
 
       pollRef.current = setInterval(async () => {
@@ -277,7 +278,8 @@ export default function TrainTab({ project, onRefresh }: Props) {
   const modelLabel = (m: MLModel) => {
     const date = new Date(m.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
     const acc  = m.metrics?.accuracy_test != null ? ` · ${(m.metrics.accuracy_test * 100).toFixed(1)}%` : '';
-    return `${m.algorithm.toUpperCase()}${acc} · ${date}`;
+    const thr  = m.params?.threshold != null ? ` · thr ${Math.round((m.params.threshold as number) * 100)}%` : '';
+    return `${m.algorithm.toUpperCase()}${acc}${thr} · ${date}`;
   };
 
   // ── Render ────────────────────────────────────────────────────────────
@@ -353,6 +355,42 @@ export default function TrainTab({ project, onRefresh }: Props) {
           {augmentFactor >= 2 && (
             <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>
               → {okCrops.length * (augmentFactor - 1)} synthetic NG will be added
+            </div>
+          )}
+        </div>
+
+        {/* ── OK Threshold ── */}
+        <div className="ml-section-title">OK Threshold</div>
+        <div className="ml-form-group">
+          <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px' }}>
+            prob_ok ≥ threshold → classified as OK
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <input
+              type="range"
+              min={1} max={99} step={1}
+              value={threshold}
+              onChange={e => setThreshold(Number(e.target.value))}
+              style={{ flex: 1, accentColor: '#3b82f6' }}
+            />
+            <input
+              type="number"
+              min={1} max={99} step={1}
+              value={threshold}
+              onChange={e => {
+                const v = Math.min(99, Math.max(1, Number(e.target.value)));
+                setThreshold(v);
+              }}
+              className="ml-form-input"
+              style={{ width: '58px', textAlign: 'center', padding: '4px 6px' }}
+            />
+            <span style={{ fontSize: '12px', color: '#6b7280', flexShrink: 0 }}>%</span>
+          </div>
+          {threshold !== 50 && (
+            <div style={{ fontSize: '11px', color: '#fbbf24' }}>
+              {threshold < 50
+                ? `↓ Looser — more crops will be OK`
+                : `↑ Stricter — fewer crops will be OK`}
             </div>
           )}
         </div>
@@ -528,6 +566,19 @@ export default function TrainTab({ project, onRefresh }: Props) {
                   {/* ── Metrics tab ── */}
                   {resultsTab === 'metrics' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {/* Threshold badge */}
+                      {selectedModel.params?.threshold != null && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#9ca3af' }}>
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
+                            <line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                            <circle cx="12" cy="12" r="3" fill="currentColor" />
+                          </svg>
+                          OK threshold:
+                          <span style={{ color: '#60a5fa', fontWeight: 600 }}>
+                            {Math.round((selectedModel.params.threshold as number) * 100)}%
+                          </span>
+                        </div>
+                      )}
                       <div className="ml-metric-row">
                         <div className="ml-metric-card">
                           <div className="ml-metric-value">{(selectedModel.metrics.accuracy_train * 100).toFixed(1)}%</div>

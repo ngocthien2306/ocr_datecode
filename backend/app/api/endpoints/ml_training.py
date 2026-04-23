@@ -572,8 +572,9 @@ async def predict(
         content = await file.read()
         tmp_path.write_bytes(content)
 
+        threshold = float(model_record.params.get("threshold", 0.5))
         results = await asyncio.get_event_loop().run_in_executor(
-            None, predict_on_image, model_path, tmp_path, None, 0.5,
+            None, predict_on_image, model_path, tmp_path, None, threshold,
         )
     finally:
         if tmp_path.exists():

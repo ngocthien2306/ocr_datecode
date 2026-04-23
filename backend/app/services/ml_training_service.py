@@ -89,18 +89,18 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
             rx = np.random.randint(0, max(1, w - rw))
             aug[ry:ry + rh, rx:rx + rw] = 0
         elif choice == 2:
-            k = np.random.randint(5, 7)
+            k = np.random.randint(4, 7)
             kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
             aug = cv.erode(aug, kernel, iterations=1)
         elif choice == 3:
-            k = np.random.randint(6, 8)
+            k = np.random.randint(5, 8)
             kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
             aug = cv.dilate(aug, kernel, iterations=1)
-        # elif choice == 4:
-        #     dx = np.random.randint(-w // 3, w // 3 + 1)
-        #     dy = np.random.randint(-h // 3, h // 3 + 1)
-        #     M = np.float32([[1, 0, dx], [0, 1, dy]])
-        #     aug = cv.warpAffine(aug, M, (w, h), borderValue=0)
+        elif choice == 4:
+            dx = np.random.randint(-w // 3, w // 3 + 1)
+            dy = np.random.randint(-h // 3, h // 3 + 1)
+            M = np.float32([[1, 0, dx], [0, 1, dy]])
+            aug = cv.warpAffine(aug, M, (w, h), borderValue=0)
         results.append(aug)
     return results
 
@@ -217,9 +217,16 @@ def train_model(
     clf = _build_classifier(request)
     clf.fit(X_train, y_train)
 
-    # Evaluate
-    y_pred_train = clf.predict(X_train)
-    y_pred_test  = clf.predict(X_test)
+    threshold = float(getattr(request, "threshold", 0.5))
+
+    def _apply_threshold(X: np.ndarray) -> np.ndarray:
+        proba = clf.predict_proba(X)
+        p_ok = proba[:, 1] if proba.shape[1] > 1 else proba[:, 0]
+        return (p_ok >= threshold).astype(np.int32)
+
+    # Evaluate using the configured threshold
+    y_pred_train = _apply_threshold(X_train)
+    y_pred_test  = _apply_threshold(X_test)
     acc_train = float(accuracy_score(y_train, y_pred_train))
     acc_test  = float(accuracy_score(y_test,  y_pred_test))
 

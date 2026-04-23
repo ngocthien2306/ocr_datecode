@@ -64,6 +64,7 @@ export interface SyntheticCrop {
 export interface TrainRequest {
   algorithm: 'rf' | 'svm' | 'mlp';
   augment_factor: number;
+  threshold?: number;       // prob_ok >= threshold → OK (0.0–1.0, default 0.5)
   test_split?: number;
   n_estimators?: number;
   max_iter?: number;

@@ -117,6 +117,7 @@ class TrainRequest(BaseModel):
     algorithm: str = "rf"           # "rf" | "svm" | "mlp"
     augment_factor: int = 0         # 0=off, 2=x2 ...
     test_split: float = 0.2         # fraction for test set
+    threshold: float = 0.5          # prob_ok >= threshold → label OK
     n_estimators: int = 100         # RF only
     max_iter: int = 500             # MLP/SVM only
     C: float = 1.0                  # SVM only
