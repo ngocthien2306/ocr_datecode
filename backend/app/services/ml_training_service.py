@@ -75,9 +75,9 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
     results = []
     for _ in range(n):
         aug = gray.copy()
-        choice = np.random.randint(0, 5)
+        choice = np.random.randint(0, 4)
         if choice == 0:
-            noise = np.random.normal(0, 60, aug.shape).astype(np.int16)
+            noise = np.random.normal(0, 30, aug.shape).astype(np.int16)
             aug = np.clip(aug.astype(np.int16) + noise, 0, 255).astype(np.uint8)
         # elif choice == 1:
         #     k = np.random.choice([7, 9, 11, 13])
@@ -96,11 +96,11 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
             k = np.random.randint(6, 8)
             kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
             aug = cv.dilate(aug, kernel, iterations=1)
-        elif choice == 4:
-            dx = np.random.randint(-w // 3, w // 3 + 1)
-            dy = np.random.randint(-h // 3, h // 3 + 1)
-            M = np.float32([[1, 0, dx], [0, 1, dy]])
-            aug = cv.warpAffine(aug, M, (w, h), borderValue=0)
+        # elif choice == 4:
+        #     dx = np.random.randint(-w // 3, w // 3 + 1)
+        #     dy = np.random.randint(-h // 3, h // 3 + 1)
+        #     M = np.float32([[1, 0, dx], [0, 1, dy]])
+        #     aug = cv.warpAffine(aug, M, (w, h), borderValue=0)
         results.append(aug)
     return results
 
