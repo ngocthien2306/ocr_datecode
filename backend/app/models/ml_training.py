@@ -127,6 +127,10 @@ class SyntheticPreviewRequest(BaseModel):
     augment_factor: int             # must be >= 2
 
 
+class TestSetRequest(BaseModel):
+    model_id: str
+
+
 class SegmentRequest(BaseModel):
     filename: str
     region: Dict[str, float]        # {x, y, w, h} normalized

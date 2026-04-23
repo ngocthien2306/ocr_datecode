@@ -102,6 +102,13 @@ export interface PredictResult {
   crop_b64: string;
 }
 
+export interface TestSetImageResult {
+  filename: string;
+  predictions: PredictResult[];
+  ok_count: number;
+  ng_count: number;
+}
+
 // ──────── Static URL builders ──────────────────────────────────────────────
 
 /** Full URL to a camera snapshot image (served from /public/images_temp) */
@@ -210,12 +217,19 @@ export const mlTrainingAPI = {
     api.get<MLModel>(`/ml/projects/${projectId}/models/${modelId}/status`).then(r => r.data),
 
   // Prediction
-  predict: (projectId: string, file: File) => {
+  predict: (projectId: string, file: File, modelId?: string) => {
     const form = new FormData();
     form.append('file', file);
+    if (modelId) form.append('model_id', modelId);
     return api.post<{ model_id: string; algorithm: string; results: PredictResult[] }>(
       `/ml/projects/${projectId}/predict`, form,
       { headers: { 'Content-Type': 'multipart/form-data' } }
     ).then(r => r.data);
   },
+
+  testSet: (projectId: string, modelId: string) =>
+    api.post<{ results: TestSetImageResult[]; model_id: string; image_count: number }>(
+      `/ml/projects/${projectId}/test-set`,
+      { model_id: modelId }
+    ).then(r => r.data),
 };
