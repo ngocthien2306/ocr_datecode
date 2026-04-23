@@ -12,7 +12,12 @@ import numpy as np
 from .utils import save_and_encode_frame, encode_frame_for_display
 
 # Import verification services
-from .verification import TextVerificationService, TemplateVerificationService, ProductVerificationService
+from .verification import (
+    TextVerificationService,
+    TemplateVerificationService,
+    ProductVerificationService,
+    MLClassifierService,
+)
 
 # Import OCR backend factory (Strategy Pattern)
 from .ocr import OCRBackendFactory, OCRBackendType
@@ -299,6 +304,16 @@ class InferenceHandler:
 
     def _init_verification_services(self):
         """Initialize text and template verification services"""
+        # ML Classifier Service — loads sklearn models from shared filesystem.
+        # BE saves models to {PROJECT_ROOT}/public/ml_projects/{project_id}/models/{model_id}.joblib
+        ml_base_dir = Path(f"{home}/Source/ocr_datecode/public/ml_projects")
+        self.ml_classifier_service = MLClassifierService(
+            ml_base_dir=ml_base_dir,
+            save_debug_images=True,
+            debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
+        )
+        logger.info(f"MLClassifierService initialized: base_dir={ml_base_dir}")
+
         # Text Verification Service
         if self.text_recognizer is not None:
             self.text_verification_service = TextVerificationService(
@@ -308,6 +323,7 @@ class InferenceHandler:
                 debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
                 use_char_conf_check=False,
                 use_sim_check=False,
+                ml_classifier_service=self.ml_classifier_service,
             )
             logger.info(f"TextVerificationService initialized with {self.ocr_backend} backend")
         else:
@@ -485,7 +501,9 @@ class InferenceHandler:
         self.camera_matchers.clear()
         with self._camera_stats_lock:
             self._per_camera_stats.clear()
-        logger.info("All inference matchers and camera stats cleared")
+        if getattr(self, 'ml_classifier_service', None) is not None:
+            self.ml_classifier_service.clear_cache()
+        logger.info("All inference matchers, camera stats, and ML model cache cleared")
 
     def shutdown(self):
         """Shutdown inference handler and cleanup resources"""

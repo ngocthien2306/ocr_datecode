@@ -3,21 +3,37 @@ Text Verification Service
 
 Handles OCR-based text verification for inference results.
 Supports both single-camera and multi-camera batch processing.
+
+Helpers live in sibling modules:
+  - char_quality:    character segmentation + per-char similarity/defects + debug strip
+  - text_ocr_utils:  laser-text augmentation, OCR candidate selection, text similarity
+  - ml_classifier:   sklearn OK/NG classifier loader + predictor
 """
 
-import base64
 import logging
 import time
 import os
 import cv2
 import numpy as np
-from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, Any, List, Optional, TYPE_CHECKING
+from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field
 
-from ..ocr_utils import crop_text_region, compare_texts, compare_texts_smart
+from ..ocr_utils import crop_text_region
 from ..smtr_utils import _to_candidates
+
+from .char_quality import (
+    char_quality as compute_char_quality,
+    img_to_b64,
+    save_char_comparison,
+    segment_characters_from_image,
+)
+from .text_ocr_utils import (
+    AUGMENT_SIMILARITY_THRESHOLD,
+    augment_laser_text,
+    calculate_text_similarity,
+    pick_winning_candidate,
+)
 
 if TYPE_CHECKING:
     from ..camera import Camera
@@ -26,478 +42,6 @@ logger = logging.getLogger(__name__)
 
 home = os.environ.get('HOME')
 
-AUGMENT_SIMILARITY_THRESHOLD = 0.70
-
-
-def augment_laser_text(img_bgr: np.ndarray) -> dict:
-    """
-    Generate 5 enhanced versions optimized for difficult backgrounds (laser-engraved, low contrast).
-    Copied from tests/test_trt_inference.py.
-
-    Returns:
-        dict with keys: 'original', 'clahe', 'bg_subtract', 'unsharp_clahe', 'tophat'
-    """
-    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(4, 4))
-    results = {'original': img_bgr.copy()}
-
-    # 1. CLAHE – adaptive local contrast enhancement
-    lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    lab_eq = cv2.merge([clahe.apply(l), a, b])
-    results['clahe'] = cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
-
-    # 2. Background subtraction – amplify residual text signal
-    bg = cv2.GaussianBlur(gray, (51, 51), 0)
-    diff_amp = cv2.convertScaleAbs(cv2.subtract(gray, bg), alpha=8)
-    results['bg_subtract'] = cv2.cvtColor(diff_amp, cv2.COLOR_GRAY2BGR)
-
-    # 3. Unsharp masking + CLAHE
-    blurred = cv2.GaussianBlur(gray, (0, 0), 3)
-    unsharp = cv2.addWeighted(gray, 2.0, blurred, -1.0, 0)
-    results['unsharp_clahe'] = cv2.cvtColor(clahe.apply(unsharp), cv2.COLOR_GRAY2BGR)
-
-    # 4. Morphological TOPHAT – extracts bright regions smaller than kernel
-    kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 20))
-    tophat = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, kernel_morph)
-    tophat_eq = cv2.convertScaleAbs(tophat, alpha=6)
-    results['tophat'] = cv2.cvtColor(clahe.apply(tophat_eq), cv2.COLOR_GRAY2BGR)
-
-    return results
-
-
-def _apply_text_corrections(text: str) -> str:
-    """Apply common OCR correction rules before comparison."""
-    # if "BE" in text:
-    #     text = text.replace("BE", "BB")
-    # if "RL" in text:
-    #     text = text.replace("RL", "PL")
-    if "Pt" in text:
-        text = text.replace("Pt", "PL")
-    if "USsed" in text:
-        text = text.replace("USsed", "Used")
-    if "Iif" in text:
-        text = text.replace("Iif", "If")
-
-
-    return text
-
-
-def _pick_winning_candidate(candidates, conf_threshold, use_char_conf_check, expected_text, case_sensitive=True):
-    passing = []
-    for text, conf, cc in candidates:
-        if conf < conf_threshold:
-            continue
-        if use_char_conf_check and cc is not None:
-            if any(c.isalnum() and cf < conf_threshold for c, cf in cc):
-                continue
-        passing.append((_apply_text_corrections(text.strip()), conf, cc))
-
-    if not passing:
-        best = max(candidates, key=lambda x: x[1])
-        return False, _apply_text_corrections(best[0].strip()), best[1], best[2]
-
-    matched = [
-        (t, c, cc) for t, c, cc in passing
-        if compare_texts(t, expected_text, case_sensitive=case_sensitive, strip=True)
-    ]
-    if matched:
-        winner = max(matched, key=lambda x: x[1])
-        return True, expected_text[:], winner[1], winner[2]
-
-    best = max(passing, key=lambda x: x[1])
-    return False, best[0], best[1], best[2]
-
-
-# ── Character-level quality analysis ──────────────────────────────────────
-
-def _split_wide_box(thresh_roi, box, median_w):
-    """Split a box that is too wide using vertical projection."""
-    x, y, w, h = box
-    if w < median_w * 1.5:
-        return [box]
-    roi = thresh_roi[y:y+h, x:x+w]
-    v_proj = np.sum(roi, axis=0) / 255
-    n_chars = max(2, round(w / median_w))
-    split_points = []
-    for i in range(1, n_chars):
-        expected_x = int(i * w / n_chars)
-        search_w = max(3, int(median_w * 0.3))
-        left = max(1, expected_x - search_w)
-        right = min(w - 1, expected_x + search_w)
-        if left < right:
-            window = v_proj[left:right]
-            best = left + np.argmin(window)
-            split_points.append(best)
-    split_points = sorted(set(split_points))
-    sub_boxes = []
-    prev = 0
-    for sp in split_points:
-        if sp - prev > 3:
-            sub_boxes.append((x + prev, y, sp - prev, h))
-        prev = sp
-    if w - prev > 3:
-        sub_boxes.append((x + prev, y, w - prev, h))
-    return sub_boxes if len(sub_boxes) > 1 else [box]
-
-
-def _segment_characters_from_image(img: np.ndarray) -> list:
-    """
-    Segment characters from a BGR image.
-    Returns list of cropped char images (BGR), sorted left-to-right.
-    """
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (3, 3), 0)
-    _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    if np.mean(thresh) > 127:
-        thresh = cv2.bitwise_not(thresh)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
-
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    h_img, w_img = img.shape[:2]
-    min_char_height = h_img * 0.3
-    min_char_width = 3
-
-    boxes = []
-    for cnt in contours:
-        x, y, w, h = cv2.boundingRect(cnt)
-        if h >= min_char_height and w >= min_char_width:
-            boxes.append((x, y, w, h))
-    boxes.sort(key=lambda b: b[0])
-
-    merged = []
-    for box in boxes:
-        if merged and box[0] < merged[-1][0] + merged[-1][2]:
-            px, py, pw, ph = merged[-1]
-            nx = min(px, box[0])
-            ny = min(py, box[1])
-            nx2 = max(px + pw, box[0] + box[2])
-            ny2 = max(py + ph, box[1] + box[3])
-            merged[-1] = (nx, ny, nx2 - nx, ny2 - ny)
-        else:
-            merged.append(box)
-
-    if merged:
-        widths = [b[2] for b in merged]
-        median_w = float(np.median(widths))
-        final_boxes = []
-        for box in merged:
-            sub = _split_wide_box(thresh, box, median_w)
-            final_boxes.extend(sub)
-    else:
-        final_boxes = merged
-
-    padding = 2
-    char_imgs = []
-    for (x, y, w, h) in final_boxes:
-        x1, y1 = max(0, x - padding), max(0, y - padding)
-        x2, y2 = min(w_img, x + w + padding), min(h_img, y + h + padding)
-        char_imgs.append(img[y1:y2, x1:x2])
-
-    return char_imgs
-
-
-def _tight_crop(thresh: np.ndarray) -> np.ndarray:
-    """Crop to foreground bounding box, removing excess padding."""
-    coords = np.where(thresh > 0)
-    if len(coords[0]) == 0:
-        return thresh
-    y0, y1 = int(coords[0].min()), int(coords[0].max())
-    x0, x1 = int(coords[1].min()), int(coords[1].max())
-    return thresh[y0:y1 + 1, x0:x1 + 1]
-
-
-def _deskew_char(thresh_char: np.ndarray, max_angle: float = 15.0) -> np.ndarray:
-    """Rotate upright. Skip if angle > max_angle to avoid wrong rotation on L/J/F."""
-    coords = np.column_stack(np.where(thresh_char > 0))
-    if len(coords) < 10:
-        return thresh_char
-    angle = cv2.minAreaRect(coords[:, ::-1].astype(np.float32))[2]
-    if angle < -45:
-        angle += 90
-    if abs(angle) > max_angle:
-        return thresh_char
-    h, w = thresh_char.shape
-    M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
-    return cv2.warpAffine(thresh_char, M, (w, h), flags=cv2.INTER_NEAREST, borderValue=0)
-
-
-def _fit_to_square(img: np.ndarray, size: tuple) -> np.ndarray:
-    """Resize keeping aspect ratio, pad with black. Prevents I/l/1 distortion."""
-    h, w = img.shape[:2]
-    if h == 0 or w == 0:
-        return np.zeros((size[1], size[0]), dtype=np.uint8)
-    scale = min(size[0] / w, size[1] / h)
-    nw = max(1, int(round(w * scale)))
-    nh = max(1, int(round(h * scale)))
-    resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_NEAREST)
-    canvas = np.zeros((size[1], size[0]), dtype=np.uint8)
-    yo = (size[1] - nh) // 2
-    xo = (size[0] - nw) // 2
-    canvas[yo:yo + nh, xo:xo + nw] = resized
-    return canvas
-
-
-def _center_by_centroid(mask: np.ndarray, size: tuple) -> np.ndarray:
-    """Place mask in canvas so its centroid is centered."""
-    H, W = size[1], size[0]
-    canvas = np.zeros((H, W), dtype=np.uint8)
-    ys, xs = np.where(mask > 0)
-    if len(xs) == 0:
-        return canvas
-    cy, cx = float(ys.mean()), float(xs.mean())
-    h, w = mask.shape
-    yo = int(round(H / 2 - cy))
-    xo = int(round(W / 2 - cx))
-    y1s, y1e = max(0, yo), min(H, yo + h)
-    x1s, x1e = max(0, xo), min(W, xo + w)
-    y2s = max(0, -yo)
-    x2s = max(0, -xo)
-    y2e = y2s + (y1e - y1s)
-    x2e = x2s + (x1e - x1s)
-    if y1e > y1s and x1e > x1s:
-        canvas[y1s:y1e, x1s:x1e] = mask[y2s:y2e, x2s:x2e]
-    return canvas
-
-
-def _iou_binary(a: np.ndarray, b: np.ndarray) -> float:
-    """IoU of two same-size binary masks."""
-    inter = int(np.count_nonzero((a > 0) & (b > 0)))
-    union = int(np.count_nonzero((a > 0) | (b > 0)))
-    return inter / union if union > 0 else 0.0
-
-
-def _char_quality(tmpl_char: np.ndarray, tgt_char: np.ndarray, size=(64, 64)) -> dict:
-    """
-    Per-character quality analysis (ported from test_segment.py).
-
-    Pipeline: BGR → thresh → tight_crop → deskew → fit_to_square
-    Metrics:
-      1. Blurred Template Matching (TM_CCOEFF_NORMED, σ=1.2, multi-scale)
-      2. IoU after centroid alignment
-      3. Pixel ratio confidence
-    tm_conf = max(blur_TM, IoU). final confidence = min(tm_conf, pixel_conf).
-    Defect detection retained for production use.
-    """
-    def _to_thresh(img: np.ndarray) -> np.ndarray:
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
-        # Blur mạnh hơn để normalize stroke width trước Otsu
-        # (3,3) quá nhỏ → chữ mờ và chữ nét cho mask khác nhau nhiều, đặc biệt B/D/O)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, th = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        if np.mean(th) > 127:
-            th = cv2.bitwise_not(th)
-        # Morphological closing: lấp holes nhỏ do stroke mỏng, chuẩn hóa enclosed regions (B, D, O)
-        k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        th = cv2.morphologyEx(th, cv2.MORPH_CLOSE, k_close, iterations=1)
-        return th
-
-    tmpl_thresh = _to_thresh(tmpl_char)
-    tgt_thresh = _to_thresh(tgt_char)
-
-    t1 = _fit_to_square(_deskew_char(_tight_crop(tmpl_thresh)), size)
-    g2_deskewed = _deskew_char(_tight_crop(tgt_thresh))
-    t2_base = _fit_to_square(g2_deskewed, size)
-
-    # (1) Pixel confidence
-    px1 = int(np.count_nonzero(t1))
-    px2 = int(np.count_nonzero(t2_base))
-    pixel_ratio = px2 / (px1 + 1e-6)
-    deviation = abs(pixel_ratio - 1.0)
-    pixel_conf = float(np.clip(1.0 - deviation * (1.0 / 1.4), 0.0, 1.0))
-
-    # (2) Blurred multi-scale Template Matching
-    t1_blur = cv2.GaussianBlur(t1.astype(np.float32), (0, 0), sigmaX=1.2)
-    best_tm = 0.0
-    for scale in [0.85, 0.92, 1.0, 1.08, 1.15]:
-        s = (max(t1.shape[1], int(size[0] * scale)),
-             max(t1.shape[0], int(size[1] * scale)))
-        t2 = _fit_to_square(g2_deskewed, s)
-        t2_blur = cv2.GaussianBlur(t2.astype(np.float32), (0, 0), sigmaX=1.2)
-        result = cv2.matchTemplate(t2_blur, t1_blur, cv2.TM_CCOEFF_NORMED)
-        best_tm = max(best_tm, float(result.max()))
-    blur_tm = float(np.clip(best_tm, 0.0, 1.0))
-
-    # (3) IoU after centroid alignment
-    # Dilation 5×5 để tha thứ stroke width khác nhau (B/D/O có enclosed regions nhạy cảm)
-    a = _center_by_centroid(_tight_crop(t1), size)
-    b = _center_by_centroid(_tight_crop(t2_base), size)
-    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    a = cv2.dilate(a, k, iterations=1)
-    b = cv2.dilate(b, k, iterations=1)
-    iou = _iou_binary(a, b)
-
-    tm_conf = max(blur_tm, iou)
-    confidence = min(tm_conf, pixel_conf)
-
-    # Sharpness from BGR for LEM detection
-    g1 = cv2.cvtColor(tmpl_char, cv2.COLOR_BGR2GRAY) if len(tmpl_char.shape) == 3 else tmpl_char
-    g2 = cv2.cvtColor(tgt_char, cv2.COLOR_BGR2GRAY) if len(tgt_char.shape) == 3 else tgt_char
-    g1 = cv2.resize(g1, size)
-    g2 = cv2.resize(g2, size)
-    sharp_t = float(np.var(cv2.Laplacian(g1, cv2.CV_64F)))
-    sharp_g = float(np.var(cv2.Laplacian(g2, cv2.CV_64F)))
-    sharp_ratio = sharp_g / (sharp_t + 1e-8)
-
-    # Connected components for GAY_NET — tính trên tight_crop của thresh gốc,
-    # KHÔNG trên t1/t2_base (đã qua fit_to_square INTER_NEAREST → stroke mỏng bị đứt giả tạo)
-    cc_t = cv2.connectedComponents(_tight_crop(tmpl_thresh))[0] - 1
-    cc_g = cv2.connectedComponents(_tight_crop(tgt_thresh))[0] - 1
-
-    # Defect detection
-    defects = []
-    if confidence < 0.5:
-        defects.append("SAI_KY_TU")
-    if sharp_ratio < 0.25:
-        defects.append("LEM")
-    if pixel_ratio > 1.3 and iou > 0.6:
-        defects.append("IN_CHONG")
-    if cc_g > cc_t + 2:
-        defects.append("GAY_NET")
-    if pixel_ratio < 0.5:
-        defects.append("MAT_NET")
-
-    return {
-        "confidence": round(confidence, 4),
-        "tm_conf": round(tm_conf, 4),
-        "blur_tm": round(blur_tm, 4),
-        "iou": round(iou, 4),
-        "pixel_conf": round(pixel_conf, 3),
-        "px_tmpl": px1,
-        "px_tgt": px2,
-        "sharp_ratio": round(sharp_ratio, 4),
-        "cc_tmpl": cc_t,
-        "cc_tgt": cc_g,
-        "defects": defects,
-    }
-
-
-def _save_char_comparison(tmpl_img, tgt_img, tmpl_chars, tgt_chars, char_results, output_path, conf_threshold=0.75):
-    """Save visual comparison strip — layout identical to test_segment.py:
-      Row 1: ORIG TEMPLATE  |  ORIG TARGET        (side by side)
-      Row 2: THRESH TEMPLATE | THRESH TARGET       (side by side)
-      Row 3: template chars  (80×80 per char)
-      Row 4: target chars    (80×80, green/red border)
-      Row 5: confidence + PASS/FAIL per char
-      Banner: overall PASS/FAIL
-    """
-    n = len(char_results)
-    if n == 0:
-        return
-
-    cell_w, cell_h = 80, 80
-    gap = 4
-    score_h = 40
-    strip_w = n * (cell_w + gap) + gap
-
-    orig_h = 120
-    orig_section_h = (orig_h + gap) * 2 + gap
-    char_strip_h = 2 * (cell_h + gap) + score_h + gap * 2
-    total_h = orig_section_h + char_strip_h
-    total_w = max(strip_w, 200)
-
-    canvas = np.ones((total_h, total_w, 3), dtype=np.uint8) * 50
-
-    def place_image(src, y_start, x_start, w, h):
-        img_bgr = cv2.cvtColor(src, cv2.COLOR_GRAY2BGR) if len(src.shape) == 2 else src
-        ih, iw = img_bgr.shape[:2]
-        scale = w / iw
-        nw = w
-        nh = min(h, max(1, int(ih * scale)))
-        resized = cv2.resize(img_bgr, (nw, nh))
-        canvas[y_start:y_start + nh, x_start:x_start + nw] = resized
-
-    def make_full_thresh(bgr):
-        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY) if len(bgr.shape) == 3 else bgr
-        blur = cv2.GaussianBlur(gray, (3, 3), 0)
-        _, th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        if np.mean(th) > 127:
-            th = cv2.bitwise_not(th)
-        return th
-
-    def fit_char(src, w, h):
-        img = src if len(src.shape) == 3 else cv2.cvtColor(src, cv2.COLOR_GRAY2BGR)
-        ih, iw = img.shape[:2]
-        scale = min(w / iw, h / ih)
-        nw, nh = max(1, int(iw * scale)), max(1, int(ih * scale))
-        resized = cv2.resize(img, (nw, nh))
-        cell = np.ones((h, w, 3), dtype=np.uint8) * 50
-        yo = (h - nh) // 2
-        xo = (w - nw) // 2
-        cell[yo:yo + nh, xo:xo + nw] = resized
-        return cell
-
-    tmpl_thresh = make_full_thresh(tmpl_img)
-    tgt_thresh = make_full_thresh(tgt_img)
-    half_w = total_w // 2
-
-    # Row 1: original images side by side
-    y0 = gap
-    place_image(tmpl_img, y0, 0, half_w, orig_h)
-    place_image(tgt_img, y0, half_w, half_w, orig_h)
-    cv2.line(canvas, (half_w, y0), (half_w, y0 + orig_h), (120, 120, 120), 1)
-    cv2.putText(canvas, "ORIG TEMPLATE", (4, y0 + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
-    cv2.putText(canvas, "ORIG TARGET", (half_w + 4, y0 + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
-
-    # Row 2: thresh images side by side
-    y1 = y0 + orig_h + gap
-    place_image(tmpl_thresh, y1, 0, half_w, orig_h)
-    place_image(tgt_thresh, y1, half_w, half_w, orig_h)
-    cv2.line(canvas, (half_w, y1), (half_w, y1 + orig_h), (120, 120, 120), 1)
-    cv2.putText(canvas, "THRESH TEMPLATE", (4, y1 + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
-    cv2.putText(canvas, "THRESH TARGET", (half_w + 4, y1 + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
-
-    # Char rows
-    y_base = orig_section_h
-    cv2.putText(canvas, "TEMPLATE", (2, y_base + gap + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
-    cv2.putText(canvas, "TARGET", (2, y_base + gap * 2 + cell_h + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
-
-    for idx, cr in enumerate(char_results):
-        x_off = gap + idx * (cell_w + gap)
-        if x_off + cell_w > total_w:
-            break
-        i = cr["idx"]
-        is_pass = cr["confidence"] >= conf_threshold
-        color = (0, 220, 0) if is_pass else (0, 0, 255)
-
-        # Template char row
-        canvas[y_base + gap:y_base + gap + cell_h, x_off:x_off + cell_w] = fit_char(tmpl_chars[i], cell_w, cell_h)
-
-        # Target char row + border
-        tgt_y0 = y_base + gap * 2 + cell_h
-        tgt_y1 = tgt_y0 + cell_h
-        canvas[tgt_y0:tgt_y1, x_off:x_off + cell_w] = fit_char(tgt_chars[i], cell_w, cell_h)
-        cv2.rectangle(canvas, (x_off, tgt_y0), (x_off + cell_w, tgt_y1), color, 2)
-
-        # Score row
-        y_text = y_base + gap * 3 + cell_h * 2
-        cv2.putText(canvas, f"{cr['confidence']:.2f}", (x_off + 2, y_text + 14),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
-        label = "PASS" if is_pass else "FAIL"
-        cv2.putText(canvas, label, (x_off + 2, y_text + 28),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
-
-    # Overall PASS/FAIL banner
-    overall_pass = all(cr["confidence"] >= conf_threshold for cr in char_results)
-    banner_color = (0, 180, 0) if overall_pass else (0, 0, 220)
-    banner_label = "PASS" if overall_pass else "FAIL"
-    banner_h = 28
-    banner = np.ones((banner_h, total_w, 3), dtype=np.uint8)
-    banner[:] = banner_color
-    text_size = cv2.getTextSize(banner_label, cv2.FONT_HERSHEY_DUPLEX, 0.8, 2)[0]
-    tx = (total_w - text_size[0]) // 2
-    cv2.putText(banner, banner_label, (tx, 21), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 2)
-    canvas = np.vstack([canvas, banner])
-
-    cv2.imwrite(output_path, canvas)
-
-
-def _img_to_b64(img: np.ndarray) -> str:
-    """Encode BGR image to base64 PNG string for FE display."""
-    _, buf = cv2.imencode('.png', img)
-    return base64.b64encode(buf).decode('utf-8')
 
 
 @dataclass
@@ -518,31 +62,6 @@ class TextVerificationSummary:
     all_match: bool
     results: List[TextVerificationResult] = field(default_factory=list)
     error: Optional[str] = None
-
-
-def calculate_text_similarity(text1: str, text2: str) -> float:
-    """
-    Calculate similarity ratio between two texts using SequenceMatcher.
-
-    Args:
-        text1: First text
-        text2: Second text
-
-    Returns:
-        Similarity ratio (0.0 - 1.0)
-    """
-    # Normalize: strip whitespace, remove internal spaces, and convert to lowercase
-    special_chars_to_space = ['_', '-', '－', '—', '–', ',', '.', ':', ';', '--']  # underscore, hyphen, dashes, punctuation
-    for char in special_chars_to_space:
-        text1 = text1.replace(char, " ")
-        text2 = text2.replace(char, " ")
-
-    text1_norm = text1.strip().replace(" ", "").lower()
-    text2_norm = text2.strip().replace(" ", "").lower()
-
-    # Calculate similarity ratio
-    ratio = SequenceMatcher(None, text1_norm, text2_norm).ratio()
-    return ratio
 
 
 class TextVerificationService:
@@ -568,6 +87,7 @@ class TextVerificationService:
         debug_path: Optional[str] = None,
         use_char_conf_check: bool = False,
         use_sim_check: bool = False,
+        ml_classifier_service: Optional[Any] = None,
     ):
         """
         Initialize TextVerificationService.
@@ -578,6 +98,8 @@ class TextVerificationService:
             save_debug_images: Whether to save cropped regions for debugging
             debug_path: Path to save debug images
             use_sim_check: Whether to run similarity check on text/datecode regions
+            ml_classifier_service: Optional MLClassifierService — ML OK/NG classification
+                runs only when both the service and camera.ml_project_id/ml_model_id are set.
         """
         self.text_recognizer = text_recognizer
         self.ocr_backend = ocr_backend
@@ -586,6 +108,7 @@ class TextVerificationService:
         self._debug_counter = 0
         self.use_char_conf_check = use_char_conf_check
         self.use_sim_check = use_sim_check
+        self.ml_classifier_service = ml_classifier_service
         self._sim_crop_cache = {}  # Cache for template crops (key: (serial, points_tuple))
 
     @property
@@ -658,23 +181,23 @@ class TextVerificationService:
 
             # ── Per-character quality analysis (threaded) ──
             t_char_start = time.perf_counter()
-            tmpl_chars = _segment_characters_from_image(cropped_template)
-            tgt_chars = _segment_characters_from_image(cropped_target)
+            tmpl_chars = segment_characters_from_image(cropped_template)
+            tgt_chars = segment_characters_from_image(cropped_target)
             n_pairs = min(len(tmpl_chars), len(tgt_chars))
 
             char_results = []
             if n_pairs > 0:
                 with ThreadPoolExecutor(max_workers=min(n_pairs, self.SIM_MAX_WORKERS)) as pool:
                     metrics_list = list(pool.map(
-                        lambda i: _char_quality(tmpl_chars[i], tgt_chars[i]),
+                        lambda i: compute_char_quality(tmpl_chars[i], tgt_chars[i]),
                         range(n_pairs)
                     ))
                 for i, m in enumerate(metrics_list):
                     char_results.append({
                         "idx": i,
                         **m,
-                        "tmpl_char_b64": _img_to_b64(tmpl_chars[i]),
-                        "tgt_char_b64":  _img_to_b64(tgt_chars[i]),
+                        "tmpl_char_b64": img_to_b64(tmpl_chars[i]),
+                        "tgt_char_b64":  img_to_b64(tgt_chars[i]),
                     })
 
             t_char_ms = (time.perf_counter() - t_char_start) * 1000
@@ -705,7 +228,7 @@ class TextVerificationService:
                         self.debug_path,
                         f"char_quality_{serial_number}_{annotation_idx}_{ts}.png"
                     )
-                    _save_char_comparison(
+                    save_char_comparison(
                         cropped_template, cropped_target,
                         tmpl_chars, tgt_chars, char_results, out_path,
                         conf_threshold=conf_threshold
@@ -746,6 +269,46 @@ class TextVerificationService:
                 'similarity': 0.0,
                 'threshold': conf_threshold,
                 'time_ms': elapsed,
+                'error': str(e),
+            }
+
+    def _compute_single_ml(
+        self,
+        frame_img: np.ndarray,
+        transformed_points: List,
+        serial_number: str,
+        annotation_idx: int,
+        conf_threshold: float,
+        ml_project_id: str,
+        ml_model_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Crop region from frame and run ML classifier to label OK/NG.
+        Each bbox is assumed to be a single character (user draws per-char).
+        Used as a unit of work for ThreadPoolExecutor.
+        """
+        try:
+            cropped = crop_text_region(frame_img, transformed_points)
+            res = self.ml_classifier_service.classify_region(
+                region_img=cropped,
+                project_id=ml_project_id,
+                model_id=ml_model_id,
+                conf_threshold=conf_threshold,
+                serial_number=serial_number,
+                annotation_idx=annotation_idx,
+            )
+            res['annotation_idx'] = annotation_idx
+            return res
+        except Exception as e:
+            logger.error(
+                f"[{serial_number}] ML classify crop error ann {annotation_idx}: {e}"
+            )
+            return {
+                'annotation_idx': annotation_idx,
+                'ml_pass': False,
+                'p_ok': 0.0,
+                'label': 'NG',
+                'threshold': conf_threshold,
                 'error': str(e),
             }
 
@@ -871,6 +434,76 @@ class TextVerificationService:
                     except Exception as e:
                         logger.error(f"[{serial_number}] Sim check thread error ann {ann_idx}: {e}")
 
+        # ── ML classification (only when camera has ml_project_id + ml_model_id) ──
+        ml_project_id = getattr(camera, 'ml_project_id', None)
+        ml_model_id = getattr(camera, 'ml_model_id', None)
+        use_ml = bool(self.ml_classifier_service and ml_project_id and ml_model_id)
+        ml_results_map: Dict[int, Dict[str, Any]] = {}
+        ml_future = None
+        ml_executor_outer = None
+
+        if use_ml:
+            ml_tasks_local = []
+            for bbox in text_bboxes:
+                ann_idx = bbox.get('annotation_index')
+                if ann_idx is None:
+                    continue
+                points = bbox.get('points', [])
+                if len(points) < 4:
+                    continue
+                ml_tasks_local.append({
+                    'transformed_points': points,
+                    'annotation_idx': ann_idx,
+                    'conf_threshold': bbox.get('conf', 0.8),
+                })
+
+            if ml_tasks_local:
+                logger.info(
+                    f"[{serial_number}] ML classify: {len(ml_tasks_local)} regions "
+                    f"(project={ml_project_id}, model={ml_model_id})"
+                )
+
+                def _run_all_ml():
+                    out: Dict[int, Dict[str, Any]] = {}
+                    with ThreadPoolExecutor(max_workers=self.SIM_MAX_WORKERS) as ml_pool:
+                        futs = {
+                            ml_pool.submit(
+                                self._compute_single_ml,
+                                frame_img,
+                                mt['transformed_points'],
+                                serial_number,
+                                mt['annotation_idx'],
+                                mt['conf_threshold'],
+                                ml_project_id,
+                                ml_model_id,
+                            ): mt['annotation_idx']
+                            for mt in ml_tasks_local
+                        }
+                        for fut in as_completed(futs):
+                            aid = futs[fut]
+                            try:
+                                out[aid] = fut.result()
+                            except Exception as e:
+                                logger.error(
+                                    f"[{serial_number}] ML thread error ann {aid}: {e}"
+                                )
+                    return out
+
+                # Run ML in background, join after OCR loop (parallel with OCR)
+                ml_executor_outer = ThreadPoolExecutor(max_workers=1)
+                ml_future = ml_executor_outer.submit(_run_all_ml)
+
+        # Wait for ML future to finish (started in parallel with OCR above)
+        if ml_future is not None:
+            try:
+                ml_results_map = ml_future.result(timeout=10)
+            except Exception as e:
+                logger.error(f"[{serial_number}] ML future error: {e}")
+                ml_results_map = {}
+            finally:
+                if ml_executor_outer is not None:
+                    ml_executor_outer.shutdown(wait=False)
+
         for bbox in text_bboxes:
             result = self._verify_single_text_region(
                 frame_img=frame_img,
@@ -898,6 +531,25 @@ class TextVerificationService:
                     result['match_sim'] = None
                     result['similarity'] = None
                     result['char_results'] = []
+
+            # Merge ML classification result
+            if use_ml:
+                ann_idx = bbox.get('annotation_index')
+                ml_result = ml_results_map.get(ann_idx)
+                if ml_result:
+                    result['ml_pass'] = ml_result['ml_pass']
+                    result['ml_p_ok'] = ml_result.get('p_ok', 0.0)
+                    result['ml_label'] = ml_result.get('label', 'NG')
+                    result['match'] = result['match'] and ml_result['ml_pass']
+                    logger.info(
+                        f"[{serial_number}] Annotation {ann_idx}: "
+                        f"FINAL match={result['match']}, ml_pass={ml_result['ml_pass']}, "
+                        f"ml_label={ml_result.get('label')}, p_ok={ml_result.get('p_ok', 0.0):.4f}"
+                    )
+                else:
+                    result['ml_pass'] = None
+                    result['ml_p_ok'] = None
+                    result['ml_label'] = None
 
             verification_results.append(result)
 
@@ -985,7 +637,7 @@ class TextVerificationService:
                 raw = self.text_recognizer.recognize(cropped_region, return_confidence=True)
 
             candidates = _to_candidates(raw)
-            match, recognized_text, confidence, char_confs = _pick_winning_candidate(
+            match, recognized_text, confidence, char_confs = pick_winning_candidate(
                 candidates, conf_threshold, self.use_char_conf_check, expected_text, case_sensitive=False
             )
             logger.debug(f"[{serial_number}] OCR result: '{recognized_text}' (conf: {confidence:.2%})")
@@ -1055,6 +707,7 @@ class TextVerificationService:
         all_cropped_regions = []
         all_metadata = []
         sim_tasks = []  # Similarity check tasks (only when use_sim_check=True)
+        ml_tasks = []   # ML classify tasks (only when camera has ml_project_id + ml_model_id)
 
         for task in ocr_tasks:
             serial_number = task['serial_number']
@@ -1063,6 +716,14 @@ class TextVerificationService:
             expected_texts = task['expected_texts']
             template_img = task.get('template_img')        # for sim check
             original_bboxes = task.get('original_bboxes', [])  # for sim check
+            camera_obj = task.get('camera')
+
+            # ML classify eligibility (per-camera): needs service + ml_project_id + ml_model_id
+            ml_project_id = getattr(camera_obj, 'ml_project_id', None)
+            ml_model_id = getattr(camera_obj, 'ml_model_id', None)
+            use_ml_for_task = bool(
+                self.ml_classifier_service and ml_project_id and ml_model_id
+            )
 
             # Build lookup: annotation_index -> original bbox (for sim check)
             original_bbox_map = {}
@@ -1125,6 +786,18 @@ class TextVerificationService:
                                     'annotation_idx': annotation_idx,
                                     'conf_threshold': conf_threshold,
                                 })
+
+                    # Collect ML classify task (1 bbox = 1 char, no char segmentation)
+                    if use_ml_for_task:
+                        ml_tasks.append({
+                            'frame_img': frame_img,
+                            'transformed_points': points,
+                            'serial_number': serial_number,
+                            'annotation_idx': annotation_idx,
+                            'conf_threshold': conf_threshold,
+                            'ml_project_id': ml_project_id,
+                            'ml_model_id': ml_model_id,
+                        })
 
                 except Exception as e:
                     logger.error(f"[{serial_number}] Error cropping annotation {annotation_idx}: {e}")
@@ -1190,6 +863,56 @@ class TextVerificationService:
         elif self.use_sim_check:
             logger.info("Sim check ENABLED but no valid sim tasks (missing template_img or original_bboxes)")
 
+        # --- Thread A2: ML classify (parallel per region, per-camera enabled) ---
+        ml_results_map: Dict[Tuple[str, int], Dict[str, Any]] = {}
+        ml_future = None
+        ml_executor_outer = None
+
+        if ml_tasks:
+            logger.info(
+                f"ML classify ENABLED: {len(ml_tasks)} regions to classify "
+                f"(workers={self.SIM_MAX_WORKERS})"
+            )
+
+            def _run_all_ml_checks():
+                t_ml_start = time.perf_counter()
+                results: Dict[Tuple[str, int], Dict[str, Any]] = {}
+                with ThreadPoolExecutor(max_workers=self.SIM_MAX_WORKERS) as ml_pool:
+                    futs = {
+                        ml_pool.submit(
+                            self._compute_single_ml,
+                            mt['frame_img'],
+                            mt['transformed_points'],
+                            mt['serial_number'],
+                            mt['annotation_idx'],
+                            mt['conf_threshold'],
+                            mt['ml_project_id'],
+                            mt['ml_model_id'],
+                        ): (mt['serial_number'], mt['annotation_idx'])
+                        for mt in ml_tasks
+                    }
+                    for fut in as_completed(futs):
+                        key = futs[fut]
+                        try:
+                            results[key] = fut.result()
+                        except Exception as e:
+                            logger.error(f"ML classify thread error {key}: {e}")
+                            results[key] = {
+                                'annotation_idx': key[1],
+                                'ml_pass': False,
+                                'p_ok': 0.0,
+                                'label': 'NG',
+                                'error': str(e),
+                            }
+                t_ml_total = (time.perf_counter() - t_ml_start) * 1000
+                logger.info(
+                    f"ML classify ALL complete: {len(ml_tasks)} regions in {t_ml_total:.1f}ms"
+                )
+                return results
+
+            ml_executor_outer = ThreadPoolExecutor(max_workers=1)
+            ml_future = ml_executor_outer.submit(_run_all_ml_checks)
+
         # --- Thread B (main thread): OCR batch ---
         logger.info(
             f"Running BATCH OCR on {len(all_cropped_regions)} regions "
@@ -1218,6 +941,11 @@ class TextVerificationService:
             if sim_future:
                 sim_future.cancel()
                 sim_executor_outer.shutdown(wait=False)
+            # Cancel ml future if running
+            if ml_future:
+                ml_future.cancel()
+                if ml_executor_outer is not None:
+                    ml_executor_outer.shutdown(wait=False)
             return {
                 task['serial_number']: {'all_match': False, 'results': [], 'error': str(e)}
                 for task in ocr_tasks
@@ -1233,9 +961,20 @@ class TextVerificationService:
             finally:
                 sim_executor_outer.shutdown(wait=False)
 
+        # --- Wait for ML checks to finish (if running) ---
+        if ml_future:
+            try:
+                ml_results_map = ml_future.result(timeout=10)
+            except Exception as e:
+                logger.error(f"ML classify future error: {e}")
+                ml_results_map = {}
+            finally:
+                if ml_executor_outer is not None:
+                    ml_executor_outer.shutdown(wait=False)
+
         t_phase2_total = (time.perf_counter() - t_phase2_start) * 1000
         logger.info(
-            f"Phase 2 (OCR + Sim parallel) complete: {t_phase2_total:.1f}ms"
+            f"Phase 2 (OCR + Sim + ML parallel) complete: {t_phase2_total:.1f}ms"
         )
 
         # ========== PHASE 3: Distribute results back to cameras ==========
@@ -1257,7 +996,7 @@ class TextVerificationService:
                     raw = self.text_recognizer.recognize_with_char_conf(meta['cropped_region'])
                     candidates = _to_candidates(raw)
 
-            match, recognized_text, confidence, char_confs = _pick_winning_candidate(
+            match, recognized_text, confidence, char_confs = pick_winning_candidate(
                 candidates, conf_threshold, self.use_char_conf_check, expected_text, case_sensitive=True
             )
 
@@ -1326,7 +1065,23 @@ class TextVerificationService:
                     region_result['similarity'] = None
                     region_result['char_results'] = []
 
-            if not (match and sim_pass):
+            # Merge ML classify result if available (per-camera, keyed by serial+ann)
+            ml_pass = True
+            ml_key = (serial_number, annotation_idx)
+            ml_result = ml_results_map.get(ml_key) if ml_results_map else None
+            if ml_result:
+                region_result['ml_pass'] = ml_result['ml_pass']
+                region_result['ml_p_ok'] = ml_result.get('p_ok', 0.0)
+                region_result['ml_label'] = ml_result.get('label', 'NG')
+                ml_pass = ml_result['ml_pass']
+                region_result['match'] = region_result['match'] and ml_pass
+                logger.info(
+                    f"[{serial_number}] Annotation {annotation_idx}: "
+                    f"FINAL match={region_result['match']}, ml_pass={ml_pass}, "
+                    f"ml_label={ml_result.get('label')}, p_ok={ml_result.get('p_ok', 0.0):.4f}"
+                )
+
+            if not (match and sim_pass and ml_pass):
                 camera_results[serial_number]['all_match'] = False
 
             camera_results[serial_number]['results'].append(region_result)
@@ -1373,7 +1128,7 @@ class TextVerificationService:
 
         for ver_name, aug_result in zip(aug_names, aug_results):
             candidates = _to_candidates(aug_result)
-            aug_match, aug_recognized, aug_conf, _ = _pick_winning_candidate(
+            aug_match, aug_recognized, aug_conf, _ = pick_winning_candidate(
                 candidates, conf_threshold, self.use_char_conf_check, expected_text, case_sensitive=True
             )
             logger.info(
