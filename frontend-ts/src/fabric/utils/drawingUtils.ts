@@ -24,6 +24,7 @@ export const startDrawingRectangle = (canvas: any, e: any, color: string, onComp
     startY = Math.max(bounds.top, Math.min(bounds.bottom, pointer.y));
   }
   
+  const zoom = canvas.getZoom?.() || 1;
   const rect = new Rect({
     left: startX,
     top: startY,
@@ -31,7 +32,7 @@ export const startDrawingRectangle = (canvas: any, e: any, color: string, onComp
     height: 0,
     fill: color + '30',
     stroke: color,
-    strokeWidth: 3,
+    strokeWidth: Math.max(0.5, 3 / zoom),
     selectable: false,
     evented: false
   });
@@ -143,20 +144,22 @@ export class PolygonDrawer {
     this.points.push(newPoint);
     
     // Draw point circle
+    const pZoom = this.canvas.getZoom?.() || 1;
+    const pRadius = Math.max(2, 5 / pZoom);
     const circle = new Circle({
-      left: pointer.x - 5,
-      top: pointer.y - 5,
-      radius: 5,
+      left: pointer.x - pRadius,
+      top: pointer.y - pRadius,
+      radius: pRadius,
       fill: this.color,
       stroke: '#ffffff',
-      strokeWidth: 2,
+      strokeWidth: Math.max(0.5, 2 / pZoom),
       selectable: false,
       evented: false,
       isTemp: true
     });
     this.canvas.add(circle);
     this.tempObjects.push(circle);
-    
+
     // Draw line from previous point
     if (this.points.length > 1) {
       const prevPoint = this.points[this.points.length - 2];
@@ -164,7 +167,7 @@ export class PolygonDrawer {
         [prevPoint.x, prevPoint.y, newPoint.x, newPoint.y],
         {
           stroke: this.color,
-          strokeWidth: 3,
+          strokeWidth: Math.max(0.5, 3 / pZoom),
           selectable: false,
           evented: false,
           isTemp: true

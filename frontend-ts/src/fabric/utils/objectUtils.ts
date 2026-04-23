@@ -303,35 +303,54 @@ export const setupCanvasPanning = (canvas: any): void => {
     const delta = opt.e.deltaY;
     let zoom = canvas.getZoom();
     zoom *= 0.999 ** delta;
-    
+
     if (zoom > 10) zoom = 10;
     if (zoom < 0.1) zoom = 0.1;
-    
+
     canvas.zoomToPoint({ x: opt.e.offsetX, y: opt.e.offsetY }, zoom);
+    updateStrokeForZoom(canvas, zoom);
     opt.e.preventDefault();
     opt.e.stopPropagation();
   });
 };
 
 /**
+ * Update stroke width of all annotation objects inversely with zoom
+ */
+const updateStrokeForZoom = (canvas: any, zoom: number): void => {
+  const baseStroke = 2;
+  const sw = Math.max(0.5, baseStroke / zoom);
+  canvas.getObjects().forEach((obj: any) => {
+    if (obj.annotationIndex !== undefined) {
+      obj.set('strokeWidth', sw);
+      // Also scale corner size inversely
+      obj.set('cornerSize', Math.max(4, 10 / zoom));
+    }
+  });
+};
+
+/**
  * Set canvas zoom
- * @param {fabric.Canvas} canvas 
+ * @param {fabric.Canvas} canvas
  * @param {number} zoom - Zoom level (0.1 to 10)
  */
 export const setCanvasZoom = (canvas: any, zoom: number): void => {
   if (!canvas) return;
-  canvas.setZoom(Math.min(Math.max(zoom, 0.1), 10));
+  const z = Math.min(Math.max(zoom, 0.1), 10);
+  canvas.setZoom(z);
+  updateStrokeForZoom(canvas, z);
   canvas.requestRenderAll();
 };
 
 /**
  * Reset canvas zoom and position
- * @param {fabric.Canvas} canvas 
+ * @param {fabric.Canvas} canvas
  */
 export const resetCanvasZoom = (canvas: any): void => {
   if (!canvas) return;
   canvas.setZoom(1);
   canvas.viewportTransform[4] = 0;
   canvas.viewportTransform[5] = 0;
+  updateStrokeForZoom(canvas, 1);
   canvas.requestRenderAll();
 };
