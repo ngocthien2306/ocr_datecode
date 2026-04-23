@@ -57,7 +57,15 @@ export default function TemplateEditor({
   const fabricCanvasRef = (externalCanvasRef as React.MutableRefObject<CanvasWithImageBounds | null>) || internalCanvasRef;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const isTransformingRef = useRef(false);
-  
+
+  // Refs to always access latest props in event handlers (avoid stale closures)
+  const annotationsRef = useRef(annotations);
+  annotationsRef.current = annotations;
+  const onAnnotationsChangeRef = useRef(onAnnotationsChange);
+  onAnnotationsChangeRef.current = onAnnotationsChange;
+  const onSelectAnnotationRef = useRef(onSelectAnnotation);
+  onSelectAnnotationRef.current = onSelectAnnotation;
+
   const [drawMode, setDrawMode] = useState('select');
   const polygonDrawerRef = useRef<any>(null);
   const polygonCleanupRef = useRef<(() => void) | null>(null);
@@ -124,23 +132,23 @@ export default function TemplateEditor({
       });
     }
 
-    // Handle selection
+    // Handle selection - use refs to avoid stale closures
     canvas.on('selection:created', (e) => {
       const obj = e.selected[0] as FabricAnnotationObject;
       if (obj && !obj.isTemp && obj.annotationIndex !== undefined) {
-        onSelectAnnotation?.(obj.annotationIndex);
+        onSelectAnnotationRef.current?.(obj.annotationIndex);
       }
     });
 
     canvas.on('selection:updated', (e) => {
       const obj = e.selected[0] as FabricAnnotationObject;
       if (obj && !obj.isTemp && obj.annotationIndex !== undefined) {
-        onSelectAnnotation?.(obj.annotationIndex);
+        onSelectAnnotationRef.current?.(obj.annotationIndex);
       }
     });
 
     canvas.on('selection:cleared', () => {
-      onSelectAnnotation?.(null);
+      onSelectAnnotationRef.current?.(null);
     });
 
     // Handle object modification
@@ -560,7 +568,9 @@ export default function TemplateEditor({
       (obj.annotationIndex !== undefined) || !!obj.isLabel
     );
 
-    annotations.forEach((ann, index) => {
+    // Always use ref to get latest annotations (avoid stale closure in async/event callbacks)
+    const currentAnnotations = annotationsRef.current;
+    currentAnnotations.forEach((ann, index) => {
       let typeConfig = TYPE_CONFIGS.find(t => t.value === ann.type);
       if (!typeConfig && TYPE_CONFIGS.length > 0) typeConfig = TYPE_CONFIGS[0];
       const color = typeConfig ? typeConfig.color : '#fff';
@@ -699,8 +709,9 @@ export default function TemplateEditor({
 
   const updateAnnotationFromObject = (obj: FabricAnnotationObject) => {
     if (obj.annotationIndex === undefined) return;
-    console.log('updateAnnotationFromObject called for index:', obj.annotationIndex, 'isTransforming:', isTransformingRef.current);
-    const updated = [...annotations];
+    const currentAnnotations = annotationsRef.current;
+    console.log('updateAnnotationFromObject called for index:', obj.annotationIndex, 'isTransforming:', isTransformingRef.current, 'total:', currentAnnotations.length);
+    const updated = [...currentAnnotations];
     const ann = updated[obj.annotationIndex];
     if (!ann) return;
     if ((ann as any).shape === 'rectangle') {
@@ -712,7 +723,7 @@ export default function TemplateEditor({
       console.log('Updating polygon:', data);
       Object.assign(ann, data);
     }
-    onAnnotationsChange(updated);
+    onAnnotationsChangeRef.current(updated);
   };
 
   const startDrawingRectangle = () => {
@@ -845,20 +856,20 @@ export default function TemplateEditor({
       ...normalized
     };
 
-    const updatedAnnotations = [...annotations, newAnnotation];
-    onAnnotationsChange(updatedAnnotations);
-    onSelectAnnotation(updatedAnnotations.length - 1);
+    const updatedAnnotations = [...annotationsRef.current, newAnnotation];
+    onAnnotationsChangeRef.current(updatedAnnotations);
+    onSelectAnnotationRef.current(updatedAnnotations.length - 1);
   };
 
   const handleDeleteAnnotation = (index: number) => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
-    
+
     canvasActions.deleteByIndex(canvas, index);
-    
-    const updated = annotations.filter((_, i) => i !== index);
-    onAnnotationsChange(updated);
-    onSelectAnnotation(null);
+
+    const updated = annotationsRef.current.filter((_, i) => i !== index);
+    onAnnotationsChangeRef.current(updated);
+    onSelectAnnotationRef.current(null);
   };
 
   const handleZoomIn = () => {
