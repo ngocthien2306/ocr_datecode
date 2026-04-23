@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import '@/styles/AnnotationsPanel.css';
 
 interface AnnotationType {
@@ -10,13 +10,11 @@ interface AnnotationType {
 
 const ANNOTATION_TYPES: AnnotationType[] = [
   { value: 'text', label: 'Text OCR', color: '#50fa7b', needsText: true },
-  // { value: 'barcode', label: 'Barcode', color: '#ffdc5c', needsText: false },
   { value: 'template', label: 'Template Match', color: '#ff5555', needsText: false },
   { value: 'crop_area', label: 'Crop Area', color: '#ff64ff', needsText: false },
   { value: 'datecode', label: 'Date Code', color: '#5096ff', needsText: true },
   { value: 'product', label: 'Product', color: '#7513dd', needsText: false },
   { value: 'label', label: 'Label', color: '#ad6df1', needsText: false },
-
 ];
 
 interface Point {
@@ -53,8 +51,8 @@ interface AnnotationsPanelProps {
   fabricCanvasRef?: React.RefObject<FabricCanvas>;
   imageWidth?: number;
   imageHeight?: number;
-  readOnlyType?: boolean; // Disable type selector
-  hideMetadata?: boolean; // Hide shape/size info
+  readOnlyType?: boolean;
+  hideMetadata?: boolean;
 }
 
 const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
@@ -73,11 +71,14 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
   readOnlyType = false,
   hideMetadata = false
 }) => {
-  
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  const [showMetadata, setShowMetadata] = useState(false);
+
   const handleAnnotationClick = (index: number) => {
+    // Toggle expand: click again to collapse
+    setExpandedIndex(prev => prev === index ? null : index);
     onSelectAnnotation?.(index);
-    
-    // Also select on canvas if fabricCanvasRef is provided
+
     if (fabricCanvasRef?.current) {
       const obj = fabricCanvasRef.current.getObjects().find(
         (o: any) => o.annotationIndex === index
@@ -89,148 +90,216 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
     }
   };
 
+  const isExpanded = (index: number) =>
+    expandedIndex === index || selectedAnnotation === index;
+
   return (
     <div className="annotations-panel">
-      <h3>Bounding Boxes ({annotations.length})</h3>
-      <div className="annotations-list">
-        {annotations.map((ann, index) => (
-          <div
-            key={index}
-            className={`annotation-item ${selectedAnnotation === index ? 'selected' : ''}`}
-            onClick={() => handleAnnotationClick(index)}
+      <div className="annotations-panel-header">
+        <h3>Bounding Boxes ({annotations.length})</h3>
+        {annotations.length > 0 && (
+          <button
+            type="button"
+            className="collapse-all-btn"
+            onClick={() => setExpandedIndex(null)}
+            title="Collapse All"
           >
-            <div className="annotation-header">
-              <span
-                className="annotation-color"
-                style={{
-                  backgroundColor: ANNOTATION_TYPES.find(t => t.value === ann.type)?.color || '#ffffff'
-                }}
-              />
-              <span className="annotation-index">BBox #{index + 1}</span>
-            </div>
-            
-            <select
-              value={ann.type}
-              onChange={(e) => onAnnotationTypeChange?.(index, e.target.value)}
-              className="annotation-type-select"
-              onClick={(e) => e.stopPropagation()}
-              disabled={readOnlyType}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <path d="M4 14H10V20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M20 10H14V4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+        )}
+      </div>
+      <div className="annotations-list">
+        {annotations.map((ann, index) => {
+          const typeConfig = ANNOTATION_TYPES.find(t => t.value === ann.type);
+          const color = typeConfig?.color || '#ffffff';
+          const expanded = isExpanded(index);
+
+          return (
+            <div
+              key={index}
+              className={`annotation-item ${selectedAnnotation === index ? 'selected' : ''} ${expanded ? 'expanded' : 'collapsed'}`}
+              onClick={() => handleAnnotationClick(index)}
             >
-              {ANNOTATION_TYPES.map(type => (
-                <option key={type.value} value={type.value}>
-                  {type.label}
-                </option>
-              ))}
-            </select>
+              {/* Compact header row - always visible */}
+              <div className="annotation-header">
+                <span className="annotation-color" style={{ backgroundColor: color }} />
+                <span className="annotation-index">#{index + 1}</span>
+                <span className="annotation-type-badge" style={{ color, borderColor: color + '60' }}>
+                  {typeConfig?.label || ann.type}
+                </span>
 
-            {/* Text input for types that need text */}
-            {ANNOTATION_TYPES.find(t => t.value === ann.type)?.needsText && (
-              <div className="annotation-text-field">
-                <input
-                  type="text"
-                  value={ann.text || ''}
-                  onChange={(e) => onAnnotationTextChange?.(index, e.target.value)}
-                  placeholder="Enter text content... *"
-                  className={`annotation-text-input ${(!ann.text || ann.text.trim() === '') ? 'required-empty' : ''}`}
-                  onClick={(e) => e.stopPropagation()}
-                  required
-                />
-                {(!ann.text || ann.text.trim() === '') && (
-                  <span className="required-indicator">* Required</span>
+                {/* Text preview in collapsed mode */}
+                {!expanded && typeConfig?.needsText && ann.text && (
+                  <span className="annotation-text-preview" title={ann.text}>
+                    {ann.text}
+                  </span>
                 )}
-              </div>
-            )}
 
-            {/* Confidence threshold input */}
-            <div className="annotation-conf-field">
-              <label className="conf-label">Conf:</label>
-              <input
-                type="number"
-                min="0"
-                max="1"
-                step="0.01"
-                value={ann.conf ?? 0.85}
-                onChange={(e) => {
-                  const value = parseFloat(e.target.value);
-                  if (!isNaN(value) && value >= 0 && value <= 1) {
-                    onAnnotationConfChange?.(index, value);
-                  }
-                }}
-                onBlur={(e) => {
-                  const value = parseFloat(e.target.value);
-                  if (isNaN(value) || value < 0) {
-                    onAnnotationConfChange?.(index, 0);
-                  } else if (value > 1) {
-                    onAnnotationConfChange?.(index, 1);
-                  }
-                }}
-                className="annotation-conf-input"
-                onClick={(e) => e.stopPropagation()}
-              />
-            </div>
+                <div className="annotation-header-actions">
+                  {/* Auto Segment icon button */}
+                  {onAutoSegment && ann.shape === 'rectangle' && (ann.type === 'text' || ann.type === 'datecode') && (
+                    <button
+                      type="button"
+                      className="auto-segment-icon-btn"
+                      disabled={segmenting}
+                      title={segmenting ? 'Segmenting...' : 'Auto Segment'}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAutoSegment(index);
+                      }}
+                    >
+                      {segmenting ? (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="spin">
+                          <path d="M12 2V6M12 18V22M4.93 4.93L7.76 7.76M16.24 16.24L19.07 19.07M2 12H6M18 12H22M4.93 19.07L7.76 16.24M16.24 7.76L19.07 4.93" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                        </svg>
+                      ) : (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                          <rect x="3" y="3" width="7" height="7" stroke="currentColor" strokeWidth="2" rx="1"/>
+                          <rect x="14" y="3" width="7" height="7" stroke="currentColor" strokeWidth="2" rx="1"/>
+                          <rect x="3" y="14" width="7" height="7" stroke="currentColor" strokeWidth="2" rx="1"/>
+                          <rect x="14" y="14" width="7" height="7" stroke="currentColor" strokeWidth="2" rx="1"/>
+                        </svg>
+                      )}
+                    </button>
+                  )}
 
-            {/* Auto Segment button for text/datecode rectangle annotations */}
-            {onAutoSegment && ann.shape === 'rectangle' && (ann.type === 'text' || ann.type === 'datecode') && (
-              <button
-                type="button"
-                className="auto-segment-btn"
-                disabled={segmenting}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onAutoSegment(index);
-                }}
-              >
-                {segmenting ? 'Segmenting...' : 'Auto Segment'}
-              </button>
-            )}
-
-            {!hideMetadata && (
-              <>
-                <div className="annotation-info">
-                  <span className="info-label">Shape:</span>
-                  <span className="info-value">{ann.shape}</span>
+                  {/* Delete button */}
+                  <button
+                    type="button"
+                    className="delete-annotation-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteAnnotation?.(index);
+                    }}
+                    title="Delete"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                      <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                      <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                    </svg>
+                  </button>
                 </div>
+              </div>
 
-                {ann.shape === 'rectangle' && ann.width !== undefined && ann.height !== undefined && (
-                  <div className="annotation-info">
-                    <span className="info-label">Size:</span>
-                    <span className="info-value">
-                      {imageWidth && imageHeight
-                        ? `${Math.round(ann.width * imageWidth)} × ${Math.round(ann.height * imageHeight)}`
-                        : `${ann.width.toFixed(3)} × ${ann.height.toFixed(3)}`
-                      }
-                    </span>
+              {/* Expanded details */}
+              {expanded && (
+                <div className="annotation-details">
+                  <select
+                    value={ann.type}
+                    onChange={(e) => onAnnotationTypeChange?.(index, e.target.value)}
+                    className="annotation-type-select"
+                    onClick={(e) => e.stopPropagation()}
+                    disabled={readOnlyType}
+                  >
+                    {ANNOTATION_TYPES.map(type => (
+                      <option key={type.value} value={type.value}>
+                        {type.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  {typeConfig?.needsText && (
+                    <div className="annotation-text-field">
+                      <input
+                        type="text"
+                        value={ann.text || ''}
+                        onChange={(e) => onAnnotationTextChange?.(index, e.target.value)}
+                        placeholder="Enter text content... *"
+                        className={`annotation-text-input ${(!ann.text || ann.text.trim() === '') ? 'required-empty' : ''}`}
+                        onClick={(e) => e.stopPropagation()}
+                        required
+                      />
+                      {(!ann.text || ann.text.trim() === '') && (
+                        <span className="required-indicator">*</span>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="annotation-conf-field">
+                    <label className="conf-label">Conf:</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={ann.conf ?? 0.85}
+                      onChange={(e) => {
+                        const value = parseFloat(e.target.value);
+                        if (!isNaN(value) && value >= 0 && value <= 1) {
+                          onAnnotationConfChange?.(index, value);
+                        }
+                      }}
+                      onBlur={(e) => {
+                        const value = parseFloat(e.target.value);
+                        if (isNaN(value) || value < 0) {
+                          onAnnotationConfChange?.(index, 0);
+                        } else if (value > 1) {
+                          onAnnotationConfChange?.(index, 1);
+                        }
+                      }}
+                      className="annotation-conf-input"
+                      onClick={(e) => e.stopPropagation()}
+                    />
                   </div>
-                )}
 
-                {ann.shape === 'polygon' && ann.points && (
-                  <div className="annotation-info">
-                    <span className="info-label">Points:</span>
-                    <span className="info-value">{ann.points.length}</span>
-                  </div>
-                )}
-              </>
-            )}
-
-            <button
-              type="button"
-              className="delete-annotation-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDeleteAnnotation?.(index);
-              }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                <path d="M3 6H5H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                <path d="M8 6V4C8 3.46957 8.21071 2.96086 8.58579 2.58579C8.96086 2.21071 9.46957 2 10 2H14C14.5304 2 15.0391 2.21071 15.4142 2.58579C15.7893 2.96086 16 3.46957 16 4V6M19 6V20C19 20.5304 18.7893 21.0391 18.4142 21.4142C18.0391 21.7893 17.5304 22 17 22H7C6.46957 22 5.96086 21.7893 5.58579 21.4142C5.21071 21.0391 5 20.5304 5 20V6H19Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </button>
-          </div>
-        ))}
+                  {/* Collapsible metadata */}
+                  {!hideMetadata && (
+                    <div className="annotation-metadata">
+                      <button
+                        type="button"
+                        className="metadata-toggle"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowMetadata(prev => !prev);
+                        }}
+                      >
+                        <svg
+                          width="10" height="10" viewBox="0 0 24 24" fill="none"
+                          className={`chevron ${showMetadata ? 'open' : ''}`}
+                        >
+                          <path d="M9 18L15 12L9 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                        <span>Details</span>
+                      </button>
+                      {showMetadata && (
+                        <div className="metadata-content">
+                          <div className="annotation-info">
+                            <span className="info-label">Shape:</span>
+                            <span className="info-value">{ann.shape}</span>
+                          </div>
+                          {ann.shape === 'rectangle' && ann.width !== undefined && ann.height !== undefined && (
+                            <div className="annotation-info">
+                              <span className="info-label">Size:</span>
+                              <span className="info-value">
+                                {imageWidth && imageHeight
+                                  ? `${Math.round(ann.width * imageWidth)} x ${Math.round(ann.height * imageHeight)}`
+                                  : `${ann.width.toFixed(3)} x ${ann.height.toFixed(3)}`
+                                }
+                              </span>
+                            </div>
+                          )}
+                          {ann.shape === 'polygon' && ann.points && (
+                            <div className="annotation-info">
+                              <span className="info-label">Points:</span>
+                              <span className="info-value">{ann.points.length}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
 
         {annotations.length === 0 && (
           <div className="empty-message">
-            No annotations yet. Use the tools above to draw bounding boxes.
+            No annotations yet. Draw bounding boxes on the canvas.
           </div>
         )}
       </div>

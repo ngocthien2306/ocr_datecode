@@ -71,6 +71,7 @@ export default function TemplateEditor({
   const polygonCleanupRef = useRef<(() => void) | null>(null);
   const rectangleCleanupRef = useRef<(() => void) | null>(null);
   const [showHints, setShowHints] = useState(false);
+  const [showLabels, setShowLabels] = useState(false);
   const [isSpacePressed, setIsSpacePressed] = useState(false);
 
   // Initialize canvas
@@ -497,6 +498,17 @@ export default function TemplateEditor({
     }
   }, [annotations]);
 
+  // Toggle label visibility
+  useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    canvas.getObjects().forEach(obj => {
+      if ((obj as FabricAnnotationObject).isLabel) {
+        obj.visible = showLabels;
+      }
+    });
+    canvas.requestRenderAll();
+  }, [showLabels, annotations]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -536,6 +548,9 @@ export default function TemplateEditor({
           break;
         case 'h':
           setShowHints(prev => !prev);
+          break;
+        case 'l':
+          setShowLabels(prev => !prev);
           break;
         default:
           break;
@@ -587,6 +602,7 @@ export default function TemplateEditor({
         canvas.add(obj);
         const annAny = annForCanvas as any;
         const label = objectUtils.createLabel(annForCanvas, annAny.x || (annAny.points && annAny.points[0][0]), annAny.y || (annAny.points && annAny.points[0][1]), color, index);
+        label.visible = showLabels;
         canvas.add(label);
       }
     });
@@ -960,6 +976,21 @@ export default function TemplateEditor({
           </button>
           <button type="button" className="tool-btn" onClick={handleResetZoom} title="Reset Zoom">
             100%
+          </button>
+        </div>
+
+        <div className="toolbar-group">
+          <button
+            type="button"
+            className={`tool-btn ${showLabels ? 'active' : ''}`}
+            onClick={() => setShowLabels(prev => !prev)}
+            title={showLabels ? 'Hide Labels (L)' : 'Show Labels (L)'}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M4 7V4H20V7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M12 4V20" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              <path d="M8 20H16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
           </button>
         </div>
       </div>
