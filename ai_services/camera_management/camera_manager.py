@@ -279,6 +279,15 @@ class CameraManager:
                 if success and loaded_cameras:
                     cameras_with_recipe = [self.cameras[sn] for sn in loaded_cameras]
 
+                    # Set OCR model type from recipe before initializing matchers
+                    ocr_model_type = recipe_data.get('ocr_model_type')
+                    model_changed = self.inference_handler.set_ocr_model_type(ocr_model_type)
+                    if model_changed and self.inference_handler._models_initialized:
+                        # OCR already loaded but recipe wants a different model → reinit on worker thread
+                        self.inference_handler._inference_executor.submit(
+                            self.inference_handler._reinit_ocr_backend
+                        ).result(timeout=30)
+
                     logger.info(f"Initializing inference matchers for {len(cameras_with_recipe)} cameras")
                     num_initialized = self.inference_handler.init_matchers(cameras_with_recipe)
 

@@ -1032,7 +1032,10 @@ async def load_recipe(
         'product_code': recipe.product_code,
         'camera_templates': _to_primitive(camera_templates),
         'model_thresholds': _to_primitive(getattr(recipe, 'model_thresholds', None)),
-        'cameras': enriched_cameras  # Use enriched cameras with function_type
+        'cameras': enriched_cameras,  # Use enriched cameras with function_type
+        'ocr_model_type': getattr(recipe, 'ocr_model_type', None),
+        'ml_project_id': getattr(recipe, 'ml_project_id', None),
+        'ml_model_id': getattr(recipe, 'ml_model_id', None),
     }
 
     # Send load recipe command via WebSocket to CameraManagement service
@@ -1054,6 +1057,9 @@ async def load_recipe(
         'camera_settings': _to_primitive(getattr(recipe, 'camera_settings', None)),
         'template_config': _to_primitive(getattr(recipe, 'template_config', None)),
         'roi_config': _to_primitive(getattr(recipe, 'roi_config', None)),
+        'ocr_model_type': getattr(recipe, 'ocr_model_type', None),
+        'ml_project_id': getattr(recipe, 'ml_project_id', None),
+        'ml_model_id': getattr(recipe, 'ml_model_id', None),
     }
 
     success = await send_load_recipe(recipe_dict)
@@ -1347,6 +1353,9 @@ async def update_recipe_realtime(
         'camera_settings': _to_primitive(getattr(recipe, 'camera_settings', None)),
         'template_config': _to_primitive(getattr(recipe, 'template_config', None)),
         'roi_config': _to_primitive(getattr(recipe, 'roi_config', None)),
+        'ocr_model_type': getattr(recipe, 'ocr_model_type', None),
+        'ml_project_id': getattr(recipe, 'ml_project_id', None),
+        'ml_model_id': getattr(recipe, 'ml_model_id', None),
     }
 
     # 4. Merge update_data into recipe_dict (in-memory, NOT saved to DB)

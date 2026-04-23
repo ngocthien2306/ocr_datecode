@@ -1132,9 +1132,16 @@ class Camera:
             model_thresholds = recipe_data.get("model_thresholds", {})
             self.matching_threshold = model_thresholds.get("matching_threshold", 0.85)
             self.recognition_threshold = model_thresholds.get("recognition_threshold", 0.5)
+            self.ocr_model_type = recipe_data.get("ocr_model_type")
+            self.ml_project_id = recipe_data.get("ml_project_id")
+            self.ml_model_id = recipe_data.get("ml_model_id")
             logger.info(
                 f"[{self.serial_number}] Loaded thresholds: "
                 f"matching={self.matching_threshold}, recognition={self.recognition_threshold}"
+            )
+            logger.info(
+                f"[{self.serial_number}] OCR model: {self.ocr_model_type or 'default'}, "
+                f"ML project: {self.ml_project_id or 'none'}, ML model: {self.ml_model_id or 'none'}"
             )
 
             # Find camera config in recipe

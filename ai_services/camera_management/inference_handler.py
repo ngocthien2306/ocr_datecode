@@ -18,12 +18,20 @@ from .verification import TextVerificationService, TemplateVerificationService, 
 from .ocr import OCRBackendFactory, OCRBackendType
 from .ocr.factory import OCRModelType, OCRConfig
 
-# ── Chọn model OCR tại đây ────────────────────────────────────────────────
+# ── Default OCR model (used when recipe doesn't specify one) ───────────────
 # OCRModelType.SMTR            → SMTR dual-head GTC+CTC (dynamic width) ← MỚI
 # OCRModelType.SVTRV2_CTC      → SVTRv2 CTC (6625 classes, width=320)
 # OCRModelType.OPENOCR_REPSVTR → OpenOCR RepSVTR
 # OCRModelType.PADDLEV5        → PaddleV5 (legacy)
-OCR_MODEL_TYPE = OCRModelType.OPENOCR_REPSVTR
+DEFAULT_OCR_MODEL_TYPE = OCRModelType.OPENOCR_REPSVTR
+
+# Map recipe string → enum (used by set_ocr_model_type)
+_OCR_MODEL_MAP: Dict[str, OCRModelType] = {
+    'SMTR': OCRModelType.SMTR,
+    'SVTRV2_CTC': OCRModelType.SVTRV2_CTC,
+    'OPENOCR_REPSVTR': OCRModelType.OPENOCR_REPSVTR,
+    'PADDLEV5': OCRModelType.PADDLEV5,
+}
 
 # OCRBackendType.AUTO      → tự chọn TRT nếu có engine, fallback ONNX
 # OCRBackendType.TENSORRT  → bắt buộc dùng .engine (pycuda)
@@ -96,6 +104,9 @@ class InferenceHandler:
             backend_dir=Path(__file__).parent.parent.parent / "backend"
         )
 
+        # OCR model type (dynamic, set from recipe)
+        self._ocr_model_type: OCRModelType = DEFAULT_OCR_MODEL_TYPE
+
         # Text recognizer for Check_Type_Product function
         self.text_recognizer = None
         self.ocr_backend = None
@@ -142,6 +153,29 @@ class InferenceHandler:
 
         logger.info("InferenceHandler initialized (models will be lazy-loaded on worker thread)")
 
+    def set_ocr_model_type(self, model_type_str: Optional[str]) -> bool:
+        """Set OCR model type from recipe string. Returns True if changed (needs reinit)."""
+        if not model_type_str:
+            return False  # keep current
+        new_type = _OCR_MODEL_MAP.get(model_type_str, DEFAULT_OCR_MODEL_TYPE)
+        if new_type == self._ocr_model_type:
+            return False
+        logger.info(f"🔄 OCR model type changed: {self._ocr_model_type.name} → {new_type.name}")
+        self._ocr_model_type = new_type
+        return True
+
+    def _reinit_ocr_backend(self):
+        """Reinit OCR backend when recipe changes model type (called on worker thread)."""
+        logger.info(f"🔄 Reinitializing OCR backend → {self._ocr_model_type.name}")
+        old = getattr(self, '_ocr_backend_instance', None)
+        self._init_ocr_backend()
+        # Update text_verification_service with new recognizer
+        if hasattr(self, 'text_verification_service') and self.text_verification_service and self.text_recognizer:
+            self.text_verification_service.text_recognizer = self.text_recognizer
+            self.text_verification_service.ocr_backend = self.ocr_backend or "unknown"
+            logger.info(f"✅ TextVerificationService updated with new OCR backend: {self.ocr_backend}")
+        del old  # free VRAM
+
     def _init_ocr_backend(self):
         """
         Initialize OCR backend using Factory Pattern.
@@ -164,7 +198,7 @@ class InferenceHandler:
             # Note: TensorRT OpenOCR now uses pre-allocated buffers (like YOLO OBB) - NO CONFLICT!
             self._ocr_backend_instance = OCRBackendFactory.create(
                 backend_type=OCR_BACKEND_TYPE,
-                model_type=OCR_MODEL_TYPE,
+                model_type=self._ocr_model_type,
             )
 
             if self._ocr_backend_instance is not None:
