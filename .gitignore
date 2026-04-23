@@ -193,3 +193,10 @@ bottle_data/
 datecodes/
 backend/scripts/cropped_datecodes_all
 trt_cache/
+segment_text/
+dataset/
+ai_generate/
+templates/
+check_data_fastapi.py
+check_data.py
+public/

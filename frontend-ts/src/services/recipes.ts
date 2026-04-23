@@ -51,6 +51,11 @@ export const recipesAPI = {
     const response = await api.post<Recipe>(`/recipes/${recipeId}/clone`);
     return response.data;
   },
+
+  segmentTemplateRegion: async (imageUrl: string, region: { x: number; y: number; w: number; h: number }): Promise<{ segments: Array<{ id: string; x: number; y: number; w: number; h: number }>; count: number }> => {
+    const response = await api.post('/recipes/templates/segment', { image_url: imageUrl, region });
+    return response.data;
+  },
 };
 
 export const receiptsAPI = {

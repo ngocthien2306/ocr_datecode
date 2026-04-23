@@ -48,6 +48,8 @@ interface AnnotationsPanelProps {
   onAnnotationTextChange?: (index: number, text: string) => void;
   onAnnotationConfChange?: (index: number, conf: number) => void;
   onDeleteAnnotation?: (index: number) => void;
+  onAutoSegment?: (index: number) => void;
+  segmenting?: boolean;
   fabricCanvasRef?: React.RefObject<FabricCanvas>;
   imageWidth?: number;
   imageHeight?: number;
@@ -63,6 +65,8 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
   onAnnotationTextChange,
   onAnnotationConfChange,
   onDeleteAnnotation,
+  onAutoSegment,
+  segmenting = false,
   fabricCanvasRef,
   imageWidth,
   imageHeight,
@@ -164,6 +168,21 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
                 onClick={(e) => e.stopPropagation()}
               />
             </div>
+
+            {/* Auto Segment button for text/datecode rectangle annotations */}
+            {onAutoSegment && ann.shape === 'rectangle' && (ann.type === 'text' || ann.type === 'datecode') && (
+              <button
+                type="button"
+                className="auto-segment-btn"
+                disabled={segmenting}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAutoSegment(index);
+                }}
+              >
+                {segmenting ? 'Segmenting...' : 'Auto Segment'}
+              </button>
+            )}
 
             {!hideMetadata && (
               <>

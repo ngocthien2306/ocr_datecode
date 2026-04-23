@@ -3,6 +3,7 @@ import TemplateEditor from './TemplateEditorRefactored';
 import AnnotationsPanel from '@/components/shared/AnnotationsPanel';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import { camerasAPI } from '@/services/api';
+import recipesAPI from '@/services/recipes';
 import { mlTrainingAPI, MLProject, MLModel } from '@/services/mlTraining';
 import { useToast } from '@/contexts/ToastContext';
 import { useUser } from '@/contexts/UserContext';
@@ -116,6 +117,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+  const [segmenting, setSegmenting] = useState(false);
   
   // Camera management states
   const [availableCameras, setAvailableCameras] = useState<Camera[]>([]);
@@ -1189,6 +1191,55 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     }
   };
 
+  const handleAutoSegment = async (index: number) => {
+    const currentAnnotations = getCurrentAnnotations();
+    const ann = currentAnnotations[index];
+    if (!ann || ann.shape !== 'rectangle') return;
+
+    // Get the template image_url (the server-relative path, e.g. /api/recipes/templates/images/abc.jpg)
+    const template = getCurrentTemplate();
+    const imageUrl = template?.image_url;
+    if (!imageUrl) {
+      toast.warning('No template image found for segmentation');
+      return;
+    }
+
+    setSegmenting(true);
+    try {
+      const result = await recipesAPI.segmentTemplateRegion(imageUrl, {
+        x: ann.x ?? 0, y: ann.y ?? 0, w: ann.width ?? 0, h: ann.height ?? 0,
+      });
+
+      if (result.count === 0) {
+        toast.warning('No segments found in this region');
+        return;
+      }
+
+      // Keep original annotation, insert N new annotations after it
+      const newAnnotations = result.segments.map((seg: any) => ({
+        id: `annotation-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        type: ann.type, // same type (text or datecode)
+        shape: 'rectangle' as const,
+        x: seg.x,
+        y: seg.y,
+        width: seg.w,
+        height: seg.h,
+        text: '',
+        conf: ann.conf ?? 0.85,
+      }));
+
+      const updated = [...currentAnnotations];
+      updated.splice(index + 1, 0, ...newAnnotations);
+      handleAnnotationsChange(updated);
+      toast.success(`Auto segment: ${result.count} regions found`);
+    } catch (e: any) {
+      console.error('Auto segment failed:', e);
+      toast.error(e?.response?.data?.detail || 'Segmentation failed');
+    } finally {
+      setSegmenting(false);
+    }
+  };
+
   const handleClose = () => {
     // Don't reset formData here - let useEffect handle it when modal reopens
     setErrors({});
@@ -2110,6 +2161,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                             onAnnotationTextChange={handleAnnotationTextChange}
                             onAnnotationConfChange={handleAnnotationConfChange}
                             onDeleteAnnotation={handleDeleteAnnotation}
+                            onAutoSegment={handleAutoSegment}
+                            segmenting={segmenting}
                             fabricCanvasRef={fabricCanvasRef}
                             imageWidth={getCurrentTemplate()?.image_width}
                             imageHeight={getCurrentTemplate()?.image_height}

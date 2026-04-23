@@ -1,3 +1,4 @@
+import asyncio
 import traceback
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Request
 from fastapi.responses import FileResponse, Response
@@ -803,6 +804,36 @@ async def options_template_image(filename: str):
         }
     )
 
+
+
+@router.post("/templates/segment")
+async def segment_template_region(body: dict):
+    """
+    Auto-segment characters inside a drawn region on a template image.
+    Body: {image_url: str, region: {x, y, w, h}}  (all coords normalized 0-1)
+    Returns: {segments: [{id, x, y, w, h}, ...], count}
+    """
+    image_url = body.get("image_url", "")
+    region = body.get("region")
+    if not image_url or not region:
+        raise HTTPException(400, "image_url and region are required")
+
+    # Extract filename from URL (e.g. /api/recipes/templates/images/abc.jpg → abc.jpg)
+    filename = image_url.split("/")[-1]
+    image_path = TEMPLATE_UPLOAD_DIR / filename
+    if not image_path.exists():
+        raise HTTPException(404, f"Template image not found: {filename}")
+
+    try:
+        from app.services.ml_segment_service import segment_region
+        segments = await asyncio.get_event_loop().run_in_executor(
+            None, segment_region, image_path, region
+        )
+    except Exception as e:
+        logger.exception("Template segmentation failed")
+        raise HTTPException(500, f"Segmentation error: {e}")
+
+    return {"segments": segments, "count": len(segments)}
 
 
 @router.get("/{recipe_id}", response_model=RecipeResponse)
