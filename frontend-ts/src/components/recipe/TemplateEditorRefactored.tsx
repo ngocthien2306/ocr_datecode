@@ -510,6 +510,31 @@ export default function TemplateEditor({
     canvas.requestRenderAll();
   }, [showLabels, annotations]);
 
+  // Dim non-selected annotations when one is focused
+  useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    canvas.getObjects().forEach(obj => {
+      const fObj = obj as FabricAnnotationObject;
+      if (fObj.annotationIndex === undefined) return;
+      if (selectedAnnotation !== null && fObj.annotationIndex !== selectedAnnotation) {
+        obj.set({ opacity: 0.25 });
+      } else {
+        obj.set({ opacity: 1 });
+      }
+      // Also dim/show associated labels
+      if (fObj.isLabel) {
+        const labelIdx = fObj.annotationIndex;
+        if (selectedAnnotation !== null && labelIdx !== selectedAnnotation) {
+          obj.set({ opacity: 0.15 });
+        } else {
+          obj.set({ opacity: 1 });
+        }
+      }
+    });
+    canvas.requestRenderAll();
+  }, [selectedAnnotation, annotations]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

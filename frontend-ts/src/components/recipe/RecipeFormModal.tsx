@@ -1662,104 +1662,99 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
             {activeTab === 'model' && (
               <div className="form-section">
-                {/* ── OCR Model Selection ── */}
-                <h3>OCR Model</h3>
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>OCR Model Type</label>
-                    <select
-                      name="ocr_model_type"
-                      value={formData.ocr_model_type}
-                      onChange={(e) => setFormData(prev => ({ ...prev, ocr_model_type: e.target.value }))}
-                    >
-                      <option value="">-- Default --</option>
-                      <option value="SMTR">SMTR (large-x)</option>
-                      <option value="SVTRV2_CTC">SVTRV2_CTC (large)</option>
-                      <option value="OPENOCR_REPSVTR">OPENOCR_REPSVTR (medium)</option>
-                      <option value="PADDLEV5">PADDLEV5 (small)</option>
-                    </select>
-                    <small className="field-description">OCR recognition backbone used for text reading</small>
+                {/* ── Top: OCR (left) + ML Quality (right) ── */}
+                <div className="model-columns">
+                  <div className="model-column">
+                    <h3>OCR Model</h3>
+                    <div className="form-group">
+                      <label>OCR Model Type</label>
+                      <select
+                        name="ocr_model_type"
+                        value={formData.ocr_model_type}
+                        onChange={(e) => setFormData(prev => ({ ...prev, ocr_model_type: e.target.value }))}
+                      >
+                        <option value="">-- Default --</option>
+                        <option value="SMTR">SMTR (large-x)</option>
+                        <option value="SVTRV2_CTC">SVTRV2_CTC (large)</option>
+                        <option value="OPENOCR_REPSVTR">OPENOCR_REPSVTR (medium)</option>
+                        <option value="PADDLEV5">PADDLEV5 (small)</option>
+                      </select>
+                      <small className="field-description">OCR recognition backbone used for text reading</small>
+                    </div>
                   </div>
-                </div>
-
-                {/* ── ML Quality Inspection Model ── */}
-                <h3 style={{ marginTop: '1.5rem' }}>ML Quality Inspection</h3>
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>AI Training Project</label>
-                    <select
-                      value={formData.ml_project_id}
-                      onChange={(e) => setFormData(prev => ({ ...prev, ml_project_id: e.target.value, ml_model_id: '' }))}
-                      disabled={loadingMlProjects}
-                    >
-                      <option value="">-- None --</option>
-                      {mlProjects.map(p => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </select>
-                    {loadingMlProjects && <small className="field-description">Loading projects…</small>}
-                  </div>
-                  <div className="form-group">
-                    <label>Trained Model</label>
-                    <select
-                      value={formData.ml_model_id}
-                      onChange={(e) => setFormData(prev => ({ ...prev, ml_model_id: e.target.value }))}
-                      disabled={!formData.ml_project_id || loadingMlModels}
-                    >
-                      <option value="">-- None --</option>
-                      {mlModels.map(m => (
-                        <option key={m.id} value={m.id}>
-                          {m.algorithm.toUpperCase()} · acc {(m.metrics.accuracy_test * 100).toFixed(1)}% · {new Date(m.created_at).toLocaleDateString()}
-                        </option>
-                      ))}
-                    </select>
-                    {loadingMlModels && <small className="field-description">Loading models…</small>}
-                    {formData.ml_project_id && !loadingMlModels && mlModels.length === 0 && (
-                      <small className="field-description" style={{ color: 'var(--color-warning, #f59e0b)' }}>No completed models in this project yet</small>
-                    )}
+                  <div className="model-column">
+                    <h3>ML Quality Inspection</h3>
+                    <div className="form-group">
+                      <label>AI Training Project</label>
+                      <select
+                        value={formData.ml_project_id}
+                        onChange={(e) => setFormData(prev => ({ ...prev, ml_project_id: e.target.value, ml_model_id: '' }))}
+                        disabled={loadingMlProjects}
+                      >
+                        <option value="">-- None --</option>
+                        {mlProjects.map(p => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                      {loadingMlProjects && <small className="field-description">Loading projects…</small>}
+                    </div>
+                    <div className="form-group">
+                      <label>Trained Model</label>
+                      <select
+                        value={formData.ml_model_id}
+                        onChange={(e) => setFormData(prev => ({ ...prev, ml_model_id: e.target.value }))}
+                        disabled={!formData.ml_project_id || loadingMlModels}
+                      >
+                        <option value="">-- None --</option>
+                        {mlModels.map(m => (
+                          <option key={m.id} value={m.id}>
+                            {m.algorithm.toUpperCase()} · acc {(m.metrics.accuracy_test * 100).toFixed(1)}% · {new Date(m.created_at).toLocaleDateString()}
+                          </option>
+                        ))}
+                      </select>
+                      {loadingMlModels && <small className="field-description">Loading models…</small>}
+                      {formData.ml_project_id && !loadingMlModels && mlModels.length === 0 && (
+                        <small className="field-description" style={{ color: 'var(--color-warning, #f59e0b)' }}>No completed models in this project yet</small>
+                      )}
+                    </div>
                   </div>
                 </div>
 
                 {/* ── Model Thresholds ── */}
-                <h3 style={{ marginTop: '1.5rem' }}>Model Thresholds</h3>
-                <div className="form-row">
+                <h3>Model Thresholds</h3>
+                <div className="thresholds-grid">
                   <div className="form-group">
-                    <label>Detection Threshold <span className="required">*</span> <span className="hint">(0.0 - 1.0)</span></label>
+                    <label>Detection <span className="required">*</span></label>
                     <input type="number" value={formData.model_thresholds.detection_threshold}
                            onChange={(e) => handleModelThresholdChange('detection_threshold', e.target.value)}
-                           step="0.01" min="0" max="1"
+                           step="0.01" min="0" max="1" placeholder="0.0 - 1.0"
                            className={errors['model_thresholds.detection_threshold'] ? 'error' : ''} />
                     {errors['model_thresholds.detection_threshold'] && (
                       <span className="error-message">{errors['model_thresholds.detection_threshold']}</span>
                     )}
                   </div>
                   <div className="form-group">
-                    <label>Recognition Threshold <span className="required">*</span> <span className="hint">(0.0 - 1.0)</span></label>
+                    <label>Recognition <span className="required">*</span></label>
                     <input type="number" value={formData.model_thresholds.recognition_threshold}
                            onChange={(e) => handleModelThresholdChange('recognition_threshold', e.target.value)}
-                           step="0.01" min="0" max="1"
+                           step="0.01" min="0" max="1" placeholder="0.0 - 1.0"
                            className={errors['model_thresholds.recognition_threshold'] ? 'error' : ''} />
                     {errors['model_thresholds.recognition_threshold'] && (
                       <span className="error-message">{errors['model_thresholds.recognition_threshold']}</span>
                     )}
                   </div>
-                </div>
-                <div className="form-row">
                   <div className="form-group">
-                    <label>Matching Threshold <span className="required">*</span> <span className="hint">(0.0 - 1.0)</span></label>
+                    <label>Matching <span className="required">*</span></label>
                     <input type="number" value={formData.model_thresholds.matching_threshold}
                            onChange={(e) => handleModelThresholdChange('matching_threshold', e.target.value)}
-                           step="0.01" min="0" max="1"
+                           step="0.01" min="0" max="1" placeholder="0.0 - 1.0"
                            className={errors['model_thresholds.matching_threshold'] ? 'error' : ''} />
                     {errors['model_thresholds.matching_threshold'] && (
                       <span className="error-message">{errors['model_thresholds.matching_threshold']}</span>
                     )}
-                    <small className="field-description">Template similarity threshold for verification (default: 0.85)</small>
                   </div>
-                </div>
-                <div className="form-row">
                   <div className="form-group">
-                    <label>Min Text Size (px)</label>
+                    <label>Min Text (px)</label>
                     <input type="number" value={formData.model_thresholds.min_text_size || ''}
                            onChange={(e) => handleModelThresholdChange('min_text_size', e.target.value)} min="1"
                            className={errors['model_thresholds.min_text_size'] ? 'error' : ''} />
@@ -1768,7 +1763,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                     )}
                   </div>
                   <div className="form-group">
-                    <label>Max Text Size (px)</label>
+                    <label>Max Text (px)</label>
                     <input type="number" value={formData.model_thresholds.max_text_size || ''}
                            onChange={(e) => handleModelThresholdChange('max_text_size', e.target.value)} min="1"
                            className={errors['model_thresholds.max_text_size'] ? 'error' : ''} />
