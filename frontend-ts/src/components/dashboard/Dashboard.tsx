@@ -1413,7 +1413,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                 <path d="M2 17l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
                 <path d="M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
               </svg>
-              ML Training
+              AI Training
             </a>
             {canAccessPage('logs') && (
               <a

@@ -1689,7 +1689,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                 <h3 style={{ marginTop: '1.5rem' }}>ML Quality Inspection</h3>
                 <div className="form-row">
                   <div className="form-group">
-                    <label>ML Training Project</label>
+                    <label>AI Training Project</label>
                     <select
                       value={formData.ml_project_id}
                       onChange={(e) => setFormData(prev => ({ ...prev, ml_project_id: e.target.value, ml_model_id: '' }))}

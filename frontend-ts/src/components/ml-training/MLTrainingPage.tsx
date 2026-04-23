@@ -115,7 +115,7 @@ export default function MLTrainingPage({ onClose }: Props) {
       {/* Header */}
       <div className="ml-training-header">
         <div className="ml-training-header-left">
-          <h1 className="ml-training-title">ML Training Studio</h1>
+          <h1 className="ml-training-title">AI Training Studio</h1>
           {activeProject && (
             <span className={`ml-training-badge ${activeProject.status}`}>
               {activeProject.name}
