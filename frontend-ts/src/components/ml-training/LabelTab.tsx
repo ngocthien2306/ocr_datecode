@@ -46,8 +46,17 @@ export default function LabelTab({ project, onRefresh }: Props) {
   const [selectedSegId, setSelectedSegId]   = useState<string | null>(null);
   const [expandedRegions, setExpandedRegions] = useState<Set<string>>(new Set());
 
-  const autoSaveTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isInitLoadRef  = useRef(true); // skip auto-save on first load from server
+  const [copyPrevRegions, setCopyPrevRegions] = useState(false);
+
+  const autoSaveTimer      = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isInitLoadRef      = useRef(true);
+  const regionsRef         = useRef<AnnotationRegion[]>([]);   // always-current snapshot
+  const prevRegionsRef     = useRef<AnnotationRegion[]>([]);   // regions of last image
+  const copyPrevRegionsRef = useRef(false);
+
+  // keep refs in sync
+  useEffect(() => { regionsRef.current = regions; }, [regions]);
+  useEffect(() => { copyPrevRegionsRef.current = copyPrevRegions; }, [copyPrevRegions]);
 
   // ── Refs so canvas handlers always see current values (no stale closures) ──
   const drawModeRef         = useRef<DrawMode>('select');
@@ -77,7 +86,10 @@ export default function LabelTab({ project, onRefresh }: Props) {
 
   // ── Select image → load into canvas ──────────────────────────────────────
   const selectImage = useCallback(async (filename: string) => {
-    isInitLoadRef.current = true; // suppress auto-save during this load
+    // Save current regions (strip segments) before switching
+    prevRegionsRef.current = regionsRef.current.map(r => ({ ...r, segments: [] }));
+
+    isInitLoadRef.current = true;
     setSelectedFile(filename);
     setRegions([]);
     setSelectedRegionId(null);
@@ -111,10 +123,18 @@ export default function LabelTab({ project, onRefresh }: Props) {
       canvas.renderAll();
 
       if (annData.regions.length > 0) {
+        // Image already has annotations — use them
         setRegions(annData.regions);
         setExpandedRegions(new Set(annData.regions.map(r => r.id)));
         _renderAllRegions(canvas, annData.regions, imageBoundsRef.current);
+      } else if (copyPrevRegionsRef.current && prevRegionsRef.current.length > 0) {
+        // No annotations yet + copy-prev enabled → paste region boxes (no segments)
+        const copied = prevRegionsRef.current.map(r => ({ ...r, id: uuidv4(), segments: [] }));
+        setRegions(copied);
+        setExpandedRegions(new Set(copied.map(r => r.id)));
+        _renderAllRegions(canvas, copied, imageBoundsRef.current);
       }
+
       // Allow auto-save after initial data is settled
       setTimeout(() => { isInitLoadRef.current = false; }, 100);
     } catch (e) {
@@ -541,7 +561,18 @@ export default function LabelTab({ project, onRefresh }: Props) {
 
       {/* ── Left: image list ── */}
       <div className="ml-label-list">
-        <div className="ml-panel-header" style={{ padding: '10px 12px' }}>Images</div>
+        <div className="ml-panel-header" style={{ padding: '10px 12px', flexDirection: 'column', alignItems: 'flex-start', gap: '6px' }}>
+          <span>Images</span>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: 400, color: '#6b7280', cursor: 'pointer', userSelect: 'none' }}>
+            <input
+              type="checkbox"
+              checked={copyPrevRegions}
+              onChange={e => setCopyPrevRegions(e.target.checked)}
+              style={{ cursor: 'pointer', accentColor: REGION_COLOR }}
+            />
+            Copy prev regions
+          </label>
+        </div>
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {images.length === 0 && (
             <div className="ml-empty-state" style={{ padding: '20px' }}>
