@@ -54,6 +54,13 @@ export interface LabeledCrop {
   crop_b64: string;
 }
 
+export interface SyntheticCrop {
+  source_segment_id: string;
+  filename: string;
+  label: 'NG';
+  crop_b64: string;
+}
+
 export interface TrainRequest {
   algorithm: 'rf' | 'svm' | 'mlp';
   augment_factor: number;
@@ -182,6 +189,12 @@ export const mlTrainingAPI = {
   getLabeledCrops: (projectId: string) =>
     api.get<{ crops: LabeledCrop[]; count: number }>(
       `/ml/projects/${projectId}/labeled-crops`
+    ).then(r => r.data),
+
+  previewSynthetic: (projectId: string, augmentFactor: number) =>
+    api.post<{ crops: SyntheticCrop[]; count: number }>(
+      `/ml/projects/${projectId}/preview-synthetic`,
+      { augment_factor: augmentFactor }
     ).then(r => r.data),
 
   // Training

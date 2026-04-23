@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   mlTrainingAPI,
   LabeledCrop,
+  SyntheticCrop,
   MLModel,
   MLProject,
   TrainRequest,
@@ -20,10 +21,82 @@ const AUGMENT_OPTIONS = [
   { value: 5, label: '×5' },
 ];
 
+// ── Lazy image: only renders <img> when it enters the viewport ─────────────
+function LazyImage({ src, alt }: { src: string; alt: string }) {
+  const [visible, setVisible] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setVisible(true); obs.disconnect(); } },
+      { rootMargin: '300px' }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
+  return (
+    <div ref={ref} style={{ width: '52px', height: '36px', background: '#0f1117', borderRadius: '3px' }}>
+      {visible && (
+        <img
+          src={src}
+          alt={alt}
+          style={{ width: '52px', height: '36px', objectFit: 'contain', display: 'block' }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── CropGrid: shared grid used for both real and synthetic crops ───────────
+interface CropGridProps {
+  items: Array<{ crop_b64: string; label: string }>;
+  emptyText: string;
+}
+
+function CropGrid({ items, emptyText }: CropGridProps) {
+  if (items.length === 0) {
+    return (
+      <div className="ml-empty-state" style={{ minHeight: '100px' }}>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.4 }}>
+          <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"
+            stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+          <circle cx="7" cy="7" r="1.5" fill="currentColor" />
+        </svg>
+        <span style={{ fontSize: '12px', color: '#6b7280', marginTop: '6px' }}>{emptyText}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="ml-crops-grid">
+      {items.map((crop, i) => (
+        <div key={i} className="ml-crop-card">
+          <LazyImage src={`data:image/jpeg;base64,${crop.crop_b64}`} alt={`crop-${i}`} />
+          <span className={`ml-label-badge ${crop.label === 'OK' ? 'ok' : 'ng'}`}>
+            {crop.label}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Main component ─────────────────────────────────────────────────────────
 export default function TrainTab({ project, onRefresh }: Props) {
-  // Labeled crops preview
+  // Labeled crops
   const [crops, setCrops] = useState<LabeledCrop[]>([]);
   const [loadingCrops, setLoadingCrops] = useState(false);
+
+  // Labeled crops UI state
+  const [cropsTab, setCropsTab] = useState<'real' | 'synthetic'>('real');
+  const [cropFilter, setCropFilter] = useState<'all' | 'OK' | 'NG'>('all');
+
+  // Synthetic preview
+  const [syntheticCrops, setSyntheticCrops] = useState<SyntheticCrop[]>([]);
+  const [loadingSynthetic, setLoadingSynthetic] = useState(false);
 
   // Training config
   const [algorithm, setAlgorithm] = useState<'rf' | 'svm' | 'mlp'>('rf');
@@ -73,6 +146,19 @@ export default function TrainTab({ project, onRefresh }: Props) {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [project.id]);
 
+  // ── Preview synthetic ─────────────────────────────────────────────────
+  const handlePreviewSynthetic = async () => {
+    if (augmentFactor < 2) return;
+    setLoadingSynthetic(true);
+    setSyntheticCrops([]);
+    setCropsTab('synthetic');
+    try {
+      const data = await mlTrainingAPI.previewSynthetic(project.id, augmentFactor);
+      setSyntheticCrops(data.crops);
+    } catch { /* ignore */ }
+    finally { setLoadingSynthetic(false); }
+  };
+
   // ── Start training ────────────────────────────────────────────────────
   const handleTrain = async () => {
     setTraining(true);
@@ -88,7 +174,6 @@ export default function TrainTab({ project, onRefresh }: Props) {
       const { model_id } = await mlTrainingAPI.startTraining(project.id, req);
       setActiveModelId(model_id);
 
-      // Poll for completion
       pollRef.current = setInterval(async () => {
         try {
           const model = await mlTrainingAPI.getModelStatus(project.id, model_id);
@@ -124,15 +209,19 @@ export default function TrainTab({ project, onRefresh }: Props) {
     }
   };
 
-  // ── Stats from crops ──────────────────────────────────────────────────
+  // ── Stats ──────────────────────────────────────────────────────────────
   const okCrops = crops.filter(c => c.label === 'OK');
   const ngCrops = crops.filter(c => c.label === 'NG');
   const canTrain = okCrops.length + ngCrops.length >= 2 && !training;
 
+  const filteredCrops =
+    cropFilter === 'all' ? crops :
+    cropFilter === 'OK'  ? okCrops : ngCrops;
+
   // ── Render ────────────────────────────────────────────────────────────
   return (
     <div className="ml-train-tab">
-      {/* Left: Config */}
+      {/* ── Left: Config ────────────────────────────────────────────── */}
       <div className="ml-train-left">
         <div className="ml-section-title">Dataset</div>
         <div className="ml-metric-row">
@@ -162,7 +251,6 @@ export default function TrainTab({ project, onRefresh }: Props) {
           ))}
         </div>
 
-        {/* Algorithm-specific params */}
         {algorithm === 'rf' && (
           <div className="ml-form-group">
             <label className="ml-form-label">N estimators</label>
@@ -187,29 +275,53 @@ export default function TrainTab({ project, onRefresh }: Props) {
           </div>
         )}
 
+        {/* ── Augmentation ──────────────────────────────────────── */}
         <div className="ml-section-title">Augmentation (NG)</div>
         <div className="ml-form-group">
-          <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px' }}>
+          <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '6px' }}>
             Generate synthetic NG from OK samples
           </div>
-          <div className="ml-augment-options">
-            {AUGMENT_OPTIONS.map(opt => (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+            <div className="ml-augment-options">
+              {AUGMENT_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  className={`ml-augment-chip ${augmentFactor === opt.value ? 'selected' : ''}`}
+                  onClick={() => setAugmentFactor(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {augmentFactor >= 2 && (
               <button
-                key={opt.value}
-                className={`ml-augment-chip ${augmentFactor === opt.value ? 'selected' : ''}`}
-                onClick={() => setAugmentFactor(opt.value)}
+                className="ml-btn ml-btn-secondary ml-btn-sm"
+                onClick={handlePreviewSynthetic}
+                disabled={loadingSynthetic}
+                title="Preview synthetic NG crops before training"
+                style={{ marginLeft: 'auto' }}
               >
-                {opt.label}
+                {loadingSynthetic
+                  ? <span className="ml-loading-spinner" style={{ width: 12, height: 12, borderWidth: 2 }} />
+                  : <>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
+                    </svg>
+                    Preview
+                  </>
+                }
               </button>
-            ))}
+            )}
           </div>
           {augmentFactor >= 2 && (
-            <div style={{ fontSize: '11px', color: '#6b7280' }}>
-              → {okCrops.length * (augmentFactor - 1)} synthetic NG added
+            <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>
+              → {okCrops.length * (augmentFactor - 1)} synthetic NG will be added
             </div>
           )}
         </div>
 
+        {/* ── Train button ──────────────────────────────────────── */}
         <button
           className="ml-btn ml-btn-primary"
           style={{ width: '100%', justifyContent: 'center', padding: '10px' }}
@@ -217,8 +329,8 @@ export default function TrainTab({ project, onRefresh }: Props) {
           disabled={!canTrain}
         >
           {training
-            ? <><span className="ml-loading-spinner" style={{width:14,height:14,borderWidth:2}}/> Training...</>
-            : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/></svg> Start Training</>
+            ? <><span className="ml-loading-spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> Training...</>
+            : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" /></svg> Start Training</>
           }
         </button>
 
@@ -237,7 +349,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
           </div>
         )}
 
-        {/* Models history */}
+        {/* ── History ───────────────────────────────────────────── */}
         {models.length > 0 && (
           <>
             <div className="ml-section-title">History</div>
@@ -249,9 +361,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span style={{ color: '#9ca3af' }}>{m.algorithm.toUpperCase()}</span>
-                    <span style={{
-                      color: m.status === 'completed' ? '#4ade80' : m.status === 'failed' ? '#f87171' : '#fbbf24',
-                    }}>
+                    <span style={{ color: m.status === 'completed' ? '#4ade80' : m.status === 'failed' ? '#f87171' : '#fbbf24' }}>
                       {m.status}
                     </span>
                   </div>
@@ -270,44 +380,120 @@ export default function TrainTab({ project, onRefresh }: Props) {
         )}
       </div>
 
-      {/* Right: Results + Preview + Test */}
+      {/* ── Right: Crops + Results ────────────────────────────────────── */}
       <div className="ml-train-right">
-        {/* Character crops preview */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#1a1d27', borderBottom: '1px solid #2d3148', flexShrink: 0 }}>
-          <span style={{ fontSize: '12px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '.05em' }}>
-            Labeled Crops
-          </span>
-          <button className="ml-btn ml-btn-secondary ml-btn-sm" onClick={loadCrops} disabled={loadingCrops}>
-            {loadingCrops
-              ? <span className="ml-loading-spinner" style={{width:12,height:12,borderWidth:2}}/>
-              : <><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M1 4v6h6M23 20v-6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> Refresh</>
-            }
-          </button>
-        </div>
 
-        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-          {/* Crops grid */}
-          {loadingCrops ? (
-            <div className="ml-empty-state"><div className="ml-loading-spinner" /></div>
-          ) : crops.length === 0 ? (
-            <div className="ml-empty-state">
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" style={{opacity:.4}}><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/><circle cx="7" cy="7" r="1.5" fill="currentColor"/></svg>
-              No labeled characters yet. Go to Label tab to annotate images.
-            </div>
-          ) : (
-            <div className="ml-crops-grid">
-              {crops.map((crop, i) => (
-                <div key={i} className="ml-crop-card">
-                  <img src={`data:image/jpeg;base64,${crop.crop_b64}`} alt={`char-${i}`} />
-                  <span className={`ml-label-badge ${crop.label === 'OK' ? 'ok' : 'ng'}`}>
-                    {crop.label}
-                  </span>
-                </div>
+        {/* ── Labeled Crops header ───────────────────────────────── */}
+        <div style={{ background: '#1a1d27', borderBottom: '1px solid #2d3148', flexShrink: 0 }}>
+          {/* Title row */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px 0' }}>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '.05em' }}>
+              Labeled Crops
+            </span>
+            <button className="ml-btn ml-btn-secondary ml-btn-sm" onClick={loadCrops} disabled={loadingCrops}>
+              {loadingCrops
+                ? <span className="ml-loading-spinner" style={{ width: 12, height: 12, borderWidth: 2 }} />
+                : <><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M1 4v6h6M23 20v-6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg> Refresh</>
+              }
+            </button>
+          </div>
+
+          {/* Inner tabs */}
+          <div style={{ display: 'flex', gap: '0', padding: '8px 14px 0' }}>
+            {([
+              { key: 'real', label: `Real Data (${crops.length})` },
+              { key: 'synthetic', label: `Synthetic (${syntheticCrops.length})` },
+            ] as const).map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => setCropsTab(tab.key)}
+                style={{
+                  padding: '5px 12px',
+                  fontSize: '12px',
+                  border: 'none',
+                  borderBottom: cropsTab === tab.key ? '2px solid #3b82f6' : '2px solid transparent',
+                  background: 'transparent',
+                  color: cropsTab === tab.key ? '#60a5fa' : '#6b7280',
+                  cursor: 'pointer',
+                  fontWeight: cropsTab === tab.key ? 600 : 400,
+                  transition: 'color .12s',
+                }}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Filter row — only on Real tab */}
+          {cropsTab === 'real' && (
+            <div style={{ display: 'flex', gap: '6px', padding: '8px 14px' }}>
+              {(['all', 'OK', 'NG'] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setCropFilter(f)}
+                  style={{
+                    padding: '3px 10px',
+                    fontSize: '11px',
+                    borderRadius: '12px',
+                    border: '1px solid',
+                    cursor: 'pointer',
+                    transition: 'all .12s',
+                    borderColor: cropFilter === f
+                      ? (f === 'OK' ? '#4ade80' : f === 'NG' ? '#f87171' : '#3b82f6')
+                      : '#2d3148',
+                    background: cropFilter === f
+                      ? (f === 'OK' ? 'rgba(74,222,128,.12)' : f === 'NG' ? 'rgba(248,113,113,.12)' : 'rgba(59,130,246,.12)')
+                      : 'transparent',
+                    color: cropFilter === f
+                      ? (f === 'OK' ? '#4ade80' : f === 'NG' ? '#f87171' : '#60a5fa')
+                      : '#6b7280',
+                  }}
+                >
+                  {f === 'all' ? `All (${crops.length})` : f === 'OK' ? `OK (${okCrops.length})` : `NG (${ngCrops.length})`}
+                </button>
               ))}
             </div>
           )}
+        </div>
 
-          {/* Training results */}
+        {/* ── Crops content area ─────────────────────────────────── */}
+        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+
+          {/* Real tab */}
+          {cropsTab === 'real' && (
+            loadingCrops
+              ? <div className="ml-empty-state"><div className="ml-loading-spinner" /></div>
+              : <CropGrid
+                  items={filteredCrops}
+                  emptyText={
+                    crops.length === 0
+                      ? 'No labeled characters yet. Go to Label tab to annotate images.'
+                      : `No ${cropFilter} crops found.`
+                  }
+                />
+          )}
+
+          {/* Synthetic tab */}
+          {cropsTab === 'synthetic' && (
+            loadingSynthetic
+              ? <div className="ml-empty-state"><div className="ml-loading-spinner" /></div>
+              : syntheticCrops.length === 0
+                ? (
+                  <div className="ml-empty-state" style={{ minHeight: '120px' }}>
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.4 }}>
+                      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                    </svg>
+                    <span style={{ fontSize: '12px', color: '#6b7280', marginTop: '6px' }}>
+                      {augmentFactor < 2
+                        ? 'Select an augmentation factor (×2 or higher), then click Preview.'
+                        : 'Click Preview in the Augmentation section to generate synthetic NG samples.'}
+                    </span>
+                  </div>
+                )
+                : <CropGrid items={syntheticCrops} emptyText="No synthetic crops." />
+          )}
+
+          {/* ── Training results ─────────────────────────────────── */}
           {latestModel && latestModel.status === 'completed' && (
             <div className="ml-results-panel">
               <div className="ml-section-title">Training Results — {latestModel.algorithm.toUpperCase()}</div>
@@ -335,11 +521,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
                   <div className="ml-confusion-matrix">
                     <table>
                       <thead>
-                        <tr>
-                          <th></th>
-                          <th>Pred NG</th>
-                          <th>Pred OK</th>
-                        </tr>
+                        <tr><th></th><th>Pred NG</th><th>Pred OK</th></tr>
                       </thead>
                       <tbody>
                         <tr>
@@ -374,7 +556,9 @@ export default function TrainTab({ project, onRefresh }: Props) {
                   className="ml-btn ml-btn-secondary ml-btn-sm"
                   onClick={() => predictInputRef.current?.click()}
                 >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg> Choose Image
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                    <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                  </svg> Choose Image
                 </button>
                 {predictFile && (
                   <span style={{ fontSize: '11px', color: '#9ca3af' }}>{predictFile.name}</span>
@@ -386,8 +570,8 @@ export default function TrainTab({ project, onRefresh }: Props) {
                     disabled={predicting}
                   >
                     {predicting
-                      ? <><span className="ml-loading-spinner" style={{width:12,height:12,borderWidth:2}}/> Predicting...</>
-                      : <><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/></svg> Run</>
+                      ? <><span className="ml-loading-spinner" style={{ width: 12, height: 12, borderWidth: 2 }} /> Predicting...</>
+                      : <><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" /></svg> Run</>
                     }
                   </button>
                 )}

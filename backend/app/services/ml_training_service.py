@@ -349,3 +349,39 @@ def get_labeled_crops(
                     "crop_b64": img_to_b64(crop),
                 })
     return result
+
+
+def generate_synthetic_crops(
+    annotations: List[MLAnnotationInDB],
+    images_dir: Path,
+    augment_factor: int,
+) -> List[Dict[str, Any]]:
+    """
+    Generate synthetic NG crops from OK samples for preview.
+    augment_factor must be >= 2 (n_per_sample = augment_factor - 1).
+    Returns list of {source_segment_id, filename, label, crop_b64}.
+    """
+    if augment_factor < 2:
+        return []
+    n_per_sample = augment_factor - 1
+    result = []
+    for ann in annotations:
+        img_path = images_dir / ann.filename
+        for region in ann.regions:
+            for seg in region.segments:
+                if seg.label != "OK":
+                    continue
+                crop = crop_segment(img_path, {
+                    "x": seg.x, "y": seg.y, "w": seg.w, "h": seg.h,
+                })
+                if crop is None:
+                    continue
+                aug_imgs = augment_ng(crop, n=n_per_sample)
+                for aug in aug_imgs:
+                    result.append({
+                        "source_segment_id": seg.id,
+                        "filename": ann.filename,
+                        "label": "NG",
+                        "crop_b64": img_to_b64(aug),
+                    })
+    return result

@@ -123,6 +123,10 @@ class TrainRequest(BaseModel):
     hidden_layer_sizes: List[int] = [128, 64]  # MLP only
 
 
+class SyntheticPreviewRequest(BaseModel):
+    augment_factor: int             # must be >= 2
+
+
 class SegmentRequest(BaseModel):
     filename: str
     region: Dict[str, float]        # {x, y, w, h} normalized

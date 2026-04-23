@@ -20,12 +20,14 @@ from app.models.ml_training import (
     MLAnnotationSave,
     MLProjectCreate,
     MLProjectUpdate,
+    SyntheticPreviewRequest,
     TrainRequest,
 )
 from app.models.user import UserInDB
 from app.repositories.ml_training_repository import MLTrainingRepository
 from app.services.ml_segment_service import segment_region
 from app.services.ml_training_service import (
+    generate_synthetic_crops,
     get_labeled_crops,
     img_to_b64,
     predict_on_image,
@@ -418,6 +420,23 @@ async def get_labeled_crops_endpoint(
 
     crops = await asyncio.get_event_loop().run_in_executor(
         None, get_labeled_crops, annotations, images_dir
+    )
+    return {"crops": crops, "count": len(crops)}
+
+
+@router.post("/ml/projects/{project_id}/preview-synthetic", tags=["ML Training"])
+async def preview_synthetic_endpoint(
+    project_id: str,
+    request: SyntheticPreviewRequest,
+    repo: MLTrainingRepository = Depends(get_repo),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Return synthetic NG crops generated from OK samples for preview (no training)."""
+    annotations = await repo.list_annotations(project_id)
+    images_dir = _images_dir(project_id)
+
+    crops = await asyncio.get_event_loop().run_in_executor(
+        None, generate_synthetic_crops, annotations, images_dir, request.augment_factor
     )
     return {"crops": crops, "count": len(crops)}
 
