@@ -1,22 +1,24 @@
 /* Recipe Form Modal Styles */
 
-/* Full page mode styles */
+/* Full-screen overlay (like ml-training-overlay) */
 .recipe-form-page {
-  width: 100%;
-  min-height: 100vh;
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
   background: white;
-  animation: pageSlideIn 0.3s ease-out;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .page-header {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 20px 32px;
+  padding: 12px 24px;
   background: white;
   border-bottom: 2px solid #e5e7eb;
-  position: sticky;
-  top: 0;
+  flex-shrink: 0;
   z-index: 10;
 }
 
@@ -60,8 +62,9 @@
 
 .recipe-form-container {
   width: 100%;
-  max-width: 1400px;
-  margin: 0 auto;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* Navigation Tabs - Hidden for vertical sidebar layout */
@@ -261,8 +264,9 @@
 /* Layout with vertical tabs */
 .recipe-form-layout {
   display: flex;
-  min-height: calc(100vh - 80px);
+  height: 100%;
   background: white;
+  overflow: hidden;
 }
 
 .vertical-tabs {
@@ -401,19 +405,24 @@
 }
 
 .tab-content {
-  min-height: 400px;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Recipe Form */
 .recipe-form {
   flex: 1;
   width: 100%;
-  padding: 48px 30px;
+  padding: 24px 30px;
   background: white;
   overflow-y: auto;
-  max-height: calc(100vh - 80px);
   scroll-behavior: smooth;
   margin-right: -80px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .tab-content {
@@ -440,6 +449,11 @@
 .form-section.template-section {
   margin-bottom: 0;
   padding-bottom: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .template-header {
@@ -847,8 +861,8 @@
 .template-workspace {
   display: flex;
   gap: 0;
-  height: calc(100vh - 340px);
-  min-height: 500px;
+  flex: 1;
+  min-height: 0;
 }
 
 .template-editor-layout {
