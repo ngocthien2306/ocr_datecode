@@ -322,7 +322,18 @@ def augment_ok(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
 
 # Augmentation type tags — emitted alongside each crop so char_stats can
 # break down "what kind of synthetic NG" was generated per char.
-NG_AUG_TYPES: Tuple[str, ...] = ("noise", "cut", "erode", "dilate", "translate")
+NG_AUG_TYPES: Tuple[str, ...] = ("noise", "cut", "erode", "dilate", "line")
+
+
+def _pick_patch_color(aug: np.ndarray) -> int:
+    """Pick a random patch color: pure black, pure white, or estimated bg."""
+    choice = int(np.random.randint(0, 3))
+    if choice == 0:
+        return 0                                # pure black
+    if choice == 1:
+        return 255                              # pure white
+    bg = _estimate_bg_color(aug)                # estimated background
+    return int(bg if np.isscalar(bg) else float(bg.mean()))
 
 
 def _augment_ng_one(gray: np.ndarray) -> Tuple[np.ndarray, str]:
@@ -336,14 +347,14 @@ def _augment_ng_one(gray: np.ndarray) -> Tuple[np.ndarray, str]:
         aug = np.clip(aug.astype(np.int16) + noise, 0, 255).astype(np.uint8)
         return aug, "noise"
 
-    if choice == 1:  # random black-rect cuts
+    if choice == 1:  # random-color rect cuts (black / white / bg)
         num_cuts = int(np.random.randint(1, 4))
         for _ in range(num_cuts):
             rh = int(np.random.randint(max(2, h // 6), max(3, h // 3)))
             rw = int(np.random.randint(max(2, w // 6), max(3, w // 3)))
             ry = int(np.random.randint(0, max(1, h - rh)))
             rx = int(np.random.randint(0, max(1, w - rw)))
-            aug[ry:ry + rh, rx:rx + rw] = 0
+            aug[ry:ry + rh, rx:rx + rw] = _pick_patch_color(aug)
         return aug, "cut"
 
     if choice == 2:  # erode (stroke thinning)
@@ -356,11 +367,29 @@ def _augment_ng_one(gray: np.ndarray) -> Tuple[np.ndarray, str]:
         kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
         return cv.dilate(aug, kernel, iterations=1), "dilate"
 
-    # choice == 4 — translate (misalignment)
-    # dx = int(np.random.randint(-w // 3, w // 3 + 1))
-    # dy = int(np.random.randint(-h // 3, h // 3 + 1))
-    # M = np.float32([[1, 0, dx], [0, 1, dy]])
-    # return cv.warpAffine(aug, M, (w, h), borderValue=0), "translate"
+    # choice == 4 — line: 1-2 straight lines (horizontal or vertical) crossing
+    # the full span of the crop at a random position (top/middle/bottom for
+    # horizontal; left/middle/right for vertical). Simulates ribbon/head
+    # miss or scratch across the printed char.
+    num_lines = int(np.random.randint(1, 3))
+    for _ in range(num_lines):
+        color = _pick_patch_color(aug)
+        thickness = int(np.random.randint(2, max(3, min(h, w) // 8 + 1)))
+        if np.random.rand() < 0.5:
+            # Horizontal line — top, middle, or bottom band
+            band = int(np.random.choice([0, 1, 2]))       # 0=top, 1=mid, 2=bot
+            center = [int(h * 0.2), int(h * 0.5), int(h * 0.8)][band]
+            y0 = max(0, center - thickness // 2)
+            y1 = min(h, y0 + thickness)
+            aug[y0:y1, :] = color
+        else:
+            # Vertical line — left, middle, or right band
+            band = int(np.random.choice([0, 1, 2]))
+            center = [int(w * 0.2), int(w * 0.5), int(w * 0.8)][band]
+            x0 = max(0, center - thickness // 2)
+            x1 = min(w, x0 + thickness)
+            aug[:, x0:x1] = color
+    return aug, "line"
 
 
 def augment_ng(char_img: np.ndarray, n: int = 5) -> List[Tuple[np.ndarray, str]]:
@@ -368,7 +397,7 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[Tuple[np.ndarray, str]]
     Generate n synthetic NG crops from an OK character.
 
     5 transform types (uniform random choice):
-      noise · cut · erode · dilate · translate
+      noise · cut · erode · dilate · line
 
     Returns list of (crop, type_tag) so callers can log what was generated.
     """

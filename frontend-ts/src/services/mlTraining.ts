@@ -62,7 +62,7 @@ export interface SyntheticCrop {
   label: 'OK' | 'NG';
   crop_b64: string;
   char_id?: string | null;
-  aug_type?: 'noise' | 'cut' | 'erode' | 'dilate' | 'translate';
+  aug_type?: 'noise' | 'cut' | 'erode' | 'dilate' | 'line';
 }
 
 export type MLAlgorithm = 'rf' | 'svm' | 'mlp';
