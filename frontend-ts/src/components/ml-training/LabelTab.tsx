@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, FabricImage, Rect } from 'fabric';
 import { mlTrainingAPI, AnnotationRegion, CharSegment, MLProject, ProjectImage } from '@/services/mlTraining';
 
@@ -459,6 +459,18 @@ export default function LabelTab({ project, onRefresh }: Props) {
     }
   }, [project.id, selectedFile, regions]);
 
+  // ── char_id edit from panel input ────────────────────────────────────────
+  const handleCharIdChange = useCallback((regionId: string, segId: string, raw: string) => {
+    // Model outputs 1 char — enforce maxLength=1 after trim.
+    // If user paste multi-char string, keep first non-whitespace char.
+    const trimmed = (raw || '').replace(/\s+/g, '');
+    const char_id = trimmed ? trimmed.charAt(0) : '';
+    setRegions(prev => prev.map(r => r.id !== regionId ? r : {
+      ...r,
+      segments: r.segments.map(s => s.id === segId ? { ...s, char_id: char_id || null } : s),
+    }));
+  }, []);
+
   // ── Label change from panel select ───────────────────────────────────────
   const handleLabelChange = useCallback((regionId: string, segId: string, label: Label) => {
     // Update state
@@ -566,6 +578,11 @@ export default function LabelTab({ project, onRefresh }: Props) {
   const okCount       = allSegs.filter(s => s.label === 'OK').length;
   const ngCount       = allSegs.filter(s => s.label === 'NG').length;
   const unlabeledCount = allSegs.filter(s => !s.label).length;
+  // Segments that have an OK/NG label but no char_id — required before training.
+  const missingCharIdCount = useMemo(
+    () => allSegs.filter(s => (s.label === 'OK' || s.label === 'NG') && !s.char_id).length,
+    [allSegs],
+  );
 
   // ── Cursor for canvas wrapper ─────────────────────────────────────────────
   const wrapperCursor = drawMode !== 'select' ? 'crosshair' : 'default';
@@ -712,6 +729,14 @@ export default function LabelTab({ project, onRefresh }: Props) {
                 <span style={{ color: SEG_OK_COLOR }}>{okCount} OK</span>
                 <span style={{ color: SEG_NG_COLOR }}>{ngCount} NG</span>
                 {unlabeledCount > 0 && <span style={{ color: '#6b7280' }}>{unlabeledCount} ?</span>}
+                {missingCharIdCount > 0 && (
+                  <span
+                    style={{ color: '#ef4444', fontWeight: 600 }}
+                    title="Labeled segments missing char_id — required for per-char golden template"
+                  >
+                    ⚠ {missingCharIdCount} no char
+                  </span>
+                )}
               </span>
               {autoSaveStatus === 'saving' && (
                 <span style={{ fontSize: '11px', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -879,6 +904,35 @@ export default function LabelTab({ project, onRefresh }: Props) {
                   {/* Color dot */}
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: segColor(seg.label ?? null), flexShrink: 0, display: 'inline-block' }} />
                   <span style={{ color: '#6b7280', flexShrink: 0 }}>Char {si + 1}</span>
+
+                  {/* char_id input — required when label set; red border if empty */}
+                  {(() => {
+                    const needsChar = (seg.label === 'OK' || seg.label === 'NG') && !seg.char_id;
+                    return (
+                      <input
+                        type="text"
+                        value={seg.char_id ?? ''}
+                        onChange={e => handleCharIdChange(region.id, seg.id, e.target.value)}
+                        onClick={e => e.stopPropagation()}
+                        maxLength={1}
+                        placeholder="?"
+                        title={needsChar ? 'char_id required' : 'Character identity'}
+                        style={{
+                          width: 28,
+                          fontSize: '12px',
+                          padding: '2px 4px',
+                          borderRadius: '4px',
+                          border: `1.5px solid ${needsChar ? '#ef4444' : '#334155'}`,
+                          background: needsChar ? 'rgba(239,68,68,.08)' : '#0f1117',
+                          color: '#e5e7eb',
+                          textAlign: 'center',
+                          fontFamily: 'monospace',
+                          outline: 'none',
+                          flexShrink: 0,
+                        }}
+                      />
+                    );
+                  })()}
 
                   {/* Label select — syncs with canvas */}
                   <select

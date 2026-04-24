@@ -31,7 +31,8 @@ from app.models.ml_training import (
 from app.models.user import UserInDB
 from app.repositories.ml_training_repository import MLTrainingRepository
 from app.repositories.recipe_repository import RecipeRepository
-from app.services.ml_segment_service import segment_region
+from app.services.ml_char_ocr_service import recognize_chars
+from app.services.ml_segment_service import crop_segment, segment_region
 from app.services.ml_training_service import (
     generate_synthetic_crops,
     get_labeled_crops,
@@ -385,6 +386,24 @@ async def segment_image_region(
     except Exception as e:
         logger.exception("Segmentation failed")
         raise HTTPException(500, f"Segmentation error: {e}")
+
+    # Auto-OCR each segment to pre-populate char_id. Batch the ONNX call.
+    # User can still edit char_id manually in Label tab afterwards.
+    if segments:
+        def _ocr_all():
+            crops = [crop_segment(image_path, s) for s in segments]
+            return recognize_chars([c for c in crops if c is not None]), crops
+
+        try:
+            char_ids, crops = await asyncio.get_event_loop().run_in_executor(None, _ocr_all)
+            # char_ids is parallel to non-None crops; re-align back to segments
+            it = iter(char_ids)
+            for seg, crop in zip(segments, crops):
+                seg["char_id"] = next(it) if crop is not None else ""
+        except Exception as e:
+            logger.warning(f"[segment] OCR pass failed, leaving char_id empty: {e}")
+            for seg in segments:
+                seg.setdefault("char_id", "")
 
     return {"segments": segments, "count": len(segments)}
 
