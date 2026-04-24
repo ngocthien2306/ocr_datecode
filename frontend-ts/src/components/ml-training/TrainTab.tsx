@@ -94,59 +94,6 @@ const AUGMENT_OPTIONS = [
   { value: 5, label: '×5' },
 ];
 
-// ── Collapsible section — supports both uncontrolled (internal state +
-//    localStorage) and controlled (accordion) modes. Pass `open` + `onToggle`
-//    to control externally; omit both for internal state.
-function CollapsibleSection({
-  title, summary, defaultOpen = false, storageKey,
-  open: controlledOpen, onToggle,
-  children,
-}: {
-  title: string;
-  summary?: React.ReactNode;
-  defaultOpen?: boolean;
-  storageKey?: string;
-  open?: boolean;
-  onToggle?: () => void;
-  children: React.ReactNode;
-}) {
-  const isControlled = controlledOpen !== undefined;
-  const [uncontrolledOpen, setUncontrolledOpen] = useState(() => {
-    if (storageKey) {
-      const saved = localStorage.getItem(storageKey);
-      if (saved !== null) return saved === '1';
-    }
-    return defaultOpen;
-  });
-  const open = isControlled ? controlledOpen : uncontrolledOpen;
-  const toggle = () => {
-    if (isControlled) {
-      onToggle?.();
-      return;
-    }
-    setUncontrolledOpen(v => {
-      const next = !v;
-      if (storageKey) localStorage.setItem(storageKey, next ? '1' : '0');
-      return next;
-    });
-  };
-  return (
-    <div className={`ml-collapsible ${open ? 'open' : ''}`}>
-      <button type="button" className="ml-collapsible-header" onClick={toggle}>
-        <svg className="ml-collapsible-chevron" width="10" height="10" viewBox="0 0 10 10">
-          <path d="M3 1 L7 5 L3 9" stroke="currentColor" strokeWidth="1.5"
-                fill="none" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-        <span className="ml-collapsible-title">{title}</span>
-        {summary != null && <span className="ml-collapsible-summary">{summary}</span>}
-      </button>
-      {open && <div className="ml-collapsible-body">{children}</div>}
-    </div>
-  );
-}
-
-type AccordionKey = 'augment' | 'threshold' | 'history' | null;
-
 // ── Lazy image: only renders <img> when it enters the viewport ─────────────
 function LazyImage({ src, alt }: { src: string; alt: string }) {
   const [visible, setVisible] = useState(false);
@@ -441,29 +388,8 @@ export default function TrainTab({ project, onRefresh }: Props) {
   const [maxIter, setMaxIter] = useState(500);
   const [svmC, setSvmC] = useState(1.0);
   const [threshold, setThreshold] = useState(50); // percent, 0–100
-  const [thresholdK, setThresholdK] = useState(2.0);          // golden_dist: min(mean + k*std, p95*1.1)
+  const [thresholdK, setThresholdK] = useState(3.0);          // golden_dist: mean + k*std
   const [contamination, setContamination] = useState(0.05);    // anomaly: IF contamination
-
-  // Accordion — only one of {augment, threshold, history} open at a time.
-  // Persisted so reload remembers which section was active.
-  const [openSection, setOpenSection] = useState<AccordionKey>(() => {
-    const saved = localStorage.getItem('ml-train.openSection') as AccordionKey;
-    return saved === 'augment' || saved === 'threshold' || saved === 'history' ? saved : 'augment';
-  });
-  const toggleSection = useCallback((key: AccordionKey) => {
-    setOpenSection(prev => {
-      const next = prev === key ? null : key;
-      localStorage.setItem('ml-train.openSection', next ?? '');
-      return next;
-    });
-  }, []);
-  // If the currently-open section is hidden (OK Threshold hidden for one-class
-  // algorithms), fall back to Augmentation so the left column isn't silent.
-  useEffect(() => {
-    if (openSection === 'threshold' && algorithm !== 'rf' && algorithm !== 'svm' && algorithm !== 'mlp') {
-      setOpenSection('augment');
-    }
-  }, [algorithm, openSection]);
 
   // Training state
   const [training, setTraining] = useState(false);
@@ -706,28 +632,29 @@ export default function TrainTab({ project, onRefresh }: Props) {
 
         <div className="ml-section-title">Algorithm</div>
         <div className="ml-form-group">
-          <select
-            className="ml-form-select"
-            value={algorithm}
-            onChange={e => setAlgorithm(e.target.value as typeof algorithm)}
-          >
-            <optgroup label="Binary (needs OK + NG)">
-              <option value="rf">Random Forest</option>
-              <option value="svm">SVM (RBF kernel)</option>
-              <option value="mlp">Neural Net (MLP)</option>
-            </optgroup>
-            <optgroup label="One-class (OK only)">
-              <option value="golden_dist">Golden Distance · Cognex OCVMax style</option>
-              <option value="anomaly">IsolationForest anomaly · Cognex ViDi Red style</option>
-            </optgroup>
-          </select>
-          <div className="ml-algo-desc">
-            {algorithm === 'rf' && 'Tree ensemble on feature vectors. Robust default for binary classification.'}
-            {algorithm === 'svm' && 'Support vectors with RBF kernel. Good when data is low-volume but cleanly separable.'}
-            {algorithm === 'mlp' && 'Small neural net. Needs more data but can capture non-linear patterns.'}
-            {algorithm === 'golden_dist' && 'Pixel-wise distance to per-char golden template, thresholded against OK distribution. No NG samples required.'}
-            {algorithm === 'anomaly' && 'IsolationForest learns the OK manifold; anything unusual is flagged NG. No NG samples required.'}
-          </div>
+          {([
+            { key: 'rf',           label: 'Random Forest',                tag: 'Binary (needs OK + NG)' },
+            { key: 'svm',          label: 'SVM (RBF kernel)',             tag: 'Binary (needs OK + NG)' },
+            { key: 'mlp',          label: 'Neural Net (MLP)',             tag: 'Binary (needs OK + NG)' },
+            { key: 'golden_dist',  label: 'Golden Distance',              tag: 'One-class (OK only) · Cognex OCVMax style' },
+            { key: 'anomaly',      label: 'IsolationForest anomaly',      tag: 'One-class (OK only) · Cognex ViDi Red style' },
+          ] as const).map(opt => (
+            <label key={opt.key}
+              style={{
+                display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer',
+                padding: '4px 0', opacity: algorithm === opt.key ? 1 : 0.7,
+              }}>
+              <input type="radio" name="algorithm" value={opt.key}
+                checked={algorithm === opt.key}
+                onChange={() => setAlgorithm(opt.key)} />
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: '13px', fontWeight: algorithm === opt.key ? 600 : 400 }}>
+                  {opt.label}
+                </span>
+                <span style={{ fontSize: '10px', opacity: 0.65 }}>{opt.tag}</span>
+              </div>
+            </label>
+          ))}
         </div>
 
         {algorithm === 'rf' && (
@@ -748,12 +675,12 @@ export default function TrainTab({ project, onRefresh }: Props) {
         {algorithm === 'golden_dist' && (
           <div className="ml-form-group">
             <label className="ml-form-label">
-              Threshold K (mean + K·std, capped at p95·1.1)
+              Threshold K (mean + K·std of OK scores)
             </label>
-            <input className="ml-form-input" type="number" min={0.5} max={4} step={0.1}
+            <input className="ml-form-input" type="number" min={1} max={6} step={0.1}
               value={thresholdK} onChange={e => setThresholdK(Number(e.target.value))} />
             <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
-              Lower K = stricter (more rejects) · 2.0 is the recommended default · try 1.0–1.5 if NG gets missed
+              Lower K = stricter (more rejects) · 3.0 covers ~99.7% of OK distribution
             </div>
           </div>
         )}
@@ -785,18 +712,10 @@ export default function TrainTab({ project, onRefresh }: Props) {
         )}
 
         {/* ── Augmentation ── */}
-        <CollapsibleSection
-          title="Augmentation (NG)"
-          open={openSection === 'augment'}
-          onToggle={() => toggleSection('augment')}
-          summary={
-            augmentFactor >= 2
-              ? <span className="ml-collapsible-summary-chip active">×{augmentFactor}</span>
-              : <span className="ml-collapsible-summary-chip">off</span>
-          }
-        >
-          <div className="ml-subhint">Generate synthetic NG from OK samples</div>
-          <div className="ml-augment-row">
+        <div className="ml-section-title">Augmentation (NG)</div>
+        <div className="ml-form-group">
+          <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '6px' }}>Generate synthetic NG from OK samples</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
             <div className="ml-augment-options">
               {AUGMENT_OPTIONS.map(opt => (
                 <button key={opt.value}
@@ -805,10 +724,11 @@ export default function TrainTab({ project, onRefresh }: Props) {
               ))}
             </div>
             {augmentFactor >= 2 && (
-              <div className="ml-augment-preview">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginLeft: 'auto' }}>
                 {(['NG', 'OK', 'BOTH'] as const).map(lbl => (
                   <button key={lbl}
-                    className={`ml-augment-chip ml-augment-chip-sm ${previewLabel === lbl ? 'selected' : ''}`}
+                    className={`ml-augment-chip ${previewLabel === lbl ? 'selected' : ''}`}
+                    style={{ padding: '3px 8px', fontSize: '11px' }}
                     onClick={() => { setPreviewLabel(lbl); handlePreviewSynthetic(lbl); }}
                     title={lbl === 'OK' ? 'Preview mild OK augmentations'
                          : lbl === 'NG' ? 'Preview destructive NG augmentations'
@@ -838,57 +758,49 @@ export default function TrainTab({ project, onRefresh }: Props) {
             const totalOk = nOk + augOk;
             const totalNg = nNg + augNg;
             return (
-              <div className="ml-subhint ml-augment-total">
+              <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>
                 → OK: {nOk} real + {augOk} aug = <b>{totalOk}</b> &nbsp;|&nbsp;
                 NG: {nNg} real + {augNg} aug = <b>{totalNg}</b>
               </div>
             );
           })()}
-        </CollapsibleSection>
+        </div>
 
-        {/* ── OK Threshold — only for binary classifiers ── */}
-        {(algorithm === 'rf' || algorithm === 'svm' || algorithm === 'mlp') && (
-          <CollapsibleSection
-            title="OK Threshold"
-            open={openSection === 'threshold'}
-            onToggle={() => toggleSection('threshold')}
-            summary={
-              <span className={`ml-collapsible-summary-chip ${threshold !== 50 ? 'active' : ''}`}>
-                {threshold}%
-              </span>
-            }
-          >
-            <div className="ml-subhint">prob_ok ≥ threshold → classified as OK</div>
-            <div className="ml-threshold-row">
-              <input
-                type="range"
-                min={1} max={99} step={1}
-                value={threshold}
-                onChange={e => setThreshold(Number(e.target.value))}
-                style={{ flex: 1, accentColor: '#3b82f6' }}
-              />
-              <input
-                type="number"
-                min={1} max={99} step={1}
-                value={threshold}
-                onChange={e => {
-                  const v = Math.min(99, Math.max(1, Number(e.target.value)));
-                  setThreshold(v);
-                }}
-                className="ml-form-input"
-                style={{ width: '58px', textAlign: 'center', padding: '4px 6px' }}
-              />
-              <span style={{ fontSize: '12px', opacity: 0.6, flexShrink: 0 }}>%</span>
+        {/* ── OK Threshold ── */}
+        <div className="ml-section-title">OK Threshold</div>
+        <div className="ml-form-group">
+          <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px' }}>
+            prob_ok ≥ threshold → classified as OK
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <input
+              type="range"
+              min={1} max={99} step={1}
+              value={threshold}
+              onChange={e => setThreshold(Number(e.target.value))}
+              style={{ flex: 1, accentColor: '#3b82f6' }}
+            />
+            <input
+              type="number"
+              min={1} max={99} step={1}
+              value={threshold}
+              onChange={e => {
+                const v = Math.min(99, Math.max(1, Number(e.target.value)));
+                setThreshold(v);
+              }}
+              className="ml-form-input"
+              style={{ width: '58px', textAlign: 'center', padding: '4px 6px' }}
+            />
+            <span style={{ fontSize: '12px', color: '#6b7280', flexShrink: 0 }}>%</span>
+          </div>
+          {threshold !== 50 && (
+            <div style={{ fontSize: '11px', color: '#fbbf24' }}>
+              {threshold < 50
+                ? `↓ Looser — more crops will be OK`
+                : `↑ Stricter — fewer crops will be OK`}
             </div>
-            {threshold !== 50 && (
-              <div className="ml-threshold-hint">
-                {threshold < 50
-                  ? `↓ Looser — more crops will be OK`
-                  : `↑ Stricter — fewer crops will be OK`}
-              </div>
-            )}
-          </CollapsibleSection>
-        )}
+          )}
+        </div>
 
         {/* ── Train Preview — per-char breakdown before user clicks Train ── */}
         {(() => {
@@ -954,36 +866,29 @@ export default function TrainTab({ project, onRefresh }: Props) {
 
         {/* ── History ── */}
         {models.length > 0 && (
-          <CollapsibleSection
-            title="History"
-            open={openSection === 'history'}
-            onToggle={() => toggleSection('history')}
-            summary={<span className="ml-collapsible-summary-chip">{models.length}</span>}
-          >
-            <div className="ml-history-list">
+          <>
+            <div className="ml-section-title">History</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               {models.slice(0, 5).map(m => (
                 <div key={m.id} className="ml-history-card">
-                  <div className="ml-history-head">
-                    <span className="ml-history-algo">{m.algorithm.toUpperCase()}</span>
-                    <span className={`ml-history-status ${m.status}`}>{m.status}</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ opacity: 0.75 }}>{m.algorithm.toUpperCase()}</span>
+                    <span style={{ color: m.status === 'completed' ? '#22c55e' : m.status === 'failed' ? '#ef4444' : '#f59e0b' }}>
+                      {m.status}
+                    </span>
                   </div>
                   {m.status === 'completed' && (
-                    <div className="ml-history-detail">
+                    <div style={{ opacity: 0.6, marginTop: '2px' }}>
                       Test acc: {(m.metrics.accuracy_test * 100).toFixed(1)}%
                     </div>
                   )}
                   {m.status === 'failed' && m.error && (
-                    <div className="ml-history-error">{m.error}</div>
+                    <div style={{ color: '#ef4444', marginTop: '2px', wordBreak: 'break-word' }}>{m.error}</div>
                   )}
                 </div>
               ))}
-              {models.length > 5 && (
-                <div className="ml-subhint" style={{ textAlign: 'center' }}>
-                  + {models.length - 5} older model(s)
-                </div>
-              )}
             </div>
-          </CollapsibleSection>
+          </>
         )}
       </div>
 
