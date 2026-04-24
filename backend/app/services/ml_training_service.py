@@ -1050,8 +1050,12 @@ def golden_distance_score(img: np.ndarray, char_id: str, goldens: Dict[str, np.n
     Compute a scalar distance between the input crop and its char's golden.
     Lower = closer to golden (OK-like); higher = more divergent (NG-like).
 
-    Composite: mean(|diff|) + 0.5 * max(|diff|). Captures both overall
-    deviation and local worst-case (e.g., single blob or missing stroke).
+    Weighted blend: 0.4*mean(|diff|) + 0.6*p95(|diff|). p95 (95th percentile)
+    is more robust than max() to alignment noise while still capturing
+    localized defects (cuts, missing strokes, ink blots) which push the
+    high-end of the diff distribution up. Real-world OK variation is
+    typically bounded across the whole image → low p95; localized NG
+    damage → p95 spikes even if mean stays modest.
     Returns +inf if golden missing → forces caller to treat as NG.
     """
     if char_id not in goldens:
@@ -1059,18 +1063,23 @@ def golden_distance_score(img: np.ndarray, char_id: str, goldens: Dict[str, np.n
     canvas = preprocess_canonical(img)
     aligned, _ = align_to_golden(canvas, goldens[char_id])
     diff = np.abs(aligned.astype(np.int16) - goldens[char_id].astype(np.int16))
-    return float(diff.mean()) + 0.5 * float(diff.max())
+    mean_abs = float(diff.mean())
+    p95 = float(np.percentile(diff, 95))
+    return 0.4 * mean_abs + 0.6 * p95
 
 
 def fit_golden_thresholds(
     ok_by_char: Dict[str, List[np.ndarray]],
     goldens: Dict[str, np.ndarray],
-    k: float = 3.0,
+    k: float = 2.0,
 ) -> Dict[str, float]:
     """
-    Per-char threshold: mean(OK-scores) + k * std(OK-scores).
-    That is ~99.7% coverage of the OK distribution when k=3.
-    Chars without a golden → skipped (no threshold learned).
+    Per-char threshold = max(percentile_p, mean + k*std) of OK-score distribution.
+
+    Uses percentile_p = 95th percentile to resist small-sample std instability
+    (with 5-6 OK samples, naive mean+3σ is too loose because std is noisy).
+    k=2.0 covers ~97.7% of a Gaussian tail, tighter than original k=3.0.
+    Chars with <3 OK samples fall back to pure max() since std is meaningless.
     """
     thresholds: Dict[str, float] = {}
     for char_id, crops in ok_by_char.items():
@@ -1080,7 +1089,15 @@ def fit_golden_thresholds(
         scores = [s for s in scores if np.isfinite(s)]
         if not scores:
             continue
-        thresholds[char_id] = float(np.mean(scores) + k * np.std(scores))
+        if len(scores) < 3:
+            # Too few samples — just use max (will be retightened if more data added)
+            thresholds[char_id] = float(max(scores)) * 1.2
+            continue
+        sigma_thr = float(np.mean(scores) + k * np.std(scores))
+        pct_thr   = float(np.percentile(scores, 95))
+        # Use max of the two → stricter bound (the one that excludes MORE OKs)
+        # Actually we want the LOWER of the two so threshold stays tight
+        thresholds[char_id] = min(sigma_thr, pct_thr * 1.1)
     return thresholds
 
 

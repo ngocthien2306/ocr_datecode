@@ -124,7 +124,7 @@ class TrainRequest(BaseModel):
     C: float = 1.0                  # SVM only
     hidden_layer_sizes: List[int] = [128, 64]  # MLP only
     # Golden-distance params
-    threshold_k: float = 3.0        # threshold = mean(ok_scores) + k*std(ok_scores)
+    threshold_k: float = 2.0        # threshold = min(mean + k*std, p95 * 1.1)
     # IsolationForest params
     contamination: float = 0.05     # expected outlier fraction in OK training set
 
