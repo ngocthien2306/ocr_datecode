@@ -89,11 +89,11 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
                 rx = np.random.randint(0, max(1, w - rw))
                 aug[ry:ry + rh, rx:rx + rw] = 0
         elif choice == 2:
-            k = np.random.randint(4, 7)
+            k = np.random.randint(7, 10)
             kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
             aug = cv.erode(aug, kernel, iterations=1)
         elif choice == 3:
-            k = np.random.randint(12, 15)
+            k = np.random.randint(4, 7)
             kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
             aug = cv.dilate(aug, kernel, iterations=1)
         elif choice == 4:
