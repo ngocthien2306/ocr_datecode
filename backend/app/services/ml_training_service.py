@@ -92,7 +92,7 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
                 # Chọn ngẫu nhiên vệt ngang hay vệt dọc
                 if np.random.rand() < 0.5:
                     # Vệt ngang: rộng hết ảnh, cao mỏng
-                    rh = np.random.randint(max(2, h // 20), max(4, h // 8))
+                    rh = np.random.randint(max(5, h // 15), max(6, h // 6))
                     ry = np.random.randint(0, max(1, h - rh))
                     aug[ry:ry + rh, :] = bg_color
                 else:
