@@ -22,7 +22,10 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-FEAT_SIZE = (32, 32)
+FEAT_SIZE = (48, 48)
+GRID = 6
+CELL_SIZE = FEAT_SIZE[0] // GRID
+FEAT_DIM = 576 + 144 + 32 + 96 + 8   # 856
 
 
 def _to_gray(img: np.ndarray) -> np.ndarray:
@@ -34,12 +37,18 @@ def _to_gray(img: np.ndarray) -> np.ndarray:
 def extract_features(char_img: np.ndarray) -> np.ndarray:
     """
     Port of backend's extract_features — MUST stay in sync.
-    1120-dim: 32x32 pixels (1024) + Sobel Gx/Gy hists (32) + H/V projections (64).
+
+    856-dim feature vector:
+      - 24×24 downsampled pixels (576) — global shape
+      - 6×6 grid × 4 cell stats (144)  — LOCAL defect signal
+      - Sobel Gx/Gy histograms (32)    — stroke orientation
+      - H/V projections (96)           — row/column sums
+      - 2×2 quadrant Sobel mag (8)     — coarse gradient energy
     """
     gray = _to_gray(char_img)
     h, w = gray.shape[:2]
     if h == 0 or w == 0:
-        return np.zeros(1120, dtype=np.float32)
+        return np.zeros(FEAT_DIM, dtype=np.float32)
 
     scale = min(FEAT_SIZE[0] / w, FEAT_SIZE[1] / h)
     nw = max(1, int(w * scale))
@@ -50,8 +59,26 @@ def extract_features(char_img: np.ndarray) -> np.ndarray:
     xo = (FEAT_SIZE[0] - nw) // 2
     canvas[yo:yo + nh, xo:xo + nw] = resized
 
-    pixels = canvas.astype(np.float32).flatten() / 255.0
+    # 1) Global downsampled pixels (24×24 = 576)
+    small = cv2.resize(canvas, (24, 24), interpolation=cv2.INTER_AREA)
+    pixels = small.astype(np.float32).flatten() / 255.0
 
+    # 2) 6×6 grid local stats (144)
+    edges = cv2.Canny(canvas, 50, 150)
+    cell_stats = []
+    for i in range(GRID):
+        for j in range(GRID):
+            y0, y1 = i * CELL_SIZE, (i + 1) * CELL_SIZE
+            x0, x1 = j * CELL_SIZE, (j + 1) * CELL_SIZE
+            cell = canvas[y0:y1, x0:x1]
+            edge_cell = edges[y0:y1, x0:x1]
+            cell_stats.append(float(cell.mean()) / 255.0)
+            cell_stats.append(float(cell.std()) / 128.0)
+            cell_stats.append(float(np.count_nonzero(edge_cell)) / (CELL_SIZE * CELL_SIZE))
+            cell_stats.append(float(cell.min()) / 255.0)
+    cell_arr = np.asarray(cell_stats, dtype=np.float32)
+
+    # 3) Sobel Gx/Gy histograms (32)
     gx = cv2.Sobel(canvas, cv2.CV_32F, 1, 0, ksize=3)
     gy = cv2.Sobel(canvas, cv2.CV_32F, 0, 1, ksize=3)
     hist_gx = np.histogram(gx, bins=16, range=(-255, 255))[0].astype(np.float32)
@@ -59,10 +86,22 @@ def extract_features(char_img: np.ndarray) -> np.ndarray:
     hist_gx /= hist_gx.sum() + 1e-6
     hist_gy /= hist_gy.sum() + 1e-6
 
+    # 4) H/V projections (96)
     h_proj = canvas.astype(np.float32).sum(axis=1) / (FEAT_SIZE[0] * 255.0 + 1e-6)
     v_proj = canvas.astype(np.float32).sum(axis=0) / (FEAT_SIZE[1] * 255.0 + 1e-6)
 
-    return np.concatenate([pixels, hist_gx, hist_gy, h_proj, v_proj])
+    # 5) Sobel magnitude per 2×2 quadrant (8)
+    sob = np.hypot(gx, gy)
+    qsize = FEAT_SIZE[0] // 2
+    quad_stats = []
+    for qi in range(2):
+        for qj in range(2):
+            q = sob[qi * qsize:(qi + 1) * qsize, qj * qsize:(qj + 1) * qsize]
+            quad_stats.append(float(q.mean()) / 255.0)
+            quad_stats.append(float(q.std()) / 255.0)
+    quad_arr = np.asarray(quad_stats, dtype=np.float32)
+
+    return np.concatenate([pixels, cell_arr, hist_gx, hist_gy, h_proj, v_proj, quad_arr])
 
 
 class MLClassifierService:

@@ -19,7 +19,10 @@ from app.services.ml_segment_service import crop_segment, segment_region
 
 logger = logging.getLogger(__name__)
 
-FEAT_SIZE = (32, 32)
+FEAT_SIZE = (48, 48)   # resolution to catch smaller defects
+GRID = 6               # 6×6 grid → 36 cells of 8×8 each
+CELL_SIZE = FEAT_SIZE[0] // GRID
+FEAT_DIM = 576 + 144 + 32 + 96 + 8   # 856
 
 
 # ──────────────────────────────────────── Feature extraction ──
@@ -32,16 +35,27 @@ def _to_gray(img: np.ndarray) -> np.ndarray:
 
 def extract_features(char_img: np.ndarray) -> np.ndarray:
     """
-    Extract 1120-dim feature vector:
-      - 32×32 normalized pixels (1024)
-      - Sobel Gx/Gy histograms (32)
-      - H/V projection profiles (64)
+    Extract 856-dim feature vector mixing global + LOCAL signals.
+
+    Layout:
+      - 24×24 downsampled pixels (576)        — global shape
+      - 6×6 grid × 4 stats/cell (144)         — LOCAL defect signal
+           mean, std, edge density, min-pixel
+      - Sobel Gx/Gy histograms (32)           — stroke orientation
+      - H/V projection profiles (96)          — row/column sums
+      - 2×2 quadrant Sobel mag stats (8)      — coarse gradient energy
+
+    Grid cell stats are the key upgrade: a tiny local defect (e.g. 6-12px
+    ink blot / cut) concentrates in 1-2 cells → their mean/std/edge/min
+    diverge sharply from neighbours, giving RF/MLP a strong local signal
+    that the original global-only features washed out.
     """
     gray = _to_gray(char_img)
     h, w = gray.shape[:2]
     if h == 0 or w == 0:
-        return np.zeros(1120, dtype=np.float32)
+        return np.zeros(FEAT_DIM, dtype=np.float32)
 
+    # Resize preserving aspect, pad to FEAT_SIZE
     scale = min(FEAT_SIZE[0] / w, FEAT_SIZE[1] / h)
     nw = max(1, int(w * scale))
     nh = max(1, int(h * scale))
@@ -51,8 +65,26 @@ def extract_features(char_img: np.ndarray) -> np.ndarray:
     xo = (FEAT_SIZE[0] - nw) // 2
     canvas[yo:yo + nh, xo:xo + nw] = resized
 
-    pixels = canvas.astype(np.float32).flatten() / 255.0
+    # --- 1) Global downsampled pixels (24×24 = 576) ---
+    small = cv.resize(canvas, (24, 24), interpolation=cv.INTER_AREA)
+    pixels = small.astype(np.float32).flatten() / 255.0
 
+    # --- 2) 6×6 grid local stats (36 cells × 4 = 144) ---
+    edges = cv.Canny(canvas, 50, 150)
+    cell_stats: List[float] = []
+    for i in range(GRID):
+        for j in range(GRID):
+            y0, y1 = i * CELL_SIZE, (i + 1) * CELL_SIZE
+            x0, x1 = j * CELL_SIZE, (j + 1) * CELL_SIZE
+            cell = canvas[y0:y1, x0:x1]
+            edge_cell = edges[y0:y1, x0:x1]
+            cell_stats.append(float(cell.mean()) / 255.0)
+            cell_stats.append(float(cell.std()) / 128.0)
+            cell_stats.append(float(np.count_nonzero(edge_cell)) / (CELL_SIZE * CELL_SIZE))
+            cell_stats.append(float(cell.min()) / 255.0)
+    cell_arr = np.asarray(cell_stats, dtype=np.float32)
+
+    # --- 3) Sobel Gx/Gy histograms (16 + 16 = 32) ---
     gx = cv.Sobel(canvas, cv.CV_32F, 1, 0, ksize=3)
     gy = cv.Sobel(canvas, cv.CV_32F, 0, 1, ksize=3)
     hist_gx = np.histogram(gx, bins=16, range=(-255, 255))[0].astype(np.float32)
@@ -60,10 +92,22 @@ def extract_features(char_img: np.ndarray) -> np.ndarray:
     hist_gx /= hist_gx.sum() + 1e-6
     hist_gy /= hist_gy.sum() + 1e-6
 
+    # --- 4) H/V projection profiles (48 + 48 = 96) ---
     h_proj = canvas.astype(np.float32).sum(axis=1) / (FEAT_SIZE[0] * 255.0 + 1e-6)
     v_proj = canvas.astype(np.float32).sum(axis=0) / (FEAT_SIZE[1] * 255.0 + 1e-6)
 
-    return np.concatenate([pixels, hist_gx, hist_gy, h_proj, v_proj])
+    # --- 5) Sobel magnitude stats per 2×2 quadrant (4 × 2 = 8) ---
+    sob = np.hypot(gx, gy)
+    qsize = FEAT_SIZE[0] // 2
+    quad_stats: List[float] = []
+    for qi in range(2):
+        for qj in range(2):
+            q = sob[qi * qsize:(qi + 1) * qsize, qj * qsize:(qj + 1) * qsize]
+            quad_stats.append(float(q.mean()) / 255.0)
+            quad_stats.append(float(q.std()) / 255.0)
+    quad_arr = np.asarray(quad_stats, dtype=np.float32)
+
+    return np.concatenate([pixels, cell_arr, hist_gx, hist_gy, h_proj, v_proj, quad_arr])
 
 
 # ──────────────────────────────────────── Augmentation helpers ──
@@ -168,8 +212,10 @@ def _ng_transform(aug: np.ndarray, choice: int) -> np.ndarray:
         for _ in range(num_cuts):
             i = int(np.random.randint(0, len(xs)))
             cx, cy = int(xs[i]), int(ys[i])
-            patch_w = int(np.random.randint(3, 7))
-            patch_h = int(np.random.randint(3, 7))
+            # Larger patches — previous 3-7px was nearly invisible after 32×32
+            # downsample; 6-12px survives the 48×48 grid stats.
+            patch_w = int(np.random.randint(6, 13))
+            patch_h = int(np.random.randint(6, 13))
             x0 = max(0, cx - patch_w // 2)
             y0 = max(0, cy - patch_h // 2)
             x1 = min(w, x0 + patch_w)
@@ -206,27 +252,27 @@ def _ng_transform(aug: np.ndarray, choice: int) -> np.ndarray:
         bg = _estimate_bg_color(aug)
         out = aug.copy()
         if np.random.rand() < 0.5:
-            # Horizontal strip — cut across full width
-            thickness = int(np.random.randint(max(2, int(h * 0.04)),
-                                              max(5, int(h * 0.12))))
+            # Horizontal strip — cut across full width (6-18% of height)
+            thickness = int(np.random.randint(max(3, int(h * 0.06)),
+                                              max(8, int(h * 0.18))))
             y0 = int(np.random.randint(0, max(1, h - thickness)))
             out[y0:y0 + thickness, :] = bg
         else:
-            # Vertical strip — cut across full height
-            thickness = int(np.random.randint(max(2, int(w * 0.04)),
-                                              max(5, int(w * 0.12))))
+            # Vertical strip — cut across full height (6-18% of width)
+            thickness = int(np.random.randint(max(3, int(w * 0.06)),
+                                              max(8, int(w * 0.18))))
             x0 = int(np.random.randint(0, max(1, w - thickness)))
             out[:, x0:x0 + thickness] = bg
         return out
 
     if choice == 5:
-        # Ink blot — chấm đen (fg color) 3-5px tại vị trí ngẫu nhiên
+        # Ink blot — chấm fg_color 3-8px radius (đủ lớn để survive downsample)
         fg = _estimate_fg_color(aug)
         num_blots = int(np.random.randint(1, 3))
         for _ in range(num_blots):
-            cx = int(np.random.randint(2, max(3, w - 2)))
-            cy = int(np.random.randint(2, max(3, h - 2)))
-            radius = int(np.random.randint(2, 5))
+            cx = int(np.random.randint(3, max(4, w - 3)))
+            cy = int(np.random.randint(3, max(4, h - 3)))
+            radius = int(np.random.randint(3, 9))
             cv.circle(aug, (cx, cy), radius, fg if np.isscalar(fg) else tuple(fg.tolist()), -1)
         return aug
 
@@ -470,6 +516,7 @@ def _build_classifier(request: TrainRequest):
             min_samples_leaf=2,
             random_state=42,
             n_jobs=-1,
+            class_weight="balanced",   # safety net for imbalanced datasets
         )
     elif algo == "svm":
         from sklearn.svm import SVC
@@ -479,6 +526,7 @@ def _build_classifier(request: TrainRequest):
             probability=True,
             max_iter=request.max_iter,
             random_state=42,
+            class_weight="balanced",
         )
     elif algo == "mlp":
         from sklearn.neural_network import MLPClassifier
