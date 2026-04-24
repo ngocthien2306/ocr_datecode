@@ -73,7 +73,7 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
     gray = _to_gray(char_img)
     h, w = gray.shape[:2]
     results = []
-    num_aug_types = 6
+    num_aug_types = 4
     choices = np.random.choice(num_aug_types, size=n, replace=n > num_aug_types)
     for choice in choices:
         aug = gray.copy()
@@ -91,13 +91,13 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
             for _c in range(num_cuts):
                 # Chọn ngẫu nhiên vệt ngang hay vệt dọc
                 if np.random.rand() < 0.5:
-                    # Vệt ngang: rộng hết ảnh, cao mỏng
-                    rh = np.random.randint(max(5, h // 15), max(6, h // 6))
+                    # Vệt ngang: rộng hết ảnh, cao dày
+                    rh = np.random.randint(max(8, h // 8), max(10, h // 3))
                     ry = np.random.randint(0, max(1, h - rh))
                     aug[ry:ry + rh, :] = bg_color
                 else:
-                    # Vệt dọc: cao hết ảnh, rộng mỏng
-                    rw = np.random.randint(max(5, w // 15), max(6, w //68))
+                    # Vệt dọc: cao hết ảnh, rộng dày
+                    rw = np.random.randint(max(8, w // 8), max(10, w // 3))
                     rx = np.random.randint(0, max(1, w - rw))
                     aug[:, rx:rx + rw] = bg_color
         elif choice == 2:
@@ -108,14 +108,14 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
             k = np.random.randint(4, 7)
             kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
             aug = cv.dilate(aug, kernel, iterations=1)
-        elif choice == 4:
-            dx = np.random.randint(-w // 3, w // 3 + 1)
-            dy = np.random.randint(-h // 3, h // 3 + 1)
-            M = np.float32([[1, 0, dx], [0, 1, dy]])
-            aug = cv.warpAffine(aug, M, (w, h), borderValue=255)
-        elif choice == 5:
-            k = np.random.choice([17, 19, 21, 23])
-            aug = cv.GaussianBlur(aug, (k, k), 0)
+        # elif choice == 4:
+        #     dx = np.random.randint(-w // 3, w // 3 + 1)
+        #     dy = np.random.randint(-h // 3, h // 3 + 1)
+        #     M = np.float32([[1, 0, dx], [0, 1, dy]])
+        #     aug = cv.warpAffine(aug, M, (w, h), borderValue=255)
+        # elif choice == 5:
+        #     k = np.random.choice([17, 19, 21, 23])
+        #     aug = cv.GaussianBlur(aug, (k, k), 0)
         results.append(aug)
     return results
 
