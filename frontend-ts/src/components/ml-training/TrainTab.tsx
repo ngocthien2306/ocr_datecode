@@ -94,6 +94,40 @@ const AUGMENT_OPTIONS = [
   { value: 5, label: '×5' },
 ];
 
+/**
+ * Char-balanced NG augmentation math — mirrors backend build_dataset.
+ * target_ng_per_char = factor * max(n_ok_real across chars).
+ * Each char's NG is topped up to target; only chars with OK samples count.
+ *
+ * Returns per-class totals for display in the training preview.
+ */
+function computeAugmentStats(
+  crops: { char_id?: string | null; label: string }[],
+  factor: number,
+): { nOkReal: number; nNgReal: number; nNgAug: number; totalOk: number; totalNg: number } {
+  const okByChar = new Map<string, number>();
+  const ngByChar = new Map<string, number>();
+  for (const c of crops) {
+    const cid = (c.char_id || '').trim();
+    if (!cid) continue;  // no char_id → excluded from training
+    if (c.label === 'OK') okByChar.set(cid, (okByChar.get(cid) || 0) + 1);
+    else if (c.label === 'NG') ngByChar.set(cid, (ngByChar.get(cid) || 0) + 1);
+  }
+  const nOkReal = Array.from(okByChar.values()).reduce((a, b) => a + b, 0);
+  const nNgReal = Array.from(ngByChar.values()).reduce((a, b) => a + b, 0);
+
+  let nNgAug = 0;
+  if (factor >= 2 && okByChar.size > 0) {
+    const maxOk = Math.max(...okByChar.values());
+    const target = factor * maxOk;
+    for (const cid of okByChar.keys()) {
+      const deficit = Math.max(0, target - (ngByChar.get(cid) || 0));
+      nNgAug += deficit;
+    }
+  }
+  return { nOkReal, nNgReal, nNgAug, totalOk: nOkReal, totalNg: nNgReal + nNgAug };
+}
+
 // ── Lazy image: only renders <img> when it enters the viewport ─────────────
 function LazyImage({ src, alt }: { src: string; alt: string }) {
   const [visible, setVisible] = useState(false);
@@ -379,7 +413,6 @@ export default function TrainTab({ project, onRefresh }: Props) {
   // Synthetic preview
   const [syntheticCrops, setSyntheticCrops] = useState<SyntheticCrop[]>([]);
   const [loadingSynthetic, setLoadingSynthetic] = useState(false);
-  const [previewLabel, setPreviewLabel] = useState<'NG' | 'OK' | 'BOTH'>('NG');
 
   // Training config
   const [algorithm, setAlgorithm] = useState<'rf' | 'svm' | 'mlp'>('rf');
@@ -457,14 +490,14 @@ export default function TrainTab({ project, onRefresh }: Props) {
     setTestSetCrops([]);
   }, []);
 
-  // ── Preview synthetic ─────────────────────────────────────────────────
-  const handlePreviewSynthetic = async (label: 'NG' | 'OK' | 'BOTH' = previewLabel) => {
+  // ── Preview synthetic NG (only NG is generated — no OK augmentation) ──
+  const handlePreviewSynthetic = async () => {
     if (augmentFactor < 2) return;
     setLoadingSynthetic(true);
     setSyntheticCrops([]);
     setCropsTab('synthetic');
     try {
-      const data = await mlTrainingAPI.previewSynthetic(project.id, augmentFactor, label);
+      const data = await mlTrainingAPI.previewSynthetic(project.id, augmentFactor, 'NG');
       setSyntheticCrops(data.crops);
     } catch { /* ignore */ }
     finally { setLoadingSynthetic(false); }
@@ -680,43 +713,28 @@ export default function TrainTab({ project, onRefresh }: Props) {
               ))}
             </div>
             {augmentFactor >= 2 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginLeft: 'auto' }}>
-                {(['NG', 'OK', 'BOTH'] as const).map(lbl => (
-                  <button key={lbl}
-                    className={`ml-augment-chip ${previewLabel === lbl ? 'selected' : ''}`}
-                    style={{ padding: '3px 8px', fontSize: '11px' }}
-                    onClick={() => { setPreviewLabel(lbl); handlePreviewSynthetic(lbl); }}
-                    title={lbl === 'OK' ? 'Preview mild OK augmentations'
-                         : lbl === 'NG' ? 'Preview destructive NG augmentations'
-                         : 'Preview both OK and NG'}>
-                    {lbl}
-                  </button>
-                ))}
-                <button className="ml-btn ml-btn-secondary ml-btn-sm"
-                  onClick={() => handlePreviewSynthetic()} disabled={loadingSynthetic}
-                  title="Preview synthetic crops">
-                  {loadingSynthetic
-                    ? <span className="ml-loading-spinner" style={{ width: 12, height: 12, borderWidth: 2 }} />
-                    : <><svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-                        <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
-                      </svg> Preview</>
-                  }
-                </button>
-              </div>
+              <button className="ml-btn ml-btn-secondary ml-btn-sm"
+                style={{ marginLeft: 'auto' }}
+                onClick={() => handlePreviewSynthetic()} disabled={loadingSynthetic}
+                title="Preview synthetic NG crops generated from OK samples">
+                {loadingSynthetic
+                  ? <span className="ml-loading-spinner" style={{ width: 12, height: 12, borderWidth: 2 }} />
+                  : <><svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
+                    </svg> Preview NG</>
+                }
+              </button>
             )}
           </div>
           {augmentFactor >= 2 && (() => {
-            const nOk = okCrops.length;
-            const nNg = crops.filter(c => c.label === 'NG').length;
-            const augNg = (augmentFactor - 1) * nOk;
-            const augOk = nNg + Math.max(0, augmentFactor - 2) * nOk;
-            const totalOk = nOk + augOk;
-            const totalNg = nNg + augNg;
+            const { nOkReal, nNgReal, nNgAug, totalOk, totalNg } =
+              computeAugmentStats(crops, augmentFactor);
             return (
               <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>
-                → OK: {nOk} real + {augOk} aug = <b>{totalOk}</b> &nbsp;|&nbsp;
-                NG: {nNg} real + {augNg} aug = <b>{totalNg}</b>
+                → OK: <b>{totalOk}</b> (no aug) &nbsp;|&nbsp;
+                NG: {nNgReal} real + {nNgAug} aug = <b>{totalNg}</b>
+                {nOkReal === 0 && <span style={{ color: '#f59e0b' }}> · no OK samples with char_id</span>}
               </div>
             );
           })()}
@@ -765,12 +783,12 @@ export default function TrainTab({ project, onRefresh }: Props) {
           const ready = buckets.filter(b => b.status === 'ready');
           const insufficient = buckets.filter(b => b.status === 'insufficient');
           const missing = buckets.filter(b => b.status === 'missing');
-          const nOkReal = crops.filter(c => c.label === 'OK').length;
-          const nNgReal = crops.filter(c => c.label === 'NG').length;
+          const { nOkReal, nNgReal, nNgAug, totalNg } =
+            computeAugmentStats(crops, augmentFactor);
           const f = augmentFactor;
-          // Match BE balance formula
-          const augNg = f >= 2 ? (f - 1) * nOkReal : 0;
-          const augOk = f >= 2 ? nNgReal + Math.max(0, f - 2) * nOkReal : 0;
+          // target_ng_per_char for display
+          const maxOkPerChar = buckets.reduce((m, b) => Math.max(m, b.ok), 0);
+          const targetPerChar = f >= 2 ? f * maxOkPerChar : 0;
           return (
             <div className="ml-train-preview">
               <div className="ml-train-preview-title">🚀 Training preview</div>
@@ -791,9 +809,14 @@ export default function TrainTab({ project, onRefresh }: Props) {
                 </div>
               )}
               <div style={{ marginTop: 2 }}>
-                Dataset: {nOkReal}+{augOk}={nOkReal + augOk} OK · {nNgReal}+{augNg}={nNgReal + augNg} NG
+                Dataset: {nOkReal} OK · {nNgReal}+{nNgAug}={totalNg} NG (target {targetPerChar}/char)
                 {f < 2 && <span style={{ color: '#f59e0b' }}> (no augmentation)</span>}
               </div>
+              {f >= 2 && nOkReal > 0 && (
+                <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2 }}>
+                  Char-balanced NG — every char tops up to {targetPerChar} NG samples
+                </div>
+              )}
             </div>
           );
         })()}

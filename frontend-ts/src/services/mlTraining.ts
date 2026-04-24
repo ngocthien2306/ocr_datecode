@@ -241,7 +241,8 @@ export const mlTrainingAPI = {
       `/ml/projects/${projectId}/labeled-crops`
     ).then(r => r.data),
 
-  previewSynthetic: (projectId: string, augmentFactor: number, label: 'NG' | 'OK' | 'BOTH' = 'NG') =>
+  // Preview synthetic NG (generated from OK samples). OK augmentation removed.
+  previewSynthetic: (projectId: string, augmentFactor: number, label: 'NG' = 'NG') =>
     api.post<{ crops: SyntheticCrop[]; count: number }>(
       `/ml/projects/${projectId}/preview-synthetic`,
       { augment_factor: augmentFactor, label }

@@ -578,6 +578,8 @@ def train_model(
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 
+    algo = (request.algorithm or "rf").lower()
+
     X, y, crops_raw, char_ids_raw, goldens, char_stats, n_ok, n_ng = build_dataset(
         annotations, images_dir, request.augment_factor,
     )

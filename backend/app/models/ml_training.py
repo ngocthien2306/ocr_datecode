@@ -127,7 +127,7 @@ class TrainRequest(BaseModel):
 
 class SyntheticPreviewRequest(BaseModel):
     augment_factor: int             # must be >= 2
-    label: str = "NG"               # 'NG', 'OK', or 'BOTH'
+    label: str = "NG"               # Only 'NG' is supported (OK aug removed)
 
 
 class TestSetRequest(BaseModel):
