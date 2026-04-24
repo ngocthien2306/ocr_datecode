@@ -43,6 +43,30 @@ logger = logging.getLogger(__name__)
 home = os.environ.get('HOME')
 
 
+_NUMERIC_CHAR_FIELDS = (
+    'confidence', 'tm_conf', 'blur_tm', 'iou', 'pixel_conf',
+    'px_tmpl', 'px_tgt', 'sharp_ratio', 'cc_tmpl', 'cc_tgt', 'idx',
+)
+
+
+def _sanitize_char_results(char_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Convert numpy scalars inside char_result dicts to native Python types
+    so the websocket JSON serializer doesn't choke.
+    """
+    out: List[Dict[str, Any]] = []
+    for cr in char_results or []:
+        sanitized: Dict[str, Any] = dict(cr)
+        for f in _NUMERIC_CHAR_FIELDS:
+            if f in sanitized and sanitized[f] is not None:
+                try:
+                    sanitized[f] = float(sanitized[f])
+                except (TypeError, ValueError):
+                    pass
+        out.append(sanitized)
+    return out
+
+
 
 @dataclass
 class TextVerificationResult:
@@ -586,15 +610,19 @@ class TextVerificationService:
             if match:
                 recognized = expected[:]
 
+            # Cast numeric fields to native Python types — OCR backends can
+            # return numpy scalars (e.g. np.float32) which are not
+            # JSON-serializable and break the websocket send.
             region = {
-                'annotation_idx': ann_idx,
+                'annotation_idx': int(ann_idx),
                 'expected': expected,
                 'recognized': recognized,
-                'match': match,
-                'confidence': confidence,
-                'threshold': conf_thr,
+                'match': bool(match),
+                'confidence': float(confidence),
+                'threshold': float(conf_thr),
                 'char_confs': [
-                    {'char': c, 'conf': round(cf, 4)} for c, cf in char_confs if c.isalnum()
+                    {'char': c, 'conf': round(float(cf), 4)}
+                    for c, cf in char_confs if c.isalnum()
                 ] if char_confs else None,
             }
 
@@ -604,10 +632,12 @@ class TextVerificationService:
             if has_sim:
                 sim_res = sim_results_map.get(key)
                 if sim_res:
-                    region['match_sim'] = sim_res['match_sim']
-                    region['similarity'] = sim_res.get('similarity', 0.0)
-                    region['char_results'] = sim_res.get('char_results', [])
-                    region['match'] = region['match'] and sim_res['match_sim']
+                    region['match_sim'] = bool(sim_res['match_sim'])
+                    region['similarity'] = float(sim_res.get('similarity', 0.0))
+                    region['char_results'] = _sanitize_char_results(
+                        sim_res.get('char_results', [])
+                    )
+                    region['match'] = bool(region['match'] and sim_res['match_sim'])
                     logger.info(
                         f"[{serial}] Annotation {ann_idx}: FINAL match={region['match']}, "
                         f"match_sim={sim_res['match_sim']}, "
@@ -622,10 +652,10 @@ class TextVerificationService:
             if has_ml:
                 ml_res = ml_results_map.get(key)
                 if ml_res:
-                    region['ml_pass'] = ml_res['ml_pass']
-                    region['ml_p_ok'] = ml_res.get('p_ok', 0.0)
+                    region['ml_pass'] = bool(ml_res['ml_pass'])
+                    region['ml_p_ok'] = float(ml_res.get('p_ok', 0.0))
                     region['ml_label'] = ml_res.get('label', 'NG')
-                    region['match'] = region['match'] and ml_res['ml_pass']
+                    region['match'] = bool(region['match'] and ml_res['ml_pass'])
                     logger.info(
                         f"[{serial}] Annotation {ann_idx}: FINAL match={region['match']}, "
                         f"ml_pass={ml_res['ml_pass']}, ml_label={ml_res.get('label')}, "
@@ -732,12 +762,12 @@ class TextVerificationService:
                     f"[{serial_number}] Ann {ann_idx}: skipping OCR ({reason})"
                 )
                 invalid_map[(serial_number, ann_idx)] = {
-                    'annotation_idx': ann_idx,
+                    'annotation_idx': int(ann_idx),
                     'expected': expected_text,
                     'recognized': '',
                     'match': False,
                     'confidence': 0.0,
-                    'threshold': conf_threshold,
+                    'threshold': float(conf_threshold),
                     'error': f'invalid_bbox:{reason}',
                 }
                 continue
@@ -747,12 +777,12 @@ class TextVerificationService:
             except Exception as e:
                 logger.error(f"[{serial_number}] Error cropping ann {ann_idx}: {e}")
                 invalid_map[(serial_number, ann_idx)] = {
-                    'annotation_idx': ann_idx,
+                    'annotation_idx': int(ann_idx),
                     'expected': expected_text,
                     'recognized': '',
                     'match': False,
                     'confidence': 0.0,
-                    'threshold': conf_threshold,
+                    'threshold': float(conf_threshold),
                     'error': f'crop_failed:{e}',
                 }
                 continue
