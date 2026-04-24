@@ -100,11 +100,11 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
                     rw = np.random.randint(max(3, int(w * min_ratio)), max(8, int(w * max_ratio)))
                     rx = np.random.randint(0, max(1, w - rw))
                     aug[:, rx:rx + rw] = bg_color
-        elif choice == 5:
+        elif choice == 2:
             k = np.random.randint(7, 10)
             kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
             aug = cv.erode(aug, kernel, iterations=1)
-        elif choice == 6:
+        elif choice == 3:
             k = np.random.randint(4, 7)
             kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
             aug = cv.dilate(aug, kernel, iterations=1)
