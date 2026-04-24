@@ -81,18 +81,25 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
             noise = np.random.normal(0, 60, aug.shape).astype(np.int16)
             aug = np.clip(aug.astype(np.int16) + noise, 0, 255).astype(np.uint8)
         elif choice == 1:
+            # Ước lượng màu background (chữ tối → background là vùng sáng)
             if aug.ndim == 3:
                 bg_color = np.percentile(aug.reshape(-1, aug.shape[2]), 75, axis=0)
             else:
                 bg_color = np.percentile(aug, 75)
 
-            num_cuts = np.random.randint(1, 4)
+            num_cuts = np.random.randint(1, 3)
             for _c in range(num_cuts):
-                rh = np.random.randint(max(2, h // 6), max(3, h // 3))
-                rw = np.random.randint(max(2, w // 6), max(3, w // 3))
-                ry = np.random.randint(0, max(1, h - rh))
-                rx = np.random.randint(0, max(1, w - rw))
-                aug[ry:ry + rh, rx:rx + rw] = bg_color
+                # Chọn ngẫu nhiên vệt ngang hay vệt dọc
+                if np.random.rand() < 0.5:
+                    # Vệt ngang: rộng hết ảnh, cao mỏng
+                    rh = np.random.randint(max(2, h // 20), max(4, h // 8))
+                    ry = np.random.randint(0, max(1, h - rh))
+                    aug[ry:ry + rh, :] = bg_color
+                else:
+                    # Vệt dọc: cao hết ảnh, rộng mỏng
+                    rw = np.random.randint(max(2, w // 20), max(4, w // 8))
+                    rx = np.random.randint(0, max(1, w - rw))
+                    aug[:, rx:rx + rw] = bg_color
         elif choice == 2:
             k = np.random.randint(7, 10)
             kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
