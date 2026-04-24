@@ -93,7 +93,7 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
             kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
             aug = cv.erode(aug, kernel, iterations=1)
         elif choice == 3:
-            k = np.random.randint(8, 10)
+            k = np.random.randint(12, 15)
             kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
             aug = cv.dilate(aug, kernel, iterations=1)
         elif choice == 4:
