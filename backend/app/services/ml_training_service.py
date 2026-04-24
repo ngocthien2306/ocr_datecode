@@ -475,18 +475,23 @@ def build_dataset(
     annotations: List[MLAnnotationInDB],
     images_dir: Path,
     augment_factor: int = 0,
-) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray], Dict[str, np.ndarray], int, int]:
+) -> Tuple[
+    np.ndarray, np.ndarray, List[np.ndarray], List[Optional[str]],
+    Dict[str, np.ndarray], Dict[str, Dict[str, int]], int, int,
+]:
     """
-    Build (X, y, crops_raw, goldens) dataset from project annotations.
+    Build training dataset + per-char goldens.
 
     v2: groups OK samples by char_id → per-char golden templates.
     Char without char_id (or with <5 OK samples) → no golden, diff features zero.
 
-    Returns:
+    Returns (all lists / arrays share order):
         X: feature matrix (N, 1016)
         y: labels (1=OK, 0=NG)
-        crops_raw: raw crops in order matching X rows
+        crops_raw: raw crops parallel to X rows
+        char_ids_raw: char_id strings parallel to X rows (None for _unknown)
         goldens: {char_id: np.ndarray(48,48)} — skipped chars absent
+        char_stats: {char_id: {n_ok_train, n_ng_train}} — counts used for training
         n_ok_total, n_ng_total: counts after augmentation
     """
     from collections import defaultdict
@@ -558,6 +563,7 @@ def build_dataset(
     X_rows: List[np.ndarray] = []
     y_rows: List[int] = []
     crops_rows: List[np.ndarray] = []
+    char_ids_rows: List[Optional[str]] = []
 
     def _append_samples(samples_by_char, label_val):
         for char_id, crops in samples_by_char.items():
@@ -565,6 +571,7 @@ def build_dataset(
                 X_rows.append(extract_features_v2(c, char_id, goldens))
                 y_rows.append(label_val)
                 crops_rows.append(c)
+                char_ids_rows.append(None if char_id == "_unknown" else char_id)
 
     _append_samples(ok_by_char, 1)
     _append_samples(aug_ok_by_char, 1)
@@ -579,18 +586,36 @@ def build_dataset(
     total_ok = n_ok_real + n_aug_ok
     total_ng = n_ng_real + n_aug_ng
 
+    # Per-char training sample counts (for FE display)
+    char_stats: Dict[str, Dict[str, int]] = {}
+    all_chars = set(ok_by_char.keys()) | set(ng_by_char.keys())
+    for c in all_chars:
+        if c == "_unknown":
+            continue
+        char_stats[c] = {
+            "n_ok_train": len(ok_by_char.get(c, [])) + len(aug_ok_by_char.get(c, [])),
+            "n_ng_train": len(ng_by_char.get(c, [])) + len(aug_ng_by_char.get(c, [])),
+            "n_ok_real": len(ok_by_char.get(c, [])),
+            "n_ng_real": len(ng_by_char.get(c, [])),
+            "has_golden": c in goldens,
+        }
+
     logger.info(
         f"[build_dataset v2] "
-        f"chars: {sorted(set(ok_by_char.keys()) | set(ng_by_char.keys()))} | "
+        f"chars: {sorted(all_chars)} | "
         f"goldens: {sorted(goldens.keys())} | "
         f"OK: {n_ok_real}+{n_aug_ok}={total_ok} | "
         f"NG: {n_ng_real}+{n_aug_ng}={total_ng} | factor={augment_factor}"
     )
 
-    # Shuffle — keep crops in sync
+    # Shuffle — keep crops + char_ids in sync
     idx = np.random.permutation(len(X))
     crops_shuffled = [crops_rows[i] for i in idx]
-    return X[idx], y[idx], crops_shuffled, goldens, total_ok, total_ng
+    char_ids_shuffled = [char_ids_rows[i] for i in idx]
+    return (
+        X[idx], y[idx], crops_shuffled, char_ids_shuffled,
+        goldens, char_stats, total_ok, total_ng,
+    )
 
 
 def train_model(
@@ -608,23 +633,26 @@ def train_model(
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 
-    X, y, crops_raw, goldens, n_ok, n_ng = build_dataset(
+    X, y, crops_raw, char_ids_raw, goldens, char_stats, n_ok, n_ng = build_dataset(
         annotations, images_dir, request.augment_factor,
     )
 
     if len(X) < 4:
         raise ValueError(f"Need at least 4 samples, got {len(X)}.")
 
-    # Split — pass crops_raw alongside X/y so indices stay in sync
+    # Split — pass crops_raw + char_ids_raw alongside X/y so indices stay in sync
     test_size = min(request.test_split, 0.4)
     if len(np.unique(y)) > 1:
-        X_train, X_test, y_train, y_test, _, crops_test = train_test_split(
-            X, y, crops_raw, test_size=test_size, random_state=42, stratify=y,
+        (X_train, X_test, y_train, y_test,
+         _, crops_test, _, char_ids_test) = train_test_split(
+            X, y, crops_raw, char_ids_raw,
+            test_size=test_size, random_state=42, stratify=y,
         )
     else:
         # Only one class — no meaningful split; use all crops for display
         X_train, X_test, y_train, y_test = X, X, y, y
         crops_test = crops_raw
+        char_ids_test = char_ids_raw
 
     # Build & train classifier
     clf = _build_classifier(request)
@@ -650,23 +678,25 @@ def train_model(
     # Build per-crop test-set records (saved as sidecar JSON)
     proba_test = clf.predict_proba(X_test)
     test_set_items = []
-    for crop_img, true_y, pred_y, proba in zip(crops_test, y_test, y_pred_test, proba_test):
+    for crop_img, char_id, true_y, pred_y, proba in zip(
+        crops_test, char_ids_test, y_test, y_pred_test, proba_test,
+    ):
         p_ok = float(proba[1]) if len(proba) > 1 else float(proba[0])
         test_set_items.append({
             "crop_b64":   img_to_b64(crop_img),
+            "char_id":    char_id,
             "true_label": "OK" if int(true_y) == 1 else "NG",
             "pred_label": "OK" if int(pred_y) == 1 else "NG",
             "prob_ok":    round(p_ok, 4),
             "correct":    bool(true_y == pred_y),
         })
 
-    # Save bundle: classifier + goldens + feat_version
-    # Old loaders that do `joblib.load(path)` will get the dict directly;
-    # predict_on_image detects bundle format via 'feat_version' key.
+    # Save bundle: classifier + goldens + per-char stats + feat_version
     model_save_path.parent.mkdir(parents=True, exist_ok=True)
     bundle = {
         'clf': clf,
         'goldens': goldens,           # {char_id: np.ndarray(48,48) uint8}
+        'char_stats': char_stats,     # {char_id: {n_ok_train, n_ng_train, ...}}
         'feat_version': 'v2',
         'feat_dim': FEAT_DIM_V2,
     }
@@ -831,6 +861,41 @@ def get_model_chars(model_path: Path) -> List[str]:
         return []
 
 
+def get_model_goldens(model_path: Path) -> List[Dict[str, Any]]:
+    """
+    Return list of goldens with per-char training stats.
+    Each item: {char_id, golden_b64, n_ok_train, n_ng_train, n_ok_real, n_ng_real}.
+    Legacy models (no bundle): returns [].
+    """
+    try:
+        data = joblib.load(str(model_path))
+    except Exception as e:
+        logger.warning(f"[get_model_goldens] Failed to load {model_path}: {e}")
+        return []
+    if not isinstance(data, dict) or 'goldens' not in data:
+        return []
+
+    goldens = data.get('goldens') or {}
+    char_stats = data.get('char_stats') or {}
+    out: List[Dict[str, Any]] = []
+    for char_id in sorted(goldens.keys()):
+        g = goldens[char_id]
+        # Convert to BGR for uniform encode, scale up 2× for readable preview
+        g_bgr = cv.cvtColor(g, cv.COLOR_GRAY2BGR) if g.ndim == 2 else g
+        g_up = cv.resize(g_bgr, (g_bgr.shape[1] * 2, g_bgr.shape[0] * 2),
+                         interpolation=cv.INTER_NEAREST)
+        stats = char_stats.get(char_id, {})
+        out.append({
+            "char_id": char_id,
+            "golden_b64": img_to_b64(g_up),
+            "n_ok_train": int(stats.get("n_ok_train", 0)),
+            "n_ng_train": int(stats.get("n_ng_train", 0)),
+            "n_ok_real":  int(stats.get("n_ok_real", 0)),
+            "n_ng_real":  int(stats.get("n_ng_real", 0)),
+        })
+    return out
+
+
 def get_labeled_crops(
     annotations: List[MLAnnotationInDB],
     images_dir: Path,
@@ -857,6 +922,7 @@ def get_labeled_crops(
                     "filename": ann.filename,
                     "label": seg.label,
                     "crop_b64": img_to_b64(crop),
+                    "char_id": seg.char_id,
                 })
     return result
 
@@ -904,6 +970,7 @@ def generate_synthetic_crops(
                             "filename": ann.filename,
                             "label": "NG",
                             "crop_b64": img_to_b64(aug),
+                            "char_id": seg.char_id,
                         })
                 if want_ok:
                     for aug in augment_ok(crop, n=n_per_sample):
@@ -912,5 +979,6 @@ def generate_synthetic_crops(
                             "filename": ann.filename,
                             "label": "OK",
                             "crop_b64": img_to_b64(aug),
+                            "char_id": seg.char_id,
                         })
     return result

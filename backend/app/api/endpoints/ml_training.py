@@ -37,6 +37,7 @@ from app.services.ml_training_service import (
     generate_synthetic_crops,
     get_labeled_crops,
     get_model_chars,
+    get_model_goldens,
     img_to_b64,
     predict_on_image,
     train_model,
@@ -649,6 +650,36 @@ async def get_test_set_crops(
 
     items = _json.loads(test_set_path.read_text())
     return {"crops": items, "count": len(items)}
+
+
+@router.get(
+    "/ml/projects/{project_id}/models/{model_id}/goldens",
+    tags=["ML Training"],
+)
+async def get_model_goldens_endpoint(
+    project_id: str,
+    model_id: str,
+    repo: MLTrainingRepository = Depends(get_repo),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """
+    Return the per-char golden reference images bundled with this model,
+    plus per-char training sample counts (real + augmented).
+
+    Each item: { char_id, golden_b64, n_ok_train, n_ng_train, n_ok_real, n_ng_real }
+    Returns empty list for legacy (v1) models.
+    """
+    all_models = await repo.list_models(project_id)
+    model_record = next((m for m in all_models if m.id == model_id), None)
+    if not model_record:
+        raise HTTPException(404, "Model not found")
+    if not model_record.model_path:
+        raise HTTPException(400, "Model has no saved file")
+
+    goldens = await asyncio.get_event_loop().run_in_executor(
+        None, get_model_goldens, Path(model_record.model_path),
+    )
+    return {"goldens": goldens, "count": len(goldens)}
 
 
 # ════════════════════════════════════════ IMPORT FROM RECIPE ══════════════

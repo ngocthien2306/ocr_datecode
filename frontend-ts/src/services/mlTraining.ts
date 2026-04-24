@@ -137,6 +137,16 @@ export interface TestSetCropResult {
   pred_label: 'OK' | 'NG';
   prob_ok: number;
   correct: boolean;
+  char_id?: string | null;
+}
+
+export interface MLGoldenItem {
+  char_id: string;
+  golden_b64: string;   // base64 PNG of golden (upscaled)
+  n_ok_train: number;   // total OK used (real + augmented)
+  n_ng_train: number;
+  n_ok_real: number;    // real samples (before augmentation)
+  n_ng_real: number;
 }
 
 // ──────── Static URL builders ──────────────────────────────────────────────
@@ -273,5 +283,11 @@ export const mlTrainingAPI = {
     api.get<CharCoverageResponse>(
       `/ml/projects/${projectId}/models/${modelId}/char-coverage`,
       { params: { chars: chars.join(',') } },
+    ).then(r => r.data),
+
+  // Retrieve per-char golden images + training sample counts
+  getModelGoldens: (projectId: string, modelId: string) =>
+    api.get<{ goldens: MLGoldenItem[]; count: number }>(
+      `/ml/projects/${projectId}/models/${modelId}/goldens`,
     ).then(r => r.data),
 };

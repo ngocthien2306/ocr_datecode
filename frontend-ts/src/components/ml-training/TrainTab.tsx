@@ -2,12 +2,92 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   mlTrainingAPI,
   LabeledCrop,
+  MLGoldenItem,
   SyntheticCrop,
   MLModel,
   MLProject,
   TestSetCropResult,
   TrainRequest,
 } from '@/services/mlTraining';
+
+// Minimum OK samples per char needed to compute a golden template.
+// Must match backend GOLDEN_MIN_OK_SAMPLES.
+const GOLDEN_MIN_OK = 5;
+
+type CharStatus = 'ready' | 'insufficient' | 'missing';
+interface CharBucket<T> {
+  char_id: string | null;  // null = no char_id
+  items: T[];
+  ok: number;
+  ng: number;
+  status: CharStatus;
+}
+
+/**
+ * Group crops by char_id.
+ *   - null char_id → special bucket at the end ("No char_id")
+ *   - bucket status:
+ *       ready         → n_ok ≥ GOLDEN_MIN_OK, golden will be built
+ *       insufficient  → 0 < n_ok < GOLDEN_MIN_OK, golden skipped
+ *       missing       → no char_id (null) — excluded from training
+ */
+function bucketByChar<T extends { char_id?: string | null; label: string }>(
+  items: T[],
+  sortMode: 'alpha' | 'wrong-desc' = 'alpha',
+  wrongCounts?: Map<string, number>,
+): CharBucket<T>[] {
+  const map = new Map<string, CharBucket<T>>();
+  const keyOf = (cid: string | null | undefined): string => (cid && cid.trim() ? cid : '__null__');
+
+  for (const item of items) {
+    const key = keyOf(item.char_id);
+    if (!map.has(key)) {
+      map.set(key, { char_id: key === '__null__' ? null : key, items: [], ok: 0, ng: 0, status: 'missing' });
+    }
+    const b = map.get(key)!;
+    b.items.push(item);
+    if (item.label === 'OK') b.ok += 1;
+    else if (item.label === 'NG') b.ng += 1;
+  }
+
+  for (const b of map.values()) {
+    if (b.char_id === null) b.status = 'missing';
+    else if (b.ok >= GOLDEN_MIN_OK) b.status = 'ready';
+    else b.status = 'insufficient';
+  }
+
+  const buckets = Array.from(map.values());
+  if (sortMode === 'wrong-desc' && wrongCounts) {
+    buckets.sort((a, b) => {
+      const wa = wrongCounts.get(a.char_id ?? '__null__') ?? 0;
+      const wb = wrongCounts.get(b.char_id ?? '__null__') ?? 0;
+      if (wa !== wb) return wb - wa;  // more wrongs first
+      return (a.char_id ?? '~').localeCompare(b.char_id ?? '~');
+    });
+  } else {
+    buckets.sort((a, b) => {
+      // null last
+      if (a.char_id === null && b.char_id !== null) return 1;
+      if (a.char_id !== null && b.char_id === null) return -1;
+      return (a.char_id ?? '').localeCompare(b.char_id ?? '');
+    });
+  }
+  return buckets;
+}
+
+function charStatusChipStyle(status: CharStatus): { bg: string; color: string; border: string } {
+  switch (status) {
+    case 'ready':        return { bg: 'rgba(74,222,128,.15)', color: '#4ade80', border: '#4ade80' };
+    case 'insufficient': return { bg: 'rgba(251,191,36,.15)', color: '#fbbf24', border: '#fbbf24' };
+    case 'missing':      return { bg: 'rgba(248,113,113,.15)', color: '#f87171', border: '#f87171' };
+  }
+}
+
+function charStatusLabel(status: CharStatus, ok: number): string {
+  if (status === 'ready') return '✓ golden ready';
+  if (status === 'insufficient') return `⚠ need ${GOLDEN_MIN_OK - ok} more OK`;
+  return '✗ no char_id';
+}
 
 interface Props {
   project: MLProject;
@@ -44,6 +124,127 @@ function LazyImage({ src, alt }: { src: string; alt: string }) {
         <img src={src} alt={alt}
           style={{ width: '52px', height: '36px', objectFit: 'contain', display: 'block' }} />
       )}
+    </div>
+  );
+}
+
+// ── Stats banner showing per-char coverage at a glance ─────────────────────
+interface CharStatsBannerProps {
+  buckets: CharBucket<any>[];
+  viewMode: 'grouped' | 'flat';
+  onToggleView: (mode: 'grouped' | 'flat') => void;
+}
+function CharStatsBanner({ buckets, viewMode, onToggleView }: CharStatsBannerProps) {
+  const total = buckets.length;
+  const ready = buckets.filter(b => b.status === 'ready').length;
+  const insufficient = buckets.filter(b => b.status === 'insufficient').length;
+  const missing = buckets.filter(b => b.status === 'missing').length;
+
+  return (
+    <div style={{
+      padding: '8px 12px', borderBottom: '1px solid #2d3148',
+      background: '#10131c', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+    }}>
+      <span style={{ fontSize: 11, color: '#9ca3af' }}>
+        <b style={{ color: '#e5e7eb' }}>{total}</b> char{total !== 1 ? 's' : ''}
+      </span>
+      {ready > 0 && <span style={{ fontSize: 11, color: '#4ade80' }}>✓ {ready} ready</span>}
+      {insufficient > 0 && (
+        <span style={{ fontSize: 11, color: '#fbbf24' }} title="Need more OK samples">
+          ⚠ {insufficient} need OK
+        </span>
+      )}
+      {missing > 0 && (
+        <span style={{ fontSize: 11, color: '#f87171' }} title="Won't train without char_id">
+          ✗ {missing} no char_id
+        </span>
+      )}
+      <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+        {(['grouped', 'flat'] as const).map(mode => (
+          <button key={mode} onClick={() => onToggleView(mode)} style={{
+            padding: '3px 10px', fontSize: 11, borderRadius: 4, cursor: 'pointer',
+            border: '1px solid',
+            borderColor: viewMode === mode ? '#3b82f6' : '#2d3148',
+            background: viewMode === mode ? 'rgba(59,130,246,.12)' : 'transparent',
+            color: viewMode === mode ? '#60a5fa' : '#6b7280',
+          }}>{mode === 'grouped' ? '📋 Grouped' : '📃 Flat'}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Grouped crops (sections per char_id, collapsible) ──────────────────────
+interface CharGroupedCropsProps {
+  buckets: CharBucket<{ crop_b64: string; label: string; char_id?: string | null }>[];
+  expanded: Set<string>;
+  onToggleExpand: (key: string) => void;
+  emptyText: string;
+}
+function CharGroupedCrops({ buckets, expanded, onToggleExpand, emptyText }: CharGroupedCropsProps) {
+  if (buckets.length === 0) {
+    return (
+      <div className="ml-empty-state" style={{ minHeight: '100px' }}>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.4 }}>
+          <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"
+            stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+          <circle cx="7" cy="7" r="1.5" fill="currentColor" />
+        </svg>
+        <span style={{ fontSize: '12px', color: '#6b7280', marginTop: '6px' }}>{emptyText}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {buckets.map(b => {
+        const key = b.char_id ?? '__null__';
+        const isOpen = expanded.has(key);
+        const chip = charStatusChipStyle(b.status);
+        return (
+          <div key={key} style={{
+            border: `1px solid ${chip.border}33`, borderRadius: 6,
+            background: '#0f1117', overflow: 'hidden',
+          }}>
+            <button
+              onClick={() => onToggleExpand(key)}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+                padding: '6px 10px', border: 'none', cursor: 'pointer',
+                background: `${chip.bg}`, color: '#e5e7eb', fontSize: 12, textAlign: 'left',
+              }}
+            >
+              <span style={{ width: 12, textAlign: 'center' }}>{isOpen ? '▼' : '▶'}</span>
+              <span style={{
+                fontFamily: 'monospace', fontWeight: 700, fontSize: 14,
+                padding: '1px 8px', borderRadius: 4,
+                background: '#1a1d27', color: chip.color,
+                minWidth: 28, textAlign: 'center',
+              }}>
+                {b.char_id ?? '—'}
+              </span>
+              <span style={{ color: '#4ade80' }}>{b.ok} OK</span>
+              <span style={{ color: '#f87171' }}>{b.ng} NG</span>
+              <span style={{
+                marginLeft: 'auto', fontSize: 10,
+                padding: '1px 6px', borderRadius: 3,
+                background: `${chip.bg}`, border: `1px solid ${chip.border}66`,
+                color: chip.color,
+              }}>{charStatusLabel(b.status, b.ok)}</span>
+            </button>
+            {isOpen && (
+              <div className="ml-crops-grid" style={{ padding: 6 }}>
+                {b.items.map((item, i) => (
+                  <div key={i} className="ml-crop-card" style={{ position: 'relative' }}>
+                    <LazyImage src={`data:image/jpeg;base64,${item.crop_b64}`} alt={`crop-${i}`} />
+                    <span className={`ml-label-badge ${item.label === 'OK' ? 'ok' : 'ng'}`}>{item.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -206,6 +407,15 @@ export default function TrainTab({ project, onRefresh }: Props) {
   const [loadingCrops, setLoadingCrops] = useState(false);
   const [cropsTab, setCropsTab] = useState<'real' | 'synthetic'>('real');
   const [cropFilter, setCropFilter] = useState<'all' | 'OK' | 'NG'>('all');
+  const [viewMode, setViewMode] = useState<'grouped' | 'flat'>('grouped');
+  const [expandedChars, setExpandedChars] = useState<Set<string>>(new Set());
+  const toggleCharExpanded = useCallback((key: string) => {
+    setExpandedChars(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
 
   // Synthetic preview
   const [syntheticCrops, setSyntheticCrops] = useState<SyntheticCrop[]>([]);
@@ -234,7 +444,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
   );
 
   // Results panel tabs
-  const [resultsTab, setResultsTab] = useState<'metrics' | 'testset'>('metrics');
+  const [resultsTab, setResultsTab] = useState<'metrics' | 'testset' | 'goldens'>('metrics');
 
   // Predict (single image)
   const [predictFile, setPredictFile] = useState<File | null>(null);
@@ -246,6 +456,11 @@ export default function TrainTab({ project, onRefresh }: Props) {
   const [testSetCrops, setTestSetCrops] = useState<TestSetCropResult[]>([]);
   const [loadingTestSet, setLoadingTestSet] = useState(false);
   const [testSetFilter, setTestSetFilter] = useState<'all' | 'correct' | 'wrong'>('all');
+  const [testsetExpanded, setTestsetExpanded] = useState<Set<string>>(new Set());
+
+  // Goldens tab
+  const [goldens, setGoldens] = useState<MLGoldenItem[]>([]);
+  const [loadingGoldens, setLoadingGoldens] = useState(false);
 
   // ── Load crops ────────────────────────────────────────────────────────
   const loadCrops = useCallback(async () => {
@@ -354,6 +569,43 @@ export default function TrainTab({ project, onRefresh }: Props) {
       loadTestSetCrops(selectedModel.id);
     }
   }, [resultsTab, selectedModel?.id]);
+
+  // ── Load goldens for "Goldens" tab ───────────────────────────────────────
+  const loadGoldens = useCallback(async (modelId: string) => {
+    setLoadingGoldens(true);
+    setGoldens([]);
+    try {
+      const data = await mlTrainingAPI.getModelGoldens(project.id, modelId);
+      setGoldens(data.goldens);
+    } catch { /* ignore */ }
+    finally { setLoadingGoldens(false); }
+  }, [project.id]);
+
+  useEffect(() => {
+    if (resultsTab === 'goldens' && selectedModel) {
+      loadGoldens(selectedModel.id);
+    }
+  }, [resultsTab, selectedModel?.id]);
+
+  // ── Per-char accuracy (computed from testSetCrops) ───────────────────────
+  const perCharAccuracy = useMemo(() => {
+    const map = new Map<string, { char_id: string | null; n: number; correct: number; wrong: number }>();
+    for (const item of testSetCrops) {
+      const key = item.char_id ?? '__null__';
+      if (!map.has(key)) {
+        map.set(key, { char_id: item.char_id ?? null, n: 0, correct: 0, wrong: 0 });
+      }
+      const e = map.get(key)!;
+      e.n += 1;
+      if (item.correct) e.correct += 1; else e.wrong += 1;
+    }
+    return Array.from(map.values())
+      .map(e => ({ ...e, acc: e.n ? e.correct / e.n : 0 }))
+      .sort((a, b) => {
+        if (a.wrong !== b.wrong) return b.wrong - a.wrong;
+        return (a.char_id ?? '~').localeCompare(b.char_id ?? '~');
+      });
+  }, [testSetCrops]);
 
   // ── Stats ──────────────────────────────────────────────────────────────
   const okCrops  = crops.filter(c => c.label === 'OK');
@@ -504,6 +756,52 @@ export default function TrainTab({ project, onRefresh }: Props) {
           )}
         </div>
 
+        {/* ── Train Preview — per-char breakdown before user clicks Train ── */}
+        {(() => {
+          const buckets = bucketByChar(crops);
+          if (buckets.length === 0) return null;
+          const ready = buckets.filter(b => b.status === 'ready');
+          const insufficient = buckets.filter(b => b.status === 'insufficient');
+          const missing = buckets.filter(b => b.status === 'missing');
+          const nOkReal = crops.filter(c => c.label === 'OK').length;
+          const nNgReal = crops.filter(c => c.label === 'NG').length;
+          const f = augmentFactor;
+          // Match BE balance formula
+          const augNg = f >= 2 ? (f - 1) * nOkReal : 0;
+          const augOk = f >= 2 ? nNgReal + Math.max(0, f - 2) * nOkReal : 0;
+          return (
+            <div style={{
+              padding: 10, borderRadius: 6, background: '#0f1117',
+              border: '1px solid #2d3148', fontSize: 11, display: 'flex',
+              flexDirection: 'column', gap: 5, color: '#9ca3af',
+            }}>
+              <div style={{ color: '#e5e7eb', fontWeight: 600, fontSize: 12 }}>
+                🚀 Training preview
+              </div>
+              {ready.length > 0 && (
+                <div style={{ color: '#4ade80' }}>
+                  ✓ Goldens for: {ready.map(b => b.char_id).join(', ')} ({ready.length} char{ready.length !== 1 ? 's' : ''})
+                </div>
+              )}
+              {insufficient.length > 0 && (
+                <div style={{ color: '#fbbf24' }}>
+                  ⚠ Skipped (need {GOLDEN_MIN_OK}+ OK):{' '}
+                  {insufficient.map(b => `${b.char_id}(${b.ok})`).join(', ')}
+                </div>
+              )}
+              {missing.length > 0 && (
+                <div style={{ color: '#f87171' }}>
+                  ✗ Excluded (no char_id): {missing.reduce((sum, b) => sum + b.items.length, 0)} sample(s) — fix in Label tab
+                </div>
+              )}
+              <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
+                Dataset: {nOkReal}+{augOk}={nOkReal + augOk} OK · {nNgReal}+{augNg}={nNgReal + augNg} NG
+                {f < 2 && <span style={{ color: '#fbbf24' }}> (no augmentation)</span>}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* ── Train button ── */}
         <button className="ml-btn ml-btn-primary"
           style={{ width: '100%', justifyContent: 'center', padding: '10px' }}
@@ -597,13 +895,33 @@ export default function TrainTab({ project, onRefresh }: Props) {
                 ))}
               </div>
             ) : <div style={{ height: '8px' }} />}
+            {/* Stats banner showing char coverage + view mode toggle */}
+            {(() => {
+              const src: Array<{ crop_b64: string; label: string; char_id?: string | null }> =
+                cropsTab === 'real' ? crops : syntheticCrops;
+              const sourceBuckets = bucketByChar(src);
+              return (
+                <CharStatsBanner
+                  buckets={sourceBuckets}
+                  viewMode={viewMode}
+                  onToggleView={setViewMode}
+                />
+              );
+            })()}
           </div>
           <div className="ml-crops-panel-body">
             {cropsTab === 'real' && (
               loadingCrops
                 ? <div className="ml-empty-state"><div className="ml-loading-spinner" /></div>
-                : <CropGrid items={filteredCrops}
-                    emptyText={crops.length === 0 ? 'No labeled characters yet. Go to Label tab.' : `No ${cropFilter} crops found.`} />
+                : viewMode === 'grouped'
+                    ? <CharGroupedCrops
+                        buckets={bucketByChar(filteredCrops)}
+                        expanded={expandedChars}
+                        onToggleExpand={toggleCharExpanded}
+                        emptyText={crops.length === 0 ? 'No labeled characters yet. Go to Label tab.' : `No ${cropFilter} crops found.`}
+                      />
+                    : <CropGrid items={filteredCrops}
+                        emptyText={crops.length === 0 ? 'No labeled characters yet. Go to Label tab.' : `No ${cropFilter} crops found.`} />
             )}
             {cropsTab === 'synthetic' && (
               loadingSynthetic
@@ -617,7 +935,14 @@ export default function TrainTab({ project, onRefresh }: Props) {
                         {augmentFactor < 2 ? 'Select ×2 or higher, then click Preview.' : 'Click Preview to generate synthetic NG samples.'}
                       </span>
                     </div>
-                  : <CropGrid items={syntheticCrops} emptyText="No synthetic crops." />
+                  : viewMode === 'grouped'
+                      ? <CharGroupedCrops
+                          buckets={bucketByChar(syntheticCrops)}
+                          expanded={expandedChars}
+                          onToggleExpand={toggleCharExpanded}
+                          emptyText="No synthetic crops."
+                        />
+                      : <CropGrid items={syntheticCrops} emptyText="No synthetic crops." />
             )}
           </div>
         </div>
@@ -661,6 +986,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
                     {([
                       { key: 'metrics', label: 'Metrics' },
                       { key: 'testset', label: 'Test Set' },
+                      { key: 'goldens', label: 'Goldens' },
                     ] as const).map(t => (
                       <button key={t.key} onClick={() => setResultsTab(t.key)} style={{
                         padding: '6px 14px', fontSize: '12px', border: 'none',
@@ -734,6 +1060,60 @@ export default function TrainTab({ project, onRefresh }: Props) {
                         <div>
                           <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '6px', fontWeight: 600 }}>Classification Report</div>
                           <pre className="ml-report-pre">{selectedModel.metrics.report}</pre>
+                        </div>
+                      )}
+
+                      {/* Per-char accuracy table (requires test-set data loaded) */}
+                      {perCharAccuracy.length > 0 && (
+                        <div>
+                          <div style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            fontSize: '12px', color: '#6b7280', marginBottom: '6px', fontWeight: 600,
+                          }}>
+                            <span>Per-Char Accuracy</span>
+                            <button
+                              className="ml-btn ml-btn-secondary ml-btn-sm"
+                              onClick={() => loadTestSetCrops(selectedModel.id)}
+                              disabled={loadingTestSet}
+                              style={{ padding: '2px 8px', fontSize: 10 }}
+                            >
+                              {loadingTestSet ? '…' : 'Refresh'}
+                            </button>
+                          </div>
+                          <div style={{ fontSize: 11, overflowX: 'auto' }}>
+                            <table className="ml-cm-table" style={{ width: '100%' }}>
+                              <thead>
+                                <tr>
+                                  <th style={{ textAlign: 'left' }}>Char</th>
+                                  <th>n</th>
+                                  <th style={{ color: '#4ade80' }}>✓</th>
+                                  <th style={{ color: '#f87171' }}>✗</th>
+                                  <th>Acc</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {perCharAccuracy.map(r => (
+                                  <tr key={r.char_id ?? '__null__'}>
+                                    <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                                      {r.char_id ?? <span style={{ color: '#f87171' }}>—</span>}
+                                    </td>
+                                    <td>{r.n}</td>
+                                    <td style={{ color: '#4ade80' }}>{r.correct}</td>
+                                    <td style={{ color: r.wrong > 0 ? '#f87171' : '#6b7280' }}>{r.wrong}</td>
+                                    <td style={{
+                                      color: r.acc >= 0.9 ? '#4ade80' : r.acc >= 0.7 ? '#fbbf24' : '#f87171',
+                                      fontWeight: 600,
+                                    }}>{(r.acc * 100).toFixed(0)}%</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          {testSetCrops.length === 0 && !loadingTestSet && (
+                            <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
+                              Load test-set tab to populate this table.
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -840,20 +1220,153 @@ export default function TrainTab({ project, onRefresh }: Props) {
                               ))}
                             </div>
 
-                            {/* Crops grid */}
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                              {shown.map((item, i) => (
-                                <TestSetCropCard key={i} item={item} />
-                              ))}
-                              {shown.length === 0 && (
-                                <div style={{ fontSize: '12px', color: '#6b7280', padding: '16px 0' }}>No crops match this filter.</div>
-                              )}
-                            </div>
+                            {/* Grouped by char — sorted wrong-count desc, auto-expand chars with errors */}
+                            {(() => {
+                              // Build per-char groups for SHOWN items (after filter)
+                              const groups = new Map<string, { char_id: string | null; items: TestSetCropResult[]; wrong: number; correct: number }>();
+                              for (const it of shown) {
+                                const key = it.char_id ?? '__null__';
+                                if (!groups.has(key)) {
+                                  groups.set(key, { char_id: it.char_id ?? null, items: [], wrong: 0, correct: 0 });
+                                }
+                                const g = groups.get(key)!;
+                                g.items.push(it);
+                                if (it.correct) g.correct += 1; else g.wrong += 1;
+                              }
+                              const sorted = Array.from(groups.values()).sort((a, b) => {
+                                if (a.wrong !== b.wrong) return b.wrong - a.wrong;
+                                return (a.char_id ?? '~').localeCompare(b.char_id ?? '~');
+                              });
+
+                              return (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  {sorted.map(g => {
+                                    const key = g.char_id ?? '__null__';
+                                    const acc = g.items.length ? g.correct / g.items.length : 0;
+                                    // Auto-expand if has wrongs OR user manually toggled
+                                    const autoExpand = g.wrong > 0;
+                                    const manuallyToggled = testsetExpanded.has(key);
+                                    const isOpen = autoExpand ? !manuallyToggled : manuallyToggled;
+                                    const accColor = acc >= 0.9 ? '#4ade80' : acc >= 0.7 ? '#fbbf24' : '#f87171';
+                                    return (
+                                      <div key={key} style={{
+                                        border: '1px solid #2d3148', borderRadius: 6,
+                                        background: '#0f1117', overflow: 'hidden',
+                                      }}>
+                                        <button
+                                          onClick={() => setTestsetExpanded(prev => {
+                                            const next = new Set(prev);
+                                            if (next.has(key)) next.delete(key); else next.add(key);
+                                            return next;
+                                          })}
+                                          style={{
+                                            width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+                                            padding: '6px 10px', border: 'none', cursor: 'pointer',
+                                            background: 'rgba(59,130,246,.06)', color: '#e5e7eb',
+                                            fontSize: 12, textAlign: 'left',
+                                          }}
+                                        >
+                                          <span style={{ width: 12, textAlign: 'center' }}>{isOpen ? '▼' : '▶'}</span>
+                                          <span style={{
+                                            fontFamily: 'monospace', fontWeight: 700, fontSize: 14,
+                                            padding: '1px 8px', borderRadius: 4,
+                                            background: '#1a1d27', color: accColor,
+                                            minWidth: 28, textAlign: 'center',
+                                          }}>{g.char_id ?? '—'}</span>
+                                          <span style={{ color: accColor, fontWeight: 600 }}>
+                                            {(acc * 100).toFixed(0)}% acc
+                                          </span>
+                                          <span style={{ color: '#9ca3af' }}>
+                                            {g.items.length} test · ✓ {g.correct} · ✗ {g.wrong}
+                                          </span>
+                                        </button>
+                                        {isOpen && (
+                                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: 6 }}>
+                                            {/* Sort wrongs first within group */}
+                                            {[...g.items].sort((a, b) => Number(a.correct) - Number(b.correct)).map((item, i) => (
+                                              <TestSetCropCard key={i} item={item} />
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                  {shown.length === 0 && (
+                                    <div style={{ fontSize: '12px', color: '#6b7280', padding: '16px 0' }}>
+                                      No crops match this filter.
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </>
                         )}
                       </div>
                     );
                   })()}
+
+                  {/* ── Goldens tab ── */}
+                  {resultsTab === 'goldens' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {loadingGoldens ? (
+                        <div className="ml-empty-state" style={{ minHeight: 100 }}>
+                          <div className="ml-loading-spinner" />
+                        </div>
+                      ) : goldens.length === 0 ? (
+                        <div style={{ fontSize: 12, color: '#6b7280', textAlign: 'center', padding: '32px 0' }}>
+                          No goldens for this model.<br />
+                          <span style={{ fontSize: 11 }}>
+                            (Legacy v1 models or chars with &lt;{GOLDEN_MIN_OK} OK samples.)
+                          </span>
+                        </div>
+                      ) : (
+                        <>
+                          <div style={{ fontSize: 11, color: '#9ca3af' }}>
+                            {goldens.length} golden{goldens.length !== 1 ? 's' : ''} bundled with this model
+                          </div>
+                          <div style={{
+                            display: 'grid', gap: 8,
+                            gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+                          }}>
+                            {goldens.map(g => (
+                              <div key={g.char_id} style={{
+                                padding: 8, borderRadius: 6, background: '#0f1117',
+                                border: '1px solid #2d3148',
+                                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                              }}>
+                                <div style={{
+                                  fontFamily: 'monospace', fontWeight: 700, fontSize: 14,
+                                  color: '#60a5fa', minWidth: 28, textAlign: 'center',
+                                  background: '#1a1d27', padding: '2px 10px', borderRadius: 4,
+                                }}>{g.char_id}</div>
+                                <img
+                                  src={`data:image/jpeg;base64,${g.golden_b64}`}
+                                  alt={`golden-${g.char_id}`}
+                                  style={{
+                                    width: '100%', maxWidth: 96, aspectRatio: '1 / 1',
+                                    objectFit: 'contain', background: '#000',
+                                    borderRadius: 3, imageRendering: 'pixelated',
+                                  }}
+                                />
+                                <div style={{ fontSize: 10, color: '#9ca3af', textAlign: 'center', lineHeight: 1.3 }}>
+                                  <div>
+                                    <span style={{ color: '#4ade80' }}>{g.n_ok_real} OK</span>
+                                    <span style={{ margin: '0 4px', color: '#6b7280' }}>·</span>
+                                    <span style={{ color: '#f87171' }}>{g.n_ng_real} NG</span>
+                                  </div>
+                                  {(g.n_ok_train > g.n_ok_real || g.n_ng_train > g.n_ng_real) && (
+                                    <div style={{ color: '#6b7280', fontSize: 9 }}>
+                                      +{g.n_ok_train - g.n_ok_real}/+{g.n_ng_train - g.n_ng_real} aug
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </>
               )}
             </div>
