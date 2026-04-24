@@ -106,7 +106,7 @@ class TextVerificationService:
     # Text/datecode bbox: a single character typically < 150px.
     # Anything larger is almost certainly a projection failure (template mismatch).
     # Use a generous ceiling (2×) so only truly bogus bboxes are rejected.
-    MAX_TEXT_CROP_DIM = 300
+    MAX_TEXT_CROP_DIM = 2500
 
     def __init__(
         self,
