@@ -78,7 +78,7 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
     for choice in choices:
         aug = gray.copy()
         if choice == 0:
-            noise = np.random.normal(0, 30, aug.shape).astype(np.int16)
+            noise = np.random.normal(0, 60, aug.shape).astype(np.int16)
             aug = np.clip(aug.astype(np.int16) + noise, 0, 255).astype(np.uint8)
         elif choice == 1:
             num_cuts = np.random.randint(1, 4)
@@ -87,7 +87,7 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
                 rw = np.random.randint(max(2, w // 6), max(3, w // 3))
                 ry = np.random.randint(0, max(1, h - rh))
                 rx = np.random.randint(0, max(1, w - rw))
-                aug[ry:ry + rh, rx:rx + rw] = 0
+                aug[ry:ry + rh, rx:rx + rw] = 1
         elif choice == 2:
             k = np.random.randint(7, 10)
             kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
