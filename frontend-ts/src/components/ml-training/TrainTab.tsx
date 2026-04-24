@@ -124,6 +124,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
   // Synthetic preview
   const [syntheticCrops, setSyntheticCrops] = useState<SyntheticCrop[]>([]);
   const [loadingSynthetic, setLoadingSynthetic] = useState(false);
+  const [previewLabel, setPreviewLabel] = useState<'NG' | 'OK' | 'BOTH'>('NG');
 
   // Training config
   const [algorithm, setAlgorithm] = useState<'rf' | 'svm' | 'mlp'>('rf');
@@ -197,13 +198,13 @@ export default function TrainTab({ project, onRefresh }: Props) {
   }, []);
 
   // ── Preview synthetic ─────────────────────────────────────────────────
-  const handlePreviewSynthetic = async () => {
+  const handlePreviewSynthetic = async (label: 'NG' | 'OK' | 'BOTH' = previewLabel) => {
     if (augmentFactor < 2) return;
     setLoadingSynthetic(true);
     setSyntheticCrops([]);
     setCropsTab('synthetic');
     try {
-      const data = await mlTrainingAPI.previewSynthetic(project.id, augmentFactor);
+      const data = await mlTrainingAPI.previewSynthetic(project.id, augmentFactor, label);
       setSyntheticCrops(data.crops);
     } catch { /* ignore */ }
     finally { setLoadingSynthetic(false); }
@@ -339,24 +340,46 @@ export default function TrainTab({ project, onRefresh }: Props) {
               ))}
             </div>
             {augmentFactor >= 2 && (
-              <button className="ml-btn ml-btn-secondary ml-btn-sm"
-                onClick={handlePreviewSynthetic} disabled={loadingSynthetic}
-                title="Preview synthetic NG crops" style={{ marginLeft: 'auto' }}>
-                {loadingSynthetic
-                  ? <span className="ml-loading-spinner" style={{ width: 12, height: 12, borderWidth: 2 }} />
-                  : <><svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-                      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
-                    </svg> Preview</>
-                }
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginLeft: 'auto' }}>
+                {(['NG', 'OK', 'BOTH'] as const).map(lbl => (
+                  <button key={lbl}
+                    className={`ml-augment-chip ${previewLabel === lbl ? 'selected' : ''}`}
+                    style={{ padding: '3px 8px', fontSize: '11px' }}
+                    onClick={() => { setPreviewLabel(lbl); handlePreviewSynthetic(lbl); }}
+                    title={lbl === 'OK' ? 'Preview mild OK augmentations'
+                         : lbl === 'NG' ? 'Preview destructive NG augmentations'
+                         : 'Preview both OK and NG'}>
+                    {lbl}
+                  </button>
+                ))}
+                <button className="ml-btn ml-btn-secondary ml-btn-sm"
+                  onClick={() => handlePreviewSynthetic()} disabled={loadingSynthetic}
+                  title="Preview synthetic crops">
+                  {loadingSynthetic
+                    ? <span className="ml-loading-spinner" style={{ width: 12, height: 12, borderWidth: 2 }} />
+                    : <><svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                        <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
+                      </svg> Preview</>
+                  }
+                </button>
+              </div>
             )}
           </div>
-          {augmentFactor >= 2 && (
-            <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>
-              → {okCrops.length * (augmentFactor - 1)} synthetic NG will be added
-            </div>
-          )}
+          {augmentFactor >= 2 && (() => {
+            const nOk = okCrops.length;
+            const nNg = crops.filter(c => c.label === 'NG').length;
+            const augNg = (augmentFactor - 1) * nOk;
+            const augOk = nNg + Math.max(0, augmentFactor - 2) * nOk;
+            const totalOk = nOk + augOk;
+            const totalNg = nNg + augNg;
+            return (
+              <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>
+                → OK: {nOk} real + {augOk} aug = <b>{totalOk}</b> &nbsp;|&nbsp;
+                NG: {nNg} real + {augNg} aug = <b>{totalNg}</b>
+              </div>
+            );
+          })()}
         </div>
 
         {/* ── OK Threshold ── */}

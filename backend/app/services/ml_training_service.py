@@ -66,56 +66,195 @@ def extract_features(char_img: np.ndarray) -> np.ndarray:
     return np.concatenate([pixels, hist_gx, hist_gy, h_proj, v_proj])
 
 
-# ──────────────────────────────────────── Augmentation (synthetic NG) ──
+# ──────────────────────────────────────── Augmentation helpers ──
 
-def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
-    """Generate n synthetic NG samples from an OK character image."""
+def _estimate_bg_color(img: np.ndarray):
+    """Ước lượng màu background (chữ tối → bg là vùng sáng, lấy percentile 75)."""
+    if img.ndim == 3:
+        return np.percentile(img.reshape(-1, img.shape[2]), 75, axis=0)
+    return np.percentile(img, 75)
+
+
+def _estimate_fg_color(img: np.ndarray):
+    """Ước lượng màu foreground (chữ) — vùng tối, percentile 25."""
+    if img.ndim == 3:
+        return np.percentile(img.reshape(-1, img.shape[2]), 25, axis=0)
+    return np.percentile(img, 25)
+
+
+# ──────────────────────────────────────── Augmentation (synthetic OK) ──
+
+def augment_ok(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
+    """
+    Generate n mildly-augmented OK samples.
+
+    Biên độ NHỎ — giữ nguyên semantic OK. Mô phỏng variation thực tế:
+    rotation nhẹ, dịch vị trí nhỏ, ánh sáng, noise sensor, focus drift nhẹ.
+    """
     gray = _to_gray(char_img)
     h, w = gray.shape[:2]
-    results = []
-    num_aug_types = 4
+    results: List[np.ndarray] = []
+    num_aug_types = 5
     choices = np.random.choice(num_aug_types, size=n, replace=n > num_aug_types)
+
     for choice in choices:
         aug = gray.copy()
         if choice == 0:
-            noise = np.random.normal(0, 60, aug.shape).astype(np.int16)
-            aug = np.clip(aug.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+            # Rotation ±5° — replicate border để không tạo viền đen giả
+            angle = float(np.random.uniform(-5, 5))
+            M = cv.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+            aug = cv.warpAffine(
+                aug, M, (w, h),
+                flags=cv.INTER_LINEAR, borderMode=cv.BORDER_REPLICATE,
+            )
         elif choice == 1:
-            # Ước lượng màu background (chữ tối → background là vùng sáng)
-            if aug.ndim == 3:
-                bg_color = np.percentile(aug.reshape(-1, aug.shape[2]), 75, axis=0)
-            else:
-                bg_color = np.percentile(aug, 75)
-
-            num_cuts = np.random.randint(1, 3)
-            min_ratio = 0.05  # độ dày tối thiểu (10% kích thước ảnh)
-            max_ratio = 0.1  # độ dày tối đa (25% kích thước ảnh)
-
-            for _c in range(num_cuts):
-                if np.random.rand() < 0.5:
-                    rh = np.random.randint(max(3, int(h * min_ratio)), max(8, int(h * max_ratio)))
-                    ry = np.random.randint(0, max(1, h - rh))
-                    aug[ry:ry + rh, :] = bg_color
-                else:
-                    rw = np.random.randint(max(3, int(w * min_ratio)), max(8, int(w * max_ratio)))
-                    rx = np.random.randint(0, max(1, w - rw))
-                    aug[:, rx:rx + rw] = bg_color
+            # Translation ±3px
+            dx = int(np.random.randint(-3, 4))
+            dy = int(np.random.randint(-3, 4))
+            M = np.float32([[1, 0, dx], [0, 1, dy]])
+            aug = cv.warpAffine(
+                aug, M, (w, h),
+                flags=cv.INTER_LINEAR, borderMode=cv.BORDER_REPLICATE,
+            )
         elif choice == 2:
-            k = np.random.randint(7, 10)
-            kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
-            aug = cv.erode(aug, kernel, iterations=1)
+            # Brightness/contrast jitter ±15%
+            alpha = float(np.random.uniform(0.85, 1.15))
+            beta = int(np.random.randint(-15, 15))
+            aug = np.clip(aug.astype(np.float32) * alpha + beta, 0, 255).astype(np.uint8)
         elif choice == 3:
-            k = np.random.randint(4, 7)
-            kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
-            aug = cv.dilate(aug, kernel, iterations=1)
-        # elif choice == 4:
-        #     dx = np.random.randint(-w // 3, w // 3 + 1)
-        #     dy = np.random.randint(-h // 3, h // 3 + 1)
-        #     M = np.float32([[1, 0, dx], [0, 1, dy]])
-        #     aug = cv.warpAffine(aug, M, (w, h), borderValue=255)
-        # elif choice == 5:
-        #     k = np.random.choice([17, 19, 21, 23])
-        #     aug = cv.GaussianBlur(aug, (k, k), 0)
+            # Mild gaussian noise (σ=5-8) — sensor noise
+            sigma = float(np.random.uniform(5, 8))
+            noise = np.random.normal(0, sigma, aug.shape).astype(np.int16)
+            aug = np.clip(aug.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+        elif choice == 4:
+            # Slight blur k=3/5 — focus drift nhẹ
+            k = int(np.random.choice([3, 5]))
+            aug = cv.GaussianBlur(aug, (k, k), 0)
+        results.append(aug)
+    return results
+
+
+# ──────────────────────────────────────── Augmentation (synthetic NG) ──
+
+def _ng_transform(aug: np.ndarray, choice: int) -> np.ndarray:
+    """Apply a single NG transform. Split out so augment_ng can chain 2 at once."""
+    h, w = aug.shape[:2]
+
+    if choice == 0:
+        # Heavy noise σ=40-80 — bụi/nhiễu
+        sigma = float(np.random.uniform(40, 80))
+        noise = np.random.normal(0, sigma, aug.shape).astype(np.int16)
+        return np.clip(aug.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+
+    if choice == 1:
+        # Localized cut — vá bg_color 3-8px tại vị trí ngẫu nhiên trên stroke
+        # Simulate "in mất nét 1 đoạn cục bộ"
+        bg = _estimate_bg_color(aug)
+        fg = _estimate_fg_color(aug)
+        # Build text mask (dark pixels = stroke)
+        gray = aug if aug.ndim == 2 else cv.cvtColor(aug, cv.COLOR_BGR2GRAY)
+        thr = (float(np.mean([fg if np.isscalar(fg) else fg.mean(),
+                              bg if np.isscalar(bg) else bg.mean()])))
+        text_mask = gray < thr
+        ys, xs = np.where(text_mask)
+        if len(xs) < 5:
+            # Fallback — không có stroke rõ thì cut strip nhỏ
+            rh = int(np.random.randint(max(3, int(h * 0.05)), max(8, int(h * 0.10))))
+            ry = int(np.random.randint(0, max(1, h - rh)))
+            aug[ry:ry + rh, :] = bg
+            return aug
+
+        num_cuts = int(np.random.randint(1, 3))
+        for _ in range(num_cuts):
+            i = int(np.random.randint(0, len(xs)))
+            cx, cy = int(xs[i]), int(ys[i])
+            patch_w = int(np.random.randint(3, 7))
+            patch_h = int(np.random.randint(3, 7))
+            x0 = max(0, cx - patch_w // 2)
+            y0 = max(0, cy - patch_h // 2)
+            x1 = min(w, x0 + patch_w)
+            y1 = min(h, y0 + patch_h)
+            aug[y0:y1, x0:x1] = bg
+        return aug
+
+    if choice == 2:
+        # Partial erosion — chỉ erode 1 nửa ảnh (lỗi ribbon/head 1 phía)
+        k = int(np.random.randint(5, 9))
+        kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
+        eroded = cv.erode(aug, kernel, iterations=1)
+        side = int(np.random.randint(0, 4))  # 0=left, 1=right, 2=top, 3=bottom
+        out = aug.copy()
+        if side == 0:
+            out[:, :w // 2] = eroded[:, :w // 2]
+        elif side == 1:
+            out[:, w // 2:] = eroded[:, w // 2:]
+        elif side == 2:
+            out[:h // 2, :] = eroded[:h // 2, :]
+        else:
+            out[h // 2:, :] = eroded[h // 2:, :]
+        return out
+
+    if choice == 3:
+        # Dilate full — mực chảy dày toàn ký tự
+        k = int(np.random.randint(4, 7))
+        kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
+        return cv.dilate(aug, kernel, iterations=1)
+
+    if choice == 4:
+        # Heavy blur k=11-17 — mực nhòe / motion blur
+        k = int(np.random.choice([11, 13, 15, 17]))
+        return cv.GaussianBlur(aug, (k, k), 0)
+
+    if choice == 5:
+        # Ink blot — chấm đen (fg color) 3-5px tại vị trí ngẫu nhiên
+        fg = _estimate_fg_color(aug)
+        num_blots = int(np.random.randint(1, 3))
+        for _ in range(num_blots):
+            cx = int(np.random.randint(2, max(3, w - 2)))
+            cy = int(np.random.randint(2, max(3, h - 2)))
+            radius = int(np.random.randint(2, 5))
+            cv.circle(aug, (cx, cy), radius, fg if np.isscalar(fg) else tuple(fg.tolist()), -1)
+        return aug
+
+    if choice == 6:
+        # Ghosting — shift + overlay alpha 0.4 (in chồng)
+        dx = int(np.random.randint(3, 6)) * int(np.random.choice([-1, 1]))
+        dy = int(np.random.randint(2, 5)) * int(np.random.choice([-1, 1]))
+        M = np.float32([[1, 0, dx], [0, 1, dy]])
+        shifted = cv.warpAffine(
+            aug, M, (w, h), flags=cv.INTER_LINEAR, borderMode=cv.BORDER_REPLICATE,
+        )
+        alpha = float(np.random.uniform(0.35, 0.55))
+        return cv.addWeighted(aug, 1.0 - alpha, shifted, alpha, 0)
+
+    return aug
+
+
+def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
+    """
+    Generate n synthetic NG samples.
+
+    7 transform types:
+      0 heavy noise | 1 localized cut | 2 partial erosion | 3 dilate
+      4 heavy blur  | 5 ink blot      | 6 ghosting
+    Với ~20% xác suất mỗi sample sẽ chain 2 transforms khác nhau để
+    tạo defect phức hợp (e.g. blur + cut) giống thực tế hơn.
+    """
+    gray = _to_gray(char_img)
+    results: List[np.ndarray] = []
+    num_aug_types = 7
+
+    for _ in range(n):
+        aug = gray.copy()
+        first = int(np.random.randint(0, num_aug_types))
+        aug = _ng_transform(aug, first)
+
+        # 20% chance chain a second distinct transform
+        if np.random.rand() < 0.20:
+            remaining = [c for c in range(num_aug_types) if c != first]
+            second = int(np.random.choice(remaining))
+            aug = _ng_transform(aug, second)
+
         results.append(aug)
     return results
 
@@ -169,32 +308,60 @@ def build_dataset(
     if not ok_imgs and not ng_imgs:
         raise ValueError("No labeled segments found. Please label images before training.")
 
-    X_ok = np.array([extract_features(c) for c in ok_imgs], dtype=np.float32)
+    n_ok_real = len(ok_imgs)
+    n_ng_real = len(ng_imgs)
+
+    # Balance formula — aim for total_ok ≈ total_ng:
+    #   n_aug_ng = (factor - 1) * n_ok_real
+    #   n_aug_ok = n_ng_real + (factor - 2) * n_ok_real     (floored at 0)
+    # See docs: x2 → 0 OK aug + n_ok NG aug; x3 → n_ok OK aug + 2n_ok NG aug.
+    aug_ok_imgs: List[np.ndarray] = []
+    aug_ng_imgs: List[np.ndarray] = []
+
+    if augment_factor >= 2 and n_ok_real > 0:
+        # --- Augment NG from OK templates ---
+        n_per_ok_ng = augment_factor - 1
+        for c in ok_imgs:
+            aug_ng_imgs.extend(augment_ng(c, n=n_per_ok_ng))
+
+        # --- Augment OK to balance class ---
+        n_aug_ok_total = n_ng_real + max(0, augment_factor - 2) * n_ok_real
+        if n_aug_ok_total > 0:
+            # Distribute per-sample as evenly as possible
+            base = n_aug_ok_total // n_ok_real
+            extra = n_aug_ok_total - base * n_ok_real
+            for i, c in enumerate(ok_imgs):
+                n_this = base + (1 if i < extra else 0)
+                if n_this > 0:
+                    aug_ok_imgs.extend(augment_ok(c, n=n_this))
+
+    all_ok = ok_imgs + aug_ok_imgs
+    all_ng = ng_imgs + aug_ng_imgs
+
+    X_ok = np.array([extract_features(c) for c in all_ok], dtype=np.float32)
     y_ok = np.ones(len(X_ok), dtype=np.int32)
 
-    # Augment OK→synthetic NG if augment_factor > 0
-    aug_ng_imgs: List[np.ndarray] = []
-    if augment_factor >= 2:
-        n_per_sample = augment_factor - 1
-        for c in ok_imgs:
-            aug_ng_imgs.extend(augment_ng(c, n=n_per_sample))
-
-    all_ng = ng_imgs + aug_ng_imgs
     if all_ng:
         X_ng = np.array([extract_features(c) for c in all_ng], dtype=np.float32)
         y_ng = np.zeros(len(X_ng), dtype=np.int32)
         X = np.vstack([X_ok, X_ng])
         y = np.concatenate([y_ok, y_ng])
-        crops_all: List[np.ndarray] = ok_imgs + all_ng
+        crops_all: List[np.ndarray] = list(all_ok) + list(all_ng)
     else:
         X = X_ok
         y = y_ok
-        crops_all = list(ok_imgs)
+        crops_all = list(all_ok)
+
+    logger.info(
+        f"[build_dataset] OK: {n_ok_real} real + {len(aug_ok_imgs)} aug = {len(all_ok)} | "
+        f"NG: {n_ng_real} real + {len(aug_ng_imgs)} aug = {len(all_ng)} | "
+        f"factor={augment_factor}"
+    )
 
     # Shuffle — keep crops in sync
     idx = np.random.permutation(len(X))
     crops_shuffled = [crops_all[i] for i in idx]
-    return X[idx], y[idx], crops_shuffled, len(ok_imgs), len(all_ng)
+    return X[idx], y[idx], crops_shuffled, len(all_ok), len(all_ng)
 
 
 def train_model(
@@ -397,15 +564,26 @@ def generate_synthetic_crops(
     annotations: List[MLAnnotationInDB],
     images_dir: Path,
     augment_factor: int,
+    label: str = "NG",
 ) -> List[Dict[str, Any]]:
     """
-    Generate synthetic NG crops from OK samples for preview.
-    augment_factor must be >= 2 (n_per_sample = augment_factor - 1).
+    Generate synthetic crops from OK samples for preview.
+
+    Args:
+        annotations: project annotations.
+        images_dir: project images directory.
+        augment_factor: preview uses (augment_factor - 1) augments per OK sample.
+        label: 'NG' (destructive augs), 'OK' (mild augs), or 'BOTH'.
+
     Returns list of {source_segment_id, filename, label, crop_b64}.
     """
     if augment_factor < 2:
         return []
     n_per_sample = augment_factor - 1
+    label = (label or "NG").upper()
+    want_ng = label in ("NG", "BOTH")
+    want_ok = label in ("OK", "BOTH")
+
     result = []
     for ann in annotations:
         img_path = images_dir / ann.filename
@@ -418,12 +596,20 @@ def generate_synthetic_crops(
                 })
                 if crop is None:
                     continue
-                aug_imgs = augment_ng(crop, n=n_per_sample)
-                for aug in aug_imgs:
-                    result.append({
-                        "source_segment_id": seg.id,
-                        "filename": ann.filename,
-                        "label": "NG",
-                        "crop_b64": img_to_b64(aug),
-                    })
+                if want_ng:
+                    for aug in augment_ng(crop, n=n_per_sample):
+                        result.append({
+                            "source_segment_id": seg.id,
+                            "filename": ann.filename,
+                            "label": "NG",
+                            "crop_b64": img_to_b64(aug),
+                        })
+                if want_ok:
+                    for aug in augment_ok(crop, n=n_per_sample):
+                        result.append({
+                            "source_segment_id": seg.id,
+                            "filename": ann.filename,
+                            "label": "OK",
+                            "crop_b64": img_to_b64(aug),
+                        })
     return result

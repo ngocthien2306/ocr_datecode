@@ -431,12 +431,20 @@ async def preview_synthetic_endpoint(
     repo: MLTrainingRepository = Depends(get_repo),
     current_user: UserInDB = Depends(get_current_user),
 ):
-    """Return synthetic NG crops generated from OK samples for preview (no training)."""
+    """
+    Return synthetic augmented crops generated from OK samples (no training).
+
+    Request `label` controls which variants to return:
+      - 'NG'   → destructive augmentations (default)
+      - 'OK'   → mild augmentations (for balanced training preview)
+      - 'BOTH' → both OK and NG variants
+    """
     annotations = await repo.list_annotations(project_id)
     images_dir = _images_dir(project_id)
 
     crops = await asyncio.get_event_loop().run_in_executor(
-        None, generate_synthetic_crops, annotations, images_dir, request.augment_factor
+        None, generate_synthetic_crops,
+        annotations, images_dir, request.augment_factor, request.label,
     )
     return {"crops": crops, "count": len(crops)}
 
