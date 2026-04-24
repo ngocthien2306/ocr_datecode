@@ -149,7 +149,7 @@ export default function InferenceRealtimeSettingsModal({
       ...ann,
       type: ann.type || 'text', // Required: Default to 'text' if not specified
       shape: ann.shape || 'rectangle', // Required: Default to 'rectangle'
-      conf: ann.conf ?? 0.85 // Required: Default to 0.85
+      conf: ann.conf ?? 0.5 // Required: Default to 0.85
     }));
   };
 

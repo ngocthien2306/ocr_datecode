@@ -1226,7 +1226,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         width: seg.w,
         height: seg.h,
         text: '',
-        conf: ann.conf ?? 0.85,
+        conf: ann.conf ?? 0.5,
       }));
 
       const updated = [...currentAnnotations];

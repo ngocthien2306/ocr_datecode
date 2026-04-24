@@ -206,7 +206,7 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
                       min="0"
                       max="1"
                       step="0.01"
-                      value={ann.conf ?? 0.85}
+                      value={ann.conf ?? 0.5}
                       onChange={(e) => {
                         const value = parseFloat(e.target.value);
                         if (!isNaN(value) && value >= 0 && value <= 1) {

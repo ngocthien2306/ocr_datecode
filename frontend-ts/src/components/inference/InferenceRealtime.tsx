@@ -34,6 +34,9 @@ interface TextVerificationResult {
   threshold: number;
   match_sim: boolean;
   similarity: number;
+  ml_pass?: boolean | null;
+  ml_p_ok?: number | null;
+  ml_label?: string | null;
   char_confs?: CharConf[] | null;
   char_results?: CharResult[];
 }
@@ -1064,7 +1067,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                       <th className="col-recognized">Recognized</th>
                       <th className="col-match">Match</th>
                       <th className="col-confidence">Conf</th>
-                      <th className="col-confidence">Sim</th>
+                      <th className="col-confidence">ML</th>
                       <th className="col-threshold-ocr">Conf</th>
 
                     </tr>
@@ -1114,8 +1117,8 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                             </td>
                             <td className="col-confidence">
                               <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                <span className={`confidence-value ${getConfidenceClass(result.similarity)}`}>
-                                  {result.similarity != null ? (result.similarity * 100).toFixed(1) + '%' : '—'}
+                                <span className={`confidence-value ${result.ml_p_ok != null ? getConfidenceClass(result.ml_p_ok) : ''}`}>
+                                  {result.ml_p_ok != null ? (result.ml_p_ok * 100).toFixed(1) + '%' : '—'}
                                 </span>
                                 {hasCharImages && (
                                   <button

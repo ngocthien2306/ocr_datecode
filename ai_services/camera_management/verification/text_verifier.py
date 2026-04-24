@@ -872,7 +872,7 @@ class TextVerificationService:
         region_map: Dict[Tuple[str, int], Dict[str, Any]] = {}
         if ocr_items:
             region_map = self._run_ocr_batch_with_checks(
-                ocr_items, sim_items, ml_items, case_sensitive=False,
+                ocr_items, sim_items, ml_items, case_sensitive=True,
             )
         region_map.update(invalid_map)
 
