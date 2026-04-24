@@ -32,6 +32,7 @@ export interface CharSegment {
   id: string;
   x: number; y: number; w: number; h: number;
   label?: 'OK' | 'NG' | null;
+  char_id?: string | null;   // auto-populated from recipe expected_text or manually set
 }
 
 export interface AnnotationRegion {
@@ -52,13 +53,15 @@ export interface LabeledCrop {
   filename: string;
   label: 'OK' | 'NG';
   crop_b64: string;
+  char_id?: string | null;
 }
 
 export interface SyntheticCrop {
   source_segment_id: string;
   filename: string;
-  label: 'NG';
+  label: 'OK' | 'NG';
   crop_b64: string;
+  char_id?: string | null;
 }
 
 export interface TrainRequest {
@@ -80,6 +83,7 @@ export interface MLModelMetrics {
   n_total: number;
   confusion_matrix: number[][];
   report: string;
+  golden_chars?: string[];   // chars with golden templates (v2 models only)
 }
 
 export interface MLModel {
@@ -101,6 +105,30 @@ export interface PredictResult {
   prob_ok: number;
   label: 'OK' | 'NG';
   crop_b64: string;
+  char_id?: string | null;
+  aligned_b64?: string | null;   // input after alignment to golden (v2 + golden)
+  golden_b64?: string | null;    // reference golden for this char
+  diff_b64?: string | null;      // JET-colormap diff heatmap
+}
+
+export interface ImportFromRecipeRequest {
+  recipe_id: string;
+  camera_serial: string;
+  filenames: string[];
+}
+
+export interface ImportFromRecipeResponse {
+  imported: number;
+  skipped: number;
+  errors: Array<{ filename: string; reason: string }>;
+  char_ids: string[];
+}
+
+export interface CharCoverageResponse {
+  covered: string[];
+  missing: string[];
+  coverage_pct: number;
+  model_chars: string[];
 }
 
 export interface TestSetCropResult {
@@ -232,5 +260,18 @@ export const mlTrainingAPI = {
   getTestSetCrops: (projectId: string, modelId: string) =>
     api.get<{ crops: TestSetCropResult[]; count: number }>(
       `/ml/projects/${projectId}/models/${modelId}/test-set-crops`
+    ).then(r => r.data),
+
+  // Import recipe template bboxes into project (auto-populate char_id)
+  importFromRecipe: (projectId: string, body: ImportFromRecipeRequest) =>
+    api.post<ImportFromRecipeResponse>(
+      `/ml/projects/${projectId}/import-from-recipe`, body,
+    ).then(r => r.data),
+
+  // Check which required chars are covered by the model's goldens
+  charCoverage: (projectId: string, modelId: string, chars: string[]) =>
+    api.get<CharCoverageResponse>(
+      `/ml/projects/${projectId}/models/${modelId}/char-coverage`,
+      { params: { chars: chars.join(',') } },
     ).then(r => r.data),
 };

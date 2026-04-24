@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import TemplateEditor from './TemplateEditorRefactored';
 import AnnotationsPanel from '@/components/shared/AnnotationsPanel';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
@@ -129,6 +129,10 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   const [mlModels, setMlModels] = useState<MLModel[]>([]);
   const [loadingMlProjects, setLoadingMlProjects] = useState(false);
   const [loadingMlModels, setLoadingMlModels] = useState(false);
+  // Char coverage check (warns when selected ML model is missing chars
+  // required by this recipe's template text/datecode bboxes)
+  const [mlCoverage, setMlCoverage] = useState<{ covered: string[]; missing: string[]; pct: number } | null>(null);
+  const [loadingMlCoverage, setLoadingMlCoverage] = useState(false);
   
   // Template editor states - now supports multiple templates per camera
   const [selectedCameraForTemplate, setSelectedCameraForTemplate] = useState<string>('');
@@ -341,6 +345,54 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       setMlModels([]);
     }
   }, [formData.ml_project_id]);
+
+  // Collect all recipe chars from text/datecode annotations across templates.
+  // These are the chars the ML model must be able to classify at runtime.
+  const recipeChars = useMemo(() => {
+    const chars = new Set<string>();
+    Object.values(cameraTemplates).forEach(tpls => {
+      tpls.forEach(tpl => {
+        (tpl.annotations || []).forEach((ann: any) => {
+          if ((ann.type === 'text' || ann.type === 'datecode') && typeof ann.text === 'string' && ann.text.trim()) {
+            chars.add(ann.text.trim());
+          }
+        });
+      });
+    });
+    return Array.from(chars).sort();
+  }, [cameraTemplates]);
+
+  // Check coverage whenever ml_model_id or recipe chars change
+  useEffect(() => {
+    if (!formData.ml_project_id || !formData.ml_model_id || recipeChars.length === 0) {
+      setMlCoverage(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setLoadingMlCoverage(true);
+      try {
+        const cov = await mlTrainingAPI.charCoverage(
+          formData.ml_project_id,
+          formData.ml_model_id,
+          recipeChars,
+        );
+        if (!cancelled) {
+          setMlCoverage({
+            covered: cov.covered,
+            missing: cov.missing,
+            pct: cov.coverage_pct,
+          });
+        }
+      } catch (e) {
+        if (!cancelled) setMlCoverage(null);
+        console.warn('[RecipeForm] char-coverage check failed:', e);
+      } finally {
+        if (!cancelled) setLoadingMlCoverage(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [formData.ml_project_id, formData.ml_model_id, recipeChars]);
 
   const loadAvailableCameras = async () => {
     setLoadingCameras(true);
@@ -1715,6 +1767,50 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       {loadingMlModels && <small className="field-description">Loading models…</small>}
                       {formData.ml_project_id && !loadingMlModels && mlModels.length === 0 && (
                         <small className="field-description" style={{ color: 'var(--color-warning, #f59e0b)' }}>No completed models in this project yet</small>
+                      )}
+                      {/* ── Char coverage warning ─────────────────────────── */}
+                      {formData.ml_model_id && recipeChars.length > 0 && (
+                        <div style={{ marginTop: 8, padding: 8, borderRadius: 4,
+                          background: mlCoverage && mlCoverage.missing.length === 0
+                            ? 'rgba(34,197,94,.12)'
+                            : 'rgba(245,158,11,.12)',
+                          border: `1px solid ${
+                            mlCoverage && mlCoverage.missing.length === 0
+                              ? 'rgba(34,197,94,.35)' : 'rgba(245,158,11,.35)'
+                          }`,
+                          fontSize: 12,
+                        }}>
+                          {loadingMlCoverage ? (
+                            <span>Checking char coverage…</span>
+                          ) : mlCoverage ? (
+                            <>
+                              <div>
+                                <strong>Coverage: {mlCoverage.pct.toFixed(0)}%</strong>
+                                <span style={{ marginLeft: 8, color: '#9ca3af' }}>
+                                  ({mlCoverage.covered.length}/{recipeChars.length} chars)
+                                </span>
+                              </div>
+                              {mlCoverage.missing.length > 0 && (
+                                <div style={{ marginTop: 4 }}>
+                                  <span style={{ color: 'var(--color-warning, #f59e0b)' }}>
+                                    ⚠️ Missing: {mlCoverage.missing.map(c => `"${c}"`).join(', ')}
+                                  </span>
+                                  <br />
+                                  <small style={{ color: '#9ca3af' }}>
+                                    ML check sẽ bị SKIP cho các bbox có chars này. Label & retrain project nếu cần full coverage.
+                                  </small>
+                                </div>
+                              )}
+                              {mlCoverage.missing.length === 0 && (
+                                <div style={{ color: 'var(--color-success, #22c55e)', marginTop: 2 }}>
+                                  ✓ All recipe chars covered by this model
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <small>Coverage check unavailable</small>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>

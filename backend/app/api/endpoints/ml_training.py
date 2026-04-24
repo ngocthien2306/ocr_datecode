@@ -17,6 +17,11 @@ from fastapi.responses import JSONResponse
 from app.api.dependencies.auth import get_current_user
 from app.db.mongodb import get_database
 from app.models.ml_training import (
+    AnnotationRegion,
+    CharSegment,
+    ImportFromRecipeRequest,
+    ImportFromRecipeResponse,
+    CharCoverageResponse,
     MLAnnotationSave,
     MLProjectCreate,
     MLProjectUpdate,
@@ -25,10 +30,12 @@ from app.models.ml_training import (
 )
 from app.models.user import UserInDB
 from app.repositories.ml_training_repository import MLTrainingRepository
+from app.repositories.recipe_repository import RecipeRepository
 from app.services.ml_segment_service import segment_region
 from app.services.ml_training_service import (
     generate_synthetic_crops,
     get_labeled_crops,
+    get_model_chars,
     img_to_b64,
     predict_on_image,
     train_model,
@@ -69,6 +76,10 @@ def _models_dir(project_id: str) -> Path:
 
 def get_repo(db=Depends(get_database)) -> MLTrainingRepository:
     return MLTrainingRepository(db)
+
+
+def get_recipe_repo(db=Depends(get_database)) -> RecipeRepository:
+    return RecipeRepository(db)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -619,3 +630,205 @@ async def get_test_set_crops(
 
     items = _json.loads(test_set_path.read_text())
     return {"crops": items, "count": len(items)}
+
+
+# ════════════════════════════════════════ IMPORT FROM RECIPE ══════════════
+
+def _bbox_to_normalized_xywh(ann, image_width: int, image_height: int):
+    """
+    Convert a recipe TemplateAnnotation (either rect or polygon) to
+    normalized (x, y, w, h) in [0, 1] coords.
+    Returns None if annotation has neither rect nor polygon points.
+    """
+    if ann.points and len(ann.points) >= 4:
+        xs = [float(p[0]) for p in ann.points]
+        ys = [float(p[1]) for p in ann.points]
+        x0, x1 = min(xs), max(xs)
+        y0, y1 = min(ys), max(ys)
+    elif (ann.x is not None and ann.y is not None
+          and ann.width is not None and ann.height is not None):
+        x0, y0 = float(ann.x), float(ann.y)
+        x1, y1 = x0 + float(ann.width), y0 + float(ann.height)
+    else:
+        return None
+
+    # Normalize to 0..1 (clamped)
+    nx = max(0.0, min(1.0, x0 / image_width))
+    ny = max(0.0, min(1.0, y0 / image_height))
+    nw = max(0.0, min(1.0 - nx, (x1 - x0) / image_width))
+    nh = max(0.0, min(1.0 - ny, (y1 - y0) / image_height))
+    if nw <= 0 or nh <= 0:
+        return None
+    return nx, ny, nw, nh
+
+
+@router.post(
+    "/ml/projects/{project_id}/import-from-recipe",
+    response_model=ImportFromRecipeResponse,
+    tags=["ML Training"],
+)
+async def import_from_recipe(
+    project_id: str,
+    request: ImportFromRecipeRequest,
+    repo: MLTrainingRepository = Depends(get_repo),
+    recipe_repo: RecipeRepository = Depends(get_recipe_repo),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """
+    Pre-populate ML annotations from recipe template's text/datecode bboxes.
+
+    For each filename in project images:
+      - For each text/datecode annotation in the recipe's camera template:
+        - Create a region + segment with char_id auto-filled from annotation.text
+        - label left as None — user labels OK/NG in the UI afterwards
+
+    Partial-success semantics: files that fail (missing on disk, no
+    recipe annotations, invalid bbox) are skipped with error logged;
+    other files proceed.
+    """
+    # Verify project exists
+    project = await repo.get_project(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    # Load recipe
+    recipe = await recipe_repo.get_by_id(request.recipe_id)
+    if not recipe:
+        raise HTTPException(404, f"Recipe {request.recipe_id} not found")
+
+    # Find the CameraConfiguration matching the requested serial
+    camera_cfg = next(
+        (c for c in (recipe.cameras or []) if c.serial_number == request.camera_serial),
+        None,
+    )
+    if not camera_cfg:
+        raise HTTPException(
+            400,
+            f"Recipe does not reference camera {request.camera_serial}",
+        )
+
+    # Find the CameraTemplates for this camera_id
+    cam_templates = next(
+        (ct for ct in (recipe.camera_templates or []) if ct.camera_id == camera_cfg.camera_id),
+        None,
+    )
+    if not cam_templates or not cam_templates.templates:
+        raise HTTPException(
+            400,
+            f"Recipe has no templates for camera {request.camera_serial}",
+        )
+
+    imported = 0
+    skipped = 0
+    errors: List[dict] = []
+    char_ids_seen = set()
+
+    images_dir = _images_dir(project_id)
+
+    for filename in request.filenames:
+        try:
+            image_path = images_dir / filename
+            if not image_path.exists():
+                raise FileNotFoundError(f"{filename} not present in project images")
+
+            regions: List[AnnotationRegion] = []
+            # Loop over each template defined for the camera
+            # Normally there's 1 template per camera, but support N.
+            for tpl in cam_templates.templates:
+                img_w = int(tpl.image_width) if tpl.image_width else 0
+                img_h = int(tpl.image_height) if tpl.image_height else 0
+                if img_w <= 0 or img_h <= 0:
+                    continue
+
+                for ann in tpl.annotations or []:
+                    if ann.type not in ("text", "datecode"):
+                        continue
+                    box = _bbox_to_normalized_xywh(ann, img_w, img_h)
+                    if box is None:
+                        continue
+                    nx, ny, nw, nh = box
+                    char_id = (ann.text or "").strip() or None
+
+                    seg = CharSegment(
+                        id=str(uuid.uuid4()),
+                        x=nx, y=ny, w=nw, h=nh,
+                        label=None,
+                        char_id=char_id,
+                    )
+                    regions.append(AnnotationRegion(
+                        id=str(uuid.uuid4()),
+                        x=nx, y=ny, w=nw, h=nh,
+                        segments=[seg],
+                    ))
+                    if char_id:
+                        char_ids_seen.add(char_id)
+
+            if not regions:
+                raise ValueError("Recipe template has no text/datecode annotations")
+
+            await repo.save_annotation(
+                project_id, filename,
+                MLAnnotationSave(regions=regions),
+            )
+            imported += 1
+
+        except Exception as e:
+            skipped += 1
+            errors.append({"filename": filename, "reason": str(e)})
+            logger.warning(f"[import-from-recipe] skip {filename}: {e}")
+
+    # Refresh labeled count (may be 0 since we only created segments, not labels)
+    await repo.refresh_labeled_count(project_id)
+
+    logger.info(
+        f"[import-from-recipe] project={project_id} recipe={request.recipe_id} "
+        f"imported={imported} skipped={skipped} char_ids={sorted(char_ids_seen)}"
+    )
+
+    return ImportFromRecipeResponse(
+        imported=imported,
+        skipped=skipped,
+        errors=errors,
+        char_ids=sorted(char_ids_seen),
+    )
+
+
+# ════════════════════════════════════════ CHAR COVERAGE ═════════════════
+
+@router.get(
+    "/ml/projects/{project_id}/models/{model_id}/char-coverage",
+    response_model=CharCoverageResponse,
+    tags=["ML Training"],
+)
+async def char_coverage(
+    project_id: str,
+    model_id: str,
+    chars: str,  # comma-separated: "A,B,C"
+    repo: MLTrainingRepository = Depends(get_repo),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """
+    Given a list of chars the recipe needs, return which are covered by
+    the model's goldens and which are missing. Used by FE to warn when
+    a recipe picks an ML model that doesn't have all its required chars.
+    """
+    all_models = await repo.list_models(project_id)
+    model_record = next((m for m in all_models if m.id == model_id), None)
+    if not model_record:
+        raise HTTPException(404, "Model not found")
+    if not model_record.model_path:
+        raise HTTPException(400, "Model has no saved file")
+
+    model_chars = set(get_model_chars(Path(model_record.model_path)))
+    requested = [c.strip() for c in (chars or "").split(",") if c.strip()]
+
+    covered = [c for c in requested if c in model_chars]
+    missing = [c for c in requested if c not in model_chars]
+    pct = round(len(covered) / len(requested) * 100, 1) if requested else 0.0
+
+    return CharCoverageResponse(
+        covered=covered,
+        missing=missing,
+        coverage_pct=pct,
+        model_chars=sorted(model_chars),
+    )

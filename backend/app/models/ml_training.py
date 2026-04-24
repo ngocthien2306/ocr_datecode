@@ -30,6 +30,7 @@ class CharSegment(BaseModel):
     w: float
     h: float
     label: Optional[str] = None  # "OK" | "NG" | None
+    char_id: Optional[str] = None  # "A", "B", "0", "/"... — enables per-char golden template
 
 
 class AnnotationRegion(BaseModel):
@@ -144,6 +145,7 @@ class LabeledCrop(BaseModel):
     filename: str
     label: Optional[str]
     crop_b64: str                   # base64 JPEG
+    char_id: Optional[str] = None   # for FE badge + golden template
 
 
 class PredictResult(BaseModel):
@@ -155,6 +157,31 @@ class PredictResult(BaseModel):
     prob_ok: float
     label: str                      # "OK" | "NG"
     crop_b64: str
+    char_id: Optional[str] = None
+    # Diff heatmap preview (only when char_id has a golden in model)
+    aligned_b64: Optional[str] = None
+    golden_b64: Optional[str] = None
+    diff_b64: Optional[str] = None
+
+
+class ImportFromRecipeRequest(BaseModel):
+    recipe_id: str
+    camera_serial: str
+    filenames: List[str]
+
+
+class ImportFromRecipeResponse(BaseModel):
+    imported: int
+    skipped: int
+    errors: List[Dict[str, str]] = []  # [{filename, reason}, ...]
+    char_ids: List[str] = []            # unique char_ids auto-populated
+
+
+class CharCoverageResponse(BaseModel):
+    covered: List[str]
+    missing: List[str]
+    coverage_pct: float
+    model_chars: List[str]              # full list of chars the model has goldens for
 
 
 class PredictResponse(BaseModel):

@@ -110,6 +110,146 @@ def extract_features(char_img: np.ndarray) -> np.ndarray:
     return np.concatenate([pixels, cell_arr, hist_gx, hist_gy, h_proj, v_proj, quad_arr])
 
 
+# ──────────────────────────────────────── Golden template (v2) ──
+#
+# v2 pipeline: per-char golden reference + alignment + diff features.
+# Requires char_id on each segment (either manually labeled or imported
+# from recipe's expected_text).
+#
+# extract_features_v2 layout:
+#   base_v1 (856) = extract_features(aligned_input)
+#   diff features (160):
+#     - 6×6 grid × 4 stats on diff_map (144): mean, max, std, count>thr
+#     - 4×4 region × 1 stat (16): max
+#   total 1016
+
+FEAT_DIM_V2 = FEAT_DIM + 160   # 856 + 160 = 1016
+GOLDEN_MIN_OK_SAMPLES = 5      # skip char's golden if fewer than this many OK
+
+
+def preprocess_canonical(img: np.ndarray) -> np.ndarray:
+    """
+    Gray → CLAHE (contrast normalize) → resize preserve aspect → center-pad 48×48.
+    Used by compute_golden and extract_features_v2 for consistent canonical form.
+    """
+    gray = _to_gray(img)
+    h, w = gray.shape[:2]
+    if h == 0 or w == 0:
+        return np.zeros(FEAT_SIZE[::-1], dtype=np.uint8)
+
+    clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    normed = clahe.apply(gray)
+
+    scale = min(FEAT_SIZE[0] / w, FEAT_SIZE[1] / h)
+    nw = max(1, int(w * scale))
+    nh = max(1, int(h * scale))
+    resized = cv.resize(normed, (nw, nh), interpolation=cv.INTER_AREA)
+    canvas = np.zeros(FEAT_SIZE[::-1], dtype=np.uint8)
+    yo = (FEAT_SIZE[1] - nh) // 2
+    xo = (FEAT_SIZE[0] - nw) // 2
+    canvas[yo:yo + nh, xo:xo + nw] = resized
+    return canvas
+
+
+def compute_golden(ok_crops: List[np.ndarray]) -> Optional[np.ndarray]:
+    """
+    Average OK samples (after canonical preprocessing) → 48×48 uint8 reference.
+
+    Returns None if fewer than GOLDEN_MIN_OK_SAMPLES samples provided —
+    caller should fall back to non-golden (v1 features only) for this char.
+    """
+    if len(ok_crops) < GOLDEN_MIN_OK_SAMPLES:
+        return None
+    canonical = [preprocess_canonical(c).astype(np.float32) for c in ok_crops]
+    return np.mean(canonical, axis=0).astype(np.uint8)
+
+
+def align_to_golden(
+    input_48: np.ndarray, golden_48: np.ndarray, search: int = 5,
+) -> Tuple[np.ndarray, Tuple[int, int]]:
+    """
+    Find best ±search-px offset that aligns input to golden; apply the shift.
+    Uses cv2.matchTemplate for fast sub-pixel-accurate search.
+    """
+    padded = cv.copyMakeBorder(
+        input_48, search, search, search, search, cv.BORDER_REPLICATE,
+    )
+    result = cv.matchTemplate(padded, golden_48, cv.TM_CCOEFF_NORMED)
+    _, _, _, (mx, my) = cv.minMaxLoc(result)
+    dx, dy = mx - search, my - search
+    M = np.float32([[1, 0, dx], [0, 1, dy]])
+    aligned = cv.warpAffine(
+        input_48, M, FEAT_SIZE,
+        flags=cv.INTER_LINEAR, borderMode=cv.BORDER_REPLICATE,
+    )
+    return aligned, (int(dx), int(dy))
+
+
+def extract_diff_features(diff_48: np.ndarray) -> np.ndarray:
+    """
+    160-dim features from |input - golden| diff map.
+      - 6×6 grid × 4 stats (144): mean, max, std, count(>30)
+      - 4×4 region × 1 stat (16): max
+    """
+    feats: List[float] = []
+
+    # 6×6 grid of 8×8 cells
+    for i in range(GRID):
+        for j in range(GRID):
+            y0, y1 = i * CELL_SIZE, (i + 1) * CELL_SIZE
+            x0, x1 = j * CELL_SIZE, (j + 1) * CELL_SIZE
+            cell = diff_48[y0:y1, x0:x1]
+            feats.append(float(cell.mean()) / 255.0)
+            feats.append(float(cell.max()) / 255.0)
+            feats.append(float(cell.std()) / 128.0)
+            feats.append(float(np.count_nonzero(cell > 30)) / (CELL_SIZE * CELL_SIZE))
+
+    # 4×4 coarse grid of 12×12 regions — captures broader local anomalies
+    region_size = FEAT_SIZE[0] // 4
+    for i in range(4):
+        for j in range(4):
+            y0, y1 = i * region_size, (i + 1) * region_size
+            x0, x1 = j * region_size, (j + 1) * region_size
+            region = diff_48[y0:y1, x0:x1]
+            feats.append(float(region.max()) / 255.0)
+
+    return np.asarray(feats, dtype=np.float32)
+
+
+def _compute_diff_map(img: np.ndarray, char_id: Optional[str],
+                     goldens: Optional[Dict[str, np.ndarray]]) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    """
+    Shared helper: canonical preprocess + align + diff.
+    Returns (aligned_48, diff_48_or_None). diff is None when no golden available.
+    """
+    canvas = preprocess_canonical(img)
+    if char_id and goldens and char_id in goldens:
+        golden = goldens[char_id]
+        aligned, _ = align_to_golden(canvas, golden)
+        diff = np.abs(aligned.astype(np.int16) - golden.astype(np.int16)).astype(np.uint8)
+        return aligned, diff
+    return canvas, None
+
+
+def extract_features_v2(
+    char_img: np.ndarray,
+    char_id: Optional[str] = None,
+    goldens: Optional[Dict[str, np.ndarray]] = None,
+) -> np.ndarray:
+    """
+    1016-dim feature vector = 856 base + 160 diff.
+    When char_id missing or no golden exists → diff features = zeros (model
+    learns to discount them).
+    """
+    aligned, diff = _compute_diff_map(char_img, char_id, goldens)
+    base = extract_features(aligned)
+    if diff is None:
+        diff_feats = np.zeros(160, dtype=np.float32)
+    else:
+        diff_feats = extract_diff_features(diff)
+    return np.concatenate([base, diff_feats])
+
+
 # ──────────────────────────────────────── Augmentation helpers ──
 
 def _estimate_bg_color(img: np.ndarray):
@@ -335,19 +475,26 @@ def build_dataset(
     annotations: List[MLAnnotationInDB],
     images_dir: Path,
     augment_factor: int = 0,
-) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray], int, int]:
+) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray], Dict[str, np.ndarray], int, int]:
     """
-    Build (X, y, crops_raw) dataset from project annotations.
+    Build (X, y, crops_raw, goldens) dataset from project annotations.
+
+    v2: groups OK samples by char_id → per-char golden templates.
+    Char without char_id (or with <5 OK samples) → no golden, diff features zero.
 
     Returns:
-        X: feature matrix
+        X: feature matrix (N, 1016)
         y: labels (1=OK, 0=NG)
-        crops_raw: list of raw crop images, same order as X/y rows
-        n_ok: count of real OK samples
-        n_ng: count of real+synthetic NG samples
+        crops_raw: raw crops in order matching X rows
+        goldens: {char_id: np.ndarray(48,48)} — skipped chars absent
+        n_ok_total, n_ng_total: counts after augmentation
     """
-    ok_imgs: List[np.ndarray] = []
-    ng_imgs: List[np.ndarray] = []
+    from collections import defaultdict
+
+    # Group OK crops by char_id for golden computation.
+    # Samples tagged with char_id but no label → ignored (unlabeled).
+    ok_by_char: Dict[str, List[np.ndarray]] = defaultdict(list)
+    ng_by_char: Dict[str, List[np.ndarray]] = defaultdict(list)
 
     for ann in annotations:
         img_path = images_dir / ann.filename
@@ -360,68 +507,90 @@ def build_dataset(
                 })
                 if crop is None:
                     continue
-                if seg.label == "OK":
-                    ok_imgs.append(crop)
-                else:
-                    ng_imgs.append(crop)
+                key = seg.char_id or "_unknown"
+                (ok_by_char if seg.label == "OK" else ng_by_char)[key].append(crop)
 
-    if not ok_imgs and not ng_imgs:
+    if not ok_by_char and not ng_by_char:
         raise ValueError("No labeled segments found. Please label images before training.")
 
-    n_ok_real = len(ok_imgs)
-    n_ng_real = len(ng_imgs)
+    # --- Compute goldens per char (skip char_id='_unknown' or <5 OK) ---
+    goldens: Dict[str, np.ndarray] = {}
+    for char_id, crops in ok_by_char.items():
+        if char_id == "_unknown":
+            continue
+        g = compute_golden(crops)
+        if g is not None:
+            goldens[char_id] = g
+        else:
+            logger.warning(
+                f"[build_dataset] char '{char_id}' has {len(crops)} OK samples "
+                f"(< {GOLDEN_MIN_OK_SAMPLES}) — skipping golden, diff features will be zero"
+            )
 
-    # Balance formula — aim for total_ok ≈ total_ng:
-    #   n_aug_ng = (factor - 1) * n_ok_real
-    #   n_aug_ok = n_ng_real + (factor - 2) * n_ok_real     (floored at 0)
-    # See docs: x2 → 0 OK aug + n_ok NG aug; x3 → n_ok OK aug + 2n_ok NG aug.
-    aug_ok_imgs: List[np.ndarray] = []
-    aug_ng_imgs: List[np.ndarray] = []
+    n_ok_real = sum(len(v) for v in ok_by_char.values())
+    n_ng_real = sum(len(v) for v in ng_by_char.values())
+
+    # --- Augment (same balance formula, but per-char preserved) ---
+    #   n_aug_ng_total = (factor-1) * n_ok_real   (NG generated from OK templates)
+    #   n_aug_ok_total = n_ng_real + max(0, factor-2) * n_ok_real
+    aug_ok_by_char: Dict[str, List[np.ndarray]] = defaultdict(list)
+    aug_ng_by_char: Dict[str, List[np.ndarray]] = defaultdict(list)
 
     if augment_factor >= 2 and n_ok_real > 0:
-        # --- Augment NG from OK templates ---
         n_per_ok_ng = augment_factor - 1
-        for c in ok_imgs:
-            aug_ng_imgs.extend(augment_ng(c, n=n_per_ok_ng))
+        for char_id, crops in ok_by_char.items():
+            for c in crops:
+                # Synthetic NG keeps the char_id so alignment uses the right golden
+                aug_ng_by_char[char_id].extend(augment_ng(c, n=n_per_ok_ng))
 
-        # --- Augment OK to balance class ---
         n_aug_ok_total = n_ng_real + max(0, augment_factor - 2) * n_ok_real
         if n_aug_ok_total > 0:
-            # Distribute per-sample as evenly as possible
-            base = n_aug_ok_total // n_ok_real
-            extra = n_aug_ok_total - base * n_ok_real
-            for i, c in enumerate(ok_imgs):
+            # Distribute proportionally across OK samples
+            all_ok_chars = [(char_id, c) for char_id, crops in ok_by_char.items() for c in crops]
+            base = n_aug_ok_total // len(all_ok_chars)
+            extra = n_aug_ok_total - base * len(all_ok_chars)
+            for i, (char_id, c) in enumerate(all_ok_chars):
                 n_this = base + (1 if i < extra else 0)
                 if n_this > 0:
-                    aug_ok_imgs.extend(augment_ok(c, n=n_this))
+                    aug_ok_by_char[char_id].extend(augment_ok(c, n=n_this))
 
-    all_ok = ok_imgs + aug_ok_imgs
-    all_ng = ng_imgs + aug_ng_imgs
+    # --- Flatten + extract features (with goldens for alignment) ---
+    X_rows: List[np.ndarray] = []
+    y_rows: List[int] = []
+    crops_rows: List[np.ndarray] = []
 
-    X_ok = np.array([extract_features(c) for c in all_ok], dtype=np.float32)
-    y_ok = np.ones(len(X_ok), dtype=np.int32)
+    def _append_samples(samples_by_char, label_val):
+        for char_id, crops in samples_by_char.items():
+            for c in crops:
+                X_rows.append(extract_features_v2(c, char_id, goldens))
+                y_rows.append(label_val)
+                crops_rows.append(c)
 
-    if all_ng:
-        X_ng = np.array([extract_features(c) for c in all_ng], dtype=np.float32)
-        y_ng = np.zeros(len(X_ng), dtype=np.int32)
-        X = np.vstack([X_ok, X_ng])
-        y = np.concatenate([y_ok, y_ng])
-        crops_all: List[np.ndarray] = list(all_ok) + list(all_ng)
-    else:
-        X = X_ok
-        y = y_ok
-        crops_all = list(all_ok)
+    _append_samples(ok_by_char, 1)
+    _append_samples(aug_ok_by_char, 1)
+    _append_samples(ng_by_char, 0)
+    _append_samples(aug_ng_by_char, 0)
+
+    X = np.asarray(X_rows, dtype=np.float32)
+    y = np.asarray(y_rows, dtype=np.int32)
+
+    n_aug_ok = sum(len(v) for v in aug_ok_by_char.values())
+    n_aug_ng = sum(len(v) for v in aug_ng_by_char.values())
+    total_ok = n_ok_real + n_aug_ok
+    total_ng = n_ng_real + n_aug_ng
 
     logger.info(
-        f"[build_dataset] OK: {n_ok_real} real + {len(aug_ok_imgs)} aug = {len(all_ok)} | "
-        f"NG: {n_ng_real} real + {len(aug_ng_imgs)} aug = {len(all_ng)} | "
-        f"factor={augment_factor}"
+        f"[build_dataset v2] "
+        f"chars: {sorted(set(ok_by_char.keys()) | set(ng_by_char.keys()))} | "
+        f"goldens: {sorted(goldens.keys())} | "
+        f"OK: {n_ok_real}+{n_aug_ok}={total_ok} | "
+        f"NG: {n_ng_real}+{n_aug_ng}={total_ng} | factor={augment_factor}"
     )
 
     # Shuffle — keep crops in sync
     idx = np.random.permutation(len(X))
-    crops_shuffled = [crops_all[i] for i in idx]
-    return X[idx], y[idx], crops_shuffled, len(all_ok), len(all_ng)
+    crops_shuffled = [crops_rows[i] for i in idx]
+    return X[idx], y[idx], crops_shuffled, goldens, total_ok, total_ng
 
 
 def train_model(
@@ -439,7 +608,9 @@ def train_model(
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 
-    X, y, crops_raw, n_ok, n_ng = build_dataset(annotations, images_dir, request.augment_factor)
+    X, y, crops_raw, goldens, n_ok, n_ng = build_dataset(
+        annotations, images_dir, request.augment_factor,
+    )
 
     if len(X) < 4:
         raise ValueError(f"Need at least 4 samples, got {len(X)}.")
@@ -489,11 +660,24 @@ def train_model(
             "correct":    bool(true_y == pred_y),
         })
 
-    # Save model + sidecar JSON
+    # Save bundle: classifier + goldens + feat_version
+    # Old loaders that do `joblib.load(path)` will get the dict directly;
+    # predict_on_image detects bundle format via 'feat_version' key.
     model_save_path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(clf, str(model_save_path))
+    bundle = {
+        'clf': clf,
+        'goldens': goldens,           # {char_id: np.ndarray(48,48) uint8}
+        'feat_version': 'v2',
+        'feat_dim': FEAT_DIM_V2,
+    }
+    joblib.dump(bundle, str(model_save_path))
     test_set_path = model_save_path.parent / f"{model_save_path.stem}_test_set.json"
     test_set_path.write_text(json.dumps(test_set_items))
+
+    logger.info(
+        f"[train_model] saved bundle to {model_save_path.name}: "
+        f"feat_version=v2, goldens={sorted(goldens.keys())}"
+    )
 
     return {
         "accuracy_train": acc_train,
@@ -503,6 +687,7 @@ def train_model(
         "n_total":        len(X),
         "confusion_matrix": cm,
         "report":         report,
+        "golden_chars":   sorted(goldens.keys()),
     }
 
 
@@ -542,43 +727,75 @@ def _build_classifier(request: TrainRequest):
 
 # ──────────────────────────────────────── Prediction ──
 
+def _load_model_bundle(model_path: Path):
+    """
+    Load a model from disk and normalize to (clf, goldens, feat_version).
+
+    Backward compat: old joblibs stored the classifier directly (no bundle).
+    New joblibs store {'clf', 'goldens', 'feat_version'}.
+    """
+    data = joblib.load(str(model_path))
+    if isinstance(data, dict) and 'clf' in data:
+        clf = data['clf']
+        goldens = data.get('goldens') or {}
+        feat_version = data.get('feat_version', 'v2')
+    else:
+        # Legacy: raw classifier
+        clf = data
+        goldens = {}
+        feat_version = 'v1'
+    return clf, goldens, feat_version
+
+
 def predict_on_image(
     model_path: Path,
     image_path: Path,
     region: Optional[Dict] = None,
     threshold: float = 0.5,
+    char_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Segment an image (or a region of it) and predict OK/NG per character.
 
+    When `char_id` is provided AND model has a golden for it, result includes
+    aligned/golden/diff base64 images for FE heatmap preview.
+
     Args:
-        model_path: Path to saved joblib model.
+        model_path: Path to saved joblib bundle.
         image_path: Image to predict on.
         region: Optional {x, y, w, h} normalized — segment only this area.
         threshold: Probability threshold for OK class.
+        char_id: Optional char identity (uses per-char golden for alignment).
 
     Returns:
-        List of {id, x, y, w, h, prob_ok, label, crop_b64}
+        List of dicts — see LabeledCrop/PredictResult schema.
     """
-    clf = joblib.load(str(model_path))
+    clf, goldens, feat_version = _load_model_bundle(model_path)
 
     if region:
         segments = segment_region(image_path, region)
     else:
-        # Segment entire image using a full-image region
         segments = segment_region(image_path, {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0})
+
+    # Select feature extractor based on model version
+    use_v2 = (feat_version == 'v2')
 
     results = []
     for seg in segments:
         crop = crop_segment(image_path, seg)
         if crop is None:
             continue
-        feat = extract_features(crop).reshape(1, -1)
+
+        if use_v2:
+            feat = extract_features_v2(crop, char_id, goldens).reshape(1, -1)
+        else:
+            feat = extract_features(crop).reshape(1, -1)
+
         proba = clf.predict_proba(feat)[0]
-        # index 1 = OK if both classes present, else use index 0
         p_ok = float(proba[1]) if len(proba) > 1 else float(proba[0])
         label = "OK" if p_ok >= threshold else "NG"
-        results.append({
+
+        result = {
             "id": seg["id"],
             "x": seg["x"],
             "y": seg["y"],
@@ -587,9 +804,31 @@ def predict_on_image(
             "prob_ok": round(p_ok, 4),
             "label": label,
             "crop_b64": img_to_b64(crop),
-        })
+            "char_id": char_id,
+        }
+
+        # Diff heatmap preview (only when v2 + golden available)
+        if use_v2 and char_id and char_id in goldens:
+            aligned, diff = _compute_diff_map(crop, char_id, goldens)
+            if diff is not None:
+                heatmap = cv.applyColorMap(diff, cv.COLORMAP_JET)
+                result["aligned_b64"] = img_to_b64(cv.cvtColor(aligned, cv.COLOR_GRAY2BGR))
+                result["golden_b64"] = img_to_b64(cv.cvtColor(goldens[char_id], cv.COLOR_GRAY2BGR))
+                result["diff_b64"] = img_to_b64(heatmap)
+
+        results.append(result)
 
     return results
+
+
+def get_model_chars(model_path: Path) -> List[str]:
+    """Return list of char_ids the model has goldens for (empty if legacy)."""
+    try:
+        _, goldens, _ = _load_model_bundle(model_path)
+        return sorted(goldens.keys())
+    except Exception as e:
+        logger.warning(f"[get_model_chars] Failed to load {model_path}: {e}")
+        return []
 
 
 def get_labeled_crops(

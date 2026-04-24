@@ -49,7 +49,10 @@ function LazyImage({ src, alt }: { src: string; alt: string }) {
 }
 
 // ── CropGrid ───────────────────────────────────────────────────────────────
-function CropGrid({ items, emptyText }: { items: Array<{ crop_b64: string; label: string }>; emptyText: string }) {
+function CropGrid({ items, emptyText }: {
+  items: Array<{ crop_b64: string; label: string; char_id?: string | null }>;
+  emptyText: string;
+}) {
   if (items.length === 0) {
     return (
       <div className="ml-empty-state" style={{ minHeight: '100px' }}>
@@ -65,14 +68,97 @@ function CropGrid({ items, emptyText }: { items: Array<{ crop_b64: string; label
   return (
     <div className="ml-crops-grid">
       {items.map((crop, i) => (
-        <div key={i} className="ml-crop-card">
+        <div key={i} className="ml-crop-card" style={{ position: 'relative' }}>
           <LazyImage src={`data:image/jpeg;base64,${crop.crop_b64}`} alt={`crop-${i}`} />
           <span className={`ml-label-badge ${crop.label === 'OK' ? 'ok' : 'ng'}`}>{crop.label}</span>
+          {crop.char_id && (
+            <span
+              title={`char_id: ${crop.char_id}`}
+              style={{
+                position: 'absolute', top: 2, right: 2,
+                fontSize: 10, fontWeight: 600, padding: '1px 5px',
+                borderRadius: 3, background: '#3b82f6', color: '#fff',
+                fontFamily: 'monospace', lineHeight: 1.3,
+                boxShadow: '0 1px 2px rgba(0,0,0,.3)',
+              }}
+            >{crop.char_id}</span>
+          )}
         </div>
       ))}
     </div>
   );
 }
+
+// ── Prediction result card with optional diff heatmap ─────────────────────
+interface PredictCardItem {
+  crop_b64: string;
+  label: string;
+  prob_ok: number;
+  char_id?: string | null;
+  aligned_b64?: string | null;
+  golden_b64?: string | null;
+  diff_b64?: string | null;
+}
+
+function PredictResultCard({ result }: { result: PredictCardItem }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasHeatmap = Boolean(result.diff_b64 && result.golden_b64);
+
+  return (
+    <div className={`ml-predict-card ${result.label.toLowerCase()}`} style={{ position: 'relative' }}>
+      <img src={`data:image/jpeg;base64,${result.crop_b64}`} alt="predict crop" />
+      <span className={`ml-label-badge ${result.label === 'OK' ? 'ok' : 'ng'}`}>{result.label}</span>
+      <span className="ml-predict-prob">{(result.prob_ok * 100).toFixed(0)}% OK</span>
+      {result.char_id && (
+        <span style={{
+          position: 'absolute', top: 2, right: 2,
+          fontSize: 10, fontWeight: 600, padding: '1px 5px',
+          borderRadius: 3, background: '#3b82f6', color: '#fff',
+          fontFamily: 'monospace', lineHeight: 1.3,
+        }}>{result.char_id}</span>
+      )}
+      {hasHeatmap && (
+        <button
+          onClick={() => setExpanded(v => !v)}
+          title={expanded ? 'Hide heatmap' : 'Show diff heatmap'}
+          style={{
+            position: 'absolute', bottom: 2, right: 2,
+            width: 18, height: 18, padding: 0,
+            background: 'rgba(59,130,246,.9)', color: '#fff',
+            border: 'none', borderRadius: 3, cursor: 'pointer',
+            fontSize: 11, lineHeight: 1,
+          }}
+        >{expanded ? '−' : '🔥'}</button>
+      )}
+      {expanded && hasHeatmap && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0,
+          marginTop: 4, padding: 6,
+          background: '#1a1d27', border: '1px solid #2d3148', borderRadius: 4,
+          zIndex: 10, boxShadow: '0 4px 12px rgba(0,0,0,.5)',
+        }}>
+          <div style={{ display: 'flex', gap: 4, justifyContent: 'space-between' }}>
+            <HeatmapPanel label="Input" src={result.aligned_b64 || result.crop_b64} />
+            <HeatmapPanel label="Golden" src={result.golden_b64!} />
+            <HeatmapPanel label="Diff" src={result.diff_b64!} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HeatmapPanel({ label, src }: { label: string; src: string }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, flex: 1 }}>
+      <img src={`data:image/jpeg;base64,${src}`} alt={label}
+        style={{ width: '100%', maxWidth: 64, height: 64, objectFit: 'contain',
+                 background: '#0f1117', borderRadius: 3 }} />
+      <span style={{ fontSize: 9, color: '#9ca3af' }}>{label}</span>
+    </div>
+  );
+}
+
 
 // ── Single test-set crop card ──────────────────────────────────────────────
 function TestSetCropCard({ item }: { item: TestSetCropResult }) {
@@ -680,11 +766,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
                           </div>
                           <div className="ml-predict-results-grid">
                             {predictResults.map((r, i) => (
-                              <div key={i} className={`ml-predict-card ${r.label.toLowerCase()}`}>
-                                <img src={`data:image/jpeg;base64,${r.crop_b64}`} alt={`pred-${i}`} />
-                                <span className={`ml-label-badge ${r.label === 'OK' ? 'ok' : 'ng'}`}>{r.label}</span>
-                                <span className="ml-predict-prob">{(r.prob_ok * 100).toFixed(0)}% OK</span>
-                              </div>
+                              <PredictResultCard key={i} result={r} />
                             ))}
                           </div>
                         </div>
