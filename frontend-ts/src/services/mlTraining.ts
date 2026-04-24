@@ -64,15 +64,19 @@ export interface SyntheticCrop {
   char_id?: string | null;
 }
 
+export type MLAlgorithm = 'rf' | 'svm' | 'mlp' | 'golden_dist' | 'anomaly';
+
 export interface TrainRequest {
-  algorithm: 'rf' | 'svm' | 'mlp';
+  algorithm: MLAlgorithm;
   augment_factor: number;
-  threshold?: number;       // prob_ok >= threshold → OK (0.0–1.0, default 0.5)
+  threshold?: number;         // prob_ok >= threshold → OK (rf/svm/mlp)
   test_split?: number;
-  n_estimators?: number;
+  n_estimators?: number;      // rf, anomaly (IsolationForest)
   max_iter?: number;
   C?: number;
   hidden_layer_sizes?: number[];
+  threshold_k?: number;       // golden_dist: mean + k*std
+  contamination?: number;     // anomaly: IsolationForest contamination
 }
 
 export interface MLModelMetrics {

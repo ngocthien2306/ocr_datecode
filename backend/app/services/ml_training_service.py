@@ -618,6 +618,327 @@ def build_dataset(
     )
 
 
+def _save_bundle_and_testset(
+    model_save_path: Path,
+    bundle: Dict[str, Any],
+    test_set_items: List[Dict[str, Any]],
+) -> None:
+    """Persist bundle joblib + test-set sidecar JSON."""
+    import json
+    model_save_path.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(bundle, str(model_save_path))
+    test_set_path = model_save_path.parent / f"{model_save_path.stem}_test_set.json"
+    test_set_path.write_text(json.dumps(test_set_items))
+
+
+def _collect_ok_ng_by_char(
+    annotations: List[MLAnnotationInDB],
+    images_dir: Path,
+) -> Tuple[Dict[str, List[np.ndarray]], Dict[str, List[np.ndarray]]]:
+    """Group labeled crops by char_id (unlabeled / no char_id → '_unknown')."""
+    from collections import defaultdict
+    ok_by_char: Dict[str, List[np.ndarray]] = defaultdict(list)
+    ng_by_char: Dict[str, List[np.ndarray]] = defaultdict(list)
+    for ann in annotations:
+        img_path = images_dir / ann.filename
+        for region in ann.regions:
+            for seg in region.segments:
+                if seg.label not in ("OK", "NG"):
+                    continue
+                crop = crop_segment(img_path, {
+                    "x": seg.x, "y": seg.y, "w": seg.w, "h": seg.h,
+                })
+                if crop is None:
+                    continue
+                key = seg.char_id or "_unknown"
+                (ok_by_char if seg.label == "OK" else ng_by_char)[key].append(crop)
+    return ok_by_char, ng_by_char
+
+
+def _train_golden_distance(
+    annotations: List[MLAnnotationInDB],
+    images_dir: Path,
+    request: TrainRequest,
+    model_save_path: Path,
+) -> Dict[str, Any]:
+    """
+    Cognex-OCVMax-style threshold approach:
+      - Compute per-char golden from OK samples (same as v2)
+      - Compute per-char threshold = mean(OK_score) + k * std(OK_score)
+      - No classifier. At inference: score < threshold → OK, else NG.
+
+    Does NOT require real NG samples — only OK. Real NG, if provided, are
+    used purely for evaluation metrics (not used in fitting threshold).
+    """
+    from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+    from sklearn.model_selection import train_test_split
+
+    ok_by_char, ng_by_char = _collect_ok_ng_by_char(annotations, images_dir)
+    if not ok_by_char:
+        raise ValueError("Need at least some OK samples to fit golden thresholds.")
+
+    # Compute goldens + thresholds
+    goldens: Dict[str, np.ndarray] = {}
+    for char_id, crops in ok_by_char.items():
+        if char_id == "_unknown":
+            continue
+        g = compute_golden(crops)
+        if g is not None:
+            goldens[char_id] = g
+
+    k = float(getattr(request, "threshold_k", 3.0))
+    thresholds = fit_golden_thresholds(ok_by_char, goldens, k=k)
+
+    # Flatten all samples for evaluation
+    samples: List[Tuple[np.ndarray, Optional[str], int]] = []
+    for char_id, crops in ok_by_char.items():
+        cid = None if char_id == "_unknown" else char_id
+        for c in crops:
+            samples.append((c, cid, 1))
+    for char_id, crops in ng_by_char.items():
+        cid = None if char_id == "_unknown" else char_id
+        for c in crops:
+            samples.append((c, cid, 0))
+
+    # Optional augment to stress-test thresholds (only for eval reporting)
+    if request.augment_factor >= 2:
+        n_per = request.augment_factor - 1
+        extras: List[Tuple[np.ndarray, Optional[str], int]] = []
+        for char_id, crops in ok_by_char.items():
+            cid = None if char_id == "_unknown" else char_id
+            for c in crops:
+                # mild OK aug → still "OK"
+                for a in augment_ok(c, n=n_per):
+                    extras.append((a, cid, 1))
+                # destructive NG aug → label NG for eval
+                for a in augment_ng(c, n=n_per):
+                    extras.append((a, cid, 0))
+        samples.extend(extras)
+
+    # Score every sample using its char's threshold; char without threshold → fallback
+    def predict_one(crop: np.ndarray, char_id: Optional[str]) -> Tuple[int, float]:
+        """Return (pred_label 0/1, score)."""
+        if not char_id or char_id not in thresholds:
+            return 0, float("inf")          # no threshold → treat as NG (safe)
+        s = golden_distance_score(crop, char_id, goldens)
+        pred = 1 if s <= thresholds[char_id] else 0
+        return pred, s
+
+    preds = [predict_one(c, cid) for c, cid, _ in samples]
+    y_pred = np.array([p[0] for p in preds], dtype=np.int32)
+    scores = np.array([p[1] for p in preds], dtype=np.float32)
+    y_true = np.array([s[2] for s in samples], dtype=np.int32)
+    crops_all = [s[0] for s in samples]
+    char_ids_all = [s[1] for s in samples]
+
+    # Train/test split for reporting ONLY — thresholds are already fit from OK
+    test_size = min(request.test_split, 0.4)
+    if len(np.unique(y_true)) > 1:
+        idx_train, idx_test = train_test_split(
+            np.arange(len(y_true)), test_size=test_size,
+            random_state=42, stratify=y_true,
+        )
+    else:
+        idx_train = idx_test = np.arange(len(y_true))
+
+    acc_train = float(accuracy_score(y_true[idx_train], y_pred[idx_train])) if len(idx_train) else 0.0
+    acc_test  = float(accuracy_score(y_true[idx_test],  y_pred[idx_test]))  if len(idx_test)  else 0.0
+    cm     = confusion_matrix(y_true[idx_test], y_pred[idx_test], labels=[0, 1]).tolist() if len(idx_test) else []
+    report = classification_report(
+        y_true[idx_test], y_pred[idx_test],
+        target_names=["NG", "OK"], zero_division=0, labels=[0, 1],
+    ) if len(idx_test) else ""
+
+    # Test-set items (use test indices). "prob_ok" carries the score so FE can
+    # still sort/show; lower score = more OK-like.
+    test_set_items = []
+    for i in idx_test:
+        crop_img = crops_all[i]
+        cid = char_ids_all[i]
+        true_y = int(y_true[i])
+        pred_y = int(y_pred[i])
+        score = float(scores[i]) if np.isfinite(scores[i]) else 1e9
+        # Normalize score to [0, 1] — lower = more OK
+        norm = 1.0 - min(score / max(thresholds.get(cid, 1.0), 1e-6), 1.0) if cid else 0.0
+        test_set_items.append({
+            "crop_b64":   img_to_b64(crop_img),
+            "char_id":    cid,
+            "true_label": "OK" if true_y == 1 else "NG",
+            "pred_label": "OK" if pred_y == 1 else "NG",
+            "prob_ok":    round(norm, 4),
+            "correct":    bool(true_y == pred_y),
+            "score":      round(score, 4),
+        })
+
+    # Build char_stats for FE (same schema as v2)
+    char_stats: Dict[str, Dict[str, int]] = {}
+    for cid in set(ok_by_char.keys()) | set(ng_by_char.keys()):
+        if cid == "_unknown":
+            continue
+        char_stats[cid] = {
+            "n_ok_train": len(ok_by_char.get(cid, [])),
+            "n_ng_train": len(ng_by_char.get(cid, [])),
+            "n_ok_real":  len(ok_by_char.get(cid, [])),
+            "n_ng_real":  len(ng_by_char.get(cid, [])),
+            "has_golden": cid in goldens,
+            "threshold":  float(thresholds[cid]) if cid in thresholds else None,
+        }
+
+    bundle = {
+        'clf': None,
+        'goldens': goldens,
+        'char_stats': char_stats,
+        'thresholds': thresholds,
+        'threshold_k': k,
+        'feat_version': 'v2',
+        'feat_dim': FEAT_DIM_V2,
+        'algorithm': 'golden_dist',
+    }
+    _save_bundle_and_testset(model_save_path, bundle, test_set_items)
+
+    logger.info(
+        f"[train_model:golden_dist] saved bundle to {model_save_path.name}: "
+        f"goldens={sorted(goldens.keys())}, thresholds set for {len(thresholds)} chars, k={k}"
+    )
+
+    n_ok_total = sum(len(v) for v in ok_by_char.values())
+    n_ng_total = sum(len(v) for v in ng_by_char.values())
+    return {
+        "accuracy_train": acc_train,
+        "accuracy_test":  acc_test,
+        "n_ok":           n_ok_total,
+        "n_ng":           n_ng_total,
+        "n_total":        len(samples),
+        "confusion_matrix": cm,
+        "report":         report,
+        "golden_chars":   sorted(goldens.keys()),
+    }
+
+
+def _train_anomaly(
+    annotations: List[MLAnnotationInDB],
+    images_dir: Path,
+    request: TrainRequest,
+    model_save_path: Path,
+) -> Dict[str, Any]:
+    """
+    Cognex-ViDi-Red-style one-class anomaly detection:
+      - Train IsolationForest on OK feature vectors only
+      - At inference: decision_function(x) > threshold → OK, else NG
+
+    Does NOT require real NG samples. Real NG (if any) are used purely for
+    evaluation. Uses v2 features so goldens-based diff signal is baked in.
+    """
+    from sklearn.ensemble import IsolationForest
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+
+    X, y, crops_raw, char_ids_raw, goldens, char_stats, n_ok, n_ng = build_dataset(
+        annotations, images_dir, request.augment_factor,
+    )
+
+    if int((y == 1).sum()) < 10:
+        raise ValueError(
+            f"Anomaly detection needs at least 10 OK samples, got {int((y == 1).sum())}."
+        )
+
+    # Split (stratify only if both classes present)
+    test_size = min(request.test_split, 0.4)
+    if len(np.unique(y)) > 1:
+        (X_train, X_test, y_train, y_test,
+         _, crops_test, _, char_ids_test) = train_test_split(
+            X, y, crops_raw, char_ids_raw,
+            test_size=test_size, random_state=42, stratify=y,
+        )
+    else:
+        X_train, X_test = X, X
+        y_train, y_test = y, y
+        crops_test = crops_raw
+        char_ids_test = char_ids_raw
+
+    X_train_ok = X_train[y_train == 1]
+    if len(X_train_ok) < 10:
+        raise ValueError(
+            f"Not enough OK training samples after split: {len(X_train_ok)}."
+        )
+
+    contamination = float(getattr(request, "contamination", 0.05))
+    n_estimators = int(getattr(request, "n_estimators", 200) or 200)
+    clf = IsolationForest(
+        n_estimators=n_estimators,
+        contamination=contamination,
+        random_state=42,
+        n_jobs=-1,
+    )
+    clf.fit(X_train_ok)   # one-class: fit ONLY on OK
+
+    # decision_function: positive = inlier/OK, negative = outlier/NG
+    # Set threshold so that the bottom 1% of OK train scores becomes the cutoff.
+    ok_train_scores = clf.decision_function(X_train_ok)
+    threshold = float(np.percentile(ok_train_scores, 1))  # 1st percentile
+
+    def _predict(X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        scores = clf.decision_function(X)
+        preds = (scores >= threshold).astype(np.int32)
+        return preds, scores
+
+    y_pred_train, _ = _predict(X_train)
+    y_pred_test,  scores_test = _predict(X_test)
+    acc_train = float(accuracy_score(y_train, y_pred_train))
+    acc_test  = float(accuracy_score(y_test,  y_pred_test))
+    cm     = confusion_matrix(y_test, y_pred_test, labels=[0, 1]).tolist()
+    report = classification_report(
+        y_test, y_pred_test, target_names=["NG", "OK"], zero_division=0, labels=[0, 1],
+    )
+
+    # Normalize score → [0,1] for "prob_ok"-like display (sigmoid around threshold)
+    def _prob(score: float) -> float:
+        return float(1.0 / (1.0 + np.exp(-(score - threshold) * 10.0)))
+
+    test_set_items = []
+    for crop_img, char_id, true_y, pred_y, score in zip(
+        crops_test, char_ids_test, y_test, y_pred_test, scores_test,
+    ):
+        test_set_items.append({
+            "crop_b64":   img_to_b64(crop_img),
+            "char_id":    char_id,
+            "true_label": "OK" if int(true_y) == 1 else "NG",
+            "pred_label": "OK" if int(pred_y) == 1 else "NG",
+            "prob_ok":    round(_prob(float(score)), 4),
+            "correct":    bool(true_y == pred_y),
+            "score":      round(float(score), 4),
+        })
+
+    bundle = {
+        'clf': clf,
+        'goldens': goldens,
+        'char_stats': char_stats,
+        'threshold': threshold,
+        'contamination': contamination,
+        'feat_version': 'v2',
+        'feat_dim': FEAT_DIM_V2,
+        'algorithm': 'anomaly',
+    }
+    _save_bundle_and_testset(model_save_path, bundle, test_set_items)
+
+    logger.info(
+        f"[train_model:anomaly] saved bundle to {model_save_path.name}: "
+        f"IsolationForest n_estimators={n_estimators}, "
+        f"contamination={contamination}, threshold={threshold:.4f}"
+    )
+
+    return {
+        "accuracy_train": acc_train,
+        "accuracy_test":  acc_test,
+        "n_ok":           n_ok,
+        "n_ng":           n_ng,
+        "n_total":        len(X),
+        "confusion_matrix": cm,
+        "report":         report,
+        "golden_chars":   sorted(goldens.keys()),
+    }
+
+
 def train_model(
     annotations: List[MLAnnotationInDB],
     images_dir: Path,
@@ -625,11 +946,20 @@ def train_model(
     model_save_path: Path,
 ) -> Dict[str, Any]:
     """
-    Train a classifier and save it to disk.
-    Also saves the test-set crops with predictions to a sidecar JSON file.
-    Returns metrics dict.
+    Train a model and save it to disk. Branches on `request.algorithm`:
+      - rf / svm / mlp  → binary sklearn classifier on v2 features
+      - golden_dist     → per-char threshold on golden diff score (no classifier)
+      - anomaly         → IsolationForest on OK features (one-class)
+
+    Always saves a sidecar test-set JSON with per-crop predictions.
     """
-    import json
+    algo = (request.algorithm or "rf").lower()
+    if algo == "golden_dist":
+        return _train_golden_distance(annotations, images_dir, request, model_save_path)
+    if algo == "anomaly":
+        return _train_anomaly(annotations, images_dir, request, model_save_path)
+
+    # Default: sklearn binary classifier (rf / svm / mlp)
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 
@@ -654,7 +984,6 @@ def train_model(
         crops_test = crops_raw
         char_ids_test = char_ids_raw
 
-    # Build & train classifier
     clf = _build_classifier(request)
     clf.fit(X_train, y_train)
 
@@ -665,7 +994,6 @@ def train_model(
         p_ok = proba[:, 1] if proba.shape[1] > 1 else proba[:, 0]
         return (p_ok >= threshold).astype(np.int32)
 
-    # Evaluate using the configured threshold
     y_pred_train = _apply_threshold(X_train)
     y_pred_test  = _apply_threshold(X_test)
     acc_train = float(accuracy_score(y_train, y_pred_train))
@@ -675,7 +1003,6 @@ def train_model(
     report = classification_report(y_test, y_pred_test,
                                    target_names=["NG", "OK"], zero_division=0)
 
-    # Build per-crop test-set records (saved as sidecar JSON)
     proba_test = clf.predict_proba(X_test)
     test_set_items = []
     for crop_img, char_id, true_y, pred_y, proba in zip(
@@ -691,21 +1018,18 @@ def train_model(
             "correct":    bool(true_y == pred_y),
         })
 
-    # Save bundle: classifier + goldens + per-char stats + feat_version
-    model_save_path.parent.mkdir(parents=True, exist_ok=True)
     bundle = {
         'clf': clf,
-        'goldens': goldens,           # {char_id: np.ndarray(48,48) uint8}
-        'char_stats': char_stats,     # {char_id: {n_ok_train, n_ng_train, ...}}
+        'goldens': goldens,
+        'char_stats': char_stats,
         'feat_version': 'v2',
         'feat_dim': FEAT_DIM_V2,
+        'algorithm': algo,
     }
-    joblib.dump(bundle, str(model_save_path))
-    test_set_path = model_save_path.parent / f"{model_save_path.stem}_test_set.json"
-    test_set_path.write_text(json.dumps(test_set_items))
+    _save_bundle_and_testset(model_save_path, bundle, test_set_items)
 
     logger.info(
-        f"[train_model] saved bundle to {model_save_path.name}: "
+        f"[train_model:{algo}] saved bundle to {model_save_path.name}: "
         f"feat_version=v2, goldens={sorted(goldens.keys())}"
     )
 
@@ -719,6 +1043,45 @@ def train_model(
         "report":         report,
         "golden_chars":   sorted(goldens.keys()),
     }
+
+
+def golden_distance_score(img: np.ndarray, char_id: str, goldens: Dict[str, np.ndarray]) -> float:
+    """
+    Compute a scalar distance between the input crop and its char's golden.
+    Lower = closer to golden (OK-like); higher = more divergent (NG-like).
+
+    Composite: mean(|diff|) + 0.5 * max(|diff|). Captures both overall
+    deviation and local worst-case (e.g., single blob or missing stroke).
+    Returns +inf if golden missing → forces caller to treat as NG.
+    """
+    if char_id not in goldens:
+        return float("inf")
+    canvas = preprocess_canonical(img)
+    aligned, _ = align_to_golden(canvas, goldens[char_id])
+    diff = np.abs(aligned.astype(np.int16) - goldens[char_id].astype(np.int16))
+    return float(diff.mean()) + 0.5 * float(diff.max())
+
+
+def fit_golden_thresholds(
+    ok_by_char: Dict[str, List[np.ndarray]],
+    goldens: Dict[str, np.ndarray],
+    k: float = 3.0,
+) -> Dict[str, float]:
+    """
+    Per-char threshold: mean(OK-scores) + k * std(OK-scores).
+    That is ~99.7% coverage of the OK distribution when k=3.
+    Chars without a golden → skipped (no threshold learned).
+    """
+    thresholds: Dict[str, float] = {}
+    for char_id, crops in ok_by_char.items():
+        if char_id not in goldens or not crops:
+            continue
+        scores = [golden_distance_score(c, char_id, goldens) for c in crops]
+        scores = [s for s in scores if np.isfinite(s)]
+        if not scores:
+            continue
+        thresholds[char_id] = float(np.mean(scores) + k * np.std(scores))
+    return thresholds
 
 
 def _build_classifier(request: TrainRequest):
@@ -759,22 +1122,19 @@ def _build_classifier(request: TrainRequest):
 
 def _load_model_bundle(model_path: Path):
     """
-    Load a model from disk and normalize to (clf, goldens, feat_version).
-
-    Backward compat: old joblibs stored the classifier directly (no bundle).
-    New joblibs store {'clf', 'goldens', 'feat_version'}.
+    Load a model from disk. Returns full bundle dict (or synthesizes one for
+    legacy joblibs that stored the raw classifier directly).
     """
     data = joblib.load(str(model_path))
-    if isinstance(data, dict) and 'clf' in data:
-        clf = data['clf']
-        goldens = data.get('goldens') or {}
-        feat_version = data.get('feat_version', 'v2')
-    else:
-        # Legacy: raw classifier
-        clf = data
-        goldens = {}
-        feat_version = 'v1'
-    return clf, goldens, feat_version
+    if isinstance(data, dict) and ('clf' in data or 'goldens' in data):
+        return data
+    # Legacy: raw classifier
+    return {
+        'clf': data,
+        'goldens': {},
+        'feat_version': 'v1',
+        'algorithm': 'rf',
+    }
 
 
 def predict_on_image(
@@ -800,15 +1160,47 @@ def predict_on_image(
     Returns:
         List of dicts — see LabeledCrop/PredictResult schema.
     """
-    clf, goldens, feat_version = _load_model_bundle(model_path)
+    bundle = _load_model_bundle(model_path)
+    clf = bundle.get('clf')
+    goldens = bundle.get('goldens') or {}
+    feat_version = bundle.get('feat_version', 'v2')
+    algorithm = bundle.get('algorithm', 'rf').lower()
 
     if region:
         segments = segment_region(image_path, region)
     else:
         segments = segment_region(image_path, {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0})
 
-    # Select feature extractor based on model version
     use_v2 = (feat_version == 'v2')
+
+    # Bundle-specific predict function — maps crop → (p_ok, label)
+    if algorithm == 'golden_dist':
+        thresholds = bundle.get('thresholds') or {}
+        def _predict(crop: np.ndarray) -> Tuple[float, str]:
+            if not char_id or char_id not in thresholds:
+                return 0.0, "NG"
+            score = golden_distance_score(crop, char_id, goldens)
+            thr = thresholds[char_id]
+            # prob_ok: 1.0 when score=0, drops to 0.5 at threshold, ~0 beyond 2x thr
+            norm = 1.0 - min(score / max(thr, 1e-6), 1.0)
+            return max(0.0, min(1.0, float(norm))), ("OK" if score <= thr else "NG")
+    elif algorithm == 'anomaly':
+        anom_thr = float(bundle.get('threshold', 0.0))
+        def _predict(crop: np.ndarray) -> Tuple[float, str]:
+            feat = (extract_features_v2 if use_v2 else extract_features)(
+                crop, char_id, goldens,
+            ).reshape(1, -1) if use_v2 else extract_features(crop).reshape(1, -1)
+            score = float(clf.decision_function(feat)[0])
+            p_ok = float(1.0 / (1.0 + np.exp(-(score - anom_thr) * 10.0)))
+            return p_ok, ("OK" if score >= anom_thr else "NG")
+    else:
+        # Default binary sklearn classifier (rf / svm / mlp)
+        def _predict(crop: np.ndarray) -> Tuple[float, str]:
+            feat = (extract_features_v2(crop, char_id, goldens)
+                    if use_v2 else extract_features(crop)).reshape(1, -1)
+            proba = clf.predict_proba(feat)[0]
+            p_ok = float(proba[1]) if len(proba) > 1 else float(proba[0])
+            return p_ok, ("OK" if p_ok >= threshold else "NG")
 
     results = []
     for seg in segments:
@@ -816,14 +1208,7 @@ def predict_on_image(
         if crop is None:
             continue
 
-        if use_v2:
-            feat = extract_features_v2(crop, char_id, goldens).reshape(1, -1)
-        else:
-            feat = extract_features(crop).reshape(1, -1)
-
-        proba = clf.predict_proba(feat)[0]
-        p_ok = float(proba[1]) if len(proba) > 1 else float(proba[0])
-        label = "OK" if p_ok >= threshold else "NG"
+        p_ok, label = _predict(crop)
 
         result = {
             "id": seg["id"],
@@ -835,9 +1220,10 @@ def predict_on_image(
             "label": label,
             "crop_b64": img_to_b64(crop),
             "char_id": char_id,
+            "algorithm": algorithm,
         }
 
-        # Diff heatmap preview (only when v2 + golden available)
+        # Diff heatmap preview (whenever golden exists for char)
         if use_v2 and char_id and char_id in goldens:
             aligned, diff = _compute_diff_map(crop, char_id, goldens)
             if diff is not None:
@@ -854,7 +1240,8 @@ def predict_on_image(
 def get_model_chars(model_path: Path) -> List[str]:
     """Return list of char_ids the model has goldens for (empty if legacy)."""
     try:
-        _, goldens, _ = _load_model_bundle(model_path)
+        bundle = _load_model_bundle(model_path)
+        goldens = bundle.get('goldens') or {}
         return sorted(goldens.keys())
     except Exception as e:
         logger.warning(f"[get_model_chars] Failed to load {model_path}: {e}")

@@ -115,14 +115,18 @@ class MLModelInDB(BaseModel):
 # ─────────────────────────────────── Request / Response bodies ───────
 
 class TrainRequest(BaseModel):
-    algorithm: str = "rf"           # "rf" | "svm" | "mlp"
+    algorithm: str = "rf"           # "rf" | "svm" | "mlp" | "golden_dist" | "anomaly"
     augment_factor: int = 0         # 0=off, 2=x2 ...
     test_split: float = 0.2         # fraction for test set
     threshold: float = 0.5          # prob_ok >= threshold → label OK
-    n_estimators: int = 100         # RF only
+    n_estimators: int = 100         # RF / anomaly (IsolationForest)
     max_iter: int = 500             # MLP/SVM only
     C: float = 1.0                  # SVM only
     hidden_layer_sizes: List[int] = [128, 64]  # MLP only
+    # Golden-distance params
+    threshold_k: float = 3.0        # threshold = mean(ok_scores) + k*std(ok_scores)
+    # IsolationForest params
+    contamination: float = 0.05     # expected outlier fraction in OK training set
 
 
 class SyntheticPreviewRequest(BaseModel):
