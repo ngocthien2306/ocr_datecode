@@ -304,39 +304,43 @@ class InferenceHandler:
 
     def _init_verification_services(self):
         """Initialize text and template verification services"""
+        # Debug image writes are disk-I/O heavy (~50-150ms each) and hurt
+        # realtime inference latency. Gate on env var for troubleshooting.
+        save_debug = os.environ.get('VERIFY_DEBUG_IMAGES', '0').lower() in ('1', 'true', 'yes')
+
         # ML Classifier Service — loads sklearn models from shared filesystem.
         # BE saves models to {PROJECT_ROOT}/public/ml_projects/{project_id}/models/{model_id}.joblib
         ml_base_dir = Path(f"{home}/Source/ocr_datecode/public/ml_projects")
         self.ml_classifier_service = MLClassifierService(
             ml_base_dir=ml_base_dir,
-            save_debug_images=True,
+            save_debug_images=save_debug,
             debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
         )
-        logger.info(f"MLClassifierService initialized: base_dir={ml_base_dir}")
+        logger.info(f"MLClassifierService initialized: base_dir={ml_base_dir}, debug={save_debug}")
 
         # Text Verification Service
         if self.text_recognizer is not None:
             self.text_verification_service = TextVerificationService(
                 text_recognizer=self.text_recognizer,
                 ocr_backend=self.ocr_backend or "unknown",
-                save_debug_images=True,
+                save_debug_images=save_debug,
                 debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
                 use_char_conf_check=False,
                 use_sim_check=False,
                 ml_classifier_service=self.ml_classifier_service,
             )
-            logger.info(f"TextVerificationService initialized with {self.ocr_backend} backend")
+            logger.info(f"TextVerificationService initialized with {self.ocr_backend} backend (debug={save_debug})")
         else:
             self.text_verification_service = None
             logger.warning("TextVerificationService not available (no OCR backend)")
 
         # Template Verification Service
         self.template_verification_service = TemplateVerificationService(
-            save_debug_images=True,
+            save_debug_images=save_debug,
             debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
             default_threshold=0.85
         )
-        logger.info("TemplateVerificationService initialized")
+        logger.info(f"TemplateVerificationService initialized (debug={save_debug})")
 
         # Product Verification Service with YOLO OBB
         yolo_obb_engine_path = f"{home}/Source/ocr_datecode/weights/best_bottle_m_320_new.engine"

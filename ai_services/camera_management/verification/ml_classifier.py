@@ -11,9 +11,10 @@ Feature extraction MUST match backend/app/services/ml_training_service.py
 import logging
 import os
 import time
+from collections import defaultdict
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import joblib
@@ -205,3 +206,138 @@ class MLClassifierService:
             f"time={result['time_ms']:.1f}ms"
         )
         return result
+
+    def classify_batch(
+        self,
+        items: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Batch-predict OK/NG for N region crops.
+
+        Much faster than calling classify_region in parallel because:
+          - sklearn predict_proba(N samples) is barely more expensive than
+            predict_proba(1 sample) for RandomForest/MLP
+          - Avoids Python thread contention (GIL bound on feature extraction)
+
+        Input item shape:
+            {'region_img', 'project_id', 'model_id', 'conf_threshold',
+             'serial_number', 'annotation_idx'}
+
+        Returns a list parallel to `items` with one result dict each
+        (same shape as classify_region's return).
+        """
+        n = len(items)
+        results: List[Optional[Dict[str, Any]]] = [None] * n
+        if n == 0:
+            return []
+
+        # Group items by (project_id, model_id) — different cameras may use
+        # different models; each group gets its own predict_proba call.
+        groups: Dict[Tuple[str, str], List[int]] = defaultdict(list)
+        for i, item in enumerate(items):
+            groups[(item['project_id'], item['model_id'])].append(i)
+
+        for (pid, mid), idxs in groups.items():
+            t0 = time.perf_counter()
+            clf = self.load_model(pid, mid)
+
+            if clf is None:
+                for i in idxs:
+                    item = items[i]
+                    results[i] = {
+                        'annotation_idx': item.get('annotation_idx'),
+                        'ml_pass': False,
+                        'p_ok': 0.0,
+                        'label': 'NG',
+                        'threshold': float(item.get('conf_threshold', 0.5)),
+                        'time_ms': 0.0,
+                        'error': 'model_not_found',
+                    }
+                continue
+
+            # Feature extraction (Python loop but cheap per-item: ~1-3ms)
+            feats_list: List[np.ndarray] = []
+            valid_idxs: List[int] = []
+            for i in idxs:
+                item = items[i]
+                region = item.get('region_img')
+                if region is None or region.size == 0:
+                    results[i] = {
+                        'annotation_idx': item.get('annotation_idx'),
+                        'ml_pass': False,
+                        'p_ok': 0.0,
+                        'label': 'NG',
+                        'threshold': float(item.get('conf_threshold', 0.5)),
+                        'time_ms': 0.0,
+                        'error': 'empty_region',
+                    }
+                    continue
+                feats_list.append(extract_features(region))
+                valid_idxs.append(i)
+
+            if not valid_idxs:
+                continue
+
+            t_feat = time.perf_counter()
+            X = np.stack(feats_list, axis=0)
+            probas = clf.predict_proba(X)  # shape (M, 2) or (M, 1)
+            t_pred = time.perf_counter()
+
+            debug_write_count = 0
+            for row, i in enumerate(valid_idxs):
+                item = items[i]
+                proba = probas[row]
+                p_ok = float(proba[1]) if proba.shape[0] > 1 else float(proba[0])
+                conf_thr = float(item.get('conf_threshold', 0.5))
+                label = "OK" if p_ok >= conf_thr else "NG"
+                results[i] = {
+                    'annotation_idx': item.get('annotation_idx'),
+                    'ml_pass': (label == "OK"),
+                    'p_ok': round(p_ok, 4),
+                    'label': label,
+                    'threshold': conf_thr,
+                    'time_ms': 0.0,  # set below
+                    'error': None,
+                }
+
+                if self.save_debug_images:
+                    try:
+                        ts = int(time.time())
+                        fname = (
+                            f"ml_classify_{item.get('serial_number', '')}_"
+                            f"{item.get('annotation_idx', -1)}_{label}_"
+                            f"{p_ok:.2f}_{ts}.png"
+                        )
+                        cv2.imwrite(os.path.join(self.debug_path, fname), item['region_img'])
+                        debug_write_count += 1
+                    except Exception:
+                        pass
+
+            group_ms = (time.perf_counter() - t0) * 1000
+            feat_ms = (t_feat - t0) * 1000
+            pred_ms = (t_pred - t_feat) * 1000
+            for i in valid_idxs:
+                if results[i] is not None:
+                    results[i]['time_ms'] = round(group_ms / max(len(valid_idxs), 1), 2)
+
+            logger.info(
+                f"ML batch classify: project={pid}, model={mid}, "
+                f"N={len(valid_idxs)}, feat={feat_ms:.1f}ms, "
+                f"predict={pred_ms:.1f}ms, total={group_ms:.1f}ms"
+            )
+
+        # Fill any remaining None with fallback (shouldn't happen)
+        for i, r in enumerate(results):
+            if r is None:
+                item = items[i]
+                results[i] = {
+                    'annotation_idx': item.get('annotation_idx'),
+                    'ml_pass': False,
+                    'p_ok': 0.0,
+                    'label': 'NG',
+                    'threshold': float(item.get('conf_threshold', 0.5)),
+                    'time_ms': 0.0,
+                    'error': 'unknown',
+                }
+
+        return results  # type: ignore

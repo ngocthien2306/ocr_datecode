@@ -451,38 +451,27 @@ class TextVerificationService:
         ml_future = None
         ml_executor_outer = None
         if ml_items:
-            logger.info(
-                f"ML classify ENABLED: {len(ml_items)} regions "
-                f"(workers={self.SIM_MAX_WORKERS})"
-            )
+            logger.info(f"ML classify ENABLED: {len(ml_items)} regions (batched)")
 
             def _run_all_ml():
                 t_ml_start = time.perf_counter()
-                out: Dict[Tuple[str, int], Dict[str, Any]] = {}
-                with ThreadPoolExecutor(max_workers=self.SIM_MAX_WORKERS) as pool:
-                    futs = {
-                        pool.submit(
-                            self._compute_single_ml,
-                            m['frame_img'], m['transformed_points'],
-                            m['serial_number'], m['annotation_idx'],
-                            m['conf_threshold'],
-                            m['ml_project_id'], m['ml_model_id'],
-                        ): (m['serial_number'], m['annotation_idx'])
-                        for m in ml_items
+                # Build classify_batch input: use the already-cropped region
+                # from _build_items_for_camera so we don't re-warp.
+                batch_input = [
+                    {
+                        'region_img': m['cropped_region'],
+                        'project_id': m['ml_project_id'],
+                        'model_id': m['ml_model_id'],
+                        'conf_threshold': m['conf_threshold'],
+                        'serial_number': m['serial_number'],
+                        'annotation_idx': m['annotation_idx'],
                     }
-                    for fut in as_completed(futs):
-                        key = futs[fut]
-                        try:
-                            out[key] = fut.result()
-                        except Exception as e:
-                            logger.error(f"ML thread error {key}: {e}")
-                            out[key] = {
-                                'annotation_idx': key[1],
-                                'ml_pass': False,
-                                'p_ok': 0.0,
-                                'label': 'NG',
-                                'error': str(e),
-                            }
+                    for m in ml_items
+                ]
+                results_list = self.ml_classifier_service.classify_batch(batch_input)
+                out: Dict[Tuple[str, int], Dict[str, Any]] = {}
+                for m, r in zip(ml_items, results_list):
+                    out[(m['serial_number'], m['annotation_idx'])] = r
                 t_ml_total = (time.perf_counter() - t_ml_start) * 1000
                 logger.info(
                     f"ML classify ALL complete: {len(ml_items)} regions in {t_ml_total:.1f}ms"
@@ -816,9 +805,9 @@ class TextVerificationService:
                     })
 
             if use_ml_task:
+                # Reuse the already-computed crop to avoid warping twice.
                 ml_items.append({
-                    'frame_img': frame_img,
-                    'transformed_points': points,
+                    'cropped_region': cropped,
                     'serial_number': serial_number,
                     'annotation_idx': ann_idx,
                     'conf_threshold': conf_threshold,

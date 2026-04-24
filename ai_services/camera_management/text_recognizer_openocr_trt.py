@@ -88,11 +88,18 @@ class TextRecognizerOpenOCRTRT:
             profile = self.engine.get_tensor_profile_shape(self.input_name, 0)
             self.min_batch = profile[0][0]
             self.max_batch = profile[2][0]
+            # Engine also constrains input width — use it to pad undersized crops
+            self.min_width = int(profile[0][3])
+            self.max_width = int(profile[2][3])
             logger.info(f"Dynamic batch range: {self.min_batch} - {self.max_batch}")
+            logger.info(f"Dynamic width range: {self.min_width} - {self.max_width}")
         else:
             self.min_batch = self.input_shape[0]
             self.max_batch = self.input_shape[0]
+            self.min_width = int(self.input_shape[3])
+            self.max_width = int(self.input_shape[3])
             logger.info(f"Fixed batch size: {self.max_batch}")
+            logger.info(f"Fixed width: {self.min_width}")
 
         # PRE-ALLOCATE CUDA buffers (like YOLO OBB) ✅
         self._allocate_persistent_buffers()
@@ -204,13 +211,22 @@ class TextRecognizerOpenOCRTRT:
         # Resize to height=48, maintain aspect ratio
         target_h = 48
         ratio = w / float(h)
-        target_w = int(target_h * ratio)
+        natural_w = max(1, int(target_h * ratio))
 
-        # Limit width to reasonable range
-        target_w = max(10, min(target_w, 320))
+        floor_w = max(getattr(self, 'min_width', 50), 1)
+        ceil_w = min(getattr(self, 'max_width', 2000), 320)
 
-        # Resize
-        img_resized = cv2.resize(img_rgb, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        # Preserve aspect ratio: resize to natural width (bounded by ceil), then
+        # pad the right side with zeros if it is narrower than the engine's
+        # profile minimum. Stretching small chars to floor_w distorts them and
+        # hurts OCR; zero-padding matches how the batch collator already pads.
+        resized_w = min(natural_w, ceil_w)
+        img_resized = cv2.resize(img_rgb, (resized_w, target_h), interpolation=cv2.INTER_LINEAR)
+
+        if resized_w < floor_w:
+            pad_w = floor_w - resized_w
+            pad = np.zeros((target_h, pad_w, img_resized.shape[2]), dtype=img_resized.dtype)
+            img_resized = np.hstack([img_resized, pad])
 
         # Normalize: [0, 255] -> [0, 1] -> [-1, 1]
         img_array = img_resized.astype(np.float32) / 255.0
