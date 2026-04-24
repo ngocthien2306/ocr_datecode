@@ -357,10 +357,10 @@ def _augment_ng_one(gray: np.ndarray) -> Tuple[np.ndarray, str]:
         return cv.dilate(aug, kernel, iterations=1), "dilate"
 
     # choice == 4 — translate (misalignment)
-    dx = int(np.random.randint(-w // 3, w // 3 + 1))
-    dy = int(np.random.randint(-h // 3, h // 3 + 1))
-    M = np.float32([[1, 0, dx], [0, 1, dy]])
-    return cv.warpAffine(aug, M, (w, h), borderValue=0), "translate"
+    # dx = int(np.random.randint(-w // 3, w // 3 + 1))
+    # dy = int(np.random.randint(-h // 3, h // 3 + 1))
+    # M = np.float32([[1, 0, dx], [0, 1, dy]])
+    # return cv.warpAffine(aug, M, (w, h), borderValue=0), "translate"
 
 
 def augment_ng(char_img: np.ndarray, n: int = 5) -> List[Tuple[np.ndarray, str]]:
