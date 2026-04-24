@@ -75,14 +75,6 @@ function bucketByChar<T extends { char_id?: string | null; label: string }>(
   return buckets;
 }
 
-function charStatusChipStyle(status: CharStatus): { bg: string; color: string; border: string } {
-  switch (status) {
-    case 'ready':        return { bg: 'rgba(74,222,128,.15)', color: '#4ade80', border: '#4ade80' };
-    case 'insufficient': return { bg: 'rgba(251,191,36,.15)', color: '#fbbf24', border: '#fbbf24' };
-    case 'missing':      return { bg: 'rgba(248,113,113,.15)', color: '#f87171', border: '#f87171' };
-  }
-}
-
 function charStatusLabel(status: CharStatus, ok: number): string {
   if (status === 'ready') return '✓ golden ready';
   if (status === 'insufficient') return `⚠ need ${GOLDEN_MIN_OK - ok} more OK`;
@@ -141,33 +133,25 @@ function CharStatsBanner({ buckets, viewMode, onToggleView }: CharStatsBannerPro
   const missing = buckets.filter(b => b.status === 'missing').length;
 
   return (
-    <div style={{
-      padding: '8px 12px', borderBottom: '1px solid #2d3148',
-      background: '#10131c', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-    }}>
-      <span style={{ fontSize: 11, color: '#9ca3af' }}>
-        <b style={{ color: '#e5e7eb' }}>{total}</b> char{total !== 1 ? 's' : ''}
-      </span>
-      {ready > 0 && <span style={{ fontSize: 11, color: '#4ade80' }}>✓ {ready} ready</span>}
+    <div className="ml-char-stats-banner">
+      <span><b>{total}</b> char{total !== 1 ? 's' : ''}</span>
+      {ready > 0 && <span style={{ color: '#22c55e' }}>✓ {ready} ready</span>}
       {insufficient > 0 && (
-        <span style={{ fontSize: 11, color: '#fbbf24' }} title="Need more OK samples">
+        <span style={{ color: '#f59e0b' }} title="Need more OK samples">
           ⚠ {insufficient} need OK
         </span>
       )}
       {missing > 0 && (
-        <span style={{ fontSize: 11, color: '#f87171' }} title="Won't train without char_id">
+        <span style={{ color: '#ef4444' }} title="Won't train without char_id">
           ✗ {missing} no char_id
         </span>
       )}
       <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
         {(['grouped', 'flat'] as const).map(mode => (
-          <button key={mode} onClick={() => onToggleView(mode)} style={{
-            padding: '3px 10px', fontSize: 11, borderRadius: 4, cursor: 'pointer',
-            border: '1px solid',
-            borderColor: viewMode === mode ? '#3b82f6' : '#2d3148',
-            background: viewMode === mode ? 'rgba(59,130,246,.12)' : 'transparent',
-            color: viewMode === mode ? '#60a5fa' : '#6b7280',
-          }}>{mode === 'grouped' ? '📋 Grouped' : '📃 Flat'}</button>
+          <button key={mode}
+            className={`ml-view-toggle-btn${viewMode === mode ? ' active' : ''}`}
+            onClick={() => onToggleView(mode)}
+          >{mode === 'grouped' ? '📋 Grouped' : '📃 Flat'}</button>
         ))}
       </div>
     </div>
@@ -190,47 +174,28 @@ function CharGroupedCrops({ buckets, expanded, onToggleExpand, emptyText }: Char
             stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
           <circle cx="7" cy="7" r="1.5" fill="currentColor" />
         </svg>
-        <span style={{ fontSize: '12px', color: '#6b7280', marginTop: '6px' }}>{emptyText}</span>
+        <span style={{ fontSize: '12px', marginTop: '6px' }}>{emptyText}</span>
       </div>
     );
   }
+
+  const statusClass = (s: CharStatus) =>
+    s === 'ready' ? 'ready' : s === 'insufficient' ? 'warn' : 'miss';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       {buckets.map(b => {
         const key = b.char_id ?? '__null__';
         const isOpen = expanded.has(key);
-        const chip = charStatusChipStyle(b.status);
+        const sc = statusClass(b.status);
         return (
-          <div key={key} style={{
-            border: `1px solid ${chip.border}33`, borderRadius: 6,
-            background: '#0f1117', overflow: 'hidden',
-          }}>
-            <button
-              onClick={() => onToggleExpand(key)}
-              style={{
-                width: '100%', display: 'flex', alignItems: 'center', gap: 8,
-                padding: '6px 10px', border: 'none', cursor: 'pointer',
-                background: `${chip.bg}`, color: '#e5e7eb', fontSize: 12, textAlign: 'left',
-              }}
-            >
+          <div key={key} className={`ml-char-group ${sc}`}>
+            <button className="ml-char-group-header" onClick={() => onToggleExpand(key)}>
               <span style={{ width: 12, textAlign: 'center' }}>{isOpen ? '▼' : '▶'}</span>
-              <span style={{
-                fontFamily: 'monospace', fontWeight: 700, fontSize: 14,
-                padding: '1px 8px', borderRadius: 4,
-                background: '#1a1d27', color: chip.color,
-                minWidth: 28, textAlign: 'center',
-              }}>
-                {b.char_id ?? '—'}
-              </span>
-              <span style={{ color: '#4ade80' }}>{b.ok} OK</span>
-              <span style={{ color: '#f87171' }}>{b.ng} NG</span>
-              <span style={{
-                marginLeft: 'auto', fontSize: 10,
-                padding: '1px 6px', borderRadius: 3,
-                background: `${chip.bg}`, border: `1px solid ${chip.border}66`,
-                color: chip.color,
-              }}>{charStatusLabel(b.status, b.ok)}</span>
+              <span className="ml-char-badge">{b.char_id ?? '—'}</span>
+              <span style={{ color: '#22c55e' }}>{b.ok} OK</span>
+              <span style={{ color: '#ef4444' }}>{b.ng} NG</span>
+              <span className={`ml-status-chip ${sc}`}>{charStatusLabel(b.status, b.ok)}</span>
             </button>
             {isOpen && (
               <div className="ml-crops-grid" style={{ padding: 6 }}>
@@ -332,13 +297,12 @@ function PredictResultCard({ result }: { result: PredictCardItem }) {
         >{expanded ? '−' : '🔥'}</button>
       )}
       {expanded && hasHeatmap && (
-        <div style={{
+        <div className="ml-golden-card" style={{
           position: 'absolute', top: '100%', left: 0, right: 0,
           marginTop: 4, padding: 6,
-          background: '#1a1d27', border: '1px solid #2d3148', borderRadius: 4,
-          zIndex: 10, boxShadow: '0 4px 12px rgba(0,0,0,.5)',
+          zIndex: 10, boxShadow: '0 4px 12px rgba(0,0,0,.15)',
         }}>
-          <div style={{ display: 'flex', gap: 4, justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', gap: 4, justifyContent: 'space-between', width: '100%' }}>
             <HeatmapPanel label="Input" src={result.aligned_b64 || result.crop_b64} />
             <HeatmapPanel label="Golden" src={result.golden_b64!} />
             <HeatmapPanel label="Diff" src={result.diff_b64!} />
@@ -353,9 +317,9 @@ function HeatmapPanel({ label, src }: { label: string; src: string }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, flex: 1 }}>
       <img src={`data:image/jpeg;base64,${src}`} alt={label}
-        style={{ width: '100%', maxWidth: 64, height: 64, objectFit: 'contain',
-                 background: '#0f1117', borderRadius: 3 }} />
-      <span style={{ fontSize: 9, color: '#9ca3af' }}>{label}</span>
+        className="ml-golden-img"
+        style={{ maxWidth: 64, height: 64 }} />
+      <span style={{ fontSize: 9, opacity: 0.7 }}>{label}</span>
     </div>
   );
 }
@@ -770,33 +734,27 @@ export default function TrainTab({ project, onRefresh }: Props) {
           const augNg = f >= 2 ? (f - 1) * nOkReal : 0;
           const augOk = f >= 2 ? nNgReal + Math.max(0, f - 2) * nOkReal : 0;
           return (
-            <div style={{
-              padding: 10, borderRadius: 6, background: '#0f1117',
-              border: '1px solid #2d3148', fontSize: 11, display: 'flex',
-              flexDirection: 'column', gap: 5, color: '#9ca3af',
-            }}>
-              <div style={{ color: '#e5e7eb', fontWeight: 600, fontSize: 12 }}>
-                🚀 Training preview
-              </div>
+            <div className="ml-train-preview">
+              <div className="ml-train-preview-title">🚀 Training preview</div>
               {ready.length > 0 && (
-                <div style={{ color: '#4ade80' }}>
+                <div style={{ color: '#22c55e' }}>
                   ✓ Goldens for: {ready.map(b => b.char_id).join(', ')} ({ready.length} char{ready.length !== 1 ? 's' : ''})
                 </div>
               )}
               {insufficient.length > 0 && (
-                <div style={{ color: '#fbbf24' }}>
+                <div style={{ color: '#f59e0b' }}>
                   ⚠ Skipped (need {GOLDEN_MIN_OK}+ OK):{' '}
                   {insufficient.map(b => `${b.char_id}(${b.ok})`).join(', ')}
                 </div>
               )}
               {missing.length > 0 && (
-                <div style={{ color: '#f87171' }}>
+                <div style={{ color: '#ef4444' }}>
                   ✗ Excluded (no char_id): {missing.reduce((sum, b) => sum + b.items.length, 0)} sample(s) — fix in Label tab
                 </div>
               )}
-              <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
+              <div style={{ marginTop: 2 }}>
                 Dataset: {nOkReal}+{augOk}={nOkReal + augOk} OK · {nNgReal}+{augNg}={nNgReal + augNg} NG
-                {f < 2 && <span style={{ color: '#fbbf24' }}> (no augmentation)</span>}
+                {f < 2 && <span style={{ color: '#f59e0b' }}> (no augmentation)</span>}
               </div>
             </div>
           );
@@ -1080,14 +1038,14 @@ export default function TrainTab({ project, onRefresh }: Props) {
                               {loadingTestSet ? '…' : 'Refresh'}
                             </button>
                           </div>
-                          <div style={{ fontSize: 11, overflowX: 'auto' }}>
-                            <table className="ml-cm-table" style={{ width: '100%' }}>
+                          <div style={{ overflowX: 'auto' }}>
+                            <table className="ml-perchar-table">
                               <thead>
                                 <tr>
                                   <th style={{ textAlign: 'left' }}>Char</th>
                                   <th>n</th>
-                                  <th style={{ color: '#4ade80' }}>✓</th>
-                                  <th style={{ color: '#f87171' }}>✗</th>
+                                  <th style={{ color: '#22c55e' }}>✓</th>
+                                  <th style={{ color: '#ef4444' }}>✗</th>
                                   <th>Acc</th>
                                 </tr>
                               </thead>
@@ -1095,13 +1053,15 @@ export default function TrainTab({ project, onRefresh }: Props) {
                                 {perCharAccuracy.map(r => (
                                   <tr key={r.char_id ?? '__null__'}>
                                     <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>
-                                      {r.char_id ?? <span style={{ color: '#f87171' }}>—</span>}
+                                      {r.char_id ?? <span style={{ color: '#ef4444' }}>—</span>}
                                     </td>
                                     <td>{r.n}</td>
-                                    <td style={{ color: '#4ade80' }}>{r.correct}</td>
-                                    <td style={{ color: r.wrong > 0 ? '#f87171' : '#6b7280' }}>{r.wrong}</td>
+                                    <td style={{ color: '#22c55e' }}>{r.correct}</td>
+                                    <td style={{ color: r.wrong > 0 ? '#ef4444' : 'inherit', opacity: r.wrong > 0 ? 1 : 0.5 }}>
+                                      {r.wrong}
+                                    </td>
                                     <td style={{
-                                      color: r.acc >= 0.9 ? '#4ade80' : r.acc >= 0.7 ? '#fbbf24' : '#f87171',
+                                      color: r.acc >= 0.9 ? '#22c55e' : r.acc >= 0.7 ? '#f59e0b' : '#ef4444',
                                       fontWeight: 600,
                                     }}>{(r.acc * 100).toFixed(0)}%</td>
                                   </tr>
@@ -1247,38 +1207,25 @@ export default function TrainTab({ project, onRefresh }: Props) {
                                     const autoExpand = g.wrong > 0;
                                     const manuallyToggled = testsetExpanded.has(key);
                                     const isOpen = autoExpand ? !manuallyToggled : manuallyToggled;
-                                    const accColor = acc >= 0.9 ? '#4ade80' : acc >= 0.7 ? '#fbbf24' : '#f87171';
+                                    const accColor = acc >= 0.9 ? '#22c55e' : acc >= 0.7 ? '#f59e0b' : '#ef4444';
                                     return (
-                                      <div key={key} style={{
-                                        border: '1px solid #2d3148', borderRadius: 6,
-                                        background: '#0f1117', overflow: 'hidden',
-                                      }}>
+                                      <div key={key} className="ml-testset-group">
                                         <button
+                                          className="ml-testset-group-header"
                                           onClick={() => setTestsetExpanded(prev => {
                                             const next = new Set(prev);
                                             if (next.has(key)) next.delete(key); else next.add(key);
                                             return next;
                                           })}
-                                          style={{
-                                            width: '100%', display: 'flex', alignItems: 'center', gap: 8,
-                                            padding: '6px 10px', border: 'none', cursor: 'pointer',
-                                            background: 'rgba(59,130,246,.06)', color: '#e5e7eb',
-                                            fontSize: 12, textAlign: 'left',
-                                          }}
                                         >
                                           <span style={{ width: 12, textAlign: 'center' }}>{isOpen ? '▼' : '▶'}</span>
-                                          <span style={{
-                                            fontFamily: 'monospace', fontWeight: 700, fontSize: 14,
-                                            padding: '1px 8px', borderRadius: 4,
-                                            background: '#1a1d27', color: accColor,
-                                            minWidth: 28, textAlign: 'center',
-                                          }}>{g.char_id ?? '—'}</span>
+                                          <span className="ml-char-badge" style={{ color: accColor }}>
+                                            {g.char_id ?? '—'}
+                                          </span>
                                           <span style={{ color: accColor, fontWeight: 600 }}>
                                             {(acc * 100).toFixed(0)}% acc
                                           </span>
-                                          <span style={{ color: '#9ca3af' }}>
-                                            {g.items.length} test · ✓ {g.correct} · ✗ {g.wrong}
-                                          </span>
+                                          <span>{g.items.length} test · ✓ {g.correct} · ✗ {g.wrong}</span>
                                         </button>
                                         {isOpen && (
                                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: 6 }}>
@@ -1321,7 +1268,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
                         </div>
                       ) : (
                         <>
-                          <div style={{ fontSize: 11, color: '#9ca3af' }}>
+                          <div style={{ fontSize: 11, opacity: 0.7 }}>
                             {goldens.length} golden{goldens.length !== 1 ? 's' : ''} bundled with this model
                           </div>
                           <div style={{
@@ -1329,33 +1276,21 @@ export default function TrainTab({ project, onRefresh }: Props) {
                             gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
                           }}>
                             {goldens.map(g => (
-                              <div key={g.char_id} style={{
-                                padding: 8, borderRadius: 6, background: '#0f1117',
-                                border: '1px solid #2d3148',
-                                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-                              }}>
-                                <div style={{
-                                  fontFamily: 'monospace', fontWeight: 700, fontSize: 14,
-                                  color: '#60a5fa', minWidth: 28, textAlign: 'center',
-                                  background: '#1a1d27', padding: '2px 10px', borderRadius: 4,
-                                }}>{g.char_id}</div>
+                              <div key={g.char_id} className="ml-golden-card">
+                                <div className="ml-char-badge" style={{ color: '#3b82f6' }}>{g.char_id}</div>
                                 <img
                                   src={`data:image/jpeg;base64,${g.golden_b64}`}
                                   alt={`golden-${g.char_id}`}
-                                  style={{
-                                    width: '100%', maxWidth: 96, aspectRatio: '1 / 1',
-                                    objectFit: 'contain', background: '#000',
-                                    borderRadius: 3, imageRendering: 'pixelated',
-                                  }}
+                                  className="ml-golden-img"
                                 />
-                                <div style={{ fontSize: 10, color: '#9ca3af', textAlign: 'center', lineHeight: 1.3 }}>
+                                <div className="ml-golden-meta">
                                   <div>
-                                    <span style={{ color: '#4ade80' }}>{g.n_ok_real} OK</span>
-                                    <span style={{ margin: '0 4px', color: '#6b7280' }}>·</span>
-                                    <span style={{ color: '#f87171' }}>{g.n_ng_real} NG</span>
+                                    <span style={{ color: '#22c55e' }}>{g.n_ok_real} OK</span>
+                                    <span style={{ margin: '0 4px', opacity: 0.5 }}>·</span>
+                                    <span style={{ color: '#ef4444' }}>{g.n_ng_real} NG</span>
                                   </div>
                                   {(g.n_ok_train > g.n_ok_real || g.n_ng_train > g.n_ng_real) && (
-                                    <div style={{ color: '#6b7280', fontSize: 9 }}>
+                                    <div style={{ fontSize: 9, opacity: 0.6 }}>
                                       +{g.n_ok_train - g.n_ok_real}/+{g.n_ng_train - g.n_ng_real} aug
                                     </div>
                                   )}

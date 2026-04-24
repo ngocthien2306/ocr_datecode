@@ -911,25 +911,13 @@ export default function LabelTab({ project, onRefresh }: Props) {
                     return (
                       <input
                         type="text"
+                        className={`ml-char-input${needsChar ? ' empty' : ''}`}
                         value={seg.char_id ?? ''}
                         onChange={e => handleCharIdChange(region.id, seg.id, e.target.value)}
                         onClick={e => e.stopPropagation()}
                         maxLength={1}
                         placeholder="?"
                         title={needsChar ? 'char_id required' : 'Character identity'}
-                        style={{
-                          width: 28,
-                          fontSize: '12px',
-                          padding: '2px 4px',
-                          borderRadius: '4px',
-                          border: `1.5px solid ${needsChar ? '#ef4444' : '#334155'}`,
-                          background: needsChar ? 'rgba(239,68,68,.08)' : '#0f1117',
-                          color: '#e5e7eb',
-                          textAlign: 'center',
-                          fontFamily: 'monospace',
-                          outline: 'none',
-                          flexShrink: 0,
-                        }}
                       />
                     );
                   })()}
