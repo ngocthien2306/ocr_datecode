@@ -62,21 +62,20 @@ export interface SyntheticCrop {
   label: 'OK' | 'NG';
   crop_b64: string;
   char_id?: string | null;
+  aug_type?: 'noise' | 'cut' | 'erode' | 'dilate' | 'translate';
 }
 
-export type MLAlgorithm = 'rf' | 'svm' | 'mlp' | 'golden_dist' | 'anomaly';
+export type MLAlgorithm = 'rf' | 'svm' | 'mlp';
 
 export interface TrainRequest {
   algorithm: MLAlgorithm;
   augment_factor: number;
-  threshold?: number;         // prob_ok >= threshold → OK (rf/svm/mlp)
+  threshold?: number;         // prob_ok >= threshold → OK
   test_split?: number;
-  n_estimators?: number;      // rf, anomaly (IsolationForest)
+  n_estimators?: number;      // RF only
   max_iter?: number;
   C?: number;
   hidden_layer_sizes?: number[];
-  threshold_k?: number;       // golden_dist: mean + k*std
-  contamination?: number;     // anomaly: IsolationForest contamination
 }
 
 export interface MLModelMetrics {

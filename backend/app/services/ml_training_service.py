@@ -320,143 +320,60 @@ def augment_ok(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
 
 # ──────────────────────────────────────── Augmentation (synthetic NG) ──
 
-def _ng_transform(aug: np.ndarray, choice: int) -> np.ndarray:
-    """Apply a single NG transform. Split out so augment_ng can chain 2 at once."""
-    h, w = aug.shape[:2]
+# Augmentation type tags — emitted alongside each crop so char_stats can
+# break down "what kind of synthetic NG" was generated per char.
+NG_AUG_TYPES: Tuple[str, ...] = ("noise", "cut", "erode", "dilate", "translate")
 
-    if choice == 0:
-        # Heavy noise σ=40-80 — bụi/nhiễu
-        sigma = float(np.random.uniform(40, 80))
-        noise = np.random.normal(0, sigma, aug.shape).astype(np.int16)
-        return np.clip(aug.astype(np.int16) + noise, 0, 255).astype(np.uint8)
 
-    if choice == 1:
-        # Localized cut — vá bg_color 3-8px tại vị trí ngẫu nhiên trên stroke
-        # Simulate "in mất nét 1 đoạn cục bộ"
-        bg = _estimate_bg_color(aug)
-        fg = _estimate_fg_color(aug)
-        # Build text mask (dark pixels = stroke)
-        gray = aug if aug.ndim == 2 else cv.cvtColor(aug, cv.COLOR_BGR2GRAY)
-        thr = (float(np.mean([fg if np.isscalar(fg) else fg.mean(),
-                              bg if np.isscalar(bg) else bg.mean()])))
-        text_mask = gray < thr
-        ys, xs = np.where(text_mask)
-        if len(xs) < 5:
-            # Fallback — không có stroke rõ thì cut strip nhỏ
-            rh = int(np.random.randint(max(3, int(h * 0.05)), max(8, int(h * 0.10))))
-            ry = int(np.random.randint(0, max(1, h - rh)))
-            aug[ry:ry + rh, :] = bg
-            return aug
+def _augment_ng_one(gray: np.ndarray) -> Tuple[np.ndarray, str]:
+    """Apply one random NG transform. Returns (crop, type_tag)."""
+    h, w = gray.shape[:2]
+    choice = int(np.random.randint(0, len(NG_AUG_TYPES)))
+    aug = gray.copy()
 
-        num_cuts = int(np.random.randint(1, 3))
+    if choice == 0:  # noise
+        noise = np.random.normal(0, 30, aug.shape).astype(np.int16)
+        aug = np.clip(aug.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+        return aug, "noise"
+
+    if choice == 1:  # random black-rect cuts
+        num_cuts = int(np.random.randint(1, 4))
         for _ in range(num_cuts):
-            i = int(np.random.randint(0, len(xs)))
-            cx, cy = int(xs[i]), int(ys[i])
-            # Larger patches — previous 3-7px was nearly invisible after 32×32
-            # downsample; 6-12px survives the 48×48 grid stats.
-            patch_w = int(np.random.randint(6, 13))
-            patch_h = int(np.random.randint(6, 13))
-            x0 = max(0, cx - patch_w // 2)
-            y0 = max(0, cy - patch_h // 2)
-            x1 = min(w, x0 + patch_w)
-            y1 = min(h, y0 + patch_h)
-            aug[y0:y1, x0:x1] = bg
-        return aug
+            rh = int(np.random.randint(max(2, h // 6), max(3, h // 3)))
+            rw = int(np.random.randint(max(2, w // 6), max(3, w // 3)))
+            ry = int(np.random.randint(0, max(1, h - rh)))
+            rx = int(np.random.randint(0, max(1, w - rw)))
+            aug[ry:ry + rh, rx:rx + rw] = 0
+        return aug, "cut"
 
-    if choice == 2:
-        # Partial erosion — chỉ erode 1 nửa ảnh (lỗi ribbon/head 1 phía)
-        k = int(np.random.randint(5, 9))
+    if choice == 2:  # erode (stroke thinning)
+        k = int(np.random.randint(4, 7))
         kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
-        eroded = cv.erode(aug, kernel, iterations=1)
-        side = int(np.random.randint(0, 4))  # 0=left, 1=right, 2=top, 3=bottom
-        out = aug.copy()
-        if side == 0:
-            out[:, :w // 2] = eroded[:, :w // 2]
-        elif side == 1:
-            out[:, w // 2:] = eroded[:, w // 2:]
-        elif side == 2:
-            out[:h // 2, :] = eroded[:h // 2, :]
-        else:
-            out[h // 2:, :] = eroded[h // 2:, :]
-        return out
+        return cv.erode(aug, kernel, iterations=1), "erode"
 
-    if choice == 3:
-        # Dilate full — mực chảy dày toàn ký tự
-        k = int(np.random.randint(6, 9))
+    if choice == 3:  # dilate (stroke bleeding)
+        k = int(np.random.randint(5, 8))
         kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
-        return cv.dilate(aug, kernel, iterations=1)
+        return cv.dilate(aug, kernel, iterations=1), "dilate"
 
-    if choice == 4:
-        # Strip cut — 1 đường bg_color cắt NGANG hoặc DỌC qua toàn ký tự
-        # Simulate "mất nét 1 đường luôn" (ribbon/head miss trên 1 hàng pixels)
-        bg = _estimate_bg_color(aug)
-        out = aug.copy()
-        if np.random.rand() < 0.5:
-            # Horizontal strip — cut across full width (6-18% of height)
-            thickness = int(np.random.randint(max(3, int(h * 0.06)),
-                                              max(8, int(h * 0.18))))
-            y0 = int(np.random.randint(0, max(1, h - thickness)))
-            out[y0:y0 + thickness, :] = bg
-        else:
-            # Vertical strip — cut across full height (6-18% of width)
-            thickness = int(np.random.randint(max(3, int(w * 0.06)),
-                                              max(8, int(w * 0.18))))
-            x0 = int(np.random.randint(0, max(1, w - thickness)))
-            out[:, x0:x0 + thickness] = bg
-        return out
-
-    if choice == 5:
-        # Ink blot — chấm fg_color 3-8px radius (đủ lớn để survive downsample)
-        fg = _estimate_fg_color(aug)
-        num_blots = int(np.random.randint(1, 3))
-        for _ in range(num_blots):
-            cx = int(np.random.randint(3, max(4, w - 3)))
-            cy = int(np.random.randint(3, max(4, h - 3)))
-            radius = int(np.random.randint(3, 9))
-            cv.circle(aug, (cx, cy), radius, fg if np.isscalar(fg) else tuple(fg.tolist()), -1)
-        return aug
-
-    if choice == 6:
-        # Ghosting — shift + overlay alpha 0.4 (in chồng)
-        dx = int(np.random.randint(3, 6)) * int(np.random.choice([-1, 1]))
-        dy = int(np.random.randint(2, 5)) * int(np.random.choice([-1, 1]))
-        M = np.float32([[1, 0, dx], [0, 1, dy]])
-        shifted = cv.warpAffine(
-            aug, M, (w, h), flags=cv.INTER_LINEAR, borderMode=cv.BORDER_REPLICATE,
-        )
-        alpha = float(np.random.uniform(0.35, 0.55))
-        return cv.addWeighted(aug, 1.0 - alpha, shifted, alpha, 0)
-
-    return aug
+    # choice == 4 — translate (misalignment)
+    dx = int(np.random.randint(-w // 3, w // 3 + 1))
+    dy = int(np.random.randint(-h // 3, h // 3 + 1))
+    M = np.float32([[1, 0, dx], [0, 1, dy]])
+    return cv.warpAffine(aug, M, (w, h), borderValue=0), "translate"
 
 
-def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
+def augment_ng(char_img: np.ndarray, n: int = 5) -> List[Tuple[np.ndarray, str]]:
     """
-    Generate n synthetic NG samples.
+    Generate n synthetic NG crops from an OK character.
 
-    7 transform types (NO blur — blur cũng có thể gặp ở OK sample thật):
-      0 heavy noise | 1 localized cut | 2 partial erosion | 3 dilate full
-      4 strip cut   | 5 ink blot      | 6 ghosting
-    Với ~20% xác suất mỗi sample sẽ chain 2 transforms khác nhau để
-    tạo defect phức hợp (e.g. noise + cut) giống thực tế hơn.
+    5 transform types (uniform random choice):
+      noise · cut · erode · dilate · translate
+
+    Returns list of (crop, type_tag) so callers can log what was generated.
     """
     gray = _to_gray(char_img)
-    results: List[np.ndarray] = []
-    num_aug_types = 7
-
-    for _ in range(n):
-        aug = gray.copy()
-        first = int(np.random.randint(0, num_aug_types))
-        aug = _ng_transform(aug, first)
-
-        # 20% chance chain a second distinct transform
-        if np.random.rand() < 0.20:
-            remaining = [c for c in range(num_aug_types) if c != first]
-            second = int(np.random.choice(remaining))
-            aug = _ng_transform(aug, second)
-
-        results.append(aug)
-    return results
+    return [_augment_ng_one(gray) for _ in range(n)]
 
 
 # ──────────────────────────────────────── Image encoding ──
@@ -535,29 +452,43 @@ def build_dataset(
     n_ok_real = sum(len(v) for v in ok_by_char.values())
     n_ng_real = sum(len(v) for v in ng_by_char.values())
 
-    # --- Augment (same balance formula, but per-char preserved) ---
-    #   n_aug_ng_total = (factor-1) * n_ok_real   (NG generated from OK templates)
-    #   n_aug_ok_total = n_ng_real + max(0, factor-2) * n_ok_real
-    aug_ok_by_char: Dict[str, List[np.ndarray]] = defaultdict(list)
+    # --- NG augmentation — char-balanced (Option A) ---
+    # Target per char = factor * max(n_ok_real across chars). Each char tops up
+    # with synthetic NG to reach this target. Ensures every char has the same
+    # total NG count regardless of its original OK/NG distribution.
+    #
+    # OK samples are NOT augmented. Only real OK + NG (real + synthetic) go
+    # into training. The classifier learns what real OK looks like; synthetic
+    # NG supplies the negative class.
     aug_ng_by_char: Dict[str, List[np.ndarray]] = defaultdict(list)
+    aug_ng_type_counts: Dict[str, Dict[str, int]] = defaultdict(
+        lambda: {t: 0 for t in NG_AUG_TYPES}
+    )
 
-    if augment_factor >= 2 and n_ok_real > 0:
-        n_per_ok_ng = augment_factor - 1
-        for char_id, crops in ok_by_char.items():
-            for c in crops:
-                # Synthetic NG keeps the char_id so alignment uses the right golden
-                aug_ng_by_char[char_id].extend(augment_ng(c, n=n_per_ok_ng))
+    max_ok_per_char = max((len(v) for v in ok_by_char.values()), default=0)
+    target_ng_per_char = augment_factor * max_ok_per_char if augment_factor >= 2 else 0
 
-        n_aug_ok_total = n_ng_real + max(0, augment_factor - 2) * n_ok_real
-        if n_aug_ok_total > 0:
-            # Distribute proportionally across OK samples
-            all_ok_chars = [(char_id, c) for char_id, crops in ok_by_char.items() for c in crops]
-            base = n_aug_ok_total // len(all_ok_chars)
-            extra = n_aug_ok_total - base * len(all_ok_chars)
-            for i, (char_id, c) in enumerate(all_ok_chars):
+    if target_ng_per_char > 0:
+        all_chars_with_ok = [c for c in ok_by_char.keys() if c != "_unknown"]
+        for char_id in all_chars_with_ok:
+            ok_crops = ok_by_char[char_id]
+            if not ok_crops:
+                continue
+            n_ng_real_this = len(ng_by_char.get(char_id, []))
+            deficit = max(0, target_ng_per_char - n_ng_real_this)
+            if deficit == 0:
+                continue
+            # Distribute deficit across OK crops — each OK template generates
+            # base (+1 for first `extra` crops) augmentations.
+            base = deficit // len(ok_crops)
+            extra = deficit - base * len(ok_crops)
+            for i, crop in enumerate(ok_crops):
                 n_this = base + (1 if i < extra else 0)
-                if n_this > 0:
-                    aug_ok_by_char[char_id].extend(augment_ok(c, n=n_this))
+                if n_this == 0:
+                    continue
+                for aug_img, tag in augment_ng(crop, n=n_this):
+                    aug_ng_by_char[char_id].append(aug_img)
+                    aug_ng_type_counts[char_id][tag] += 1
 
     # --- Flatten + extract features (with goldens for alignment) ---
     X_rows: List[np.ndarray] = []
@@ -574,38 +505,40 @@ def build_dataset(
                 char_ids_rows.append(None if char_id == "_unknown" else char_id)
 
     _append_samples(ok_by_char, 1)
-    _append_samples(aug_ok_by_char, 1)
     _append_samples(ng_by_char, 0)
     _append_samples(aug_ng_by_char, 0)
 
     X = np.asarray(X_rows, dtype=np.float32)
     y = np.asarray(y_rows, dtype=np.int32)
 
-    n_aug_ok = sum(len(v) for v in aug_ok_by_char.values())
     n_aug_ng = sum(len(v) for v in aug_ng_by_char.values())
-    total_ok = n_ok_real + n_aug_ok
+    total_ok = n_ok_real                      # no OK augmentation
     total_ng = n_ng_real + n_aug_ng
 
     # Per-char training sample counts (for FE display)
-    char_stats: Dict[str, Dict[str, int]] = {}
+    char_stats: Dict[str, Dict[str, Any]] = {}
     all_chars = set(ok_by_char.keys()) | set(ng_by_char.keys())
     for c in all_chars:
         if c == "_unknown":
             continue
+        n_ng_aug_c = len(aug_ng_by_char.get(c, []))
         char_stats[c] = {
-            "n_ok_train": len(ok_by_char.get(c, [])) + len(aug_ok_by_char.get(c, [])),
-            "n_ng_train": len(ng_by_char.get(c, [])) + len(aug_ng_by_char.get(c, [])),
-            "n_ok_real": len(ok_by_char.get(c, [])),
-            "n_ng_real": len(ng_by_char.get(c, [])),
-            "has_golden": c in goldens,
+            "n_ok_train":  len(ok_by_char.get(c, [])),
+            "n_ng_train":  len(ng_by_char.get(c, [])) + n_ng_aug_c,
+            "n_ok_real":   len(ok_by_char.get(c, [])),
+            "n_ng_real":   len(ng_by_char.get(c, [])),
+            "n_ng_aug":    n_ng_aug_c,
+            "n_ng_aug_by_type": dict(aug_ng_type_counts.get(c, {})),
+            "has_golden":  c in goldens,
         }
 
     logger.info(
-        f"[build_dataset v2] "
+        f"[build_dataset v3 char-balanced] "
         f"chars: {sorted(all_chars)} | "
         f"goldens: {sorted(goldens.keys())} | "
-        f"OK: {n_ok_real}+{n_aug_ok}={total_ok} | "
-        f"NG: {n_ng_real}+{n_aug_ng}={total_ng} | factor={augment_factor}"
+        f"OK: {n_ok_real} (no aug) | "
+        f"NG: {n_ng_real}+{n_aug_ng}={total_ng} | "
+        f"target/char={target_ng_per_char} | factor={augment_factor}"
     )
 
     # Shuffle — keep crops + char_ids in sync
@@ -631,314 +564,6 @@ def _save_bundle_and_testset(
     test_set_path.write_text(json.dumps(test_set_items))
 
 
-def _collect_ok_ng_by_char(
-    annotations: List[MLAnnotationInDB],
-    images_dir: Path,
-) -> Tuple[Dict[str, List[np.ndarray]], Dict[str, List[np.ndarray]]]:
-    """Group labeled crops by char_id (unlabeled / no char_id → '_unknown')."""
-    from collections import defaultdict
-    ok_by_char: Dict[str, List[np.ndarray]] = defaultdict(list)
-    ng_by_char: Dict[str, List[np.ndarray]] = defaultdict(list)
-    for ann in annotations:
-        img_path = images_dir / ann.filename
-        for region in ann.regions:
-            for seg in region.segments:
-                if seg.label not in ("OK", "NG"):
-                    continue
-                crop = crop_segment(img_path, {
-                    "x": seg.x, "y": seg.y, "w": seg.w, "h": seg.h,
-                })
-                if crop is None:
-                    continue
-                key = seg.char_id or "_unknown"
-                (ok_by_char if seg.label == "OK" else ng_by_char)[key].append(crop)
-    return ok_by_char, ng_by_char
-
-
-def _train_golden_distance(
-    annotations: List[MLAnnotationInDB],
-    images_dir: Path,
-    request: TrainRequest,
-    model_save_path: Path,
-) -> Dict[str, Any]:
-    """
-    Cognex-OCVMax-style threshold approach:
-      - Compute per-char golden from OK samples (same as v2)
-      - Compute per-char threshold = mean(OK_score) + k * std(OK_score)
-      - No classifier. At inference: score < threshold → OK, else NG.
-
-    Does NOT require real NG samples — only OK. Real NG, if provided, are
-    used purely for evaluation metrics (not used in fitting threshold).
-    """
-    from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
-    from sklearn.model_selection import train_test_split
-
-    ok_by_char, ng_by_char = _collect_ok_ng_by_char(annotations, images_dir)
-    if not ok_by_char:
-        raise ValueError("Need at least some OK samples to fit golden thresholds.")
-
-    # Compute goldens + thresholds
-    goldens: Dict[str, np.ndarray] = {}
-    for char_id, crops in ok_by_char.items():
-        if char_id == "_unknown":
-            continue
-        g = compute_golden(crops)
-        if g is not None:
-            goldens[char_id] = g
-
-    k = float(getattr(request, "threshold_k", 3.0))
-    thresholds = fit_golden_thresholds(ok_by_char, goldens, k=k)
-
-    # Flatten all samples for evaluation
-    samples: List[Tuple[np.ndarray, Optional[str], int]] = []
-    for char_id, crops in ok_by_char.items():
-        cid = None if char_id == "_unknown" else char_id
-        for c in crops:
-            samples.append((c, cid, 1))
-    for char_id, crops in ng_by_char.items():
-        cid = None if char_id == "_unknown" else char_id
-        for c in crops:
-            samples.append((c, cid, 0))
-
-    # Optional augment to stress-test thresholds (only for eval reporting)
-    if request.augment_factor >= 2:
-        n_per = request.augment_factor - 1
-        extras: List[Tuple[np.ndarray, Optional[str], int]] = []
-        for char_id, crops in ok_by_char.items():
-            cid = None if char_id == "_unknown" else char_id
-            for c in crops:
-                # mild OK aug → still "OK"
-                for a in augment_ok(c, n=n_per):
-                    extras.append((a, cid, 1))
-                # destructive NG aug → label NG for eval
-                for a in augment_ng(c, n=n_per):
-                    extras.append((a, cid, 0))
-        samples.extend(extras)
-
-    # Score every sample using its char's threshold; char without threshold → fallback
-    def predict_one(crop: np.ndarray, char_id: Optional[str]) -> Tuple[int, float]:
-        """Return (pred_label 0/1, score)."""
-        if not char_id or char_id not in thresholds:
-            return 0, float("inf")          # no threshold → treat as NG (safe)
-        s = golden_distance_score(crop, char_id, goldens)
-        pred = 1 if s <= thresholds[char_id] else 0
-        return pred, s
-
-    preds = [predict_one(c, cid) for c, cid, _ in samples]
-    y_pred = np.array([p[0] for p in preds], dtype=np.int32)
-    scores = np.array([p[1] for p in preds], dtype=np.float32)
-    y_true = np.array([s[2] for s in samples], dtype=np.int32)
-    crops_all = [s[0] for s in samples]
-    char_ids_all = [s[1] for s in samples]
-
-    # Train/test split for reporting ONLY — thresholds are already fit from OK
-    test_size = min(request.test_split, 0.4)
-    if len(np.unique(y_true)) > 1:
-        idx_train, idx_test = train_test_split(
-            np.arange(len(y_true)), test_size=test_size,
-            random_state=42, stratify=y_true,
-        )
-    else:
-        idx_train = idx_test = np.arange(len(y_true))
-
-    acc_train = float(accuracy_score(y_true[idx_train], y_pred[idx_train])) if len(idx_train) else 0.0
-    acc_test  = float(accuracy_score(y_true[idx_test],  y_pred[idx_test]))  if len(idx_test)  else 0.0
-    cm     = confusion_matrix(y_true[idx_test], y_pred[idx_test], labels=[0, 1]).tolist() if len(idx_test) else []
-    report = classification_report(
-        y_true[idx_test], y_pred[idx_test],
-        target_names=["NG", "OK"], zero_division=0, labels=[0, 1],
-    ) if len(idx_test) else ""
-
-    # Test-set items (use test indices). "prob_ok" carries the score so FE can
-    # still sort/show; lower score = more OK-like.
-    test_set_items = []
-    for i in idx_test:
-        crop_img = crops_all[i]
-        cid = char_ids_all[i]
-        true_y = int(y_true[i])
-        pred_y = int(y_pred[i])
-        score = float(scores[i]) if np.isfinite(scores[i]) else 1e9
-        # Normalize score to [0, 1] — lower = more OK
-        norm = 1.0 - min(score / max(thresholds.get(cid, 1.0), 1e-6), 1.0) if cid else 0.0
-        test_set_items.append({
-            "crop_b64":   img_to_b64(crop_img),
-            "char_id":    cid,
-            "true_label": "OK" if true_y == 1 else "NG",
-            "pred_label": "OK" if pred_y == 1 else "NG",
-            "prob_ok":    round(norm, 4),
-            "correct":    bool(true_y == pred_y),
-            "score":      round(score, 4),
-        })
-
-    # Build char_stats for FE (same schema as v2)
-    char_stats: Dict[str, Dict[str, int]] = {}
-    for cid in set(ok_by_char.keys()) | set(ng_by_char.keys()):
-        if cid == "_unknown":
-            continue
-        char_stats[cid] = {
-            "n_ok_train": len(ok_by_char.get(cid, [])),
-            "n_ng_train": len(ng_by_char.get(cid, [])),
-            "n_ok_real":  len(ok_by_char.get(cid, [])),
-            "n_ng_real":  len(ng_by_char.get(cid, [])),
-            "has_golden": cid in goldens,
-            "threshold":  float(thresholds[cid]) if cid in thresholds else None,
-        }
-
-    bundle = {
-        'clf': None,
-        'goldens': goldens,
-        'char_stats': char_stats,
-        'thresholds': thresholds,
-        'threshold_k': k,
-        'feat_version': 'v2',
-        'feat_dim': FEAT_DIM_V2,
-        'algorithm': 'golden_dist',
-    }
-    _save_bundle_and_testset(model_save_path, bundle, test_set_items)
-
-    logger.info(
-        f"[train_model:golden_dist] saved bundle to {model_save_path.name}: "
-        f"goldens={sorted(goldens.keys())}, thresholds set for {len(thresholds)} chars, k={k}"
-    )
-
-    n_ok_total = sum(len(v) for v in ok_by_char.values())
-    n_ng_total = sum(len(v) for v in ng_by_char.values())
-    return {
-        "accuracy_train": acc_train,
-        "accuracy_test":  acc_test,
-        "n_ok":           n_ok_total,
-        "n_ng":           n_ng_total,
-        "n_total":        len(samples),
-        "confusion_matrix": cm,
-        "report":         report,
-        "golden_chars":   sorted(goldens.keys()),
-    }
-
-
-def _train_anomaly(
-    annotations: List[MLAnnotationInDB],
-    images_dir: Path,
-    request: TrainRequest,
-    model_save_path: Path,
-) -> Dict[str, Any]:
-    """
-    Cognex-ViDi-Red-style one-class anomaly detection:
-      - Train IsolationForest on OK feature vectors only
-      - At inference: decision_function(x) > threshold → OK, else NG
-
-    Does NOT require real NG samples. Real NG (if any) are used purely for
-    evaluation. Uses v2 features so goldens-based diff signal is baked in.
-    """
-    from sklearn.ensemble import IsolationForest
-    from sklearn.model_selection import train_test_split
-    from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
-
-    X, y, crops_raw, char_ids_raw, goldens, char_stats, n_ok, n_ng = build_dataset(
-        annotations, images_dir, request.augment_factor,
-    )
-
-    if int((y == 1).sum()) < 10:
-        raise ValueError(
-            f"Anomaly detection needs at least 10 OK samples, got {int((y == 1).sum())}."
-        )
-
-    # Split (stratify only if both classes present)
-    test_size = min(request.test_split, 0.4)
-    if len(np.unique(y)) > 1:
-        (X_train, X_test, y_train, y_test,
-         _, crops_test, _, char_ids_test) = train_test_split(
-            X, y, crops_raw, char_ids_raw,
-            test_size=test_size, random_state=42, stratify=y,
-        )
-    else:
-        X_train, X_test = X, X
-        y_train, y_test = y, y
-        crops_test = crops_raw
-        char_ids_test = char_ids_raw
-
-    X_train_ok = X_train[y_train == 1]
-    if len(X_train_ok) < 10:
-        raise ValueError(
-            f"Not enough OK training samples after split: {len(X_train_ok)}."
-        )
-
-    contamination = float(getattr(request, "contamination", 0.05))
-    n_estimators = int(getattr(request, "n_estimators", 200) or 200)
-    clf = IsolationForest(
-        n_estimators=n_estimators,
-        contamination=contamination,
-        random_state=42,
-        n_jobs=-1,
-    )
-    clf.fit(X_train_ok)   # one-class: fit ONLY on OK
-
-    # decision_function: positive = inlier/OK, negative = outlier/NG
-    # Set threshold so that the bottom 1% of OK train scores becomes the cutoff.
-    ok_train_scores = clf.decision_function(X_train_ok)
-    threshold = float(np.percentile(ok_train_scores, 1))  # 1st percentile
-
-    def _predict(X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        scores = clf.decision_function(X)
-        preds = (scores >= threshold).astype(np.int32)
-        return preds, scores
-
-    y_pred_train, _ = _predict(X_train)
-    y_pred_test,  scores_test = _predict(X_test)
-    acc_train = float(accuracy_score(y_train, y_pred_train))
-    acc_test  = float(accuracy_score(y_test,  y_pred_test))
-    cm     = confusion_matrix(y_test, y_pred_test, labels=[0, 1]).tolist()
-    report = classification_report(
-        y_test, y_pred_test, target_names=["NG", "OK"], zero_division=0, labels=[0, 1],
-    )
-
-    # Normalize score → [0,1] for "prob_ok"-like display (sigmoid around threshold)
-    def _prob(score: float) -> float:
-        return float(1.0 / (1.0 + np.exp(-(score - threshold) * 10.0)))
-
-    test_set_items = []
-    for crop_img, char_id, true_y, pred_y, score in zip(
-        crops_test, char_ids_test, y_test, y_pred_test, scores_test,
-    ):
-        test_set_items.append({
-            "crop_b64":   img_to_b64(crop_img),
-            "char_id":    char_id,
-            "true_label": "OK" if int(true_y) == 1 else "NG",
-            "pred_label": "OK" if int(pred_y) == 1 else "NG",
-            "prob_ok":    round(_prob(float(score)), 4),
-            "correct":    bool(true_y == pred_y),
-            "score":      round(float(score), 4),
-        })
-
-    bundle = {
-        'clf': clf,
-        'goldens': goldens,
-        'char_stats': char_stats,
-        'threshold': threshold,
-        'contamination': contamination,
-        'feat_version': 'v2',
-        'feat_dim': FEAT_DIM_V2,
-        'algorithm': 'anomaly',
-    }
-    _save_bundle_and_testset(model_save_path, bundle, test_set_items)
-
-    logger.info(
-        f"[train_model:anomaly] saved bundle to {model_save_path.name}: "
-        f"IsolationForest n_estimators={n_estimators}, "
-        f"contamination={contamination}, threshold={threshold:.4f}"
-    )
-
-    return {
-        "accuracy_train": acc_train,
-        "accuracy_test":  acc_test,
-        "n_ok":           n_ok,
-        "n_ng":           n_ng,
-        "n_total":        len(X),
-        "confusion_matrix": cm,
-        "report":         report,
-        "golden_chars":   sorted(goldens.keys()),
-    }
-
-
 def train_model(
     annotations: List[MLAnnotationInDB],
     images_dir: Path,
@@ -946,20 +571,10 @@ def train_model(
     model_save_path: Path,
 ) -> Dict[str, Any]:
     """
-    Train a model and save it to disk. Branches on `request.algorithm`:
-      - rf / svm / mlp  → binary sklearn classifier on v2 features
-      - golden_dist     → per-char threshold on golden diff score (no classifier)
-      - anomaly         → IsolationForest on OK features (one-class)
-
-    Always saves a sidecar test-set JSON with per-crop predictions.
+    Train a binary sklearn classifier (rf / svm / mlp) on v2 features and
+    save it to disk. Always saves a sidecar test-set JSON with per-crop
+    predictions.
     """
-    algo = (request.algorithm or "rf").lower()
-    if algo == "golden_dist":
-        return _train_golden_distance(annotations, images_dir, request, model_save_path)
-    if algo == "anomaly":
-        return _train_anomaly(annotations, images_dir, request, model_save_path)
-
-    # Default: sklearn binary classifier (rf / svm / mlp)
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 
@@ -1043,62 +658,6 @@ def train_model(
         "report":         report,
         "golden_chars":   sorted(goldens.keys()),
     }
-
-
-def golden_distance_score(img: np.ndarray, char_id: str, goldens: Dict[str, np.ndarray]) -> float:
-    """
-    Compute a scalar distance between the input crop and its char's golden.
-    Lower = closer to golden (OK-like); higher = more divergent (NG-like).
-
-    Weighted blend: 0.4*mean(|diff|) + 0.6*p95(|diff|). p95 (95th percentile)
-    is more robust than max() to alignment noise while still capturing
-    localized defects (cuts, missing strokes, ink blots) which push the
-    high-end of the diff distribution up. Real-world OK variation is
-    typically bounded across the whole image → low p95; localized NG
-    damage → p95 spikes even if mean stays modest.
-    Returns +inf if golden missing → forces caller to treat as NG.
-    """
-    if char_id not in goldens:
-        return float("inf")
-    canvas = preprocess_canonical(img)
-    aligned, _ = align_to_golden(canvas, goldens[char_id])
-    diff = np.abs(aligned.astype(np.int16) - goldens[char_id].astype(np.int16))
-    mean_abs = float(diff.mean())
-    p95 = float(np.percentile(diff, 95))
-    return 0.4 * mean_abs + 0.6 * p95
-
-
-def fit_golden_thresholds(
-    ok_by_char: Dict[str, List[np.ndarray]],
-    goldens: Dict[str, np.ndarray],
-    k: float = 2.0,
-) -> Dict[str, float]:
-    """
-    Per-char threshold = max(percentile_p, mean + k*std) of OK-score distribution.
-
-    Uses percentile_p = 95th percentile to resist small-sample std instability
-    (with 5-6 OK samples, naive mean+3σ is too loose because std is noisy).
-    k=2.0 covers ~97.7% of a Gaussian tail, tighter than original k=3.0.
-    Chars with <3 OK samples fall back to pure max() since std is meaningless.
-    """
-    thresholds: Dict[str, float] = {}
-    for char_id, crops in ok_by_char.items():
-        if char_id not in goldens or not crops:
-            continue
-        scores = [golden_distance_score(c, char_id, goldens) for c in crops]
-        scores = [s for s in scores if np.isfinite(s)]
-        if not scores:
-            continue
-        if len(scores) < 3:
-            # Too few samples — just use max (will be retightened if more data added)
-            thresholds[char_id] = float(max(scores)) * 1.2
-            continue
-        sigma_thr = float(np.mean(scores) + k * np.std(scores))
-        pct_thr   = float(np.percentile(scores, 95))
-        # Use max of the two → stricter bound (the one that excludes MORE OKs)
-        # Actually we want the LOWER of the two so threshold stays tight
-        thresholds[char_id] = min(sigma_thr, pct_thr * 1.1)
-    return thresholds
 
 
 def _build_classifier(request: TrainRequest):
@@ -1190,34 +749,14 @@ def predict_on_image(
 
     use_v2 = (feat_version == 'v2')
 
-    # Bundle-specific predict function — maps crop → (p_ok, label)
-    if algorithm == 'golden_dist':
-        thresholds = bundle.get('thresholds') or {}
-        def _predict(crop: np.ndarray) -> Tuple[float, str]:
-            if not char_id or char_id not in thresholds:
-                return 0.0, "NG"
-            score = golden_distance_score(crop, char_id, goldens)
-            thr = thresholds[char_id]
-            # prob_ok: 1.0 when score=0, drops to 0.5 at threshold, ~0 beyond 2x thr
-            norm = 1.0 - min(score / max(thr, 1e-6), 1.0)
-            return max(0.0, min(1.0, float(norm))), ("OK" if score <= thr else "NG")
-    elif algorithm == 'anomaly':
-        anom_thr = float(bundle.get('threshold', 0.0))
-        def _predict(crop: np.ndarray) -> Tuple[float, str]:
-            feat = (extract_features_v2 if use_v2 else extract_features)(
-                crop, char_id, goldens,
-            ).reshape(1, -1) if use_v2 else extract_features(crop).reshape(1, -1)
-            score = float(clf.decision_function(feat)[0])
-            p_ok = float(1.0 / (1.0 + np.exp(-(score - anom_thr) * 10.0)))
-            return p_ok, ("OK" if score >= anom_thr else "NG")
-    else:
-        # Default binary sklearn classifier (rf / svm / mlp)
-        def _predict(crop: np.ndarray) -> Tuple[float, str]:
-            feat = (extract_features_v2(crop, char_id, goldens)
-                    if use_v2 else extract_features(crop)).reshape(1, -1)
-            proba = clf.predict_proba(feat)[0]
-            p_ok = float(proba[1]) if len(proba) > 1 else float(proba[0])
-            return p_ok, ("OK" if p_ok >= threshold else "NG")
+    # Binary sklearn classifier (rf / svm / mlp). Legacy bundles with other
+    # algorithm tags fall through here as well since we only keep one path.
+    def _predict(crop: np.ndarray) -> Tuple[float, str]:
+        feat = (extract_features_v2(crop, char_id, goldens)
+                if use_v2 else extract_features(crop)).reshape(1, -1)
+        proba = clf.predict_proba(feat)[0]
+        p_ok = float(proba[1]) if len(proba) > 1 else float(proba[0])
+        return p_ok, ("OK" if p_ok >= threshold else "NG")
 
     results = []
     for seg in segments:
@@ -1338,22 +877,25 @@ def generate_synthetic_crops(
     label: str = "NG",
 ) -> List[Dict[str, Any]]:
     """
-    Generate synthetic crops from OK samples for preview.
+    Generate synthetic NG crops from OK samples for preview.
+
+    Only NG augmentation is supported now (OK augmentation removed).
+    Accepted labels: 'NG' or 'BOTH' → generate NG preview. 'OK' → empty.
 
     Args:
         annotations: project annotations.
         images_dir: project images directory.
         augment_factor: preview uses (augment_factor - 1) augments per OK sample.
-        label: 'NG' (destructive augs), 'OK' (mild augs), or 'BOTH'.
+        label: kept for API compatibility; anything except 'NG'/'BOTH' returns [].
 
-    Returns list of {source_segment_id, filename, label, crop_b64}.
+    Returns list of {source_segment_id, filename, label, crop_b64, char_id, aug_type}.
     """
     if augment_factor < 2:
         return []
     n_per_sample = augment_factor - 1
     label = (label or "NG").upper()
-    want_ng = label in ("NG", "BOTH")
-    want_ok = label in ("OK", "BOTH")
+    if label not in ("NG", "BOTH"):
+        return []
 
     result = []
     for ann in annotations:
@@ -1367,22 +909,13 @@ def generate_synthetic_crops(
                 })
                 if crop is None:
                     continue
-                if want_ng:
-                    for aug in augment_ng(crop, n=n_per_sample):
-                        result.append({
-                            "source_segment_id": seg.id,
-                            "filename": ann.filename,
-                            "label": "NG",
-                            "crop_b64": img_to_b64(aug),
-                            "char_id": seg.char_id,
-                        })
-                if want_ok:
-                    for aug in augment_ok(crop, n=n_per_sample):
-                        result.append({
-                            "source_segment_id": seg.id,
-                            "filename": ann.filename,
-                            "label": "OK",
-                            "crop_b64": img_to_b64(aug),
-                            "char_id": seg.char_id,
-                        })
+                for aug_img, aug_tag in augment_ng(crop, n=n_per_sample):
+                    result.append({
+                        "source_segment_id": seg.id,
+                        "filename": ann.filename,
+                        "label": "NG",
+                        "crop_b64": img_to_b64(aug_img),
+                        "char_id": seg.char_id,
+                        "aug_type": aug_tag,
+                    })
     return result

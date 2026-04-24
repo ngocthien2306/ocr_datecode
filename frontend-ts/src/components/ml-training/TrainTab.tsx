@@ -382,14 +382,12 @@ export default function TrainTab({ project, onRefresh }: Props) {
   const [previewLabel, setPreviewLabel] = useState<'NG' | 'OK' | 'BOTH'>('NG');
 
   // Training config
-  const [algorithm, setAlgorithm] = useState<'rf' | 'svm' | 'mlp' | 'golden_dist' | 'anomaly'>('rf');
+  const [algorithm, setAlgorithm] = useState<'rf' | 'svm' | 'mlp'>('rf');
   const [augmentFactor, setAugmentFactor] = useState(0);
   const [nEstimators, setNEstimators] = useState(100);
   const [maxIter, setMaxIter] = useState(500);
   const [svmC, setSvmC] = useState(1.0);
   const [threshold, setThreshold] = useState(50); // percent, 0–100
-  const [thresholdK, setThresholdK] = useState(3.0);          // golden_dist: mean + k*std
-  const [contamination, setContamination] = useState(0.05);    // anomaly: IF contamination
 
   // Training state
   const [training, setTraining] = useState(false);
@@ -485,8 +483,6 @@ export default function TrainTab({ project, onRefresh }: Props) {
         n_estimators: nEstimators,
         max_iter: maxIter,
         C: svmC,
-        threshold_k: thresholdK,
-        contamination,
       };
       const { model_id } = await mlTrainingAPI.startTraining(project.id, req);
 
@@ -636,8 +632,6 @@ export default function TrainTab({ project, onRefresh }: Props) {
             { key: 'rf',           label: 'Random Forest',                tag: 'Binary (needs OK + NG)' },
             { key: 'svm',          label: 'SVM (RBF kernel)',             tag: 'Binary (needs OK + NG)' },
             { key: 'mlp',          label: 'Neural Net (MLP)',             tag: 'Binary (needs OK + NG)' },
-            { key: 'golden_dist',  label: 'Golden Distance',              tag: 'One-class (OK only) · Cognex OCVMax style' },
-            { key: 'anomaly',      label: 'IsolationForest anomaly',      tag: 'One-class (OK only) · Cognex ViDi Red style' },
           ] as const).map(opt => (
             <label key={opt.key}
               style={{
@@ -670,44 +664,6 @@ export default function TrainTab({ project, onRefresh }: Props) {
             <input className="ml-form-input" type="number"
               value={algorithm === 'svm' ? svmC : maxIter}
               onChange={e => algorithm === 'svm' ? setSvmC(Number(e.target.value)) : setMaxIter(Number(e.target.value))} />
-          </div>
-        )}
-        {algorithm === 'golden_dist' && (
-          <div className="ml-form-group">
-            <label className="ml-form-label">
-              Threshold K (mean + K·std of OK scores)
-            </label>
-            <input className="ml-form-input" type="number" min={1} max={6} step={0.1}
-              value={thresholdK} onChange={e => setThresholdK(Number(e.target.value))} />
-            <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
-              Lower K = stricter (more rejects) · 3.0 covers ~99.7% of OK distribution
-            </div>
-          </div>
-        )}
-        {algorithm === 'anomaly' && (
-          <>
-            <div className="ml-form-group">
-              <label className="ml-form-label">Contamination (expected outlier fraction)</label>
-              <input className="ml-form-input" type="number" min={0.001} max={0.3} step={0.01}
-                value={contamination} onChange={e => setContamination(Number(e.target.value))} />
-              <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
-                0.01–0.10 typical. Higher = more permissive anomaly flagging.
-              </div>
-            </div>
-            <div className="ml-form-group">
-              <label className="ml-form-label">N estimators (trees)</label>
-              <input className="ml-form-input" type="number" min={50} max={500} step={50}
-                value={nEstimators} onChange={e => setNEstimators(Number(e.target.value))} />
-            </div>
-          </>
-        )}
-        {(algorithm === 'golden_dist' || algorithm === 'anomaly') && (
-          <div className="ml-train-preview" style={{ marginTop: -4 }}>
-            <div className="ml-train-preview-title">One-class mode</div>
-            <div style={{ fontSize: 11, opacity: 0.8 }}>
-              Trains only on OK samples. Real NG (if any) are used for eval only.
-              No need to label NG — ideal when NG is rare or diverse.
-            </div>
           </div>
         )}
 
