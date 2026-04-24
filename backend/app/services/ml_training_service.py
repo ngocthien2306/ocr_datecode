@@ -73,7 +73,7 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
     gray = _to_gray(char_img)
     h, w = gray.shape[:2]
     results = []
-    num_aug_types = 2
+    num_aug_types = 4
     choices = np.random.choice(num_aug_types, size=n, replace=n > num_aug_types)
     for choice in choices:
         aug = gray.copy()
@@ -87,27 +87,27 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
             else:
                 bg_color = np.percentile(aug, 75)
 
-            num_cuts = np.random.randint(1, 2)
-            min_ratio = 0.5  # độ dày tối thiểu (10% kích thước ảnh)
-            max_ratio = 0.15  # độ dày tối đa (25% kích thước ảnh)
+            num_cuts = np.random.randint(1, 3)
+            min_ratio = 0.05  # độ dày tối thiểu (10% kích thước ảnh)
+            max_ratio = 0.1  # độ dày tối đa (25% kích thước ảnh)
 
             for _c in range(num_cuts):
                 if np.random.rand() < 0.5:
-                    rh = np.random.randint(max(6, int(h * min_ratio)), max(8, int(h * max_ratio)))
+                    rh = np.random.randint(max(3, int(h * min_ratio)), max(8, int(h * max_ratio)))
                     ry = np.random.randint(0, max(1, h - rh))
                     aug[ry:ry + rh, :] = bg_color
                 else:
-                    rw = np.random.randint(max(6, int(w * min_ratio)), max(8, int(w * max_ratio)))
+                    rw = np.random.randint(max(3, int(w * min_ratio)), max(8, int(w * max_ratio)))
                     rx = np.random.randint(0, max(1, w - rw))
                     aug[:, rx:rx + rw] = bg_color
-        # elif choice == 2:
-        #     k = np.random.randint(7, 10)
-        #     kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
-        #     aug = cv.erode(aug, kernel, iterations=1)
-        # elif choice == 3:
-        #     k = np.random.randint(4, 7)
-        #     kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
-        #     aug = cv.dilate(aug, kernel, iterations=1)
+        elif choice == 5:
+            k = np.random.randint(7, 10)
+            kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
+            aug = cv.erode(aug, kernel, iterations=1)
+        elif choice == 6:
+            k = np.random.randint(4, 7)
+            kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
+            aug = cv.dilate(aug, kernel, iterations=1)
         # elif choice == 4:
         #     dx = np.random.randint(-w // 3, w // 3 + 1)
         #     dy = np.random.randint(-h // 3, h // 3 + 1)
