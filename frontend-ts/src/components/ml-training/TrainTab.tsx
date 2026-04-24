@@ -498,6 +498,27 @@ export default function TrainTab({ project, onRefresh }: Props) {
     }
   };
 
+  // ── Download model report (JSON with embedded images) ─────────────────
+  const [downloadingReport, setDownloadingReport] = useState(false);
+  const handleDownloadReport = async () => {
+    if (!selectedModel) return;
+    setDownloadingReport(true);
+    try {
+      const data = await mlTrainingAPI.getModelReport(project.id, selectedModel.id);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `model_${selectedModel.id}_report.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail ?? 'Report download failed');
+    } finally { setDownloadingReport(false); }
+  };
+
   // ── Predict (single image) ────────────────────────────────────────────
   const handlePredict = async () => {
     if (!predictFile || !selectedModel) return;
@@ -958,19 +979,39 @@ export default function TrainTab({ project, onRefresh }: Props) {
                   {/* ── Metrics tab ── */}
                   {resultsTab === 'metrics' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      {/* Threshold badge */}
-                      {selectedModel.params?.threshold != null && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#9ca3af' }}>
-                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
-                            <line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                            <circle cx="12" cy="12" r="3" fill="currentColor" />
-                          </svg>
-                          OK threshold:
-                          <span style={{ color: '#60a5fa', fontWeight: 600 }}>
-                            {Math.round((selectedModel.params.threshold as number) * 100)}%
-                          </span>
-                        </div>
-                      )}
+                      {/* Top bar: threshold badge + download report */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        {selectedModel.params?.threshold != null && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', opacity: 0.75 }}>
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
+                              <line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                              <circle cx="12" cy="12" r="3" fill="currentColor" />
+                            </svg>
+                            OK threshold:
+                            <span style={{ color: '#3b82f6', fontWeight: 600 }}>
+                              {Math.round((selectedModel.params.threshold as number) * 100)}%
+                            </span>
+                          </div>
+                        )}
+                        <button
+                          className="ml-btn ml-btn-secondary ml-btn-sm"
+                          onClick={handleDownloadReport}
+                          disabled={downloadingReport}
+                          title="Download JSON report with metrics, goldens, and test-set crops (base64)"
+                          style={{ marginLeft: 'auto' }}
+                        >
+                          {downloadingReport
+                            ? <><span className="ml-loading-spinner" style={{ width: 11, height: 11, borderWidth: 2 }} /> Building…</>
+                            : <>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"
+                                    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                                Download Report
+                              </>
+                          }
+                        </button>
+                      </div>
                       <div className="ml-metric-row">
                         <div className="ml-metric-card">
                           <div className="ml-metric-value">{(selectedModel.metrics.accuracy_train * 100).toFixed(1)}%</div>

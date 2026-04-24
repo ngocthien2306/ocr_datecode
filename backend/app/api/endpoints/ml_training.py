@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import cv2 as cv
+import joblib
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
@@ -650,6 +651,107 @@ async def get_test_set_crops(
 
     items = _json.loads(test_set_path.read_text())
     return {"crops": items, "count": len(items)}
+
+
+@router.get(
+    "/ml/projects/{project_id}/models/{model_id}/report",
+    tags=["ML Training"],
+)
+async def download_model_report(
+    project_id: str,
+    model_id: str,
+    include_goldens: bool = True,
+    include_testset: bool = True,
+    repo: MLTrainingRepository = Depends(get_repo),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """
+    Full training report as a single JSON — metrics, per-char stats, goldens,
+    and test-set crops with embedded base64 images. Intended for offline
+    analysis / sharing.
+    """
+    import json as _json
+
+    all_models = await repo.list_models(project_id)
+    model_record = next((m for m in all_models if m.id == model_id), None)
+    if not model_record:
+        raise HTTPException(404, "Model not found")
+
+    def _build() -> dict:
+        report = {
+            "project_id": project_id,
+            "model_id": model_id,
+            "algorithm": model_record.algorithm,
+            "created_at": model_record.created_at.isoformat() if model_record.created_at else None,
+            "status": model_record.status,
+            "augment_factor": model_record.augment_factor,
+            "params": model_record.params,
+            "metrics": model_record.metrics.model_dump() if hasattr(model_record.metrics, "model_dump") else dict(model_record.metrics or {}),
+        }
+
+        if model_record.model_path:
+            try:
+                data = joblib.load(str(model_record.model_path))
+                if isinstance(data, dict):
+                    report["feat_version"] = data.get("feat_version", "v1")
+                    report["feat_dim"] = data.get("feat_dim")
+                    report["char_stats"] = data.get("char_stats") or {}
+                else:
+                    report["feat_version"] = "v1"
+                    report["char_stats"] = {}
+            except Exception as e:
+                logger.warning(f"[report] bundle load failed: {e}")
+                report["char_stats"] = {}
+
+        if include_goldens:
+            report["goldens"] = get_model_goldens(Path(model_record.model_path)) if model_record.model_path else []
+
+        if include_testset and model_record.model_path:
+            ts_path = Path(model_record.model_path).parent / f"{Path(model_record.model_path).stem}_test_set.json"
+            if ts_path.exists():
+                try:
+                    report["test_set"] = _json.loads(ts_path.read_text())
+                except Exception as e:
+                    logger.warning(f"[report] test_set read failed: {e}")
+                    report["test_set"] = []
+            else:
+                report["test_set"] = []
+
+        # Summarize per-char accuracy from test_set (handy for quick glance)
+        if include_testset and report.get("test_set"):
+            from collections import defaultdict
+            buckets = defaultdict(lambda: {"n": 0, "correct": 0, "wrong": 0})
+            for item in report["test_set"]:
+                key = item.get("char_id") or "__null__"
+                b = buckets[key]
+                b["n"] += 1
+                if item.get("correct"):
+                    b["correct"] += 1
+                else:
+                    b["wrong"] += 1
+            per_char = []
+            for k, v in buckets.items():
+                per_char.append({
+                    "char_id": None if k == "__null__" else k,
+                    "n": v["n"],
+                    "correct": v["correct"],
+                    "wrong": v["wrong"],
+                    "accuracy": round(v["correct"] / v["n"], 4) if v["n"] else 0.0,
+                })
+            per_char.sort(key=lambda r: (-r["wrong"], r["char_id"] or "~"))
+            report["per_char_accuracy"] = per_char
+
+        return report
+
+    report = await asyncio.get_event_loop().run_in_executor(None, _build)
+
+    filename = f"model_{model_id}_report.json"
+    return JSONResponse(
+        content=report,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
 
 
 @router.get(

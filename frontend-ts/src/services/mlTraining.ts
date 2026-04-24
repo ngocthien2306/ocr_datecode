@@ -290,4 +290,13 @@ export const mlTrainingAPI = {
     api.get<{ goldens: MLGoldenItem[]; count: number }>(
       `/ml/projects/${projectId}/models/${modelId}/goldens`,
     ).then(r => r.data),
+
+  // Full training report (metrics + goldens + test-set with base64 images)
+  getModelReport: (projectId: string, modelId: string, opts?: {
+    include_goldens?: boolean; include_testset?: boolean;
+  }) =>
+    api.get(
+      `/ml/projects/${projectId}/models/${modelId}/report`,
+      { params: opts },
+    ).then(r => r.data),
 };
