@@ -1039,3 +1039,39 @@ body.dark-mode .ml-golden-meta { color: #9ca3af; }
 body.dark-mode .ml-perchar-table th,
 body.dark-mode .ml-perchar-table td { border-color: #374151; }
 body.dark-mode .ml-perchar-table th { background: #1f2937; color: #9ca3af; }
+
+/* ── Test-set crop card (wrong/correct per-item) ─── */
+.ml-testset-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 5px;
+  border-radius: 7px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  position: relative;
+}
+.ml-testset-card.wrong { border-color: rgba(248,113,113,.5); }
+.ml-testset-card img {
+  width: 44px;
+  height: 30px;
+  object-fit: contain;
+  background: #e2e8f0;
+  border-radius: 3px;
+  display: block;
+}
+body.dark-mode .ml-testset-card     { background: #1a1d27; border-color: #2d3148; }
+body.dark-mode .ml-testset-card.wrong { border-color: rgba(248,113,113,.5); }
+body.dark-mode .ml-testset-card img { background: #0f1117; }
+
+/* ── Model history card ───────────────────────────── */
+.ml-history-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: #334155;
+}
+body.dark-mode .ml-history-card { background: #1a1d27; border-color: #2d3148; color: #d1d5db; }

@@ -329,37 +329,32 @@ function HeatmapPanel({ label, src }: { label: string; src: string }) {
 function TestSetCropCard({ item }: { item: TestSetCropResult }) {
   const wrong = !item.correct;
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px',
-      padding: '5px', borderRadius: '7px', background: '#1a1d27',
-      border: `1px solid ${wrong ? 'rgba(248,113,113,.5)' : '#2d3148'}`,
-      position: 'relative',
-    }}>
+    <div className={`ml-testset-card${wrong ? ' wrong' : ''}`}>
       {/* Wrong indicator */}
       {wrong && (
         <div style={{
           position: 'absolute', top: '-5px', right: '-5px',
           width: '14px', height: '14px', borderRadius: '50%',
-          background: '#f87171', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           <svg width="8" height="8" viewBox="0 0 24 24" fill="none">
             <path d="M18 6L6 18M6 6l12 12" stroke="white" strokeWidth="3" strokeLinecap="round" />
           </svg>
         </div>
       )}
-      <img src={`data:image/jpeg;base64,${item.crop_b64}`} alt="crop"
-        style={{ width: '44px', height: '30px', objectFit: 'contain', background: '#0f1117', borderRadius: '3px', display: 'block' }} />
+      <img src={`data:image/jpeg;base64,${item.crop_b64}`} alt="crop" />
       {/* True → Pred */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
         <span className={`ml-label-badge ${item.true_label === 'OK' ? 'ok' : 'ng'}`}
           style={{ fontSize: '9px', padding: '1px 4px' }}>{item.true_label}</span>
         <svg width="8" height="8" viewBox="0 0 24 24" fill="none">
-          <path d="M5 12h14M12 5l7 7-7 7" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            opacity="0.4" />
         </svg>
         <span className={`ml-label-badge ${item.pred_label === 'OK' ? 'ok' : 'ng'}`}
           style={{ fontSize: '9px', padding: '1px 4px', opacity: wrong ? 1 : 0.7 }}>{item.pred_label}</span>
       </div>
-      <span style={{ fontSize: '9px', color: '#6b7280' }}>{(item.prob_ok * 100).toFixed(0)}% OK</span>
+      <span style={{ fontSize: '9px', opacity: 0.6 }}>{(item.prob_ok * 100).toFixed(0)}% OK</span>
     </div>
   );
 }
@@ -788,16 +783,20 @@ export default function TrainTab({ project, onRefresh }: Props) {
             <div className="ml-section-title">History</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               {models.slice(0, 5).map(m => (
-                <div key={m.id} style={{ background: '#1a1d27', border: '1px solid #2d3148', borderRadius: '6px', padding: '6px 8px', fontSize: '11px' }}>
+                <div key={m.id} className="ml-history-card">
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ color: '#9ca3af' }}>{m.algorithm.toUpperCase()}</span>
-                    <span style={{ color: m.status === 'completed' ? '#4ade80' : m.status === 'failed' ? '#f87171' : '#fbbf24' }}>{m.status}</span>
+                    <span style={{ opacity: 0.75 }}>{m.algorithm.toUpperCase()}</span>
+                    <span style={{ color: m.status === 'completed' ? '#22c55e' : m.status === 'failed' ? '#ef4444' : '#f59e0b' }}>
+                      {m.status}
+                    </span>
                   </div>
                   {m.status === 'completed' && (
-                    <div style={{ color: '#6b7280', marginTop: '2px' }}>Test acc: {(m.metrics.accuracy_test * 100).toFixed(1)}%</div>
+                    <div style={{ opacity: 0.6, marginTop: '2px' }}>
+                      Test acc: {(m.metrics.accuracy_test * 100).toFixed(1)}%
+                    </div>
                   )}
                   {m.status === 'failed' && m.error && (
-                    <div style={{ color: '#f87171', marginTop: '2px', wordBreak: 'break-word' }}>{m.error}</div>
+                    <div style={{ color: '#ef4444', marginTop: '2px', wordBreak: 'break-word' }}>{m.error}</div>
                   )}
                 </div>
               ))}
