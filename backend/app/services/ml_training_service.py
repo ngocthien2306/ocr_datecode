@@ -81,13 +81,18 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
             noise = np.random.normal(0, 60, aug.shape).astype(np.int16)
             aug = np.clip(aug.astype(np.int16) + noise, 0, 255).astype(np.uint8)
         elif choice == 1:
+            if aug.ndim == 3:
+                bg_color = np.percentile(aug.reshape(-1, aug.shape[2]), 75, axis=0)
+            else:
+                bg_color = np.percentile(aug, 75)
+
             num_cuts = np.random.randint(1, 4)
             for _c in range(num_cuts):
                 rh = np.random.randint(max(2, h // 6), max(3, h // 3))
                 rw = np.random.randint(max(2, w // 6), max(3, w // 3))
                 ry = np.random.randint(0, max(1, h - rh))
                 rx = np.random.randint(0, max(1, w - rw))
-                aug[ry:ry + rh, rx:rx + rw] = 255
+                aug[ry:ry + rh, rx:rx + rw] = bg_color
         elif choice == 2:
             k = np.random.randint(7, 10)
             kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))

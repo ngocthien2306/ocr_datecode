@@ -4,7 +4,32 @@
       "Bash(python -m pylint:*)",
       "mcp__ide__getDiagnostics",
       "Bash(cd:*)",
-      "Bash(cd /home/demo/Source/ocr_datecode/backend && python -c \"import numpy; print\\('numpy:', numpy.__version__\\)\" 2>&1:*)"
+      "Bash(cd /home/demo/Source/ocr_datecode/backend && python -c \"import numpy; print\\('numpy:', numpy.__version__\\)\" 2>&1:*)",
+      "Bash(grep -r 'scikit-learn\\\\|sklearn\\\\|joblib' /Users/ngocthien.ai/Source/Projects/ocr_datecode/backend/requirements*.txt 2>/dev/null || find /Users/ngocthien.ai/Source/Projects/ocr_datecode/backend -name \"requirements*.txt\" -o -name \"pyproject.toml\" 2>/dev/null | head -5)",
+      "Bash(grep -n \"ocr_model_type\\\\|ml_project_id\\\\|ml_model_id\" /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src/types/*.ts /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src/types/index.ts 2>/dev/null | head -20)",
+      "Bash(cp -r /Users/ngocthien.ai/.claude/projects/-Users-ngocthien-ai-Source-Projects-ocr-datecode/memory/ /Users/ngocthien.ai/Source/Projects/ocr_datecode/docs/memory/)",
+      "Bash(rtk grep -n \"templates/images\\\\|templates/upload\\\\|templates/visualizations\\\\|def serve_template\\\\|def serve_visualization\\\\|def upload_template\" /Users/ngocthien.ai/Source/Projects/ocr_datecode/backend/app/api/endpoints/recipes.py | head -10)",
+      "Bash(rtk grep -n \"def serve_template\\\\|def upload_template\\\\|@router.*templates\" /Users/ngocthien.ai/Source/Projects/ocr_datecode/backend/app/api/endpoints/recipes.py | head -10)",
+      "Bash(rtk grep -n \"^import asyncio\\\\|^import logging\\\\|^logger\" /Users/ngocthien.ai/Source/Projects/ocr_datecode/backend/app/api/endpoints/recipes.py | head -5)",
+      "Bash(rtk grep -n \"delete-annotation-btn\\\\|annotation-conf\" /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src/styles/AnnotationsPanel.css | head -10)",
+      "Bash(rtk grep -n \"delete-annotation-btn\" /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src/styles/AnnotationsPanel.css)",
+      "Bash(rtk grep -n \"AnnotationsPanel\\\\|onAutoSegment\\\\|segmenting\" /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src/components/recipe/TemplateEditorRefactored.tsx | head -20)",
+      "Bash(rtk grep -rn \"AnnotationsPanel\" /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src/components/recipe/ | head -10)",
+      "Bash(rtk grep -n \"handleAnnotationTypeChange\\\\|handleAnnotationTextChange\\\\|handleAnnotationConfChange\\\\|handleDeleteAnnotation\\\\|handleAnnotationsChange\\\\|getCurrentTemplate\\\\|getCurrentAnnotations\" /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src/components/recipe/RecipeFormModal.tsx | head -20)",
+      "Bash(rtk grep -n \"}, \\\\[.*annotations\" /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src/components/recipe/TemplateEditorRefactored.tsx | head -5)",
+      "Bash(rtk find /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts -name \"*canvasActions*\" -o -name \"*canvas*actions*\")",
+      "Bash(cd /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts && rtk tsc --noEmit --pretty 2>&1 | head -40)",
+      "Bash(cd /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts && rtk tsc --noEmit --pretty 2>&1 | head -10)",
+      "Bash(rtk tsc --noEmit --pretty 2>&1 | head -10)",
+      "Bash(rtk find /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts -name \"MLTrainingPage.tsx\" 2>/dev/null)",
+      "Bash(rtk wc -l /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src/components/recipe/RecipeFormModal.tsx)",
+      "Bash(rtk tsc --noEmit 2>&1 | grep -i \"RecipeFormModal\\\\|AnnotationsPanel\\\\|TemplateEditor\")",
+      "Bash(rtk grep -r \"RecipeFormModal\" /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src --include=\"*.tsx\" --include=\"*.ts\" -l)",
+      "Bash(rtk grep -A 10 -B 5 \"RecipeFormModal\" /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src/components/recipe/Receipts.tsx | head -40)",
+      "Bash(rtk grep -n \"return.*\\(\" /Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src/components/recipe/RecipeFormModal.tsx | tail -5)",
+      "Bash(rtk grep -n \"\\\\.vertical-tabs\\\\|\\\\.tab-btn\\\\|\\\\.recipe-form\\\\|\\\\.tab-content\\\\|\\\\.form-section\\\\|\\\\.form-group\\\\|\\\\.form-row\\\\|\\\\.template-header\\\\|\\\\.template-workspace\" \"/Users/ngocthien.ai/Source/Projects/ocr_datecode/frontend-ts/src/styles/RecipeFormModal.css\" | head -50)",
+      "Bash(python3 *)",
+      "Bash(rtk grep *)"
     ]
   }
 }

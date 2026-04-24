@@ -53,19 +53,33 @@ def segment_characters(image_path, output_dir="output_chars", save=True):
         print(f"Error: Cannot read image '{image_path}'")
         return None, None, None, None, None
 
-    gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+    h_img, w_img = img.shape[:2]
+
+    # Upscale nếu text nhỏ: thêm pixel space giữa ký tự → segment tốt hơn
+    MIN_PROC_H = 80
+    scale = max(1.0, MIN_PROC_H / h_img) if h_img < MIN_PROC_H else 1.0
+    proc_img = cv.resize(img, None, fx=scale, fy=scale,
+                         interpolation=cv.INTER_CUBIC) if scale > 1.0 else img
+
+    gray = cv.cvtColor(proc_img, cv.COLOR_BGR2GRAY)
+    # Non-Local Means: lọc noise hiệu quả, giữ cạnh chữ tốt hơn Gaussian
+    # gray = cv.fastNlMeansDenoising(gray, h=10, templateWindowSize=7, searchWindowSize=21)
+    # CLAHE: cải thiện contrast cục bộ, giúp Otsu phân biệt ký tự/nền tốt hơn
+    clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    gray = clahe.apply(gray)
     blurred = cv.GaussianBlur(gray, (3, 3), 0)
     _, thresh = cv.threshold(blurred, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU)
     # Chuẩn hóa hướng: foreground (chữ) luôn là trắng trên nền đen
     if np.mean(thresh) > 127:
         thresh = cv.bitwise_not(thresh)
-    kernel = cv.getStructuringElement(cv.MORPH_RECT, (2, 2))
+    # Adaptive kernel: với text nhỏ, kernel lớn sẽ lấp gap giữa các ký tự → dính chữ
+    h_proc = proc_img.shape[0]
+    close_k = max(1, int(h_proc * 0.025))  # ~2.5% chiều cao ảnh đã scale, tối thiểu 1px
+    kernel = cv.getStructuringElement(cv.MORPH_RECT, (close_k, close_k))
     thresh = cv.morphologyEx(thresh, cv.MORPH_CLOSE, kernel, iterations=1)
 
     contours, _ = cv.findContours(thresh, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-
-    h_img, w_img = img.shape[:2]
-    min_char_height = h_img * 0.3
+    min_char_height = h_proc * 0.3
     min_char_width = 3
 
     boxes = []
@@ -76,9 +90,11 @@ def segment_characters(image_path, output_dir="output_chars", save=True):
 
     boxes.sort(key=lambda b: b[0])
 
+    # Chỉ merge khi thực sự overlap (> 1px), tránh merge ký tự sát nhau nhưng không dính
+    min_overlap_px = max(1, int(h_proc * 0.01))
     merged = []
     for box in boxes:
-        if merged and box[0] < merged[-1][0] + merged[-1][2]:
+        if merged and box[0] < merged[-1][0] + merged[-1][2] - min_overlap_px:
             px, py, pw, ph = merged[-1]
             nx = min(px, box[0])
             ny = min(py, box[1])
@@ -91,12 +107,23 @@ def segment_characters(image_path, output_dir="output_chars", save=True):
     if len(merged) > 0:
         widths = [b[2] for b in merged]
         median_w = float(np.median(widths))
-        final_boxes = []
+        final_boxes_proc = []
         for box in merged:
             sub = split_wide_box(thresh, box, median_w)
-            final_boxes.extend(sub)
+            final_boxes_proc.extend(sub)
     else:
-        final_boxes = merged
+        final_boxes_proc = merged
+
+    # Scale boxes về tọa độ ảnh gốc
+    if scale > 1.0:
+        final_boxes = [(int(x / scale), int(y / scale),
+                        max(1, int(w / scale)), max(1, int(h / scale)))
+                       for (x, y, w, h) in final_boxes_proc]
+        # thresh hiển thị: scale về kích thước gốc
+        thresh_display = cv.resize(thresh, (w_img, h_img), interpolation=cv.INTER_NEAREST)
+    else:
+        final_boxes = final_boxes_proc
+        thresh_display = thresh
 
     padding = 2
     char_imgs = []
@@ -108,7 +135,7 @@ def segment_characters(image_path, output_dir="output_chars", save=True):
         y2 = min(h_img, y + h + padding)
         char_img = img[y1:y2, x1:x2]
         char_imgs.append(char_img)
-        thresh_char_imgs.append(thresh[y1:y2, x1:x2])
+        thresh_char_imgs.append(thresh_display[y1:y2, x1:x2])
         if save:
             cv.imwrite(os.path.join(output_dir, f"char_{i}.png"), char_img)
 
@@ -122,9 +149,9 @@ def segment_characters(image_path, output_dir="output_chars", save=True):
             cv.rectangle(result, (x1, y1), (x2, y2), (0, 0, 255), 2)
             cv.putText(result, str(i), (x1, y1 - 5), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
         cv.imwrite(os.path.join(output_dir, "result.png"), result)
-        cv.imwrite(os.path.join(output_dir, "thresh.png"), thresh)
+        cv.imwrite(os.path.join(output_dir, "thresh.png"), thresh_display)
 
-    return final_boxes, char_imgs, thresh_char_imgs, img, thresh
+    return final_boxes, char_imgs, thresh_char_imgs, img, thresh_display
 
 
 def deskew_char(thresh_char, max_angle=15):
