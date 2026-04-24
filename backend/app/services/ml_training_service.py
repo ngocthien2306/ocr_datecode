@@ -196,14 +196,28 @@ def _ng_transform(aug: np.ndarray, choice: int) -> np.ndarray:
 
     if choice == 3:
         # Dilate full — mực chảy dày toàn ký tự
-        k = int(np.random.randint(4, 7))
+        k = int(np.random.randint(6, 9))
         kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))
         return cv.dilate(aug, kernel, iterations=1)
 
     if choice == 4:
-        # Heavy blur k=11-17 — mực nhòe / motion blur
-        k = int(np.random.choice([11, 13, 15, 17]))
-        return cv.GaussianBlur(aug, (k, k), 0)
+        # Strip cut — 1 đường bg_color cắt NGANG hoặc DỌC qua toàn ký tự
+        # Simulate "mất nét 1 đường luôn" (ribbon/head miss trên 1 hàng pixels)
+        bg = _estimate_bg_color(aug)
+        out = aug.copy()
+        if np.random.rand() < 0.5:
+            # Horizontal strip — cut across full width
+            thickness = int(np.random.randint(max(2, int(h * 0.04)),
+                                              max(5, int(h * 0.12))))
+            y0 = int(np.random.randint(0, max(1, h - thickness)))
+            out[y0:y0 + thickness, :] = bg
+        else:
+            # Vertical strip — cut across full height
+            thickness = int(np.random.randint(max(2, int(w * 0.04)),
+                                              max(5, int(w * 0.12))))
+            x0 = int(np.random.randint(0, max(1, w - thickness)))
+            out[:, x0:x0 + thickness] = bg
+        return out
 
     if choice == 5:
         # Ink blot — chấm đen (fg color) 3-5px tại vị trí ngẫu nhiên
@@ -234,11 +248,11 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
     """
     Generate n synthetic NG samples.
 
-    7 transform types:
-      0 heavy noise | 1 localized cut | 2 partial erosion | 3 dilate
-      4 heavy blur  | 5 ink blot      | 6 ghosting
+    7 transform types (NO blur — blur cũng có thể gặp ở OK sample thật):
+      0 heavy noise | 1 localized cut | 2 partial erosion | 3 dilate full
+      4 strip cut   | 5 ink blot      | 6 ghosting
     Với ~20% xác suất mỗi sample sẽ chain 2 transforms khác nhau để
-    tạo defect phức hợp (e.g. blur + cut) giống thực tế hơn.
+    tạo defect phức hợp (e.g. noise + cut) giống thực tế hơn.
     """
     gray = _to_gray(char_img)
     results: List[np.ndarray] = []
