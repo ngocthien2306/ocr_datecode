@@ -94,25 +94,37 @@ const AUGMENT_OPTIONS = [
   { value: 5, label: '×5' },
 ];
 
-// ── Collapsible section — used for Augmentation / Threshold / History ──────
+// ── Collapsible section — supports both uncontrolled (internal state +
+//    localStorage) and controlled (accordion) modes. Pass `open` + `onToggle`
+//    to control externally; omit both for internal state.
 function CollapsibleSection({
-  title, summary, defaultOpen = false, storageKey, children,
+  title, summary, defaultOpen = false, storageKey,
+  open: controlledOpen, onToggle,
+  children,
 }: {
   title: string;
   summary?: React.ReactNode;
   defaultOpen?: boolean;
   storageKey?: string;
+  open?: boolean;
+  onToggle?: () => void;
   children: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(() => {
+  const isControlled = controlledOpen !== undefined;
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(() => {
     if (storageKey) {
       const saved = localStorage.getItem(storageKey);
       if (saved !== null) return saved === '1';
     }
     return defaultOpen;
   });
+  const open = isControlled ? controlledOpen : uncontrolledOpen;
   const toggle = () => {
-    setOpen(v => {
+    if (isControlled) {
+      onToggle?.();
+      return;
+    }
+    setUncontrolledOpen(v => {
       const next = !v;
       if (storageKey) localStorage.setItem(storageKey, next ? '1' : '0');
       return next;
@@ -132,6 +144,8 @@ function CollapsibleSection({
     </div>
   );
 }
+
+type AccordionKey = 'augment' | 'threshold' | 'history' | null;
 
 // ── Lazy image: only renders <img> when it enters the viewport ─────────────
 function LazyImage({ src, alt }: { src: string; alt: string }) {
@@ -429,6 +443,27 @@ export default function TrainTab({ project, onRefresh }: Props) {
   const [threshold, setThreshold] = useState(50); // percent, 0–100
   const [thresholdK, setThresholdK] = useState(2.0);          // golden_dist: min(mean + k*std, p95*1.1)
   const [contamination, setContamination] = useState(0.05);    // anomaly: IF contamination
+
+  // Accordion — only one of {augment, threshold, history} open at a time.
+  // Persisted so reload remembers which section was active.
+  const [openSection, setOpenSection] = useState<AccordionKey>(() => {
+    const saved = localStorage.getItem('ml-train.openSection') as AccordionKey;
+    return saved === 'augment' || saved === 'threshold' || saved === 'history' ? saved : 'augment';
+  });
+  const toggleSection = useCallback((key: AccordionKey) => {
+    setOpenSection(prev => {
+      const next = prev === key ? null : key;
+      localStorage.setItem('ml-train.openSection', next ?? '');
+      return next;
+    });
+  }, []);
+  // If the currently-open section is hidden (OK Threshold hidden for one-class
+  // algorithms), fall back to Augmentation so the left column isn't silent.
+  useEffect(() => {
+    if (openSection === 'threshold' && algorithm !== 'rf' && algorithm !== 'svm' && algorithm !== 'mlp') {
+      setOpenSection('augment');
+    }
+  }, [algorithm, openSection]);
 
   // Training state
   const [training, setTraining] = useState(false);
@@ -752,8 +787,8 @@ export default function TrainTab({ project, onRefresh }: Props) {
         {/* ── Augmentation ── */}
         <CollapsibleSection
           title="Augmentation (NG)"
-          storageKey="ml-train.augment.open"
-          defaultOpen={augmentFactor >= 2}
+          open={openSection === 'augment'}
+          onToggle={() => toggleSection('augment')}
           summary={
             augmentFactor >= 2
               ? <span className="ml-collapsible-summary-chip active">×{augmentFactor}</span>
@@ -815,8 +850,8 @@ export default function TrainTab({ project, onRefresh }: Props) {
         {(algorithm === 'rf' || algorithm === 'svm' || algorithm === 'mlp') && (
           <CollapsibleSection
             title="OK Threshold"
-            storageKey="ml-train.threshold.open"
-            defaultOpen={threshold !== 50}
+            open={openSection === 'threshold'}
+            onToggle={() => toggleSection('threshold')}
             summary={
               <span className={`ml-collapsible-summary-chip ${threshold !== 50 ? 'active' : ''}`}>
                 {threshold}%
@@ -921,8 +956,8 @@ export default function TrainTab({ project, onRefresh }: Props) {
         {models.length > 0 && (
           <CollapsibleSection
             title="History"
-            storageKey="ml-train.history.open"
-            defaultOpen={false}
+            open={openSection === 'history'}
+            onToggle={() => toggleSection('history')}
             summary={<span className="ml-collapsible-summary-chip">{models.length}</span>}
           >
             <div className="ml-history-list">
