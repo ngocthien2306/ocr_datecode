@@ -88,16 +88,16 @@ def augment_ng(char_img: np.ndarray, n: int = 5) -> List[np.ndarray]:
                 bg_color = np.percentile(aug, 75)
 
             num_cuts = np.random.randint(1, 3)
+            min_ratio = 0.10  # độ dày tối thiểu (10% kích thước ảnh)
+            max_ratio = 0.25  # độ dày tối đa (25% kích thước ảnh)
+
             for _c in range(num_cuts):
-                # Chọn ngẫu nhiên vệt ngang hay vệt dọc
                 if np.random.rand() < 0.5:
-                    # Vệt ngang: rộng hết ảnh, cao dày
-                    rh = np.random.randint(max(8, h // 8), max(10, h // 3))
+                    rh = np.random.randint(max(6, int(h * min_ratio)), max(8, int(h * max_ratio)))
                     ry = np.random.randint(0, max(1, h - rh))
                     aug[ry:ry + rh, :] = bg_color
                 else:
-                    # Vệt dọc: cao hết ảnh, rộng dày
-                    rw = np.random.randint(max(8, w // 8), max(10, w // 3))
+                    rw = np.random.randint(max(6, int(w * min_ratio)), max(8, int(w * max_ratio)))
                     rx = np.random.randint(0, max(1, w - rw))
                     aug[:, rx:rx + rw] = bg_color
         elif choice == 2:
