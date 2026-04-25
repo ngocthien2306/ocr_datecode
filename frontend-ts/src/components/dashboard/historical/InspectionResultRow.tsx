@@ -457,7 +457,8 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
                             </div>
                           )}
 
-                          {/* Char Verification (ML per-character inspection) */}
+                          {/* Char Verification (ML per-character inspection) — compact badge row only.
+                              Hover any badge to see full info: index, expected char, ML label, error. */}
                           {frame.char_verification && frame.char_verification.results && frame.char_verification.results.length > 0 && (
                             <div className="char-verification-section">
                               <div className="section-title">
@@ -472,39 +473,14 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
                                   <span
                                     key={r.annotation_idx}
                                     className={`hist-char-badge ${r.match ? 'ok' : 'ng'}`}
-                                    title={`#${r.annotation_idx} · expected ${r.expected} · ${r.ml_label}${r.error ? ` · ${r.error}` : ''}`}
+                                    title={
+                                      `#${r.annotation_idx} · expected "${r.expected}" · ML: ${r.ml_label} · p_ok ${(r.ml_p_ok * 100).toFixed(1)}%`
+                                      + (r.error ? ` · error: ${r.error}` : '')
+                                    }
                                   >
                                     <span className="hist-char-badge-char">{r.expected || '?'}</span>
                                     <span className="hist-char-badge-conf">{(r.ml_p_ok * 100).toFixed(0)}%</span>
                                   </span>
-                                ))}
-                              </div>
-                              <div className="text-results-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginTop: '12px' }}>
-                                {frame.char_verification.results.map((r: any, idx: number) => (
-                                  <div key={`${r.annotation_idx}-${idx}`} className={`text-result-card ${r.match ? 'match' : 'mismatch'}`}>
-                                    <div className="text-result-header-v2">
-                                      <span className="region-label">Region {r.annotation_idx}:</span>
-                                      <span className={`match-badge ${r.match ? 'success' : 'error'}`}>
-                                        {r.match ? '✓' : '✗'} {(r.ml_p_ok * 100).toFixed(1)}%
-                                      </span>
-                                    </div>
-                                    <div className="text-comparison-v2">
-                                      <div className="text-line">
-                                        <span className="text-label">Expected:</span>
-                                        <span className="text-value" style={{ fontFamily: 'monospace' }}>"{r.expected || '—'}"</span>
-                                      </div>
-                                      <div className="text-line">
-                                        <span className="text-label">ML Label:</span>
-                                        <span className="text-value">{r.ml_label}</span>
-                                      </div>
-                                      {r.error && (
-                                        <div className="text-line">
-                                          <span className="text-label">Error:</span>
-                                          <span className="text-value" style={{ color: '#dc2626' }}>{r.error}</span>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
                                 ))}
                               </div>
                             </div>

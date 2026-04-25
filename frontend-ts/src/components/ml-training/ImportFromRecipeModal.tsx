@@ -120,29 +120,27 @@ export default function ImportFromRecipeModal({
   if (!open) return null;
 
   return (
-    <div className="ml-modal-backdrop" onClick={handleClose}>
-      <div className="ml-modal" onClick={e => e.stopPropagation()}
-           style={{ maxWidth: 720, width: '92%' }}>
+    <div className="ml-modal-overlay" onClick={handleClose}>
+      <div className="ml-modal" onClick={e => e.stopPropagation()}>
         <div className="ml-modal-header">
-          <h3 style={{ margin: 0 }}>Import annotations from Recipe</h3>
-          <button className="ml-btn-icon" onClick={handleClose} title="Close">×</button>
+          <h3>Import annotations from Recipe</h3>
+          <button className="ml-modal-close" onClick={handleClose} title="Close">×</button>
         </div>
 
-        <div className="ml-modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <p style={{ fontSize: 12, color: '#9ca3af', margin: 0 }}>
+        <div className="ml-modal-body">
+          <p className="ml-hint" style={{ marginTop: 0 }}>
             Auto-populate segments with <code>char_id</code> from recipe template's
             text/datecode bboxes. User labels OK/NG afterwards.
           </p>
 
           {/* Recipe picker */}
-          <div>
+          <div className="ml-form-row">
             <label className="ml-label">Recipe</label>
             <select
-              className="ml-form-input"
+              className="ml-form-select"
               value={recipeId}
               onChange={e => setRecipeId(e.target.value)}
               disabled={loadingRecipes || importing}
-              style={{ width: '100%' }}
             >
               <option value="">-- Select recipe --</option>
               {recipes.map(r => (
@@ -152,18 +150,20 @@ export default function ImportFromRecipeModal({
               ))}
             </select>
             {loadingRecipes && <span className="ml-hint">Loading recipes…</span>}
+            {!loadingRecipes && recipes.length === 0 && (
+              <span className="ml-hint">No recipes found. Create one in Recipes page first.</span>
+            )}
           </div>
 
           {/* Camera picker */}
           {selectedRecipe && (
-            <div>
+            <div className="ml-form-row">
               <label className="ml-label">Camera</label>
               <select
-                className="ml-form-input"
+                className="ml-form-select"
                 value={cameraSerial}
                 onChange={e => setCameraSerial(e.target.value)}
                 disabled={importing}
-                style={{ width: '100%' }}
               >
                 {(selectedRecipe.cameras || []).map(c => (
                   <option key={c.serial_number} value={c.serial_number}>
@@ -175,9 +175,9 @@ export default function ImportFromRecipeModal({
           )}
 
           {/* File picker */}
-          <div>
+          <div className="ml-form-row">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <label className="ml-label" style={{ flex: 1 }}>
+              <label className="ml-label" style={{ flex: 1, marginBottom: 0 }}>
                 Files to annotate ({selectedFiles.size}/{projectImages.length})
               </label>
               <button
@@ -188,37 +188,27 @@ export default function ImportFromRecipeModal({
                 {selectedFiles.size === projectImages.length ? 'Unselect all' : 'Select all'}
               </button>
             </div>
-            <div style={{
-              maxHeight: 220, overflowY: 'auto', border: '1px solid #333',
-              borderRadius: 4, padding: 6, background: '#0f1117',
-            }}>
+            <div className="ml-file-picker">
               {projectImages.length === 0 && (
-                <div style={{ color: '#6b7280', fontSize: 12 }}>
+                <div className="ml-hint" style={{ padding: 6 }}>
                   No project images. Upload/copy images first.
                 </div>
               )}
-              {projectImages.map(img => (
-                <label key={img.filename} style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '4px 6px', cursor: 'pointer', fontSize: 12,
-                  background: selectedFiles.has(img.filename) ? '#1e3a8a22' : 'transparent',
-                  borderRadius: 3,
-                }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedFiles.has(img.filename)}
-                    onChange={() => toggleFile(img.filename)}
-                    disabled={importing}
-                  />
-                  <span style={{ flex: 1 }}>{img.filename}</span>
-                  {img.has_annotation && (
-                    <span style={{
-                      fontSize: 10, color: '#fbbf24',
-                      background: '#78350f44', padding: '1px 5px', borderRadius: 3,
-                    }}>labeled</span>
-                  )}
-                </label>
-              ))}
+              {projectImages.map(img => {
+                const isSel = selectedFiles.has(img.filename);
+                return (
+                  <label key={img.filename} className={`ml-file-row ${isSel ? 'selected' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={isSel}
+                      onChange={() => toggleFile(img.filename)}
+                      disabled={importing}
+                    />
+                    <span className="ml-file-row-name">{img.filename}</span>
+                    {img.has_annotation && <span className="ml-file-row-tag">labeled</span>}
+                  </label>
+                );
+              })}
             </div>
             <div className="ml-hint">
               ⚠️ Existing annotations will be OVERWRITTEN for selected files.
@@ -226,11 +216,9 @@ export default function ImportFromRecipeModal({
           </div>
 
           {/* Status / result */}
-          {errorMsg && (
-            <div className="ml-alert ml-alert-error">{errorMsg}</div>
-          )}
+          {errorMsg && <div className="ml-alert ml-alert-error">{errorMsg}</div>}
           {lastResult && (
-            <div className="ml-alert ml-alert-success" style={{ fontSize: 12 }}>
+            <div className="ml-alert ml-alert-success">
               <div><b>Imported:</b> {lastResult.imported} · <b>Skipped:</b> {lastResult.skipped}</div>
               <div><b>Chars:</b> {lastResult.char_ids.join(', ') || '—'}</div>
               {lastResult.errors.length > 0 && (
@@ -249,7 +237,7 @@ export default function ImportFromRecipeModal({
           )}
         </div>
 
-        <div className="ml-modal-footer" style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <div className="ml-modal-footer">
           <button className="ml-btn ml-btn-secondary" onClick={handleClose} disabled={importing}>
             Close
           </button>

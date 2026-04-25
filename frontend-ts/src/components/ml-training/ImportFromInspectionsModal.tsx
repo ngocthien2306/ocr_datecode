@@ -49,7 +49,9 @@ export default function ImportFromInspectionsModal({
       try {
         const list = await recipesAPI.getAllRecipes(0, 200);
         setRecipes(list);
-      } catch { /* ignore */ }
+      } catch (e) {
+        console.error('[ImportFromInspectionsModal] load recipes failed:', e);
+      }
     })();
   }, [open]);
 
@@ -128,9 +130,9 @@ export default function ImportFromInspectionsModal({
 
         <div className="ml-modal-body">
           {/* Filters */}
-          <div className="ml-form-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div className="ml-form-group">
-              <label className="ml-form-label">Recipe</label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="ml-form-row">
+              <label className="ml-label">Recipe</label>
               <select className="ml-form-select" value={recipeId}
                       onChange={e => setRecipeId(e.target.value)}>
                 <option value="">All recipes</option>
@@ -138,22 +140,25 @@ export default function ImportFromInspectionsModal({
                   <option key={r.id} value={r.id}>{r.name}</option>
                 ))}
               </select>
+              {recipes.length === 0 && (
+                <span className="ml-hint">No recipes loaded yet.</span>
+              )}
             </div>
-            <div className="ml-form-group" style={{ display: 'flex', gap: 8 }}>
+            <div className="ml-form-row" style={{ flexDirection: 'row', gap: 8 }}>
               <div style={{ flex: 1 }}>
-                <label className="ml-form-label">From</label>
+                <label className="ml-label">From</label>
                 <input className="ml-form-input" type="date"
                        value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
               </div>
               <div style={{ flex: 1 }}>
-                <label className="ml-form-label">To</label>
+                <label className="ml-label">To</label>
                 <input className="ml-form-input" type="date"
                        value={dateTo} onChange={e => setDateTo(e.target.value)} />
               </div>
             </div>
           </div>
 
-          <div className="ml-form-row" style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
               <input type="checkbox" checked={includeHardFail}
                      onChange={e => setIncludeHardFail(e.target.checked)} />
@@ -164,8 +169,8 @@ export default function ImportFromInspectionsModal({
                      onChange={e => setIncludeBorderline(e.target.checked)} />
               <span>Borderline <span style={{ opacity: .6, fontSize: 11 }}>(0.03 ≤ p_ok ≤ 0.3)</span></span>
             </label>
-            <div className="ml-form-group" style={{ marginLeft: 'auto', minWidth: 120 }}>
-              <label className="ml-form-label">Limit</label>
+            <div className="ml-form-row" style={{ marginLeft: 'auto', minWidth: 120 }}>
+              <label className="ml-label">Limit</label>
               <input className="ml-form-input" type="number" min={1} max={500} step={10}
                      value={limit} onChange={e => setLimit(Number(e.target.value) || 100)} />
             </div>

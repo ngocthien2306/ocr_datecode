@@ -1076,6 +1076,132 @@ body.dark-mode .ml-testset-card img { background: #0f1117; }
 }
 body.dark-mode .ml-history-card { background: #1a1d27; border-color: #2d3148; color: #d1d5db; }
 
+/* ── Base modal (shared by Import-from-Recipe + Import-from-Inspections) ─ */
+.ml-modal-overlay,
+.ml-modal-backdrop {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0, 0, 0, .45);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+
+.ml-modal {
+  width: min(720px, 95vw);
+  max-height: 90vh;
+  display: flex; flex-direction: column;
+  background: #ffffff;
+  color: #1f2937;
+  border-radius: 8px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, .35);
+  overflow: hidden;
+}
+
+.ml-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.ml-modal-header h3 { font-size: 15px; font-weight: 600; margin: 0; }
+
+.ml-modal-close,
+.ml-btn-icon {
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  font-size: 20px; line-height: 1;
+  color: #64748b;
+  cursor: pointer;
+  transition: background .12s;
+}
+.ml-modal-close:hover,
+.ml-btn-icon:hover { background: #f1f5f9; color: #1f2937; }
+
+.ml-modal-body {
+  padding: 14px 18px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 12px;
+}
+
+.ml-modal-footer {
+  display: flex; gap: 8px; justify-content: flex-end;
+  padding: 12px 18px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.ml-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 4px;
+}
+
+.ml-hint {
+  display: block;
+  font-size: 11px;
+  opacity: .65;
+  margin-top: 4px;
+}
+
+.ml-alert {
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  border: 1px solid transparent;
+}
+.ml-alert-error    { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
+.ml-alert-success  { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; }
+
+.ml-form-row { display: flex; flex-direction: column; gap: 6px; }
+
+/* File picker (used by Import-from-Recipe) */
+.ml-file-picker {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  padding: 6px;
+  background: #f8fafc;
+}
+.ml-file-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background .1s;
+}
+.ml-file-row:hover { background: #eff6ff; }
+.ml-file-row.selected { background: #dbeafe; }
+.ml-file-row-name { flex: 1; }
+.ml-file-row-tag {
+  font-size: 10px;
+  background: #fef3c7;
+  color: #b45309;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* ── Dark mode ─────────────────────────────────────────────────────────── */
+body.dark-mode .ml-modal              { background: #1a1d27; color: #e2e8f0; }
+body.dark-mode .ml-modal-header       { border-bottom-color: #2d3148; }
+body.dark-mode .ml-modal-footer       { border-top-color: #2d3148; }
+body.dark-mode .ml-modal-close,
+body.dark-mode .ml-btn-icon           { color: #9ca3af; }
+body.dark-mode .ml-modal-close:hover,
+body.dark-mode .ml-btn-icon:hover     { background: #2d3148; color: #e2e8f0; }
+body.dark-mode .ml-label              { color: #9ca3af; }
+body.dark-mode .ml-alert-error        { background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.35); color: #fca5a5; }
+body.dark-mode .ml-alert-success      { background: rgba(34,197,94,.12); border-color: rgba(34,197,94,.35); color: #86efac; }
+body.dark-mode .ml-file-picker        { background: #141821; border-color: #2d3148; }
+body.dark-mode .ml-file-row:hover     { background: #1e3a5f; }
+body.dark-mode .ml-file-row.selected  { background: #1e3a5f; }
+body.dark-mode .ml-file-row-tag       { background: rgba(251,191,36,.18); color: #fbbf24; }
+
 /* ── Modal large variant + Import-from-Inspections grid ────────────────── */
 .ml-modal-lg { width: min(1100px, 95vw); max-height: 90vh; display: flex; flex-direction: column; }
 .ml-modal-lg .ml-modal-body { overflow-y: auto; max-height: 70vh; }
