@@ -303,4 +303,40 @@ export const mlTrainingAPI = {
       `/ml/projects/${projectId}/models/${modelId}/report`,
       { params: opts },
     ).then(r => r.data),
+
+  // ── Active learning: pull mispredicted chars from inspection history ──
+  inspectionCandidates: (projectId: string, opts: {
+    recipe_id?: string;
+    date_from?: string;
+    date_to?: string;
+    include_hard_fail?: boolean;
+    include_borderline?: boolean;
+    limit?: number;
+  }) =>
+    api.get<{ candidates: InspectionCandidate[]; count: number }>(
+      `/ml/projects/${projectId}/inspection-candidates`,
+      { params: opts },
+    ).then(r => r.data),
+
+  importFromInspections: (projectId: string, selections: { inspection_id: string; annotation_idx: number }[]) =>
+    api.post<{ imported: number; skipped: number; errors: { inspection_id: string; reason: string }[] }>(
+      `/ml/projects/${projectId}/import-from-inspections`,
+      { selections },
+    ).then(r => r.data),
 };
+
+export interface InspectionCandidate {
+  inspection_id: string;
+  recipe_id: string;
+  recipe_name: string;
+  camera_serial: string;
+  frame_idx: number;
+  annotation_idx: number;
+  expected: string;
+  ml_label: 'OK' | 'NG';
+  ml_p_ok: number;
+  kind: 'hard_fail' | 'borderline';
+  timestamp: string | null;
+  image_path: string;
+  crop_b64: string;
+}

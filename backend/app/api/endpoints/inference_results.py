@@ -36,7 +36,7 @@ async def get_inference_results(
     pass_fail: Optional[str] = Query(None, regex="^(PASS|FAIL)$"),
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
-    fail_reasons: Optional[str] = Query(None, description="Comma-separated: text,template,wrinkled,center"),
+    fail_reasons: Optional[str] = Query(None, description="Comma-separated: text,char,template,wrinkled,center"),
     wrinkled_min_area: Optional[float] = Query(None, ge=0, description="Min wrinkle area (px²)"),
     center_direction: Optional[str] = Query(None, regex="^(left|right|any)$", description="Center offset direction"),
     db=Depends(get_database),
@@ -45,7 +45,7 @@ async def get_inference_results(
     """
     Get all inference results with pagination and filters.
 
-    - **fail_reasons**: Comma-separated list — `text`, `template`, `wrinkled`, `center` (AND logic)
+    - **fail_reasons**: Comma-separated list — `text`, `char`, `template`, `wrinkled`, `center` (AND logic)
     - **wrinkled_min_area**: Only match wrinkled boxes with area >= value (requires `wrinkled` in fail_reasons)
     - **center_direction**: `left`, `right`, or `any` (requires `center` in fail_reasons)
     """
@@ -77,7 +77,7 @@ async def get_inference_results_count(
     pass_fail: Optional[str] = Query(None, regex="^(PASS|FAIL)$"),
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
-    fail_reasons: Optional[str] = Query(None, description="Comma-separated: text,template,wrinkled,center"),
+    fail_reasons: Optional[str] = Query(None, description="Comma-separated: text,char,template,wrinkled,center"),
     wrinkled_min_area: Optional[float] = Query(None, ge=0),
     center_direction: Optional[str] = Query(None, regex="^(left|right|any)$"),
     db=Depends(get_database),

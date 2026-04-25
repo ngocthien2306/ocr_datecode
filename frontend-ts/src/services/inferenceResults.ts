@@ -15,6 +15,21 @@ export interface TextVerification {
   results: TextVerificationResult[];
 }
 
+export interface CharVerificationResult {
+  annotation_idx: number;
+  expected: string;            // single character
+  match: boolean;              // true when ml_label === 'OK'
+  ml_label: string;            // 'OK' | 'NG'
+  ml_p_ok: number;             // 0..1
+  threshold: number;
+  error?: string | null;
+}
+
+export interface CharVerification {
+  all_match: boolean;
+  results: CharVerificationResult[];
+}
+
 export interface TemplateVerification {
   match: boolean;
   similarity: number;
@@ -60,6 +75,7 @@ export interface FrameResult {
   timings?: any;
   detected_regions?: any[];
   text_verification?: TextVerification;
+  char_verification?: CharVerification;
   template_verification?: TemplateVerification;
   product_verification?: ProductVerification;
 }
@@ -105,7 +121,7 @@ export interface InferenceResultResponse {
   created_at: string;
 }
 
-export type FailReason = 'text' | 'template' | 'wrinkled' | 'center';
+export type FailReason = 'text' | 'char' | 'template' | 'wrinkled' | 'center';
 export type CenterDirection = 'left' | 'right' | 'any';
 
 export interface InferenceResultFilters {

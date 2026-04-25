@@ -1075,3 +1075,51 @@ body.dark-mode .ml-testset-card img { background: #0f1117; }
   color: #334155;
 }
 body.dark-mode .ml-history-card { background: #1a1d27; border-color: #2d3148; color: #d1d5db; }
+
+/* ── Modal large variant + Import-from-Inspections grid ────────────────── */
+.ml-modal-lg { width: min(1100px, 95vw); max-height: 90vh; display: flex; flex-direction: column; }
+.ml-modal-lg .ml-modal-body { overflow-y: auto; max-height: 70vh; }
+
+.ml-insp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.ml-insp-card {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px;
+  background: #f8fafc;
+  border: 2px solid #e2e8f0;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color .12s, transform .08s;
+  text-align: left;
+}
+.ml-insp-card:hover { border-color: #94a3b8; }
+.ml-insp-card.selected { border-color: #3b82f6; background: #eff6ff; }
+.ml-insp-card.hard_fail { border-left-width: 4px; border-left-color: rgba(239,68,68,.6); }
+.ml-insp-card.borderline { border-left-width: 4px; border-left-color: rgba(251,191,36,.6); }
+
+.ml-insp-card-img {
+  width: 100%; height: 60px;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 3px;
+  border: 1px solid #e2e8f0;
+}
+
+.ml-insp-card-meta { display: flex; align-items: center; gap: 4px; font-size: 11px; }
+.ml-insp-card-char  { font-family: monospace; font-weight: 700; font-size: 13px; }
+.ml-insp-card-label { padding: 1px 4px; border-radius: 3px; font-size: 9px; font-weight: 600; }
+.ml-insp-card-label.ok { background: rgba(34,197,94,.15); color: #16a34a; }
+.ml-insp-card-label.ng { background: rgba(239,68,68,.15); color: #dc2626; }
+.ml-insp-card-prob  { margin-left: auto; opacity: .6; font-variant-numeric: tabular-nums; }
+
+body.dark-mode .ml-insp-card             { background: #141821; border-color: #2d3148; }
+body.dark-mode .ml-insp-card:hover       { border-color: #4b5563; }
+body.dark-mode .ml-insp-card.selected    { background: #1e3a5f; border-color: #3b82f6; }
+body.dark-mode .ml-insp-card-img         { background: #0f1117; border-color: #2d3148; }
+body.dark-mode .ml-insp-card-label.ok    { background: rgba(34,197,94,.12); color: #4ade80; }
+body.dark-mode .ml-insp-card-label.ng    { background: rgba(239,68,68,.15); color: #f87171; }

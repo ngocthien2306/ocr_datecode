@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { mlTrainingAPI, AvailableImage, MLProject, ProjectImage } from '@/services/mlTraining';
 import ImportFromRecipeModal from './ImportFromRecipeModal';
+import ImportFromInspectionsModal from './ImportFromInspectionsModal';
 
 interface Props {
   project: MLProject;
@@ -22,6 +23,7 @@ export default function ImageTab({ project, onRefresh }: Props) {
   const [uploading, setUploading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
+  const [inspImportOpen, setInspImportOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Grid column control (shared state for both panels)
@@ -216,6 +218,15 @@ export default function ImageTab({ project, onRefresh }: Props) {
             </button>
             <button
               className="ml-btn ml-btn-secondary ml-btn-sm"
+              onClick={() => setInspImportOpen(true)}
+              title="Pull mispredicted chars from past inspections"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                <path d="M12 8v4l3 3M3 12a9 9 0 1018 0 9 9 0 00-18 0z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg> Import from Inspections
+            </button>
+            <button
+              className="ml-btn ml-btn-secondary ml-btn-sm"
               onClick={() => fileInputRef.current?.click()}
               disabled={uploading}
             >
@@ -302,6 +313,16 @@ export default function ImageTab({ project, onRefresh }: Props) {
         onClose={() => setImportModalOpen(false)}
         onImported={() => {
           // Reload project images to pick up the new has_annotation flag
+          loadProjectImages();
+          onRefresh();
+        }}
+      />
+
+      <ImportFromInspectionsModal
+        projectId={project.id}
+        open={inspImportOpen}
+        onClose={() => setInspImportOpen(false)}
+        onImported={() => {
           loadProjectImages();
           onRefresh();
         }}

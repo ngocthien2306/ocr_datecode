@@ -8,12 +8,13 @@ import logging
 import shutil
 import uuid
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import cv2 as cv
 import joblib
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from app.api.dependencies.auth import get_current_user
 from app.db.mongodb import get_database
@@ -984,3 +985,370 @@ async def char_coverage(
         coverage_pct=pct,
         model_chars=sorted(model_chars),
     )
+
+
+# ════════════════════════════════════════ IMPORT FROM INSPECTIONS ═════════
+#
+# Active learning loop: pull failed-prediction chars from production inference
+# results back into the training set. Operator picks the wrong predictions in
+# Label tab → labels them correctly → retrains.
+#
+# Source filter: char_verification.results from inference_results collection.
+#   - hard_fail = True   → match=false (model said NG)
+#   - borderline = True  → 0.03 ≤ ml_p_ok ≤ 0.3 (low-confidence OK)
+
+_INSPECTION_UPLOADS = _PROJECT_ROOT / "backend" / "uploads"
+
+
+def _resolve_inspection_image(image_path: str) -> Optional[Path]:
+    """
+    Inspection results store relative-ish paths. Resolve to an absolute path
+    on disk under backend/uploads/. Returns None if file doesn't exist.
+    """
+    if not image_path:
+        return None
+    p = Path(image_path)
+    if p.is_absolute() and p.exists():
+        return p
+    candidate = _INSPECTION_UPLOADS / image_path
+    return candidate if candidate.exists() else None
+
+
+def _crop_from_polygon(img, points: List[List[float]], padding: int = 4):
+    """Crop the axis-aligned bbox enclosing a polygon (with padding)."""
+    if not points:
+        return None
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    h, w = img.shape[:2]
+    x0 = max(0, int(min(xs)) - padding)
+    y0 = max(0, int(min(ys)) - padding)
+    x1 = min(w, int(max(xs)) + padding)
+    y1 = min(h, int(max(ys)) + padding)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return img[y0:y1, x0:x1].copy()
+
+
+@router.get(
+    "/ml/projects/{project_id}/inspection-candidates",
+    tags=["ML Training"],
+)
+async def get_inspection_candidates(
+    project_id: str,
+    recipe_id: Optional[str] = None,
+    date_from: Optional[str] = None,        # ISO format
+    date_to: Optional[str] = None,
+    include_hard_fail: bool = True,
+    include_borderline: bool = True,
+    limit: int = 100,
+    repo: MLTrainingRepository = Depends(get_repo),
+    current_user: UserInDB = Depends(get_current_user),
+    db=Depends(get_database),
+):
+    """
+    Return up to `limit` char-level training candidates pulled from past
+    inspections that had ML predictions worth re-labeling.
+
+    Each candidate = one char_verification result with bbox cropped from the
+    saved frame image. Sorted newest first.
+    """
+    from datetime import datetime as _dt
+
+    # Verify project exists
+    project = await repo.get_project(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    if not (include_hard_fail or include_borderline):
+        return {"candidates": [], "count": 0}
+
+    # Build mongo query
+    query: Dict[str, Any] = {}
+    if recipe_id:
+        query["recipe_id"] = recipe_id
+    if date_from or date_to:
+        ts: Dict[str, Any] = {}
+        if date_from:
+            ts["$gte"] = _dt.fromisoformat(date_from.replace("Z", "+00:00"))
+        if date_to:
+            ts["$lte"] = _dt.fromisoformat(date_to.replace("Z", "+00:00"))
+        query["timestamp"] = ts
+    # Only inspections that have at least one char_verification
+    query["camera_results.frames.char_verification"] = {"$ne": None}
+
+    coll = db.get_collection("inference_results")
+    cursor = coll.find(query).sort("timestamp", -1).limit(500)  # over-fetch for filtering
+
+    candidates: List[Dict[str, Any]] = []
+    loop = asyncio.get_event_loop()
+
+    async for doc in cursor:
+        if len(candidates) >= limit:
+            break
+        recipe_name = doc.get("recipe_name", "")
+        rid = str(doc.get("recipe_id", ""))
+        ts = doc.get("timestamp")
+        ts_iso = ts.isoformat() if ts else None
+        inspection_id = str(doc.get("_id", ""))
+
+        for cam in doc.get("camera_results", []):
+            for frame in cam.get("frames", []):
+                cv_data = frame.get("char_verification") or {}
+                results = cv_data.get("results") or []
+                if not results:
+                    continue
+
+                detected_regions = frame.get("detected_regions") or []
+                # Index detected_regions by annotation_index for quick lookup
+                region_by_idx = {
+                    r.get("annotation_index"): r
+                    for r in detected_regions
+                    if r.get("type") == "char" and r.get("annotation_index") is not None
+                }
+
+                image_path_raw = frame.get("image_path")
+                image_path = _resolve_inspection_image(image_path_raw or "")
+                if image_path is None:
+                    continue
+
+                # Lazy-load image once per frame
+                _img_cache = {"img": None}
+
+                def _get_img():
+                    if _img_cache["img"] is None:
+                        _img_cache["img"] = cv.imread(str(image_path))
+                    return _img_cache["img"]
+
+                for r in results:
+                    if len(candidates) >= limit:
+                        break
+                    is_hard_fail = (r.get("match") is False)
+                    p_ok = float(r.get("ml_p_ok") or 0.0)
+                    is_borderline = (0.03 <= p_ok <= 0.3) and not is_hard_fail
+                    if is_hard_fail and not include_hard_fail:
+                        continue
+                    if is_borderline and not include_borderline:
+                        continue
+                    if not is_hard_fail and not is_borderline:
+                        continue
+
+                    ann_idx = r.get("annotation_idx")
+                    region = region_by_idx.get(ann_idx)
+                    if region is None:
+                        continue
+                    points = region.get("points") or []
+
+                    img = _get_img()
+                    if img is None:
+                        break  # image unreadable → skip frame
+                    char_crop = _crop_from_polygon(img, points, padding=4)
+                    if char_crop is None or char_crop.size == 0:
+                        continue
+
+                    candidates.append({
+                        "inspection_id":  inspection_id,
+                        "recipe_id":      rid,
+                        "recipe_name":    recipe_name,
+                        "camera_serial":  cam.get("serial_number", ""),
+                        "frame_idx":      frame.get("frame_idx", 0),
+                        "annotation_idx": ann_idx,
+                        "expected":       r.get("expected", ""),
+                        "ml_label":       r.get("ml_label", "NG"),
+                        "ml_p_ok":        round(p_ok, 4),
+                        "kind":           "hard_fail" if is_hard_fail else "borderline",
+                        "timestamp":      ts_iso,
+                        "image_path":     image_path_raw,    # for import payload
+                        "crop_b64":       img_to_b64(char_crop),
+                    })
+                if len(candidates) >= limit:
+                    break
+            if len(candidates) >= limit:
+                break
+
+    return {"candidates": candidates, "count": len(candidates)}
+
+
+# ════════════════════════════════════════ IMPORT FROM INSPECTIONS (apply) ═
+
+class _ImportSelection(BaseModel):
+    inspection_id: str
+    annotation_idx: int
+
+
+class _ImportFromInspectionsRequest(BaseModel):
+    selections: List[_ImportSelection]
+
+
+@router.post(
+    "/ml/projects/{project_id}/import-from-inspections",
+    tags=["ML Training"],
+)
+async def import_from_inspections(
+    project_id: str,
+    body: _ImportFromInspectionsRequest,
+    repo: MLTrainingRepository = Depends(get_repo),
+    current_user: UserInDB = Depends(get_current_user),
+    db=Depends(get_database),
+):
+    """
+    Import operator-picked char crops from inspection history into a project.
+
+    Per unique frame:
+      - copy frame image into project images/ (skip if already there)
+      - find or create annotation for that filename
+      - merge char segments — char_id from `expected`, label=None for human
+        review. Segments deduplicated by annotation_idx provenance to avoid
+        re-import on repeat clicks.
+    """
+    if not body.selections:
+        return {"imported": 0, "skipped": 0, "errors": []}
+
+    project = await repo.get_project(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    images_dir = _images_dir(project_id)
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    coll = db.get_collection("inference_results")
+
+    # Group selections by inspection_id (so we open each frame doc once)
+    by_inspection: Dict[str, List[int]] = {}
+    for sel in body.selections:
+        by_inspection.setdefault(sel.inspection_id, []).append(sel.annotation_idx)
+
+    imported = 0
+    skipped = 0
+    errors: List[Dict[str, str]] = []
+
+    from bson import ObjectId
+    from app.models.ml_training import MLAnnotationSave, AnnotationRegion, CharSegment
+
+    for inspection_id, ann_idxs in by_inspection.items():
+        try:
+            try:
+                _id = ObjectId(inspection_id)
+            except Exception:
+                errors.append({"inspection_id": inspection_id, "reason": "invalid_id"})
+                continue
+            doc = await coll.find_one({"_id": _id})
+            if not doc:
+                errors.append({"inspection_id": inspection_id, "reason": "not_found"})
+                continue
+
+            # Walk frames, find char_verification + detected_regions
+            for cam in doc.get("camera_results", []):
+                for frame in cam.get("frames", []):
+                    cv_data = frame.get("char_verification") or {}
+                    results = cv_data.get("results") or []
+                    if not results:
+                        continue
+                    region_by_idx = {
+                        r.get("annotation_index"): r
+                        for r in (frame.get("detected_regions") or [])
+                        if r.get("type") == "char" and r.get("annotation_index") is not None
+                    }
+                    expected_by_idx = {r.get("annotation_idx"): r for r in results}
+
+                    needed = [i for i in ann_idxs if i in region_by_idx and i in expected_by_idx]
+                    if not needed:
+                        continue
+
+                    image_path_raw = frame.get("image_path") or ""
+                    src_path = _resolve_inspection_image(image_path_raw)
+                    if src_path is None:
+                        errors.append({"inspection_id": inspection_id, "reason": "image_missing"})
+                        continue
+
+                    img = cv.imread(str(src_path))
+                    if img is None:
+                        errors.append({"inspection_id": inspection_id, "reason": "image_unreadable"})
+                        continue
+                    img_h, img_w = img.shape[:2]
+
+                    # Stable filename derived from inspection so repeat imports merge
+                    safe_name = f"insp_{inspection_id}_cam{cam.get('serial_number','')}_f{frame.get('frame_idx',0)}.jpg"
+                    dst_path = images_dir / safe_name
+                    if not dst_path.exists():
+                        shutil.copy(str(src_path), str(dst_path))
+
+                    # Convert each selected char bbox → normalized segment
+                    new_segments: List[Dict[str, Any]] = []
+                    for ann_idx in needed:
+                        pts = region_by_idx[ann_idx].get("points") or []
+                        if not pts:
+                            continue
+                        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+                        x0, x1 = min(xs), max(xs)
+                        y0, y1 = min(ys), max(ys)
+                        nx = max(0.0, x0 / img_w)
+                        ny = max(0.0, y0 / img_h)
+                        nw = min(1.0 - nx, (x1 - x0) / img_w)
+                        nh = min(1.0 - ny, (y1 - y0) / img_h)
+                        if nw <= 0 or nh <= 0:
+                            continue
+                        new_segments.append({
+                            "id":      f"seg-{inspection_id[-8:]}-{ann_idx}",
+                            "x":       nx, "y": ny, "w": nw, "h": nh,
+                            "label":   None,           # operator reviews in Label tab
+                            "char_id": expected_by_idx[ann_idx].get("expected", "") or None,
+                        })
+                    if not new_segments:
+                        skipped += len(needed)
+                        continue
+
+                    # Merge: load existing annotation, dedupe by segment.id, save
+                    existing = await repo.get_annotation(project_id, safe_name)
+                    if existing and existing.regions:
+                        regions = [r.model_dump() for r in existing.regions]
+                        # Dedup: collect existing segment ids
+                        existing_ids = set()
+                        for reg in regions:
+                            for seg in reg.get("segments", []) or []:
+                                if seg.get("id"):
+                                    existing_ids.add(seg["id"])
+                        fresh = [s for s in new_segments if s["id"] not in existing_ids]
+                        if not fresh:
+                            skipped += len(new_segments)
+                            continue
+                        # Append into the first region (or create one)
+                        if regions:
+                            regions[0].setdefault("segments", []).extend(fresh)
+                        else:
+                            regions = [_make_wrapper_region(fresh, img_w, img_h)]
+                        new_imported = len(fresh)
+                    else:
+                        regions = [_make_wrapper_region(new_segments, img_w, img_h)]
+                        new_imported = len(new_segments)
+
+                    save_payload = MLAnnotationSave(
+                        regions=[AnnotationRegion(**r) for r in regions]
+                    )
+                    await repo.save_annotation(project_id, safe_name, save_payload)
+                    imported += new_imported
+
+        except Exception as e:
+            logger.exception(f"Import inspection {inspection_id} failed")
+            errors.append({"inspection_id": inspection_id, "reason": str(e)})
+
+    # Refresh project image_count
+    new_count = _sync_image_count(repo, project_id)
+    await repo.set_image_count(project_id, new_count)
+
+    return {"imported": imported, "skipped": skipped, "errors": errors}
+
+
+def _make_wrapper_region(segments: List[Dict[str, Any]], img_w: int, img_h: int) -> Dict[str, Any]:
+    """Build a single region wrapping all segments — bounding box."""
+    xs0 = [s["x"] for s in segments]
+    ys0 = [s["y"] for s in segments]
+    xs1 = [s["x"] + s["w"] for s in segments]
+    ys1 = [s["y"] + s["h"] for s in segments]
+    rx, ry = min(xs0), min(ys0)
+    rw, rh = max(xs1) - rx, max(ys1) - ry
+    return {
+        "id":       f"region-import-{int(asyncio.get_event_loop().time() * 1000)}",
+        "x":        rx, "y": ry, "w": rw, "h": rh,
+        "segments": segments,
+    }

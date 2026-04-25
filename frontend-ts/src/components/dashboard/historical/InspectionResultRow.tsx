@@ -172,6 +172,19 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
   const textMatches = textVerResults.filter(r => r.match).length;
   const textTotal = textVerResults.length;
 
+  // Calculate char verification stats (ML per-character inspection)
+  const charVerResults: any[] = [];
+  result.camera_results.forEach(cr => {
+    cr.frames.forEach(frame => {
+      if (frame.char_verification?.results) {
+        charVerResults.push(...frame.char_verification.results);
+      }
+    });
+  });
+  const hasCharVerification = charVerResults.length > 0;
+  const charMatches = charVerResults.filter((r: any) => r.match).length;
+  const charTotal = charVerResults.length;
+
   // Get average confidence
   const avgConfidence = result.metadata?.inference_stats?.avg_confidence || 0;
 
@@ -245,6 +258,15 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
           )}
         </td>
         <td>
+          {hasCharVerification ? (
+            <span className={`text-verify-badge ${charMatches === charTotal ? 'success' : 'error'}`}>
+              {charMatches}/{charTotal} {charMatches === charTotal ? '✓' : '✗'}
+            </span>
+          ) : (
+            <span className="text-verify-badge na">N/A</span>
+          )}
+        </td>
+        <td>
           <span className="confidence-value">
             {(avgConfidence * 100).toFixed(1)}%
           </span>
@@ -280,7 +302,7 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
       {/* Expanded Detail Row */}
       {isExpanded && (
         <tr className="expanded-detail-row">
-          <td colSpan={canDelete ? 9 : 8}>
+          <td colSpan={canDelete ? 10 : 9}>
             <div className="expanded-detail">
               <h4>Inspection Details - ID: {result.id}</h4>
 
@@ -431,6 +453,59 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
                                     </div>
                                   );
                                 })}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Char Verification (ML per-character inspection) */}
+                          {frame.char_verification && frame.char_verification.results && frame.char_verification.results.length > 0 && (
+                            <div className="char-verification-section">
+                              <div className="section-title">
+                                🔡 Char Verification (ML):
+                                <span className={`verification-summary ${frame.char_verification.all_match ? 'success' : 'error'}`}>
+                                  {frame.char_verification.results.filter((r: any) => r.match).length}/{frame.char_verification.results.length}
+                                  {frame.char_verification.all_match ? ' ✓' : ' ✗'}
+                                </span>
+                              </div>
+                              <div className="char-verify-badges" style={{ marginTop: '8px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                {frame.char_verification.results.map((r: any) => (
+                                  <span
+                                    key={r.annotation_idx}
+                                    className={`hist-char-badge ${r.match ? 'ok' : 'ng'}`}
+                                    title={`#${r.annotation_idx} · expected ${r.expected} · ${r.ml_label}${r.error ? ` · ${r.error}` : ''}`}
+                                  >
+                                    <span className="hist-char-badge-char">{r.expected || '?'}</span>
+                                    <span className="hist-char-badge-conf">{(r.ml_p_ok * 100).toFixed(0)}%</span>
+                                  </span>
+                                ))}
+                              </div>
+                              <div className="text-results-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginTop: '12px' }}>
+                                {frame.char_verification.results.map((r: any, idx: number) => (
+                                  <div key={`${r.annotation_idx}-${idx}`} className={`text-result-card ${r.match ? 'match' : 'mismatch'}`}>
+                                    <div className="text-result-header-v2">
+                                      <span className="region-label">Region {r.annotation_idx}:</span>
+                                      <span className={`match-badge ${r.match ? 'success' : 'error'}`}>
+                                        {r.match ? '✓' : '✗'} {(r.ml_p_ok * 100).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                    <div className="text-comparison-v2">
+                                      <div className="text-line">
+                                        <span className="text-label">Expected:</span>
+                                        <span className="text-value" style={{ fontFamily: 'monospace' }}>"{r.expected || '—'}"</span>
+                                      </div>
+                                      <div className="text-line">
+                                        <span className="text-label">ML Label:</span>
+                                        <span className="text-value">{r.ml_label}</span>
+                                      </div>
+                                      {r.error && (
+                                        <div className="text-line">
+                                          <span className="text-label">Error:</span>
+                                          <span className="text-value" style={{ color: '#dc2626' }}>{r.error}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
                               </div>
                             </div>
                           )}

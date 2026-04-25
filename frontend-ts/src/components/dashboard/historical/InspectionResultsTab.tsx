@@ -459,6 +459,7 @@ const InspectionResultsTab: React.FC<InspectionResultsTabProps> = ({ dateRange }
           <div className="fail-pills">
             {([
               { key: 'text',     label: 'Text Verify' },
+              { key: 'char',     label: 'Char Verify' },
               { key: 'template', label: 'Template' },
               { key: 'wrinkled', label: 'Wrinkled' },
               { key: 'center',   label: 'Center Align' },
@@ -550,6 +551,7 @@ const InspectionResultsTab: React.FC<InspectionResultsTabProps> = ({ dateRange }
                   <th style={{ width: '100px' }}>Result</th>
                   <th style={{ width: '100px' }}>Cameras</th>
                   <th style={{ width: '120px' }}>Text Verify</th>
+                  <th style={{ width: '120px' }}>Char Verify</th>
                   <th style={{ width: '100px' }}>Confidence</th>
                   <th style={{ width: '150px' }}>Actions</th>
                 </tr>

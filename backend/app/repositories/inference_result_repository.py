@@ -142,6 +142,11 @@ class InferenceResultRepository:
                     conditions.append(
                         {"camera_results.frames.text_verification.all_match": False}
                     )
+                elif reason == "char":
+                    # ML per-character inspection failed at least once
+                    conditions.append(
+                        {"camera_results.frames.char_verification.all_match": False}
+                    )
                 elif reason == "template":
                     conditions.append(
                         {"camera_results.frames.template_verification.match": False}
