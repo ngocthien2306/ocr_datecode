@@ -39,16 +39,18 @@ export default function ImportFromRecipeModal({
   const [lastResult, setLastResult] = useState<ImportFromRecipeResponse | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Load recipes once when modal opens
+  // Load recipes once when modal opens. BE caps limit at 100.
   useEffect(() => {
     if (!open) return;
     (async () => {
       setLoadingRecipes(true);
+      setErrorMsg(null);
       try {
-        const list = await recipesAPI.getAllRecipes(0, 200);
+        const list = await recipesAPI.getAllRecipes(0, 100);
         setRecipes(list);
-      } catch (e) {
+      } catch (e: any) {
         console.error('[ImportModal] load recipes failed:', e);
+        setErrorMsg(e?.response?.data?.detail || e?.message || 'Failed to load recipes');
       } finally {
         setLoadingRecipes(false);
       }
@@ -238,6 +240,15 @@ export default function ImportFromRecipeModal({
         </div>
 
         <div className="ml-modal-footer">
+          {(!recipeId || !cameraSerial || selectedFiles.size === 0) && !importing && (
+            <span className="ml-hint" style={{ marginRight: 'auto', alignSelf: 'center' }}>
+              {!recipeId
+                ? '→ Pick a recipe first'
+                : !cameraSerial
+                ? '→ Pick a camera'
+                : '→ Select at least 1 file'}
+            </span>
+          )}
           <button className="ml-btn ml-btn-secondary" onClick={handleClose} disabled={importing}>
             Close
           </button>

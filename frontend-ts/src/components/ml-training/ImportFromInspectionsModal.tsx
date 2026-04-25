@@ -47,10 +47,12 @@ export default function ImportFromInspectionsModal({
     if (!open) return;
     (async () => {
       try {
-        const list = await recipesAPI.getAllRecipes(0, 200);
+        // BE caps recipes list at 100
+        const list = await recipesAPI.getAllRecipes(0, 100);
         setRecipes(list);
-      } catch (e) {
+      } catch (e: any) {
         console.error('[ImportFromInspectionsModal] load recipes failed:', e);
+        setErrorMsg(e?.response?.data?.detail || e?.message || 'Failed to load recipes');
       }
     })();
   }, [open]);
