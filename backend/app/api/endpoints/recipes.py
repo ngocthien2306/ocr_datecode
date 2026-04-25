@@ -839,24 +839,39 @@ async def segment_template_region(body: dict):
 
         full_text: Optional[str] = None
         if with_ocr and segments:
-            # Sort segments left-to-right (reading order) so OCR results map
-            # 1:1 with visual order — matters when FE displays / labels them.
-            segments.sort(key=lambda s: (s.get("y", 0), s.get("x", 0)))
+            # Reading-order sort: row-bucket by y, then x within each row.
+            # Naive (y, x) lexicographic sort breaks for single-line text when
+            # char boxes have tiny y-jitter (e.g. L has y=0.100, O has y=0.098
+            # → O ends up before L even though O is to the right of L).
+            # Bucket size = 40% of median box height keeps chars on the same
+            # visual line in the same bucket.
+            heights = sorted((s.get("h", 0) for s in segments))
+            median_h = heights[len(heights) // 2] if heights else 0.0
+            bucket_sz = max(median_h * 0.4, 1e-6)
+            segments.sort(key=lambda s: (int(s.get("y", 0) / bucket_sz), s.get("x", 0)))
 
             from app.services.ml_char_ocr_service import recognize_chars
 
-            def _crop_and_recognize() -> List[str]:
+            def _crop_and_recognize() -> List[Optional[str]]:
+                """Return list parallel to `segments`; None for crops that failed."""
                 crops = [crop_segment(image_path, s) for s in segments]
-                crops = [c for c in crops if c is not None]
-                if not crops:
-                    return []
-                return recognize_chars(crops)
+                # Preserve indices — recognize in one batch, skip Nones but
+                # keep slot alignment via `valid_idx`.
+                valid_idx = [i for i, c in enumerate(crops) if c is not None]
+                valid_crops = [crops[i] for i in valid_idx]
+                if not valid_crops:
+                    return [None] * len(segments)
+                texts = recognize_chars(valid_crops)
+                out: List[Optional[str]] = [None] * len(segments)
+                for i, t in zip(valid_idx, texts):
+                    out[i] = t
+                return out
 
             try:
                 texts = await loop.run_in_executor(None, _crop_and_recognize)
-                # Attach expected_text per segment (1:1 by order)
+                # 1:1 mapping preserved — missing crops stay as None.
                 for seg, text in zip(segments, texts):
-                    seg["expected_text"] = (text or "").strip() or None
+                    seg["expected_text"] = ((text or "").strip()) or None
                 full_text = "".join((t or "") for t in texts)
             except Exception:
                 logger.exception("Per-segment OCR failed; returning boxes only")
