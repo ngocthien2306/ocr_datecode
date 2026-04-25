@@ -346,16 +346,18 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     }
   }, [formData.ml_project_id]);
 
-  // Collect all recipe chars from text/datecode annotations across templates.
-  // These are the chars the ML model must be able to classify at runtime.
+  // Collect chars the ML model must be able to classify at runtime.
+  // ML inspection is char-level only: `text` / `datecode` annotations go
+  // through OCR (they don't need a per-char golden). Only `char` annotations
+  // require ML coverage — each holds exactly one character.
   const recipeChars = useMemo(() => {
     const chars = new Set<string>();
     Object.values(cameraTemplates).forEach(tpls => {
       tpls.forEach(tpl => {
         (tpl.annotations || []).forEach((ann: any) => {
-          if ((ann.type === 'text' || ann.type === 'datecode') && typeof ann.text === 'string' && ann.text.trim()) {
-            chars.add(ann.text.trim());
-          }
+          if (ann.type !== 'char') return;
+          const txt = typeof ann.text === 'string' ? ann.text.trim() : '';
+          if (txt) chars.add(txt[0]);   // defensive: char annotation = 1 char
         });
       });
     });
