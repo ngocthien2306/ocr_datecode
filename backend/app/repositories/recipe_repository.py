@@ -38,6 +38,12 @@ class RecipeRepository:
         """Create a new recipe"""
         # IMPORTANT: Use mode='json' and exclude_defaults=False to include all fields
         recipe_dict = recipe.model_dump(mode='json', exclude_defaults=False)
+
+        # Normalize empty strings to None for nullable string fields
+        for f in ('ml_project_id', 'ml_model_id', 'ocr_model_type'):
+            if recipe_dict.get(f) == "":
+                recipe_dict[f] = None
+
         recipe_dict["created_by"] = user_id
         recipe_dict["updated_by"] = user_id
         recipe_dict["created_at"] = datetime.utcnow()
@@ -126,9 +132,19 @@ class RecipeRepository:
     
     async def update(self, recipe_id: str, recipe_update: RecipeUpdate, user_id: str) -> Optional[RecipeInDB]:
         """Update a recipe"""
-        # IMPORTANT: Use mode='json' to ensure ALL fields including defaults are serialized
-        # Without this, fields with default values may be excluded
-        update_data = recipe_update.model_dump(mode='json', exclude_none=True, exclude_defaults=False)
+        # exclude_unset=True keeps fields the caller EXPLICITLY passed (even if
+        # value is None) and drops fields that weren't sent at all. This lets
+        # FE clear a field by sending `null` (e.g. ml_project_id, ml_model_id
+        # when user picks "-- None --") while leaving untouched fields alone.
+        update_data = recipe_update.model_dump(mode='json', exclude_unset=True)
+
+        # Normalize: treat empty string as "clear" for nullable string fields
+        # so older clients sending "" still work. Apply only to fields that
+        # are semantically nullable strings.
+        NULLABLE_STR_FIELDS = ('ml_project_id', 'ml_model_id', 'ocr_model_type')
+        for f in NULLABLE_STR_FIELDS:
+            if f in update_data and update_data[f] == "":
+                update_data[f] = None
 
         # DEBUG: Log camera_templates to check center_offset_threshold
         if 'camera_templates' in update_data:
@@ -138,9 +154,6 @@ class RecipeRepository:
                 for idx, template in enumerate(cam_template.get('templates', [])):
                     threshold = template.get('center_offset_threshold', 'NOT_FOUND')
                     print(f"    Template {idx}: {template.get('name')} - center_offset_threshold: {threshold}")
-
-        # Remove None values manually but keep empty arrays and zero values
-        update_data = {k: v for k, v in update_data.items() if v is not None}
 
         if not update_data:
             return await self.get_by_id(recipe_id)

@@ -616,7 +616,11 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         template_config: templateImage ? {
           template_image: templateImage,
           annotations: annotations
-        } : formData.template_config
+        } : formData.template_config,
+        // Normalize empty-string sentinels to null so BE clears the field.
+        // Empty strings come from "-- None --" <option value="">.
+        ml_project_id: formData.ml_project_id || null,
+        ml_model_id:   formData.ml_model_id   || null,
       };
       
       await onSubmit(submitData);
