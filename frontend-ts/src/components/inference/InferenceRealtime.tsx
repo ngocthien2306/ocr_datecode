@@ -414,6 +414,10 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
           let color = '#ff9800'; // orange default
           if (region.type === 'template') color = '#00bcd4'; // cyan
           else if (region.type === 'text') color = '#4caf50'; // green
+          else if (region.type === 'datecode') color = '#5096ff'; // blue
+          else if (region.type === 'char') color = '#fbbf24'; // amber (matches FE annotation type)
+          // Override with red if this region failed verification
+          if (region.verification_status === 'fail') color = '#ef4444';
 
           ctx.beginPath();
           const [x0, y0] = points[0] as [number, number];

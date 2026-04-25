@@ -602,25 +602,19 @@ class InferenceHandler:
         recognition_threshold: float = 0.5
     ) -> Dict[str, Any]:
         """
-        Verify text in transformed regions match expected texts.
-        Delegates to TextVerificationService.
-
-        Args:
-            frame_img: Captured frame (numpy array)
-            transformed_bboxes: List of transformed bbox dicts from matcher
-            expected_texts: Dict mapping region_idx -> expected_text
-            camera: Camera object with function_type
-            recognition_threshold: Minimum OCR confidence threshold (default: 0.5)
+        Verify text + char regions for one camera. Delegates to
+        TextVerificationService.
 
         Returns:
             {
-                'all_match': bool,
-                'results': [...]
+                'text': {'all_match': bool, 'results': [...]},
+                'char': {'all_match': bool, 'results': [...]},
             }
         """
         if self.text_verification_service is None:
-            logger.warning("TextVerificationService not available, skipping text verification")
-            return {'all_match': False, 'results': []}
+            logger.warning("TextVerificationService not available, skipping verification")
+            empty = {'all_match': False, 'results': []}
+            return {'text': empty, 'char': dict(empty)}
 
         return self.text_verification_service.verify_text_regions(
             frame_img=frame_img,
