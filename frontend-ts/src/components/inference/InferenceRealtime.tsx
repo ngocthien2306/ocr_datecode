@@ -1346,60 +1346,59 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                 </span>
               </div>
 
-              {/* Visual badge row — quick scan, color-coded */}
+              {/* Visual badge row — char + p_ok% inline for at-a-glance review */}
               <div className="char-badge-row">
                 {verification.results.map((r) => (
                   <span
                     key={r.annotation_idx}
                     className={`char-badge ${r.match ? 'ok' : 'ng'}`}
-                    title={`${r.expected} · ${r.ml_label} · ${(r.ml_p_ok * 100).toFixed(1)}%${r.error ? ` · ${r.error}` : ''}`}
+                    title={`#${r.annotation_idx} · expected ${r.expected} · ${r.ml_label}${r.error ? ` · ${r.error}` : ''}`}
                   >
-                    {r.expected || '?'}
+                    <span className="char-badge-char">{r.expected || '?'}</span>
+                    <span className="char-badge-conf">{(r.ml_p_ok * 100).toFixed(0)}%</span>
                   </span>
                 ))}
               </div>
 
-              {/* Detail table — only NG-rich frames need it; collapsed by default */}
-              {!allMatch && (
-                <div className="verification-table-wrapper">
-                  <table className="verification-table">
-                    <thead>
-                      <tr>
-                        <th className="col-region">#</th>
-                        <th className="col-expected">Char</th>
-                        <th className="col-match">ML</th>
-                        <th className="col-confidence">p_ok</th>
-                        <th className="col-confidence">Match</th>
+              {/* Detail table — always shown so QC can read exact p_ok per char */}
+              <div className="verification-table-wrapper">
+                <table className="verification-table">
+                  <thead>
+                    <tr>
+                      <th className="col-region">#</th>
+                      <th className="col-expected">Char</th>
+                      <th className="col-match">ML</th>
+                      <th className="col-confidence">p_ok</th>
+                      <th className="col-confidence">Match</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {verification.results.map((r) => (
+                      <tr key={r.annotation_idx} className={r.match ? '' : 'mismatch-row'}>
+                        <td className="col-region">{r.annotation_idx}</td>
+                        <td className="col-expected" style={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                          {r.expected || '—'}
+                        </td>
+                        <td className="col-match">
+                          <span className={`match-icon ${r.ml_label === 'OK' ? 'match' : 'no-match'}`}>
+                            {r.ml_label}
+                          </span>
+                        </td>
+                        <td className="col-confidence">
+                          <span className={`confidence-value ${getConfidenceClass(r.ml_p_ok)}`}>
+                            {(r.ml_p_ok * 100).toFixed(1)}%
+                          </span>
+                        </td>
+                        <td className="col-confidence">
+                          <span className={`match-icon ${r.match ? 'match' : 'no-match'}`}>
+                            {r.match ? '✓' : '✗'}
+                          </span>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {verification.results.map((r) => (
-                        <tr key={r.annotation_idx} className={r.match ? '' : 'mismatch-row'}>
-                          <td className="col-region">{r.annotation_idx}</td>
-                          <td className="col-expected" style={{ fontFamily: 'monospace', fontWeight: 600 }}>
-                            {r.expected || '—'}
-                          </td>
-                          <td className="col-match">
-                            <span className={`match-icon ${r.ml_label === 'OK' ? 'match' : 'no-match'}`}>
-                              {r.ml_label}
-                            </span>
-                          </td>
-                          <td className="col-confidence">
-                            <span className={`confidence-value ${getConfidenceClass(r.ml_p_ok)}`}>
-                              {(r.ml_p_ok * 100).toFixed(1)}%
-                            </span>
-                          </td>
-                          <td className="col-confidence">
-                            <span className={`match-icon ${r.match ? 'match' : 'no-match'}`}>
-                              {r.match ? '✓' : '✗'}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           );
         })}

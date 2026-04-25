@@ -100,7 +100,7 @@ class InferenceHandler:
         """
         self.camera_matchers: Dict[str, Any] = {}  # Map serial_number -> matcher
         # self.engine_path = f"{home}/Source/ocr_datecode/weights/pipeline_fp16_dynamic_480_640.engine"
-        self.engine_path = f"{home}/Source/ocr_datecode/weights/pipeline_fp16_dynamic_315_560.engine"
+        self.engine_path = f"{home}/Source/ocr_datecode/weights/pipeline_fp16_dynamic_480_640.engine"
 
         # Initialize matcher factory (for future use)
         self._matcher_factory = MatcherFactory(
