@@ -131,8 +131,9 @@ export default function ImportFromRecipeModal({
 
         <div className="ml-modal-body">
           <p className="ml-hint" style={{ marginTop: 0 }}>
-            Auto-populate segments with <code>char_id</code> from recipe template's
-            text/datecode bboxes. User labels OK/NG afterwards.
+            Drop region bboxes from recipe's text/datecode annotations onto the
+            selected images. Open each in <b>Label tab</b> and click <b>Segment</b>
+            — OCR fills char_id per character automatically. Then label OK/NG.
           </p>
 
           {/* Recipe picker */}
@@ -221,8 +222,14 @@ export default function ImportFromRecipeModal({
           {errorMsg && <div className="ml-alert ml-alert-error">{errorMsg}</div>}
           {lastResult && (
             <div className="ml-alert ml-alert-success">
-              <div><b>Imported:</b> {lastResult.imported} · <b>Skipped:</b> {lastResult.skipped}</div>
-              <div><b>Chars:</b> {lastResult.char_ids.join(', ') || '—'}</div>
+              <div>
+                <b>Imported:</b> {lastResult.imported} file(s) ·{' '}
+                <b>Skipped:</b> {lastResult.skipped}
+              </div>
+              <div className="ml-hint" style={{ marginTop: 4 }}>
+                Next: open these images in <b>Label tab</b> → click <b>Segment</b> on
+                each region to extract characters with auto-filled char_id.
+              </div>
               {lastResult.errors.length > 0 && (
                 <details style={{ marginTop: 4 }}>
                   <summary>{lastResult.errors.length} error(s)</summary>

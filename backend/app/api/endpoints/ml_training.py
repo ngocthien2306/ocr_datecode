@@ -828,16 +828,21 @@ async def import_from_recipe(
     current_user: UserInDB = Depends(get_current_user),
 ):
     """
-    Pre-populate ML annotations from recipe template's text/datecode bboxes.
+    Pre-populate ML project annotations from recipe template text/datecode
+    bboxes.
 
-    For each filename in project images:
-      - For each text/datecode annotation in the recipe's camera template:
-        - Create a region + segment with char_id auto-filled from annotation.text
-        - label left as None — user labels OK/NG in the UI afterwards
+    For each selected file: drop a REGION (no segments) for every text /
+    datecode bbox found in the recipe's camera template. The user opens the
+    file in the Label tab afterwards and clicks "Segment" — the segment
+    endpoint runs OCR per char and fills char_id one character at a time.
 
-    Partial-success semantics: files that fail (missing on disk, no
-    recipe annotations, invalid bbox) are skipped with error logged;
-    other files proceed.
+    We don't pre-create segments here because a single annotation's `text`
+    is the whole string ("LOT PL26050423") — using that as a per-segment
+    `char_id` would store a multi-char string where a single character is
+    expected.
+
+    Partial-success semantics: files missing on disk or producing no valid
+    region are skipped with a per-file error; other files proceed.
     """
     # Verify project exists
     project = await repo.get_project(project_id)
@@ -874,7 +879,6 @@ async def import_from_recipe(
     imported = 0
     skipped = 0
     errors: List[dict] = []
-    char_ids_seen = set()
 
     images_dir = _images_dir(project_id)
 
@@ -885,8 +889,6 @@ async def import_from_recipe(
                 raise FileNotFoundError(f"{filename} not present in project images")
 
             regions: List[AnnotationRegion] = []
-            # Loop over each template defined for the camera
-            # Normally there's 1 template per camera, but support N.
             for tpl in cam_templates.templates:
                 img_w = int(tpl.image_width) if tpl.image_width else 0
                 img_h = int(tpl.image_height) if tpl.image_height else 0
@@ -900,21 +902,14 @@ async def import_from_recipe(
                     if box is None:
                         continue
                     nx, ny, nw, nh = box
-                    char_id = (ann.text or "").strip() or None
 
-                    seg = CharSegment(
-                        id=str(uuid.uuid4()),
-                        x=nx, y=ny, w=nw, h=nh,
-                        label=None,
-                        char_id=char_id,
-                    )
+                    # Empty `segments` — the user runs Segment in Label tab
+                    # to detect chars one-by-one (with OCR-filled char_id).
                     regions.append(AnnotationRegion(
                         id=str(uuid.uuid4()),
                         x=nx, y=ny, w=nw, h=nh,
-                        segments=[seg],
+                        segments=[],
                     ))
-                    if char_id:
-                        char_ids_seen.add(char_id)
 
             if not regions:
                 raise ValueError("Recipe template has no text/datecode annotations")
@@ -930,19 +925,19 @@ async def import_from_recipe(
             errors.append({"filename": filename, "reason": str(e)})
             logger.warning(f"[import-from-recipe] skip {filename}: {e}")
 
-    # Refresh labeled count (may be 0 since we only created segments, not labels)
+    # Refresh labeled count (still 0 since regions hold no labeled segments yet)
     await repo.refresh_labeled_count(project_id)
 
     logger.info(
         f"[import-from-recipe] project={project_id} recipe={request.recipe_id} "
-        f"imported={imported} skipped={skipped} char_ids={sorted(char_ids_seen)}"
+        f"imported={imported} skipped={skipped} (regions only — segment in Label tab)"
     )
 
     return ImportFromRecipeResponse(
         imported=imported,
         skipped=skipped,
         errors=errors,
-        char_ids=sorted(char_ids_seen),
+        char_ids=[],   # regions only; chars filled later by Label-tab segment
     )
 
 
