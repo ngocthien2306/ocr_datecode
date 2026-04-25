@@ -52,8 +52,26 @@ export const recipesAPI = {
     return response.data;
   },
 
-  segmentTemplateRegion: async (imageUrl: string, region: { x: number; y: number; w: number; h: number }): Promise<{ segments: Array<{ id: string; x: number; y: number; w: number; h: number }>; count: number }> => {
-    const response = await api.post('/recipes/templates/segment', { image_url: imageUrl, region });
+  /**
+   * Segment characters in a region of a template image.
+   * @param opts.withOcr — if true, BE also runs rec.onnx per box and returns
+   *   `expected_text` per segment + `full_text` for the whole region. Used by
+   *   the FE char-annotation flow to auto-fill expected text per character.
+   */
+  segmentTemplateRegion: async (
+    imageUrl: string,
+    region: { x: number; y: number; w: number; h: number },
+    opts?: { withOcr?: boolean },
+  ): Promise<{
+    segments: Array<{ id: string; x: number; y: number; w: number; h: number; expected_text?: string | null }>;
+    count: number;
+    full_text?: string;
+  }> => {
+    const response = await api.post('/recipes/templates/segment', {
+      image_url: imageUrl,
+      region,
+      with_ocr: opts?.withOcr || false,
+    });
     return response.data;
   },
 };

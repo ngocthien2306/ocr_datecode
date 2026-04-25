@@ -2,7 +2,7 @@ import asyncio
 import traceback
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Request
 from fastapi.responses import FileResponse, Response
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import os
 import uuid
 from pathlib import Path
@@ -810,11 +810,19 @@ async def options_template_image(filename: str):
 async def segment_template_region(body: dict):
     """
     Auto-segment characters inside a drawn region on a template image.
-    Body: {image_url: str, region: {x, y, w, h}}  (all coords normalized 0-1)
-    Returns: {segments: [{id, x, y, w, h}, ...], count}
+
+    Body:
+      image_url: str
+      region:    {x, y, w, h}   (normalized 0-1)
+      with_ocr:  bool           (optional, default False) — when true, runs
+                                rec.onnx per crop and attaches `expected_text`
+                                to each segment for FE auto-fill of char
+                                annotations.
+    Returns: {segments: [{id, x, y, w, h, expected_text?}, ...], count, full_text?}
     """
     image_url = body.get("image_url", "")
     region = body.get("region")
+    with_ocr = bool(body.get("with_ocr", False))
     if not image_url or not region:
         raise HTTPException(400, "image_url and region are required")
 
@@ -825,15 +833,41 @@ async def segment_template_region(body: dict):
         raise HTTPException(404, f"Template image not found: {filename}")
 
     try:
-        from app.services.ml_segment_service import segment_region
-        segments = await asyncio.get_event_loop().run_in_executor(
-            None, segment_region, image_path, region
-        )
+        from app.services.ml_segment_service import segment_region, crop_segment
+        loop = asyncio.get_event_loop()
+        segments = await loop.run_in_executor(None, segment_region, image_path, region)
+
+        full_text: Optional[str] = None
+        if with_ocr and segments:
+            # Sort segments left-to-right (reading order) so OCR results map
+            # 1:1 with visual order — matters when FE displays / labels them.
+            segments.sort(key=lambda s: (s.get("y", 0), s.get("x", 0)))
+
+            from app.services.ml_char_ocr_service import recognize_chars
+
+            def _crop_and_recognize() -> List[str]:
+                crops = [crop_segment(image_path, s) for s in segments]
+                crops = [c for c in crops if c is not None]
+                if not crops:
+                    return []
+                return recognize_chars(crops)
+
+            try:
+                texts = await loop.run_in_executor(None, _crop_and_recognize)
+                # Attach expected_text per segment (1:1 by order)
+                for seg, text in zip(segments, texts):
+                    seg["expected_text"] = (text or "").strip() or None
+                full_text = "".join((t or "") for t in texts)
+            except Exception:
+                logger.exception("Per-segment OCR failed; returning boxes only")
     except Exception as e:
         logger.exception("Template segmentation failed")
         raise HTTPException(500, f"Segmentation error: {e}")
 
-    return {"segments": segments, "count": len(segments)}
+    resp: Dict[str, Any] = {"segments": segments, "count": len(segments)}
+    if full_text is not None:
+        resp["full_text"] = full_text
+    return resp
 
 
 @router.get("/{recipe_id}", response_model=RecipeResponse)

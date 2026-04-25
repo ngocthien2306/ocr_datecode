@@ -1253,6 +1253,13 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     const ann = currentAnnotations[index];
     if (!ann || ann.shape !== 'rectangle') return;
 
+    // Segment-with-OCR is only meaningful for text/datecode regions —
+    // each segment becomes a `char` annotation pre-filled with the OCR'd text.
+    if (ann.type !== 'text' && ann.type !== 'datecode') {
+      toast.warning('Segment is only supported on Text OCR or Date Code regions');
+      return;
+    }
+
     // Get the template image_url (the server-relative path, e.g. /api/recipes/templates/images/abc.jpg)
     const template = getCurrentTemplate();
     const imageUrl = template?.image_url;
@@ -1263,32 +1270,37 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
     setSegmenting(true);
     try {
-      const result = await recipesAPI.segmentTemplateRegion(imageUrl, {
-        x: ann.x ?? 0, y: ann.y ?? 0, w: ann.width ?? 0, h: ann.height ?? 0,
-      });
+      const result = await recipesAPI.segmentTemplateRegion(
+        imageUrl,
+        { x: ann.x ?? 0, y: ann.y ?? 0, w: ann.width ?? 0, h: ann.height ?? 0 },
+        { withOcr: true },
+      );
 
       if (result.count === 0) {
-        toast.warning('No segments found in this region');
+        toast.warning('No characters found in this region');
         return;
       }
 
-      // Keep original annotation, insert N new annotations after it
+      // Each segment → new annotation type='char' with OCR'd text pre-filled.
+      // Original text/datecode annotation is KEPT (still used for word-level OCR).
       const newAnnotations = result.segments.map((seg: any) => ({
         id: `annotation-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        type: ann.type, // same type (text or datecode)
+        type: 'char' as const,
         shape: 'rectangle' as const,
         x: seg.x,
         y: seg.y,
         width: seg.w,
         height: seg.h,
-        text: '',
+        text: seg.expected_text || '',
         conf: ann.conf ?? 0.5,
       }));
 
       const updated = [...currentAnnotations];
       updated.splice(index + 1, 0, ...newAnnotations);
       handleAnnotationsChange(updated);
-      toast.success(`Auto segment: ${result.count} regions found`);
+
+      const ocrPreview = result.full_text ? ` ("${result.full_text}")` : '';
+      toast.success(`Created ${result.count} char annotation(s)${ocrPreview}`);
     } catch (e: any) {
       console.error('Auto segment failed:', e);
       toast.error(e?.response?.data?.detail || 'Segmentation failed');

@@ -29,7 +29,8 @@ export const ANNOTATION_TYPES = {
   CROP_AREA: 'crop_area',
   DATECODE: 'datecode',
   PRODUCT: 'product',
-  LABEL: 'label'
+  LABEL: 'label',
+  CHAR: 'char',
 };
 
 export const SHAPE_TYPES = {
@@ -45,5 +46,5 @@ export const TYPE_CONFIGS = [
   { value: 'datecode', label: 'Date Code', color: '#5096ff', needsText: true },
   { value: 'product', label: 'Product', color: '#7513dd', needsText: false },
   { value: 'label', label: 'Label', color: '#ad6df1', needsText: false },
-
+  { value: 'char', label: 'Character (ML)', color: '#fbbf24', needsText: true },
 ];
