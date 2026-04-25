@@ -840,23 +840,47 @@ async def segment_template_region(body: dict):
         full_text: Optional[str] = None
         if with_ocr and segments:
             # Reading-order sort: row-bucket by y, then x within each row.
-            # Naive (y, x) lexicographic sort breaks for single-line text when
-            # char boxes have tiny y-jitter (e.g. L has y=0.100, O has y=0.098
-            # → O ends up before L even though O is to the right of L).
-            # Bucket size = 40% of median box height keeps chars on the same
-            # visual line in the same bucket.
+            # Keeps single-line text in the right order even when box y's
+            # jitter; multi-line text still groups rows correctly.
             heights = sorted((s.get("h", 0) for s in segments))
             median_h = heights[len(heights) // 2] if heights else 0.0
             bucket_sz = max(median_h * 0.4, 1e-6)
             segments.sort(key=lambda s: (int(s.get("y", 0) / bucket_sz), s.get("x", 0)))
 
-            from app.services.ml_char_ocr_service import recognize_chars
+            from app.services.ml_char_ocr_service import recognize_text, recognize_chars
+            import cv2 as cv
 
-            def _crop_and_recognize() -> List[Optional[str]]:
-                """Return list parallel to `segments`; None for crops that failed."""
+            def _ocr_region_and_map() -> List[Optional[str]]:
+                """
+                Primary path — OCR the whole drawn region once (word-level),
+                then position-map each character to a sorted segment box.
+
+                Fallback — if character count from word-OCR doesn't match the
+                segment count, OCR each crop individually (less accurate but
+                at least gives 1:1 mapping the FE can edit).
+                """
+                # 1. Crop the full region from the original image
+                img = cv.imread(str(image_path))
+                if img is None:
+                    return [None] * len(segments)
+                ih, iw = img.shape[:2]
+                rx = max(0, int(region["x"] * iw))
+                ry = max(0, int(region["y"] * ih))
+                rw = min(iw - rx, int(region["w"] * iw))
+                rh = min(ih - ry, int(region["h"] * ih))
+                if rw <= 0 or rh <= 0:
+                    return [None] * len(segments)
+                region_crop = img[ry:ry + rh, rx:rx + rw]
+
+                # 2. Word-level OCR on the whole region
+                word = recognize_text(region_crop)
+
+                if word and len(word) == len(segments):
+                    # 3a. Perfect match — map char-by-char to sorted boxes
+                    return list(word)
+
+                # 3b. Mismatch — fall back to per-char OCR of each sorted box
                 crops = [crop_segment(image_path, s) for s in segments]
-                # Preserve indices — recognize in one batch, skip Nones but
-                # keep slot alignment via `valid_idx`.
                 valid_idx = [i for i, c in enumerate(crops) if c is not None]
                 valid_crops = [crops[i] for i in valid_idx]
                 if not valid_crops:
@@ -865,16 +889,19 @@ async def segment_template_region(body: dict):
                 out: List[Optional[str]] = [None] * len(segments)
                 for i, t in zip(valid_idx, texts):
                     out[i] = t
+                logger.info(
+                    f"[segment_with_ocr] word='{word}' ({len(word)} chars) "
+                    f"vs segments={len(segments)} — fell back to per-char"
+                )
                 return out
 
             try:
-                texts = await loop.run_in_executor(None, _crop_and_recognize)
-                # 1:1 mapping preserved — missing crops stay as None.
+                texts = await loop.run_in_executor(None, _ocr_region_and_map)
                 for seg, text in zip(segments, texts):
                     seg["expected_text"] = ((text or "").strip()) or None
                 full_text = "".join((t or "") for t in texts)
             except Exception:
-                logger.exception("Per-segment OCR failed; returning boxes only")
+                logger.exception("Region OCR failed; returning boxes only")
     except Exception as e:
         logger.exception("Template segmentation failed")
         raise HTTPException(500, f"Segmentation error: {e}")

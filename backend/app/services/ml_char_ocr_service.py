@@ -134,6 +134,27 @@ def recognize_char(image: np.ndarray) -> str:
         return ""
 
 
+def recognize_text(image: np.ndarray) -> str:
+    """
+    Word-level OCR — runs CTC decode without truncating to first char.
+    Use on a multi-char region (e.g. whole drawn bbox) to avoid per-char
+    bleed errors: a single-char crop of "L" with a bit of "O" on the right
+    edge decodes as "OL" and `_first_char` would pick "O" (wrong). Running
+    OCR on the full word gives "LOT" correctly.
+    """
+    if image is None or image.size == 0:
+        return ""
+    try:
+        sess = _get_session()
+        tensor = _preprocess(image)
+        batch = np.expand_dims(tensor, axis=0)
+        preds = sess.run([_output_name], {_input_name: batch})[0]
+        return (_decode_ctc(preds[0]) or "").strip()
+    except Exception as e:
+        logger.warning(f"[ml_char_ocr] recognize_text failed: {e}")
+        return ""
+
+
 def recognize_chars(images: List[np.ndarray]) -> List[str]:
     """
     Batch OCR over N crops. Output list is parallel to input; failed items
