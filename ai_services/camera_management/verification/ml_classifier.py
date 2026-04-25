@@ -4,8 +4,10 @@ ML Classifier Service
 Loads sklearn classifiers trained via the ML Training Studio and
 predicts OK/NG on per-character crops (each bbox = 1 character).
 
-Feature extraction MUST match backend/app/services/ml_training_service.py
-(1120-dim: 32x32 pixels + Sobel histograms + H/V projections).
+Feature extraction MUST stay in sync with
+backend/app/services/ml_training_service.py:
+  - v1: 856-dim (legacy bundles without goldens)
+  - v2: 1016-dim = 856 base + 160 diff-vs-golden
 """
 
 import logging
@@ -25,7 +27,8 @@ logger = logging.getLogger(__name__)
 FEAT_SIZE = (48, 48)
 GRID = 6
 CELL_SIZE = FEAT_SIZE[0] // GRID
-FEAT_DIM = 576 + 144 + 32 + 96 + 8   # 856
+FEAT_DIM = 576 + 144 + 32 + 96 + 8   # v1 = 856
+FEAT_DIM_V2 = FEAT_DIM + 160          # v2 = 1016
 
 
 def _to_gray(img: np.ndarray) -> np.ndarray:
@@ -104,6 +107,87 @@ def extract_features(char_img: np.ndarray) -> np.ndarray:
     return np.concatenate([pixels, cell_arr, hist_gx, hist_gy, h_proj, v_proj, quad_arr])
 
 
+# ───────────────────────── Golden template (v2) — port from BE ─────────────
+
+def preprocess_canonical(img: np.ndarray) -> np.ndarray:
+    """Gray → CLAHE → resize keep aspect → center-pad 48×48. Matches BE."""
+    gray = _to_gray(img)
+    h, w = gray.shape[:2]
+    if h == 0 or w == 0:
+        return np.zeros(FEAT_SIZE[::-1], dtype=np.uint8)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    normed = clahe.apply(gray)
+    scale = min(FEAT_SIZE[0] / w, FEAT_SIZE[1] / h)
+    nw = max(1, int(w * scale))
+    nh = max(1, int(h * scale))
+    resized = cv2.resize(normed, (nw, nh), interpolation=cv2.INTER_AREA)
+    canvas = np.zeros(FEAT_SIZE[::-1], dtype=np.uint8)
+    yo = (FEAT_SIZE[1] - nh) // 2
+    xo = (FEAT_SIZE[0] - nw) // 2
+    canvas[yo:yo + nh, xo:xo + nw] = resized
+    return canvas
+
+
+def align_to_golden(input_48: np.ndarray, golden_48: np.ndarray, search: int = 5) -> np.ndarray:
+    """±search-px template match → apply best shift. Returns aligned 48×48."""
+    padded = cv2.copyMakeBorder(
+        input_48, search, search, search, search, cv2.BORDER_REPLICATE,
+    )
+    result = cv2.matchTemplate(padded, golden_48, cv2.TM_CCOEFF_NORMED)
+    _, _, _, (mx, my) = cv2.minMaxLoc(result)
+    dx, dy = mx - search, my - search
+    M = np.float32([[1, 0, dx], [0, 1, dy]])
+    return cv2.warpAffine(
+        input_48, M, FEAT_SIZE,
+        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE,
+    )
+
+
+def extract_diff_features(diff_48: np.ndarray) -> np.ndarray:
+    """160-dim diff features: 6×6 grid × 4 stats (144) + 4×4 region max (16)."""
+    feats: List[float] = []
+    # 6×6 grid × 4 stats: mean, max, std, count(>30)
+    for i in range(GRID):
+        for j in range(GRID):
+            y0, y1 = i * CELL_SIZE, (i + 1) * CELL_SIZE
+            x0, x1 = j * CELL_SIZE, (j + 1) * CELL_SIZE
+            cell = diff_48[y0:y1, x0:x1]
+            feats.append(float(cell.mean()) / 255.0)
+            feats.append(float(cell.max()) / 255.0)
+            feats.append(float(cell.std()) / 128.0)
+            feats.append(float(np.count_nonzero(cell > 30)) / (CELL_SIZE * CELL_SIZE))
+    # 4×4 region × 1 stat: max
+    region_sz = FEAT_SIZE[0] // 4
+    for i in range(4):
+        for j in range(4):
+            y0, y1 = i * region_sz, (i + 1) * region_sz
+            x0, x1 = j * region_sz, (j + 1) * region_sz
+            feats.append(float(diff_48[y0:y1, x0:x1].max()) / 255.0)
+    return np.asarray(feats, dtype=np.float32)
+
+
+def extract_features_v2(
+    char_img: np.ndarray,
+    char_id: Optional[str],
+    goldens: Optional[Dict[str, np.ndarray]],
+) -> np.ndarray:
+    """
+    1016-dim v2 features: 856 base (on aligned input) + 160 diff vs golden.
+    When char_id missing or no golden → diff features = zeros (still 1016-dim).
+    """
+    canvas = preprocess_canonical(char_img)
+    diff_feats: np.ndarray
+    if char_id and goldens and char_id in goldens:
+        aligned = align_to_golden(canvas, goldens[char_id])
+        diff = np.abs(aligned.astype(np.int16) - goldens[char_id].astype(np.int16)).astype(np.uint8)
+        base = extract_features(aligned)
+        diff_feats = extract_diff_features(diff)
+    else:
+        base = extract_features(canvas)
+        diff_feats = np.zeros(160, dtype=np.float32)
+    return np.concatenate([base, diff_feats])
+
+
 class MLClassifierService:
     """
     Loads and caches sklearn classifiers from disk, predicts OK/NG
@@ -137,8 +221,15 @@ class MLClassifierService:
     def _model_path(self, project_id: str, model_id: str) -> Path:
         return self.ml_base_dir / project_id / "models" / f"{model_id}.joblib"
 
-    def load_model(self, project_id: str, model_id: str) -> Optional[Any]:
-        """Load classifier from disk (cached). Returns None if missing."""
+    def load_model(self, project_id: str, model_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Load model bundle from disk (cached). Returns a dict with keys:
+            clf            — sklearn classifier
+            goldens        — {char_id: 48×48 uint8} per-char templates (may be empty)
+            feat_version   — 'v1' or 'v2'
+        Legacy joblibs that stored the raw classifier directly are wrapped
+        into the same shape so callers can ignore the format difference.
+        """
         key = (project_id, model_id)
         with self._lock:
             if key in self._cache:
@@ -150,13 +241,24 @@ class MLClassifierService:
                 return None
 
             try:
-                clf = joblib.load(str(path))
-                self._cache[key] = clf
+                data = joblib.load(str(path))
+                if isinstance(data, dict) and ('clf' in data or 'goldens' in data):
+                    bundle = {
+                        'clf':           data.get('clf'),
+                        'goldens':       data.get('goldens') or {},
+                        'feat_version':  data.get('feat_version', 'v2'),
+                    }
+                else:
+                    # Legacy: raw classifier
+                    bundle = {'clf': data, 'goldens': {}, 'feat_version': 'v1'}
+                self._cache[key] = bundle
                 logger.info(
                     f"ML model loaded: project={project_id}, model={model_id}, "
-                    f"type={type(clf).__name__}"
+                    f"feat_version={bundle['feat_version']}, "
+                    f"goldens={len(bundle['goldens'])}, "
+                    f"clf_type={type(bundle['clf']).__name__}"
                 )
-                return clf
+                return bundle
             except Exception as e:
                 logger.error(f"Failed to load ML model {path}: {e}")
                 return None
@@ -175,9 +277,15 @@ class MLClassifierService:
         conf_threshold: float,
         serial_number: str = "",
         annotation_idx: int = -1,
+        char_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Predict OK/NG on a single-character region crop.
+
+        Args:
+            char_id: identity of the character ('L', '0'...). Required for
+                v2 models — picks the matching golden template for diff-based
+                feature extraction. None / unknown char → falls back to v1.
 
         Returns:
             {
@@ -200,8 +308,8 @@ class MLClassifierService:
         }
 
         try:
-            clf = self.load_model(project_id, model_id)
-            if clf is None:
+            bundle = self.load_model(project_id, model_id)
+            if bundle is None:
                 result['error'] = 'model_not_found'
                 return result
 
@@ -209,7 +317,15 @@ class MLClassifierService:
                 result['error'] = 'empty_region'
                 return result
 
-            feat = extract_features(region_img).reshape(1, -1)
+            clf = bundle['clf']
+            goldens = bundle['goldens']
+            feat_version = bundle['feat_version']
+
+            if feat_version == 'v2':
+                feat = extract_features_v2(region_img, char_id, goldens).reshape(1, -1)
+            else:
+                feat = extract_features(region_img).reshape(1, -1)
+
             proba = clf.predict_proba(feat)[0]
             p_ok = float(proba[1]) if len(proba) > 1 else float(proba[0])
             label = "OK" if p_ok >= conf_threshold else "NG"
@@ -260,7 +376,10 @@ class MLClassifierService:
 
         Input item shape:
             {'region_img', 'project_id', 'model_id', 'conf_threshold',
-             'serial_number', 'annotation_idx'}
+             'serial_number', 'annotation_idx', 'char_id'?}
+
+        `char_id` is required for v2 models (picks the matching golden
+        template); v1 models ignore it.
 
         Returns a list parallel to `items` with one result dict each
         (same shape as classify_region's return).
@@ -278,9 +397,9 @@ class MLClassifierService:
 
         for (pid, mid), idxs in groups.items():
             t0 = time.perf_counter()
-            clf = self.load_model(pid, mid)
+            bundle = self.load_model(pid, mid)
 
-            if clf is None:
+            if bundle is None:
                 for i in idxs:
                     item = items[i]
                     results[i] = {
@@ -293,6 +412,10 @@ class MLClassifierService:
                         'error': 'model_not_found',
                     }
                 continue
+
+            clf = bundle['clf']
+            goldens = bundle['goldens']
+            use_v2 = (bundle['feat_version'] == 'v2')
 
             # Feature extraction (Python loop but cheap per-item: ~1-3ms)
             feats_list: List[np.ndarray] = []
@@ -311,7 +434,10 @@ class MLClassifierService:
                         'error': 'empty_region',
                     }
                     continue
-                feats_list.append(extract_features(region))
+                if use_v2:
+                    feats_list.append(extract_features_v2(region, item.get('char_id'), goldens))
+                else:
+                    feats_list.append(extract_features(region))
                 valid_idxs.append(i)
 
             if not valid_idxs:

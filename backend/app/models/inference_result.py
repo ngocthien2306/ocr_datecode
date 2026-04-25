@@ -55,7 +55,11 @@ class FrameResult(BaseModel):
     )
     text_verification: Optional[Dict[str, Any]] = Field(
         None,
-        description="Text verification results for Check_Type_Product function"
+        description="Text/datecode OCR verification results"
+    )
+    char_verification: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Char-level ML verification results (per-char OK/NG)"
     )
     template_verification: Optional[Dict[str, Any]] = Field(
         None, 

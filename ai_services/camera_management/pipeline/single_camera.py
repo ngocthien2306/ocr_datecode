@@ -272,7 +272,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                         sim_original_bboxes = matcher.other_bboxes
 
                     t_ocr_start = time.perf_counter()
-                    text_verification = context.text_verification_service.verify_text_regions(
+                    verification = context.text_verification_service.verify_text_regions(
                         frame_img=frame,
                         transformed_bboxes=frame_result['transformed_bboxes'],
                         expected_texts=frame_expected_texts,
@@ -281,24 +281,34 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                         original_bboxes=sim_original_bboxes,
                     )
                     t_ocr_ms = (time.perf_counter() - t_ocr_start) * 1000
+                    text_verification = verification.get('text') or {}
+                    char_verification = verification.get('char') or {}
                     frame_result['text_verification'] = text_verification
+                    frame_result['char_verification'] = char_verification
 
-                    # Update bboxes with recognized text
+                    # Update bboxes with recognized text (text/datecode only)
                     context.text_verification_service.update_bboxes_with_recognized_text(
                         frame_result['transformed_bboxes'],
                         text_verification
                     )
 
                     # Mark failed text bboxes with verification_status
-                    if text_verification and text_verification.get('results'):
-                        for text_result in text_verification['results']:
-                            annotation_idx = text_result.get('annotation_idx')
-                            if annotation_idx is not None and not text_result.get('match', False):
-                                # Find bbox with this annotation_index and mark as fail
-                                for bbox in frame_result['transformed_bboxes']:
-                                    if (bbox.get('type')in ['text', 'datecode'] and
-                                        bbox.get('annotation_index') == annotation_idx):
-                                        bbox['verification_status'] = 'fail'
+                    for text_result in text_verification.get('results', []):
+                        annotation_idx = text_result.get('annotation_idx')
+                        if annotation_idx is not None and not text_result.get('match', False):
+                            for bbox in frame_result['transformed_bboxes']:
+                                if (bbox.get('type') in ['text', 'datecode'] and
+                                    bbox.get('annotation_index') == annotation_idx):
+                                    bbox['verification_status'] = 'fail'
+
+                    # Mark failed char bboxes with verification_status
+                    for char_result in char_verification.get('results', []):
+                        annotation_idx = char_result.get('annotation_idx')
+                        if annotation_idx is not None and not char_result.get('match', False):
+                            for bbox in frame_result['transformed_bboxes']:
+                                if (bbox.get('type') == 'char' and
+                                    bbox.get('annotation_index') == annotation_idx):
+                                    bbox['verification_status'] = 'fail'
 
             # Template verification
             if (result.get('success') and
@@ -357,16 +367,18 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             )
             frame_result['timings'] = timings
 
-            # Determine final pass/fail
+            # Determine final pass/fail (text AND char both must pass)
             text_ok = (frame_result['text_verification'] is None or
                       frame_result['text_verification'].get('all_match', True))
+            char_ok = (frame_result.get('char_verification') is None or
+                      frame_result['char_verification'].get('all_match', True))
             template_ok = (frame_result['template_verification'] is None or
                          frame_result['template_verification'].get('match', True))
             product_ok = (frame_result['product_verification'] is None or
                          frame_result['product_verification'].get('skipped', True) or
                          frame_result['product_verification'].get('match', True))
 
-            if not (text_ok and template_ok and product_ok):
+            if not (text_ok and char_ok and template_ok and product_ok):
                 frame_result['result'] = 'FAIL'
 
             verified_frames.append(frame_result)

@@ -35,6 +35,7 @@ class FrameResult:
     image_base64: Optional[str] = None
     timings: Optional[Dict] = None
     text_verification: Optional[Dict] = None
+    char_verification: Optional[Dict] = None
     template_verification: Optional[Dict] = None
     product_verification: Optional[Dict] = None
 
@@ -49,6 +50,7 @@ class FrameResult:
             "image_base64": self.image_base64,
             "timings": self.timings,
             "text_verification": self.text_verification,
+            "char_verification": self.char_verification,
             "template_verification": self.template_verification,
             "product_verification": self.product_verification
         }
@@ -87,6 +89,7 @@ class FrameResultBuilder:
         self._image_base64 = None
         self._timings = None
         self._text_verification = None
+        self._char_verification = None
         self._template_verification = None
         self._product_verification = None
         self._crop_area = None
@@ -118,6 +121,11 @@ class FrameResultBuilder:
     def with_text_verification(self, verification: Optional[Dict]) -> 'FrameResultBuilder':
         """Set text verification result"""
         self._text_verification = verification
+        return self
+
+    def with_char_verification(self, verification: Optional[Dict]) -> 'FrameResultBuilder':
+        """Set char (ML) verification result"""
+        self._char_verification = verification
         return self
 
     def with_template_verification(self, verification: Optional[Dict]) -> 'FrameResultBuilder':
@@ -213,6 +221,7 @@ class FrameResultBuilder:
             image_base64=self._image_base64,
             timings=self._timings,
             text_verification=self._text_verification,
+            char_verification=self._char_verification,
             template_verification=self._template_verification,
             product_verification=self._product_verification
         )
@@ -522,6 +531,8 @@ class InferenceResultBuilder:
                         frame_data.get('timings')
                     ).with_text_verification(
                         frame_data.get('text_verification')
+                    ).with_char_verification(
+                        frame_data.get('char_verification')
                     ).with_template_verification(
                         frame_data.get('template_verification')
                     ).with_product_verification(
@@ -539,6 +550,8 @@ class InferenceResultBuilder:
                         camera_inference.get('timings')
                     ).with_text_verification(
                         camera_inference.get('text_verification')
+                    ).with_char_verification(
+                        camera_inference.get('char_verification')
                     ).with_template_verification(
                         camera_inference.get('template_verification')
                     ).with_product_verification(

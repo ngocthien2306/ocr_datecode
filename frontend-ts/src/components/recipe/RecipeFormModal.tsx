@@ -1198,10 +1198,18 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           errors.push(`Camera ${cameraId} - ${template.name}: Must have at least one annotation (text, barcode, or datecode)`);
         }
         
-        // Validate text field for text and datecode annotations
+        // Validate text field per annotation type
         template.annotations.forEach((ann: any, annIdx: number) => {
-          if ((ann.type === 'text' || ann.type === 'datecode') && (!ann.text || ann.text.trim() === '')) {
+          const txt = (ann.text || '').trim();
+          if ((ann.type === 'text' || ann.type === 'datecode') && !txt) {
             errors.push(`Camera ${cameraId} - ${template.name} - BBox #${annIdx + 1}: "${ann.type}" annotation requires text content`);
+          }
+          if (ann.type === 'char') {
+            if (!txt) {
+              errors.push(`Camera ${cameraId} - ${template.name} - BBox #${annIdx + 1}: "char" annotation requires expected character`);
+            } else if (txt.length > 1) {
+              errors.push(`Camera ${cameraId} - ${template.name} - BBox #${annIdx + 1}: "char" must be exactly one character (got "${txt}")`);
+            }
           }
         });
       });
@@ -1814,9 +1822,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                     ⚠️ Missing: {mlCoverage.missing.map(c => `"${c}"`).join(', ')}
                                   </span>
                                   <br />
-                                  <small style={{ color: '#9ca3af' }}>
+                                  {/* <small style={{ color: '#9ca3af' }}>
                                     ML check sẽ bị SKIP cho các bbox có chars này. Label & retrain project nếu cần full coverage.
-                                  </small>
+                                  </small> */}
                                 </div>
                               )}
                               {mlCoverage.missing.length === 0 && (

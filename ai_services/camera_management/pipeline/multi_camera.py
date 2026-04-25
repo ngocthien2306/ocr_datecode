@@ -243,6 +243,11 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                 matcher = matcher[0]
             frames = context.results.get(serial_number, {}).get('frames', [])
 
+            # batch_verify_multi_camera now returns {serial: {text: {...}, char: {...}}}
+            verification = batch_ocr_results.get(serial_number) or {}
+            text_verification = verification.get('text')
+            char_verification = verification.get('char')
+
             camera_result = {
                 'result': 'PASS' if result.get('success') else 'FAIL',
                 'confidence': float(result.get('confidence', 0.0)),
@@ -250,28 +255,35 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                 'total_matches': int(result.get('total_matches', 0)),
                 'timings': result.get('timings', {}),
                 'transformed_bboxes': result.get('transformed_bboxes', []),
-                'text_verification': batch_ocr_results.get(serial_number),
+                'text_verification': text_verification,
+                'char_verification': char_verification,
                 'template_verification': None
             }
 
-            # Update bboxes with recognized text
-            if camera_result['text_verification'] and context.text_verification_service:
+            # Update bboxes with recognized text (text/datecode only)
+            if text_verification and context.text_verification_service:
                 context.text_verification_service.update_bboxes_with_recognized_text(
                     camera_result['transformed_bboxes'],
-                    camera_result['text_verification']
+                    text_verification
                 )
 
-                # Mark failed text bboxes with verification_status
-                text_verification = camera_result['text_verification']
-                if text_verification and text_verification.get('results'):
-                    for text_result in text_verification['results']:
-                        annotation_idx = text_result.get('annotation_idx')
-                        if annotation_idx is not None and not text_result.get('match', False):
-                            # Find bbox with this annotation_index and mark as fail
-                            for bbox in camera_result['transformed_bboxes']:
-                                if (bbox.get('type') in ['text', 'datecode'] and
-                                    bbox.get('annotation_index') == annotation_idx):
-                                    bbox['verification_status'] = 'fail'
+                for text_result in text_verification.get('results', []):
+                    annotation_idx = text_result.get('annotation_idx')
+                    if annotation_idx is not None and not text_result.get('match', False):
+                        for bbox in camera_result['transformed_bboxes']:
+                            if (bbox.get('type') in ['text', 'datecode'] and
+                                bbox.get('annotation_index') == annotation_idx):
+                                bbox['verification_status'] = 'fail'
+
+            # Mark failed char bboxes with verification_status
+            if char_verification:
+                for char_result in char_verification.get('results', []):
+                    annotation_idx = char_result.get('annotation_idx')
+                    if annotation_idx is not None and not char_result.get('match', False):
+                        for bbox in camera_result['transformed_bboxes']:
+                            if (bbox.get('type') == 'char' and
+                                bbox.get('annotation_index') == annotation_idx):
+                                bbox['verification_status'] = 'fail'
 
             # Template verification (UPDATED - use batch results)
             camera_result['template_verification'] = None
@@ -317,16 +329,18 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             )
             camera_result['timings'] = timings
 
-            # Determine pass/fail
+            # Determine pass/fail (text AND char both must pass)
             text_ok = (camera_result['text_verification'] is None or
                       camera_result['text_verification'].get('all_match', True))
+            char_ok = (camera_result.get('char_verification') is None or
+                      camera_result['char_verification'].get('all_match', True))
             template_ok = (camera_result['template_verification'] is None or
                          camera_result['template_verification'].get('match', True))
             product_ok = (camera_result['product_verification'] is None or
                          camera_result['product_verification'].get('skipped', True) or
                          camera_result['product_verification'].get('match', True))
 
-            if not (text_ok and template_ok and product_ok) or not result.get('success'):
+            if not (text_ok and char_ok and template_ok and product_ok) or not result.get('success'):
                 camera_result['result'] = 'FAIL'
                 overall = 'FAIL'
 

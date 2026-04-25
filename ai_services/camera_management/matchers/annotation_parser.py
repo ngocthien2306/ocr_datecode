@@ -72,7 +72,9 @@ class AnnotationParser:
                 if bbox:
                     other_bboxes.append(bbox)
 
-            elif ann_type in ["text", "barcode", "datecode"]:
+            elif ann_type in ["text", "barcode", "datecode", "char"]:
+                # `char` shares the same schema (rectangle + text=expected_char).
+                # text/datecode → OCR; char → ML predict (handled by verifier).
                 bbox = AnnotationParser._parse_text_bbox(
                     ann, ann_idx, img_width, img_height, ann_type
                 )

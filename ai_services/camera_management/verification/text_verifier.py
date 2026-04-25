@@ -381,20 +381,20 @@ class TextVerificationService:
         self,
         ocr_items: List[Dict[str, Any]],
         sim_items: List[Dict[str, Any]],
-        ml_items: List[Dict[str, Any]],
         case_sensitive: bool = True,
     ) -> Dict[Tuple[str, int], Dict[str, Any]]:
         """
-        Batch OCR across all items, run sim+ML checks in parallel, merge,
-        and apply augment retry for failed regions.
+        Batch OCR across all text/datecode items, run similarity check in
+        parallel, merge, and apply augment retry for failed regions.
+
+        ML predictions are NOT mixed in here — `char` annotations get their
+        own classify-only path (`_run_char_ml_batch`).
 
         Item dict shapes:
           ocr_items: serial_number, annotation_idx, conf_threshold,
                      expected_text, cropped_region
           sim_items: serial_number, annotation_idx, conf_threshold,
                      frame_img, template_img, transformed_points, original_points
-          ml_items:  serial_number, annotation_idx, conf_threshold,
-                     frame_img, transformed_points, ml_project_id, ml_model_id
 
         Returns: {(serial_number, annotation_idx) -> region_result}
         """
@@ -446,41 +446,6 @@ class TextVerificationService:
             sim_executor_outer = ThreadPoolExecutor(max_workers=1)
             sim_future = sim_executor_outer.submit(_run_all_sim)
 
-        # --- Launch ML future (parallel with OCR) ---
-        ml_results_map: Dict[Tuple[str, int], Dict[str, Any]] = {}
-        ml_future = None
-        ml_executor_outer = None
-        if ml_items:
-            logger.info(f"ML classify ENABLED: {len(ml_items)} regions (batched)")
-
-            def _run_all_ml():
-                t_ml_start = time.perf_counter()
-                # Build classify_batch input: use the already-cropped region
-                # from _build_items_for_camera so we don't re-warp.
-                batch_input = [
-                    {
-                        'region_img': m['cropped_region'],
-                        'project_id': m['ml_project_id'],
-                        'model_id': m['ml_model_id'],
-                        'conf_threshold': m['conf_threshold'],
-                        'serial_number': m['serial_number'],
-                        'annotation_idx': m['annotation_idx'],
-                    }
-                    for m in ml_items
-                ]
-                results_list = self.ml_classifier_service.classify_batch(batch_input)
-                out: Dict[Tuple[str, int], Dict[str, Any]] = {}
-                for m, r in zip(ml_items, results_list):
-                    out[(m['serial_number'], m['annotation_idx'])] = r
-                t_ml_total = (time.perf_counter() - t_ml_start) * 1000
-                logger.info(
-                    f"ML classify ALL complete: {len(ml_items)} regions in {t_ml_total:.1f}ms"
-                )
-                return out
-
-            ml_executor_outer = ThreadPoolExecutor(max_workers=1)
-            ml_future = ml_executor_outer.submit(_run_all_ml)
-
         # --- Batch OCR on main thread (auto-chunk by engine max_batch) ---
         crops = [it['cropped_region'] for it in ocr_items]
         max_batch = self._get_max_batch()
@@ -516,9 +481,6 @@ class TextVerificationService:
             if sim_future:
                 sim_future.cancel()
                 sim_executor_outer.shutdown(wait=False)
-            if ml_future:
-                ml_future.cancel()
-                ml_executor_outer.shutdown(wait=False)
             return {
                 (it['serial_number'], it['annotation_idx']): {
                     'annotation_idx': it['annotation_idx'],
@@ -541,18 +503,9 @@ class TextVerificationService:
             finally:
                 sim_executor_outer.shutdown(wait=False)
 
-        if ml_future:
-            try:
-                ml_results_map = ml_future.result(timeout=10)
-            except Exception as e:
-                logger.error(f"ML future error: {e}")
-            finally:
-                ml_executor_outer.shutdown(wait=False)
-
-        # --- Merge per-region: pick candidate → augment retry → sim → ml ---
+        # --- Merge per-region: pick candidate → augment retry → sim ---
         region_map: Dict[Tuple[str, int], Dict[str, Any]] = {}
         has_sim = bool(sim_items)
-        has_ml = bool(ml_items)
 
         for item, ocr_res in zip(ocr_items, ocr_results):
             serial = item['serial_number']
@@ -637,27 +590,59 @@ class TextVerificationService:
                     region['similarity'] = None
                     region['char_results'] = []
 
-            # Merge ML
-            if has_ml:
-                ml_res = ml_results_map.get(key)
-                if ml_res:
-                    region['ml_pass'] = bool(ml_res['ml_pass'])
-                    region['ml_p_ok'] = float(ml_res.get('p_ok', 0.0))
-                    region['ml_label'] = ml_res.get('label', 'NG')
-                    region['match'] = bool(region['match'] and ml_res['ml_pass'])
-                    logger.info(
-                        f"[{serial}] Annotation {ann_idx}: FINAL match={region['match']}, "
-                        f"ml_pass={ml_res['ml_pass']}, ml_label={ml_res.get('label')}, "
-                        f"p_ok={ml_res.get('p_ok', 0.0):.4f}"
-                    )
-                else:
-                    region['ml_pass'] = None
-                    region['ml_p_ok'] = None
-                    region['ml_label'] = None
-
             region_map[key] = region
 
         return region_map
+
+    # ── Char ML batch path ──
+
+    def _run_char_ml_batch(
+        self,
+        char_items: List[Dict[str, Any]],
+    ) -> Dict[Tuple[str, int], Dict[str, Any]]:
+        """
+        Classify-only path for `char` annotations.
+
+        Each char_item carries: serial_number, annotation_idx, conf_threshold,
+        cropped_region, expected_text (the char), ml_project_id, ml_model_id.
+
+        Returns: {(serial, ann_idx) → region_result} with ML-style fields
+        suitable for the char_verification frame field.
+        """
+        if not char_items or not self.ml_classifier_service:
+            return {}
+
+        t0 = time.perf_counter()
+        batch_input = [
+            {
+                'region_img':     m['cropped_region'],
+                'project_id':     m['ml_project_id'],
+                'model_id':       m['ml_model_id'],
+                'conf_threshold': m['conf_threshold'],
+                'serial_number':  m['serial_number'],
+                'annotation_idx': m['annotation_idx'],
+                'char_id':        m.get('expected_text'),   # picks matching golden
+            }
+            for m in char_items
+        ]
+        results = self.ml_classifier_service.classify_batch(batch_input)
+
+        out: Dict[Tuple[str, int], Dict[str, Any]] = {}
+        for m, r in zip(char_items, results):
+            key = (m['serial_number'], m['annotation_idx'])
+            ml_pass = bool(r.get('ml_pass', False))
+            out[key] = {
+                'annotation_idx': int(m['annotation_idx']),
+                'expected':       m.get('expected_text', ''),
+                'match':          ml_pass,
+                'ml_label':       r.get('label', 'NG'),
+                'ml_p_ok':        float(r.get('p_ok', 0.0)),
+                'threshold':      float(m['conf_threshold']),
+                'error':          r.get('error'),
+            }
+        elapsed = (time.perf_counter() - t0) * 1000
+        logger.info(f"Char ML batch: {len(char_items)} regions in {elapsed:.1f}ms")
+        return out
 
     # ── Helper: build ocr/sim/ml items from a single (camera, template) context ──
 
@@ -710,11 +695,20 @@ class TextVerificationService:
         template_img: Optional[np.ndarray],
         original_bboxes: Optional[List[Dict[str, Any]]],
     ):
-        """Return (ocr_items, sim_items, ml_items, text_bboxes) for one camera/template."""
-        text_bboxes = [
-            b for b in transformed_bboxes
-            if b.get('type') in ['text', 'datecode']
-        ]
+        """
+        Build per-(camera, template) items for the two independent paths:
+
+          OCR path  — text/datecode bboxes → ocr_items + sim_items
+          ML path   — char bboxes (when camera has ml_project_id/model_id)
+                       → char_items
+                     Skipped entirely if camera has no ML model assigned.
+
+        Returns
+            (ocr_items, sim_items, char_items,
+             text_bboxes, char_bboxes, invalid_map)
+        """
+        text_bboxes = [b for b in transformed_bboxes if b.get('type') in ['text', 'datecode']]
+        char_bboxes = [b for b in transformed_bboxes if b.get('type') == 'char']
 
         use_sim_task = self.use_sim_check and template_img is not None
         original_bbox_map: Dict[int, Dict[str, Any]] = {}
@@ -731,9 +725,10 @@ class TextVerificationService:
 
         ocr_items: List[Dict[str, Any]] = []
         sim_items: List[Dict[str, Any]] = []
-        ml_items: List[Dict[str, Any]] = []
+        char_items: List[Dict[str, Any]] = []
         invalid_map: Dict[Tuple[str, int], Dict[str, Any]] = {}
 
+        # ── OCR path: text / datecode ──
         for bbox in text_bboxes:
             ann_idx = bbox.get('annotation_index')
             if ann_idx is None:
@@ -744,18 +739,12 @@ class TextVerificationService:
             conf_threshold = bbox.get('conf', 0.8)
             expected_text = expected_texts.get(ann_idx, '')
 
-            # Pre-crop sanity check: skip bogus bboxes from bad homography
             is_valid, reason = self._validate_text_bbox(points, frame_img.shape)
             if not is_valid:
-                logger.warning(
-                    f"[{serial_number}] Ann {ann_idx}: skipping OCR ({reason})"
-                )
+                logger.warning(f"[{serial_number}] Ann {ann_idx}: skipping OCR ({reason})")
                 invalid_map[(serial_number, ann_idx)] = {
-                    'annotation_idx': int(ann_idx),
-                    'expected': expected_text,
-                    'recognized': '',
-                    'match': False,
-                    'confidence': 0.0,
+                    'annotation_idx': int(ann_idx), 'expected': expected_text,
+                    'recognized': '', 'match': False, 'confidence': 0.0,
                     'threshold': float(conf_threshold),
                     'error': f'invalid_bbox:{reason}',
                 }
@@ -766,11 +755,8 @@ class TextVerificationService:
             except Exception as e:
                 logger.error(f"[{serial_number}] Error cropping ann {ann_idx}: {e}")
                 invalid_map[(serial_number, ann_idx)] = {
-                    'annotation_idx': int(ann_idx),
-                    'expected': expected_text,
-                    'recognized': '',
-                    'match': False,
-                    'confidence': 0.0,
+                    'annotation_idx': int(ann_idx), 'expected': expected_text,
+                    'recognized': '', 'match': False, 'confidence': 0.0,
                     'threshold': float(conf_threshold),
                     'error': f'crop_failed:{e}',
                 }
@@ -778,8 +764,10 @@ class TextVerificationService:
 
             if self.save_debug_images:
                 try:
-                    debug_file = f"{self.debug_path}/cropped_region_{serial_number}_{ann_idx}.png"
-                    cv2.imwrite(debug_file, cropped)
+                    cv2.imwrite(
+                        f"{self.debug_path}/cropped_region_{serial_number}_{ann_idx}.png",
+                        cropped,
+                    )
                 except Exception as e_save:
                     logger.debug(f"[{serial_number}] Save debug crop failed: {e_save}")
 
@@ -795,27 +783,65 @@ class TextVerificationService:
                 orig_points = original_bbox_map[ann_idx].get('points', [])
                 if len(orig_points) >= 4:
                     sim_items.append({
-                        'frame_img': frame_img,
-                        'template_img': template_img,
-                        'transformed_points': points,
-                        'original_points': orig_points,
-                        'serial_number': serial_number,
-                        'annotation_idx': ann_idx,
+                        'frame_img': frame_img, 'template_img': template_img,
+                        'transformed_points': points, 'original_points': orig_points,
+                        'serial_number': serial_number, 'annotation_idx': ann_idx,
                         'conf_threshold': conf_threshold,
                     })
 
-            if use_ml_task:
-                # Reuse the already-computed crop to avoid warping twice.
-                ml_items.append({
-                    'cropped_region': cropped,
+        # ── ML path: char bboxes (only when camera has ML model) ──
+        if use_ml_task:
+            for bbox in char_bboxes:
+                ann_idx = bbox.get('annotation_index')
+                if ann_idx is None:
+                    continue
+                points = bbox.get('points', [])
+                if len(points) < 4:
+                    continue
+                conf_threshold = bbox.get('conf', 0.8)
+                expected_char = (bbox.get('text') or expected_texts.get(ann_idx, '') or '').strip()
+
+                if not expected_char:
+                    invalid_map[(serial_number, ann_idx)] = {
+                        'annotation_idx': int(ann_idx), 'expected': '',
+                        'match': False, 'ml_label': 'NG', 'ml_p_ok': 0.0,
+                        'threshold': float(conf_threshold),
+                        'error': 'no_expected_char',
+                    }
+                    continue
+
+                is_valid, reason = self._validate_text_bbox(points, frame_img.shape)
+                if not is_valid:
+                    invalid_map[(serial_number, ann_idx)] = {
+                        'annotation_idx': int(ann_idx), 'expected': expected_char,
+                        'match': False, 'ml_label': 'NG', 'ml_p_ok': 0.0,
+                        'threshold': float(conf_threshold),
+                        'error': f'invalid_bbox:{reason}',
+                    }
+                    continue
+
+                try:
+                    cropped = crop_text_region(frame_img, points)
+                except Exception as e:
+                    invalid_map[(serial_number, ann_idx)] = {
+                        'annotation_idx': int(ann_idx), 'expected': expected_char,
+                        'match': False, 'ml_label': 'NG', 'ml_p_ok': 0.0,
+                        'threshold': float(conf_threshold),
+                        'error': f'crop_failed:{e}',
+                    }
+                    continue
+
+                char_items.append({
                     'serial_number': serial_number,
                     'annotation_idx': ann_idx,
                     'conf_threshold': conf_threshold,
+                    'expected_text': expected_char,
+                    'cropped_region': cropped,
                     'ml_project_id': ml_project_id,
                     'ml_model_id': ml_model_id,
                 })
 
-        return ocr_items, sim_items, ml_items, text_bboxes, invalid_map
+        return ocr_items, sim_items, char_items, text_bboxes, char_bboxes, invalid_map
 
     # ── Public API: single camera (one template) ──
 
@@ -830,70 +856,95 @@ class TextVerificationService:
         original_bboxes: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
-        Verify text regions for a single (camera, template) invocation.
-        Uses batch OCR internally — no per-region looping.
+        Verify text + char regions for a single (camera, template) invocation.
+
+        Two independent paths:
+          - text/datecode  → OCR (+ optional similarity)
+          - char           → ML predict (per-char golden-aware)
+
+        Returns:
+            {
+              'text': {'all_match': bool, 'results': [...]},
+              'char': {'all_match': bool, 'results': [...]},
+            }
+        Frame-level pass = `text.all_match AND char.all_match`.
+        Both sub-results have `all_match=True` when they have no items.
         """
+        empty_pass = {'all_match': True, 'results': []}
         if not self.is_available:
             logger.warning("OCR model not available, skipping text verification")
-            return {'all_match': False, 'results': []}
+            return {'text': {'all_match': False, 'results': []}, 'char': empty_pass}
 
         serial_number = camera.serial_number
 
-        ocr_items, sim_items, ml_items, text_bboxes, invalid_map = self._build_items_for_camera(
-            serial_number=serial_number,
-            frame_img=frame_img,
-            transformed_bboxes=transformed_bboxes,
-            expected_texts=expected_texts,
-            camera=camera,
-            template_img=template_img,
-            original_bboxes=original_bboxes,
-        )
-
-        logger.info(f"[{serial_number}] Verifying {len(text_bboxes)} text regions")
-        logger.info(f"[{serial_number}] Expected texts dict: {expected_texts}")
-        logger.info(
-            f"[{serial_number}] Text bbox annotation indices: "
-            f"{[b.get('annotation_index') for b in text_bboxes]}"
-        )
-
-        n_invalid = len(invalid_map)
-        if n_invalid:
-            if n_invalid == len(text_bboxes):
-                logger.warning(
-                    f"[{serial_number}] ALL {n_invalid} bboxes invalid — "
-                    f"template likely mismatched. Skipping OCR batch."
-                )
-            else:
-                logger.info(
-                    f"[{serial_number}] {n_invalid}/{len(text_bboxes)} bboxes invalid, "
-                    f"OCR will skip those"
-                )
-
-        region_map: Dict[Tuple[str, int], Dict[str, Any]] = {}
-        if ocr_items:
-            region_map = self._run_ocr_batch_with_checks(
-                ocr_items, sim_items, ml_items, case_sensitive=True,
+        ocr_items, sim_items, char_items, text_bboxes, char_bboxes, invalid_map = (
+            self._build_items_for_camera(
+                serial_number=serial_number,
+                frame_img=frame_img,
+                transformed_bboxes=transformed_bboxes,
+                expected_texts=expected_texts,
+                camera=camera,
+                template_img=template_img,
+                original_bboxes=original_bboxes,
             )
-        region_map.update(invalid_map)
+        )
 
-        # Preserve original bbox order in results
-        results: List[Dict[str, Any]] = []
-        all_match = True
+        logger.info(
+            f"[{serial_number}] Verifying {len(text_bboxes)} text regions, "
+            f"{len(char_bboxes)} char regions"
+        )
+
+        # ── Text/datecode OCR path ──
+        text_region_map: Dict[Tuple[str, int], Dict[str, Any]] = {}
+        if ocr_items:
+            text_region_map = self._run_ocr_batch_with_checks(
+                ocr_items, sim_items, case_sensitive=True,
+            )
+        text_region_map.update(
+            (k, v) for k, v in invalid_map.items() if 'recognized' in v
+        )
+
+        text_results: List[Dict[str, Any]] = []
+        text_all_match = True
         for bbox in text_bboxes:
             ann_idx = bbox.get('annotation_index')
             if ann_idx is None:
                 continue
-            r = region_map.get((serial_number, ann_idx))
+            r = text_region_map.get((serial_number, ann_idx))
             if r is None:
                 continue
-            results.append(r)
+            text_results.append(r)
             if not r.get('match', False):
-                all_match = False
+                text_all_match = False
+        if text_bboxes and not text_results:
+            text_all_match = False
 
-        if not results:
-            all_match = False
+        # ── Char ML path ──
+        char_region_map = self._run_char_ml_batch(char_items)
+        char_region_map.update(
+            (k, v) for k, v in invalid_map.items() if 'ml_label' in v
+        )
 
-        return {'all_match': all_match, 'results': results}
+        char_results: List[Dict[str, Any]] = []
+        char_all_match = True
+        for bbox in char_bboxes:
+            ann_idx = bbox.get('annotation_index')
+            if ann_idx is None:
+                continue
+            r = char_region_map.get((serial_number, ann_idx))
+            if r is None:
+                continue
+            char_results.append(r)
+            if not r.get('match', False):
+                char_all_match = False
+        # No char items at all → pass (empty); some bboxes but no result → fail.
+        if char_bboxes and not char_results:
+            char_all_match = False
+
+        return {
+            'text': {'all_match': text_all_match, 'results': text_results},
+            'char': {'all_match': char_all_match, 'results': char_results},
+        }
 
     # ── Public API: multi camera batch ──
 
@@ -914,27 +965,31 @@ class TextVerificationService:
 
         ocr_items_all: List[Dict[str, Any]] = []
         sim_items_all: List[Dict[str, Any]] = []
-        ml_items_all: List[Dict[str, Any]] = []
+        char_items_all: List[Dict[str, Any]] = []
         invalid_map_all: Dict[Tuple[str, int], Dict[str, Any]] = {}
         text_bboxes_by_serial: Dict[str, List[Dict[str, Any]]] = {}
+        char_bboxes_by_serial: Dict[str, List[Dict[str, Any]]] = {}
 
         for task in ocr_tasks:
             serial_number = task['serial_number']
             logger.info(f"[{serial_number}] Collecting regions for batch OCR")
-            ocr_items, sim_items, ml_items, text_bboxes, invalid_map = self._build_items_for_camera(
-                serial_number=serial_number,
-                frame_img=task['frame_img'],
-                transformed_bboxes=task['transformed_bboxes'],
-                expected_texts=task['expected_texts'],
-                camera=task.get('camera'),
-                template_img=task.get('template_img'),
-                original_bboxes=task.get('original_bboxes', []),
+            ocr_items, sim_items, char_items, text_bboxes, char_bboxes, invalid_map = (
+                self._build_items_for_camera(
+                    serial_number=serial_number,
+                    frame_img=task['frame_img'],
+                    transformed_bboxes=task['transformed_bboxes'],
+                    expected_texts=task['expected_texts'],
+                    camera=task.get('camera'),
+                    template_img=task.get('template_img'),
+                    original_bboxes=task.get('original_bboxes', []),
+                )
             )
             ocr_items_all.extend(ocr_items)
             sim_items_all.extend(sim_items)
-            ml_items_all.extend(ml_items)
+            char_items_all.extend(char_items)
             invalid_map_all.update(invalid_map)
             text_bboxes_by_serial[serial_number] = text_bboxes
+            char_bboxes_by_serial[serial_number] = char_bboxes
 
             n_inv = len(invalid_map)
             if n_inv:
@@ -948,40 +1003,68 @@ class TextVerificationService:
                         f"[{serial_number}] {n_inv}/{len(text_bboxes)} bboxes invalid"
                     )
 
-        if not ocr_items_all and not invalid_map_all:
-            logger.warning("No valid text regions to process")
+        empty_pass = {'all_match': True, 'results': []}
+        if not ocr_items_all and not char_items_all and not invalid_map_all:
+            logger.warning("No valid text/char regions to process")
             return {
-                task['serial_number']: {'all_match': True, 'results': []}
-                for task in ocr_tasks
+                t['serial_number']: {'text': dict(empty_pass), 'char': dict(empty_pass)}
+                for t in ocr_tasks
             }
 
-        region_map: Dict[Tuple[str, int], Dict[str, Any]] = {}
+        # ── Run OCR + ML batches independently ──
+        text_region_map: Dict[Tuple[str, int], Dict[str, Any]] = {}
         if ocr_items_all:
-            region_map = self._run_ocr_batch_with_checks(
-                ocr_items_all, sim_items_all, ml_items_all, case_sensitive=True,
+            text_region_map = self._run_ocr_batch_with_checks(
+                ocr_items_all, sim_items_all, case_sensitive=True,
             )
-        region_map.update(invalid_map_all)
+        text_region_map.update(
+            (k, v) for k, v in invalid_map_all.items() if 'recognized' in v
+        )
 
-        camera_results = {
-            task['serial_number']: {'all_match': True, 'results': []}
-            for task in ocr_tasks
+        char_region_map = self._run_char_ml_batch(char_items_all)
+        char_region_map.update(
+            (k, v) for k, v in invalid_map_all.items() if 'ml_label' in v
+        )
+
+        # ── Assemble per-camera results preserving original bbox order ──
+        camera_results: Dict[str, Dict[str, Any]] = {
+            t['serial_number']: {'text': dict(empty_pass), 'char': dict(empty_pass)}
+            for t in ocr_tasks
         }
-        # Preserve original bbox order per camera
+
         for serial, text_bboxes in text_bboxes_by_serial.items():
-            any_result = False
+            results: List[Dict[str, Any]] = []
+            all_match = True
             for bbox in text_bboxes:
                 ann_idx = bbox.get('annotation_index')
                 if ann_idx is None:
                     continue
-                r = region_map.get((serial, ann_idx))
+                r = text_region_map.get((serial, ann_idx))
                 if r is None:
                     continue
-                any_result = True
-                camera_results[serial]['results'].append(r)
+                results.append(r)
                 if not r.get('match', False):
-                    camera_results[serial]['all_match'] = False
-            if not any_result:
-                camera_results[serial]['all_match'] = False
+                    all_match = False
+            if text_bboxes and not results:
+                all_match = False
+            camera_results[serial]['text'] = {'all_match': all_match, 'results': results}
+
+        for serial, char_bboxes in char_bboxes_by_serial.items():
+            results = []
+            all_match = True
+            for bbox in char_bboxes:
+                ann_idx = bbox.get('annotation_index')
+                if ann_idx is None:
+                    continue
+                r = char_region_map.get((serial, ann_idx))
+                if r is None:
+                    continue
+                results.append(r)
+                if not r.get('match', False):
+                    all_match = False
+            if char_bboxes and not results:
+                all_match = False
+            camera_results[serial]['char'] = {'all_match': all_match, 'results': results}
 
         return camera_results
 

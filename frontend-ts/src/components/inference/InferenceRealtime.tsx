@@ -46,6 +46,21 @@ interface TextVerification {
   results: TextVerificationResult[];
 }
 
+interface CharVerificationResult {
+  annotation_idx: number;
+  expected: string;
+  match: boolean;
+  ml_label: string;          // 'OK' | 'NG'
+  ml_p_ok: number;
+  threshold: number;
+  error?: string | null;
+}
+
+interface CharVerification {
+  all_match: boolean;
+  results: CharVerificationResult[];
+}
+
 interface InferenceLog {
   id: string;
   timestamp: string;
@@ -97,6 +112,7 @@ interface FrameResult {
   timings?: any;
   detected_regions?: any[];
   text_verification?: TextVerification;
+  char_verification?: CharVerification;
   template_verification?: TemplateVerification;
   product_verification?: ProductVerification;
 }
@@ -755,12 +771,14 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
 
       setLogs(prev => [...prev, newLog].slice(-100)); // Keep last 100 logs
 
-      // Auto-expand if FAIL and has text verification
+      // Auto-expand if FAIL and has any verification details
       if (data.product_pass_fail === 'FAIL') {
-        const hasTextVerification = data.camera_results?.some((cam: CameraResult) =>
-          cam.frames.some((frame: FrameResult) => frame.text_verification)
+        const hasAnyVerification = data.camera_results?.some((cam: CameraResult) =>
+          cam.frames.some((frame: FrameResult) =>
+            frame.text_verification || frame.char_verification
+          )
         );
-        if (hasTextVerification) {
+        if (hasAnyVerification) {
           setExpandedLogs(prev => new Set(prev).add(newLog.id));
         }
       }
@@ -933,6 +951,15 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
   const hasTextVerification = (log: InferenceLog): boolean => {
     return log.inferenceResult?.camera_results?.some((cam) =>
       cam.frames.some((frame) => frame.text_verification)
+    ) || false;
+  };
+
+  // Helper: Check if log entry has char (ML) verification data
+  const hasCharVerification = (log: InferenceLog): boolean => {
+    return log.inferenceResult?.camera_results?.some((cam) =>
+      cam.frames.some((frame) =>
+        frame.char_verification && (frame.char_verification.results?.length ?? 0) > 0
+      )
     ) || false;
   };
 
@@ -1270,6 +1297,105 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                   </div>
                 )}
               </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // ── Char (ML) verification — per-character ML predictions ──
+  const renderCharVerificationTable = (cameraResult: CameraResult) => {
+    const framesWithChar = cameraResult.frames.filter(f => f.char_verification);
+    const cameraInfo = getCameraInfo(cameraResult.serial_number);
+    const displayName = cameraInfo ? cameraInfo.camera_id : cameraResult.serial_number;
+
+    if (framesWithChar.length === 0) return null;
+
+    return (
+      <div className="camera-verification-card">
+        <div className="camera-verification-header">
+          <div className="camera-info">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <rect x="2" y="7" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2"/>
+              <circle cx="12" cy="14" r="3" stroke="currentColor" strokeWidth="2"/>
+            </svg>
+            <span className="camera-serial"
+                  title={cameraInfo ? `${cameraInfo.location} (${cameraResult.serial_number})` : cameraResult.serial_number}>
+              {displayName}
+            </span>
+          </div>
+        </div>
+
+        {framesWithChar.map((frame) => {
+          const verification = frame.char_verification!;
+          const okCount = verification.results.filter(r => r.match).length;
+          const totalCount = verification.results.length;
+          const allMatch = verification.all_match;
+
+          return (
+            <div key={frame.frame_idx} className="frame-verification-section">
+              <div className="frame-verification-header">
+                <span className="frame-label">{frame.template_name || `Frame ${frame.frame_idx}`}</span>
+                <span className={`match-summary ${allMatch ? 'all-match' : 'has-mismatch'}`}>
+                  {okCount}/{totalCount} OK {allMatch ? '✓' : '✗'}
+                </span>
+              </div>
+
+              {/* Visual badge row — quick scan, color-coded */}
+              <div className="char-badge-row">
+                {verification.results.map((r) => (
+                  <span
+                    key={r.annotation_idx}
+                    className={`char-badge ${r.match ? 'ok' : 'ng'}`}
+                    title={`${r.expected} · ${r.ml_label} · ${(r.ml_p_ok * 100).toFixed(1)}%${r.error ? ` · ${r.error}` : ''}`}
+                  >
+                    {r.expected || '?'}
+                  </span>
+                ))}
+              </div>
+
+              {/* Detail table — only NG-rich frames need it; collapsed by default */}
+              {!allMatch && (
+                <div className="verification-table-wrapper">
+                  <table className="verification-table">
+                    <thead>
+                      <tr>
+                        <th className="col-region">#</th>
+                        <th className="col-expected">Char</th>
+                        <th className="col-match">ML</th>
+                        <th className="col-confidence">p_ok</th>
+                        <th className="col-confidence">Match</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {verification.results.map((r) => (
+                        <tr key={r.annotation_idx} className={r.match ? '' : 'mismatch-row'}>
+                          <td className="col-region">{r.annotation_idx}</td>
+                          <td className="col-expected" style={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                            {r.expected || '—'}
+                          </td>
+                          <td className="col-match">
+                            <span className={`match-icon ${r.ml_label === 'OK' ? 'match' : 'no-match'}`}>
+                              {r.ml_label}
+                            </span>
+                          </td>
+                          <td className="col-confidence">
+                            <span className={`confidence-value ${getConfidenceClass(r.ml_p_ok)}`}>
+                              {(r.ml_p_ok * 100).toFixed(1)}%
+                            </span>
+                          </td>
+                          <td className="col-confidence">
+                            <span className={`match-icon ${r.match ? 'match' : 'no-match'}`}>
+                              {r.match ? '✓' : '✗'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           );
         })}
@@ -1744,7 +1870,8 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
             ) : (
               <div className="log-list">
                 {logs.map((log) => {
-                  const hasVerification = hasTextVerification(log);
+                  const hasVerification = hasTextVerification(log) || hasCharVerification(log);
+                  const showChar = hasCharVerification(log);
                   const isExpanded = expandedLogs.has(log.id);
 
                   return (
@@ -1778,6 +1905,16 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                               </div>
                             ))}
                           </div>
+                          {showChar && (
+                            <div className="char-verification-section">
+                              <div className="verification-label">Character ML Inspection:</div>
+                              {log.inferenceResult.camera_results.map((cameraResult) => (
+                                <div key={cameraResult.serial_number}>
+                                  {renderCharVerificationTable(cameraResult)}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                           <div className="template-verification-section">
                             <div className="verification-label">Template Matching Details:</div>
                             {log.inferenceResult.camera_results.map((cameraResult) => (
