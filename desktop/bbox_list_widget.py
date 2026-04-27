@@ -12,8 +12,9 @@ class BBoxListWidget(QWidget):
     """Widget hiển thị danh sách bounding boxes"""
 
     # Signals
-    bboxSelected = pyqtSignal(object)  # Emit khi chọn bbox từ list
-    deleteRequested = pyqtSignal(object)  # Emit khi muốn xóa bbox
+    bboxSelected = pyqtSignal(object)
+    deleteRequested = pyqtSignal(object)
+    editCharsRequested = pyqtSignal(object)  # Emit khi muốn vẽ chars trong text region
 
     # Màu sắc cho từng loại
     BBOX_COLORS = {
@@ -64,6 +65,15 @@ class BBoxListWidget(QWidget):
         # Buttons
         button_layout = QHBoxLayout()
 
+        self.edit_chars_btn = QPushButton("Edit chars…")
+        self.edit_chars_btn.setEnabled(False)
+        self.edit_chars_btn.setToolTip(
+            "Annotate per-character bboxes inside this region. Used to bypass "
+            "automatic segmentation during inference (more reliable per-char comparison)."
+        )
+        self.edit_chars_btn.clicked.connect(self.on_edit_chars_clicked)
+        button_layout.addWidget(self.edit_chars_btn)
+
         self.delete_btn = QPushButton("Delete")
         self.delete_btn.setObjectName("dangerButton")
         self.delete_btn.setEnabled(False)
@@ -87,10 +97,12 @@ class BBoxListWidget(QWidget):
             return
 
         for i, bbox in enumerate(self.bboxes):
-            # Tạo item text
             text = f"BBox #{i+1} - {bbox.bbox_type.upper()}"
             details = f"    Position: ({bbox.rect.x()}, {bbox.rect.y()})"
             details += f"\n    Size: {bbox.rect.width()} × {bbox.rect.height()}"
+            n_chars = len(getattr(bbox, 'chars', []) or [])
+            if n_chars > 0:
+                details += f"\n    Chars: {n_chars} ✓ (segmentation bypassed)"
 
             item = QListWidgetItem(f"{text}\n{details}")
             item.setData(Qt.UserRole, bbox.bbox_id)
@@ -116,40 +128,52 @@ class BBoxListWidget(QWidget):
     def on_item_clicked(self, item):
         """Xử lý khi click vào item"""
         bbox_id = item.data(Qt.UserRole)
-        # Tìm bbox tương ứng
         for bbox in self.bboxes:
             if bbox.bbox_id == bbox_id:
                 self.bboxSelected.emit(bbox)
                 self.delete_btn.setEnabled(True)
+                # Edit-chars only for text/datecode (not template/barcode/crop_area)
+                self.edit_chars_btn.setEnabled(
+                    bbox.bbox_type in ('text', 'datecode')
+                )
                 return
 
     def on_delete_clicked(self):
-        """Xử lý khi click nút delete"""
         current_item = self.list_widget.currentItem()
         if current_item:
             bbox_id = current_item.data(Qt.UserRole)
-            # Tìm bbox tương ứng
             for bbox in self.bboxes:
                 if bbox.bbox_id == bbox_id:
                     self.deleteRequested.emit(bbox)
                     return
 
+    def on_edit_chars_clicked(self):
+        current_item = self.list_widget.currentItem()
+        if current_item:
+            bbox_id = current_item.data(Qt.UserRole)
+            for bbox in self.bboxes:
+                if bbox.bbox_id == bbox_id:
+                    self.editCharsRequested.emit(bbox)
+                    return
+
     def select_bbox(self, bbox):
-        """Chọn bbox trong list"""
         if bbox is None:
             self.list_widget.clearSelection()
             self.delete_btn.setEnabled(False)
+            self.edit_chars_btn.setEnabled(False)
             return
 
-        # Tìm và select item tương ứng
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
             if item.data(Qt.UserRole) == bbox.bbox_id:
                 self.list_widget.setCurrentItem(item)
                 self.delete_btn.setEnabled(True)
+                self.edit_chars_btn.setEnabled(
+                    bbox.bbox_type in ('text', 'datecode')
+                )
                 return
 
     def clear_selection(self):
-        """Bỏ chọn tất cả"""
         self.list_widget.clearSelection()
         self.delete_btn.setEnabled(False)
+        self.edit_chars_btn.setEnabled(False)

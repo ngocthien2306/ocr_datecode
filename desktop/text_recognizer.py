@@ -105,11 +105,51 @@ class TextRecognizer:
     def recognize(self, image, return_confidence=True):
         tensor = self.preprocess(image)
         preds = self.session.run([self.output_name], {self.input_name: tensor})[0]
-        
+
         if return_confidence:
             return self.decode_ctc_with_confidence(preds)
         else:
             return self.decode_ctc(preds)
+
+    def recognize_with_char_conf(self, image):
+        """
+        Run recognition and return (text, avg_conf, char_confs).
+        `char_confs` = [(char, conf), ...] only for alphanumeric chars.
+
+        PP-OCR rec.onnx already outputs softmax probabilities — using raw
+        values directly (matches ai_services/.../text_recognizer.py).
+        """
+        tensor = self.preprocess(image)
+        preds = self.session.run([self.output_name], {self.input_name: tensor})[0]
+        pred = preds[0]  # (T, C)
+
+        best_path = np.argmax(pred, axis=-1)
+        best_prob = pred[np.arange(len(pred)), best_path]
+
+        decoded_chars, char_confs = [], []
+        prev_idx = -1
+        for t, char_idx in enumerate(best_path):
+            if char_idx != 0 and char_idx != prev_idx:
+                if char_idx < len(self.char_list):
+                    label = self.char_list[char_idx]
+                    decoded_chars.append(label)
+                    if label.isalnum():
+                        char_confs.append((label, float(best_prob[t])))
+            prev_idx = char_idx
+
+        text = ''.join(decoded_chars)
+        avg_conf = float(np.mean(best_prob)) if len(best_prob) > 0 else 0.0
+        return text, avg_conf, char_confs
+
+    def recognize_with_chars(self, image):
+        """Compatibility shim with the RapidOCR/Tesseract recognizers used
+        by char_labeler — returns chars in the dict form they expect."""
+        text, avg_conf, char_confs = self.recognize_with_char_conf(image)
+        chars = [
+            {'char': c, 'conf': float(p), 'col': i}
+            for i, (c, p) in enumerate(char_confs)
+        ]
+        return text, avg_conf, chars
     
     def recognize_batch(self, images, max_width=None):
         if not images:

@@ -64,7 +64,25 @@ class MainWindow(QMainWindow):
         # Tab 2: Inference Tool
         self.inference_tab = InferenceWidget()
         self.tab_widget.addTab(self.inference_tab, "Inference")
-        
+
+        # Tab 3: Char Labeler — build a per-char dataset from text crops
+        try:
+            from char_labeler_widget import CharLabelerWidget
+            self.char_labeler_tab = CharLabelerWidget()
+            self.tab_widget.addTab(self.char_labeler_tab, "Char Labeler")
+        except Exception as e:
+            print(f"[main] CharLabelerWidget unavailable: {e}")
+            self.char_labeler_tab = None
+
+        # Tab 4: Dataset Stats — browse the dataset built above
+        try:
+            from dataset_stats_widget import DatasetStatsWidget
+            self.dataset_stats_tab = DatasetStatsWidget()
+            self.tab_widget.addTab(self.dataset_stats_tab, "Dataset Stats")
+        except Exception as e:
+            print(f"[main] DatasetStatsWidget unavailable: {e}")
+            self.dataset_stats_tab = None
+
         main_layout.addWidget(self.tab_widget)
     
     def create_annotation_tab(self):
@@ -253,6 +271,7 @@ class MainWindow(QMainWindow):
         self.bbox_list_widget.setMaximumWidth(350)
         self.bbox_list_widget.bboxSelected.connect(self.on_bbox_list_selected)
         self.bbox_list_widget.deleteRequested.connect(self.on_bbox_delete_requested)
+        self.bbox_list_widget.editCharsRequested.connect(self.on_edit_chars_requested)
 
         center_right_splitter.addWidget(self.bbox_list_widget)
 
@@ -388,13 +407,78 @@ class MainWindow(QMainWindow):
 
     def on_bbox_delete_requested(self, bbox):
         """Xử lý khi yêu cầu xóa bbox từ list"""
-        # Chọn bbox trước khi xóa
         self.image_viewer.select_bbox_by_id(bbox.bbox_id)
-        # Xóa
         self.image_viewer.delete_selected_bbox()
-        # Cập nhật list
         self.bbox_list_widget.update_bboxes(self.image_viewer.get_bboxes())
         self.update_bbox_count()
+        self.save_current_annotations()
+
+    def on_edit_chars_requested(self, bbox):
+        """Open the per-character bbox editor for a text/datecode region.
+        Saved chars override segmentation during inference."""
+        if not self.current_image_path:
+            return
+        if bbox.bbox_type not in ('text', 'datecode'):
+            return
+
+        try:
+            import cv2
+            from char_editor_dialog import CharEditorDialog
+        except ImportError as e:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Cannot open char editor", str(e))
+            return
+
+        # Crop the region from the current image (the template image — chars
+        # are annotated only on the template).
+        img = cv2.imread(self.current_image_path)
+        if img is None:
+            return
+
+        # Use bbox's bounding rect for the crop. Polygon bboxes will produce
+        # an axis-aligned crop containing the polygon.
+        r = bbox.rect
+        x0 = max(0, r.x())
+        y0 = max(0, r.y())
+        x1 = min(img.shape[1], r.x() + r.width())
+        y1 = min(img.shape[0], r.y() + r.height())
+        if x1 <= x0 or y1 <= y0:
+            return
+        region_crop = img[y0:y1, x0:x1].copy()
+
+        # Existing chars are stored in image coords → translate to crop coords
+        existing_in_crop = []
+        for c in (bbox.chars or []):
+            translated = dict(c)
+            if c.get('shape') == 'polygon':
+                pts = [[p[0] - x0, p[1] - y0] for p in c['points']]
+                translated['points'] = pts
+            else:
+                translated['x'] = int(c.get('x', 0)) - x0
+                translated['y'] = int(c.get('y', 0)) - y0
+            existing_in_crop.append(translated)
+
+        dlg = CharEditorDialog(
+            region_image_bgr=region_crop,
+            existing_chars=existing_in_crop,
+            region_label=f"{bbox.bbox_type} ({r.width()}×{r.height()})",
+            parent=self,
+        )
+        if dlg.exec_() != dlg.Accepted:
+            return
+
+        # Translate chars back to image coords
+        new_chars_crop = dlg.get_chars()
+        new_chars_image = []
+        for c in new_chars_crop:
+            translated = dict(c)
+            translated['x'] = int(c['x']) + x0
+            translated['y'] = int(c['y']) + y0
+            new_chars_image.append(translated)
+
+        bbox.chars = new_chars_image
+        self.image_viewer.update()
+        self.bbox_list_widget.update_bboxes(self.image_viewer.get_bboxes())
         self.save_current_annotations()
 
     def on_bboxes_changed(self):
@@ -523,5 +607,14 @@ class MainWindow(QMainWindow):
         # Auto save trước khi thoát
         if self.current_image_path:
             self.save_current_annotations()
+
+        # Forward close to inference tab so its background workers (training
+        # subprocess + monitor thread) get torn down cleanly. Otherwise Qt
+        # aborts with 'QThread: Destroyed while thread is still running'.
+        try:
+            if hasattr(self, 'inference_tab') and self.inference_tab is not None:
+                self.inference_tab.closeEvent(event)
+        except Exception as e:
+            print(f"[main_window] inference_tab closeEvent error: {e}")
 
         event.accept()

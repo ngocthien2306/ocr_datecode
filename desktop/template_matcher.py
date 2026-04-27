@@ -17,7 +17,8 @@ except:
 
 
 class BoundingBox:
-    def __init__(self, rect=None, bbox_type="text", shape="rectangle", points=None, bbox_id=None):
+    def __init__(self, rect=None, bbox_type="text", shape="rectangle",
+                 points=None, bbox_id=None, chars=None):
         """
         Args:
             rect: QRect for rectangle shape (backward compatibility)
@@ -25,14 +26,17 @@ class BoundingBox:
             shape: str - "rectangle" or "polygon"
             points: list of [x,y] for polygon shape (4 points)
             bbox_id: unique ID (for UI tracking)
+            chars: optional list of dicts (rectangle or polygon) marking each
+                   character within a text/datecode region — used to bypass
+                   `segment_characters` and pair chars deterministically by index
         """
         self.bbox_type = bbox_type
         self.shape = shape  # "rectangle" or "polygon"
-        self.bbox_id = bbox_id or id(self)  # Unique ID for UI
+        self.bbox_id = bbox_id or id(self)
+        self.chars = chars or []  # list of {shape, points|x,y,w,h}
 
         if shape == "polygon" and points is not None:
             self.points = points  # [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
-            # Calculate bounding rect from polygon for compatibility
             xs = [p[0] for p in points]
             ys = [p[1] for p in points]
             self.rect = QRect(int(min(xs)), int(min(ys)),
@@ -41,7 +45,6 @@ class BoundingBox:
             self.points = None
             self.rect = rect if rect else QRect()
 
-    # Backward compatibility
     @property
     def polygon(self):
         """Alias for points (backward compatibility)"""
@@ -50,16 +53,18 @@ class BoundingBox:
     @staticmethod
     def from_dict(data):
         """Load from JSON format"""
-        shape = data.get('shape', 'rectangle')  # Default to rectangle for old data
+        shape = data.get('shape', 'rectangle')
         bbox_type = data['type']
+        chars = data.get('chars') or []
 
         if shape == 'polygon':
             points = data.get('points', None)
-            return BoundingBox(rect=None, bbox_type=bbox_type, shape='polygon', points=points)
+            return BoundingBox(rect=None, bbox_type=bbox_type, shape='polygon',
+                                points=points, chars=chars)
         else:
-            # Rectangle mode (old format or explicit rectangle)
             rect = QRect(data['x'], data['y'], data['width'], data['height'])
-            return BoundingBox(rect=rect, bbox_type=bbox_type, shape='rectangle')
+            return BoundingBox(rect=rect, bbox_type=bbox_type, shape='rectangle',
+                                chars=chars)
 
     def to_dict(self):
         """Save to JSON format"""
@@ -71,11 +76,13 @@ class BoundingBox:
         if self.shape == 'polygon' and self.points is not None:
             result['points'] = self.points
         else:
-            # Save rectangle data
             result['x'] = self.rect.x()
             result['y'] = self.rect.y()
             result['width'] = self.rect.width()
             result['height'] = self.rect.height()
+
+        if self.chars:
+            result['chars'] = self.chars
 
         return result
 
