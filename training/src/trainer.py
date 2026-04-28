@@ -78,15 +78,18 @@ def build_scheduler(cfg, optimizer, steps_per_epoch: int):
 # One epoch
 # ---------------------------------------------------------------------------
 
-def train_one_epoch(model, loader, loss_fn, optimizer, device, cfg,
-                    scaler: Optional[torch.cuda.amp.GradScaler] = None) -> float:
+def _is_two_view(imgs) -> bool:
+    """DataLoader sometimes converts our tuple to a list — accept both."""
+    return isinstance(imgs, (tuple, list)) and len(imgs) == 2 and torch.is_tensor(imgs[0])
+
+
+def train_one_epoch(model, loader, loss_fn, optimizer, device, cfg, scaler=None) -> float:
     model.train()
     total = 0.0; n = 0
     use_amp = cfg.train.amp and device == "cuda"
 
     for imgs, target in loader:
-        # Move to device (handle two-view tuple)
-        if isinstance(imgs, tuple):
+        if _is_two_view(imgs):
             v1, v2 = imgs
             imgs_f = torch.cat([v1.to(device, non_blocking=True),
                                 v2.to(device, non_blocking=True)], dim=0)
@@ -94,18 +97,17 @@ def train_one_epoch(model, loader, loss_fn, optimizer, device, cfg,
             target = {
                 "ok_ng":     torch.cat([target["ok_ng"],     target["ok_ng"]],     dim=0),
                 "multi_idx": torch.cat([target["multi_idx"], target["multi_idx"]], dim=0),
-                "char":      target["char"]  + target["char"],
-                "path":      target["path"]  + target["path"],
+                "char":      list(target["char"])  + list(target["char"]),
+                "path":      list(target["path"])  + list(target["path"]),
             }
         else:
             imgs_f = imgs.to(device, non_blocking=True)
 
-        # ArcFace head needs labels in forward to apply margin
         labels_for_head = target["multi_idx"].to(device) if cfg.model.head.type == "arcface" else None
 
         optimizer.zero_grad(set_to_none=True)
         if use_amp:
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast("cuda"):
                 out = model(imgs_f, labels=labels_for_head) if labels_for_head is not None else model(imgs_f)
                 loss = loss_fn(out, target)
             scaler.scale(loss).backward()
@@ -267,7 +269,7 @@ def train(cfg, run_dir: Path) -> Dict:
     params = list(model.parameters()) + list(loss_fn.parameters())
     optimizer = build_optimizer(cfg, params)
     scheduler = build_scheduler(cfg, optimizer, len(train_loader))
-    scaler = torch.cuda.amp.GradScaler() if (cfg.train.amp and device == "cuda") else None
+    scaler = torch.amp.GradScaler("cuda") if (cfg.train.amp and device == "cuda") else None
     print(f"[optim]   {cfg.train.optimizer}  lr={cfg.train.lr}  amp={scaler is not None}")
 
     # ---- train ----

@@ -182,10 +182,12 @@ class TwoViewDataset(Dataset):
 
 def collate_fn(batch):
     """Custom collate because target is a dict with mixed types (str fields)."""
-    if isinstance(batch[0][0], tuple):  # TwoView
+    first = batch[0][0]
+    if isinstance(first, (tuple, list)) and len(first) == 2 and torch.is_tensor(first[0]):
+        # TwoView
         v1 = torch.stack([b[0][0] for b in batch], dim=0)
         v2 = torch.stack([b[0][1] for b in batch], dim=0)
-        imgs = (v1, v2)
+        imgs = [v1, v2]            # list — DataLoader preserves it across workers
     else:
         imgs = torch.stack([b[0] for b in batch], dim=0)
     tgt = {
@@ -261,6 +263,60 @@ IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
+def _alb_v2() -> bool:
+    import albumentations as A
+    return int(A.__version__.split(".")[0]) >= 2
+
+
+def _pad_white(size: int):
+    """White-fill padding, compatible with albumentations 1.x and 2.x."""
+    import albumentations as A
+    if _alb_v2():
+        return A.PadIfNeeded(min_height=size, min_width=size,
+                             border_mode=0, fill=(255, 255, 255))
+    return A.PadIfNeeded(min_height=size, min_width=size,
+                         border_mode=0, value=(255, 255, 255))
+
+
+def _affine(translate, rotate, scale=None, shear=None, fill=255, p=0.5):
+    import albumentations as A
+    common = dict(translate_percent=translate, rotate=rotate, interpolation=1, p=p)
+    if scale is not None:
+        common["scale"] = scale
+    if shear is not None:
+        common["shear"] = shear
+    if _alb_v2():
+        return A.Affine(**common, fill=fill)
+    return A.Affine(**common, cval=fill)
+
+
+def _gauss_noise(low_var: float, high_var: float, p: float = 1.0):
+    """var_limit (1.x, pixel² 0-255²) ↔ std_range (2.x, normalized 0-1)."""
+    import albumentations as A
+    if _alb_v2():
+        return A.GaussNoise(
+            std_range=((low_var ** 0.5) / 255.0, (high_var ** 0.5) / 255.0),
+            mean_range=(0.0, 0.0), p=p,
+        )
+    return A.GaussNoise(var_limit=(float(low_var), float(high_var)), p=p)
+
+
+def _coarse_dropout(max_holes: int, max_h: int, max_w: int, fill: int = 255, p: float = 0.10):
+    import albumentations as A
+    if _alb_v2():
+        # 2.x requires num_holes_range >= 1; control "no-drop" via outer p.
+        return A.CoarseDropout(
+            num_holes_range=(1, max(1, max_holes)),
+            hole_height_range=(1, max_h),
+            hole_width_range=(1, max_w),
+            fill=fill, p=p,
+        )
+    return A.CoarseDropout(
+        max_holes=max_holes, max_height=max_h, max_width=max_w,
+        fill_value=fill, p=p,
+    )
+
+
 def build_augment(preset: str, image_size: int):
     """
     Returns (train_tf, val_tf). Album pipelines emitting torch tensors normalized.
@@ -275,40 +331,36 @@ def build_augment(preset: str, image_size: int):
 
     common_tail = [
         A.LongestMaxSize(max_size=image_size, interpolation=1),
-        A.PadIfNeeded(min_height=image_size, min_width=image_size,
-                      border_mode=0, value=(255, 255, 255)),
+        _pad_white(image_size),
         A.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD, max_pixel_value=255.0),
         ToTensorV2(),
     ]
 
     if preset == "minimal":
         train_ops = [
-            A.Affine(translate_percent=(-0.03, 0.03), rotate=(-2, 2),
-                     interpolation=1, cval=255, p=0.5),
+            _affine(translate=(-0.03, 0.03), rotate=(-2, 2), p=0.5),
             A.RandomBrightnessContrast(brightness_limit=0.10, contrast_limit=0.10, p=0.4),
         ]
     elif preset == "medium":
         train_ops = [
-            A.Affine(translate_percent=(-0.05, 0.05), rotate=(-3, 3),
-                     scale=(0.92, 1.08), interpolation=1, cval=255, p=0.7),
+            _affine(translate=(-0.05, 0.05), rotate=(-3, 3), scale=(0.92, 1.08), p=0.7),
             A.RandomBrightnessContrast(brightness_limit=0.15, contrast_limit=0.15, p=0.5),
             A.OneOf([
                 A.GaussianBlur(blur_limit=(3, 5), sigma_limit=(0.3, 0.9), p=1.0),
-                A.GaussNoise(var_limit=(5.0, 20.0), p=1.0),
+                _gauss_noise(low_var=5.0, high_var=20.0, p=1.0),
             ], p=0.25),
-            A.CoarseDropout(max_holes=2, max_height=5, max_width=5, fill_value=255, p=0.10),
+            _coarse_dropout(max_holes=2, max_h=5, max_w=5, fill=255, p=0.10),
         ]
     elif preset == "strong":
         train_ops = [
-            A.Affine(translate_percent=(-0.07, 0.07), rotate=(-5, 5),
-                     scale=(0.85, 1.15), interpolation=1, cval=255, p=0.8),
+            _affine(translate=(-0.07, 0.07), rotate=(-5, 5), scale=(0.85, 1.15), p=0.8),
             A.RandomBrightnessContrast(brightness_limit=0.20, contrast_limit=0.20, p=0.6),
             A.OneOf([
                 A.GaussianBlur(blur_limit=(3, 7), sigma_limit=(0.3, 1.5), p=1.0),
                 A.MotionBlur(blur_limit=(3, 5), p=1.0),
-                A.GaussNoise(var_limit=(8.0, 40.0), p=1.0),
+                _gauss_noise(low_var=8.0, high_var=40.0, p=1.0),
             ], p=0.4),
-            A.CoarseDropout(max_holes=3, max_height=8, max_width=8, fill_value=255, p=0.15),
+            _coarse_dropout(max_holes=3, max_h=8, max_w=8, fill=255, p=0.15),
         ]
     else:
         raise ValueError(f"Unknown augment preset: {preset}")
