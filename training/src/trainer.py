@@ -225,6 +225,7 @@ def export_onnx(model, cfg, out_path: Path):
                       **{n: {0: "batch"} for n in output_names}},
         opset_version=int(cfg.output.onnx_opset),
         do_constant_folding=True,
+        dynamo=False,
     )
     # Force single-file
     m = onnx.load(str(out_path), load_external_data=True)
@@ -237,7 +238,7 @@ def export_onnx(model, cfg, out_path: Path):
 # Main entry
 # ---------------------------------------------------------------------------
 
-def train(cfg, run_dir: Path) -> Dict:
+def train(cfg, run_dir: Path, resume_checkpoint: Optional[Path] = None) -> Dict:
     """Run training, write artifacts to run_dir, return final metrics dict."""
     from .utils import pick_device, set_seed
 
@@ -272,12 +273,31 @@ def train(cfg, run_dir: Path) -> Dict:
     scaler = torch.amp.GradScaler("cuda") if (cfg.train.amp and device == "cuda") else None
     print(f"[optim]   {cfg.train.optimizer}  lr={cfg.train.lr}  amp={scaler is not None}")
 
-    # ---- train ----
-    save_config(cfg, run_dir / "config.yaml")
+    # ---- resume ----
+    start_epoch = 0
     best_score = -1.0; best_metrics = {}; best_preds = None
     history = {"train_loss": [], "val": []}
 
-    for epoch in range(cfg.train.epochs):
+    if resume_checkpoint is not None:
+        ckpt = torch.load(resume_checkpoint, map_location=device)
+        model.load_state_dict(ckpt["model"])
+        if "loss_state" in ckpt:
+            loss_fn.load_state_dict(ckpt["loss_state"])
+        if "optimizer" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer"])
+        if "scheduler" in ckpt and scheduler is not None and ckpt["scheduler"] is not None:
+            scheduler.load_state_dict(ckpt["scheduler"])
+        if "scaler" in ckpt and scaler is not None and ckpt["scaler"] is not None:
+            scaler.load_state_dict(ckpt["scaler"])
+        start_epoch = ckpt.get("epoch", 0) + 1
+        best_score  = ckpt.get("score", -1.0)
+        best_metrics = ckpt.get("metrics", {})
+        print(f"[resume]  epoch {start_epoch}/{cfg.train.epochs}  best_score={best_score:.4f}")
+
+    # ---- train ----
+    save_config(cfg, run_dir / "config.yaml")
+
+    for epoch in range(start_epoch, cfg.train.epochs):
         t0 = time.time()
         train_loss = train_one_epoch(model, train_loader, loss_fn, optimizer, device, cfg, scaler)
         if scheduler is not None:
@@ -297,6 +317,9 @@ def train(cfg, run_dir: Path) -> Dict:
             torch.save({
                 "model": model.state_dict(),
                 "loss_state": loss_fn.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "scheduler": scheduler.state_dict() if scheduler is not None else None,
+                "scaler": scaler.state_dict() if scaler is not None else None,
                 "epoch": epoch,
                 "score": score,
                 "metrics": metrics,
