@@ -1367,9 +1367,11 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                     <tr>
                       <th className="col-region">#</th>
                       <th className="col-expected">Char</th>
-                      <th className="col-match">ML</th>
+                      <th className="col-match">AI</th>
                       <th className="col-confidence">p_ok</th>
                       <th className="col-confidence">Match</th>
+                      <th className="col-confidence">Threshold</th>
+
                     </tr>
                   </thead>
                   <tbody>
@@ -1392,6 +1394,11 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                         <td className="col-confidence">
                           <span className={`match-icon ${r.match ? 'match' : 'no-match'}`}>
                             {r.match ? '✓' : '✗'}
+                          </span>
+                        </td>
+                        <td className="col-confidence">
+                          <span className="confidence-value">
+                            {(r.threshold * 100).toFixed(1)}%
                           </span>
                         </td>
                       </tr>
