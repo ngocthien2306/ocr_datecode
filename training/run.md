@@ -171,11 +171,19 @@ python3 training/visualize_embedding.py \
     --out training/test_data/result.png \
     --benchmark
 
-# Tăng số lần đo
+# Benchmark batch=1
 python3 training/visualize_embedding.py \
     --run weights/supcon_128_repvit_m1_5_20260428-194406 \
     --ok-dir training/test_data/ok \
     --ng-dir training/test_data/ng \
     --out training/test_data/result.png \
-    --benchmark --bench-runs 500
+    --benchmark
+
+# Benchmark batch=8
+python3 training/visualize_embedding.py \
+    --run weights/supcon_128_repvit_m1_5_20260428-194406 \
+    --ok-dir training/test_data/ok \
+    --ng-dir training/test_data/ng \
+    --out training/test_data/result.png \
+    --benchmark --bench-batch 8 --bench-runs 200
 ```

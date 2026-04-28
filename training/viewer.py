@@ -76,6 +76,7 @@ class Viewer(QMainWindow):
         self.sess = self.head = self.cfg_size = self.input_name = None
         self.centroids = self.idx_to_ok_ng = None
         self.idx_to_char = {}
+        self.template_emb = None
         self.threshold = 0.5
         self.pad_w = self.pad_h = 6
         self.temperature = 5.0
@@ -104,6 +105,12 @@ class Viewer(QMainWindow):
             return s
 
         tb.addWidget(btn("Load Model",  self._load_model))
+        tb.addSeparator()
+        self.tmpl_btn = QPushButton("Load Template")
+        self.tmpl_btn.clicked.connect(self._load_template)
+        self.tmpl_btn.setEnabled(False)
+        self.tmpl_btn.setToolTip("Only available for projection / arcface models")
+        tb.addWidget(self.tmpl_btn)
         tb.addSeparator()
         tb.addWidget(btn("Load Folder", self._load_folder))
         tb.addSeparator()
@@ -155,6 +162,8 @@ class Viewer(QMainWindow):
             cfg           = OmegaConf.load(run_dir / "config.yaml")
             self.cfg_size = cfg.data.image_size
             self.head     = cfg.model.head.type
+            self.template_emb = None
+            self.tmpl_btn.setEnabled(self.head in ("projection", "arcface"))
 
             ckpt             = torch.load(run_dir / "best.pt", map_location="cpu")
             multi_to_idx      = ckpt.get("multi_to_idx", {})
@@ -195,6 +204,30 @@ class Viewer(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Load error", str(e))
 
+    def _load_template(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Select template image(s) — OK samples only", "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.webp)")
+        if not paths:
+            return
+        try:
+            tensors = np.stack([preprocess(cv2.imread(p), self.cfg_size) for p in paths])
+            if self.head == "projection":
+                embs = self.sess.run(None, {self.input_name: tensors})[0]
+            else:  # arcface
+                embs = self.sess.run(None, {self.input_name: tensors})[1]
+            embs /= np.linalg.norm(embs, axis=1, keepdims=True) + 1e-8
+            tmpl = embs.mean(axis=0)
+            tmpl /= np.linalg.norm(tmpl) + 1e-8
+            self.template_emb = tmpl
+            self.th_spin.setValue(0.5)
+            self.threshold = 0.5
+            names = ", ".join(Path(p).name for p in paths[:2])
+            suffix = f" (+{len(paths)-2} more)" if len(paths) > 2 else ""
+            self.statusBar().showMessage(f"[Template] {names}{suffix}  — {len(paths)} image(s)")
+        except Exception as e:
+            QMessageBox.critical(self, "Template error", str(e))
+
     def _load_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select image folder")
         if not folder:
@@ -230,7 +263,19 @@ class Viewer(QMainWindow):
         tensors = np.stack([preprocess(pad(c), self.cfg_size) for c in char_imgs])
 
         pred_chars = ["?"] * len(tensors)
-        if self.head == "linear":
+        mode_label = "P_NG"
+
+        if self.template_emb is not None and self.head in ("projection", "arcface"):
+            # Template matching mode — no centroids needed
+            if self.head == "projection":
+                embs = self.sess.run(None, {self.input_name: tensors})[0]
+            else:
+                embs = self.sess.run(None, {self.input_name: tensors})[1]
+            embs  /= np.linalg.norm(embs, axis=1, keepdims=True) + 1e-8
+            sims   = embs @ self.template_emb          # cosine sim ∈ [-1, 1]
+            scores = (1.0 - sims) / 2.0                # 0 = identical, 1 = opposite
+            mode_label = "dist"
+        elif self.head == "linear":
             logits = self.sess.run(None, {self.input_name: tensors})[0]
             scores = softmax(logits)[:, 1]
         elif self.head == "projection":
@@ -250,7 +295,7 @@ class Viewer(QMainWindow):
 
         vis   = proc_img.copy()
         n_ng  = 0
-        lines = [f"{'#':>3}  {'char':>6}  {'P_NG':>6}  {'conf%':>6}  verdict"]
+        lines = [f"{'#':>3}  {'char':>6}  {mode_label:>6}  {'conf%':>6}  verdict"]
         for i, (box, s, ch) in enumerate(zip(boxes, scores, pred_chars)):
             x, y, w, h = box
             ng    = bool(s >= self.threshold)

@@ -85,9 +85,11 @@ def main():
     parser.add_argument("--ok-dir", default="training/test_data/ok")
     parser.add_argument("--ng-dir", default="training/test_data/ng")
     parser.add_argument("--out",       default="training/test_data/result.png")
-    parser.add_argument("--benchmark", action="store_true",
-                        help="Measure inference latency (warmup 20 + 100 runs, batch=1)")
-    parser.add_argument("--bench-runs", type=int, default=100)
+    parser.add_argument("--benchmark",  action="store_true",
+                        help="Measure inference latency")
+    parser.add_argument("--bench-runs",  type=int, default=100)
+    parser.add_argument("--bench-batch", type=int, default=1,
+                        help="Batch size for benchmark (default=1)")
     args = parser.parse_args()
 
     run_dir = Path(args.run)
@@ -121,18 +123,21 @@ def main():
     # ---- Benchmark ----
     if args.benchmark:
         input_name = sess.get_inputs()[0].name
-        dummy = np.random.randn(1, 3, size, size).astype(np.float32)
-        print(f"\n[benchmark] warmup 20 runs...")
+        bs    = args.bench_batch
+        dummy = np.random.randn(bs, 3, size, size).astype(np.float32)
+        print(f"\n[benchmark] warmup 20 runs  (batch={bs})...")
         for _ in range(20):
             sess.run(None, {input_name: dummy})
-        print(f"[benchmark] timing {args.bench_runs} runs (batch=1)...")
+        print(f"[benchmark] timing {args.bench_runs} runs...")
         t0 = time.perf_counter()
         for _ in range(args.bench_runs):
             sess.run(None, {input_name: dummy})
         dt = time.perf_counter() - t0
-        ms_per_img = dt / args.bench_runs * 1000
-        fps = args.bench_runs / dt
-        print(f"[benchmark] {ms_per_img:.2f} ms/image  |  {fps:.1f} FPS\n")
+        ms_per_batch = dt / args.bench_runs * 1000
+        ms_per_img   = ms_per_batch / bs
+        fps          = bs * args.bench_runs / dt
+        print(f"[benchmark] batch={bs}  {ms_per_batch:.2f} ms/batch  "
+              f"{ms_per_img:.2f} ms/image  {fps:.1f} FPS\n")
 
     # Extract embeddings
     template_emb = embed(sess, head, [str(template_path)], size)[0]
