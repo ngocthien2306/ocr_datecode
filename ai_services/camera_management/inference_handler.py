@@ -492,6 +492,26 @@ class InferenceHandler:
                     f"({initialized_count} separate engines - high memory usage)"
                 )
             logger.info(f"✅ Initialized {initialized_count} matchers on {thread_name}")
+
+            # Pre-compute template embeddings for embedding classifier
+            svc = getattr(self, 'text_verification_service', None)
+            if svc is not None:
+                for camera in cameras:
+                    serial_number = camera.serial_number
+                    matcher = self.camera_matchers.get(serial_number)
+                    if matcher is None:
+                        continue
+                    # Support both single matcher and list-of-matchers
+                    first = matcher[0] if isinstance(matcher, list) else matcher
+                    t_img = getattr(first, 'template_img', None)
+                    orig_bboxes = getattr(first, 'other_bboxes', None)
+                    if t_img is not None and orig_bboxes is not None:
+                        n = svc.prepare_embedding_templates(serial_number, t_img, orig_bboxes)
+                        if n:
+                            logger.info(
+                                f"[{serial_number}] Prepared {n} embedding template(s)"
+                            )
+
             return initialized_count
 
         except Exception as e:
@@ -507,7 +527,10 @@ class InferenceHandler:
             self._per_camera_stats.clear()
         if getattr(self, 'ml_classifier_service', None) is not None:
             self.ml_classifier_service.clear_cache()
-        logger.info("All inference matchers, camera stats, and ML model cache cleared")
+        svc = getattr(self, 'text_verification_service', None)
+        if svc is not None:
+            svc.clear_embedding_templates()
+        logger.info("All inference matchers, camera stats, and ML/embedding cache cleared")
 
     def shutdown(self):
         """Shutdown inference handler and cleanup resources"""

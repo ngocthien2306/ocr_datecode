@@ -42,6 +42,13 @@ logger = logging.getLogger(__name__)
 
 home = os.environ.get('HOME')
 
+# Switch between sklearn feature-based ML and ONNX embedding classifier for
+# char annotation classification. Change this to "embedding" to use cosine
+# similarity instead of predict_proba.
+# "ml"        — MLClassifierService (sklearn, feature-based)
+# "embedding" — EmbeddingClassifierService (ONNX, cosine similarity)
+CHAR_CLASSIFIER_BACKEND: str = "embedding"
+
 
 _NUMERIC_CHAR_FIELDS = (
     'confidence', 'tm_conf', 'blur_tm', 'iou', 'pixel_conf',
@@ -117,6 +124,7 @@ class TextVerificationService:
         use_char_conf_check: bool = False,
         use_sim_check: bool = False,
         ml_classifier_service: Optional[Any] = None,
+        embedding_classifier_service: Optional[Any] = None,
     ):
         """
         Initialize TextVerificationService.
@@ -138,12 +146,58 @@ class TextVerificationService:
         self.use_char_conf_check = use_char_conf_check
         self.use_sim_check = use_sim_check
         self.ml_classifier_service = ml_classifier_service
+        self.embedding_classifier_service = embedding_classifier_service
         self._sim_crop_cache = {}  # Cache for template crops (key: (serial, points_tuple))
 
     @property
     def is_available(self) -> bool:
         """Check if OCR is available"""
         return self.text_recognizer is not None
+
+    def prepare_embedding_templates(
+        self,
+        serial_number: str,
+        template_img: np.ndarray,
+        original_bboxes: List[Dict[str, Any]],
+    ) -> int:
+        """
+        Pre-compute and cache template embeddings for all char bboxes of a camera.
+
+        Call once after recipe is loaded (or whenever template/recipe changes).
+        No-op if CHAR_CLASSIFIER_BACKEND != "embedding" or service not set.
+
+        Returns number of embeddings cached.
+        """
+        if CHAR_CLASSIFIER_BACKEND != "embedding" or not self.embedding_classifier_service:
+            return 0
+
+        items = []
+        for ob in (original_bboxes or []):
+            if ob.get('type') != 'char':
+                continue
+            ann_idx = ob.get('annotation_index')
+            points = ob.get('points', [])
+            if ann_idx is None or len(points) < 4:
+                continue
+            try:
+                from ..ocr_utils import crop_text_region
+                template_crop = crop_text_region(template_img, points)
+                items.append({'annotation_idx': ann_idx, 'template_crop': template_crop})
+            except Exception as e:
+                logger.warning(
+                    f"[{serial_number}] prepare_embedding_templates: "
+                    f"crop failed ann {ann_idx}: {e}"
+                )
+
+        if not items:
+            return 0
+
+        return self.embedding_classifier_service.cache_template_embeddings(serial_number, items)
+
+    def clear_embedding_templates(self, serial_number: Optional[str] = None) -> None:
+        """Invalidate cached template embeddings. Call when recipe is reloaded."""
+        if self.embedding_classifier_service:
+            self.embedding_classifier_service.clear_template_cache(serial_number)
 
     def _get_max_batch(self) -> int:
         """
@@ -388,7 +442,7 @@ class TextVerificationService:
         parallel, merge, and apply augment retry for failed regions.
 
         ML predictions are NOT mixed in here — `char` annotations get their
-        own classify-only path (`_run_char_ml_batch`).
+        own classify-only path (`_run_char_batch`).
 
         Item dict shapes:
           ocr_items: serial_number, annotation_idx, conf_threshold,
@@ -596,36 +650,60 @@ class TextVerificationService:
 
     # ── Char ML batch path ──
 
-    def _run_char_ml_batch(
+    def _run_char_batch(
         self,
         char_items: List[Dict[str, Any]],
     ) -> Dict[Tuple[str, int], Dict[str, Any]]:
         """
         Classify-only path for `char` annotations.
 
-        Each char_item carries: serial_number, annotation_idx, conf_threshold,
-        cropped_region, expected_text (the char), ml_project_id, ml_model_id.
+        Routes to EmbeddingClassifierService or MLClassifierService depending
+        on CHAR_CLASSIFIER_BACKEND.
 
-        Returns: {(serial, ann_idx) → region_result} with ML-style fields
-        suitable for the char_verification frame field.
+        Each char_item carries: serial_number, annotation_idx, conf_threshold,
+        cropped_region, template_crop (embedding only), expected_text,
+        ml_project_id, ml_model_id.
+
+        Returns: {(serial, ann_idx) → region_result} with ML-style fields.
         """
-        if not char_items or not self.ml_classifier_service:
+        if not char_items:
             return {}
 
         t0 = time.perf_counter()
-        batch_input = [
-            {
-                'region_img':     m['cropped_region'],
-                'project_id':     m['ml_project_id'],
-                'model_id':       m['ml_model_id'],
-                'conf_threshold': m['conf_threshold'],
-                'serial_number':  m['serial_number'],
-                'annotation_idx': m['annotation_idx'],
-                'char_id':        m.get('expected_text'),   # picks matching golden
-            }
-            for m in char_items
-        ]
-        results = self.ml_classifier_service.classify_batch(batch_input)
+
+        if CHAR_CLASSIFIER_BACKEND == "embedding":
+            if not self.embedding_classifier_service:
+                logger.warning("CHAR_CLASSIFIER_BACKEND=embedding but no embedding_classifier_service")
+                return {}
+            batch_input = [
+                {
+                    'region_img':     m['cropped_region'],
+                    'template_crop':  m.get('template_crop'),
+                    'conf_threshold': m['conf_threshold'],
+                    'serial_number':  m['serial_number'],
+                    'annotation_idx': m['annotation_idx'],
+                }
+                for m in char_items
+            ]
+            results = self.embedding_classifier_service.classify_batch(batch_input)
+            backend_label = "Embedding"
+        else:
+            if not self.ml_classifier_service:
+                return {}
+            batch_input = [
+                {
+                    'region_img':     m['cropped_region'],
+                    'project_id':     m['ml_project_id'],
+                    'model_id':       m['ml_model_id'],
+                    'conf_threshold': m['conf_threshold'],
+                    'serial_number':  m['serial_number'],
+                    'annotation_idx': m['annotation_idx'],
+                    'char_id':        m.get('expected_text'),
+                }
+                for m in char_items
+            ]
+            results = self.ml_classifier_service.classify_batch(batch_input)
+            backend_label = "ML"
 
         out: Dict[Tuple[str, int], Dict[str, Any]] = {}
         for m, r in zip(char_items, results):
@@ -640,8 +718,9 @@ class TextVerificationService:
                 'threshold':      float(m['conf_threshold']),
                 'error':          r.get('error'),
             }
+
         elapsed = (time.perf_counter() - t0) * 1000
-        logger.info(f"Char ML batch: {len(char_items)} regions in {elapsed:.1f}ms")
+        logger.info(f"Char {backend_label} batch: {len(char_items)} regions in {elapsed:.1f}ms")
         return out
 
     # ── Helper: build ocr/sim/ml items from a single (camera, template) context ──
@@ -721,7 +800,20 @@ class TextVerificationService:
 
         ml_project_id = getattr(camera, 'ml_project_id', None)
         ml_model_id = getattr(camera, 'ml_model_id', None)
-        use_ml_task = bool(self.ml_classifier_service and ml_project_id and ml_model_id)
+        use_char_task = bool(
+            (self.ml_classifier_service or self.embedding_classifier_service)
+            and ml_project_id and ml_model_id
+        )
+
+        # For embedding backend: build original points map for char bboxes so we
+        # can crop the template region from template_img per char.
+        original_char_bbox_map: Dict[int, Dict[str, Any]] = {}
+        if use_char_task and CHAR_CLASSIFIER_BACKEND == "embedding":
+            for ob in (original_bboxes or []):
+                if ob.get('type') == 'char':
+                    idx = ob.get('annotation_index')
+                    if idx is not None:
+                        original_char_bbox_map[idx] = ob
 
         ocr_items: List[Dict[str, Any]] = []
         sim_items: List[Dict[str, Any]] = []
@@ -789,8 +881,8 @@ class TextVerificationService:
                         'conf_threshold': conf_threshold,
                     })
 
-        # ── ML path: char bboxes (only when camera has ML model) ──
-        if use_ml_task:
+        # ── Char path: char bboxes (ML or embedding, only when camera has model) ──
+        if use_char_task:
             for bbox in char_bboxes:
                 ann_idx = bbox.get('annotation_index')
                 if ann_idx is None:
@@ -831,12 +923,26 @@ class TextVerificationService:
                     }
                     continue
 
+                # Crop template region for embedding mode
+                template_crop = None
+                if CHAR_CLASSIFIER_BACKEND == "embedding" and ann_idx in original_char_bbox_map:
+                    orig_points = original_char_bbox_map[ann_idx].get('points', [])
+                    if len(orig_points) >= 4:
+                        try:
+                            template_crop = crop_text_region(template_img, orig_points)
+                        except Exception as e:
+                            logger.warning(
+                                f"[{serial_number}] Failed to crop template for char "
+                                f"ann {ann_idx}: {e}"
+                            )
+
                 char_items.append({
                     'serial_number': serial_number,
                     'annotation_idx': ann_idx,
                     'conf_threshold': conf_threshold,
                     'expected_text': expected_char,
                     'cropped_region': cropped,
+                    'template_crop': template_crop,
                     'ml_project_id': ml_project_id,
                     'ml_model_id': ml_model_id,
                 })
@@ -920,7 +1026,7 @@ class TextVerificationService:
             text_all_match = False
 
         # ── Char ML path ──
-        char_region_map = self._run_char_ml_batch(char_items)
+        char_region_map = self._run_char_batch(char_items)
         char_region_map.update(
             (k, v) for k, v in invalid_map.items() if 'ml_label' in v
         )
@@ -1021,7 +1127,7 @@ class TextVerificationService:
             (k, v) for k, v in invalid_map_all.items() if 'recognized' in v
         )
 
-        char_region_map = self._run_char_ml_batch(char_items_all)
+        char_region_map = self._run_char_batch(char_items_all)
         char_region_map.update(
             (k, v) for k, v in invalid_map_all.items() if 'ml_label' in v
         )
