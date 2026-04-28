@@ -204,3 +204,4 @@ public/
 desktop/debug_output/
 desktop/debug_*.png
 
+training/runs
