@@ -205,3 +205,4 @@ desktop/debug_output/
 desktop/debug_*.png
 
 training/runs
+training/onnx_results
