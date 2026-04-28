@@ -145,3 +145,37 @@ Controls:
 - `Threshold` — ngưỡng phân tách OK/NG
 - `Temp` — temperature scale (chỉ ảnh hưởng `projection` và `arcface`)
 - `Pad W/H` — padding thêm vào ký tự trước khi inference
+
+
+
+---
+
+## 7. Jetson Test — `visualize_embedding.py`
+
+```bash
+# Kiểm tra provider (phải thấy CUDAExecutionProvider)
+python3 -c "import onnxruntime as ort; print(ort.get_available_providers())"
+
+# Visualize + đo kết quả
+python3 training/visualize_embedding.py \
+    --run weights/supcon_128_repvit_m1_5_20260428-194406 \
+    --ok-dir training/test_data/ok \
+    --ng-dir training/test_data/ng \
+    --out training/test_data/result.png
+
+# Benchmark tốc độ (batch=1, 100 lần)
+python3 training/visualize_embedding.py \
+    --run weights/supcon_128_repvit_m1_5_20260428-194406 \
+    --ok-dir training/test_data/ok \
+    --ng-dir training/test_data/ng \
+    --out training/test_data/result.png \
+    --benchmark
+
+# Tăng số lần đo
+python3 training/visualize_embedding.py \
+    --run weights/supcon_128_repvit_m1_5_20260428-194406 \
+    --ok-dir training/test_data/ok \
+    --ng-dir training/test_data/ng \
+    --out training/test_data/result.png \
+    --benchmark --bench-runs 500
+```
