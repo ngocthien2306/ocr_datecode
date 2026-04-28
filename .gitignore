@@ -200,3 +200,7 @@ templates/
 check_data_fastapi.py
 check_data.py
 public/
+# Inference debug outputs
+desktop/debug_output/
+desktop/debug_*.png
+
