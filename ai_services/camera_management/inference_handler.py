@@ -17,6 +17,7 @@ from .verification import (
     TemplateVerificationService,
     ProductVerificationService,
     MLClassifierService,
+    EmbeddingClassifierService,
 )
 
 # Import OCR backend factory (Strategy Pattern)
@@ -318,6 +319,26 @@ class InferenceHandler:
         )
         logger.info(f"MLClassifierService initialized: base_dir={ml_base_dir}, debug={save_debug}")
 
+        # Embedding Classifier Service — ONNX cosine similarity for char bboxes
+        embedding_weights = Path(f"{home}/Source/ocr_datecode/weights/supcon_128_repvit_m1_5_20260428-194406")
+        embedding_onnx   = embedding_weights / "model.onnx"
+        embedding_config = embedding_weights / "config.yaml"
+        if embedding_onnx.exists() and embedding_config.exists():
+            try:
+                self.embedding_classifier_service = EmbeddingClassifierService(
+                    onnx_path=str(embedding_onnx),
+                    config_path=str(embedding_config),
+                    save_debug_images=save_debug,
+                    debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
+                )
+                logger.info(f"EmbeddingClassifierService initialized: {embedding_weights.name}")
+            except Exception as e:
+                self.embedding_classifier_service = None
+                logger.warning(f"EmbeddingClassifierService failed to init: {e}")
+        else:
+            self.embedding_classifier_service = None
+            logger.warning(f"Embedding model not found at {embedding_weights}, char embedding disabled")
+
         # Text Verification Service
         if self.text_recognizer is not None:
             self.text_verification_service = TextVerificationService(
@@ -328,6 +349,7 @@ class InferenceHandler:
                 use_char_conf_check=False,
                 use_sim_check=False,
                 ml_classifier_service=self.ml_classifier_service,
+                embedding_classifier_service=self.embedding_classifier_service,
             )
             logger.info(f"TextVerificationService initialized with {self.ocr_backend} backend (debug={save_debug})")
         else:

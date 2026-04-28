@@ -12,6 +12,7 @@ from .template_verifier import TemplateVerificationService
 from .product_verifier import ProductVerificationService
 from .wrinkle_segmenter import WrinkledSegmenterTRT
 from .ml_classifier import MLClassifierService
+from .embedding_classifier import EmbeddingClassifierService
 
 __all__ = [
     'TextVerificationService',
@@ -19,4 +20,5 @@ __all__ = [
     'ProductVerificationService',
     'WrinkledSegmenterTRT',
     'MLClassifierService',
+    'EmbeddingClassifierService',
 ]
