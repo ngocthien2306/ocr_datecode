@@ -1,0 +1,70 @@
+# Shared defaults — every other config can `extends: _common.yaml`
+# and override only what differs.
+
+seed: 42
+device: auto                      # auto | cuda | mps | cpu
+
+data:
+  root: /Users/ngocthien.ai/Downloads/output2
+  image_size: 64
+  val_ratio: 0.15
+  min_per_class: 4
+  task: binary                    # binary | multi_128
+  include_ng: true                # binary always true; multi_128 always true (NG = own class)
+  num_workers: 2
+
+augment:
+  preset: minimal                 # minimal | medium | strong
+
+model:
+  backbone: efficientnet_b0       # any timm model name
+  pretrained: true
+  head:
+    type: linear                  # linear | projection | arcface | cosface
+    out_dim: 2                    # 2 for binary, num_classes for multi_128, embed_dim for projection
+    hidden: 512                   # only used by projection head
+    margin: 0.30                  # only used by arcface/cosface
+    scale: 30.0                   # only used by arcface/cosface
+
+loss:
+  type: ce                        # ce | focal | poly | ce_center | supcon | arcface
+  class_weights: auto             # auto | null | [w0, w1, ...]
+  label_smoothing: 0.05
+  # focal:
+  gamma: 2.0
+  # poly:
+  poly_eps: 2.0
+  # center:
+  center_alpha: 0.5
+  center_lambda: 0.005
+  # supcon:
+  temperature: 0.07
+
+train:
+  batch_size: 128
+  epochs: 30
+  optimizer: adamw                # adamw | sgd
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  scheduler: cosine               # cosine | step | none
+  warmup_epochs: 2
+  use_two_view: false             # required true for supcon
+  sampler: random                 # random | per_class
+  per_class_n_classes: 16
+  per_class_n_samples: 4
+  amp: true                       # automatic mixed precision (cuda only)
+  grad_clip: 1.0                  # 0 to disable
+
+eval:
+  primary_metric: balanced_score  # balanced_score | bin_acc | auc
+  threshold_sweep: true
+  inference: argmax               # argmax | nearest_centroid
+
+output:
+  base_dir: runs
+  save_artifacts:
+    - pt
+    - onnx
+    - csv
+  export_onnx: true
+  onnx_opset: 17

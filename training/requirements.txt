@@ -1,0 +1,15 @@
+torch>=2.0
+torchvision
+timm>=0.9
+albumentations>=1.4
+opencv-python-headless
+numpy
+pandas
+scikit-learn
+matplotlib
+pillow
+omegaconf>=2.3
+onnx>=1.15
+onnxruntime>=1.17
+tqdm
+pytorch-metric-learning>=2.5

@@ -1,0 +1,24 @@
+extends: _common.yaml
+experiment_name: arcface_128_b0
+
+data:
+  task: multi_128
+
+model:
+  backbone: efficientnet_b0
+  head:
+    type: arcface
+    margin: 0.30
+    scale: 30.0
+
+loss:
+  type: arcface
+  label_smoothing: 0.05
+
+train:
+  epochs: 40
+  batch_size: 128
+  use_two_view: false
+  sampler: per_class
+  per_class_n_classes: 16
+  per_class_n_samples: 4

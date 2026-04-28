@@ -1,0 +1,24 @@
+extends: _common.yaml
+experiment_name: ce_center_b0
+
+data:
+  task: binary
+
+model:
+  backbone: efficientnet_b0
+  head:
+    type: linear
+    out_dim: 2
+
+loss:
+  type: ce_center
+  class_weights: auto
+  label_smoothing: 0.05
+  center_lambda: 0.005
+
+train:
+  epochs: 30
+  # Center loss has its own learnable parameters (centers); the same
+  # optimizer steps them together with the rest of the model.
+  use_two_view: false
+  sampler: random

@@ -1,0 +1,28 @@
+extends: _common.yaml
+experiment_name: supcon_128_b0
+
+data:
+  task: multi_128
+
+augment:
+  preset: medium
+
+model:
+  backbone: efficientnet_b0
+  head:
+    type: projection
+    out_dim: 128
+    hidden: 512
+
+loss:
+  type: supcon
+  temperature: 0.07
+
+train:
+  epochs: 50
+  batch_size: 128
+  use_two_view: true
+  sampler: random          # PerClassBatchSampler is optional, two-view alone is fine here
+
+eval:
+  inference: nearest_centroid

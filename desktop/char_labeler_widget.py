@@ -226,6 +226,39 @@ class CharLabelerWidget(QWidget):
         self.output_label.setStyleSheet("color: #888;")
         lv.addWidget(self.output_label)
 
+        # Segmentation padding controls (extra px around each detected char bbox)
+        seg_group = QGroupBox("Segmentation padding")
+        sg = QVBoxLayout(seg_group)
+        sg.setSpacing(4)
+        pad_row = QHBoxLayout()
+        pad_row.addWidget(QLabel("W:"))
+        from PyQt5.QtWidgets import QSpinBox
+        self.pad_w_input = QSpinBox()
+        self.pad_w_input.setRange(0, 60)
+        self.pad_w_input.setValue(4)
+        self.pad_w_input.setToolTip(
+            "Extra horizontal padding (px) applied to each segmented char bbox.\n"
+            "Useful if segmentation produces tight crops that cut into the strokes."
+        )
+        pad_row.addWidget(self.pad_w_input)
+        pad_row.addWidget(QLabel("H:"))
+        self.pad_h_input = QSpinBox()
+        self.pad_h_input.setRange(0, 60)
+        self.pad_h_input.setValue(4)
+        self.pad_h_input.setToolTip("Extra vertical padding (px).")
+        pad_row.addWidget(self.pad_h_input)
+        pad_row.addStretch(1)
+        sg.addLayout(pad_row)
+        # Apply to current image without re-running segmentation
+        self.apply_pad_btn = QPushButton("Apply padding to current")
+        self.apply_pad_btn.setToolTip(
+            "Re-apply current padding values to the existing bboxes on this image\n"
+            "(without re-running segmentation, so manual edits are kept)."
+        )
+        self.apply_pad_btn.clicked.connect(self._apply_padding_to_current)
+        sg.addWidget(self.apply_pad_btn)
+        lv.addWidget(seg_group)
+
         # OCR controls
         ocr_group = QGroupBox("Auto-label (OCR)")
         og = QVBoxLayout(ocr_group)
@@ -302,6 +335,27 @@ class CharLabelerWidget(QWidget):
         re_ocr_btn.clicked.connect(self._re_ocr_current)
         mode_row.addWidget(re_ocr_btn)
         mode_row.addStretch(1)
+
+        # Zoom controls (Ctrl + scroll on canvas also works)
+        zoom_out_btn = QPushButton("−")
+        zoom_out_btn.setFixedWidth(30)
+        zoom_out_btn.setToolTip("Zoom out (Ctrl+−)")
+        zoom_out_btn.clicked.connect(self._zoom_out)
+        mode_row.addWidget(zoom_out_btn)
+        self.zoom_label = QLabel("100%")
+        self.zoom_label.setFixedWidth(48)
+        self.zoom_label.setAlignment(Qt.AlignCenter)
+        self.zoom_label.setStyleSheet("color: #aaa;")
+        mode_row.addWidget(self.zoom_label)
+        zoom_in_btn = QPushButton("+")
+        zoom_in_btn.setFixedWidth(30)
+        zoom_in_btn.setToolTip("Zoom in (Ctrl++)")
+        zoom_in_btn.clicked.connect(self._zoom_in)
+        mode_row.addWidget(zoom_in_btn)
+        zoom_fit_btn = QPushButton("Fit")
+        zoom_fit_btn.setToolTip("Reset zoom to fit the viewport (Ctrl+0)")
+        zoom_fit_btn.clicked.connect(self._zoom_reset)
+        mode_row.addWidget(zoom_fit_btn)
         cv_layout.addLayout(mode_row)
 
         # Char thumbnail strip
@@ -391,7 +445,9 @@ class CharLabelerWidget(QWidget):
             "Shift+O / Shift+N : All OK / All NG<br/>"
             "Ctrl+S : save & next<br/>"
             "Space : skip<br/>"
-            "Del : delete char"
+            "Del : delete char<br/>"
+            "Ctrl+ + / − / 0 : zoom in / out / fit<br/>"
+            "Ctrl + scroll : zoom on canvas"
             "</small>"
         ))
         rv.addWidget(help_box)
@@ -408,6 +464,11 @@ class CharLabelerWidget(QWidget):
         QShortcut(QKeySequence("Space"), self, activated=self._skip_current)
         QShortcut(QKeySequence("Up"), self, activated=lambda: self._step_image(-1))
         QShortcut(QKeySequence("Down"), self, activated=lambda: self._step_image(1))
+        # Zoom shortcuts
+        QShortcut(QKeySequence(Qt.CTRL + Qt.Key_Plus), self, activated=self._zoom_in)
+        QShortcut(QKeySequence(Qt.CTRL + Qt.Key_Equal), self, activated=self._zoom_in)
+        QShortcut(QKeySequence(Qt.CTRL + Qt.Key_Minus), self, activated=self._zoom_out)
+        QShortcut(QKeySequence(Qt.CTRL + Qt.Key_0), self, activated=self._zoom_reset)
         # NOTE: 0-9, A-Z, plus N (NG) are handled in keyPressEvent so we can
         # also auto-advance to the next char after the keystroke. QShortcut
         # would fire even while editing the QLineEdit, which we don't want.
@@ -562,6 +623,17 @@ class CharLabelerWidget(QWidget):
         self.thumb_strip.populate(img, chars, selected=-1)
         self._refresh_stats()
 
+    def _pad_box(self, x, y, w, h, img_shape):
+        """Expand (x, y, w, h) by user-specified padding, clamped to image bounds."""
+        pad_w = int(self.pad_w_input.value())
+        pad_h = int(self.pad_h_input.value())
+        ih, iw = img_shape[:2]
+        nx = max(0, x - pad_w)
+        ny = max(0, y - pad_h)
+        nw = min(iw - nx, w + 2 * pad_w)
+        nh = min(ih - ny, h + 2 * pad_h)
+        return nx, ny, nw, nh
+
     def _auto_label(self, img):
         """Segment + run the user-selected OCR strategy. Returns list of char dicts."""
         try:
@@ -571,6 +643,8 @@ class CharLabelerWidget(QWidget):
             return []
 
         boxes, _, _, _, _ = segment_characters(img)
+        # Apply user padding before any further processing
+        boxes = [self._pad_box(x, y, w, h, img.shape) for (x, y, w, h) in boxes]
         boxes = sorted(boxes, key=lambda b: b[0])
 
         backend = self.ocr_backend_combo.currentData()
@@ -687,6 +761,8 @@ class CharLabelerWidget(QWidget):
         except ImportError:
             return
         boxes, _, _, _, _ = segment_characters(self.current_image)
+        boxes = [self._pad_box(x, y, w, h, self.current_image.shape)
+                 for (x, y, w, h) in boxes]
         boxes = sorted(boxes, key=lambda b: b[0])
         new_chars = []
         for (x, y, w, h) in boxes:
@@ -782,6 +858,43 @@ class CharLabelerWidget(QWidget):
     def _on_draw_mode_toggled(self, on):
         self.canvas.set_mode(self.canvas.MODE_DRAW if on else self.canvas.MODE_SELECT)
 
+    def _apply_padding_to_current(self):
+        """Re-pad existing bboxes on the current image using current pad W/H values.
+        Useful when the user tweaks padding after manual edits — segmentation is
+        not re-run (so manual additions/edits are preserved). To make this idempotent,
+        the new bbox is computed from each char's current bbox treated as the
+        already-padded shape: we shrink by the previously-applied padding first.
+        Since we don't track previous padding per char, we just re-expand from
+        the current visible bbox — call multiple times → keeps growing. Reset
+        with Re-segment if needed."""
+        if self.current_image is None:
+            return
+        chars = self.canvas.get_chars()
+        if not chars:
+            return
+        for c in chars:
+            x, y, w, h = c['bbox']
+            c['bbox'] = self._pad_box(x, y, w, h, self.current_image.shape)
+        self.canvas.set_chars(chars)
+        self.thumb_strip.populate(self.current_image, chars,
+                                    selected=self.canvas.selected)
+
+    def _zoom_in(self):
+        self.canvas.zoom_in()
+        self._refresh_zoom_label()
+
+    def _zoom_out(self):
+        self.canvas.zoom_out()
+        self._refresh_zoom_label()
+
+    def _zoom_reset(self):
+        self.canvas.zoom_reset()
+        self._refresh_zoom_label()
+
+    def _refresh_zoom_label(self):
+        pct = int(round(self.canvas.get_user_zoom() * 100))
+        self.zoom_label.setText(f"{pct}%")
+
     def _set_selected_label(self, label):
         self.canvas.update_selected_label(label)
 
@@ -855,8 +968,16 @@ class CharLabelerWidget(QWidget):
             crop = self.current_image[y:y2, x:x2]
             char_id = (c.get('char_id') or '?').strip() or '?'
             char_id_safe = ''.join(ch for ch in char_id if ch.isalnum()) or 'unknown'
+            # Use `_low` suffix for lowercase letters so case-insensitive
+            # filesystems (macOS, default Windows) don't collapse `char_A`
+            # and `char_a` into the same folder. Digits + uppercase keep
+            # their original folder name for backward compat with old datasets.
+            if char_id_safe.islower() and char_id_safe.isalpha():
+                folder = f'char_{char_id_safe}_low'
+            else:
+                folder = f'char_{char_id_safe}'
             label = c.get('label') or 'ok'
-            sub = os.path.join(self.output_folder, f'char_{char_id_safe}', label)
+            sub = os.path.join(self.output_folder, folder, label)
             os.makedirs(sub, exist_ok=True)
             out_name = f"{stem}_{idx}.png"
             out_path = os.path.join(sub, out_name)

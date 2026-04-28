@@ -1,0 +1,21 @@
+extends: _common.yaml
+experiment_name: ce_baseline_b0
+
+data:
+  task: binary
+
+model:
+  backbone: efficientnet_b0
+  head:
+    type: linear
+    out_dim: 2
+
+loss:
+  type: ce
+  class_weights: auto
+  label_smoothing: 0.05
+
+train:
+  epochs: 30
+  use_two_view: false
+  sampler: random

@@ -44,7 +44,9 @@ class CharLabelerCanvas(QLabel):
         self.setFocusPolicy(Qt.StrongFocus)
 
         self._pixmap = QPixmap()
-        self._scale = 1.0
+        self._scale = 1.0              # final on-screen scale = fit_scale * user_zoom
+        self._fit_scale = 1.0          # auto-fit baseline
+        self._user_zoom = 1.0          # user multiplier (1×, 1.5×, 2× …)
         self.chars = []                # list of dicts (see docstring)
         self.selected = -1
         self.mode = self.MODE_SELECT
@@ -124,11 +126,14 @@ class CharLabelerCanvas(QLabel):
     def _update_display(self):
         if self._pixmap.isNull():
             return
+        # Auto-fit baseline (so the smallest reasonable canvas fills the viewport)
         target_w = max(800, self.width() if self.width() > 100 else 800)
         target_h = max(160, self.height() if self.height() > 100 else 160)
         sw = target_w / self._pixmap.width()
         sh = target_h / self._pixmap.height()
-        self._scale = max(0.1, min(sw, sh, 4.0))
+        self._fit_scale = max(0.1, min(sw, sh, 4.0))
+        # Final scale = fit × user zoom, clamped to a sane range
+        self._scale = max(0.1, min(self._fit_scale * self._user_zoom, 16.0))
         scaled = self._pixmap.scaled(
             int(self._pixmap.width() * self._scale),
             int(self._pixmap.height() * self._scale),
@@ -137,6 +142,36 @@ class CharLabelerCanvas(QLabel):
         self.setFixedSize(scaled.size())
         self.setPixmap(scaled)
         self.update()
+
+    # -------------------------------------------------------------- zoom
+
+    def set_user_zoom(self, factor):
+        """Multiplier on top of auto-fit scale (1.0 = fit, 2.0 = 2× fit)."""
+        self._user_zoom = max(0.25, min(8.0, float(factor)))
+        self._update_display()
+
+    def zoom_in(self, step=1.25):
+        self.set_user_zoom(self._user_zoom * step)
+
+    def zoom_out(self, step=1.25):
+        self.set_user_zoom(self._user_zoom / step)
+
+    def zoom_reset(self):
+        self.set_user_zoom(1.0)
+
+    def get_user_zoom(self):
+        return self._user_zoom
+
+    def wheelEvent(self, ev):
+        """Ctrl + scroll = zoom (mirrors most image apps)."""
+        if ev.modifiers() & Qt.ControlModifier:
+            if ev.angleDelta().y() > 0:
+                self.zoom_in()
+            else:
+                self.zoom_out()
+            ev.accept()
+            return
+        super().wheelEvent(ev)
 
     def _to_image(self, p):
         return QPoint(int(p.x() / self._scale), int(p.y() / self._scale))

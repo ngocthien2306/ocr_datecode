@@ -1,0 +1,21 @@
+extends: _common.yaml
+experiment_name: focal_b0
+
+data:
+  task: binary
+
+model:
+  backbone: efficientnet_b0
+  head:
+    type: linear
+    out_dim: 2
+
+loss:
+  type: focal
+  gamma: 2.0
+  class_weights: auto
+
+train:
+  epochs: 30
+  use_two_view: false
+  sampler: random
