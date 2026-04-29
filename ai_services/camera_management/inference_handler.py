@@ -307,14 +307,14 @@ class InferenceHandler:
         """Initialize text and template verification services"""
         # Debug image writes are disk-I/O heavy (~50-150ms each) and hurt
         # realtime inference latency. Gate on env var for troubleshooting.
-        save_debug = os.environ.get('VERIFY_DEBUG_IMAGES', '0').lower() in ('1', 'true', 'yes')
+        save_debug = True #os.environ.get('VERIFY_DEBUG_IMAGES', '0').lower() in ('1', 'true', 'yes')
 
         # ML Classifier Service — loads sklearn models from shared filesystem.
         # BE saves models to {PROJECT_ROOT}/public/ml_projects/{project_id}/models/{model_id}.joblib
         ml_base_dir = Path(f"{home}/Source/ocr_datecode/public/ml_projects")
         self.ml_classifier_service = MLClassifierService(
             ml_base_dir=ml_base_dir,
-            save_debug_images=True,
+            save_debug_images=save_debug,
             debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
         )
         logger.info(f"MLClassifierService initialized: base_dir={ml_base_dir}, debug={save_debug}")
@@ -328,7 +328,7 @@ class InferenceHandler:
                 self.embedding_classifier_service = EmbeddingClassifierService(
                     onnx_path=str(embedding_onnx),
                     config_path=str(embedding_config),
-                    save_debug_images=True,
+                    save_debug_images=save_debug,
                     debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
                 )
                 logger.info(f"EmbeddingClassifierService initialized: {embedding_weights.name}")
