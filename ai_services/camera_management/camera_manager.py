@@ -251,10 +251,22 @@ class CameraManager:
                     serial_number = cam_config.get("serial_number")
 
                     if serial_number not in self.cameras:
-                        error_msg = f"Camera {serial_number} not connected"
-                        logger.warning(error_msg)
-                        errors.append(error_msg)
-                        continue
+                        # Auto-connect camera if not already connected (e.g. after service restart)
+                        pixel_format = cam_config.get("pixel_format", "Mono8")
+                        logger.info(
+                            f"Camera {serial_number} not connected, attempting auto-connect "
+                            f"(pixel_format={pixel_format})..."
+                        )
+                        connect_result = self.add_camera(serial_number, pixel_format)
+                        if not connect_result["success"]:
+                            error_msg = (
+                                f"Camera {serial_number} not connected and auto-connect failed: "
+                                f"{connect_result.get('error')}"
+                            )
+                            logger.error(error_msg)
+                            errors.append(error_msg)
+                            continue
+                        logger.info(f"Camera {serial_number} auto-connected successfully")
 
                     camera = self.cameras[serial_number]
 
