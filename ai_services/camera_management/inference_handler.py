@@ -314,7 +314,7 @@ class InferenceHandler:
         ml_base_dir = Path(f"{home}/Source/ocr_datecode/public/ml_projects")
         self.ml_classifier_service = MLClassifierService(
             ml_base_dir=ml_base_dir,
-            save_debug_images=save_debug,
+            save_debug_images=True,
             debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
         )
         logger.info(f"MLClassifierService initialized: base_dir={ml_base_dir}, debug={save_debug}")
