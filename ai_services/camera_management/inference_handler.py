@@ -328,7 +328,7 @@ class InferenceHandler:
                 self.embedding_classifier_service = EmbeddingClassifierService(
                     onnx_path=str(embedding_onnx),
                     config_path=str(embedding_config),
-                    save_debug_images=save_debug,
+                    save_debug_images=True,
                     debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
                 )
                 logger.info(f"EmbeddingClassifierService initialized: {embedding_weights.name}")
