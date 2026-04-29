@@ -194,6 +194,17 @@ class EmbeddingClassifierService:
         elapsed = (time.perf_counter() - t0) * 1000
         time_per_item = round(elapsed / m, 2)
 
+        # One debug folder per batch call
+        debug_dir = None
+        if self.save_debug_images:
+            try:
+                serial = items[valid_idxs[0]].get('serial_number', 'unknown')
+                ts = time.strftime("%Y%m%d_%H%M%S")
+                debug_dir = os.path.join(self.debug_path, f"emb_{serial}_{ts}")
+                os.makedirs(debug_dir, exist_ok=True)
+            except Exception:
+                debug_dir = None
+
         for row, i in enumerate(valid_idxs):
             item = items[i]
             sim = float(np.dot(tmpl_embs[row], tgt_embs[row]))
@@ -209,14 +220,14 @@ class EmbeddingClassifierService:
                 'error': None,
             }
 
-            if self.save_debug_images:
+            if debug_dir is not None:
                 try:
-                    ts = int(time.time())
-                    fname = (
-                        f"emb_classify_{item.get('serial_number', '')}_"
-                        f"{item.get('annotation_idx', -1)}_{label}_{p_ok:.2f}_{ts}.png"
-                    )
-                    cv2.imwrite(os.path.join(self.debug_path, fname), item['region_img'])
+                    ann = item.get('annotation_idx', row)
+                    prefix = f"char{ann:02d}_{label}_p{p_ok:.2f}"
+                    cv2.imwrite(os.path.join(debug_dir, f"{prefix}_template.png"),
+                                item['template_crop'])
+                    cv2.imwrite(os.path.join(debug_dir, f"{prefix}_target.png"),
+                                item['region_img'])
                 except Exception:
                     pass
 
