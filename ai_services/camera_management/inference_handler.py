@@ -320,7 +320,7 @@ class InferenceHandler:
         logger.info(f"MLClassifierService initialized: base_dir={ml_base_dir}, debug={save_debug}")
 
         # Embedding Classifier Service — ONNX cosine similarity for char bboxes
-        embedding_weights = Path(f"{home}/Source/ocr_datecode/weights/supcon_128_repvit_m1_5_20260428-194406")
+        embedding_weights = Path(f"{home}/Source/ocr_datecode/weights/supcon_128_efficientnet_b2_20260429-073504")
         embedding_onnx   = embedding_weights / "model.onnx"
         embedding_config = embedding_weights / "config.yaml"
         if embedding_onnx.exists() and embedding_config.exists():

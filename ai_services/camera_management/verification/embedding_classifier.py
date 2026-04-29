@@ -24,11 +24,23 @@ logger = logging.getLogger(__name__)
 MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
+# Minimum grayscale std-dev for a crop to be considered a real character.
+# A black/white uniform patch → std ≈ 0. Typical characters → std > 15.
+MIN_CROP_STD: float = 8.0
+
+
+def _crop_std(bgr: np.ndarray) -> float:
+    """Return grayscale std-dev of an image crop."""
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY) if bgr.ndim == 3 else bgr
+    return float(np.std(gray))
+
 
 def _preprocess(bgr: np.ndarray, size: int) -> np.ndarray:
     h, w = bgr.shape[:2]
+    if h == 0 or w == 0:
+        raise ValueError(f"degenerate crop {w}x{h}")
     s = size / max(h, w)
-    nh, nw = int(round(h * s)), int(round(w * s))
+    nh, nw = max(1, int(round(h * s))), max(1, int(round(w * s)))
     img = cv2.resize(bgr, (nw, nh), interpolation=cv2.INTER_LINEAR)
     canvas = np.full((size, size, 3), 255, dtype=np.uint8)
     canvas[(size - nh) // 2:(size - nh) // 2 + nh, (size - nw) // 2:(size - nw) // 2 + nw] = img
@@ -42,11 +54,14 @@ def _extract_embeddings(
     input_name: str,
     tensors: np.ndarray,
 ) -> np.ndarray:
-    """Run ONNX inference and return L2-normalized embeddings."""
-    if head == "projection":
-        emb = sess.run(None, {input_name: tensors})[0]
-    else:  # arcface
-        emb = sess.run(None, {input_name: tensors})[1]
+    """Run ONNX inference and return L2-normalized feature embeddings.
+
+    Both projection and arcface use output[0] (the feature vector before the
+    classification head) for pairwise cosine similarity comparison.
+    arcface output[1] is cos_sim against class-weight vectors — NOT suitable
+    for comparing two arbitrary crops.
+    """
+    emb = sess.run(None, {input_name: tensors})[0]
     norms = np.linalg.norm(emb, axis=1, keepdims=True) + 1e-8
     return emb / norms
 
@@ -128,6 +143,8 @@ class EmbeddingClassifierService:
             region = item.get('region_img')
             template = item.get('template_crop')
             conf_thr = float(item.get('conf_threshold', 0.5))
+            serial = item.get('serial_number', '')
+            ann_idx = item.get('annotation_idx', -1)
 
             if region is None or region.size == 0:
                 results[i] = {
@@ -140,6 +157,33 @@ class EmbeddingClassifierService:
                 results[i] = {
                     'ml_pass': False, 'p_ok': 0.0, 'label': 'NG',
                     'threshold': conf_thr, 'time_ms': 0.0, 'error': 'missing_template_crop',
+                }
+                continue
+
+            # Reject uniform/blank crops — model was not trained on empty patches
+            tgt_std = _crop_std(region)
+            if tgt_std < MIN_CROP_STD:
+                logger.debug(
+                    f"[{serial}] ann {ann_idx}: target crop too uniform "
+                    f"(std={tgt_std:.1f} < {MIN_CROP_STD}) → NG"
+                )
+                results[i] = {
+                    'ml_pass': False, 'p_ok': 0.0, 'label': 'NG',
+                    'threshold': conf_thr, 'time_ms': 0.0,
+                    'error': f'low_variance_target:{tgt_std:.1f}',
+                }
+                continue
+
+            tmpl_std = _crop_std(template)
+            if tmpl_std < MIN_CROP_STD:
+                logger.warning(
+                    f"[{serial}] ann {ann_idx}: template crop too uniform "
+                    f"(std={tmpl_std:.1f} < {MIN_CROP_STD}), check recipe"
+                )
+                results[i] = {
+                    'ml_pass': False, 'p_ok': 0.0, 'label': 'NG',
+                    'threshold': conf_thr, 'time_ms': 0.0,
+                    'error': f'low_variance_template:{tmpl_std:.1f}',
                 }
                 continue
 
