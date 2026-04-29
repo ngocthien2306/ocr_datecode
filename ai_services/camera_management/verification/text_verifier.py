@@ -838,6 +838,18 @@ class TextVerificationService:
 
         # ── Char path: char bboxes (ML or embedding, only when camera has model) ──
         if use_char_task:
+            # One debug folder per camera per call (same pattern as embedding_classifier)
+            char_debug_dir = None
+            if self.save_debug_images and char_bboxes:
+                try:
+                    ts = time.strftime("%Y%m%d_%H%M%S")
+                    char_debug_dir = os.path.join(
+                        self.debug_path, f"char_{serial_number}_{ts}"
+                    )
+                    os.makedirs(char_debug_dir, exist_ok=True)
+                except Exception:
+                    char_debug_dir = None
+
             for bbox in char_bboxes:
                 ann_idx = bbox.get('annotation_index')
                 if ann_idx is None:
@@ -890,6 +902,20 @@ class TextVerificationService:
                                 f"[{serial_number}] Failed to crop template for char "
                                 f"ann {ann_idx}: {e}"
                             )
+
+                if char_debug_dir is not None:
+                    try:
+                        prefix = f"char{ann_idx:02d}_{expected_char}"
+                        cv2.imwrite(
+                            os.path.join(char_debug_dir, f"{prefix}_target.png"), cropped
+                        )
+                        if template_crop is not None:
+                            cv2.imwrite(
+                                os.path.join(char_debug_dir, f"{prefix}_template.png"),
+                                template_crop,
+                            )
+                    except Exception:
+                        pass
 
                 char_items.append({
                     'serial_number': serial_number,
