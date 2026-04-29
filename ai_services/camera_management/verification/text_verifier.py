@@ -154,51 +154,6 @@ class TextVerificationService:
         """Check if OCR is available"""
         return self.text_recognizer is not None
 
-    def prepare_embedding_templates(
-        self,
-        serial_number: str,
-        template_img: np.ndarray,
-        original_bboxes: List[Dict[str, Any]],
-    ) -> int:
-        """
-        Pre-compute and cache template embeddings for all char bboxes of a camera.
-
-        Call once after recipe is loaded (or whenever template/recipe changes).
-        No-op if CHAR_CLASSIFIER_BACKEND != "embedding" or service not set.
-
-        Returns number of embeddings cached.
-        """
-        if CHAR_CLASSIFIER_BACKEND != "embedding" or not self.embedding_classifier_service:
-            return 0
-
-        items = []
-        for ob in (original_bboxes or []):
-            if ob.get('type') != 'char':
-                continue
-            ann_idx = ob.get('annotation_index')
-            points = ob.get('points', [])
-            if ann_idx is None or len(points) < 4:
-                continue
-            try:
-                from ..ocr_utils import crop_text_region
-                template_crop = crop_text_region(template_img, points)
-                items.append({'annotation_idx': ann_idx, 'template_crop': template_crop})
-            except Exception as e:
-                logger.warning(
-                    f"[{serial_number}] prepare_embedding_templates: "
-                    f"crop failed ann {ann_idx}: {e}"
-                )
-
-        if not items:
-            return 0
-
-        return self.embedding_classifier_service.cache_template_embeddings(serial_number, items)
-
-    def clear_embedding_templates(self, serial_number: Optional[str] = None) -> None:
-        """Invalidate cached template embeddings. Call when recipe is reloaded."""
-        if self.embedding_classifier_service:
-            self.embedding_classifier_service.clear_template_cache(serial_number)
-
     def _get_max_batch(self) -> int:
         """
         Resolve OCR chunk size.

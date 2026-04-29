@@ -6,15 +6,13 @@ Supports projection and arcface head types only.
 
 p_ok = (cosine_sim + 1) / 2  →  identical=1.0, opposite=0.0
 
-Template embeddings are pre-computed once at recipe load via
-cache_template_embeddings() and reused across all frames. classify_batch()
-only runs ONNX on target crops.
+Template and target crops are embedded together in every classify_batch() call.
 """
 
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import cv2
 import numpy as np
@@ -57,11 +55,8 @@ class EmbeddingClassifierService:
     """
     ONNX-based per-character OK/NG classifier using cosine similarity.
 
-    Workflow:
-      1. Call cache_template_embeddings() once when recipe is loaded.
-      2. Call classify_batch() each frame — only runs ONNX on target crops,
-         template embeddings are served from cache.
-      3. Call clear_template_cache() when recipe is reloaded.
+    classify_batch() embeds template and target crops together in one ONNX
+    call every time — no caching.
     """
 
     def __init__(
@@ -91,76 +86,10 @@ class EmbeddingClassifierService:
         if self.save_debug_images:
             os.makedirs(self.debug_path, exist_ok=True)
 
-        # (serial_number, annotation_idx) → L2-normalized embedding (D,)
-        self._template_emb_cache: Dict[Tuple[str, int], np.ndarray] = {}
-
         logger.info(
             f"EmbeddingClassifierService: head={self.head}, size={self.size}, "
             f"provider={self.sess.get_providers()[0]}, onnx={onnx_path}"
         )
-
-    # ── Template cache management ──
-
-    def cache_template_embeddings(
-        self,
-        serial_number: str,
-        items: List[Dict[str, Any]],
-    ) -> int:
-        """
-        Pre-compute and cache template embeddings for a camera's char bboxes.
-
-        Call once when a recipe is loaded for a camera. Skips items already
-        in cache (idempotent).
-
-        items shape: [{'annotation_idx': int, 'template_crop': np.ndarray}, ...]
-
-        Returns number of new embeddings cached.
-        """
-        crops: List[np.ndarray] = []
-        keys: List[Tuple[str, int]] = []
-
-        for item in items:
-            ann_idx = item.get('annotation_idx')
-            template = item.get('template_crop')
-            if ann_idx is None or template is None or template.size == 0:
-                continue
-            key = (serial_number, ann_idx)
-            if key in self._template_emb_cache:
-                continue
-            try:
-                crops.append(_preprocess(template, self.size))
-                keys.append(key)
-            except Exception as e:
-                logger.warning(f"[{serial_number}] Failed to preprocess template ann {ann_idx}: {e}")
-
-        if not crops:
-            return 0
-
-        tensors = np.stack(crops)
-        embs = _extract_embeddings(self.sess, self.head, self.input_name, tensors)
-        for key, emb in zip(keys, embs):
-            self._template_emb_cache[key] = emb
-
-        logger.info(f"Cached {len(keys)} template embeddings for {serial_number}")
-        return len(keys)
-
-    def clear_template_cache(self, serial_number: Optional[str] = None) -> None:
-        """
-        Invalidate template embedding cache.
-        Call when recipe is reloaded. Pass serial_number to clear only one
-        camera, or None to clear all.
-        """
-        if serial_number is None:
-            count = len(self._template_emb_cache)
-            self._template_emb_cache.clear()
-            logger.info(f"Template embedding cache cleared ({count} entries)")
-        else:
-            keys = [k for k in self._template_emb_cache if k[0] == serial_number]
-            for k in keys:
-                del self._template_emb_cache[k]
-            logger.info(f"Template embedding cache cleared for {serial_number} ({len(keys)} entries)")
-
-    # ── Per-frame classification ──
 
     def classify_batch(
         self,
@@ -169,15 +98,13 @@ class EmbeddingClassifierService:
         """
         Batch classify N character crops via embedding cosine similarity.
 
-        Template embeddings are served from cache (set via
-        cache_template_embeddings). If a cache miss occurs (e.g. first frame
-        before cache_template_embeddings was called), falls back to computing
-        from item['template_crop'] and caches the result.
+        Both template and target are embedded in one ONNX call per batch.
+        Each item must supply template_crop.
 
         Input item shape:
             {
                 'region_img':     np.ndarray  — target crop (current frame)
-                'template_crop':  np.ndarray  — fallback if cache miss (optional)
+                'template_crop':  np.ndarray  — template crop (required)
                 'conf_threshold': float
                 'serial_number':  str
                 'annotation_idx': int
@@ -193,19 +120,14 @@ class EmbeddingClassifierService:
         t0 = time.perf_counter()
         results: List[Optional[Dict[str, Any]]] = [None] * n
 
-        # ── Step 1: preprocess targets; resolve template embs from cache ──
-        target_tensors: List[np.ndarray] = []
-        template_embs_resolved: List[Optional[np.ndarray]] = []  # per valid item
-        miss_crops: List[np.ndarray] = []   # template crops for cache misses
-        miss_keys: List[Tuple[str, int]] = []
-        miss_positions: List[int] = []      # index into target_tensors list
+        tmpl_tensors: List[np.ndarray] = []
+        tgt_tensors: List[np.ndarray] = []
         valid_idxs: List[int] = []
 
         for i, item in enumerate(items):
             region = item.get('region_img')
+            template = item.get('template_crop')
             conf_thr = float(item.get('conf_threshold', 0.5))
-            serial = item.get('serial_number', '')
-            ann_idx = item.get('annotation_idx', -1)
 
             if region is None or region.size == 0:
                 results[i] = {
@@ -214,8 +136,16 @@ class EmbeddingClassifierService:
                 }
                 continue
 
+            if template is None or template.size == 0:
+                results[i] = {
+                    'ml_pass': False, 'p_ok': 0.0, 'label': 'NG',
+                    'threshold': conf_thr, 'time_ms': 0.0, 'error': 'missing_template_crop',
+                }
+                continue
+
             try:
-                target_tensors.append(_preprocess(region, self.size))
+                tgt_tensors.append(_preprocess(region, self.size))
+                tmpl_tensors.append(_preprocess(template, self.size))
             except Exception as e:
                 results[i] = {
                     'ml_pass': False, 'p_ok': 0.0, 'label': 'NG',
@@ -223,38 +153,6 @@ class EmbeddingClassifierService:
                     'error': f'preprocess_failed:{e}',
                 }
                 continue
-
-            pos = len(target_tensors) - 1
-            cache_key = (serial, ann_idx)
-            cached = self._template_emb_cache.get(cache_key)
-
-            if cached is not None:
-                template_embs_resolved.append(cached)
-            else:
-                # Cache miss — will compute from template_crop below
-                template = item.get('template_crop')
-                if template is None or template.size == 0:
-                    results[i] = {
-                        'ml_pass': False, 'p_ok': 0.0, 'label': 'NG',
-                        'threshold': conf_thr, 'time_ms': 0.0,
-                        'error': 'template_cache_miss_and_no_crop',
-                    }
-                    # Roll back the target tensor we just added
-                    target_tensors.pop()
-                    continue
-                try:
-                    miss_crops.append(_preprocess(template, self.size))
-                    miss_keys.append(cache_key)
-                    miss_positions.append(pos)
-                    template_embs_resolved.append(None)  # placeholder
-                except Exception as e:
-                    results[i] = {
-                        'ml_pass': False, 'p_ok': 0.0, 'label': 'NG',
-                        'threshold': conf_thr, 'time_ms': 0.0,
-                        'error': f'template_preprocess_failed:{e}',
-                    }
-                    target_tensors.pop()
-                    continue
 
             valid_idxs.append(i)
 
@@ -268,28 +166,13 @@ class EmbeddingClassifierService:
                     }
             return results  # type: ignore
 
-        # ── Step 2: ONNX on targets (always) + cache-miss templates (first frame only) ──
         m = len(valid_idxs)
         try:
-            if miss_crops:
-                # Combine targets + miss templates in one ONNX call
-                combined = np.stack(target_tensors + miss_crops)
-                all_embs = _extract_embeddings(self.sess, self.head, self.input_name, combined)
-                target_embs = all_embs[:m]
-                miss_embs   = all_embs[m:]
-                # Cache newly computed template embeddings
-                for key, emb in zip(miss_keys, miss_embs):
-                    self._template_emb_cache[key] = emb
-                    logger.debug(f"Cached template emb on-the-fly for {key}")
-                # Fill placeholders in template_embs_resolved
-                miss_iter = iter(miss_embs)
-                for pos in miss_positions:
-                    template_embs_resolved[pos] = next(miss_iter)
-            else:
-                # All templates cached — only run ONNX on targets
-                target_embs = _extract_embeddings(
-                    self.sess, self.head, self.input_name, np.stack(target_tensors)
-                )
+            # Embed template + target together in one ONNX call
+            combined = np.stack(tmpl_tensors + tgt_tensors)
+            all_embs = _extract_embeddings(self.sess, self.head, self.input_name, combined)
+            tmpl_embs = all_embs[:m]
+            tgt_embs  = all_embs[m:]
         except Exception as e:
             elapsed = (time.perf_counter() - t0) * 1000
             logger.error(f"EmbeddingClassifier ONNX inference failed: {e}")
@@ -308,15 +191,13 @@ class EmbeddingClassifierService:
                     }
             return results  # type: ignore
 
-        # ── Step 3: cosine similarity + threshold ──
         elapsed = (time.perf_counter() - t0) * 1000
         time_per_item = round(elapsed / m, 2)
 
         for row, i in enumerate(valid_idxs):
             item = items[i]
-            tmpl_emb = template_embs_resolved[row]
-            sim = float(np.dot(target_embs[row], tmpl_emb))
-            p_ok = (sim + 1.0) / 2.0   # map [-1,1] → [0,1]
+            sim = float(np.dot(tmpl_embs[row], tgt_embs[row]))
+            p_ok = (sim + 1.0) / 2.0
             conf_thr = float(item.get('conf_threshold', 0.5))
             label = "OK" if p_ok >= conf_thr else "NG"
             results[i] = {
@@ -345,10 +226,8 @@ class EmbeddingClassifierService:
                 f"{label} thr={conf_thr}"
             )
 
-        cache_status = f"(+{len(miss_crops)} new)" if miss_crops else "(all cached)"
         logger.info(
-            f"Embedding classify batch: N={m} {cache_status}, "
-            f"elapsed={elapsed:.1f}ms ({time_per_item:.2f}ms/item)"
+            f"Embedding classify batch: N={m}, elapsed={elapsed:.1f}ms ({time_per_item:.2f}ms/item)"
         )
 
         for i, r in enumerate(results):
