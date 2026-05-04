@@ -112,7 +112,7 @@ class ProductVerificationService:
                 from .wrinkle_segmenter import WrinkledSegmenterTRT
                 wrinkle_engine = (
                     f"{home}/Source/ocr_datecode/weights/"
-                    "best_wrinkled_instance_segmentation_crop_bottle.engine"
+                    "best_wrinkled_instance_segmentation_crop_bottle_m.engine"
                 )
                 self.wrinkle_seg = WrinkledSegmenterTRT(
                     engine_path=wrinkle_engine,

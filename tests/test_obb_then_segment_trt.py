@@ -492,8 +492,8 @@ if __name__ == "__main__":
     project_root = os.path.dirname(script_dir)
     os.chdir(project_root)
 
-    OBB_ENGINE = "weights/best_bottle_obb_m_320.engine"
-    SEG_ENGINE = "weights/best_wrinkled_instance_segmentation_crop_bottle.engine"
+    OBB_ENGINE = "./weights/best_bottle_m_320_new.engine"
+    SEG_ENGINE = "./weights/best_wrinkled_instance_segmentation_crop_bottle_m.engine"
 
     if len(sys.argv) >= 3:
         # Batch: <input_folder> <output_folder>

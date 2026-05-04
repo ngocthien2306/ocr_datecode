@@ -240,3 +240,5 @@ if __name__ == "__main__":
  
 
 # /usr/src/tensorrt/bin/trtexec --onnx=weights/best_2.onnx --saveEngine=weights/best_bottle_m_320_new_1.engine --fp16 --minShapes=images:1x3x320x320 --optShapes=images:4x3x320x320 --maxShapes=images:8x3x320x320
+
+# /usr/src/tensorrt/bin/trtexec --onnx=weights/best_wrinkled_instance_segmentation_crop_bottle_m.onnx --saveEngine=weights/best_wrinkled_instance_segmentation_crop_bottle_m.engine --fp16 --minShapes=images:1x3x320x320 --optShapes=images:4x3x320x320 --maxShapes=images:8x3x320x320
