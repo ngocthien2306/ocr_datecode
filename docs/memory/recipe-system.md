@@ -1,95 +1,115 @@
-# Recipe System — Data Flow & Architecture
+---
+name: Recipe System — Data Flow & Architecture
+description: How recipes propagate from FE save → DB → AI Service via load/latest/update-realtime/clone, plus the per-recipe classifier routing scheme
+type: project
+originSessionId: 62c49580-c229-497d-a0d0-965d7d677231
+---
+# Recipe System
 
-## Recipe Fields (as of 2026-04-23)
-Standard: `name, product_code, description, delay_reject, reject_pulse, reject_method, do_reject_number, do_alarm_number, normal_pulse_ms, cameras, camera_templates, camera_settings, model_thresholds, template_config, roi_config, is_active`
-New ML fields: `ocr_model_type, ml_project_id, ml_model_id, defect_model`
+## Recipe Fields (verified 2026-05-05)
 
-## Defect Model (per-recipe embedding picker)
-- Field: `defect_model: 'arcface' | 'supcon'` (default `'arcface'`)
-- Routes which `EmbeddingClassifierService` instance handles char OK/NG check
-- BE registry built in `inference_handler.py`: `self.embedding_classifier_services = {'arcface': ..., 'supcon': ...}`
-- `text_verifier._run_char_batch()` reads `defect_model` from each char_item (carried via `camera.defect_model` set by `camera.py:1138`)
-- `CHAR_CLASSIFIER_BACKEND` constant in `text_verifier.py:50` still gates embedding-vs-ML routing globally — `defect_model` only picks **which embedding** within the embedding branch
+### Core
+`name, product_code, description, delay_reject, reject_pulse, reject_method, do_reject_number, do_alarm_number, normal_pulse_ms, cameras, camera_templates, camera_settings, model_thresholds, template_config, roi_config, is_active`
 
-## OCR Model Types
-- `SMTR` (large-x)
-- `SVTRV2_CTC` (large)
-- `OPENOCR_REPSVTR` (medium)
-- `PADDLEV5` (small)
+### ML / OCR
+`ocr_model_type, ml_project_id, ml_model_id, defect_model, classifier_backend`
 
-## Data Flow: Save → Load → Edit
+### Field meanings
+- **`ocr_model_type`** `'SMTR' | 'SVTRV2_CTC' | 'OPENOCR_REPSVTR' | 'PADDLEV5'` — OCR backbone for text/datecode reading
+- **`classifier_backend`** `'embedding' | 'ml'` (default `'embedding'`) — **Active Method** for char OK/NG verify
+  - `'embedding'` → cosine sim between `template_crop` and `target_crop` via SupCon/ArcFace ONNX
+  - `'ml'`        → trained sklearn/centroid bundle from ML Training Studio
+- **`defect_model`** `'arcface' | 'supcon'` (default `'arcface'`) — picks which embedding ONNX (only used when `classifier_backend='embedding'`)
+- **`ml_project_id` + `ml_model_id`** — point to bundle in `public/ml_projects/{pid}/models/{mid}.joblib`. Required when `classifier_backend='ml' AND recipe has char bboxes`
 
-### 1. Save (Create/Update)
-- FE `RecipeFormModal.tsx` → `handleSubmit()` → `onSubmit(submitData)` → API
-- `submitData` = `{...formData, camera_templates: cameraTemplatesArray}`
-- BE: `POST /api/recipes/` (create) or `PUT /api/recipes/{id}` (update)
-- BE validates via `RecipeCreate` / `RecipeUpdate` Pydantic models
+## Per-recipe classifier routing (no global flag — replaces old `CHAR_CLASSIFIER_BACKEND`)
 
-### 2. Load Recipe for AI Service
-- **Direct load**: `POST /api/recipes/{recipe_id}/load`
-  - Builds `recipe_dict` with ALL recipe fields → sends via WebSocket (`send_load_recipe`)
-  - Also saves to `receipt_loads` collection as metadata snapshot
-  - **PENDING**: `recipe_dict` at line ~1040 does NOT yet include `ocr_model_type, ml_project_id, ml_model_id`
-  - **PENDING**: `metadata` dict at line ~1023 also does NOT include these fields
+| Recipe state | Behavior at inference |
+|---|---|
+| `classifier_backend='embedding'` (default) | `defect_model` picks embedding service → cosine sim |
+| `classifier_backend='ml'` + valid `ml_project_id`/`ml_model_id` | `MLClassifierService.classify_batch` loads bundle (sklearn or centroid) → `predict_proba` |
+| `classifier_backend='ml'` + missing ml_model | BE logs warning + skips char verify (`use_char_task=False`); OCR still runs |
+| Recipe has only `text/datecode` bboxes (no `char`) | classifier never invoked (char_items list empty) — backend choice irrelevant |
 
-- **Resume after restart**: `GET /api/recipes/loads/latest`
-  - Returns latest running load from `receipt_loads` collection
-  - Data comes from the `metadata` snapshot saved during load
-  - **PENDING**: If metadata didn't include OCR/ML fields at load time, latest won't have them either
+FE blocks save with **ConfirmDialog popup** when `backend='ml' + recipeChars > 0 + missing ml_*` → button "Confirm" jumps to Model tab.
 
-- **Realtime update (no DB save)**: `POST /api/recipes/{recipe_id}/update-realtime`
-  - Reads recipe from DB, merges `update_data` in-memory, stops+reloads via WebSocket
-  - `recipe_dict` at line ~1333 does NOT yet include `ocr_model_type, ml_project_id, ml_model_id`
-  - Currently handles: `delay_reject, reject_pulse, normal_pulse_ms, cameras, camera_templates`
+## Routing code points
+- BE: `text_verifier._build_items_for_camera` reads `camera.classifier_backend` (set in `camera.py:1139`); branches `use_char_task` gate per backend
+- BE: `text_verifier._run_char_batch` reads `char_items[0]['classifier_backend']`; routes to `embedding_classifier_services[defect_model]` or `ml_classifier_service`
+- BE: `inference_handler.py` builds `embedding_classifier_services = {'arcface': ..., 'supcon': ...}` registry
+- AI service: `MLClassifierService` handles 2 bundle shapes — sklearn `{'clf': ...}` or centroid `{'centroid_ok', 'centroid_ng', 'temperature'}`
 
-### 3. List/Display
-- `GET /api/recipes/` → `list_recipes()` → `recipe_to_response()` → `RecipeResponse`
-- `GET /api/recipes/search` → `search_recipes()` → same
-- FE `Receipts.tsx` → 3 transform blocks (loadReceipts, handleSearch, clone handler)
+## Data Flow paths (where new fields MUST appear)
 
-### 4. Edit
-- FE `Receipts.tsx` → `handleEditReceipt(receipt)` → opens `RecipeFormModal` with `recipe` prop
-- `RecipeFormModal.tsx` → `useEffect` on `(recipe, mode, isOpen)` → `setFormData(...)` from `recipeAny`
-- **Key**: Uses `recipe as any` cast to bypass type checking
+### Save (Create/Update)
+- FE `RecipeFormModal.handleSubmit` → `submitData = {...formData, camera_templates}`
+- BE: `POST /api/recipes/` (create) → `RecipeCreate` Pydantic
+- BE: `PUT /api/recipes/{id}` (update) → `RecipeUpdate` Pydantic
+- DB: `recipes.create(...)` calls `_normalize_empty_strings` (NULLABLE_STR_FIELDS includes new fields)
 
-## NEXT TODO — OCR Model Mapping in Load
-User wants OCR model type to actually affect which model the AI Service uses. Steps needed:
+### Load to AI Service — POST `/api/recipes/{id}/load`
+**Two dicts populated** (recipes.py around line 1135 + 1156):
+1. `metadata` dict → saved to `receipt_loads` collection (used by `/loads/latest` resume)
+2. `recipe_dict` → `send_load_recipe(recipe_dict)` → WebSocket → CameraManagement service → `Camera.load_recipe(recipe_data)`
 
-1. **`load_recipe()` (line ~1040)**: Add to `recipe_dict`:
-   ```python
-   'ocr_model_type': getattr(recipe, 'ocr_model_type', None),
-   'ml_project_id': getattr(recipe, 'ml_project_id', None),
-   'ml_model_id': getattr(recipe, 'ml_model_id', None),
-   ```
+→ Both dicts MUST include any new field that AI Service needs.
 
-2. **`load_recipe()` metadata (line ~1023)**: Add same 3 fields to `metadata` dict
+### Resume after AI restart — GET `/api/recipes/loads/latest`
+- Returns raw `metadata` from DB unchanged
+- AI service: `camera_management_service.py:418` calls this; uses `metadata` directly as `recipe_data`
+- → Field availability depends on `metadata` dict at save time (load_recipe step above)
 
-3. **`update_realtime()` (line ~1333)**: Add same 3 fields to `recipe_dict`
+### Realtime update — POST `/api/recipes/{id}/update-realtime`
+- Reads recipe from DB → builds `recipe_dict` (recipes.py around line 1454) → merges `update_data` in-memory → `send_load_recipe(recipe_dict)` (re-load)
+- → `recipe_dict` MUST include any new field
 
-4. **`loads/latest` endpoint**: No code change needed — it returns raw metadata from DB. Just need metadata to include the fields at save time (step 2).
+### Clone — POST `/api/recipes/{id}/clone`
+- recipes.py around line 990: `RecipeCreate(name=..., ..., field=getattr(original_recipe, 'field', None))`
+- → MUST add new field as kwarg here
 
-5. **AI Service side**: Map `ocr_model_type` string to actual model class. ML training logic deferred to later.
+### List/Display
+- `GET /api/recipes/` + `/search` → `recipe_to_response()` → `RecipeResponse`
+- FE `Receipts.tsx` has 3 transform blocks (`loadReceipts`, `handleSearch`, `clone handler`) that map BE response → frontend `Receipt` shape
 
-## File Locations (quick reference)
+### Edit
+- FE `Receipts.tsx.handleEditReceipt(receipt)` → opens `RecipeFormModal` with `recipe` prop
+- `RecipeFormModal` `useEffect` on (recipe, mode, isOpen) → `setFormData(...)` from `recipeAny`
+
+## CHECKLIST — Adding a New Recipe Field
+
+1. ✅ `RecipeBase` in `backend/app/models/recipe.py`
+2. ✅ `RecipeUpdate` in `backend/app/models/recipe.py`
+3. ✅ `RecipeBase` in `backend/app/schemas/recipe.py`
+4. ✅ `RecipeUpdate` in `backend/app/schemas/recipe.py`
+5. ✅ `NULLABLE_STR_FIELDS` in `backend/app/repositories/recipe_repository.py` (if string field)
+6. ✅ `recipe_to_response()` in `recipes.py` endpoint (kwarg)
+7. ✅ `clone_recipe()` in `recipes.py` endpoint — `RecipeCreate(... field=getattr(original_recipe, 'field', None))`
+8. ✅ `load_recipe()` `metadata` dict in `recipes.py` (~line 1135)
+9. ✅ `load_recipe()` `recipe_dict` in `recipes.py` (~line 1156)
+10. ✅ `update_realtime()` `recipe_dict` in `recipes.py` (~line 1454)
+11. ✅ `Recipe` interface in `frontend-ts/src/types/index.ts`
+12. ✅ `Receipt` interface in `frontend-ts/src/types/index.ts`
+13. ✅ `FormDataType` in `RecipeFormModal.tsx`
+14. ✅ `setFormData` initial state in `RecipeFormModal.tsx`
+15. ✅ `setFormData` edit-load (when recipe prop exists)
+16. ✅ `setFormData` create-reset (mode='create')
+17. ✅ submit payload assembly in `handleSubmit`
+18. ✅ All 3 `transformedReceipts` mappings in `Receipts.tsx` (load + search + clone)
+19. ✅ AI service `camera.py` `Camera.load_recipe()` → `self.field = recipe_data.get(...) or default` (if AI uses field at runtime)
+
+→ **All 19 steps verified for `defect_model` and `classifier_backend` (2026-05-05).**
+
+## File Locations
 - BE models: `backend/app/models/recipe.py`
 - BE schemas: `backend/app/schemas/recipe.py`
-- BE endpoints: `backend/app/api/endpoints/recipes.py`
-- FE types: `frontend-ts/src/types/index.ts` (Recipe + Receipt interfaces)
+- BE endpoints: `backend/app/api/endpoints/recipes.py` (~1700 lines)
+- BE repo: `backend/app/repositories/recipe_repository.py`
+- AI service camera loader: `ai_services/camera_management/camera.py:1118+`
+- AI service routing: `ai_services/camera_management/verification/text_verifier.py`
+- AI service ML classifier: `ai_services/camera_management/verification/ml_classifier.py`
+- AI service embedding: `ai_services/camera_management/verification/embedding_classifier.py`
+- AI service inference handler: `ai_services/camera_management/inference_handler.py` (registry init)
+- FE types: `frontend-ts/src/types/index.ts`
 - FE list page: `frontend-ts/src/components/recipe/Receipts.tsx`
 - FE form modal: `frontend-ts/src/components/recipe/RecipeFormModal.tsx`
 - FE API service: `frontend-ts/src/services/recipes.ts`
-
-## Checklist: Adding a New Recipe Field
-1. Add to `RecipeBase` in `backend/app/models/recipe.py`
-2. Add to `RecipeUpdate` in `backend/app/models/recipe.py`
-3. Add to `RecipeBase` in `backend/app/schemas/recipe.py`
-4. Add to `RecipeUpdate` in `backend/app/schemas/recipe.py`
-5. Add to `recipe_to_response()` in `recipes.py` endpoint
-6. Add to `clone_recipe()` in `recipes.py` endpoint
-7. Add to `load_recipe()` recipe_dict + metadata in `recipes.py`
-8. Add to `update_realtime()` recipe_dict in `recipes.py`
-9. Add to `Recipe` interface in `frontend-ts/src/types/index.ts`
-10. Add to `Receipt` interface in `frontend-ts/src/types/index.ts`
-11. Add to `FormDataType` in `RecipeFormModal.tsx`
-12. Add to `setFormData` (edit mode + create reset) in `RecipeFormModal.tsx`
-13. Add to all 3 `transformedReceipts` mappings in `Receipts.tsx`
