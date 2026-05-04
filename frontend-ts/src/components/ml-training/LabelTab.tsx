@@ -1,6 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, FabricImage, Rect } from 'fabric';
 import { mlTrainingAPI, AnnotationRegion, CharSegment, MLProject, ProjectImage } from '@/services/mlTraining';
+import ConfirmDialog from '@/components/shared/ConfirmDialog';
+
+interface ConfirmState {
+  title: string;
+  message: string;
+  type?: 'warning' | 'danger' | 'info';
+  confirmText?: string;
+  onConfirm: () => void;
+}
 
 const uuidv4 = () => crypto.randomUUID();
 
@@ -28,6 +37,18 @@ function segColor(label: Label) {
   return label === 'OK' ? SEG_OK_COLOR : label === 'NG' ? SEG_NG_COLOR : SEG_UNLABELED;
 }
 
+// Inverse-scale stroke + corner so zoomed-in bboxes stay visually thin
+function applyZoomVisuals(canvas: Canvas, zoom: number) {
+  const sw = Math.max(0.5, 2 / zoom);
+  const cs = Math.max(4, 8 / zoom);
+  canvas.getObjects().forEach(o => {
+    const r = o as AnnotatedRect;
+    if (!r._isRegion && !r._segmentId) return;
+    r.set('strokeWidth', sw);
+    r.set('cornerSize', cs);
+  });
+}
+
 export default function LabelTab({ project, onRefresh }: Props) {
   const [images, setImages]         = useState<ProjectImage[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -47,6 +68,8 @@ export default function LabelTab({ project, onRefresh }: Props) {
   const [expandedRegions, setExpandedRegions] = useState<Set<string>>(new Set());
 
   const [copyPrevRegions, setCopyPrevRegions] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmState | null>(null);
+  const [resizeDelta, setResizeDelta]     = useState<number>(2);
 
   const autoSaveTimer      = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isInitLoadRef      = useRef(true);
@@ -65,6 +88,19 @@ export default function LabelTab({ project, onRefresh }: Props) {
 
   useEffect(() => { drawModeRef.current = drawMode; }, [drawMode]);
   useEffect(() => { selectedRegionIdRef.current = selectedRegionId; }, [selectedRegionId]);
+
+  // In draw modes, skipTargetFind prevents Fabric from picking existing rects on click —
+  // otherwise a click on a region/segment box starts a fabric-drag AND our draw-rect
+  // simultaneously, so each drag commits a phantom char/region.
+  useEffect(() => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    canvas.skipTargetFind = drawMode !== 'select';
+    if (drawMode !== 'select') {
+      canvas.discardActiveObject();
+      canvas.requestRenderAll();
+    }
+  }, [drawMode]);
 
   // Drawing state
   const drawStartRef  = useRef<{ x: number; y: number } | null>(null);
@@ -162,6 +198,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
       zoom *= 0.999 ** delta;
       zoom = Math.min(Math.max(zoom, 0.1), 10);
       canvas.zoomToPoint({ x: opt.e.offsetX, y: opt.e.offsetY }, zoom);
+      applyZoomVisuals(canvas, zoom);
       opt.e.preventDefault();
       opt.e.stopPropagation();
     });
@@ -196,9 +233,10 @@ export default function LabelTab({ project, onRefresh }: Props) {
       isDrawingRef.current = true;
 
       const color = mode === 'draw-region' ? REGION_COLOR : SEG_UNLABELED;
+      const curZoom = canvas.getZoom();
       const rect = new Rect({
         left: clampX, top: clampY, width: 0, height: 0,
-        stroke: color, strokeWidth: 2,
+        stroke: color, strokeWidth: Math.max(0.5, 2 / curZoom),
         fill: `${color}22`,
         selectable: false, evented: false,
       }) as AnnotatedRect;
@@ -242,19 +280,25 @@ export default function LabelTab({ project, onRefresh }: Props) {
         return;
       }
 
-      // Click on segment → focus it in panel (no label cycling)
+      // Click on canvas object → focus matching row in right panel
       if (!isDrawingRef.current && opt.target) {
         const obj = opt.target as AnnotatedRect;
-        if (obj._segmentId && obj._regionId) {
-          const ptr = canvas.getScenePoint(e);
-          const dist = Math.hypot(ptr.x - mouseDnPosRef.current.x, ptr.y - mouseDnPosRef.current.y);
-          if (dist < 5) {
-            setSelectedSegId(obj._segmentId!);
-            setSelectedRegionId(obj._regionId!);
-            // Scroll panel to this segment
+        const ptr = canvas.getScenePoint(e);
+        const dist = Math.hypot(ptr.x - mouseDnPosRef.current.x, ptr.y - mouseDnPosRef.current.y);
+        if (dist < 5) {
+          if (obj._segmentId && obj._regionId) {
+            setSelectedSegId(obj._segmentId);
+            setSelectedRegionId(obj._regionId);
             setTimeout(() => {
-              const el = document.getElementById(`seg-${obj._segmentId}`);
-              el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+              document.getElementById(`seg-${obj._segmentId}`)
+                ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }, 0);
+          } else if (obj._isRegion && obj._regionId) {
+            setSelectedRegionId(obj._regionId);
+            setSelectedSegId(null);
+            setTimeout(() => {
+              document.getElementById(`region-${obj._regionId}`)
+                ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
             }, 0);
           }
         }
@@ -348,9 +392,13 @@ export default function LabelTab({ project, onRefresh }: Props) {
       }
     });
 
-    // ── Space key pan ───────────────────────────────────────────────────────
+    // ── Space key pan + ESC to exit draw mode ──────────────────────────────
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+      if (e.code === 'Escape') {
+        setDrawMode('select');
+        return;
+      }
       if (e.code === 'Space' && !(canvas as any)._spacePressed) {
         e.preventDefault();
         (canvas as any)._spacePressed = true;
@@ -380,7 +428,56 @@ export default function LabelTab({ project, onRefresh }: Props) {
     const bounds = imageBoundsRef.current;
     if (!canvas || !bounds || !selectedFile || isModifyingRef.current) return;
     _renderAllRegions(canvas, regions, bounds);
-  }, [regions, selectedFile]);
+
+    // Restore canvas active object from React selection state.
+    // Only meaningful in select mode (draw modes hide handles via discardActiveObject).
+    if (drawModeRef.current === 'select') {
+      let target: AnnotatedRect | undefined;
+      if (selectedSegId) {
+        target = canvas.getObjects().find(o => (o as AnnotatedRect)._segmentId === selectedSegId) as AnnotatedRect | undefined;
+      } else if (selectedRegionId) {
+        target = canvas.getObjects().find(o => {
+          const r = o as AnnotatedRect;
+          return r._isRegion && r._regionId === selectedRegionId;
+        }) as AnnotatedRect | undefined;
+      }
+      if (target) {
+        canvas.setActiveObject(target);
+        canvas.requestRenderAll();
+      } else if (canvas.getActiveObject()) {
+        canvas.discardActiveObject();
+        canvas.requestRenderAll();
+      }
+    }
+  }, [regions, selectedFile, selectedRegionId, selectedSegId]);
+
+  // ── Focus dimming: fade non-focused regions/chars ─────────────────────────
+  useEffect(() => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    // Skip dim during draw modes — user needs full visibility to draw
+    const inDrawMode = drawMode !== 'select';
+    const hasFocus   = !inDrawMode && (selectedSegId !== null || selectedRegionId !== null);
+
+    canvas.getObjects().forEach(o => {
+      const r = o as AnnotatedRect;
+      if (!r._isRegion && !r._segmentId) return;
+
+      let focused = true;
+      if (hasFocus) {
+        if (selectedSegId) {
+          // 1 char focus → that char + its parent region stay bright
+          focused = r._segmentId === selectedSegId
+                 || (r._isRegion === true && r._regionId === selectedRegionId);
+        } else if (selectedRegionId) {
+          // region focus → that region + all chars inside stay bright
+          focused = r._regionId === selectedRegionId;
+        }
+      }
+      r.set('opacity', focused ? 1 : 0.25);
+    });
+    canvas.requestRenderAll();
+  }, [selectedRegionId, selectedSegId, regions, drawMode]);
 
   // ── Render helper ─────────────────────────────────────────────────────────
   function _renderAllRegions(
@@ -437,6 +534,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
       });
     });
 
+    applyZoomVisuals(canvas, canvas.getZoom());
     canvas.renderAll();
   }
 
@@ -445,18 +543,33 @@ export default function LabelTab({ project, onRefresh }: Props) {
     if (!selectedFile) return;
     const region = regions.find(r => r.id === regionId);
     if (!region) return;
-    setSegmenting(true);
-    try {
-      const result = await mlTrainingAPI.segmentRegion(project.id, selectedFile, {
-        x: region.x, y: region.y, w: region.w, h: region.h,
+
+    const runSegment = async () => {
+      setSegmenting(true);
+      try {
+        const result = await mlTrainingAPI.segmentRegion(project.id, selectedFile, {
+          x: region.x, y: region.y, w: region.w, h: region.h,
+        });
+        const segments: CharSegment[] = result.segments.map(s => ({ ...s, label: null }));
+        setRegions(prev => prev.map(r => r.id === regionId ? { ...r, segments } : r));
+      } catch (e) {
+        console.error('Segmentation failed', e);
+      } finally {
+        setSegmenting(false);
+      }
+    };
+
+    if (region.segments.length > 0) {
+      setConfirmDialog({
+        title: 'Replace existing characters?',
+        message: `This region already has ${region.segments.length} character${region.segments.length > 1 ? 's' : ''}. Auto-segmenting will discard them and re-detect from scratch. Continue?`,
+        type: 'warning',
+        confirmText: 'Replace',
+        onConfirm: () => { void runSegment(); },
       });
-      const segments: CharSegment[] = result.segments.map(s => ({ ...s, label: null }));
-      setRegions(prev => prev.map(r => r.id === regionId ? { ...r, segments } : r));
-    } catch (e) {
-      console.error('Segmentation failed', e);
-    } finally {
-      setSegmenting(false);
+      return;
     }
+    await runSegment();
   }, [project.id, selectedFile, regions]);
 
   // ── char_id edit from panel input ────────────────────────────────────────
@@ -495,12 +608,15 @@ export default function LabelTab({ project, onRefresh }: Props) {
     if (!canvas) return;
     const zoom = Math.min(Math.max(canvas.getZoom() * factor, 0.1), 10);
     canvas.zoomToPoint({ x: (canvas.width ?? 800) / 2, y: (canvas.height ?? 600) / 2 }, zoom);
+    applyZoomVisuals(canvas, zoom);
+    canvas.requestRenderAll();
   }, []);
 
   const handleResetZoom = useCallback(() => {
     const canvas = fabricRef.current;
     if (!canvas) return;
     canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+    applyZoomVisuals(canvas, 1);
     canvas.renderAll();
   }, []);
 
@@ -561,10 +677,22 @@ export default function LabelTab({ project, onRefresh }: Props) {
   }, []);
 
   const deleteRegion = useCallback((regionId: string, segCount: number) => {
-    if (segCount > 0 && !confirm(`Delete this region and all ${segCount} char(s) inside?`)) return;
-    setRegions(prev => prev.filter(r => r.id !== regionId));
-    setExpandedRegions(prev => { const n = new Set(prev); n.delete(regionId); return n; });
-    if (selectedRegionId === regionId) setSelectedRegionId(null);
+    const performDelete = () => {
+      setRegions(prev => prev.filter(r => r.id !== regionId));
+      setExpandedRegions(prev => { const n = new Set(prev); n.delete(regionId); return n; });
+      if (selectedRegionId === regionId) setSelectedRegionId(null);
+    };
+    if (segCount === 0) {
+      performDelete();
+      return;
+    }
+    setConfirmDialog({
+      title: 'Delete region',
+      message: `This region contains ${segCount} character${segCount > 1 ? 's' : ''}. Deleting it will remove the region and all chars inside. Continue?`,
+      type: 'danger',
+      confirmText: 'Delete',
+      onConfirm: performDelete,
+    });
   }, [selectedRegionId]);
 
   const deleteSegment = useCallback((regionId: string, segId: string) => {
@@ -572,6 +700,60 @@ export default function LabelTab({ project, onRefresh }: Props) {
       ...r, segments: r.segments.filter(s => s.id !== segId),
     }));
   }, []);
+
+  // ── Selection bridge: panel click → state + canvas activeObject ───────────
+  // Always force select mode so resize handles are usable.
+  const selectFromPanel = useCallback((regionId: string | null, segId: string | null) => {
+    setSelectedRegionId(regionId);
+    setSelectedSegId(segId);
+    if (drawModeRef.current !== 'select') setDrawMode('select');
+
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    let target: AnnotatedRect | undefined;
+    if (segId) {
+      target = canvas.getObjects().find(o => (o as AnnotatedRect)._segmentId === segId) as AnnotatedRect | undefined;
+    } else if (regionId) {
+      target = canvas.getObjects().find(o => {
+        const r = o as AnnotatedRect;
+        return r._isRegion && r._regionId === regionId;
+      }) as AnnotatedRect | undefined;
+    }
+    if (target) {
+      canvas.setActiveObject(target);
+      canvas.requestRenderAll();
+    } else if (canvas.getActiveObject()) {
+      canvas.discardActiveObject();
+      canvas.requestRenderAll();
+    }
+  }, []);
+
+  // ── Resize selected char(s): symmetric, center-fixed, clamped to image ────
+  const applyResize = useCallback((axis: 'w' | 'h', sign: 1 | -1) => {
+    const bounds = imageBoundsRef.current;
+    if (!bounds || !selectedRegionId) return;
+    const dPx = Math.max(1, resizeDelta) * sign;
+    const dn  = axis === 'w' ? dPx / bounds.width : dPx / bounds.height;
+
+    setRegions(prev => prev.map(r => {
+      if (r.id !== selectedRegionId) return r;
+      return {
+        ...r,
+        segments: r.segments.map(s => {
+          if (selectedSegId && s.id !== selectedSegId) return s;
+          if (axis === 'w') {
+            const newW = Math.min(1, Math.max(0.001, s.w + dn));
+            const newX = Math.min(1 - newW, Math.max(0, s.x - (newW - s.w) / 2));
+            return { ...s, x: newX, w: newW };
+          } else {
+            const newH = Math.min(1, Math.max(0.001, s.h + dn));
+            const newY = Math.min(1 - newH, Math.max(0, s.y - (newH - s.h) / 2));
+            return { ...s, y: newY, h: newH };
+          }
+        }),
+      };
+    }));
+  }, [selectedRegionId, selectedSegId, resizeDelta]);
 
   // ── Stats ─────────────────────────────────────────────────────────────────
   const allSegs       = regions.flatMap(r => r.segments);
@@ -778,8 +960,8 @@ export default function LabelTab({ project, onRefresh }: Props) {
         {/* Status bar */}
         {selectedFile && (
           <div style={{ padding: '5px 12px', background: '#1a1d27', borderTop: '1px solid #2d3148', fontSize: '11px', color: '#6b7280', display: 'flex', gap: '16px' }}>
-            {drawMode === 'draw-region' && <span style={{ color: REGION_COLOR }}>Draw a rectangle around a character region → Auto Segment</span>}
-            {drawMode === 'draw-char'   && <span style={{ color: SEG_UNLABELED }}>Draw a single character box manually{selectedRegionId ? '' : ' (will create new region)'}</span>}
+            {drawMode === 'draw-region' && <span style={{ color: REGION_COLOR }}>Draw a rectangle around a character region → Auto Segment · <b>Esc</b> to exit</span>}
+            {drawMode === 'draw-char'   && <span style={{ color: SEG_UNLABELED }}>Draw a single character box manually{selectedRegionId ? '' : ' (will create new region)'} · <b>Esc</b> to exit</span>}
             {drawMode === 'select'      && <span>Scroll to zoom · Space+drag to pan · Click char to focus in panel · Drag to move/resize</span>}
           </div>
         )}
@@ -790,6 +972,51 @@ export default function LabelTab({ project, onRefresh }: Props) {
         <div className="ml-panel-header" style={{ padding: '10px 12px' }}>
           Regions {regions.length > 0 && <span className="ml-tab-count">{regions.length}</span>}
         </div>
+
+        {/* ── Resize selection panel ── */}
+        {(() => {
+          const selRegion = regions.find(r => r.id === selectedRegionId);
+          const targetCount = selectedSegId ? 1 : (selRegion?.segments.length ?? 0);
+          const enabled = !!selectedRegionId && targetCount > 0;
+          const labelText = !selectedRegionId
+            ? 'Resize: (no selection)'
+            : selectedSegId
+              ? 'Resize: 1 char'
+              : `Resize: ${targetCount} char${targetCount > 1 ? 's' : ''} in region`;
+          return (
+            <div style={{
+              padding: '8px 12px',
+              borderBottom: '1px solid #e2e8f0',
+              background: '#f8fafc',
+              opacity: enabled ? 1 : 0.5,
+            }}>
+              <div style={{ fontSize: '10px', fontWeight: 600, color: '#64748b', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '.5px' }}>
+                {labelText}
+              </div>
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <label style={{ fontSize: '11px', color: '#64748b' }}>Δ</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={resizeDelta}
+                  onChange={e => setResizeDelta(Math.max(1, Number(e.target.value) || 1))}
+                  disabled={!enabled}
+                  style={{ width: 44, fontSize: '11px', padding: '2px 4px', borderRadius: 4, border: '1px solid #cbd5e1', textAlign: 'center' }}
+                />
+                <span style={{ fontSize: '10px', color: '#94a3b8' }}>px</span>
+                <button className="ml-btn ml-btn-secondary ml-btn-sm" style={{ padding: '2px 6px', fontSize: '11px' }}
+                        disabled={!enabled} onClick={() => applyResize('w', -1)} title="Shrink width (symmetric)">W−</button>
+                <button className="ml-btn ml-btn-secondary ml-btn-sm" style={{ padding: '2px 6px', fontSize: '11px' }}
+                        disabled={!enabled} onClick={() => applyResize('w', 1)} title="Expand width (symmetric)">W+</button>
+                <button className="ml-btn ml-btn-secondary ml-btn-sm" style={{ padding: '2px 6px', fontSize: '11px' }}
+                        disabled={!enabled} onClick={() => applyResize('h', -1)} title="Shrink height (symmetric)">H−</button>
+                <button className="ml-btn ml-btn-secondary ml-btn-sm" style={{ padding: '2px 6px', fontSize: '11px' }}
+                        disabled={!enabled} onClick={() => applyResize('h', 1)} title="Expand height (symmetric)">H+</button>
+              </div>
+            </div>
+          );
+        })()}
 
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {regions.length === 0 && (
@@ -809,15 +1036,18 @@ export default function LabelTab({ project, onRefresh }: Props) {
               });
             };
             return (
-            <div key={region.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
+            <div key={region.id} id={`region-${region.id}`} style={{ borderBottom: '1px solid #e2e8f0' }}>
 
               {/* Region header */}
               <div
-                className={`ml-segment-item ${selectedRegionId === region.id ? 'selected' : ''}`}
-                onClick={() => setSelectedRegionId(prev => prev === region.id ? null : region.id)}
+                className={`ml-segment-item ${selectedRegionId === region.id && !selectedSegId ? 'selected' : ''}`}
+                onClick={() => {
+                  const isCurrent = selectedRegionId === region.id && !selectedSegId;
+                  selectFromPanel(isCurrent ? null : region.id, null);
+                }}
                 style={{
-                  background: selectedRegionId === region.id ? '#fef3c7' : '#f8fafc',
-                  borderLeft: selectedRegionId === region.id ? `3px solid ${REGION_COLOR}` : '3px solid transparent',
+                  background: selectedRegionId === region.id && !selectedSegId ? '#fef3c7' : '#f8fafc',
+                  borderLeft: selectedRegionId === region.id && !selectedSegId ? `3px solid ${REGION_COLOR}` : '3px solid transparent',
                 }}
               >
                 {/* Expand/collapse chevron */}
@@ -862,7 +1092,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
                     <button
                       className="ml-btn ml-btn-success ml-btn-sm"
                       style={{ padding: '2px 6px', fontSize: '10px' }}
-                      onClick={e => { e.stopPropagation(); setSelectedRegionId(region.id); handleSegment(region.id); }}
+                      onClick={e => { e.stopPropagation(); selectFromPanel(region.id, null); handleSegment(region.id); }}
                       disabled={segmenting}
                     >
                       <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
@@ -873,7 +1103,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
                     className="ml-btn ml-btn-secondary ml-btn-sm"
                     style={{ padding: '2px 6px', fontSize: '10px' }}
                     title="Add char manually to this region"
-                    onClick={e => { e.stopPropagation(); setSelectedRegionId(region.id); setDrawMode('draw-char'); }}
+                    onClick={e => { e.stopPropagation(); setSelectedRegionId(region.id); setSelectedSegId(null); setDrawMode('draw-char'); }}
                   >
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
                   </button>
@@ -899,7 +1129,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
                     borderLeft: selectedSegId === seg.id ? `3px solid ${segColor(seg.label ?? null)}` : '3px solid transparent',
                     boxShadow: selectedSegId === seg.id ? 'inset 0 0 0 1px #bfdbfe' : undefined,
                   }}
-                  onClick={() => { setSelectedSegId(seg.id); setSelectedRegionId(region.id); }}
+                  onClick={() => selectFromPanel(region.id, seg.id)}
                 >
                   {/* Color dot */}
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: segColor(seg.label ?? null), flexShrink: 0, display: 'inline-block' }} />
@@ -956,6 +1186,17 @@ export default function LabelTab({ project, onRefresh }: Props) {
 
         </div>
       </div>
+
+      {/* ── Confirm dialog ── */}
+      <ConfirmDialog
+        isOpen={confirmDialog !== null}
+        onClose={() => setConfirmDialog(null)}
+        onConfirm={() => confirmDialog?.onConfirm()}
+        title={confirmDialog?.title}
+        message={confirmDialog?.message ?? ''}
+        type={confirmDialog?.type}
+        confirmText={confirmDialog?.confirmText}
+      />
     </div>
   );
 }

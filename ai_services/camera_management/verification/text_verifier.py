@@ -47,7 +47,7 @@ home = os.environ.get('HOME')
 # similarity instead of predict_proba.
 # "ml"        — MLClassifierService (sklearn, feature-based)
 # "embedding" — EmbeddingClassifierService (ONNX, cosine similarity)
-CHAR_CLASSIFIER_BACKEND: str = "ml"
+CHAR_CLASSIFIER_BACKEND: str = "embedding"
 
 
 _NUMERIC_CHAR_FIELDS = (
