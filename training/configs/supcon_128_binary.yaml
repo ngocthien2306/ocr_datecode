@@ -1,0 +1,34 @@
+extends: _common.yaml
+experiment_name: supcon_128_binary_b0
+
+# Binary SupCon: train embedding to separate OK vs NG only.
+# All chars' OK form 1 cluster, all chars' NG form another → ideal for
+# global-centroid-based predict (Strategy B in ML Training Studio).
+data:
+  task: binary                    # ← key change vs supcon_128.yaml (multi_128)
+
+augment:
+  preset: medium                  # two-view needs stronger transforms
+
+model:
+  backbone: efficientnet_b0
+  head:
+    type: projection
+    out_dim: 128                  # embedding dim
+    hidden: 512
+
+loss:
+  type: supcon
+  temperature: 0.07               # standard SupCon temperature
+
+train:
+  epochs: 50
+  batch_size: 128
+  use_two_view: true              # required for SupCon two-view positives
+  sampler: per_class              # ensure mixed OK/NG per batch
+  per_class_n_classes: 2          # only OK + NG (vs 16 for multi_128)
+  per_class_n_samples: 64         # 64 samples per class per batch → 128 total
+
+eval:
+  inference: nearest_centroid     # eval via 2 centroids (OK + NG)
+  primary_metric: balanced_score

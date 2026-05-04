@@ -157,9 +157,15 @@ def evaluate(model, val_loader, cfg, device, multi_to_idx, train_samples,
     centroids = None
     if cfg.model.head.type == "projection":
         centroid_loader = _build_centroid_loader(cfg, train_samples)
+        # Binary task → 2 centroids (OK/NG) keyed by ok_ng.
+        # Multi_128 task → 1 centroid per (char × OK/NG).
+        if cfg.data.task == "binary":
+            n_classes, label_key = 2, "ok_ng"
+        else:
+            n_classes, label_key = len(multi_to_idx), "multi_idx"
         centroids = compute_centroids(model, centroid_loader,
-                                      num_classes=len(multi_to_idx), device=device,
-                                      feat_key="embedding")
+                                      num_classes=n_classes, device=device,
+                                      feat_key="embedding", label_key=label_key)
 
     preds = collect_predictions(
         model, val_loader, cfg, device,

@@ -38,8 +38,13 @@ def compute_centroids(
     num_classes: int,
     device: str,
     feat_key: str = "embedding",
+    label_key: str = "multi_idx",
 ) -> torch.Tensor:
-    """Mean L2-normalized embedding per class on `loader`. Returns (C, D)."""
+    """Mean L2-normalized embedding per class on `loader`. Returns (C, D).
+
+    label_key='multi_idx' (default) → 1 centroid per (char × OK/NG) class.
+    label_key='ok_ng'     → 2 centroids only (binary supcon).
+    """
     model.eval()
     sums: Optional[torch.Tensor] = None
     counts = torch.zeros(num_classes, device=device)
@@ -49,7 +54,7 @@ def compute_centroids(
         emb = out[feat_key] if feat_key in out else F.normalize(out["feat"], dim=1)
         if sums is None:
             sums = torch.zeros(num_classes, emb.shape[1], device=device)
-        labels = target["multi_idx"].to(device)
+        labels = target[label_key].to(device)
         for c in labels.unique():
             mask = labels == c
             sums[c] += emb[mask].sum(dim=0)
@@ -110,9 +115,17 @@ def collect_predictions(
         out = model(imgs)
 
         if task == "binary":
-            probs = F.softmax(out["logits"], dim=1)
-            score_ng = probs[:, 1]
-            pred_argmax = out["logits"].argmax(dim=1)
+            if head_type == "projection":
+                # Binary SupCon: 2 centroids (idx 0=OK, 1=NG). Score = sim_ng - sim_ok.
+                assert centroids is not None, "centroids required for binary projection head"
+                emb = out["embedding"]
+                sims = emb @ centroids.t()                       # (B, 2)
+                score_ng = sims[:, 1] - sims[:, 0]
+                pred_argmax = sims.argmax(dim=1)                 # 0=OK, 1=NG
+            else:
+                probs = F.softmax(out["logits"], dim=1)
+                score_ng = probs[:, 1]
+                pred_argmax = out["logits"].argmax(dim=1)
             pred_multi = torch.full_like(pred_argmax, -1)
 
         else:                                  # multi_128

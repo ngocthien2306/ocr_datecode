@@ -183,15 +183,20 @@ class SupConLoss(nn.Module):
 
     Works with two-view (each sample appears twice) AND with single-view
     (positives = other batch members of same class).
+
+    task='binary'      → labels = ok_ng (2 super-clusters: OK vs NG)
+    task='multi_128'   → labels = multi_idx (~132 (char×OK/NG) clusters)
     """
 
-    def __init__(self, temperature: float = 0.07):
+    def __init__(self, temperature: float = 0.07, task: str = "multi_128"):
         super().__init__()
         self.t = float(temperature)
+        self.task = task
 
     def forward(self, out: Dict, target: Dict) -> torch.Tensor:
         z = out["embedding"]                                        # (B, D), L2-normed
-        y = target["multi_idx"].to(z.device)
+        key = "ok_ng" if self.task == "binary" else "multi_idx"
+        y = target[key].to(z.device)
         return supcon_from_embeddings(z, y, self.t)
 
 
@@ -275,9 +280,9 @@ def build_loss(cfg, num_multi_classes: int, feat_dim: int,
                             weight=weight, label_smoothing=cfg.loss.label_smoothing,
                             center_lambda=cfg.loss.center_lambda, task=task)
     if loss_type == "supcon":
-        if cfg.data.task != "multi_128":
-            raise ValueError("supcon requires data.task=multi_128")
-        return SupConLoss(temperature=cfg.loss.temperature)
+        if cfg.data.task not in ("multi_128", "binary"):
+            raise ValueError("supcon requires data.task=multi_128 or binary")
+        return SupConLoss(temperature=cfg.loss.temperature, task=task)
     if loss_type == "arcface":
         if cfg.data.task != "multi_128":
             raise ValueError("arcface requires data.task=multi_128")
