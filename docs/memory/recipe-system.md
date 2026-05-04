@@ -2,7 +2,14 @@
 
 ## Recipe Fields (as of 2026-04-23)
 Standard: `name, product_code, description, delay_reject, reject_pulse, reject_method, do_reject_number, do_alarm_number, normal_pulse_ms, cameras, camera_templates, camera_settings, model_thresholds, template_config, roi_config, is_active`
-New ML fields: `ocr_model_type, ml_project_id, ml_model_id`
+New ML fields: `ocr_model_type, ml_project_id, ml_model_id, defect_model`
+
+## Defect Model (per-recipe embedding picker)
+- Field: `defect_model: 'arcface' | 'supcon'` (default `'arcface'`)
+- Routes which `EmbeddingClassifierService` instance handles char OK/NG check
+- BE registry built in `inference_handler.py`: `self.embedding_classifier_services = {'arcface': ..., 'supcon': ...}`
+- `text_verifier._run_char_batch()` reads `defect_model` from each char_item (carried via `camera.defect_model` set by `camera.py:1138`)
+- `CHAR_CLASSIFIER_BACKEND` constant in `text_verifier.py:50` still gates embedding-vs-ML routing globally — `defect_model` only picks **which embedding** within the embedding branch
 
 ## OCR Model Types
 - `SMTR` (large-x)

@@ -180,6 +180,7 @@ export interface Recipe {
   ocr_model_type?: string;
   ml_project_id?: string;
   ml_model_id?: string;
+  defect_model?: string;
   created_by?: string;
   updated_by?: string;
   created_by_name?: string;  // Full name of creator
@@ -256,6 +257,7 @@ export interface Receipt {
   ocr_model_type?: string;
   ml_project_id?: string;
   ml_model_id?: string;
+  defect_model?: string;
   createdAt: string;
   updatedAt: string;
 }

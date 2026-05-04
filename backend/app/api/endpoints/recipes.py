@@ -236,6 +236,7 @@ def recipe_to_response(recipe: RecipeInDB, user_names_map: dict = None) -> Recip
         ocr_model_type=getattr(recipe, 'ocr_model_type', None),
         ml_project_id=getattr(recipe, 'ml_project_id', None),
         ml_model_id=getattr(recipe, 'ml_model_id', None),
+        defect_model=getattr(recipe, 'defect_model', None),
         created_by=recipe.created_by,
         updated_by=recipe.updated_by,
         created_by_name=created_by_name,
@@ -1005,6 +1006,7 @@ async def clone_recipe(
         ocr_model_type=getattr(original_recipe, 'ocr_model_type', None),
         ml_project_id=getattr(original_recipe, 'ml_project_id', None),
         ml_model_id=getattr(original_recipe, 'ml_model_id', None),
+        defect_model=getattr(original_recipe, 'defect_model', None),
     )
 
     # Create the cloned recipe
@@ -1143,6 +1145,7 @@ async def load_recipe(
         'ocr_model_type': getattr(recipe, 'ocr_model_type', None),
         'ml_project_id': getattr(recipe, 'ml_project_id', None),
         'ml_model_id': getattr(recipe, 'ml_model_id', None),
+        'defect_model': getattr(recipe, 'defect_model', None),
     }
 
     # Send load recipe command via WebSocket to CameraManagement service
@@ -1167,6 +1170,7 @@ async def load_recipe(
         'ocr_model_type': getattr(recipe, 'ocr_model_type', None),
         'ml_project_id': getattr(recipe, 'ml_project_id', None),
         'ml_model_id': getattr(recipe, 'ml_model_id', None),
+        'defect_model': getattr(recipe, 'defect_model', None),
     }
 
     success = await send_load_recipe(recipe_dict)
@@ -1463,6 +1467,7 @@ async def update_recipe_realtime(
         'ocr_model_type': getattr(recipe, 'ocr_model_type', None),
         'ml_project_id': getattr(recipe, 'ml_project_id', None),
         'ml_model_id': getattr(recipe, 'ml_model_id', None),
+        'defect_model': getattr(recipe, 'defect_model', None),
     }
 
     # 4. Merge update_data into recipe_dict (in-memory, NOT saved to DB)

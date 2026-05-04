@@ -115,6 +115,7 @@ class RecipeBase(BaseModel):
     ocr_model_type: Optional[str] = Field(default=None, description="OCR model type: SMTR, SVTRV2_CTC, OPENOCR_REPSVTR, PADDLEV5")
     ml_project_id: Optional[str] = Field(default=None, description="ML Training project ID for quality inspection")
     ml_model_id: Optional[str] = Field(default=None, description="Trained ML model ID within the ML project")
+    defect_model: Optional[str] = Field(default="arcface", description="Embedding model used for defect detection: arcface | supcon")
 
 
 class RecipeCreate(RecipeBase):
@@ -143,6 +144,7 @@ class RecipeUpdate(BaseModel):
     ocr_model_type: Optional[str] = None
     ml_project_id: Optional[str] = None
     ml_model_id: Optional[str] = None
+    defect_model: Optional[str] = None
 
 
 class RecipeInDB(RecipeBase):

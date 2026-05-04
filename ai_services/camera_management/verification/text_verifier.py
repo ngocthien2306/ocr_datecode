@@ -125,6 +125,7 @@ class TextVerificationService:
         use_sim_check: bool = False,
         ml_classifier_service: Optional[Any] = None,
         embedding_classifier_service: Optional[Any] = None,
+        embedding_classifier_services: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize TextVerificationService.
@@ -137,6 +138,9 @@ class TextVerificationService:
             use_sim_check: Whether to run similarity check on text/datecode regions
             ml_classifier_service: Optional MLClassifierService — ML OK/NG classification
                 runs only when both the service and camera.ml_project_id/ml_model_id are set.
+            embedding_classifier_service: Default embedding service (legacy, fallback).
+            embedding_classifier_services: Registry {name: service} keyed by recipe.defect_model
+                (e.g. {'arcface': ..., 'supcon': ...}). Picked at runtime per recipe.
         """
         self.text_recognizer = text_recognizer
         self.ocr_backend = ocr_backend
@@ -147,6 +151,7 @@ class TextVerificationService:
         self.use_sim_check = use_sim_check
         self.ml_classifier_service = ml_classifier_service
         self.embedding_classifier_service = embedding_classifier_service
+        self.embedding_classifier_services = embedding_classifier_services or {}
         self._sim_crop_cache = {}  # Cache for template crops (key: (serial, points_tuple))
 
     @property
@@ -627,8 +632,18 @@ class TextVerificationService:
         t0 = time.perf_counter()
 
         if CHAR_CLASSIFIER_BACKEND == "embedding":
-            if not self.embedding_classifier_service:
-                logger.warning("CHAR_CLASSIFIER_BACKEND=embedding but no embedding_classifier_service")
+            # Pick embedding service based on recipe.defect_model (carried per item).
+            # Items in one batch should share the same defect_model — take the first.
+            defect_model = (char_items[0].get('defect_model') or 'arcface').lower()
+            embed_service = (
+                self.embedding_classifier_services.get(defect_model)
+                or self.embedding_classifier_service     # legacy fallback
+            )
+            if not embed_service:
+                logger.warning(
+                    f"No embedding service for defect_model='{defect_model}'. "
+                    f"Available: {list(self.embedding_classifier_services.keys())}"
+                )
                 return {}
             batch_input = [
                 {
@@ -640,8 +655,8 @@ class TextVerificationService:
                 }
                 for m in char_items
             ]
-            results = self.embedding_classifier_service.classify_batch(batch_input)
-            backend_label = "Embedding"
+            results = embed_service.classify_batch(batch_input)
+            backend_label = f"Embedding[{defect_model}]"
         else:
             if not self.ml_classifier_service:
                 return {}
@@ -926,6 +941,7 @@ class TextVerificationService:
                     'template_crop': template_crop,
                     'ml_project_id': ml_project_id,
                     'ml_model_id': ml_model_id,
+                    'defect_model': getattr(camera, 'defect_model', None) or 'arcface',
                 })
 
         return ocr_items, sim_items, char_items, text_bboxes, char_bboxes, invalid_map

@@ -171,6 +171,7 @@ export default function Receipts() {
         ocr_model_type: recipe.ocr_model_type || '',
         ml_project_id: recipe.ml_project_id || '',
         ml_model_id: recipe.ml_model_id || '',
+        defect_model: recipe.defect_model || 'arcface',
         createdAt: recipe.created_at || new Date().toISOString(),
         updatedAt: recipe.updated_at || new Date().toISOString()
       }));
@@ -238,6 +239,7 @@ export default function Receipts() {
         ocr_model_type: recipe.ocr_model_type || '',
         ml_project_id: recipe.ml_project_id || '',
         ml_model_id: recipe.ml_model_id || '',
+        defect_model: recipe.defect_model || 'arcface',
         createdAt: recipe.created_at || new Date().toISOString(),
         updatedAt: recipe.updated_at || new Date().toISOString()
       }));
@@ -342,6 +344,7 @@ export default function Receipts() {
         ocr_model_type: clonedRecipe.ocr_model_type || '',
         ml_project_id: clonedRecipe.ml_project_id || '',
         ml_model_id: clonedRecipe.ml_model_id || '',
+        defect_model: clonedRecipe.defect_model || 'arcface',
         createdAt: clonedRecipe.created_at || new Date().toISOString(),
         updatedAt: clonedRecipe.updated_at || new Date().toISOString()
       };

@@ -319,25 +319,39 @@ class InferenceHandler:
         )
         logger.info(f"MLClassifierService initialized: base_dir={ml_base_dir}, debug={save_debug}")
 
-        # Embedding Classifier Service — ONNX cosine similarity for char bboxes
-        embedding_weights = Path(f"{home}/Source/ocr_datecode/weights/supcon_128_efficientnet_b2_20260429-073504")
-        embedding_onnx   = embedding_weights / "model.onnx"
-        embedding_config = embedding_weights / "config.yaml"
-        if embedding_onnx.exists() and embedding_config.exists():
+        # Embedding Classifier Services — registry keyed by defect_model name.
+        # Recipe.defect_model picks which service to use at runtime.
+        # `embedding_classifier_service` keeps the legacy attr pointing at the
+        # default (arcface) for backward compat with paths that still read it.
+        _embedding_weights_map = {
+            'arcface': f"{home}/Source/ocr_datecode/weights/arcface_128_b3_20260428-190614",
+            'supcon':  f"{home}/Source/ocr_datecode/weights/supcon_128_efficientnet_b2_20260429-073504",
+        }
+        self.embedding_classifier_services: Dict[str, EmbeddingClassifierService] = {}
+        for name, weights_dir in _embedding_weights_map.items():
+            onnx_p = Path(weights_dir) / "model.onnx"
+            cfg_p  = Path(weights_dir) / "config.yaml"
+            if not (onnx_p.exists() and cfg_p.exists()):
+                logger.warning(f"Embedding model '{name}' not found at {weights_dir}, skipping")
+                continue
             try:
-                self.embedding_classifier_service = EmbeddingClassifierService(
-                    onnx_path=str(embedding_onnx),
-                    config_path=str(embedding_config),
+                self.embedding_classifier_services[name] = EmbeddingClassifierService(
+                    onnx_path=str(onnx_p),
+                    config_path=str(cfg_p),
                     save_debug_images=save_debug,
                     debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
                 )
-                logger.info(f"EmbeddingClassifierService initialized: {embedding_weights.name}")
+                logger.info(f"EmbeddingClassifierService '{name}' initialized: {Path(weights_dir).name}")
             except Exception as e:
-                self.embedding_classifier_service = None
-                logger.warning(f"EmbeddingClassifierService failed to init: {e}")
-        else:
-            self.embedding_classifier_service = None
-            logger.warning(f"Embedding model not found at {embedding_weights}, char embedding disabled")
+                logger.warning(f"EmbeddingClassifierService '{name}' failed to init: {e}")
+
+        # Default → arcface; fall back to first available if arcface missing
+        self.embedding_classifier_service = (
+            self.embedding_classifier_services.get('arcface')
+            or next(iter(self.embedding_classifier_services.values()), None)
+        )
+        if self.embedding_classifier_service is None:
+            logger.warning("No embedding classifier service initialized — char embedding disabled")
 
         # Text Verification Service
         if self.text_recognizer is not None:
@@ -350,6 +364,7 @@ class InferenceHandler:
                 use_sim_check=False,
                 ml_classifier_service=self.ml_classifier_service,
                 embedding_classifier_service=self.embedding_classifier_service,
+                embedding_classifier_services=self.embedding_classifier_services,
             )
             logger.info(f"TextVerificationService initialized with {self.ocr_backend} backend (debug={save_debug})")
         else:

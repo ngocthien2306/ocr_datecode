@@ -55,6 +55,7 @@ interface FormDataType {
   ocr_model_type: string;
   ml_project_id: string;
   ml_model_id: string;
+  defect_model: string;
 }
 
 interface Template {
@@ -111,6 +112,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     ocr_model_type: '',
     ml_project_id: '',
     ml_model_id: '',
+    defect_model: 'arcface',
   });
 
   const [templateImage, setTemplateImage] = useState<string | null>(null);
@@ -268,6 +270,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         ocr_model_type: recipeAny.ocr_model_type || '',
         ml_project_id: recipeAny.ml_project_id || '',
         ml_model_id: recipeAny.ml_model_id || '',
+        defect_model: recipeAny.defect_model || 'arcface',
       });
 
       if (recipeAny.template_config?.template_image) {
@@ -320,6 +323,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         ocr_model_type: '',
         ml_project_id: '',
         ml_model_id: '',
+        defect_model: 'arcface',
       });
       setTemplateImage(null);
       setAnnotations([]);
@@ -623,6 +627,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         // Empty strings come from "-- None --" <option value="">.
         ml_project_id: formData.ml_project_id || null,
         ml_model_id:   formData.ml_model_id   || null,
+        defect_model:  formData.defect_model  || 'arcface',
       };
       
       await onSubmit(submitData);
@@ -1757,7 +1762,19 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         <option value="OPENOCR_REPSVTR">OPENOCR_REPSVTR (medium)</option>
                         <option value="PADDLEV5">PADDLEV5 (small)</option>
                       </select>
-                      <small className="field-description">OCR recognition backbone used for text reading</small>
+                      {/* <small className="field-description">OCR recognition backbone used for text reading</small> */}
+                    </div>
+                    <div className="form-group">
+                      <label>Defect Model</label>
+                      <select
+                        name="defect_model"
+                        value={formData.defect_model}
+                        onChange={(e) => setFormData(prev => ({ ...prev, defect_model: e.target.value }))}
+                      >
+                        <option value="arcface">ArcChar (class-anchored)</option>
+                        <option value="supcon">SupCon (contrastive embedding)</option>
+                      </select>
+                      <small className="field-description">Template model used for per-character OK/NG classification</small>
                     </div>
                   </div>
                   <div className="model-column">
