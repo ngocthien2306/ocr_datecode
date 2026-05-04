@@ -2,34 +2,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   mlTrainingAPI,
   LabeledCrop,
-  MLGoldenItem,
   SyntheticCrop,
+  SyntheticOkCrop,
   MLModel,
   MLProject,
   TestSetCropResult,
   TrainRequest,
 } from '@/services/mlTraining';
 
-// Minimum OK samples per char needed to compute a golden template.
-// Must match backend GOLDEN_MIN_OK_SAMPLES.
-const GOLDEN_MIN_OK = 5;
-
-type CharStatus = 'ready' | 'insufficient' | 'missing';
 interface CharBucket<T> {
-  char_id: string | null;  // null = no char_id
+  char_id: string | null;  // null = no char_id (still trained, just shown separately)
   items: T[];
   ok: number;
   ng: number;
-  status: CharStatus;
 }
 
 /**
- * Group crops by char_id.
- *   - null char_id → special bucket at the end ("No char_id")
- *   - bucket status:
- *       ready         → n_ok ≥ GOLDEN_MIN_OK, golden will be built
- *       insufficient  → 0 < n_ok < GOLDEN_MIN_OK, golden skipped
- *       missing       → no char_id (null) — excluded from training
+ * Group crops by char_id for display only (no training-status semantics).
+ * char_id == null lands in a "No char_id" bucket sorted last.
  */
 function bucketByChar<T extends { char_id?: string | null; label: string }>(
   items: T[],
@@ -42,18 +32,12 @@ function bucketByChar<T extends { char_id?: string | null; label: string }>(
   for (const item of items) {
     const key = keyOf(item.char_id);
     if (!map.has(key)) {
-      map.set(key, { char_id: key === '__null__' ? null : key, items: [], ok: 0, ng: 0, status: 'missing' });
+      map.set(key, { char_id: key === '__null__' ? null : key, items: [], ok: 0, ng: 0 });
     }
     const b = map.get(key)!;
     b.items.push(item);
     if (item.label === 'OK') b.ok += 1;
     else if (item.label === 'NG') b.ng += 1;
-  }
-
-  for (const b of map.values()) {
-    if (b.char_id === null) b.status = 'missing';
-    else if (b.ok >= GOLDEN_MIN_OK) b.status = 'ready';
-    else b.status = 'insufficient';
   }
 
   const buckets = Array.from(map.values());
@@ -73,12 +57,6 @@ function bucketByChar<T extends { char_id?: string | null; label: string }>(
     });
   }
   return buckets;
-}
-
-function charStatusLabel(status: CharStatus, ok: number): string {
-  if (status === 'ready') return '✓ golden ready';
-  if (status === 'insufficient') return `⚠ need ${GOLDEN_MIN_OK - ok} more OK`;
-  return '✗ no char_id';
 }
 
 interface Props {
@@ -162,24 +140,14 @@ interface CharStatsBannerProps {
 }
 function CharStatsBanner({ buckets, viewMode, onToggleView }: CharStatsBannerProps) {
   const total = buckets.length;
-  const ready = buckets.filter(b => b.status === 'ready').length;
-  const insufficient = buckets.filter(b => b.status === 'insufficient').length;
-  const missing = buckets.filter(b => b.status === 'missing').length;
+  const totalOk = buckets.reduce((s, b) => s + b.ok, 0);
+  const totalNg = buckets.reduce((s, b) => s + b.ng, 0);
 
   return (
     <div className="ml-char-stats-banner">
       <span><b>{total}</b> char{total !== 1 ? 's' : ''}</span>
-      {ready > 0 && <span style={{ color: '#22c55e' }}>✓ {ready} ready</span>}
-      {insufficient > 0 && (
-        <span style={{ color: '#f59e0b' }} title="Need more OK samples">
-          ⚠ {insufficient} need OK
-        </span>
-      )}
-      {missing > 0 && (
-        <span style={{ color: '#ef4444' }} title="Won't train without char_id">
-          ✗ {missing} no char_id
-        </span>
-      )}
+      <span style={{ color: '#22c55e' }}>{totalOk} OK</span>
+      <span style={{ color: '#ef4444' }}>{totalNg} NG</span>
       <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
         {(['grouped', 'flat'] as const).map(mode => (
           <button key={mode}
@@ -213,23 +181,18 @@ function CharGroupedCrops({ buckets, expanded, onToggleExpand, emptyText }: Char
     );
   }
 
-  const statusClass = (s: CharStatus) =>
-    s === 'ready' ? 'ready' : s === 'insufficient' ? 'warn' : 'miss';
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       {buckets.map(b => {
         const key = b.char_id ?? '__null__';
         const isOpen = expanded.has(key);
-        const sc = statusClass(b.status);
         return (
-          <div key={key} className={`ml-char-group ${sc}`}>
+          <div key={key} className="ml-char-group">
             <button className="ml-char-group-header" onClick={() => onToggleExpand(key)}>
               <span style={{ width: 12, textAlign: 'center' }}>{isOpen ? '▼' : '▶'}</span>
               <span className="ml-char-badge">{b.char_id ?? '—'}</span>
               <span style={{ color: '#22c55e' }}>{b.ok} OK</span>
               <span style={{ color: '#ef4444' }}>{b.ng} NG</span>
-              <span className={`ml-status-chip ${sc}`}>{charStatusLabel(b.status, b.ok)}</span>
             </button>
             {isOpen && (
               <div className="ml-crops-grid" style={{ padding: 6 }}>
@@ -410,17 +373,34 @@ export default function TrainTab({ project, onRefresh }: Props) {
     });
   }, []);
 
-  // Synthetic preview
+  // Synthetic NG preview
   const [syntheticCrops, setSyntheticCrops] = useState<SyntheticCrop[]>([]);
   const [loadingSynthetic, setLoadingSynthetic] = useState(false);
 
+  // Synthetic OK preview (font-render)
+  const [syntheticOkCrops, setSyntheticOkCrops] = useState<SyntheticOkCrop[]>([]);
+  const [loadingSynthOk, setLoadingSynthOk] = useState(false);
+  const [okSynthTarget, setOkSynthTarget] = useState(30);
+
   // Training config
-  const [algorithm, setAlgorithm] = useState<'rf' | 'svm' | 'mlp'>('rf');
+  const [algorithm, setAlgorithm] = useState<'rf' | 'svm' | 'mlp' | 'centroid'>('rf');
   const [augmentFactor, setAugmentFactor] = useState(0);
   const [nEstimators, setNEstimators] = useState(100);
   const [maxIter, setMaxIter] = useState(500);
   const [svmC, setSvmC] = useState(1.0);
   const [threshold, setThreshold] = useState(50); // percent, 0–100
+  const [centroidTemperature, setCentroidTemperature] = useState(5.0);
+  // NG augmentation severity weights — auto-normalized BE side
+  const [severitySubtle, setSeveritySubtle] = useState(10);
+  const [severityLight,  setSeverityLight ] = useState(50);
+  const [severityMedium, setSeverityMedium] = useState(35);
+  const [severityHeavy,  setSeverityHeavy ] = useState(5);
+  const severityDist = useMemo(() => ({
+    subtle: severitySubtle,
+    light:  severityLight,
+    medium: severityMedium,
+    heavy:  severityHeavy,
+  }), [severitySubtle, severityLight, severityMedium, severityHeavy]);
 
   // Training state
   const [training, setTraining] = useState(false);
@@ -436,7 +416,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
   );
 
   // Results panel tabs
-  const [resultsTab, setResultsTab] = useState<'metrics' | 'testset' | 'goldens'>('metrics');
+  const [resultsTab, setResultsTab] = useState<'metrics' | 'testset'>('metrics');
 
   // Predict (single image)
   const [predictFile, setPredictFile] = useState<File | null>(null);
@@ -449,10 +429,6 @@ export default function TrainTab({ project, onRefresh }: Props) {
   const [loadingTestSet, setLoadingTestSet] = useState(false);
   const [testSetFilter, setTestSetFilter] = useState<'all' | 'correct' | 'wrong'>('all');
   const [testsetExpanded, setTestsetExpanded] = useState<Set<string>>(new Set());
-
-  // Goldens tab
-  const [goldens, setGoldens] = useState<MLGoldenItem[]>([]);
-  const [loadingGoldens, setLoadingGoldens] = useState(false);
 
   // ── Load crops ────────────────────────────────────────────────────────
   const loadCrops = useCallback(async () => {
@@ -497,10 +473,26 @@ export default function TrainTab({ project, onRefresh }: Props) {
     setSyntheticCrops([]);
     setCropsTab('synthetic');
     try {
-      const data = await mlTrainingAPI.previewSynthetic(project.id, augmentFactor, 'NG');
+      const data = await mlTrainingAPI.previewSynthetic(project.id, augmentFactor, 'NG', severityDist);
       setSyntheticCrops(data.crops);
     } catch { /* ignore */ }
     finally { setLoadingSynthetic(false); }
+  };
+
+  const handlePreviewSynthOk = async () => {
+    setLoadingSynthOk(true);
+    setSyntheticOkCrops([]);
+    setCropsTab('synthetic');
+    try {
+      const data = await mlTrainingAPI.previewSyntheticOk(project.id, {
+        target_n_per_char: okSynthTarget,
+        only_below_threshold: true,
+      });
+      setSyntheticOkCrops(data.crops);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail ?? 'OK synthesis failed');
+    }
+    finally { setLoadingSynthOk(false); }
   };
 
   // ── Start training ────────────────────────────────────────────────────
@@ -516,6 +508,9 @@ export default function TrainTab({ project, onRefresh }: Props) {
         n_estimators: nEstimators,
         max_iter: maxIter,
         C: svmC,
+        severity_dist: severityDist,
+        ok_synth_target: okSynthTarget,
+        centroid_temperature: centroidTemperature,
       };
       const { model_id } = await mlTrainingAPI.startTraining(project.id, req);
 
@@ -590,23 +585,6 @@ export default function TrainTab({ project, onRefresh }: Props) {
     }
   }, [resultsTab, selectedModel?.id]);
 
-  // ── Load goldens for "Goldens" tab ───────────────────────────────────────
-  const loadGoldens = useCallback(async (modelId: string) => {
-    setLoadingGoldens(true);
-    setGoldens([]);
-    try {
-      const data = await mlTrainingAPI.getModelGoldens(project.id, modelId);
-      setGoldens(data.goldens);
-    } catch { /* ignore */ }
-    finally { setLoadingGoldens(false); }
-  }, [project.id]);
-
-  useEffect(() => {
-    if (resultsTab === 'goldens' && selectedModel) {
-      loadGoldens(selectedModel.id);
-    }
-  }, [resultsTab, selectedModel?.id]);
-
   // ── Per-char accuracy (computed from testSetCrops) ───────────────────────
   const perCharAccuracy = useMemo(() => {
     const map = new Map<string, { char_id: string | null; n: number; correct: number; wrong: number }>();
@@ -662,9 +640,10 @@ export default function TrainTab({ project, onRefresh }: Props) {
         <div className="ml-section-title">Algorithm</div>
         <div className="ml-form-group">
           {([
-            { key: 'rf',           label: 'Random Forest',                tag: 'Binary (needs OK + NG)' },
-            { key: 'svm',          label: 'SVM (RBF kernel)',             tag: 'Binary (needs OK + NG)' },
-            { key: 'mlp',          label: 'Neural Net (MLP)',             tag: 'Binary (needs OK + NG)' },
+            { key: 'rf',       label: 'Random Forest',     tag: 'Binary (needs OK + NG)' },
+            { key: 'svm',      label: 'SVM (RBF kernel)',  tag: 'Binary (needs OK + NG)' },
+            { key: 'mlp',      label: 'Neural Net (MLP)',  tag: 'Binary (needs OK + NG)' },
+            { key: 'centroid', label: 'Nearest Centroid',  tag: 'Global mean OK + mean NG (no model fit)' },
           ] as const).map(opt => (
             <label key={opt.key}
               style={{
@@ -699,6 +678,49 @@ export default function TrainTab({ project, onRefresh }: Props) {
               onChange={e => algorithm === 'svm' ? setSvmC(Number(e.target.value)) : setMaxIter(Number(e.target.value))} />
           </div>
         )}
+        {algorithm === 'centroid' && (
+          <div className="ml-form-group">
+            <label className="ml-form-label">Temperature (sigmoid scale)</label>
+            <input className="ml-form-input" type="number" step="0.5" min={1} max={20}
+              value={centroidTemperature}
+              onChange={e => setCentroidTemperature(Number(e.target.value) || 5.0)} />
+            <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4 }}>
+              p_ok = sigmoid((sim_ok − sim_ng) × T). Higher T → sharper decision; lower → softer.
+            </div>
+          </div>
+        )}
+
+        {/* ── Synthetic OK (font-render) ── */}
+        <div className="ml-section-title">Synthetic OK (font-render)</div>
+        <div className="ml-form-group">
+          <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '6px' }}>
+            Top-up under-represented chars by rendering glyphs onto real backgrounds
+            (style fingerprint extracted from real OK).
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <label style={{ fontSize: '11px', color: '#9ca3af' }}>Target / char</label>
+            <input type="number" min={0} max={500}
+              value={okSynthTarget}
+              onChange={e => setOkSynthTarget(Math.max(0, Number(e.target.value) || 0))}
+              className="ml-form-input"
+              style={{ width: 64, textAlign: 'center', padding: '4px 6px' }} />
+            <button className="ml-btn ml-btn-secondary ml-btn-sm"
+              onClick={handlePreviewSynthOk} disabled={loadingSynthOk || okSynthTarget <= 0}
+              title="Render synthetic OK crops to fill chars below the target count">
+              {loadingSynthOk
+                ? <span className="ml-loading-spinner" style={{ width: 12, height: 12, borderWidth: 2 }} />
+                : <><svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                    <path d="M4 7V4H20V7M12 4V20M8 20H16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg> Preview OK</>}
+            </button>
+            {syntheticOkCrops.length > 0 && (
+              <span style={{ fontSize: 11, color: '#22c55e' }}>+{syntheticOkCrops.length} synthetic</span>
+            )}
+          </div>
+          <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4 }}>
+            Set <code>0</code> to disable. When &gt; 0, training also tops up char OK counts before training.
+          </div>
+        </div>
 
         {/* ── Augmentation ── */}
         <div className="ml-section-title">Augmentation (NG)</div>
@@ -727,7 +749,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
               </button>
             )}
           </div>
-          {augmentFactor >= 2 && (() => {
+          {/* {augmentFactor >= 2 && (() => {
             const { nOkReal, nNgReal, nNgAug, totalOk, totalNg } =
               computeAugmentStats(crops, augmentFactor);
             return (
@@ -735,6 +757,35 @@ export default function TrainTab({ project, onRefresh }: Props) {
                 → OK: <b>{totalOk}</b> (no aug) &nbsp;|&nbsp;
                 NG: {nNgReal} real + {nNgAug} aug = <b>{totalNg}</b>
                 {nOkReal === 0 && <span style={{ color: '#f59e0b' }}> · no OK samples with char_id</span>}
+              </div>
+            );
+          })()} */}
+
+          {/* ── NG severity distribution sliders (auto-normalized BE side) ── */}
+          {augmentFactor >= 2 && (() => {
+            const total = severitySubtle + severityLight + severityMedium + severityHeavy;
+            const pct = (v: number) => total > 0 ? (v / total * 100).toFixed(0) : '0';
+            const rows: { key: string; label: string; value: number; setter: (n: number) => void; color: string; hint: string }[] = [
+              { key: 'subtle', label: 'Subtle',  value: severitySubtle, setter: setSeveritySubtle, color: '#9ca3af', hint: '1 light defect (mild break / tiny cut)' },
+              { key: 'light',  label: 'Light',   value: severityLight,  setter: setSeverityLight,  color: '#3b82f6', hint: '1-2 mild defects' },
+              { key: 'medium', label: 'Medium',  value: severityMedium, setter: setSeverityMedium, color: '#f59e0b', hint: '2-3 medium defects' },
+              { key: 'heavy',  label: 'Heavy',   value: severityHeavy,  setter: setSeverityHeavy,  color: '#ef4444', hint: '2-3 strong defects (cuts, tape, blocks)' },
+            ];
+            return (
+              <div style={{ marginTop: 8, padding: '6px 8px', borderRadius: 4, background: 'rgba(148,163,184,.06)', border: '1px solid rgba(148,163,184,.18)' }}>
+                <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
+                  <span>NG severity mix</span>
+                  <span style={{ opacity: 0.6 }}>{total === 0 ? '⚠ all zero — uses default' : `total ${total}`}</span>
+                </div>
+                {rows.map(r => (
+                  <div key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, marginTop: 2 }}>
+                    <span style={{ color: r.color, width: 56 }} title={r.hint}>{r.label}</span>
+                    <input type="range" min={0} max={100} step={1} value={r.value}
+                           onChange={e => r.setter(Number(e.target.value))}
+                           style={{ flex: 1, accentColor: r.color }} />
+                    <span style={{ width: 36, textAlign: 'right', color: '#6b7280' }}>{pct(r.value)}%</span>
+                  </div>
+                ))}
               </div>
             );
           })()}
@@ -780,37 +831,31 @@ export default function TrainTab({ project, onRefresh }: Props) {
         {(() => {
           const buckets = bucketByChar(crops);
           if (buckets.length === 0) return null;
-          const ready = buckets.filter(b => b.status === 'ready');
-          const insufficient = buckets.filter(b => b.status === 'insufficient');
-          const missing = buckets.filter(b => b.status === 'missing');
+          const named = buckets.filter(b => b.char_id !== null);
+          const unnamedSamples = buckets
+            .filter(b => b.char_id === null)
+            .reduce((sum, b) => sum + b.items.length, 0);
           const { nOkReal, nNgReal, nNgAug, totalNg } =
             computeAugmentStats(crops, augmentFactor);
           const f = augmentFactor;
-          // target_ng_per_char for display
-          const maxOkPerChar = buckets.reduce((m, b) => Math.max(m, b.ok), 0);
+          const maxOkPerChar = named.reduce((m, b) => Math.max(m, b.ok), 0);
           const targetPerChar = f >= 2 ? f * maxOkPerChar : 0;
           return (
             <div className="ml-train-preview">
               <div className="ml-train-preview-title">🚀 Training preview</div>
-              {ready.length > 0 && (
+              {named.length > 0 && (
                 <div style={{ color: '#22c55e' }}>
-                  ✓ Goldens for: {ready.map(b => b.char_id).join(', ')} ({ready.length} char{ready.length !== 1 ? 's' : ''})
+                  ✓ {named.length} char{named.length !== 1 ? 's' : ''}: {named.map(b => b.char_id).join(', ')}
                 </div>
               )}
-              {insufficient.length > 0 && (
-                <div style={{ color: '#f59e0b' }}>
-                  ⚠ Skipped (need {GOLDEN_MIN_OK}+ OK):{' '}
-                  {insufficient.map(b => `${b.char_id}(${b.ok})`).join(', ')}
-                </div>
-              )}
-              {missing.length > 0 && (
-                <div style={{ color: '#ef4444' }}>
-                  ✗ Excluded (no char_id): {missing.reduce((sum, b) => sum + b.items.length, 0)} sample(s) — fix in Label tab
+              {unnamedSamples > 0 && (
+                <div style={{ color: '#9ca3af' }}>
+                  • {unnamedSamples} sample{unnamedSamples !== 1 ? 's' : ''} without char_id (still trained, no per-char stats)
                 </div>
               )}
               <div style={{ marginTop: 2 }}>
-                Dataset: {nOkReal} OK · {nNgReal}+{nNgAug}={totalNg} NG (target {targetPerChar}/char)
-                {f < 2 && <span style={{ color: '#f59e0b' }}> (no augmentation)</span>}
+                Dataset: {nOkReal} OK · {nNgReal}+{nNgAug}={totalNg} NG{f >= 2 ? ` (target ${targetPerChar}/char)` : ''}
+                {f < 2 && <span style={{ color: '#9ca3af' }}> · no augmentation</span>}
               </div>
               {f >= 2 && nOkReal > 0 && (
                 <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2 }}>
@@ -894,7 +939,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
             <div style={{ display: 'flex', padding: '8px 14px 0' }}>
               {([
                 { key: 'real', label: `Real Data (${crops.length})` },
-                { key: 'synthetic', label: `Synthetic (${syntheticCrops.length})` },
+                { key: 'synthetic', label: `Synthetic (${syntheticCrops.length + syntheticOkCrops.length})` },
               ] as const).map(tab => (
                 <button key={tab.key} onClick={() => setCropsTab(tab.key)} style={{
                   padding: '5px 12px', fontSize: '12px', border: 'none',
@@ -920,8 +965,14 @@ export default function TrainTab({ project, onRefresh }: Props) {
             ) : <div style={{ height: '8px' }} />}
             {/* Stats banner showing char coverage + view mode toggle */}
             {(() => {
+              const synthAll: Array<{ crop_b64: string; label: string; char_id?: string | null }> = [
+                ...syntheticCrops,
+                ...syntheticOkCrops.map(c => ({
+                  crop_b64: c.crop_b64, label: 'OK', char_id: c.char_id,
+                })),
+              ];
               const src: Array<{ crop_b64: string; label: string; char_id?: string | null }> =
-                cropsTab === 'real' ? crops : syntheticCrops;
+                cropsTab === 'real' ? crops : synthAll;
               const sourceBuckets = bucketByChar(src);
               return (
                 <CharStatsBanner
@@ -946,27 +997,37 @@ export default function TrainTab({ project, onRefresh }: Props) {
                     : <CropGrid items={filteredCrops}
                         emptyText={crops.length === 0 ? 'No labeled characters yet. Go to Label tab.' : `No ${cropFilter} crops found.`} />
             )}
-            {cropsTab === 'synthetic' && (
-              loadingSynthetic
-                ? <div className="ml-empty-state"><div className="ml-loading-spinner" /></div>
-                : syntheticCrops.length === 0
-                  ? <div className="ml-empty-state" style={{ minHeight: '120px' }}>
-                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.4 }}>
-                        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-                      </svg>
-                      <span style={{ fontSize: '12px', color: '#6b7280', marginTop: '6px' }}>
-                        {augmentFactor < 2 ? 'Select ×2 or higher, then click Preview.' : 'Click Preview to generate synthetic NG samples.'}
-                      </span>
-                    </div>
-                  : viewMode === 'grouped'
-                      ? <CharGroupedCrops
-                          buckets={bucketByChar(syntheticCrops)}
-                          expanded={expandedChars}
-                          onToggleExpand={toggleCharExpanded}
-                          emptyText="No synthetic crops."
-                        />
-                      : <CropGrid items={syntheticCrops} emptyText="No synthetic crops." />
-            )}
+            {cropsTab === 'synthetic' && (() => {
+              const merged: Array<{ crop_b64: string; label: string; char_id?: string | null }> = [
+                ...syntheticCrops,
+                ...syntheticOkCrops.map(c => ({
+                  crop_b64: c.crop_b64, label: 'OK', char_id: c.char_id,
+                })),
+              ];
+              if (loadingSynthetic || loadingSynthOk) {
+                return <div className="ml-empty-state"><div className="ml-loading-spinner" /></div>;
+              }
+              if (merged.length === 0) {
+                return (
+                  <div className="ml-empty-state" style={{ minHeight: '120px' }}>
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.4 }}>
+                      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                    </svg>
+                    <span style={{ fontSize: '12px', color: '#6b7280', marginTop: '6px' }}>
+                      Click <b>Preview NG</b> or <b>Preview OK</b> in the config panel.
+                    </span>
+                  </div>
+                );
+              }
+              return viewMode === 'grouped'
+                ? <CharGroupedCrops
+                    buckets={bucketByChar(merged)}
+                    expanded={expandedChars}
+                    onToggleExpand={toggleCharExpanded}
+                    emptyText="No synthetic crops."
+                  />
+                : <CropGrid items={merged} emptyText="No synthetic crops." />;
+            })()}
           </div>
         </div>
 
@@ -1009,7 +1070,6 @@ export default function TrainTab({ project, onRefresh }: Props) {
                     {([
                       { key: 'metrics', label: 'Metrics' },
                       { key: 'testset', label: 'Test Set' },
-                      { key: 'goldens', label: 'Goldens' },
                     ] as const).map(t => (
                       <button key={t.key} onClick={() => setResultsTab(t.key)} style={{
                         padding: '6px 14px', fontSize: '12px', border: 'none',
@@ -1042,7 +1102,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
                           className="ml-btn ml-btn-secondary ml-btn-sm"
                           onClick={handleDownloadReport}
                           disabled={downloadingReport}
-                          title="Download JSON report with metrics, goldens, and test-set crops (base64)"
+                          title="Download JSON report with metrics + test-set crops (base64)"
                           style={{ marginLeft: 'auto' }}
                         >
                           {downloadingReport
@@ -1337,56 +1397,6 @@ export default function TrainTab({ project, onRefresh }: Props) {
                     );
                   })()}
 
-                  {/* ── Goldens tab ── */}
-                  {resultsTab === 'goldens' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      {loadingGoldens ? (
-                        <div className="ml-empty-state" style={{ minHeight: 100 }}>
-                          <div className="ml-loading-spinner" />
-                        </div>
-                      ) : goldens.length === 0 ? (
-                        <div style={{ fontSize: 12, color: '#6b7280', textAlign: 'center', padding: '32px 0' }}>
-                          No goldens for this model.<br />
-                          <span style={{ fontSize: 11 }}>
-                            (Legacy v1 models or chars with &lt;{GOLDEN_MIN_OK} OK samples.)
-                          </span>
-                        </div>
-                      ) : (
-                        <>
-                          <div style={{ fontSize: 11, opacity: 0.7 }}>
-                            {goldens.length} golden{goldens.length !== 1 ? 's' : ''} bundled with this model
-                          </div>
-                          <div style={{
-                            display: 'grid', gap: 8,
-                            gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
-                          }}>
-                            {goldens.map(g => (
-                              <div key={g.char_id} className="ml-golden-card">
-                                <div className="ml-char-badge" style={{ color: '#3b82f6' }}>{g.char_id}</div>
-                                <img
-                                  src={`data:image/jpeg;base64,${g.golden_b64}`}
-                                  alt={`golden-${g.char_id}`}
-                                  className="ml-golden-img"
-                                />
-                                <div className="ml-golden-meta">
-                                  <div>
-                                    <span style={{ color: '#22c55e' }}>{g.n_ok_real} OK</span>
-                                    <span style={{ margin: '0 4px', opacity: 0.5 }}>·</span>
-                                    <span style={{ color: '#ef4444' }}>{g.n_ng_real} NG</span>
-                                  </div>
-                                  {(g.n_ok_train > g.n_ok_real || g.n_ng_train > g.n_ng_real) && (
-                                    <div style={{ fontSize: 9, opacity: 0.6 }}>
-                                      +{g.n_ok_train - g.n_ok_real}/+{g.n_ng_train - g.n_ng_real} aug
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  )}
                 </>
               )}
             </div>

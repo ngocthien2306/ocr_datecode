@@ -62,10 +62,25 @@ export interface SyntheticCrop {
   label: 'OK' | 'NG';
   crop_b64: string;
   char_id?: string | null;
-  aug_type?: 'noise' | 'cut' | 'erode' | 'dilate' | 'line';
+  aug_type?: string;            // realistic NG types or legacy tags
 }
 
-export type MLAlgorithm = 'rf' | 'svm' | 'mlp';
+export interface SyntheticOkCrop {
+  crop_b64: string;
+  char_id: string;
+  font_name: string;
+  rotation_deg: number;
+  source: 'synthetic_ok';
+}
+
+export type MLAlgorithm = 'rf' | 'svm' | 'mlp' | 'centroid';
+
+export interface SeverityDist {
+  subtle: number;
+  light: number;
+  medium: number;
+  heavy: number;
+}
 
 export interface TrainRequest {
   algorithm: MLAlgorithm;
@@ -76,6 +91,9 @@ export interface TrainRequest {
   max_iter?: number;
   C?: number;
   hidden_layer_sizes?: number[];
+  severity_dist?: SeverityDist;     // NG augmentation severity weights
+  ok_synth_target?: number;         // Top-up each char to N OK via font-render synth (0=off)
+  centroid_temperature?: number;    // Sigmoid temperature for centroid algo (default 5.0)
 }
 
 export interface MLModelMetrics {
@@ -141,15 +159,6 @@ export interface TestSetCropResult {
   prob_ok: number;
   correct: boolean;
   char_id?: string | null;
-}
-
-export interface MLGoldenItem {
-  char_id: string;
-  golden_b64: string;   // base64 PNG of golden (upscaled)
-  n_ok_train: number;   // total OK used (real + augmented)
-  n_ng_train: number;
-  n_ok_real: number;    // real samples (before augmentation)
-  n_ng_real: number;
 }
 
 // ──────── Static URL builders ──────────────────────────────────────────────
@@ -242,10 +251,23 @@ export const mlTrainingAPI = {
     ).then(r => r.data),
 
   // Preview synthetic NG (generated from OK samples). OK augmentation removed.
-  previewSynthetic: (projectId: string, augmentFactor: number, label: 'NG' = 'NG') =>
+  previewSynthetic: (projectId: string, augmentFactor: number,
+                     label: 'NG' = 'NG', severityDist?: SeverityDist) =>
     api.post<{ crops: SyntheticCrop[]; count: number }>(
       `/ml/projects/${projectId}/preview-synthetic`,
-      { augment_factor: augmentFactor, label }
+      { augment_factor: augmentFactor, label, severity_dist: severityDist }
+    ).then(r => r.data),
+
+  // Preview synthetic OK (font-render → composite on real BG → camera noise)
+  previewSyntheticOk: (projectId: string, opts: {
+    target_n_per_char?: number;
+    only_below_threshold?: boolean;
+    char_filter?: string[] | null;
+    rotation_max_deg?: number;
+    size_jitter?: number;
+  }) =>
+    api.post<{ crops: SyntheticOkCrop[]; count: number }>(
+      `/ml/projects/${projectId}/preview-synthetic-ok`, opts
     ).then(r => r.data),
 
   // Training
@@ -282,22 +304,16 @@ export const mlTrainingAPI = {
       `/ml/projects/${projectId}/import-from-recipe`, body,
     ).then(r => r.data),
 
-  // Check which required chars are covered by the model's goldens
+  // Check which required chars are covered by the model
   charCoverage: (projectId: string, modelId: string, chars: string[]) =>
     api.get<CharCoverageResponse>(
       `/ml/projects/${projectId}/models/${modelId}/char-coverage`,
       { params: { chars: chars.join(',') } },
     ).then(r => r.data),
 
-  // Retrieve per-char golden images + training sample counts
-  getModelGoldens: (projectId: string, modelId: string) =>
-    api.get<{ goldens: MLGoldenItem[]; count: number }>(
-      `/ml/projects/${projectId}/models/${modelId}/goldens`,
-    ).then(r => r.data),
-
-  // Full training report (metrics + goldens + test-set with base64 images)
+  // Full training report (metrics + test-set with base64 images)
   getModelReport: (projectId: string, modelId: string, opts?: {
-    include_goldens?: boolean; include_testset?: boolean;
+    include_testset?: boolean;
   }) =>
     api.get(
       `/ml/projects/${projectId}/models/${modelId}/report`,

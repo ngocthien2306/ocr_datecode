@@ -42,12 +42,9 @@ logger = logging.getLogger(__name__)
 
 home = os.environ.get('HOME')
 
-# Switch between sklearn feature-based ML and ONNX embedding classifier for
-# char annotation classification. Change this to "embedding" to use cosine
-# similarity instead of predict_proba.
-# "ml"        — MLClassifierService (sklearn, feature-based)
-# "embedding" — EmbeddingClassifierService (ONNX, cosine similarity)
-CHAR_CLASSIFIER_BACKEND: str = "embedding"
+# Per-recipe classifier backend (read from recipe.classifier_backend → camera).
+# Each char_item carries its own value; missing → fallback to embedding.
+DEFAULT_CHAR_CLASSIFIER_BACKEND: str = "embedding"
 
 
 _NUMERIC_CHAR_FIELDS = (
@@ -618,7 +615,7 @@ class TextVerificationService:
         Classify-only path for `char` annotations.
 
         Routes to EmbeddingClassifierService or MLClassifierService depending
-        on CHAR_CLASSIFIER_BACKEND.
+        on each item's `classifier_backend` ('embedding' default | 'ml').
 
         Each char_item carries: serial_number, annotation_idx, conf_threshold,
         cropped_region, template_crop (embedding only), expected_text,
@@ -631,9 +628,10 @@ class TextVerificationService:
 
         t0 = time.perf_counter()
 
-        if CHAR_CLASSIFIER_BACKEND == "embedding":
+        # Per-recipe routing: items in one batch share the same recipe → same backend.
+        backend = (char_items[0].get('classifier_backend') or DEFAULT_CHAR_CLASSIFIER_BACKEND).lower()
+        if backend == "embedding":
             # Pick embedding service based on recipe.defect_model (carried per item).
-            # Items in one batch should share the same defect_model — take the first.
             defect_model = (char_items[0].get('defect_model') or 'arcface').lower()
             embed_service = (
                 self.embedding_classifier_services.get(defect_model)
@@ -668,7 +666,6 @@ class TextVerificationService:
                     'conf_threshold': m['conf_threshold'],
                     'serial_number':  m['serial_number'],
                     'annotation_idx': m['annotation_idx'],
-                    'char_id':        m.get('expected_text'),
                 }
                 for m in char_items
             ]
@@ -770,15 +767,25 @@ class TextVerificationService:
 
         ml_project_id = getattr(camera, 'ml_project_id', None)
         ml_model_id = getattr(camera, 'ml_model_id', None)
-        use_char_task = bool(
-            (self.ml_classifier_service or self.embedding_classifier_service)
-            and ml_project_id and ml_model_id
-        )
+        camera_backend = (getattr(camera, 'classifier_backend', None) or DEFAULT_CHAR_CLASSIFIER_BACKEND).lower()
+        # Embedding path: only needs an embedding service (no ml_project/model required).
+        # ML path: requires both service AND recipe.ml_project_id / ml_model_id.
+        char_bboxes_count = sum(1 for b in transformed_bboxes if b.get('type') == 'char')
+        if camera_backend == "ml":
+            use_char_task = bool(self.ml_classifier_service and ml_project_id and ml_model_id)
+            if char_bboxes_count > 0 and not (ml_project_id and ml_model_id):
+                logger.warning(
+                    f"[{serial_number}] Recipe has {char_bboxes_count} char bbox(es) "
+                    f"with classifier_backend='ml' but ml_project_id/ml_model_id missing — "
+                    "char verification skipped. Either set ml_project + model or switch backend to 'embedding'."
+                )
+        else:
+            use_char_task = bool(self.embedding_classifier_service or self.embedding_classifier_services)
 
         # For embedding backend: build original points map for char bboxes so we
         # can crop the template region from template_img per char.
         original_char_bbox_map: Dict[int, Dict[str, Any]] = {}
-        if use_char_task and CHAR_CLASSIFIER_BACKEND == "embedding":
+        if use_char_task and camera_backend == "embedding":
             for ob in (original_bboxes or []):
                 if ob.get('type') == 'char':
                     idx = ob.get('annotation_index')
@@ -907,7 +914,7 @@ class TextVerificationService:
 
                 # Crop template region for embedding mode
                 template_crop = None
-                if CHAR_CLASSIFIER_BACKEND == "embedding" and ann_idx in original_char_bbox_map:
+                if camera_backend == "embedding" and ann_idx in original_char_bbox_map:
                     orig_points = original_char_bbox_map[ann_idx].get('points', [])
                     if len(orig_points) >= 4:
                         try:
@@ -942,6 +949,7 @@ class TextVerificationService:
                     'ml_project_id': ml_project_id,
                     'ml_model_id': ml_model_id,
                     'defect_model': getattr(camera, 'defect_model', None) or 'arcface',
+                    'classifier_backend': camera_backend,
                 })
 
         return ocr_items, sim_items, char_items, text_bboxes, char_bboxes, invalid_map

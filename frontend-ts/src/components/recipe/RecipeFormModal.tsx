@@ -56,6 +56,7 @@ interface FormDataType {
   ml_project_id: string;
   ml_model_id: string;
   defect_model: string;
+  classifier_backend: string;
 }
 
 interface Template {
@@ -113,6 +114,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     ml_project_id: '',
     ml_model_id: '',
     defect_model: 'arcface',
+    classifier_backend: 'embedding',
   });
 
   const [templateImage, setTemplateImage] = useState<string | null>(null);
@@ -271,6 +273,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         ml_project_id: recipeAny.ml_project_id || '',
         ml_model_id: recipeAny.ml_model_id || '',
         defect_model: recipeAny.defect_model || 'arcface',
+        classifier_backend: recipeAny.classifier_backend || 'embedding',
       });
 
       if (recipeAny.template_config?.template_image) {
@@ -324,6 +327,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         ml_project_id: '',
         ml_model_id: '',
         defect_model: 'arcface',
+        classifier_backend: 'embedding',
       });
       setTemplateImage(null);
       setAnnotations([]);
@@ -566,6 +570,28 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     };
 
     const validationErrors = validateRecipeForm(validationInput, mode as ValidationMode);
+
+    // Block save when backend='ml' + char bboxes but no ML model. Show popup
+    // explaining the issue and jump to Model tab.
+    if (formData.classifier_backend === 'ml'
+        && recipeChars.length > 0
+        && (!formData.ml_project_id || !formData.ml_model_id)) {
+      setConfirmDialog({
+        isOpen: true,
+        title: 'ML Model not selected',
+        type: 'warning',
+        message:
+          `Active Method = "ML Trained Model" but no AI Project / Trained Model is selected. ` +
+          `This recipe has ${recipeChars.length} char bbox${recipeChars.length > 1 ? 'es' : ''} that need verification — without a model they will be skipped at runtime.\n\n` +
+          `Pick a model in the Model tab, or switch Active Method to "Embedding".`,
+        onConfirm: () => {
+          setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+          setActiveTab('model');
+        },
+      });
+      return;
+    }
+
     if (hasValidationErrors(validationErrors)) {
       setErrors(validationErrors);
       const keys = Object.keys(validationErrors);
@@ -628,6 +654,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         ml_project_id: formData.ml_project_id || null,
         ml_model_id:   formData.ml_model_id   || null,
         defect_model:  formData.defect_model  || 'arcface',
+        classifier_backend: formData.classifier_backend || 'embedding',
       };
       
       await onSubmit(submitData);
@@ -1779,12 +1806,36 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                   </div>
                   <div className="model-column">
                     <h3>ML Quality Inspection</h3>
+                    {/* Active method toggle — embedding vs ML trained model */}
                     <div className="form-group">
-                      <label>AI Training Project</label>
+                      <label>Active Method</label>
+                      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 4 }}>
+                        {([
+                          { value: 'embedding', label: 'Embedding (defect_model cosine)', hint: 'Pure template matching, no training' },
+                          { value: 'ml',        label: 'ML Trained Model',                 hint: 'Use the trained classifier below' },
+                        ] as const).map(opt => (
+                          <label key={opt.value}
+                            style={{ display: 'flex', alignItems: 'flex-start', gap: 6, cursor: 'pointer', flex: '1 1 220px' }}>
+                            <input type="radio" name="classifier_backend"
+                              value={opt.value}
+                              checked={formData.classifier_backend === opt.value}
+                              onChange={() => setFormData(prev => ({ ...prev, classifier_backend: opt.value }))} />
+                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                              <span style={{ fontSize: 13, fontWeight: formData.classifier_backend === opt.value ? 600 : 400 }}>
+                                {opt.label}
+                              </span>
+                              <span style={{ fontSize: 10, opacity: 0.65 }}>{opt.hint}</span>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="form-group" style={{ opacity: formData.classifier_backend === 'ml' ? 1 : 0.55 }}>
+                      <label>AI Training Project {formData.classifier_backend === 'ml' && <span className="required">*</span>}</label>
                       <select
                         value={formData.ml_project_id}
                         onChange={(e) => setFormData(prev => ({ ...prev, ml_project_id: e.target.value, ml_model_id: '' }))}
-                        disabled={loadingMlProjects}
+                        disabled={loadingMlProjects || formData.classifier_backend !== 'ml'}
                       >
                         <option value="">-- None --</option>
                         {mlProjects.map(p => (
@@ -1793,12 +1844,12 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       </select>
                       {loadingMlProjects && <small className="field-description">Loading projects…</small>}
                     </div>
-                    <div className="form-group">
-                      <label>Trained Model</label>
+                    <div className="form-group" style={{ opacity: formData.classifier_backend === 'ml' ? 1 : 0.55 }}>
+                      <label>Trained Model {formData.classifier_backend === 'ml' && <span className="required">*</span>}</label>
                       <select
                         value={formData.ml_model_id}
                         onChange={(e) => setFormData(prev => ({ ...prev, ml_model_id: e.target.value }))}
-                        disabled={!formData.ml_project_id || loadingMlModels}
+                        disabled={!formData.ml_project_id || loadingMlModels || formData.classifier_backend !== 'ml'}
                       >
                         <option value="">-- None --</option>
                         {mlModels.map(m => (

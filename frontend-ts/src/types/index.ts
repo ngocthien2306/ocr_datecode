@@ -181,6 +181,7 @@ export interface Recipe {
   ml_project_id?: string;
   ml_model_id?: string;
   defect_model?: string;
+  classifier_backend?: string;
   created_by?: string;
   updated_by?: string;
   created_by_name?: string;  // Full name of creator
@@ -258,6 +259,7 @@ export interface Receipt {
   ml_project_id?: string;
   ml_model_id?: string;
   defect_model?: string;
+  classifier_backend?: string;
   createdAt: string;
   updatedAt: string;
 }

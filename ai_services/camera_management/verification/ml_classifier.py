@@ -4,10 +4,9 @@ ML Classifier Service
 Loads sklearn classifiers trained via the ML Training Studio and
 predicts OK/NG on per-character crops (each bbox = 1 character).
 
-Feature extraction MUST stay in sync with
-backend/app/services/ml_training_service.py:
-  - v1: 856-dim (legacy bundles without goldens)
-  - v2: 1016-dim = 856 base + 160 diff-vs-golden
+Feature extraction: SupCon embedding (128-dim L2-normalized) via shared ONNX
+weights at weights/supcon_128_efficientnet_b2_*. MUST stay in sync with
+backend/app/services/ml_training_service.py.
 """
 
 import logging
@@ -24,168 +23,77 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-FEAT_SIZE = (48, 48)
-GRID = 6
-CELL_SIZE = FEAT_SIZE[0] // GRID
-FEAT_DIM = 576 + 144 + 32 + 96 + 8   # v1 = 856
-FEAT_DIM_V2 = FEAT_DIM + 160          # v2 = 1016
+# ── SupCon embedding ──────────────────────────────────────────────────────
+EMBED_DIM = 128
+EMBED_SIZE = 64
+_EMB_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+_EMB_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+# 4 levels up: verification → camera_management → ai_services → repo root
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+_SUPCON_PATH = _REPO_ROOT / "weights/supcon_128_efficientnet_b2_20260429-073504"
+
+_supcon_session = None  # singleton ONNX session
 
 
-def _to_gray(img: np.ndarray) -> np.ndarray:
-    if len(img.shape) == 3:
-        return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    return img
+def _get_supcon_session():
+    """Lazy-init singleton ONNX session for SupCon embedder."""
+    global _supcon_session
+    if _supcon_session is None:
+        import onnxruntime as ort
+        onnx_path = _SUPCON_PATH / "model.onnx"
+        if not onnx_path.exists():
+            raise FileNotFoundError(f"SupCon model not found at {onnx_path}")
+        providers = (["CUDAExecutionProvider", "CPUExecutionProvider"]
+                     if "CUDAExecutionProvider" in ort.get_available_providers()
+                     else ["CPUExecutionProvider"])
+        _supcon_session = ort.InferenceSession(str(onnx_path), providers=providers)
+        logger.info(f"[SupCon] loaded {onnx_path.name} on {_supcon_session.get_providers()[0]}")
+    return _supcon_session
 
 
-def extract_features(char_img: np.ndarray) -> np.ndarray:
+def _preprocess_for_supcon(bgr: np.ndarray) -> np.ndarray:
+    """Resize keep-aspect → pad-255 to 64×64 → ImageNet normalize → CHW float32.
+    Accepts grayscale (2D) or BGR (3D) input — grayscale is widened to 3 channels.
     """
-    Port of backend's extract_features — MUST stay in sync.
-
-    856-dim feature vector:
-      - 24×24 downsampled pixels (576) — global shape
-      - 6×6 grid × 4 cell stats (144)  — LOCAL defect signal
-      - Sobel Gx/Gy histograms (32)    — stroke orientation
-      - H/V projections (96)           — row/column sums
-      - 2×2 quadrant Sobel mag (8)     — coarse gradient energy
-    """
-    gray = _to_gray(char_img)
-    h, w = gray.shape[:2]
+    if bgr.ndim == 2:
+        bgr = cv2.cvtColor(bgr, cv2.COLOR_GRAY2BGR)
+    elif bgr.ndim == 3 and bgr.shape[2] == 1:
+        bgr = cv2.cvtColor(bgr, cv2.COLOR_GRAY2BGR)
+    h, w = bgr.shape[:2]
     if h == 0 or w == 0:
-        return np.zeros(FEAT_DIM, dtype=np.float32)
-
-    scale = min(FEAT_SIZE[0] / w, FEAT_SIZE[1] / h)
-    nw = max(1, int(w * scale))
-    nh = max(1, int(h * scale))
-    resized = cv2.resize(gray, (nw, nh), interpolation=cv2.INTER_AREA)
-    canvas = np.zeros(FEAT_SIZE[::-1], dtype=np.uint8)
-    yo = (FEAT_SIZE[1] - nh) // 2
-    xo = (FEAT_SIZE[0] - nw) // 2
-    canvas[yo:yo + nh, xo:xo + nw] = resized
-
-    # 1) Global downsampled pixels (24×24 = 576)
-    small = cv2.resize(canvas, (24, 24), interpolation=cv2.INTER_AREA)
-    pixels = small.astype(np.float32).flatten() / 255.0
-
-    # 2) 6×6 grid local stats (144)
-    edges = cv2.Canny(canvas, 50, 150)
-    cell_stats = []
-    for i in range(GRID):
-        for j in range(GRID):
-            y0, y1 = i * CELL_SIZE, (i + 1) * CELL_SIZE
-            x0, x1 = j * CELL_SIZE, (j + 1) * CELL_SIZE
-            cell = canvas[y0:y1, x0:x1]
-            edge_cell = edges[y0:y1, x0:x1]
-            cell_stats.append(float(cell.mean()) / 255.0)
-            cell_stats.append(float(cell.std()) / 128.0)
-            cell_stats.append(float(np.count_nonzero(edge_cell)) / (CELL_SIZE * CELL_SIZE))
-            cell_stats.append(float(cell.min()) / 255.0)
-    cell_arr = np.asarray(cell_stats, dtype=np.float32)
-
-    # 3) Sobel Gx/Gy histograms (32)
-    gx = cv2.Sobel(canvas, cv2.CV_32F, 1, 0, ksize=3)
-    gy = cv2.Sobel(canvas, cv2.CV_32F, 0, 1, ksize=3)
-    hist_gx = np.histogram(gx, bins=16, range=(-255, 255))[0].astype(np.float32)
-    hist_gy = np.histogram(gy, bins=16, range=(-255, 255))[0].astype(np.float32)
-    hist_gx /= hist_gx.sum() + 1e-6
-    hist_gy /= hist_gy.sum() + 1e-6
-
-    # 4) H/V projections (96)
-    h_proj = canvas.astype(np.float32).sum(axis=1) / (FEAT_SIZE[0] * 255.0 + 1e-6)
-    v_proj = canvas.astype(np.float32).sum(axis=0) / (FEAT_SIZE[1] * 255.0 + 1e-6)
-
-    # 5) Sobel magnitude per 2×2 quadrant (8)
-    sob = np.hypot(gx, gy)
-    qsize = FEAT_SIZE[0] // 2
-    quad_stats = []
-    for qi in range(2):
-        for qj in range(2):
-            q = sob[qi * qsize:(qi + 1) * qsize, qj * qsize:(qj + 1) * qsize]
-            quad_stats.append(float(q.mean()) / 255.0)
-            quad_stats.append(float(q.std()) / 255.0)
-    quad_arr = np.asarray(quad_stats, dtype=np.float32)
-
-    return np.concatenate([pixels, cell_arr, hist_gx, hist_gy, h_proj, v_proj, quad_arr])
+        return np.zeros((3, EMBED_SIZE, EMBED_SIZE), dtype=np.float32)
+    s = EMBED_SIZE / max(h, w)
+    nh, nw = max(1, int(round(h * s))), max(1, int(round(w * s)))
+    img = cv2.resize(bgr, (nw, nh), interpolation=cv2.INTER_LINEAR)
+    canvas_pad = np.full((EMBED_SIZE, EMBED_SIZE, 3), 255, dtype=np.uint8)
+    canvas_pad[(EMBED_SIZE - nh) // 2:(EMBED_SIZE - nh) // 2 + nh,
+               (EMBED_SIZE - nw) // 2:(EMBED_SIZE - nw) // 2 + nw] = img
+    rgb = cv2.cvtColor(canvas_pad, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    return ((rgb - _EMB_MEAN) / _EMB_STD).transpose(2, 0, 1).astype(np.float32)
 
 
-# ───────────────────────── Golden template (v2) — port from BE ─────────────
-
-def preprocess_canonical(img: np.ndarray) -> np.ndarray:
-    """Gray → CLAHE → resize keep aspect → center-pad 48×48. Matches BE."""
-    gray = _to_gray(img)
-    h, w = gray.shape[:2]
-    if h == 0 or w == 0:
-        return np.zeros(FEAT_SIZE[::-1], dtype=np.uint8)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    normed = clahe.apply(gray)
-    scale = min(FEAT_SIZE[0] / w, FEAT_SIZE[1] / h)
-    nw = max(1, int(w * scale))
-    nh = max(1, int(h * scale))
-    resized = cv2.resize(normed, (nw, nh), interpolation=cv2.INTER_AREA)
-    canvas = np.zeros(FEAT_SIZE[::-1], dtype=np.uint8)
-    yo = (FEAT_SIZE[1] - nh) // 2
-    xo = (FEAT_SIZE[0] - nw) // 2
-    canvas[yo:yo + nh, xo:xo + nw] = resized
-    return canvas
+def embed_crops(crops: List[np.ndarray], batch_size: int = 128) -> np.ndarray:
+    """Batch-embed crops via SupCon ONNX. Returns (N, 128) L2-normalized."""
+    if not crops:
+        return np.zeros((0, EMBED_DIM), dtype=np.float32)
+    sess = _get_supcon_session()
+    out_chunks: List[np.ndarray] = []
+    for i in range(0, len(crops), batch_size):
+        chunk = crops[i:i + batch_size]
+        x = np.stack([_preprocess_for_supcon(c) for c in chunk]).astype(np.float32)
+        out = sess.run(None, {"input": x})[0]
+        norms = np.linalg.norm(out, axis=1, keepdims=True) + 1e-8
+        out_chunks.append(out / norms)
+    return np.vstack(out_chunks)
 
 
-def align_to_golden(input_48: np.ndarray, golden_48: np.ndarray, search: int = 5) -> np.ndarray:
-    """±search-px template match → apply best shift. Returns aligned 48×48."""
-    padded = cv2.copyMakeBorder(
-        input_48, search, search, search, search, cv2.BORDER_REPLICATE,
-    )
-    result = cv2.matchTemplate(padded, golden_48, cv2.TM_CCOEFF_NORMED)
-    _, _, _, (mx, my) = cv2.minMaxLoc(result)
-    dx, dy = mx - search, my - search
-    M = np.float32([[1, 0, dx], [0, 1, dy]])
-    return cv2.warpAffine(
-        input_48, M, FEAT_SIZE,
-        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE,
-    )
-
-
-def extract_diff_features(diff_48: np.ndarray) -> np.ndarray:
-    """160-dim diff features: 6×6 grid × 4 stats (144) + 4×4 region max (16)."""
-    feats: List[float] = []
-    # 6×6 grid × 4 stats: mean, max, std, count(>30)
-    for i in range(GRID):
-        for j in range(GRID):
-            y0, y1 = i * CELL_SIZE, (i + 1) * CELL_SIZE
-            x0, x1 = j * CELL_SIZE, (j + 1) * CELL_SIZE
-            cell = diff_48[y0:y1, x0:x1]
-            feats.append(float(cell.mean()) / 255.0)
-            feats.append(float(cell.max()) / 255.0)
-            feats.append(float(cell.std()) / 128.0)
-            feats.append(float(np.count_nonzero(cell > 30)) / (CELL_SIZE * CELL_SIZE))
-    # 4×4 region × 1 stat: max
-    region_sz = FEAT_SIZE[0] // 4
-    for i in range(4):
-        for j in range(4):
-            y0, y1 = i * region_sz, (i + 1) * region_sz
-            x0, x1 = j * region_sz, (j + 1) * region_sz
-            feats.append(float(diff_48[y0:y1, x0:x1].max()) / 255.0)
-    return np.asarray(feats, dtype=np.float32)
-
-
-def extract_features_v2(
-    char_img: np.ndarray,
-    char_id: Optional[str],
-    goldens: Optional[Dict[str, np.ndarray]],
-) -> np.ndarray:
-    """
-    1016-dim v2 features: 856 base (on aligned input) + 160 diff vs golden.
-    When char_id missing or no golden → diff features = zeros (still 1016-dim).
-    """
-    canvas = preprocess_canonical(char_img)
-    diff_feats: np.ndarray
-    if char_id and goldens and char_id in goldens:
-        aligned = align_to_golden(canvas, goldens[char_id])
-        diff = np.abs(aligned.astype(np.int16) - goldens[char_id].astype(np.int16)).astype(np.uint8)
-        base = extract_features(aligned)
-        diff_feats = extract_diff_features(diff)
-    else:
-        base = extract_features(canvas)
-        diff_feats = np.zeros(160, dtype=np.float32)
-    return np.concatenate([base, diff_feats])
+def _centroid_predict_proba(X: np.ndarray, bundle: Dict[str, Any]) -> np.ndarray:
+    """Centroid scoring → p_ok ∈ [0, 1]. Mirror of BE."""
+    c_ok = bundle['centroid_ok']
+    c_ng = bundle['centroid_ng']
+    T = float(bundle.get('temperature', 5.0))
+    raw = (X @ c_ok) - (X @ c_ng)
+    return 1.0 / (1.0 + np.exp(-np.clip(raw * T, -30, 30)))
 
 
 class MLClassifierService:
@@ -223,12 +131,11 @@ class MLClassifierService:
 
     def load_model(self, project_id: str, model_id: str) -> Optional[Dict[str, Any]]:
         """
-        Load model bundle from disk (cached). Returns a dict with keys:
-            clf            — sklearn classifier
-            goldens        — {char_id: 48×48 uint8} per-char templates (may be empty)
-            feat_version   — 'v1' or 'v2'
-        Legacy joblibs that stored the raw classifier directly are wrapped
-        into the same shape so callers can ignore the format difference.
+        Load model bundle from disk (cached). Supports two shapes:
+          - sklearn  : {'algorithm': rf|svm|mlp, 'clf': ...}
+          - centroid : {'algorithm': 'centroid', 'centroid_ok', 'centroid_ng',
+                        'temperature'}
+        Legacy joblibs (raw classifier, v2 with goldens) are no longer supported.
         """
         key = (project_id, model_id)
         with self._lock:
@@ -242,21 +149,32 @@ class MLClassifierService:
 
             try:
                 data = joblib.load(str(path))
-                if isinstance(data, dict) and ('clf' in data or 'goldens' in data):
+                if not isinstance(data, dict):
+                    logger.error(f"Unsupported model bundle at {path}: not a dict")
+                    return None
+                algo = (data.get('algorithm') or '').lower()
+                if algo == 'centroid':
+                    if 'centroid_ok' not in data or 'centroid_ng' not in data:
+                        logger.error(f"Centroid bundle at {path} missing centroid_ok/ng")
+                        return None
                     bundle = {
-                        'clf':           data.get('clf'),
-                        'goldens':       data.get('goldens') or {},
-                        'feat_version':  data.get('feat_version', 'v2'),
+                        'algorithm':   'centroid',
+                        'centroid_ok': np.asarray(data['centroid_ok'], dtype=np.float32),
+                        'centroid_ng': np.asarray(data['centroid_ng'], dtype=np.float32),
+                        'temperature': float(data.get('temperature', 5.0)),
                     }
+                elif 'clf' in data:
+                    bundle = {'algorithm': algo or 'rf', 'clf': data['clf']}
                 else:
-                    # Legacy: raw classifier
-                    bundle = {'clf': data, 'goldens': {}, 'feat_version': 'v1'}
+                    logger.error(
+                        f"Unsupported model bundle at {path}: "
+                        "expected 'clf' (sklearn) or centroid keys."
+                    )
+                    return None
                 self._cache[key] = bundle
                 logger.info(
                     f"ML model loaded: project={project_id}, model={model_id}, "
-                    f"feat_version={bundle['feat_version']}, "
-                    f"goldens={len(bundle['goldens'])}, "
-                    f"clf_type={type(bundle['clf']).__name__}"
+                    f"algorithm={bundle['algorithm']}"
                 )
                 return bundle
             except Exception as e:
@@ -277,15 +195,10 @@ class MLClassifierService:
         conf_threshold: float,
         serial_number: str = "",
         annotation_idx: int = -1,
-        char_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Predict OK/NG on a single-character region crop.
-
-        Args:
-            char_id: identity of the character ('L', '0'...). Required for
-                v2 models — picks the matching golden template for diff-based
-                feature extraction. None / unknown char → falls back to v1.
+        Predict OK/NG on a single-character region crop via SupCon embedding
+        + sklearn classifier.
 
         Returns:
             {
@@ -317,17 +230,13 @@ class MLClassifierService:
                 result['error'] = 'empty_region'
                 return result
 
-            clf = bundle['clf']
-            goldens = bundle['goldens']
-            feat_version = bundle['feat_version']
-
-            if feat_version == 'v2':
-                feat = extract_features_v2(region_img, char_id, goldens).reshape(1, -1)
+            feat = embed_crops([region_img])     # (1, 128)
+            if bundle.get('algorithm') == 'centroid':
+                p_ok = float(_centroid_predict_proba(feat, bundle)[0])
             else:
-                feat = extract_features(region_img).reshape(1, -1)
-
-            proba = clf.predict_proba(feat)[0]
-            p_ok = float(proba[1]) if len(proba) > 1 else float(proba[0])
+                clf = bundle['clf']
+                proba = clf.predict_proba(feat)[0]
+                p_ok = float(proba[1]) if len(proba) > 1 else float(proba[0])
             label = "OK" if p_ok >= conf_threshold else "NG"
 
             result['ml_pass'] = (label == "OK")
@@ -367,19 +276,16 @@ class MLClassifierService:
         items: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """
-        Batch-predict OK/NG for N region crops.
+        Batch-predict OK/NG for N region crops via SupCon embedding (single
+        ONNX call per group) + sklearn classifier.
 
         Much faster than calling classify_region in parallel because:
-          - sklearn predict_proba(N samples) is barely more expensive than
-            predict_proba(1 sample) for RandomForest/MLP
-          - Avoids Python thread contention (GIL bound on feature extraction)
+          - SupCon ONNX runs all crops in one batched call
+          - sklearn predict_proba(N samples) is near-O(1) overhead vs single
 
         Input item shape:
             {'region_img', 'project_id', 'model_id', 'conf_threshold',
-             'serial_number', 'annotation_idx', 'char_id'?}
-
-        `char_id` is required for v2 models (picks the matching golden
-        template); v1 models ignore it.
+             'serial_number', 'annotation_idx'}
 
         Returns a list parallel to `items` with one result dict each
         (same shape as classify_region's return).
@@ -413,12 +319,8 @@ class MLClassifierService:
                     }
                 continue
 
-            clf = bundle['clf']
-            goldens = bundle['goldens']
-            use_v2 = (bundle['feat_version'] == 'v2')
-
-            # Feature extraction (Python loop but cheap per-item: ~1-3ms)
-            feats_list: List[np.ndarray] = []
+            # Collect valid crops in this group
+            crops_list: List[np.ndarray] = []
             valid_idxs: List[int] = []
             for i in idxs:
                 item = items[i]
@@ -434,18 +336,20 @@ class MLClassifierService:
                         'error': 'empty_region',
                     }
                     continue
-                if use_v2:
-                    feats_list.append(extract_features_v2(region, item.get('char_id'), goldens))
-                else:
-                    feats_list.append(extract_features(region))
+                crops_list.append(region)
                 valid_idxs.append(i)
 
             if not valid_idxs:
                 continue
 
             t_feat = time.perf_counter()
-            X = np.stack(feats_list, axis=0)
-            probas = clf.predict_proba(X)  # shape (M, 2) or (M, 1)
+            X = embed_crops(crops_list)        # (M, 128) — single batched ONNX call
+            if bundle.get('algorithm') == 'centroid':
+                p_ok_arr = _centroid_predict_proba(X, bundle)
+                probas = np.stack([1.0 - p_ok_arr, p_ok_arr], axis=1)
+            else:
+                clf = bundle['clf']
+                probas = clf.predict_proba(X)      # (M, 2) or (M, 1)
             t_pred = time.perf_counter()
 
             debug_write_count = 0

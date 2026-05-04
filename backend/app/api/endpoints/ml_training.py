@@ -39,7 +39,6 @@ from app.services.ml_training_service import (
     generate_synthetic_crops,
     get_labeled_crops,
     get_model_chars,
-    get_model_goldens,
     img_to_b64,
     predict_on_image,
     train_model,
@@ -478,7 +477,63 @@ async def preview_synthetic_endpoint(
     crops = await asyncio.get_event_loop().run_in_executor(
         None, generate_synthetic_crops,
         annotations, images_dir, request.augment_factor, request.label,
+        request.severity_dist,
     )
+    return {"crops": crops, "count": len(crops)}
+
+
+# ════════════════════════════════════════ SYNTHETIC OK PREVIEW ═════════════
+
+class _SynthOKRequest(BaseModel):
+    target_n_per_char: int = 30
+    only_below_threshold: bool = True
+    char_filter: Optional[List[str]] = None
+    rotation_max_deg: float = 5.0
+    size_jitter: float = 0.30
+
+
+@router.post("/ml/projects/{project_id}/preview-synthetic-ok", tags=["ML Training"])
+async def preview_synthetic_ok_endpoint(
+    project_id: str,
+    request: _SynthOKRequest,
+    repo: MLTrainingRepository = Depends(get_repo),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """
+    Generate synthetic OK crops via PIL render → composite on real BG → camera
+    noise. Used to top-up under-represented chars in the training set.
+
+    Each result item: {crop_b64, char_id, font_name, rotation_deg, source}.
+    """
+    from app.services.ml_ok_synthesize import synthesize_ok_from_annotations
+
+    annotations = await repo.list_annotations(project_id)
+    if not annotations:
+        raise HTTPException(400, "No annotations — label some OK chars first")
+    images_dir = _images_dir(project_id)
+
+    def _build():
+        synth = synthesize_ok_from_annotations(
+            annotations, images_dir,
+            target_n_per_char=request.target_n_per_char,
+            only_below_threshold=request.only_below_threshold,
+            char_filter=request.char_filter,
+            rotation_max_deg=request.rotation_max_deg,
+            size_jitter=request.size_jitter,
+        )
+        # Encode crops → b64 for transport (drop raw ndarray)
+        return [{
+            'crop_b64':     img_to_b64(item['crop']),
+            'char_id':      item['char_id'],
+            'font_name':    item['font_name'],
+            'rotation_deg': item['rotation_deg'],
+            'source':       item['source'],
+        } for item in synth]
+
+    try:
+        crops = await asyncio.get_event_loop().run_in_executor(None, _build)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(400, str(e))
     return {"crops": crops, "count": len(crops)}
 
 
@@ -661,14 +716,13 @@ async def get_test_set_crops(
 async def download_model_report(
     project_id: str,
     model_id: str,
-    include_goldens: bool = True,
     include_testset: bool = True,
     repo: MLTrainingRepository = Depends(get_repo),
     current_user: UserInDB = Depends(get_current_user),
 ):
     """
-    Full training report as a single JSON — metrics, per-char stats, goldens,
-    and test-set crops with embedded base64 images. Intended for offline
+    Full training report as a single JSON — metrics, per-char stats, and
+    test-set crops with embedded base64 images. Intended for offline
     analysis / sharing.
     """
     import json as _json
@@ -694,18 +748,12 @@ async def download_model_report(
             try:
                 data = joblib.load(str(model_record.model_path))
                 if isinstance(data, dict):
-                    report["feat_version"] = data.get("feat_version", "v1")
-                    report["feat_dim"] = data.get("feat_dim")
                     report["char_stats"] = data.get("char_stats") or {}
                 else:
-                    report["feat_version"] = "v1"
                     report["char_stats"] = {}
             except Exception as e:
                 logger.warning(f"[report] bundle load failed: {e}")
                 report["char_stats"] = {}
-
-        if include_goldens:
-            report["goldens"] = get_model_goldens(Path(model_record.model_path)) if model_record.model_path else []
 
         if include_testset and model_record.model_path:
             ts_path = Path(model_record.model_path).parent / f"{Path(model_record.model_path).stem}_test_set.json"
@@ -753,36 +801,6 @@ async def download_model_report(
             "Content-Disposition": f'attachment; filename="{filename}"',
         },
     )
-
-
-@router.get(
-    "/ml/projects/{project_id}/models/{model_id}/goldens",
-    tags=["ML Training"],
-)
-async def get_model_goldens_endpoint(
-    project_id: str,
-    model_id: str,
-    repo: MLTrainingRepository = Depends(get_repo),
-    current_user: UserInDB = Depends(get_current_user),
-):
-    """
-    Return the per-char golden reference images bundled with this model,
-    plus per-char training sample counts (real + augmented).
-
-    Each item: { char_id, golden_b64, n_ok_train, n_ng_train, n_ok_real, n_ng_real }
-    Returns empty list for legacy (v1) models.
-    """
-    all_models = await repo.list_models(project_id)
-    model_record = next((m for m in all_models if m.id == model_id), None)
-    if not model_record:
-        raise HTTPException(404, "Model not found")
-    if not model_record.model_path:
-        raise HTTPException(400, "Model has no saved file")
-
-    goldens = await asyncio.get_event_loop().run_in_executor(
-        None, get_model_goldens, Path(model_record.model_path),
-    )
-    return {"goldens": goldens, "count": len(goldens)}
 
 
 # ════════════════════════════════════════ IMPORT FROM RECIPE ══════════════

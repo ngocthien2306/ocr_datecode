@@ -115,7 +115,7 @@ class MLModelInDB(BaseModel):
 # ─────────────────────────────────── Request / Response bodies ───────
 
 class TrainRequest(BaseModel):
-    algorithm: str = "rf"           # "rf" | "svm" | "mlp"
+    algorithm: str = "rf"           # "rf" | "svm" | "mlp" | "centroid"
     augment_factor: int = 0         # 0=off, 2=x2 ...
     test_split: float = 0.2         # fraction for test set
     threshold: float = 0.5          # prob_ok >= threshold → label OK
@@ -123,11 +123,19 @@ class TrainRequest(BaseModel):
     max_iter: int = 500             # MLP/SVM only
     C: float = 1.0                  # SVM only
     hidden_layer_sizes: List[int] = [128, 64]  # MLP only
+    centroid_temperature: float = 5.0   # centroid only — sigmoid scale
+    # NG augmentation severity distribution (auto-normalized to sum=1)
+    # Default: 10% subtle / 50% light / 35% medium / 5% heavy
+    severity_dist: Optional[Dict[str, float]] = None
+    # If > 0, top up each char to N OK samples via font-render synthesis.
+    # 0 = disabled (default).
+    ok_synth_target: int = 0
 
 
 class SyntheticPreviewRequest(BaseModel):
     augment_factor: int             # must be >= 2
     label: str = "NG"               # Only 'NG' is supported (OK aug removed)
+    severity_dist: Optional[Dict[str, float]] = None
 
 
 class TestSetRequest(BaseModel):

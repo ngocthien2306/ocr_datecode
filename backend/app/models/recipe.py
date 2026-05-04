@@ -123,6 +123,7 @@ class RecipeBase(BaseModel):
     ml_project_id: Optional[str] = Field(default=None, description="ML Training project ID for quality inspection")
     ml_model_id: Optional[str] = Field(default=None, description="Trained ML model ID within the ML project")
     defect_model: Optional[str] = Field(default="arcface", description="Embedding model used for defect detection: arcface | supcon")
+    classifier_backend: Optional[str] = Field(default="embedding", description="Active classifier method: 'embedding' (defect_model cosine) | 'ml' (trained ML model)")
 
 
 class RecipeCreate(RecipeBase):
@@ -150,6 +151,7 @@ class RecipeUpdate(BaseModel):
     ml_project_id: Optional[str] = None
     ml_model_id: Optional[str] = None
     defect_model: Optional[str] = None
+    classifier_backend: Optional[str] = None
 
 
 class RecipeInDB(RecipeBase):

@@ -1136,6 +1136,7 @@ class Camera:
             self.ml_project_id = recipe_data.get("ml_project_id")
             self.ml_model_id = recipe_data.get("ml_model_id")
             self.defect_model = recipe_data.get("defect_model") or "arcface"
+            self.classifier_backend = recipe_data.get("classifier_backend") or "embedding"
             logger.info(
                 f"[{self.serial_number}] Loaded thresholds: "
                 f"matching={self.matching_threshold}, recognition={self.recognition_threshold}"
