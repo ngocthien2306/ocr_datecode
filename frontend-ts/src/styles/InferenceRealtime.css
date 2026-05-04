@@ -2264,3 +2264,300 @@ body.dark-mode .inference-realtime-footer {
 body.dark-mode .char-badge-row { background: #141821; }
 body.dark-mode .char-badge.ok  { background: rgba(34, 197, 94, .12); color: #4ade80; }
 body.dark-mode .char-badge.ng  { background: rgba(239, 68, 68, .15); color: #f87171; }
+
+/* =====================================================================
+   Dark Mode — Comprehensive overrides for InferenceRealtime
+   ===================================================================== */
+
+/* Top-level surfaces */
+body.dark-mode .cameras-grid,
+body.dark-mode .log-panel {
+  background: #111827;
+}
+
+body.dark-mode .panel-header {
+  background: #1f2937;
+  border-bottom-color: #374151;
+}
+
+body.dark-mode .panel-header h3 { color: #f9fafb; }
+
+body.dark-mode .camera-count,
+body.dark-mode .log-count {
+  color: #9ca3af;
+  background: #111827;
+}
+
+/* Header text */
+body.dark-mode .header-info h2,
+body.dark-mode .recipe-name { color: #f9fafb; }
+body.dark-mode .product-code,
+body.dark-mode .mode-label { color: #9ca3af; }
+
+body.dark-mode .realtime-header { border-bottom-color: #374151; }
+
+/* Mode toggle */
+body.dark-mode .mode-toggle-switch {
+  background: #1f2937;
+  border-color: #374151;
+}
+
+/* Stat badges (header) */
+body.dark-mode .stat-badge {
+  background: rgba(31, 41, 55, 0.85);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+body.dark-mode .stat-badge:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+body.dark-mode .stat-badge .stat-label { color: #9ca3af; }
+body.dark-mode .stat-badge .stat-value { color: #f9fafb; }
+
+/* Cameras container background */
+body.dark-mode .cameras-container { background: #0f172a; }
+
+/* Camera card default (was light grey gradient) */
+body.dark-mode .camera-card-infer {
+  background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* Camera card PASS / FAIL — keep accent but darker */
+body.dark-mode .camera-card-infer.pass {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.18) 0%, rgba(22, 163, 74, 0.12) 100%);
+  border-color: rgba(34, 197, 94, 0.4);
+}
+body.dark-mode .camera-card-infer.fail {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.18) 0%, rgba(220, 38, 38, 0.12) 100%);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+/* Camera card header */
+body.dark-mode .camera-card-header {
+  background: #111827;
+  border-bottom-color: #374151;
+}
+body.dark-mode .camera-info svg { color: #9ca3af; }
+body.dark-mode .camera-serial { color: #f9fafb; }
+
+/* Camera frames PASS/FAIL backgrounds */
+body.dark-mode .camera-frames.pass {
+  background: linear-gradient(180deg, rgba(34, 197, 94, 0.18) 0%, rgba(22, 163, 74, 0.12) 100%);
+}
+body.dark-mode .camera-frames.fail {
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.18) 0%, rgba(220, 38, 38, 0.12) 100%);
+}
+
+body.dark-mode .frame-placeholder {
+  background: #1f2937;
+  color: #6b7280;
+}
+
+/* Stats compact bar (the bright white footer under each camera card) */
+body.dark-mode .camera-stats-compact {
+  background: linear-gradient(180deg, rgba(31, 41, 55, 0.95) 0%, rgba(17, 24, 39, 0.85) 100%);
+  border-top-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.3);
+}
+body.dark-mode .camera-stats-compact .stat-item {
+  background: rgba(255, 255, 255, 0.05);
+}
+body.dark-mode .camera-stats-compact .stat-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+body.dark-mode .camera-stats-compact .stat-label { color: #9ca3af; }
+body.dark-mode .camera-stats-compact .stat-value { color: #f9fafb; }
+body.dark-mode .camera-stats-compact .stat-separator { color: #4b5563; }
+
+/* Stats details panel */
+body.dark-mode .stats-details {
+  background: #0f172a;
+  border-top-color: #374151;
+}
+body.dark-mode .detail-row { color: #9ca3af; }
+body.dark-mode .detail-row .stat-value { color: #f9fafb; }
+
+body.dark-mode .btn-details {
+  border-color: #374151;
+  color: #9ca3af;
+}
+body.dark-mode .btn-details:hover {
+  background: #374151;
+  color: #f9fafb;
+  border-color: #4b5563;
+}
+
+/* Template preview section (the white-ish area below camera-frames) */
+body.dark-mode .template-preview-section {
+  background: linear-gradient(180deg, #1f2937 0%, #111827 100%);
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+body.dark-mode .template-preview-header {
+  background: rgba(31, 41, 55, 0.9);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+body.dark-mode .template-preview-header svg { color: #9ca3af; }
+body.dark-mode .template-label { color: #e5e7eb; }
+body.dark-mode .template-image-wrapper {
+  background: #0f172a;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+/* Delay editor (button cluster) */
+body.dark-mode .delay-editor:hover { background: #1f2937; }
+body.dark-mode .delay-editor:hover .stat-label,
+body.dark-mode .delay-editor:hover .stat-unit { color: #818cf8; }
+body.dark-mode .delay-editor:hover .delay-input { border-color: #818cf8; }
+body.dark-mode .delay-editor:hover .btn-update-delay {
+  background: #818cf8;
+  border-color: #818cf8;
+}
+body.dark-mode .delay-editor:hover .btn-update-delay:hover:not(:disabled) {
+  background: #6366f1;
+  border-color: #6366f1;
+}
+
+/* No results / no logs */
+body.dark-mode .no-results,
+body.dark-mode .no-logs { background: #0f172a; color: #9ca3af; }
+
+/* Log entries */
+body.dark-mode .inference-log-entry { background: #1f2937; }
+body.dark-mode .inference-log-entry.expandable .log-entry-header:hover {
+  background: #374151;
+}
+body.dark-mode .log-timestamp { color: #9ca3af; }
+body.dark-mode .log-message { color: #e5e7eb; }
+body.dark-mode .log-expand-icon { color: #9ca3af; }
+
+/* Verification sections (text + template) */
+body.dark-mode .text-verification-section,
+body.dark-mode .template-verification-section {
+  background: #111827;
+  border-top-color: #374151;
+}
+body.dark-mode .verification-label { color: #f9fafb; }
+
+body.dark-mode .camera-verification-card {
+  background: #1f2937;
+  border-color: #374151;
+}
+body.dark-mode .camera-verification-header {
+  background: #0f172a;
+  border-bottom-color: #374151;
+}
+body.dark-mode .camera-verification-header .camera-serial { color: #f9fafb; }
+body.dark-mode .camera-verification-header svg { color: #9ca3af; }
+body.dark-mode .verification-type {
+  background: rgba(99, 102, 241, 0.15);
+  color: #a5b4fc;
+}
+
+body.dark-mode .frame-verification-section { border-bottom-color: #374151; }
+body.dark-mode .frame-label { color: #f9fafb; }
+
+body.dark-mode .match-summary.all-match {
+  background: rgba(34, 197, 94, 0.18);
+  color: #4ade80;
+}
+body.dark-mode .match-summary.has-mismatch {
+  background: rgba(239, 68, 68, 0.18);
+  color: #f87171;
+}
+
+/* Verification table */
+body.dark-mode .verification-table th {
+  background: #111827;
+  color: #9ca3af;
+  border-bottom-color: #374151;
+}
+body.dark-mode .verification-table td {
+  border-bottom-color: #374151;
+  color: #e5e7eb;
+}
+body.dark-mode .verification-table tbody tr:hover { background: #374151; }
+body.dark-mode .verification-table tbody tr.mismatch-row {
+  background: rgba(239, 68, 68, 0.08);
+}
+body.dark-mode .verification-table tbody tr.mismatch-row:hover {
+  background: rgba(239, 68, 68, 0.15);
+}
+body.dark-mode .col-region { color: #9ca3af; }
+
+/* Per-character confidence */
+body.dark-mode .char-conf-toggle-btn {
+  background: #374151;
+  color: #d1d5db;
+  border-color: #4b5563;
+}
+body.dark-mode .char-conf-toggle-btn:hover {
+  background: #4b5563;
+  color: #f9fafb;
+}
+body.dark-mode .char-conf-cell { background: #0f172a; }
+
+body.dark-mode .char-conf-badge.high {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: rgba(110, 231, 183, 0.4);
+  color: #6ee7b7;
+}
+body.dark-mode .char-conf-badge.medium {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(252, 211, 77, 0.4);
+  color: #fcd34d;
+}
+body.dark-mode .char-conf-badge.low {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(252, 165, 165, 0.4);
+  color: #fca5a5;
+}
+
+body.dark-mode .no-verification-data { color: #6b7280; }
+
+/* Template verification details */
+body.dark-mode .verification-row { border-bottom-color: #374151; }
+body.dark-mode .verification-row .label { color: #9ca3af; }
+body.dark-mode .value.threshold { color: #a5b4fc; }
+body.dark-mode .verification-warning {
+  background: rgba(239, 68, 68, 0.1);
+  border-left-color: #f87171;
+  color: #fca5a5;
+}
+body.dark-mode .verification-warning svg { color: #f87171; }
+
+/* Recipe time info (header chip) */
+body.dark-mode .recipe-time-info {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Char comparison strip */
+body.dark-mode .char-images-row td { background: #0f172a; }
+body.dark-mode .char-images-cell { scrollbar-color: #4b5563 #1f2937; }
+body.dark-mode .char-images-cell::-webkit-scrollbar-track { background: #1f2937; }
+body.dark-mode .char-images-cell::-webkit-scrollbar-thumb { background: #4b5563; }
+
+body.dark-mode .char-comparison-cell {
+  background: #1f2937;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+body.dark-mode .char-img { background: #1f2937; }
+body.dark-mode .char-img-tmpl { border-color: #4b5563; }
+body.dark-mode .char-cell-pass { border-color: rgba(34, 197, 94, 0.4); }
+body.dark-mode .char-cell-fail { border-color: rgba(239, 68, 68, 0.4); }
+
+/* Empty state */
+body.dark-mode .empty-state h3 { color: #f9fafb; }
+body.dark-mode .empty-state { color: #9ca3af; }
+body.dark-mode .empty-state svg { color: #6b7280; }
+
+/* Camera card scrollbars */
+body.dark-mode .camera-card-infer::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+}
+body.dark-mode .camera-card-infer::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+}
+body.dark-mode .camera-card-infer::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}

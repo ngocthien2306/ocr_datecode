@@ -1,6 +1,6 @@
 // Duplicate type imports removed
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import type { Canvas as FabricCanvas, Object as FabricObject } from 'fabric';
 import { Canvas, FabricImage, Control, Point, util } from 'fabric';
 import { TYPE_CONFIGS } from '@/fabric/types';
@@ -73,6 +73,11 @@ export default function TemplateEditor({
   const [showHints, setShowHints] = useState(false);
   const [showLabels, setShowLabels] = useState(false);
   const [isSpacePressed, setIsSpacePressed] = useState(false);
+
+  // Resize-chars panel state
+  const [resizeDelta, setResizeDelta] = useState<number>(2);
+  const [resizeScope, setResizeScope] = useState<string>('all');  // 'all' | `region:${idx}` | `selected:${idx}` | 'unassigned'
+  const [resizeAxis,  setResizeAxis]  = useState<'both' | 'w' | 'h'>('both');
 
   // Initialize canvas
   useEffect(() => {
@@ -933,10 +938,172 @@ export default function TemplateEditor({
     objectUtils.resetCanvasZoom(fabricCanvasRef.current as any);
   };
 
+  // ── Resize chars: group chars by spatial parent (text/datecode region) ───
+  // Char belongs to a region if its center point falls inside the region's
+  // bounding box (or polygon). Multiple matches → smallest-area region wins.
+  // If a single char is selected, a "Selected: char #N" group is added on top.
+  const truncate = (s: string, n = 30) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+
+  const selectedCharIdx = useMemo(() => {
+    if (selectedAnnotation === null) return null;
+    const a = annotations[selectedAnnotation];
+    if (!a || a.type !== 'char' || a.shape !== 'rectangle') return null;
+    return selectedAnnotation;
+  }, [selectedAnnotation, annotations]);
+
+  const charGroups = useMemo(() => {
+    const charItems = annotations
+      .map((a, i) => ({ a, i }))
+      .filter(({ a }) => a.type === 'char' && a.shape === 'rectangle');
+
+    const regionItems = annotations
+      .map((a, i) => ({ a, i }))
+      .filter(({ a }) => a.type === 'text' || a.type === 'datecode');
+
+    const regionBBox = (a: Annotation): { x: number; y: number; w: number; h: number } | null => {
+      if (a.shape === 'rectangle') {
+        return { x: a.x ?? 0, y: a.y ?? 0, w: a.width ?? 0, h: a.height ?? 0 };
+      }
+      if (a.shape === 'polygon' && a.points && a.points.length > 0) {
+        const xs = a.points.map(p => Number(p[0] ?? 0));
+        const ys = a.points.map(p => Number(p[1] ?? 0));
+        const minX = Math.min(...xs), maxX = Math.max(...xs);
+        const minY = Math.min(...ys), maxY = Math.max(...ys);
+        return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+      }
+      return null;
+    };
+
+    const pointInRect = (px: number, py: number, b: { x: number; y: number; w: number; h: number }) =>
+      px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h;
+
+    const charToRegion = new Map<number, number>();   // char idx → region idx (smallest matching)
+    for (const { a: char, i: cIdx } of charItems) {
+      const cx = (char.x ?? 0) + (char.width ?? 0) / 2;
+      const cy = (char.y ?? 0) + (char.height ?? 0) / 2;
+      let bestRegionIdx: number | null = null;
+      let bestArea = Infinity;
+      for (const { a: region, i: rIdx } of regionItems) {
+        const bb = regionBBox(region);
+        if (!bb) continue;
+        if (!pointInRect(cx, cy, bb)) continue;
+        const area = bb.w * bb.h;
+        if (area < bestArea) { bestArea = area; bestRegionIdx = rIdx; }
+      }
+      if (bestRegionIdx !== null) charToRegion.set(cIdx, bestRegionIdx);
+    }
+
+    type Group = { id: string; label: string; indices: number[] };
+    const groups: Group[] = [];
+
+    // Single-char selection takes top spot (auto-selected via useEffect below)
+    if (selectedCharIdx !== null) {
+      groups.push({
+        id: `selected:${selectedCharIdx}`,
+        label: `Selected: char #${selectedCharIdx}`,
+        indices: [selectedCharIdx],
+      });
+    }
+
+    groups.push({
+      id: 'all',
+      label: `All chars (${charItems.length})`,
+      indices: charItems.map(({ i }) => i),
+    });
+    for (const { a: region, i: rIdx } of regionItems) {
+      const indices = charItems.filter(({ i }) => charToRegion.get(i) === rIdx).map(({ i }) => i);
+      if (indices.length === 0) continue;
+      const rawLabel = (region.text || '').toString().trim()
+        || `${region.type === 'datecode' ? 'Date' : 'Text'} #${rIdx}`;
+      groups.push({
+        id: `region:${rIdx}`,
+        label: `${truncate(rawLabel, 24)} (${indices.length} chars)`,
+        indices,
+      });
+    }
+    const unassignedIndices = charItems
+      .filter(({ i }) => !charToRegion.has(i))
+      .map(({ i }) => i);
+    if (unassignedIndices.length > 0) {
+      groups.push({ id: 'unassigned', label: `Unassigned (${unassignedIndices.length} chars)`, indices: unassignedIndices });
+    }
+    return groups;
+  }, [annotations, selectedCharIdx]);
+
+  // Auto-select "Selected: char #N" scope whenever a char gets selected on canvas
+  useEffect(() => {
+    if (selectedCharIdx !== null) {
+      setResizeScope(`selected:${selectedCharIdx}`);
+    }
+  }, [selectedCharIdx]);
+
+  // If selected scope vanishes (region deleted) → fall back to 'all'
+  useEffect(() => {
+    if (!charGroups.find(g => g.id === resizeScope)) setResizeScope('all');
+  }, [charGroups, resizeScope]);
+
+  const activeGroup = charGroups.find(g => g.id === resizeScope) ?? charGroups[0];
+  const resizeEnabled = !!activeGroup && activeGroup.indices.length > 0;
+
+  // Apply symmetric Δ to chars in active group, on selected axis.
+  // resizeAxis: 'both' | 'w' | 'h'. sign=+1 expands, -1 shrinks. Polygon chars skipped.
+  // Annotations store NORMALIZED coords [0..1] (see objectUtils.getRectangleData),
+  // so we convert px → normalized for storage, then back to px for fabric objects.
+  const applyResize = (sign: 1 | -1) => {
+    if (!resizeEnabled || !activeGroup) return;
+    const canvas = fabricCanvasRef.current as CanvasWithImageBounds | null;
+    const bounds = canvas?.imageBounds;
+    if (!canvas || !bounds) return;
+    const dPx = Math.max(1, resizeDelta) * sign;
+    const dxN = (resizeAxis === 'h') ? 0 : dPx / bounds.width;
+    const dyN = (resizeAxis === 'w') ? 0 : dPx / bounds.height;
+    const indexSet = new Set(activeGroup.indices);
+
+    const next = annotations.map((ann, i) => {
+      if (!indexSet.has(i)) return ann;
+      if (ann.shape !== 'rectangle') return ann;     // skip polygon chars
+      const cur = { ...ann };
+      const newW = Math.min(1, Math.max(0.001, (cur.width  ?? 0) + dxN));
+      const newH = Math.min(1, Math.max(0.001, (cur.height ?? 0) + dyN));
+      const newX = (cur.x ?? 0) - dxN / 2;
+      const newY = (cur.y ?? 0) - dyN / 2;
+      cur.width  = newW;
+      cur.height = newH;
+      cur.x = Math.max(0, Math.min(1 - newW, newX));
+      cur.y = Math.max(0, Math.min(1 - newH, newY));
+      return cur;
+    });
+
+    // Sync fabric objects directly — the smart-update useEffect on `annotations`
+    // only refreshes color/labels, not geometry, so we update size+pos here.
+    // Convert normalized [0..1] → canvas pixels using imageBounds.
+    canvas.getObjects().forEach(obj => {
+      const fObj = obj as FabricAnnotationObject;
+      const idx = fObj.annotationIndex;
+      if (idx === undefined || fObj.isLabel || fObj.isTemp) return;
+      if (!indexSet.has(idx)) return;
+      const updated = next[idx];
+      if (!updated || updated.shape !== 'rectangle') return;
+      obj.set({
+        left:   bounds.left + (updated.x      ?? 0) * bounds.width,
+        top:    bounds.top  + (updated.y      ?? 0) * bounds.height,
+        width:                (updated.width  ?? 0) * bounds.width,
+        height:               (updated.height ?? 0) * bounds.height,
+        scaleX: 1,
+        scaleY: 1,
+      });
+      obj.setCoords();
+    });
+    canvas.requestRenderAll();
+
+    onAnnotationsChange(next);
+  };
+
   // Full editor UI (toolbar, zoom controls, hints, canvas)
   return (
     <div className="template-editor">
       <div className="editor-toolbar">
+        <div className="toolbar-row">
         <div className="toolbar-group">
           <button
             type="button"
@@ -980,7 +1147,7 @@ export default function TemplateEditor({
           )}
         </div>
 
-        <div className="toolbar-group">
+        <div className="toolbar-group toolbar-group-end">
           <button type="button" className="tool-btn" onClick={handleZoomOut} title="Zoom Out">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
               <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
@@ -1017,6 +1184,55 @@ export default function TemplateEditor({
               <path d="M8 20H16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
             </svg>
           </button>
+        </div>
+        </div>
+
+        {/* ── Row 2: resize chars panel ──────────────────────────────── */}
+        <div className="toolbar-row toolbar-row-secondary">
+        {/* ── Resize chars: scope + axis + Δ + −/+ ───────────────────── */}
+        <div className={`toolbar-group resize-chars-group${resizeEnabled ? '' : ' disabled'}`}>
+          <select
+            className="resize-chars-select"
+            value={resizeScope}
+            onChange={e => setResizeScope(e.target.value)}
+            disabled={charGroups.length === 0}
+            title={charGroups.find(g => g.id === resizeScope)?.label || 'Choose which chars to resize'}
+          >
+            {charGroups.map(g => (
+              <option key={g.id} value={g.id} title={g.label}>{g.label}</option>
+            ))}
+          </select>
+          <input
+            type="number"
+            className="resize-chars-input"
+            min={1}
+            max={50}
+            value={resizeDelta}
+            onChange={e => setResizeDelta(Math.max(1, Number(e.target.value) || 1))}
+            disabled={!resizeEnabled}
+            title="Step in pixels"
+          />
+          <div className="resize-chars-axis-seg" role="group" aria-label="Resize axis">
+            {(['both', 'w', 'h'] as const).map(ax => (
+              <button
+                key={ax}
+                type="button"
+                className={`resize-chars-axis-btn${resizeAxis === ax ? ' active' : ''}`}
+                onClick={() => setResizeAxis(ax)}
+                disabled={!resizeEnabled}
+                title={ax === 'both' ? 'Resize both width & height' : ax === 'w' ? 'Resize width only' : 'Resize height only'}
+              >
+                {ax === 'both' ? 'W·H' : ax.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <button type="button" className="tool-btn tool-btn-sm" disabled={!resizeEnabled}
+                  onClick={() => applyResize(-1)}
+                  title={`Shrink ${resizeDelta}px (${resizeAxis === 'both' ? 'W & H' : resizeAxis.toUpperCase()})`}>−</button>
+          <button type="button" className="tool-btn tool-btn-sm" disabled={!resizeEnabled}
+                  onClick={() => applyResize( 1)}
+                  title={`Expand ${resizeDelta}px (${resizeAxis === 'both' ? 'W & H' : resizeAxis.toUpperCase()})`}>+</button>
+        </div>
         </div>
       </div>
 

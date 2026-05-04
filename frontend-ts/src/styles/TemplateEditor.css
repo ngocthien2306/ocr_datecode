@@ -11,38 +11,68 @@
 
 .editor-toolbar {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px 20px;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 6px 14px;
+  gap: 5px;
   background: rgba(30, 30, 46, 0.95);
   backdrop-filter: blur(10px);
   border-bottom: 2px solid rgba(139, 92, 246, 0.2);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
+.toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+.toolbar-row-secondary {
+  border-top: 1px solid rgba(139, 92, 246, 0.12);
+  padding-top: 5px;
+}
+
 .toolbar-group {
   display: flex;
-  gap: 10px;
+  gap: 5px;
   align-items: center;
 }
 
+/* Push group (and any siblings after it) to the right edge of the row */
+.toolbar-group-end {
+  margin-left: auto;
+}
+
 .tool-btn {
-  min-width: 42px;
-  height: 42px;
+  min-width: 30px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: rgba(45, 45, 60, 0.8);
   border: 2px solid rgba(139, 92, 246, 0.3);
-  border-radius: 8px;
+  border-radius: 7px;
   cursor: pointer;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   color: #a0a0b0;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 600;
-  padding: 0 12px;
+  padding: 0 8px;
   position: relative;
   overflow: hidden;
+}
+
+.tool-btn svg { width: 16px; height: 16px; }
+
+/* Smaller variant — used for resize +/− and other compact actions */
+.tool-btn-sm {
+  min-width: 24px;
+  height: 24px;
+  padding: 0 4px;
+  font-size: 13px;
+  border-radius: 5px;
 }
 
 .tool-btn::before {
@@ -100,13 +130,17 @@
 
 .zoom-label {
   color: #a0a0b0;
-  font-size: 14px;
+  font-size: 11px;
   font-weight: 600;
-  min-width: 55px;
+  min-width: 44px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   text-align: center;
-  padding: 8px 12px;
+  padding: 0 8px;
   background: rgba(45, 45, 60, 0.6);
-  border-radius: 6px;
+  border-radius: 5px;
   border: 1px solid rgba(139, 92, 246, 0.2);
 }
 
@@ -1002,5 +1036,162 @@ body:not(.dark-mode) .type-dialog-footer .confirm-btn:hover {
 body:not(.dark-mode) .type-dialog-footer .confirm-btn:disabled {
   background: #e5e7eb;
   color: #9ca3af;
+}
+
+/* ========================================
+   RESIZE CHARS PANEL (in toolbar)
+   ======================================== */
+
+.resize-chars-group.disabled {
+  opacity: 0.5;
+}
+
+.resize-chars-label {
+  font-size: 11px;
+  color: #a0a0b0;
+  margin-right: 4px;
+}
+
+.resize-chars-delta-label {
+  font-size: 11px;
+  color: #a0a0b0;
+  margin-left: 6px;
+}
+
+.resize-chars-unit {
+  font-size: 10px;
+  color: #6b7280;
+}
+
+.resize-chars-select,
+.resize-chars-input {
+  background: rgba(45, 45, 60, 0.8);
+  border: 2px solid rgba(139, 92, 246, 0.3);
+  color: #e0e0e0;
+  border-radius: 5px;
+  font-size: 11px;
+  padding: 0 6px;
+  height: 24px;
+  outline: none;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.resize-chars-select {
+  cursor: pointer;
+  min-width: 120px;
+  max-width: 200px;
+  /* Truncate collapsed-view text if it overflows */
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.resize-chars-input {
+  width: 38px;
+  text-align: center;
+}
+
+/* Segmented axis selector (Both | W | H) */
+.resize-chars-axis-seg {
+  display: inline-flex;
+  height: 24px;
+  border: 2px solid rgba(139, 92, 246, 0.3);
+  border-radius: 5px;
+  overflow: hidden;
+  background: rgba(45, 45, 60, 0.6);
+}
+
+.resize-chars-axis-btn {
+  background: transparent;
+  border: none;
+  color: #a0a0b0;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 0 7px;
+  min-width: 26px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+  border-right: 1px solid rgba(139, 92, 246, 0.2);
+}
+
+.resize-chars-axis-btn:last-child { border-right: none; }
+
+.resize-chars-axis-btn:hover:not(:disabled):not(.active) {
+  background: rgba(139, 92, 246, 0.15);
+  color: #fff;
+}
+
+.resize-chars-axis-btn.active {
+  background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
+  color: #fff;
+}
+
+.resize-chars-axis-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Light mode overrides for segmented control */
+body:not(.dark-mode) .resize-chars-axis-seg {
+  background: rgba(255, 255, 255, 0.85);
+  border: 2px solid rgba(139, 92, 246, 0.25);
+}
+
+body:not(.dark-mode) .resize-chars-axis-btn {
+  color: #5a5a6b;
+  border-right-color: rgba(139, 92, 246, 0.15);
+}
+
+body:not(.dark-mode) .resize-chars-axis-btn:hover:not(:disabled):not(.active) {
+  background: rgba(139, 92, 246, 0.1);
+  color: #8b5cf6;
+}
+
+body:not(.dark-mode) .resize-chars-axis-btn.active {
+  background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+  color: #fff;
+}
+
+.resize-chars-select:hover:not(:disabled),
+.resize-chars-input:hover:not(:disabled) {
+  border-color: rgba(139, 92, 246, 0.55);
+}
+
+.resize-chars-select:focus,
+.resize-chars-input:focus {
+  border-color: #8b5cf6;
+}
+
+.resize-chars-select:disabled,
+.resize-chars-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Light mode overrides */
+body:not(.dark-mode) .resize-chars-label,
+body:not(.dark-mode) .resize-chars-delta-label {
+  color: #5a5a6b;
+}
+
+body:not(.dark-mode) .resize-chars-unit {
+  color: #9ca3af;
+}
+
+body:not(.dark-mode) .resize-chars-select,
+body:not(.dark-mode) .resize-chars-input {
+  background: rgba(255, 255, 255, 0.9);
+  border: 2px solid rgba(139, 92, 246, 0.25);
+  color: #2c3e50;
+}
+
+body:not(.dark-mode) .resize-chars-select:hover:not(:disabled),
+body:not(.dark-mode) .resize-chars-input:hover:not(:disabled) {
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+body:not(.dark-mode) .resize-chars-select:focus,
+body:not(.dark-mode) .resize-chars-input:focus {
+  border-color: #8b5cf6;
 }
 
