@@ -48,6 +48,17 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
     });
   };
 
+  // Wrinkle details expand state (per-frame)
+  const [expandedWrinkles, setExpandedWrinkles] = useState<Set<string>>(new Set());
+
+  const toggleWrinkles = (key: string) => {
+    setExpandedWrinkles(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
   // Camera lookup map
   const [cameraMap, setCameraMap] = useState<Map<string, Camera>>(new Map());
 
@@ -553,6 +564,120 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
                                   </span>
                                 </div>
                               </div>
+                              {(() => {
+                                const wc: any = frame.product_verification?.wrinkled_check;
+                                if (!wc) return null;
+                                const wrinklesKey = `wr-${cameraResult.serial_number}-${frameIdx}`;
+                                const isWrExpanded = expandedWrinkles.has(wrinklesKey);
+                                const boxes: any[] = Array.isArray(wc.wrinkled_boxes) ? wc.wrinkled_boxes : [];
+                                const hasDetails = boxes.length > 0;
+                                const isSkipped = !!wc.skipped;
+                                const isOk = !!wc.ok;
+
+                                return (
+                                  <>
+                                    <div className="wrinkle-section-label">
+                                      Wrinkle Detection:
+                                      <span className={`verification-summary ${
+                                        isSkipped ? 'na' : isOk ? 'success' : 'error'
+                                      }`}>
+                                        {isSkipped ? 'Skipped' : isOk ? '✓ OK' : '✗ FAIL'}
+                                      </span>
+                                      {hasDetails && (
+                                        <button
+                                          type="button"
+                                          className="wrinkle-toggle-btn"
+                                          onClick={() => toggleWrinkles(wrinklesKey)}
+                                          title="Show/hide per-region details"
+                                        >
+                                          {isWrExpanded ? '▲ Hide details' : `▼ Details (${boxes.length})`}
+                                        </button>
+                                      )}
+                                    </div>
+                                    {isSkipped && wc.reason ? (
+                                      <div className="skip-reason">{wc.reason}</div>
+                                    ) : (
+                                      <>
+                                        <div className="center-alignment-grid">
+                                          <div className="alignment-item">
+                                            <span className="alignment-label">Count</span>
+                                            <span className={`alignment-value ${
+                                              (wc.wrinkled_count ?? 0) > 0 ? 'error' : 'success'
+                                            }`}>
+                                              {wc.wrinkled_count ?? 0}
+                                            </span>
+                                          </div>
+                                          <div className="alignment-item">
+                                            <span className="alignment-label">Total Area</span>
+                                            <span className="alignment-value">
+                                              {wc.total_area != null ? `${wc.total_area}px²` : '-'}
+                                            </span>
+                                          </div>
+                                          <div className="alignment-item">
+                                            <span className="alignment-label">Min Area</span>
+                                            <span className="alignment-value">
+                                              {wc.min_area != null ? `${getThresholdNum(wc.min_area)}px²` : '-'}
+                                            </span>
+                                          </div>
+                                          <div className="alignment-item">
+                                            <span className="alignment-label">Has Wrinkle</span>
+                                            <span className={`alignment-value ${
+                                              wc.has_wrinkled ? 'error' : 'success'
+                                            }`}>
+                                              {wc.has_wrinkled ? 'Yes' : 'No'}
+                                            </span>
+                                          </div>
+                                        </div>
+                                        {hasDetails && isWrExpanded && (
+                                          <div className="wrinkle-details-wrap">
+                                            <table className="wrinkle-details-table">
+                                              <thead>
+                                                <tr>
+                                                  <th>#</th>
+                                                  <th>Class</th>
+                                                  <th>Score</th>
+                                                  <th>Area (px²)</th>
+                                                  <th>Area %</th>
+                                                  <th>BBox (x, y, w, h)</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody>
+                                                {boxes.map((b: any, i: number) => {
+                                                  const corners: any[] = Array.isArray(b.corners) ? b.corners : [];
+                                                  let bbox = '-';
+                                                  if (corners.length >= 4) {
+                                                    const xs = corners.map((c: any) => Number(c?.[0])).filter(n => Number.isFinite(n));
+                                                    const ys = corners.map((c: any) => Number(c?.[1])).filter(n => Number.isFinite(n));
+                                                    if (xs.length && ys.length) {
+                                                      const x = Math.min(...xs);
+                                                      const y = Math.min(...ys);
+                                                      const w = Math.max(...xs) - x;
+                                                      const h = Math.max(...ys) - y;
+                                                      bbox = `${x}, ${y}, ${w}, ${h}`;
+                                                    }
+                                                  }
+                                                  const score = typeof b.score === 'number' ? `${(b.score * 100).toFixed(1)}%` : '-';
+                                                  const areaPct = typeof b.area_pct === 'number' ? `${b.area_pct.toFixed(2)}%` : '-';
+                                                  return (
+                                                    <tr key={i}>
+                                                      <td>{i + 1}</td>
+                                                      <td>{b.class || '-'}</td>
+                                                      <td>{score}</td>
+                                                      <td>{b.area ?? '-'}</td>
+                                                      <td>{areaPct}</td>
+                                                      <td className="wrinkle-bbox-cell">{bbox}</td>
+                                                    </tr>
+                                                  );
+                                                })}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        )}
+                                      </>
+                                    )}
+                                  </>
+                                );
+                              })()}
                               {frame.product_verification.skipped && frame.product_verification.reason && (
                                 <div className="skip-reason">{frame.product_verification.reason}</div>
                               )}

@@ -2540,6 +2540,110 @@ body.dark-mode .text-verification-section-v2 {
   font-style: italic;
 }
 
+/* Wrinkle Detection */
+.wrinkle-section-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6b7280;
+  margin: 12px 0 8px 0;
+}
+
+.wrinkle-toggle-btn {
+  margin-left: auto;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #6b7280;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.wrinkle-toggle-btn:hover {
+  color: #4c1d95;
+  border-color: #c4b5fd;
+  background: #f5f3ff;
+}
+
+.wrinkle-details-wrap {
+  margin-top: 8px;
+  background: white;
+  border: 1px solid #ede9fe;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.wrinkle-details-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.wrinkle-details-table th,
+.wrinkle-details-table td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.wrinkle-details-table th {
+  background: #faf5ff;
+  font-weight: 600;
+  color: #6b21a8;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.3px;
+}
+
+.wrinkle-details-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.wrinkle-details-table tbody tr:hover {
+  background: #faf5ff;
+}
+
+.wrinkle-bbox-cell {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  color: #374151;
+}
+
+body.dark-mode .wrinkle-section-label { color: #c4b5fd; }
+body.dark-mode .wrinkle-toggle-btn {
+  background: #1f2937;
+  border-color: #4c1d95;
+  color: #c4b5fd;
+}
+body.dark-mode .wrinkle-toggle-btn:hover {
+  background: #2e1065;
+  border-color: #7c3aed;
+  color: #ede9fe;
+}
+body.dark-mode .wrinkle-details-wrap {
+  background: #1f2937;
+  border-color: #4c1d95;
+}
+body.dark-mode .wrinkle-details-table th {
+  background: #2e1065;
+  color: #c4b5fd;
+}
+body.dark-mode .wrinkle-details-table th,
+body.dark-mode .wrinkle-details-table td {
+  border-bottom-color: #4c1d95;
+}
+body.dark-mode .wrinkle-details-table tbody tr:hover {
+  background: rgba(124, 58, 237, 0.15);
+}
+body.dark-mode .wrinkle-details-table td { color: #e5e7eb; }
+body.dark-mode .wrinkle-bbox-cell { color: #d1d5db; }
+
 body.dark-mode .product-verification-section {
   background: #2e1065;
   border-left-color: #7c3aed;

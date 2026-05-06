@@ -89,25 +89,43 @@ class InferencePipelineTemplate(ABC):
         context.T_inference_start = time.time()
 
         try:
+            # Stage timings — flush at end so we can spot the slow phase quickly.
+            # Replaces ad-hoc instrumentation in subclasses.
+            t_stages: Dict[str, float] = {}
+
             # Step 1: Prepare
+            t = time.perf_counter()
             if not self.prepare(context):
                 return self._build_error_result(context, "Preparation failed")
+            t_stages['prepare'] = (time.perf_counter() - t) * 1000
 
             # Step 2: Preprocess frames
+            t = time.perf_counter()
             preprocessed = self.preprocess(context)
+            t_stages['preprocess'] = (time.perf_counter() - t) * 1000
             if preprocessed is None:
                 return self._build_error_result(context, "Preprocessing failed")
 
             # Step 3: Run inference
+            t = time.perf_counter()
             inference_results = self.run_inference(context, preprocessed)
+            t_stages['run_inference'] = (time.perf_counter() - t) * 1000
             if inference_results is None:
                 return self._build_error_result(context, "Inference failed")
 
             # Step 4: Verify results (text, template)
+            t = time.perf_counter()
             verified_results = self.verify_results(context, inference_results)
+            t_stages['verify_results'] = (time.perf_counter() - t) * 1000
 
             # Step 5: Postprocess - build final results
+            t = time.perf_counter()
             final_result = self.postprocess(context, verified_results)
+            t_stages['postprocess'] = (time.perf_counter() - t) * 1000
+
+            # Stash for finalize() to log
+            context.results.setdefault('_stage_timings', {})
+            context.results['_stage_timings'][context.job_id] = t_stages
 
             # Step 6: Finalize - emit results, schedule rejects, etc.
             self.finalize(context, final_result)
@@ -218,9 +236,17 @@ class InferencePipelineTemplate(ABC):
         # Calculate total time
         total_time = time.time() - context.T_inference_start
 
+        # Stage breakdown if available (set in process())
+        stage_timings = (context.results.get('_stage_timings') or {}).get(context.job_id, {})
+        breakdown_str = ""
+        if stage_timings:
+            parts = [f"{k}={v:.0f}ms" for k, v in stage_timings.items()]
+            breakdown_str = "  STAGES: " + " | ".join(parts)
+
         logger.info(
             f"[Job #{context.job_id}] Pipeline complete: "
             f"{result.get('product_pass_fail', 'UNKNOWN')}, time: {total_time:.3f}s"
+            f"{breakdown_str}"
         )
 
         # Emit result

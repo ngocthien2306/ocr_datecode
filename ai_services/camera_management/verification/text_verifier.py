@@ -797,6 +797,12 @@ class TextVerificationService:
         char_items: List[Dict[str, Any]] = []
         invalid_map: Dict[Tuple[str, int], Dict[str, Any]] = {}
 
+        # Aggregate crop timing — to spot slow crop_text_region calls
+        crop_text_total_ms = 0.0
+        crop_char_total_ms = 0.0
+        crop_template_total_ms = 0.0
+        debug_save_ms = 0.0
+
         # ── OCR path: text / datecode ──
         for bbox in text_bboxes:
             ann_idx = bbox.get('annotation_index')
@@ -820,7 +826,9 @@ class TextVerificationService:
                 continue
 
             try:
+                _t = time.perf_counter()
                 cropped = crop_text_region(frame_img, points)
+                crop_text_total_ms += (time.perf_counter() - _t) * 1000
             except Exception as e:
                 logger.error(f"[{serial_number}] Error cropping ann {ann_idx}: {e}")
                 invalid_map[(serial_number, ann_idx)] = {
@@ -832,6 +840,7 @@ class TextVerificationService:
                 continue
 
             if self.save_debug_images:
+                _t = time.perf_counter()
                 try:
                     cv2.imwrite(
                         f"{self.debug_path}/cropped_region_{serial_number}_{ann_idx}.png",
@@ -839,6 +848,7 @@ class TextVerificationService:
                     )
                 except Exception as e_save:
                     logger.debug(f"[{serial_number}] Save debug crop failed: {e_save}")
+                debug_save_ms += (time.perf_counter() - _t) * 1000
 
             ocr_items.append({
                 'serial_number': serial_number,
@@ -902,7 +912,9 @@ class TextVerificationService:
                     continue
 
                 try:
+                    _t = time.perf_counter()
                     cropped = crop_text_region(frame_img, points)
+                    crop_char_total_ms += (time.perf_counter() - _t) * 1000
                 except Exception as e:
                     invalid_map[(serial_number, ann_idx)] = {
                         'annotation_idx': int(ann_idx), 'expected': expected_char,
@@ -918,7 +930,9 @@ class TextVerificationService:
                     orig_points = original_char_bbox_map[ann_idx].get('points', [])
                     if len(orig_points) >= 4:
                         try:
+                            _t = time.perf_counter()
                             template_crop = crop_text_region(template_img, orig_points)
+                            crop_template_total_ms += (time.perf_counter() - _t) * 1000
                         except Exception as e:
                             logger.warning(
                                 f"[{serial_number}] Failed to crop template for char "
@@ -951,6 +965,17 @@ class TextVerificationService:
                     'defect_model': getattr(camera, 'defect_model', None) or 'arcface',
                     'classifier_backend': camera_backend,
                 })
+
+        # Log crop-time aggregates so caller can see if cropping is the slow part
+        total_crop_ms = crop_text_total_ms + crop_char_total_ms + crop_template_total_ms
+        if total_crop_ms > 0 or debug_save_ms > 0:
+            logger.info(
+                f"[{serial_number}] _build_items crops: "
+                f"text={crop_text_total_ms:.1f}ms (n={len(ocr_items)}), "
+                f"char={crop_char_total_ms:.1f}ms (n={len(char_items)}), "
+                f"template_crop={crop_template_total_ms:.1f}ms, "
+                f"debug_save={debug_save_ms:.1f}ms"
+            )
 
         return ocr_items, sim_items, char_items, text_bboxes, char_bboxes, invalid_map
 
@@ -987,7 +1012,9 @@ class TextVerificationService:
             return {'text': {'all_match': False, 'results': []}, 'char': empty_pass}
 
         serial_number = camera.serial_number
+        t_v_start = time.perf_counter()
 
+        t_build_start = time.perf_counter()
         ocr_items, sim_items, char_items, text_bboxes, char_bboxes, invalid_map = (
             self._build_items_for_camera(
                 serial_number=serial_number,
@@ -999,13 +1026,15 @@ class TextVerificationService:
                 original_bboxes=original_bboxes,
             )
         )
+        t_build_ms = (time.perf_counter() - t_build_start) * 1000
 
         logger.info(
             f"[{serial_number}] Verifying {len(text_bboxes)} text regions, "
-            f"{len(char_bboxes)} char regions"
+            f"{len(char_bboxes)} char regions  (build_items={t_build_ms:.1f}ms)"
         )
 
         # ── Text/datecode OCR path ──
+        t_ocr_start = time.perf_counter()
         text_region_map: Dict[Tuple[str, int], Dict[str, Any]] = {}
         if ocr_items:
             text_region_map = self._run_ocr_batch_with_checks(
@@ -1014,6 +1043,7 @@ class TextVerificationService:
         text_region_map.update(
             (k, v) for k, v in invalid_map.items() if 'recognized' in v
         )
+        t_ocr_ms = (time.perf_counter() - t_ocr_start) * 1000
 
         text_results: List[Dict[str, Any]] = []
         text_all_match = True
@@ -1031,10 +1061,12 @@ class TextVerificationService:
             text_all_match = False
 
         # ── Char ML path ──
+        t_char_start = time.perf_counter()
         char_region_map = self._run_char_batch(char_items)
         char_region_map.update(
             (k, v) for k, v in invalid_map.items() if 'ml_label' in v
         )
+        t_char_ms = (time.perf_counter() - t_char_start) * 1000
 
         char_results: List[Dict[str, Any]] = []
         char_all_match = True
@@ -1051,6 +1083,13 @@ class TextVerificationService:
         # No char items at all → pass (empty); some bboxes but no result → fail.
         if char_bboxes and not char_results:
             char_all_match = False
+
+        t_v_total = (time.perf_counter() - t_v_start) * 1000
+        logger.info(
+            f"[{serial_number}] verify_text_regions BREAKDOWN: "
+            f"build={t_build_ms:.1f}ms, ocr={t_ocr_ms:.1f}ms (n={len(ocr_items)}), "
+            f"char={t_char_ms:.1f}ms (n={len(char_items)}), total={t_v_total:.1f}ms"
+        )
 
         return {
             'text': {'all_match': text_all_match, 'results': text_results},

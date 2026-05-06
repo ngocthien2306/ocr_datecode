@@ -342,15 +342,18 @@ class MLClassifierService:
             if not valid_idxs:
                 continue
 
-            t_feat = time.perf_counter()
-            X = embed_crops(crops_list)        # (M, 128) — single batched ONNX call
+            # Time embed (SupCon ONNX) and predict_proba separately for diagnostics.
+            # Old code measured t_feat BEFORE embed_crops → reported feat=0.0ms always.
+            t_embed_start = time.perf_counter()
+            X = embed_crops(crops_list)            # (M, 128) — batched SupCon ONNX
+            t_embed_end = time.perf_counter()
             if bundle.get('algorithm') == 'centroid':
                 p_ok_arr = _centroid_predict_proba(X, bundle)
                 probas = np.stack([1.0 - p_ok_arr, p_ok_arr], axis=1)
             else:
                 clf = bundle['clf']
                 probas = clf.predict_proba(X)      # (M, 2) or (M, 1)
-            t_pred = time.perf_counter()
+            t_pred_end = time.perf_counter()
 
             debug_write_count = 0
             for row, i in enumerate(valid_idxs):
@@ -382,17 +385,20 @@ class MLClassifierService:
                     except Exception:
                         pass
 
-            group_ms = (time.perf_counter() - t0) * 1000
-            feat_ms = (t_feat - t0) * 1000
-            pred_ms = (t_pred - t_feat) * 1000
+            group_ms  = (time.perf_counter() - t0) * 1000
+            embed_ms  = (t_embed_end - t_embed_start) * 1000
+            pred_ms   = (t_pred_end  - t_embed_end)   * 1000
+            setup_ms  = (t_embed_start - t0) * 1000      # crops_list build + valid_idxs filter
+            debug_ms  = (time.perf_counter() - t_pred_end) * 1000   # debug image save loop
             for i in valid_idxs:
                 if results[i] is not None:
                     results[i]['time_ms'] = round(group_ms / max(len(valid_idxs), 1), 2)
 
             logger.info(
-                f"ML batch classify: project={pid}, model={mid}, "
-                f"N={len(valid_idxs)}, feat={feat_ms:.1f}ms, "
-                f"predict={pred_ms:.1f}ms, total={group_ms:.1f}ms"
+                f"ML batch classify: project={pid}, model={mid}, algo={bundle.get('algorithm','rf')}, "
+                f"N={len(valid_idxs)}, setup={setup_ms:.1f}ms, "
+                f"embed={embed_ms:.1f}ms, predict={pred_ms:.1f}ms, "
+                f"debug={debug_ms:.1f}ms, total={group_ms:.1f}ms"
             )
 
         # Fill any remaining None with fallback (shouldn't happen)
