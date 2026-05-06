@@ -79,6 +79,26 @@ interface TemplateVerification {
   template_bbox?: any;
 }
 
+interface WrinkleBox {
+  score: number;
+  class?: string;
+  area?: number;
+  area_pct?: number;
+  contour?: number[][];
+  corners?: number[][];
+}
+
+interface WrinkledCheck {
+  ok?: boolean;
+  skipped?: boolean;
+  reason?: string;
+  has_wrinkled?: boolean;
+  wrinkled_count?: number;
+  total_area?: number;
+  min_area?: number | { source?: string; parsedValue?: number };
+  wrinkled_boxes?: WrinkleBox[];
+}
+
 interface ProductVerification {
   match: boolean;
   skipped: boolean;
@@ -94,6 +114,7 @@ interface ProductVerification {
     template_center: [number, number];
     product_center: [number, number];
   };
+  wrinkled_check?: WrinkledCheck;
   timing?: {
     total: number;
     yolo_inference?: number;
@@ -967,6 +988,32 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
     ) || false;
   };
 
+  // Helper: Check if log entry has wrinkle data (any frame)
+  const hasWrinkleVerification = (log: InferenceLog): boolean => {
+    return log.inferenceResult?.camera_results?.some((cam) =>
+      cam.frames.some((frame) => !!frame.product_verification?.wrinkled_check)
+    ) || false;
+  };
+
+  // Helper: parse min_area which may be number or { parsedValue }
+  const parseMinArea = (val: WrinkledCheck['min_area']): string => {
+    if (val == null) return '-';
+    if (typeof val === 'number') return val.toFixed(0);
+    if (typeof val === 'object' && val.parsedValue != null) return Number(val.parsedValue).toFixed(0);
+    return '-';
+  };
+
+  // Wrinkle details expand state (per frame)
+  const [expandedWrinkles, setExpandedWrinkles] = useState<Set<string>>(new Set());
+
+  const toggleWrinkles = (key: string) => {
+    setExpandedWrinkles(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
   // Helper: Toggle log expansion
   const toggleLogExpansion = (logId: string) => {
     setExpandedLogs(prev => {
@@ -1301,6 +1348,148 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                   </div>
                 )}
               </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // ── Wrinkle verification — per-frame wrinkle detection ──
+  const renderWrinkleVerificationInfo = (cameraResult: CameraResult, logId: string) => {
+    const framesWithWrinkle = cameraResult.frames.filter(f => f.product_verification?.wrinkled_check);
+    const cameraInfo = getCameraInfo(cameraResult.serial_number);
+    const displayName = cameraInfo ? cameraInfo.camera_id : cameraResult.serial_number;
+
+    if (framesWithWrinkle.length === 0) return null;
+
+    return (
+      <div className="camera-verification-card wrinkle-verification">
+        <div className="camera-verification-header">
+          <div className="camera-info">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <path d="M3 12c3-4 6-4 9 0s6 4 9 0" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              <path d="M3 18c3-4 6-4 9 0s6 4 9 0" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+            <span className="camera-serial" title={cameraInfo ? `${cameraInfo.location} (${cameraResult.serial_number})` : cameraResult.serial_number}>
+              {displayName}
+            </span>
+            <span className="verification-type">Wrinkle Detection</span>
+          </div>
+        </div>
+
+        {framesWithWrinkle.map((frame) => {
+          const wc = frame.product_verification!.wrinkled_check!;
+          const boxes = wc.wrinkled_boxes ?? [];
+          const isSkipped = !!wc.skipped;
+          const isOk = !!wc.ok;
+          const wrinkleKey = `${logId}-${cameraResult.serial_number}-${frame.frame_idx}`;
+          const isExpanded = expandedWrinkles.has(wrinkleKey);
+
+          return (
+            <div key={frame.frame_idx} className="frame-verification-section wrinkle-frame">
+              <div className="frame-verification-header">
+                <span className="frame-label">
+                  {frame.template_name || `Frame ${frame.frame_idx}`}
+                </span>
+                <span className={`match-summary ${isSkipped ? '' : isOk ? 'all-match' : 'has-mismatch'}`}>
+                  {isSkipped ? 'SKIPPED' : isOk ? 'OK ✓' : 'WRINKLED ✗'}
+                </span>
+              </div>
+
+              {isSkipped && wc.reason ? (
+                <div className="template-verification-details">
+                  <div className="verification-row">
+                    <span className="label">Reason:</span>
+                    <span className="value">{wc.reason}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="template-verification-details">
+                  <div className="wrinkle-summary-grid">
+                    <div className="wrinkle-chip">
+                      <span className="wrinkle-chip-label">Count</span>
+                      <span className={`wrinkle-chip-value ${(wc.wrinkled_count ?? 0) > 0 ? 'bad' : 'good'}`}>
+                        {wc.wrinkled_count ?? 0}
+                      </span>
+                    </div>
+                    <div className="wrinkle-chip">
+                      <span className="wrinkle-chip-label">Total Area</span>
+                      <span className="wrinkle-chip-value">
+                        {wc.total_area != null ? `${wc.total_area}px²` : '-'}
+                      </span>
+                    </div>
+                    <div className="wrinkle-chip">
+                      <span className="wrinkle-chip-label">Min Area</span>
+                      <span className="wrinkle-chip-value">
+                        {`${parseMinArea(wc.min_area)}px²`}
+                      </span>
+                    </div>
+                    <div className="wrinkle-chip">
+                      <span className="wrinkle-chip-label">Has Wrinkle</span>
+                      <span className={`wrinkle-chip-value ${wc.has_wrinkled ? 'bad' : 'good'}`}>
+                        {wc.has_wrinkled ? 'Yes' : 'No'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {boxes.length > 0 && (
+                    <button
+                      type="button"
+                      className="wrinkle-toggle-btn"
+                      onClick={() => toggleWrinkles(wrinkleKey)}
+                    >
+                      {isExpanded ? '▲ Hide details' : `▼ Details (${boxes.length})`}
+                    </button>
+                  )}
+
+                  {boxes.length > 0 && isExpanded && (
+                    <div className="wrinkle-details-wrap">
+                      <table className="wrinkle-details-table">
+                        <thead>
+                          <tr>
+                            <th>#</th>
+                            <th>Class</th>
+                            <th>Score</th>
+                            <th>Area (px²)</th>
+                            <th>Area %</th>
+                            <th>BBox</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {boxes.map((b, i) => {
+                            const corners = Array.isArray(b.corners) ? b.corners : [];
+                            let bbox = '-';
+                            if (corners.length >= 4) {
+                              const xs = corners.map((c: any) => Number(c?.[0])).filter(n => Number.isFinite(n));
+                              const ys = corners.map((c: any) => Number(c?.[1])).filter(n => Number.isFinite(n));
+                              if (xs.length && ys.length) {
+                                const x = Math.min(...xs);
+                                const y = Math.min(...ys);
+                                const w = Math.max(...xs) - x;
+                                const h = Math.max(...ys) - y;
+                                bbox = `${x},${y} ${w}×${h}`;
+                              }
+                            }
+                            const score = typeof b.score === 'number' ? `${(b.score * 100).toFixed(1)}%` : '-';
+                            const areaPct = typeof b.area_pct === 'number' ? `${b.area_pct.toFixed(2)}%` : '-';
+                            return (
+                              <tr key={i}>
+                                <td>{i + 1}</td>
+                                <td>{b.class || '-'}</td>
+                                <td>{score}</td>
+                                <td>{b.area ?? '-'}</td>
+                                <td>{areaPct}</td>
+                                <td className="wrinkle-bbox-cell">{bbox}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}
@@ -1880,7 +2069,8 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
             ) : (
               <div className="log-list">
                 {logs.map((log) => {
-                  const hasVerification = hasTextVerification(log) || hasCharVerification(log);
+                  const showWrinkle = hasWrinkleVerification(log);
+                  const hasVerification = hasTextVerification(log) || hasCharVerification(log) || showWrinkle;
                   const showChar = hasCharVerification(log);
                   const isExpanded = expandedLogs.has(log.id);
 
@@ -1933,6 +2123,16 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                               </div>
                             ))}
                           </div>
+                          {showWrinkle && (
+                            <div className="wrinkle-verification-section">
+                              <div className="verification-label">Wrinkle Detection Details:</div>
+                              {log.inferenceResult.camera_results.map((cameraResult) => (
+                                <div key={cameraResult.serial_number}>
+                                  {renderWrinkleVerificationInfo(cameraResult, log.id)}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

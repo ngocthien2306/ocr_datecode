@@ -613,12 +613,12 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
                                               {wc.total_area != null ? `${wc.total_area}px²` : '-'}
                                             </span>
                                           </div>
-                                          <div className="alignment-item">
+                                          {/* <div className="alignment-item">
                                             <span className="alignment-label">Min Area</span>
                                             <span className="alignment-value">
                                               {wc.min_area != null ? `${getThresholdNum(wc.min_area)}px²` : '-'}
                                             </span>
-                                          </div>
+                                          </div> */}
                                           <div className="alignment-item">
                                             <span className="alignment-label">Has Wrinkle</span>
                                             <span className={`alignment-value ${
