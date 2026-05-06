@@ -77,6 +77,27 @@ export default function MLTrainingPage({ onClose }: Props) {
     }
   };
 
+  // ── Clone project (copy training data only — no trained models) ────────
+  const [cloningId, setCloningId] = useState<string | null>(null);
+  const handleCloneProject = async (p: MLProject, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newName = prompt('Tên project mới:', `${p.name} (copy)`);
+    if (newName === null) return;
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    setCloningId(p.id);
+    try {
+      const cloned = await mlTrainingAPI.cloneProject(p.id, trimmed);
+      setProjects(prev => [cloned, ...prev]);
+      setActiveProject(cloned);
+    } catch (err) {
+      console.error('Failed to clone project', err);
+      alert('Clone project thất bại');
+    } finally {
+      setCloningId(null);
+    }
+  };
+
   // ── Refresh project stats ──────────────────────────────────────────────
   const refreshActiveProject = useCallback(async () => {
     if (!activeProject) return;
@@ -207,11 +228,26 @@ export default function MLTrainingPage({ onClose }: Props) {
                     {p.image_count} imgs · {p.labeled_count} labeled
                   </div>
                 </div>
-                <button
-                  className="ml-project-delete-btn"
-                  onClick={e => handleDeleteProject(p.id, e)}
-                  title="Delete project"
-                >✕</button>
+                <div className="ml-project-actions">
+                  <button
+                    className="ml-project-clone-btn"
+                    onClick={e => handleCloneProject(p, e)}
+                    title="Copy project data"
+                    disabled={cloningId === p.id}
+                  >
+                    {cloningId === p.id ? '…' : (
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                        <rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="2"/>
+                        <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" strokeWidth="2"/>
+                      </svg>
+                    )}
+                  </button>
+                  <button
+                    className="ml-project-delete-btn"
+                    onClick={e => handleDeleteProject(p.id, e)}
+                    title="Delete project"
+                  >✕</button>
+                </div>
               </div>
             ))}
           </div>

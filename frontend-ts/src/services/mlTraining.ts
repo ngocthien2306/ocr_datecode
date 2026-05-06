@@ -190,6 +190,9 @@ export const mlTrainingAPI = {
   deleteProject: (id: string) =>
     api.delete(`/ml/projects/${id}`).then(r => r.data),
 
+  cloneProject: (id: string, name?: string, description?: string) =>
+    api.post<MLProject>(`/ml/projects/${id}/clone`, { name, description }).then(r => r.data),
+
   // Snapshot camera buffer → stable temp folder for current session
   snapshotImages: () =>
     api.post<{ copied: number; filenames: string[] }>('/ml/snapshot-images').then(r => r.data),

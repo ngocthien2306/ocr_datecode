@@ -172,6 +172,78 @@ async def delete_project(
     return {"ok": True}
 
 
+class _CloneProjectRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+@router.post("/ml/projects/{project_id}/clone", tags=["ML Training"])
+async def clone_project(
+    project_id: str,
+    body: _CloneProjectRequest,
+    repo: MLTrainingRepository = Depends(get_repo),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """
+    Clone a project's training data (images + annotations) into a new project.
+    Trained models are NOT copied — the new project starts in 'active' status
+    and must be retrained.
+    """
+    src = await repo.get_project(project_id)
+    if not src:
+        raise HTTPException(404, "Project not found")
+
+    new_name = (body.name or f"{src.name} (copy)").strip()
+    if not new_name:
+        raise HTTPException(400, "Name is required")
+    new_desc = body.description if body.description is not None else src.description
+
+    new_project = await repo.create_project(
+        MLProjectCreate(name=new_name, description=new_desc),
+        str(current_user.id),
+    )
+    new_id = new_project.id
+
+    try:
+        # Copy image files (annotations reference filenames so paths stay valid)
+        src_images = _images_dir(project_id)
+        dst_images = _images_dir(new_id)
+        dst_images.mkdir(parents=True, exist_ok=True)
+        _models_dir(new_id).mkdir(parents=True, exist_ok=True)
+        if src_images.exists():
+            for f in src_images.glob("*"):
+                if f.is_file() and f.suffix.lower() in ALLOWED_EXTS:
+                    shutil.copy2(f, dst_images / f.name)
+
+        # Copy annotation documents under the new project_id
+        annotations = await repo.list_annotations(project_id)
+        for ann in annotations:
+            await repo.save_annotation(
+                new_id, ann.filename,
+                MLAnnotationSave(regions=ann.regions),
+            )
+
+        # Refresh counters
+        count = _sync_image_count(repo, new_id)
+        await repo.set_image_count(new_id, count)
+        await repo.refresh_labeled_count(new_id)
+
+    except Exception as e:
+        logger.exception(f"[clone] Failed to clone project {project_id} → {new_id}")
+        # Best-effort rollback so we don't leave a half-cloned project around
+        try:
+            new_dir = _project_dir(new_id)
+            if new_dir.exists():
+                shutil.rmtree(new_dir)
+            await repo.delete_project(new_id)
+        except Exception:
+            logger.exception("[clone] Rollback failed")
+        raise HTTPException(500, f"Clone failed: {e}")
+
+    cloned = await repo.get_project(new_id)
+    return cloned.model_dump(by_alias=False) if cloned else new_project.model_dump(by_alias=False)
+
+
 # ════════════════════════════════════════ SNAPSHOT ════════════════════════
 
 @router.post("/ml/snapshot-images", tags=["ML Training"])

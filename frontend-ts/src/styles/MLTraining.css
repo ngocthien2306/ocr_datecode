@@ -179,6 +179,12 @@
 }
 .ml-project-item-meta { font-size: 11px; color: #94a3b8; margin-top: 2px; }
 
+.ml-project-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .ml-project-delete-btn {
   opacity: 0;
   background: transparent;
@@ -192,6 +198,23 @@
 }
 .ml-project-item:hover .ml-project-delete-btn { opacity: 1; }
 .ml-project-delete-btn:hover { background: #fee2e2; }
+
+.ml-project-clone-btn {
+  opacity: 0;
+  background: transparent;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 3px 5px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity .12s, background .12s, color .12s;
+}
+.ml-project-item:hover .ml-project-clone-btn { opacity: 1; }
+.ml-project-clone-btn:hover { background: #e0f2fe; color: #2563eb; }
+.ml-project-clone-btn:disabled { opacity: .6; cursor: wait; }
 
 /* ── Tab content area ── */
 .ml-tab-content {
@@ -736,6 +759,8 @@ body.dark-mode .ml-project-item-name        { color: #e2e8f0; }
 body.dark-mode .ml-project-item-meta        { color: #4b5563; }
 body.dark-mode .ml-project-delete-btn       { color: #ef4444; }
 body.dark-mode .ml-project-delete-btn:hover { background: rgba(127,29,29,.2); }
+body.dark-mode .ml-project-clone-btn        { color: #94a3b8; }
+body.dark-mode .ml-project-clone-btn:hover  { background: rgba(37,99,235,.2); color: #60a5fa; }
 
 body.dark-mode .ml-panel-header       { background: #1a1d27; border-bottom-color: #2d3148; color: #4b5563; }
 body.dark-mode .ml-image-source-panel { border-right-color: #2d3148; }
