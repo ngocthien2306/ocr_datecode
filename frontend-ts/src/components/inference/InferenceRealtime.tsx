@@ -1419,12 +1419,12 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                         {wc.total_area != null ? `${wc.total_area}px²` : '-'}
                       </span>
                     </div>
-                    <div className="wrinkle-chip">
+                    {/* <div className="wrinkle-chip">
                       <span className="wrinkle-chip-label">Min Area</span>
                       <span className="wrinkle-chip-value">
                         {`${parseMinArea(wc.min_area)}px²`}
                       </span>
-                    </div>
+                    </div> */}
                     <div className="wrinkle-chip">
                       <span className="wrinkle-chip-label">Has Wrinkle</span>
                       <span className={`wrinkle-chip-value ${wc.has_wrinkled ? 'bad' : 'good'}`}>
@@ -1453,7 +1453,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                             <th>Score</th>
                             <th>Area (px²)</th>
                             <th>Area %</th>
-                            <th>BBox</th>
+                            {/* <th>BBox</th> */}
                           </tr>
                         </thead>
                         <tbody>
@@ -1480,7 +1480,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                                 <td>{score}</td>
                                 <td>{b.area ?? '-'}</td>
                                 <td>{areaPct}</td>
-                                <td className="wrinkle-bbox-cell">{bbox}</td>
+                                {/* <td className="wrinkle-bbox-cell">{bbox}</td> */}
                               </tr>
                             );
                           })}
