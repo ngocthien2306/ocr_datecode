@@ -703,7 +703,7 @@ class ProductVerificationService:
         crops = [ci[1] for ci in crops_info]
         try:
             seg_results, seg_timing = self.wrinkle_seg.predict_batch(
-                crops, conf_threshold=0.4, return_timing=True
+                crops, conf_threshold=0.25, return_timing=True
             )
             logger.info(
                 f"[WrinkleSeg] batch={len(crops)} | "
@@ -746,7 +746,7 @@ class ProductVerificationService:
         Fallback: dùng trực tiếp template product polygon từ transformed_bboxes.
         """
         product_region = next(
-            (b for b in transformed_bboxes if b.get('type') == 'template'), None
+            (b for b in transformed_bboxes if b.get('type') == 'product'), None
         )
         if product_region is None:
             return None
