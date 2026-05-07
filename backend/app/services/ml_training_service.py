@@ -8,7 +8,7 @@ import io
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import cv2 as cv
 import joblib
@@ -77,18 +77,34 @@ def _preprocess_for_supcon(bgr: np.ndarray) -> np.ndarray:
     return ((rgb - _EMB_MEAN) / _EMB_STD).transpose(2, 0, 1).astype(np.float32)
 
 
-def embed_crops(crops: List[np.ndarray], batch_size: int = 128) -> np.ndarray:
-    """Batch-embed crops via SupCon ONNX. Returns (N, 128) L2-normalized."""
+def embed_crops(
+    crops: List[np.ndarray],
+    batch_size: int = 128,
+    progress_cb: Optional[Callable[[float], None]] = None,
+) -> np.ndarray:
+    """
+    Batch-embed crops via SupCon ONNX. Returns (N, 128) L2-normalized.
+
+    `progress_cb(frac)` — optional, called after each batch with frac in [0, 1]
+    so callers can stream fine-grained progress while embedding (the dominant
+    cost during training).
+    """
     if not crops:
         return np.zeros((0, EMBED_DIM), dtype=np.float32)
     sess = _get_supcon_session()
     out_chunks: List[np.ndarray] = []
-    for i in range(0, len(crops), batch_size):
+    total_batches = max(1, (len(crops) + batch_size - 1) // batch_size)
+    for batch_idx, i in enumerate(range(0, len(crops), batch_size)):
         chunk = crops[i:i + batch_size]
         x = np.stack([_preprocess_for_supcon(c) for c in chunk]).astype(np.float32)
         out = sess.run(None, {"input": x})[0]   # output[0] = 128-dim L2-norm sẵn
         norms = np.linalg.norm(out, axis=1, keepdims=True) + 1e-8
         out_chunks.append(out / norms)
+        if progress_cb is not None:
+            try:
+                progress_cb((batch_idx + 1) / total_batches)
+            except Exception:
+                logger.exception("[embed_crops] progress_cb failed")
     return np.vstack(out_chunks)
 
 
@@ -118,6 +134,7 @@ def build_dataset(
     augment_factor: int = 0,
     severity_dist: Optional[Dict[str, float]] = None,
     ok_synth_target: int = 0,
+    embed_progress_cb: Optional[Callable[[float], None]] = None,
 ) -> Tuple[
     np.ndarray, np.ndarray, List[np.ndarray], List[Optional[str]],
     Dict[str, Dict[str, int]], int, int,
@@ -242,7 +259,7 @@ def build_dataset(
     _append_samples(aug_ng_by_char, 0)
 
     logger.info(f"[build_dataset] embedding {len(crops_rows)} crops via SupCon...")
-    X = embed_crops(crops_rows)              # (N, 128) L2-normalized
+    X = embed_crops(crops_rows, progress_cb=embed_progress_cb)  # (N, 128) L2-normalized
     y = np.asarray(y_rows, dtype=np.int32)
 
     n_aug_ng = sum(len(v) for v in aug_ng_by_char.values())
@@ -342,24 +359,50 @@ def train_model(
     images_dir: Path,
     request: TrainRequest,
     model_save_path: Path,
+    progress_cb: Optional[Callable[[str, float], None]] = None,
 ) -> Dict[str, Any]:
     """
     Train a binary classifier (rf / svm / mlp / centroid) on SupCon embedding
     features and save to disk. Always saves a sidecar test-set JSON with
     per-crop predictions.
+
+    `progress_cb(phase, progress_pct)` — optional callback fired at each phase
+    boundary so the API layer can stream live progress to the FE.
     """
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 
+    def _emit(phase: str, pct: float) -> None:
+        if progress_cb is None:
+            return
+        try:
+            progress_cb(phase, float(pct))
+        except Exception:
+            logger.exception("[train_model] progress_cb failed")
+
     algo = (request.algorithm or "rf").lower()
 
+    _emit("preparing", 5)
     severity_dist = getattr(request, 'severity_dist', None)
     ok_synth_target = int(getattr(request, 'ok_synth_target', 0) or 0)
+
+    # Embedding is the dominant cost — stream per-batch sub-progress mapped to
+    # the 10..55% global range so the UI bar moves smoothly through this phase
+    # instead of sitting at 5% until embedding finishes.
+    def _embed_progress(frac: float) -> None:
+        if progress_cb is not None:
+            try:
+                progress_cb("embedding", 10.0 + 45.0 * float(frac))
+            except Exception:
+                logger.exception("[train_model] embed progress_cb failed")
+
     X, y, crops_raw, char_ids_raw, char_stats, n_ok, n_ng = build_dataset(
         annotations, images_dir, request.augment_factor,
         severity_dist=severity_dist,
         ok_synth_target=ok_synth_target,
+        embed_progress_cb=_embed_progress,
     )
+    _emit("training_classifier", 60)
 
     if len(X) < 4:
         raise ValueError(f"Need at least 4 samples, got {len(X)}.")
@@ -380,6 +423,7 @@ def train_model(
 
     clf = _build_classifier(request)
     clf.fit(X_train, y_train)
+    _emit("evaluating", 80)
 
     threshold = float(getattr(request, "threshold", 0.5))
 
@@ -398,6 +442,7 @@ def train_model(
                                    target_names=["NG", "OK"], zero_division=0)
 
     proba_test = clf.predict_proba(X_test)
+    _emit("encoding_testset", 90)
     test_set_items = []
     for crop_img, char_id, true_y, pred_y, proba in zip(
         crops_test, char_ids_test, y_test, y_pred_test, proba_test,
@@ -428,12 +473,14 @@ def train_model(
             'clf':        clf,
             'char_stats': char_stats,
         }
+    _emit("saving", 97)
     _save_bundle_and_testset(model_save_path, bundle, test_set_items)
 
     logger.info(
         f"[train_model:{algo}] saved bundle to {model_save_path.name}: "
         f"chars={sorted(char_stats.keys())}"
     )
+    _emit("completed", 100)
 
     return {
         "accuracy_train": acc_train,

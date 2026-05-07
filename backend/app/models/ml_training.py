@@ -108,6 +108,9 @@ class MLModelInDB(BaseModel):
     status: str = "pending"  # pending | training | completed | failed
     error: Optional[str] = None
     created_at: datetime
+    # Live-progress fields populated during training (used by the FE log panel)
+    phase: Optional[str] = None        # "preparing" | "embedding" | "training" | "evaluating" | "saving" | "completed"
+    progress: float = 0.0              # 0..100
 
     model_config = {"populate_by_name": True}
 

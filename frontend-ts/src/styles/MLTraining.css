@@ -688,6 +688,86 @@
   100% { width: 20%; }
 }
 
+/* ── Live training panel (TrainTab) ── */
+.ml-training-progress-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+}
+.ml-training-phase-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+.ml-training-phase-badge {
+  background: #dbeafe;
+  color: #1e40af;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+  font-size: 11px;
+}
+.ml-training-phase-badge.phase-completed { background: #dcfce7; color: #166534; }
+.ml-training-phase-badge.phase-failed    { background: #fee2e2; color: #991b1b; }
+.ml-training-progress-pct {
+  font-weight: 600;
+  font-size: 12px;
+  color: #2563eb;
+  font-variant-numeric: tabular-nums;
+}
+.ml-training-progress-track {
+  width: 100%;
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.ml-training-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #2563eb);
+  transition: width .4s ease-out;
+}
+.ml-training-eta {
+  font-size: 11px;
+  color: #64748b;
+}
+.ml-training-log-panel {
+  height: 200px;
+  overflow-y: auto;
+  background: #f1f5f9;
+  color: #334155;
+  border: 1px solid #e2e8f0;
+  font-family: 'JetBrains Mono', 'Menlo', 'Monaco', monospace;
+  font-size: 11px;
+  padding: 8px;
+  border-radius: 4px;
+  line-height: 1.6;
+}
+.ml-training-log-empty {
+  color: #94a3b8;
+  font-style: italic;
+}
+.ml-training-log-line {
+  display: flex;
+  gap: 8px;
+}
+.ml-training-log-ts {
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+.ml-training-log-msg {
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex: 1;
+}
+.ml-training-log-line.level-warning .ml-training-log-msg { color: #b45309; }
+.ml-training-log-line.level-error   .ml-training-log-msg { color: #b91c1c; }
+
 /* ── Predict ── */
 .ml-predict-results-grid {
   display: grid;
@@ -827,6 +907,17 @@ body.dark-mode .ml-confusion-matrix td { border-color: #374151; }
 body.dark-mode .ml-confusion-matrix th { background: #1f2937; color: #9ca3af; }
 body.dark-mode .ml-report-pre          { background: #0d1117; border-color: #2d3148; color: #9ca3af; }
 body.dark-mode .ml-progress-bar-wrapper { background: #1f2937; }
+body.dark-mode .ml-training-progress-panel { background: #1a1d2e; border-color: #2d3148; }
+body.dark-mode .ml-training-phase-badge    { background: #1e3a5f; color: #93c5fd; }
+body.dark-mode .ml-training-phase-badge.phase-completed { background: #14532d; color: #86efac; }
+body.dark-mode .ml-training-phase-badge.phase-failed    { background: #7f1d1d; color: #fca5a5; }
+body.dark-mode .ml-training-progress-track { background: #2d3148; }
+body.dark-mode .ml-training-eta            { color: #94a3b8; }
+body.dark-mode .ml-training-log-panel      { background: #0f172a; color: #cbd5e1; border-color: #2d3148; }
+body.dark-mode .ml-training-log-empty      { color: #64748b; }
+body.dark-mode .ml-training-log-ts         { color: #64748b; }
+body.dark-mode .ml-training-log-line.level-warning .ml-training-log-msg { color: #fbbf24; }
+body.dark-mode .ml-training-log-line.level-error   .ml-training-log-msg { color: #f87171; }
 
 body.dark-mode .ml-predict-card        { background: #1a1d27; border-color: #2d3148; }
 body.dark-mode .ml-predict-card.ok     { border-color: #14532d; }

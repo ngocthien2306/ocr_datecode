@@ -7,6 +7,7 @@ import {
   MLModel,
   MLProject,
   TestSetCropResult,
+  TrainingLogEntry,
   TrainRequest,
 } from '@/services/mlTraining';
 
@@ -380,7 +381,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
   // Synthetic OK preview (font-render)
   const [syntheticOkCrops, setSyntheticOkCrops] = useState<SyntheticOkCrop[]>([]);
   const [loadingSynthOk, setLoadingSynthOk] = useState(false);
-  const [okSynthTarget, setOkSynthTarget] = useState(30);
+  const [okSynthTarget, setOkSynthTarget] = useState(15);
 
   // Training config
   const [algorithm, setAlgorithm] = useState<'rf' | 'svm' | 'mlp' | 'centroid'>('rf');
@@ -406,6 +407,14 @@ export default function TrainTab({ project, onRefresh }: Props) {
   const [training, setTraining] = useState(false);
   const [models, setModels] = useState<MLModel[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Live training progress
+  const [trainLogs, setTrainLogs] = useState<TrainingLogEntry[]>([]);
+  const [trainPhase, setTrainPhase] = useState<string | null>(null);
+  const [trainProgress, setTrainProgress] = useState(0);
+  const [trainStartedAt, setTrainStartedAt] = useState<number | null>(null);
+  const [, setNowTick] = useState(0);     // forces re-render every 1s during training (for elapsed/ETA)
+  const logScrollRef = useRef<HTMLDivElement>(null);
 
   // Model selection
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
@@ -500,6 +509,10 @@ export default function TrainTab({ project, onRefresh }: Props) {
     setTraining(true);
     setPredictResults(null);
     setTestSetCrops([]);
+    setTrainLogs([]);
+    setTrainPhase(null);
+    setTrainProgress(0);
+    setTrainStartedAt(Date.now());
     try {
       const req: TrainRequest = {
         algorithm,
@@ -514,24 +527,70 @@ export default function TrainTab({ project, onRefresh }: Props) {
       };
       const { model_id } = await mlTrainingAPI.startTraining(project.id, req);
 
+      let since = 0;
       pollRef.current = setInterval(async () => {
         try {
-          const model = await mlTrainingAPI.getModelStatus(project.id, model_id);
-          if (model.status === 'completed' || model.status === 'failed') {
+          const data = await mlTrainingAPI.getTrainingLogs(project.id, model_id, since);
+          if (data.logs.length > 0) {
+            setTrainLogs(prev => [...prev, ...data.logs]);
+            since = data.next_since;
+          }
+          if (data.phase != null) setTrainPhase(data.phase);
+          if (data.progress != null) setTrainProgress(data.progress);
+          if (data.status === 'completed' || data.status === 'failed') {
             clearInterval(pollRef.current!);
             pollRef.current = null;
             setTraining(false);
             await loadModels();
             await onRefresh();
-            if (model.status === 'completed') handleModelCompleted(model_id);
+            if (data.status === 'completed') handleModelCompleted(model_id);
           }
         } catch { /* ignore */ }
-      }, 2000);
+      }, 1500);
     } catch (e: any) {
       setTraining(false);
       alert(e?.response?.data?.detail ?? 'Training failed');
     }
   };
+
+  // Tick every 1s during training so elapsed/ETA update without log activity.
+  useEffect(() => {
+    if (!training) return;
+    const t = setInterval(() => setNowTick(v => v + 1), 1000);
+    return () => clearInterval(t);
+  }, [training]);
+
+  // Auto-scroll log panel to bottom when new logs arrive.
+  useEffect(() => {
+    if (logScrollRef.current) {
+      logScrollRef.current.scrollTop = logScrollRef.current.scrollHeight;
+    }
+  }, [trainLogs.length]);
+
+  // Friendly phase label + estimated duration helpers
+  const phaseLabel = (p: string | null): string => {
+    switch (p) {
+      case 'preparing':           return 'Đang chuẩn bị dữ liệu';
+      case 'training_classifier': return 'Đang train classifier';
+      case 'evaluating':          return 'Đang đánh giá';
+      case 'encoding_testset':    return 'Đang encode test set';
+      case 'saving':              return 'Đang lưu model';
+      case 'completed':           return 'Hoàn tất';
+      case 'failed':              return 'Thất bại';
+      default:                    return p ? p : 'Đang khởi động';
+    }
+  };
+  const fmtDuration = (sec: number): string => {
+    if (!isFinite(sec) || sec < 0) return '—';
+    const s = Math.round(sec);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60), r = s % 60;
+    return r === 0 ? `${m}m` : `${m}m${r}s`;
+  };
+  const elapsedSec = trainStartedAt ? (Date.now() - trainStartedAt) / 1000 : 0;
+  const etaSec = (trainProgress > 0 && trainProgress < 100)
+    ? (elapsedSec / trainProgress) * (100 - trainProgress)
+    : null;
 
   // ── Download model report (JSON with embedded images) ─────────────────
   const [downloadingReport, setDownloadingReport] = useState(false);
@@ -882,9 +941,32 @@ export default function TrainTab({ project, onRefresh }: Props) {
           </div>
         )}
         {training && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <div style={{ fontSize: '12px', color: '#9ca3af' }}>Training in progress...</div>
-            <div className="ml-progress-bar-wrapper"><div className="ml-progress-bar" /></div>
+          <div className="ml-training-progress-panel">
+            <div className="ml-training-phase-row">
+              <span className={`ml-training-phase-badge phase-${trainPhase || 'preparing'}`}>
+                {phaseLabel(trainPhase)}
+              </span>
+              <span className="ml-training-progress-pct">{trainProgress.toFixed(0)}%</span>
+            </div>
+            <div className="ml-training-progress-track">
+              <div className="ml-training-progress-fill" style={{ width: `${trainProgress}%` }} />
+            </div>
+            <div className="ml-training-eta">
+              Đã chạy {fmtDuration(elapsedSec)}
+              {etaSec != null && <> · còn ~{fmtDuration(etaSec)}</>}
+            </div>
+            <div className="ml-training-log-panel" ref={logScrollRef}>
+              {trainLogs.length === 0 ? (
+                <div className="ml-training-log-empty">Đang chờ log từ server…</div>
+              ) : trainLogs.map(log => (
+                <div key={log.idx} className={`ml-training-log-line level-${log.level.toLowerCase()}`}>
+                  <span className="ml-training-log-ts">
+                    {new Date(log.ts * 1000).toLocaleTimeString('en-GB', { hour12: false })}
+                  </span>
+                  <span className="ml-training-log-msg">{log.msg}</span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

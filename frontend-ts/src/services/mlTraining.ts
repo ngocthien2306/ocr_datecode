@@ -118,6 +118,24 @@ export interface MLModel {
   status: 'pending' | 'training' | 'completed' | 'failed';
   error?: string;
   created_at: string;
+  phase?: string | null;
+  progress?: number;
+}
+
+export interface TrainingLogEntry {
+  idx: number;
+  ts: number;          // unix epoch seconds (server clock)
+  level: string;       // "INFO" | "WARNING" | "ERROR" ...
+  msg: string;
+}
+
+export interface TrainingLogResponse {
+  logs: TrainingLogEntry[];
+  next_since: number;
+  phase: string | null;
+  progress: number;
+  status: 'pending' | 'training' | 'completed' | 'failed';
+  error: string | null;
 }
 
 export interface PredictResult {
@@ -284,6 +302,12 @@ export const mlTrainingAPI = {
 
   getModelStatus: (projectId: string, modelId: string) =>
     api.get<MLModel>(`/ml/projects/${projectId}/models/${modelId}/status`).then(r => r.data),
+
+  getTrainingLogs: (projectId: string, modelId: string, since: number = 0) =>
+    api.get<TrainingLogResponse>(
+      `/ml/projects/${projectId}/models/${modelId}/logs`,
+      { params: { since } },
+    ).then(r => r.data),
 
   // Prediction
   predict: (projectId: string, file: File, modelId?: string) => {

@@ -7,6 +7,7 @@ import base64
 import logging
 import shutil
 import uuid
+from functools import partial
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -35,6 +36,11 @@ from app.repositories.ml_training_repository import MLTrainingRepository
 from app.repositories.recipe_repository import RecipeRepository
 from app.services.ml_char_ocr_service import recognize_chars
 from app.services.ml_segment_service import crop_segment, segment_region
+from app.services.ml_training_logs import (
+    attach_handler as attach_log_handler,
+    detach_handler as detach_log_handler,
+    get_buffer as get_log_buffer,
+)
 from app.services.ml_training_service import (
     generate_synthetic_crops,
     get_labeled_crops,
@@ -658,31 +664,70 @@ async def _run_training_bg(
     images_dir = _images_dir(project_id)
     model_path = _models_dir(project_id) / f"{model_id}.joblib"
 
+    log_buffer = get_log_buffer()
+    log_buffer.register(model_id)
+    handler = attach_log_handler(model_id)
+    log_buffer.push(model_id, f"[ML] Starting training for model {model_id} (algo={request.algorithm})")
+
+    loop = asyncio.get_event_loop()
+
+    # Throttle DB writes / log lines: many batch-level updates within the same
+    # phase only need to refresh the % field — log just on phase change or
+    # after a meaningful jump (≥5 %).
+    _last_phase = [None]
+    _last_logged_pct = [-100.0]
+
+    def _progress_cb(phase: str, progress: float) -> None:
+        progress = float(progress)
+        if _last_phase[0] != phase or progress - _last_logged_pct[0] >= 5.0 or progress >= 100.0:
+            log_buffer.push(model_id, f"[phase] {phase} ({progress:.0f}%)")
+            _last_phase[0] = phase
+            _last_logged_pct[0] = progress
+        try:
+            asyncio.run_coroutine_threadsafe(
+                repo.update_model_record(
+                    model_id,
+                    {"phase": phase, "progress": progress},
+                ),
+                loop,
+            )
+        except Exception:
+            logger.exception("[ML] Failed to schedule progress update")
+
     try:
-        loop = asyncio.get_event_loop()
         metrics = await loop.run_in_executor(
             None,
-            train_model,
-            annotations,
-            images_dir,
-            request,
-            model_path,
+            partial(
+                train_model,
+                annotations,
+                images_dir,
+                request,
+                model_path,
+                progress_cb=_progress_cb,
+            ),
         )
         await repo.update_model_record(model_id, {
             "status": "completed",
             "metrics": metrics,
             "model_path": str(model_path),
+            "phase": "completed",
+            "progress": 100.0,
         })
         await repo.set_status(project_id, "trained")
+        log_buffer.push(model_id, f"[ML] Training completed (acc_test={metrics.get('accuracy_test', 0):.3f})")
         logger.info(f"[ML] Training completed for project {project_id}, model {model_id}")
 
     except Exception as e:
         logger.exception(f"[ML] Training failed for project {project_id}")
+        log_buffer.push(model_id, f"[ML] Training failed: {e}", level="ERROR")
         await repo.update_model_record(model_id, {
             "status": "failed",
             "error": str(e),
+            "phase": "failed",
         })
         await repo.set_status(project_id, "active")
+    finally:
+        detach_log_handler(handler)
 
 
 @router.get("/ml/projects/{project_id}/models", tags=["ML Training"])
@@ -707,6 +752,34 @@ async def get_model_status(
         if m.id == model_id:
             return m.model_dump(by_alias=False)
     raise HTTPException(404, "Model not found")
+
+
+@router.get("/ml/projects/{project_id}/models/{model_id}/logs", tags=["ML Training"])
+async def get_training_logs(
+    project_id: str,
+    model_id: str,
+    since: int = 0,
+    repo: MLTrainingRepository = Depends(get_repo),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """
+    Real-time training log + status. Poll with `since` (use the previous
+    response's `next_since`) to receive only new lines.
+    """
+    models = await repo.list_models(project_id)
+    model_record = next((m for m in models if m.id == model_id), None)
+    if not model_record:
+        raise HTTPException(404, "Model not found")
+
+    logs, next_since = get_log_buffer().get_since(model_id, since)
+    return {
+        "logs":       logs,
+        "next_since": next_since,
+        "phase":      model_record.phase,
+        "progress":   float(model_record.progress or 0.0),
+        "status":     model_record.status,
+        "error":      model_record.error,
+    }
 
 
 # ════════════════════════════════════════ PREDICTION ═════════════════════
