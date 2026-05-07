@@ -30,6 +30,12 @@ _EMB_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 _EMB_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 _BACKEND_DIR = Path(__file__).parent.parent.parent.parent
 _SUPCON_PATH = _BACKEND_DIR / "weights/supcon_128_efficientnet_b2_20260429-073504"
+# TensorRT engine cache survives process restarts; rebuilt only when GPU/JetPack changes.
+_TRT_CACHE_DIR = _BACKEND_DIR / "cache" / "supcon_trt"
+
+# Default ONNX inference batch size — tuned for Jetson Orin 8GB unified memory.
+# Override via env var for higher-RAM machines (e.g. ML_EMBED_BATCH_SIZE=128 on workstation).
+_DEFAULT_EMBED_BATCH_SIZE = int(os.environ.get("ML_EMBED_BATCH_SIZE", "32"))
 
 _supcon_session = None  # singleton ONNX session (lazy-loaded on first call)
 
@@ -41,18 +47,68 @@ def _to_gray(img: np.ndarray) -> np.ndarray:
 
 
 def _get_supcon_session():
-    """Lazy-init singleton ONNX session for SupCon embedder."""
+    """
+    Lazy-init singleton ONNX session for SupCon embedder.
+
+    Provider preference: TensorRT → CUDA → CPU. TensorRT engine is cached on
+    disk so the (slow) build runs only once per Jetson/JetPack version.
+
+    Session options are tuned to limit unified-memory usage on Jetson Orin 8GB:
+    - mem_pattern + cpu_arena off → reduce fragmentation
+    - sequential execution + intra=4 → fewer parallel allocations
+    """
     global _supcon_session
     if _supcon_session is None:
         import onnxruntime as ort
         onnx_path = _SUPCON_PATH / "model.onnx"
         if not onnx_path.exists():
             raise FileNotFoundError(f"SupCon model not found at {onnx_path}")
-        providers = (["CUDAExecutionProvider", "CPUExecutionProvider"]
-                     if "CUDAExecutionProvider" in ort.get_available_providers()
-                     else ["CPUExecutionProvider"])
-        _supcon_session = ort.InferenceSession(str(onnx_path), providers=providers)
-        logger.info(f"[SupCon] loaded {onnx_path.name} on {_supcon_session.get_providers()[0]}")
+
+        sess_options = ort.SessionOptions()
+        sess_options.enable_mem_pattern = False
+        sess_options.enable_cpu_mem_arena = False
+        sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        sess_options.intra_op_num_threads = int(
+            os.environ.get("ML_ORT_INTRA_THREADS", "4"),
+        )
+        # Suppress noisy ORT warnings (model has dynamic axes, normal)
+        sess_options.log_severity_level = 3
+
+        available = set(ort.get_available_providers())
+        providers: List[Any] = []
+        if "TensorrtExecutionProvider" in available:
+            _TRT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            trt_fp16 = os.environ.get("ML_TRT_FP16", "1") not in ("0", "false", "False")
+            providers.append((
+                "TensorrtExecutionProvider",
+                {
+                    "trt_engine_cache_enable":  True,
+                    "trt_engine_cache_path":    str(_TRT_CACHE_DIR),
+                    "trt_fp16_enable":          trt_fp16,
+                    # 256 MB workspace — fits comfortably on Jetson Orin 8GB.
+                    "trt_max_workspace_size":   256 * 1024 * 1024,
+                },
+            ))
+        if "CUDAExecutionProvider" in available:
+            providers.append((
+                "CUDAExecutionProvider",
+                {
+                    # HEURISTIC needs much less workspace than EXHAUSTIVE
+                    # for cuDNN conv kernel selection.
+                    "cudnn_conv_algo_search":   "HEURISTIC",
+                    "do_copy_in_default_stream": True,
+                },
+            ))
+        providers.append("CPUExecutionProvider")
+
+        _supcon_session = ort.InferenceSession(
+            str(onnx_path),
+            sess_options=sess_options,
+            providers=providers,
+        )
+        active = _supcon_session.get_providers()[0]
+        logger.info(f"[SupCon] loaded {onnx_path.name} on {active} "
+                    f"(batch={_DEFAULT_EMBED_BATCH_SIZE})")
     return _supcon_session
 
 
@@ -79,33 +135,45 @@ def _preprocess_for_supcon(bgr: np.ndarray) -> np.ndarray:
 
 def embed_crops(
     crops: List[np.ndarray],
-    batch_size: int = 128,
+    batch_size: Optional[int] = None,
     progress_cb: Optional[Callable[[float], None]] = None,
 ) -> np.ndarray:
     """
     Batch-embed crops via SupCon ONNX. Returns (N, 128) L2-normalized.
 
-    `progress_cb(frac)` — optional, called after each batch with frac in [0, 1]
-    so callers can stream fine-grained progress while embedding (the dominant
-    cost during training).
+    `batch_size=None` uses `_DEFAULT_EMBED_BATCH_SIZE` (env-tunable; 32 on Jetson
+    Orin 8GB to avoid OOM during cuDNN/TRT workspace allocation).
+
+    `progress_cb(frac)` — optional, called after each batch with frac in [0, 1].
+
+    Memory hygiene:
+    - Output is pre-allocated once (N, 128) → no list of chunks accumulating.
+    - Per-batch tensors are explicitly released so unified-memory pressure
+      doesn't grow across batches on Jetson.
     """
     if not crops:
         return np.zeros((0, EMBED_DIM), dtype=np.float32)
+    if batch_size is None or batch_size <= 0:
+        batch_size = _DEFAULT_EMBED_BATCH_SIZE
+
     sess = _get_supcon_session()
-    out_chunks: List[np.ndarray] = []
-    total_batches = max(1, (len(crops) + batch_size - 1) // batch_size)
-    for batch_idx, i in enumerate(range(0, len(crops), batch_size)):
+    n = len(crops)
+    out = np.zeros((n, EMBED_DIM), dtype=np.float32)
+    total_batches = max(1, (n + batch_size - 1) // batch_size)
+
+    for batch_idx, i in enumerate(range(0, n, batch_size)):
         chunk = crops[i:i + batch_size]
         x = np.stack([_preprocess_for_supcon(c) for c in chunk]).astype(np.float32)
-        out = sess.run(None, {"input": x})[0]   # output[0] = 128-dim L2-norm sẵn
-        norms = np.linalg.norm(out, axis=1, keepdims=True) + 1e-8
-        out_chunks.append(out / norms)
+        raw = sess.run(None, {"input": x})[0]
+        norms = np.linalg.norm(raw, axis=1, keepdims=True) + 1e-8
+        out[i:i + len(chunk)] = raw / norms
+        del x, raw, norms        # encourage immediate GC of batch tensors
         if progress_cb is not None:
             try:
                 progress_cb((batch_idx + 1) / total_batches)
             except Exception:
                 logger.exception("[embed_crops] progress_cb failed")
-    return np.vstack(out_chunks)
+    return out
 
 
 # ──────────────────────────────────────── NG augmentation ──
@@ -153,25 +221,46 @@ def build_dataset(
         char_stats: {char_id: {n_ok_train, n_ng_train, ...}} — for display
         n_ok_total, n_ng_total: counts after augmentation
     """
+    import gc
     from collections import defaultdict
 
     # Group OK / NG crops by char_id (key='_unknown' if char_id missing).
     ok_by_char: Dict[str, List[np.ndarray]] = defaultdict(list)
     ng_by_char: Dict[str, List[np.ndarray]] = defaultdict(list)
 
+    # B2 — Load each source image only once per training run, then crop all of
+    # its segments from the in-memory array. Previously crop_segment did one
+    # cv.imread per segment, so 30+ segments per image meant reading the same
+    # file 30+ times. For 3600 crops over ~100 images that's a 30× I/O win on
+    # the Jetson SD/eMMC.
+    annos_by_image: Dict[Path, List[Tuple[Any, Any]]] = defaultdict(list)
     for ann in annotations:
         img_path = images_dir / ann.filename
         for region in ann.regions:
             for seg in region.segments:
-                if seg.label not in ("OK", "NG"):
-                    continue
-                crop = crop_segment(img_path, {
-                    "x": seg.x, "y": seg.y, "w": seg.w, "h": seg.h,
-                })
-                if crop is None:
-                    continue
-                key = seg.char_id or "_unknown"
-                (ok_by_char if seg.label == "OK" else ng_by_char)[key].append(crop)
+                if seg.label in ("OK", "NG"):
+                    annos_by_image[img_path].append((region, seg))
+
+    for img_path, region_seg_list in annos_by_image.items():
+        img = cv.imread(str(img_path))
+        if img is None:
+            continue
+        img_h, img_w = img.shape[:2]
+        for _region, seg in region_seg_list:
+            # Inline normalized bbox → pixel crop with 2px padding (matches
+            # crop_segment behavior, but reuses the already-loaded image).
+            px = max(0, int(seg.x * img_w) - 2)
+            py = max(0, int(seg.y * img_h) - 2)
+            pw = min(int(seg.w * img_w) + 4, img_w - px)
+            ph = min(int(seg.h * img_h) + 4, img_h - py)
+            if pw <= 0 or ph <= 0:
+                continue
+            crop = img[py:py + ph, px:px + pw].copy()  # copy so img can be released
+            key = seg.char_id or "_unknown"
+            (ok_by_char if seg.label == "OK" else ng_by_char)[key].append(crop)
+        del img       # release the full-resolution image before loading the next one
+    del annos_by_image
+    gc.collect()
 
     if not ok_by_char and not ng_by_char:
         raise ValueError("No labeled segments found. Please label images before training.")
@@ -258,28 +347,43 @@ def build_dataset(
     _append_samples(ng_by_char, 0)
     _append_samples(aug_ng_by_char, 0)
 
+    # A3 — capture stats BEFORE freeing the dicts; subsequent code only needs
+    # `crops_rows`/`y_rows`/`char_ids_rows`. Freeing here drops a peak-RAM copy
+    # (the same arrays are also referenced by crops_rows, but defaultdict
+    # internals + augmentation overhead can add several hundred MB on Jetson).
+    n_aug_ng = sum(len(v) for v in aug_ng_by_char.values())
+    aug_ng_type_counts_snapshot: Dict[str, Dict[str, int]] = {
+        c: dict(d) for c, d in aug_ng_type_counts.items()
+    }
+    n_ok_by_char_snapshot = {c: len(v) for c, v in ok_by_char.items()}
+    n_ng_by_char_snapshot = {c: len(v) for c, v in ng_by_char.items()}
+    n_aug_ng_by_char_snapshot = {c: len(v) for c, v in aug_ng_by_char.items()}
+    all_chars = set(ok_by_char.keys()) | set(ng_by_char.keys())
+    del ok_by_char, ng_by_char, aug_ng_by_char, aug_ng_type_counts
+    gc.collect()
+
     logger.info(f"[build_dataset] embedding {len(crops_rows)} crops via SupCon...")
     X = embed_crops(crops_rows, progress_cb=embed_progress_cb)  # (N, 128) L2-normalized
     y = np.asarray(y_rows, dtype=np.int32)
-
-    n_aug_ng = sum(len(v) for v in aug_ng_by_char.values())
     total_ok = n_ok_real                      # no OK augmentation
     total_ng = n_ng_real + n_aug_ng
 
-    # Per-char training sample counts (for FE display)
+    # Per-char training sample counts (for FE display) — built from snapshots
+    # captured above before the source dicts were freed.
     char_stats: Dict[str, Dict[str, Any]] = {}
-    all_chars = set(ok_by_char.keys()) | set(ng_by_char.keys())
     for c in all_chars:
         if c == "_unknown":
             continue
-        n_ng_aug_c = len(aug_ng_by_char.get(c, []))
+        n_ok_c    = n_ok_by_char_snapshot.get(c, 0)
+        n_ng_c    = n_ng_by_char_snapshot.get(c, 0)
+        n_ng_aug_c = n_aug_ng_by_char_snapshot.get(c, 0)
         char_stats[c] = {
-            "n_ok_train":  len(ok_by_char.get(c, [])),
-            "n_ng_train":  len(ng_by_char.get(c, [])) + n_ng_aug_c,
-            "n_ok_real":   len(ok_by_char.get(c, [])),
-            "n_ng_real":   len(ng_by_char.get(c, [])),
+            "n_ok_train":  n_ok_c,
+            "n_ng_train":  n_ng_c + n_ng_aug_c,
+            "n_ok_real":   n_ok_c,
+            "n_ng_real":   n_ng_c,
             "n_ng_aug":    n_ng_aug_c,
-            "n_ng_aug_by_type": dict(aug_ng_type_counts.get(c, {})),
+            "n_ng_aug_by_type": dict(aug_ng_type_counts_snapshot.get(c, {})),
         }
 
     logger.info(

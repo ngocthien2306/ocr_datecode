@@ -72,6 +72,34 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Warning: Jetson monitoring service failed to start: {e}")
 
+    # Mark orphan ML training records as failed — if the previous process was
+    # OOM-killed mid-training, the model record stays at status='training' and
+    # poisons the project state. This sweep flips them back to 'failed' so the
+    # FE/UI can recover. Project status (was 'training') is reset to 'active'.
+    try:
+        from datetime import datetime as _dt
+        models_coll  = db.get_collection("ml_models")
+        projects_coll = db.get_collection("ml_projects")
+        orphan_filter = {"status": {"$in": ["training", "pending"]}}
+        orphan_count = await models_coll.count_documents(orphan_filter)
+        if orphan_count:
+            await models_coll.update_many(
+                orphan_filter,
+                {"$set": {
+                    "status":   "failed",
+                    "error":    "service was restarted before training completed",
+                    "phase":    "failed",
+                    "progress": 0.0,
+                }},
+            )
+            await projects_coll.update_many(
+                {"status": "training"},
+                {"$set": {"status": "active", "updated_at": _dt.utcnow()}},
+            )
+            print(f"♻️  Cleaned up {orphan_count} orphan ML training record(s)")
+    except Exception as e:
+        print(f"⚠️ Warning: ML orphan cleanup failed: {e}")
+
     yield
 
     # Stop Jetson monitoring service
