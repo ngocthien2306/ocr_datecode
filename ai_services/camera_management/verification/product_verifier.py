@@ -760,7 +760,7 @@ class ProductVerificationService:
         Fallback: dùng trực tiếp template product polygon từ transformed_bboxes.
         """
         product_region = next(
-            (b for b in transformed_bboxes if b.get('type') == 'product'), None
+            (b for b in transformed_bboxes if b.get('type') == 'label'), None
         )
         if product_region is None:
             return None
