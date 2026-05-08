@@ -391,6 +391,8 @@ export default function TrainTab({ project, onRefresh }: Props) {
   const [svmC, setSvmC] = useState(1.0);
   const [threshold, setThreshold] = useState(50); // percent, 0–100
   const [centroidTemperature, setCentroidTemperature] = useState(5.0);
+  const [includeImportedChars, setIncludeImportedChars] = useState(true);
+  const [importedStats, setImportedStats] = useState<{ ok: number; ng: number; batches: number }>({ ok: 0, ng: 0, batches: 0 });
   // NG augmentation severity weights — auto-normalized BE side
   const [severitySubtle, setSeveritySubtle] = useState(10);
   const [severityLight,  setSeverityLight ] = useState(50);
@@ -462,9 +464,20 @@ export default function TrainTab({ project, onRefresh }: Props) {
     } catch { /* ignore */ }
   }, [project.id]);
 
+  // ── Load imported chars stats (count summary for the toggle) ──────────
+  const loadImportedStats = useCallback(async () => {
+    try {
+      const list = await mlTrainingAPI.listCharImportBatches(project.id);
+      const ok = list.reduce((s, b) => s + b.ok_count, 0);
+      const ng = list.reduce((s, b) => s + b.ng_count, 0);
+      setImportedStats({ ok, ng, batches: list.length });
+    } catch { /* ignore */ }
+  }, [project.id]);
+
   useEffect(() => {
     loadCrops();
     loadModels();
+    loadImportedStats();
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [project.id]);
 
@@ -524,6 +537,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
         severity_dist: severityDist,
         ok_synth_target: okSynthTarget,
         centroid_temperature: centroidTemperature,
+        include_imported_chars: includeImportedChars,
       };
       const { model_id } = await mlTrainingAPI.startTraining(project.id, req);
 
@@ -694,6 +708,25 @@ export default function TrainTab({ project, onRefresh }: Props) {
             <div className="ml-metric-value" style={{ color: '#f87171' }}>{ngCrops.length}</div>
             <div className="ml-metric-label">NG samples</div>
           </div>
+        </div>
+
+        {/* Imported Chars pool toggle */}
+        <div className="ml-form-group" style={{ marginTop: 4 }}>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', padding: '4px 0' }}>
+            <input type="checkbox" checked={includeImportedChars}
+                   onChange={e => setIncludeImportedChars(e.target.checked)}
+                   disabled={importedStats.batches === 0} />
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>
+                Include imported chars
+              </span>
+              <span style={{ fontSize: 10, opacity: 0.65 }}>
+                {importedStats.batches === 0
+                  ? 'No imported chars yet — open the Imported Chars tab to add some.'
+                  : `${importedStats.ok} OK · ${importedStats.ng} NG across ${importedStats.batches} batch(es)`}
+              </span>
+            </div>
+          </label>
         </div>
 
         <div className="ml-section-title">Algorithm</div>

@@ -3,9 +3,10 @@ import '@/styles/MLTraining.css';
 import { mlTrainingAPI, MLProject } from '@/services/mlTraining';
 import ImageTab from './ImageTab';
 import LabelTab from './LabelTab';
+import ImportedCharsTab from './ImportedCharsTab';
 import TrainTab from './TrainTab';
 
-type TabId = 'images' | 'label' | 'train';
+type TabId = 'images' | 'label' | 'imports' | 'train';
 
 interface Props {
   onClose: () => void;
@@ -122,6 +123,11 @@ export default function MLTrainingPage({ onClose }: Props) {
         <circle cx="7" cy="7" r="1.5" fill="currentColor"/>
       </svg>
     ),
+    imports: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    ),
     train: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
         <path d="M12 2L2 7l10 5 10-5-10-5z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
@@ -129,6 +135,13 @@ export default function MLTrainingPage({ onClose }: Props) {
         <path d="M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
       </svg>
     ),
+  };
+
+  const TAB_LABELS: Record<TabId, string> = {
+    images:  'Images',
+    label:   'Label',
+    imports: 'Imported Chars',
+    train:   'Train',
   };
 
   return (
@@ -151,14 +164,14 @@ export default function MLTrainingPage({ onClose }: Props) {
 
       {/* Tabs */}
       <div className="ml-training-tabs">
-        {(['images', 'label', 'train'] as TabId[]).map(id => (
+        {(['images', 'label', 'imports', 'train'] as TabId[]).map(id => (
           <button
             key={id}
             className={`ml-tab-btn ${tab === id ? 'active' : ''}`}
             onClick={() => setTab(id)}
           >
             {TAB_ICONS[id]}
-            {id.charAt(0).toUpperCase() + id.slice(1)}
+            {TAB_LABELS[id]}
             {id === 'images' && activeProject && (
               <span className="ml-tab-count">{activeProject.image_count}</span>
             )}
@@ -267,6 +280,9 @@ export default function MLTrainingPage({ onClose }: Props) {
               )}
               {tab === 'label' && (
                 <LabelTab project={activeProject} onRefresh={refreshActiveProject} />
+              )}
+              {tab === 'imports' && (
+                <ImportedCharsTab project={activeProject} onRefresh={refreshActiveProject} />
               )}
               {tab === 'train' && (
                 <TrainTab project={activeProject} onRefresh={refreshActiveProject} />

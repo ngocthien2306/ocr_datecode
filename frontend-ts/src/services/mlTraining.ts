@@ -94,6 +94,7 @@ export interface TrainRequest {
   severity_dist?: SeverityDist;     // NG augmentation severity weights
   ok_synth_target?: number;         // Top-up each char to N OK via font-render synth (0=off)
   centroid_temperature?: number;    // Sigmoid temperature for centroid algo (default 5.0)
+  include_imported_chars?: boolean; // Merge labeled crops from Imported Chars pool (default true)
 }
 
 export interface MLModelMetrics {
@@ -148,19 +149,6 @@ export interface PredictResult {
   aligned_b64?: string | null;   // input after alignment to golden (v2 + golden)
   golden_b64?: string | null;    // reference golden for this char
   diff_b64?: string | null;      // JET-colormap diff heatmap
-}
-
-export interface ImportFromRecipeRequest {
-  recipe_id: string;
-  camera_serial: string;
-  filenames: string[];
-}
-
-export interface ImportFromRecipeResponse {
-  imported: number;
-  skipped: number;
-  errors: Array<{ filename: string; reason: string }>;
-  char_ids: string[];
 }
 
 export interface CharCoverageResponse {
@@ -325,12 +313,6 @@ export const mlTrainingAPI = {
       `/ml/projects/${projectId}/models/${modelId}/test-set-crops`
     ).then(r => r.data),
 
-  // Import recipe template bboxes into project (auto-populate char_id)
-  importFromRecipe: (projectId: string, body: ImportFromRecipeRequest) =>
-    api.post<ImportFromRecipeResponse>(
-      `/ml/projects/${projectId}/import-from-recipe`, body,
-    ).then(r => r.data),
-
   // Check which required chars are covered by the model
   charCoverage: (projectId: string, modelId: string, chars: string[]) =>
     api.get<CharCoverageResponse>(
@@ -347,13 +329,13 @@ export const mlTrainingAPI = {
       { params: opts },
     ).then(r => r.data),
 
-  // ── Active learning: pull mispredicted chars from inspection history ──
+  // ── Active learning: search candidate chars from inspection history ──
   inspectionCandidates: (projectId: string, opts: {
     recipe_id?: string;
     date_from?: string;
     date_to?: string;
-    include_hard_fail?: boolean;
-    include_borderline?: boolean;
+    include_pred_ok?: boolean;
+    include_pred_ng?: boolean;
     limit?: number;
   }) =>
     api.get<{ candidates: InspectionCandidate[]; count: number }>(
@@ -361,10 +343,50 @@ export const mlTrainingAPI = {
       { params: opts },
     ).then(r => r.data),
 
-  importFromInspections: (projectId: string, selections: { inspection_id: string; annotation_idx: number }[]) =>
-    api.post<{ imported: number; skipped: number; errors: { inspection_id: string; reason: string }[] }>(
-      `/ml/projects/${projectId}/import-from-inspections`,
-      { selections },
+  // ── Imported Chars pool ──
+  listCharImportBatches: (projectId: string) =>
+    api.get<CharImportBatch[]>(`/ml/projects/${projectId}/char-imports/batches`).then(r => r.data),
+
+  createCharImportBatch: (
+    projectId: string,
+    selections: Array<{ inspection_id: string; annotation_idx: number }>,
+    batch_name?: string,
+  ) =>
+    api.post<{
+      batch_id: string | null;
+      batch_name?: string;
+      imported: number;
+      skipped: number;
+      errors: Array<{ inspection_id: string; reason: string }>;
+    }>(`/ml/projects/${projectId}/char-imports/batches`, { selections, batch_name }).then(r => r.data),
+
+  renameCharImportBatch: (projectId: string, batchId: string, name: string) =>
+    api.patch<{ id: string; name: string }>(
+      `/ml/projects/${projectId}/char-imports/batches/${batchId}`, { name }
+    ).then(r => r.data),
+
+  deleteCharImportBatch: (projectId: string, batchId: string) =>
+    api.delete(`/ml/projects/${projectId}/char-imports/batches/${batchId}`).then(r => r.data),
+
+  listCharImports: (projectId: string, opts?: { batch_id?: string; label?: 'OK' | 'NG' }) =>
+    api.get<CharImportItem[]>(`/ml/projects/${projectId}/char-imports/chars`, {
+      params: opts,
+    }).then(r => r.data),
+
+  updateCharImport: (projectId: string, charId: string, update: { char_id?: string | null; label?: 'OK' | 'NG' }) =>
+    api.patch<CharImportItem>(
+      `/ml/projects/${projectId}/char-imports/chars/${charId}`, update,
+    ).then(r => r.data),
+
+  deleteCharImport: (projectId: string, charId: string) =>
+    api.delete(`/ml/projects/${projectId}/char-imports/chars/${charId}`).then(r => r.data),
+
+  bulkCharImports: (
+    projectId: string,
+    body: { char_ids: string[]; label?: 'OK' | 'NG'; delete?: boolean },
+  ) =>
+    api.patch<{ updated?: number; deleted?: number }>(
+      `/ml/projects/${projectId}/char-imports/chars/bulk`, body,
     ).then(r => r.data),
 };
 
@@ -378,8 +400,38 @@ export interface InspectionCandidate {
   expected: string;
   ml_label: 'OK' | 'NG';
   ml_p_ok: number;
-  kind: 'hard_fail' | 'borderline';
   timestamp: string | null;
   image_path: string;
   crop_b64: string;
+  // Set when this (inspection_id, annotation_idx) pair is already in the
+  // project's char-import pool — FE shows a "Already imported in <batch>"
+  // badge and disables the checkbox.
+  imported_batch_id: string | null;
+  imported_batch_name: string | null;
+}
+
+export interface CharImportBatch {
+  id: string;
+  name: string;
+  created_at: string;
+  total: number;
+  ok_count: number;
+  ng_count: number;
+}
+
+export interface CharImportItem {
+  id: string;
+  batch_id: string;
+  char_id: string | null;
+  label: 'OK' | 'NG';
+  crop_url: string;
+  ml_label: 'OK' | 'NG';
+  ml_p_ok: number;
+  inspection_id: string;
+  annotation_idx: number;
+  recipe_name: string | null;
+  camera_serial: string;
+  frame_idx: number;
+  source_timestamp: string | null;
+  created_at: string;
 }

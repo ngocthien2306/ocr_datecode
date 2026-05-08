@@ -10,6 +10,7 @@ from app.models.ml_training import (
     MLProjectCreate, MLProjectUpdate, MLProjectInDB,
     MLAnnotationSave, MLAnnotationInDB,
     MLModelInDB,
+    MLCharImportBatchInDB, MLCharImportInDB,
 )
 
 
@@ -25,6 +26,8 @@ class MLTrainingRepository:
         self.projects = database.get_collection("ml_projects")
         self.annotations = database.get_collection("ml_annotations")
         self.models = database.get_collection("ml_models")
+        self.char_import_batches = database.get_collection("ml_char_import_batches")
+        self.char_imports = database.get_collection("ml_char_imports")
 
     # ─────────────────────────────── Projects ────────────────────────
 
@@ -70,6 +73,8 @@ class MLTrainingRepository:
         # Clean up related data
         await self.annotations.delete_many({"project_id": project_id})
         await self.models.delete_many({"project_id": project_id})
+        await self.char_imports.delete_many({"project_id": project_id})
+        await self.char_import_batches.delete_many({"project_id": project_id})
         return result.deleted_count > 0
 
     async def set_image_count(self, project_id: str, count: int):
@@ -159,7 +164,145 @@ class MLTrainingRepository:
         )
         return MLModelInDB(**_to_str_id(doc)) if doc else None
 
+    # ─────────────────────────────── Char Imports ────────────────────
+
+    async def create_char_import_batch(self, project_id: str, name: str) -> MLCharImportBatchInDB:
+        now = datetime.utcnow()
+        doc = {
+            "project_id": project_id,
+            "name": name,
+            "created_at": now,
+        }
+        result = await self.char_import_batches.insert_one(doc)
+        doc["_id"] = str(result.inserted_id)
+        return MLCharImportBatchInDB(**doc)
+
+    async def list_char_import_batches(self, project_id: str) -> List[MLCharImportBatchInDB]:
+        cursor = self.char_import_batches.find({"project_id": project_id}).sort("created_at", -1)
+        out = []
+        async for doc in cursor:
+            out.append(MLCharImportBatchInDB(**_to_str_id(doc)))
+        return out
+
+    async def get_char_import_batch(self, batch_id: str) -> Optional[MLCharImportBatchInDB]:
+        doc = await self.char_import_batches.find_one({"_id": ObjectId(batch_id)})
+        return MLCharImportBatchInDB(**_to_str_id(doc)) if doc else None
+
+    async def rename_char_import_batch(self, batch_id: str, name: str) -> Optional[MLCharImportBatchInDB]:
+        doc = await self.char_import_batches.find_one_and_update(
+            {"_id": ObjectId(batch_id)},
+            {"$set": {"name": name}},
+            return_document=True,
+        )
+        return MLCharImportBatchInDB(**_to_str_id(doc)) if doc else None
+
+    async def delete_char_import_batch(self, batch_id: str) -> List[str]:
+        """Delete a batch and all its chars. Returns list of crop_path strings to unlink."""
+        crop_paths = []
+        async for doc in self.char_imports.find({"batch_id": batch_id}, {"crop_path": 1}):
+            cp = doc.get("crop_path")
+            if cp:
+                crop_paths.append(cp)
+        await self.char_imports.delete_many({"batch_id": batch_id})
+        await self.char_import_batches.delete_one({"_id": ObjectId(batch_id)})
+        return crop_paths
+
+    async def insert_char_import(self, doc: Dict[str, Any]) -> str:
+        result = await self.char_imports.insert_one(doc)
+        return str(result.inserted_id)
+
+    async def list_char_imports(self, project_id: str,
+                                batch_id: Optional[str] = None,
+                                label: Optional[str] = None) -> List[MLCharImportInDB]:
+        query: Dict[str, Any] = {"project_id": project_id}
+        if batch_id:
+            query["batch_id"] = batch_id
+        if label:
+            query["label"] = label
+        cursor = self.char_imports.find(query).sort("created_at", -1)
+        out = []
+        async for doc in cursor:
+            out.append(MLCharImportInDB(**_to_str_id(doc)))
+        return out
+
+    async def get_imported_provenance_keys(self, project_id: str) -> Dict[str, str]:
+        """Return {f"{inspection_id}:{annotation_idx}": batch_id} for all imports in project.
+        Used to dedup the inspection-candidates list."""
+        out: Dict[str, str] = {}
+        cursor = self.char_imports.find(
+            {"project_id": project_id},
+            {"inspection_id": 1, "annotation_idx": 1, "batch_id": 1},
+        )
+        async for doc in cursor:
+            key = f"{doc.get('inspection_id')}:{doc.get('annotation_idx')}"
+            out[key] = str(doc.get("batch_id", ""))
+        return out
+
+    async def update_char_import(self, char_id: str, update: Dict[str, Any]) -> Optional[MLCharImportInDB]:
+        update["updated_at"] = datetime.utcnow()
+        doc = await self.char_imports.find_one_and_update(
+            {"_id": ObjectId(char_id)},
+            {"$set": update},
+            return_document=True,
+        )
+        return MLCharImportInDB(**_to_str_id(doc)) if doc else None
+
+    async def get_char_import(self, char_id: str) -> Optional[MLCharImportInDB]:
+        doc = await self.char_imports.find_one({"_id": ObjectId(char_id)})
+        return MLCharImportInDB(**_to_str_id(doc)) if doc else None
+
+    async def delete_char_import(self, char_id: str) -> Optional[str]:
+        """Delete one char doc. Returns its crop_path so the caller can unlink."""
+        doc = await self.char_imports.find_one_and_delete({"_id": ObjectId(char_id)})
+        return doc.get("crop_path") if doc else None
+
+    async def bulk_update_char_imports(self, char_ids: List[str], update: Dict[str, Any]) -> int:
+        if not char_ids:
+            return 0
+        update["updated_at"] = datetime.utcnow()
+        oids = [ObjectId(c) for c in char_ids]
+        result = await self.char_imports.update_many(
+            {"_id": {"$in": oids}},
+            {"$set": update},
+        )
+        return result.modified_count
+
+    async def bulk_delete_char_imports(self, char_ids: List[str]) -> List[str]:
+        """Delete many char docs. Returns crop_paths to unlink."""
+        if not char_ids:
+            return []
+        oids = [ObjectId(c) for c in char_ids]
+        crop_paths = []
+        async for doc in self.char_imports.find({"_id": {"$in": oids}}, {"crop_path": 1}):
+            cp = doc.get("crop_path")
+            if cp:
+                crop_paths.append(cp)
+        await self.char_imports.delete_many({"_id": {"$in": oids}})
+        return crop_paths
+
+    async def count_char_imports_by_batch(self, project_id: str) -> Dict[str, Dict[str, int]]:
+        """Aggregate count of OK/NG per batch_id for a project."""
+        pipeline = [
+            {"$match": {"project_id": project_id}},
+            {"$group": {
+                "_id": {"batch_id": "$batch_id", "label": "$label"},
+                "n": {"$sum": 1},
+            }},
+        ]
+        out: Dict[str, Dict[str, int]] = {}
+        async for row in self.char_imports.aggregate(pipeline):
+            bid = row["_id"]["batch_id"]
+            label = row["_id"]["label"]
+            slot = out.setdefault(bid, {"OK": 0, "NG": 0})
+            slot[label] = row["n"]
+        return out
+
     async def create_indexes(self):
         await self.projects.create_index([("created_at", -1)])
         await self.annotations.create_index([("project_id", 1), ("filename", 1)], unique=True)
         await self.models.create_index([("project_id", 1), ("created_at", -1)])
+        await self.char_import_batches.create_index([("project_id", 1), ("created_at", -1)])
+        await self.char_imports.create_index([("project_id", 1), ("batch_id", 1)])
+        await self.char_imports.create_index([
+            ("project_id", 1), ("inspection_id", 1), ("annotation_idx", 1),
+        ])

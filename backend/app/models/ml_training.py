@@ -133,6 +133,8 @@ class TrainRequest(BaseModel):
     # If > 0, top up each char to N OK samples via font-render synthesis.
     # 0 = disabled (default).
     ok_synth_target: int = 0
+    # Whether to merge labeled crops from the Imported Chars pool into training.
+    include_imported_chars: bool = True
 
 
 class SyntheticPreviewRequest(BaseModel):
@@ -175,19 +177,6 @@ class PredictResult(BaseModel):
     diff_b64: Optional[str] = None
 
 
-class ImportFromRecipeRequest(BaseModel):
-    recipe_id: str
-    camera_serial: str
-    filenames: List[str]
-
-
-class ImportFromRecipeResponse(BaseModel):
-    imported: int
-    skipped: int
-    errors: List[Dict[str, str]] = []  # [{filename, reason}, ...]
-    char_ids: List[str] = []            # unique char_ids auto-populated
-
-
 class CharCoverageResponse(BaseModel):
     covered: List[str]
     missing: List[str]
@@ -199,3 +188,100 @@ class PredictResponse(BaseModel):
     model_id: str
     algorithm: str
     results: List[PredictResult]
+
+
+# ─────────────────────────────────── Char Imports ────────────────────
+#
+# Active-learning pool: chars cropped from past inspection results, stored as
+# JPEG files on disk under public/ml_projects/{pid}/imported_chars/{batch}/.
+# Train pipeline reads from this pool in addition to Label-tab annotations.
+
+class MLCharImportBatchInDB(BaseModel):
+    id: str = Field(alias="_id")
+    project_id: str
+    name: str                                  # auto: "Import 2026-05-08 14:30" (renameable)
+    created_at: datetime
+
+    model_config = {"populate_by_name": True}
+
+
+class MLCharImportInDB(BaseModel):
+    id: str = Field(alias="_id")
+    project_id: str
+    batch_id: str
+
+    # Provenance — used for dedup against future imports.
+    inspection_id: str
+    annotation_idx: int
+    frame_idx: int
+    camera_serial: str
+    recipe_id: Optional[str] = None
+    recipe_name: Optional[str] = None
+
+    # Editable in the Imported Chars tab.
+    char_id: Optional[str] = None
+    label: str = "NG"                          # "OK" | "NG"
+
+    # Crop file relative to /public root (served via /api/ml-files static mount).
+    crop_path: str
+
+    # Display context — what the model originally said.
+    ml_label: str = "NG"                       # "OK" | "NG"
+    ml_p_ok: float = 0.0
+    source_timestamp: Optional[datetime] = None
+
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"populate_by_name": True}
+
+
+class CharImportSelection(BaseModel):
+    inspection_id: str
+    annotation_idx: int
+
+
+class CharImportCreateRequest(BaseModel):
+    selections: List[CharImportSelection]
+    batch_name: Optional[str] = None           # auto-generated if omitted
+
+
+class CharImportBatchUpdate(BaseModel):
+    name: str
+
+
+class CharImportUpdate(BaseModel):
+    char_id: Optional[str] = None
+    label: Optional[str] = None                # "OK" | "NG"
+
+
+class CharImportBulkUpdate(BaseModel):
+    char_ids: List[str]                        # doc IDs in ml_char_imports
+    label: Optional[str] = None                # set this label on all
+    delete: bool = False                       # if True, delete instead
+
+
+class CharImportBatchResponse(BaseModel):
+    id: str
+    name: str
+    created_at: datetime
+    total: int
+    ok_count: int
+    ng_count: int
+
+
+class CharImportItemResponse(BaseModel):
+    id: str
+    batch_id: str
+    char_id: Optional[str]
+    label: str
+    crop_url: str                              # full URL via /api/ml-files static mount
+    ml_label: str
+    ml_p_ok: float
+    inspection_id: str
+    annotation_idx: int
+    recipe_name: Optional[str]
+    camera_serial: str
+    frame_idx: int
+    source_timestamp: Optional[datetime]
+    created_at: datetime

@@ -3,19 +3,29 @@ import { mlTrainingAPI, InspectionCandidate } from '@/services/mlTraining';
 import { recipesAPI } from '@/services/recipes';
 import type { Recipe } from '@/types/index';
 
+interface ImportResult {
+  batch_id: string | null;
+  batch_name?: string;
+  imported: number;
+  skipped: number;
+  errors: Array<{ inspection_id: string; reason: string }>;
+}
+
 interface Props {
   projectId: string;
   open: boolean;
   onClose: () => void;
-  onImported: (result: { imported: number; skipped: number; errors: any[] }) => void;
+  onImported: (result: ImportResult) => void;
 }
 
 /**
- * Pull mispredicted chars from past inspections back into the project for
- * re-labeling. Operator can filter by recipe + date, toggle hard-fail vs.
- * borderline, multi-select chars to import. Each import copies the source
- * frame into the project and creates an annotation with the char bbox +
- * char_id pre-filled (label left blank for human review).
+ * Search past inspection results for char-level training candidates and
+ * create a new batch in the Imported Chars pool.
+ *
+ * Filter is simplified to the model's predicted label (OK/NG) — both checked
+ * by default so the user sees everything, then picks specific cards. Already-
+ * imported candidates show a badge + disabled checkbox so the user can't
+ * re-import the same (inspection, annotation) pair twice.
  */
 export default function ImportFromInspectionsModal({
   projectId, open, onClose, onImported,
@@ -32,8 +42,8 @@ export default function ImportFromInspectionsModal({
 
   const [dateFrom, setDateFrom] = useState<string>(sevenDaysAgo);
   const [dateTo, setDateTo] = useState<string>(today);
-  const [includeHardFail, setIncludeHardFail] = useState(true);
-  const [includeBorderline, setIncludeBorderline] = useState(true);
+  const [includePredOk, setIncludePredOk] = useState(true);
+  const [includePredNg, setIncludePredNg] = useState(true);
   const [limit, setLimit] = useState(100);
 
   const [candidates, setCandidates] = useState<InspectionCandidate[]>([]);
@@ -41,13 +51,13 @@ export default function ImportFromInspectionsModal({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [batchName, setBatchName] = useState<string>('');
   const [importing, setImporting] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     (async () => {
       try {
-        // BE caps recipes list at 100
         const list = await recipesAPI.getAllRecipes(0, 100);
         setRecipes(list);
       } catch (e: any) {
@@ -57,9 +67,19 @@ export default function ImportFromInspectionsModal({
     })();
   }, [open]);
 
+  // Reset transient state when re-opened
+  useEffect(() => {
+    if (!open) {
+      setCandidates([]);
+      setSelected(new Set());
+      setErrorMsg(null);
+      setBatchName('');
+    }
+  }, [open]);
+
   const handleSearch = async () => {
-    if (!includeHardFail && !includeBorderline) {
-      setErrorMsg('Pick at least one of Hard Fail or Borderline');
+    if (!includePredOk && !includePredNg) {
+      setErrorMsg('Pick at least one predicted label (OK or NG)');
       return;
     }
     setLoading(true);
@@ -71,8 +91,8 @@ export default function ImportFromInspectionsModal({
         recipe_id: recipeId || undefined,
         date_from: dateFrom ? `${dateFrom}T00:00:00` : undefined,
         date_to:   dateTo   ? `${dateTo}T23:59:59`   : undefined,
-        include_hard_fail: includeHardFail,
-        include_borderline: includeBorderline,
+        include_pred_ok: includePredOk,
+        include_pred_ng: includePredNg,
         limit,
       });
       setCandidates(data.candidates);
@@ -85,7 +105,8 @@ export default function ImportFromInspectionsModal({
 
   const keyOf = (c: InspectionCandidate) => `${c.inspection_id}:${c.annotation_idx}`;
 
-  const toggleOne = (k: string) => {
+  const toggleOne = (k: string, disabled: boolean) => {
+    if (disabled) return;
     setSelected(prev => {
       const next = new Set(prev);
       if (next.has(k)) next.delete(k);
@@ -94,9 +115,18 @@ export default function ImportFromInspectionsModal({
     });
   };
 
+  // Selectable = candidates not already imported
+  const selectableKeys = useMemo(
+    () => candidates.filter(c => !c.imported_batch_id).map(keyOf),
+    [candidates],
+  );
+
   const toggleAll = () => {
-    if (selected.size === candidates.length) setSelected(new Set());
-    else setSelected(new Set(candidates.map(keyOf)));
+    if (selected.size === selectableKeys.length && selectableKeys.length > 0) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(selectableKeys));
+    }
   };
 
   const handleImport = async () => {
@@ -106,7 +136,9 @@ export default function ImportFromInspectionsModal({
       const selections = candidates
         .filter(c => selected.has(keyOf(c)))
         .map(c => ({ inspection_id: c.inspection_id, annotation_idx: c.annotation_idx }));
-      const result = await mlTrainingAPI.importFromInspections(projectId, selections);
+      const result = await mlTrainingAPI.createCharImportBatch(
+        projectId, selections, batchName.trim() || undefined,
+      );
       onImported(result);
       onClose();
     } catch (e: any) {
@@ -118,9 +150,11 @@ export default function ImportFromInspectionsModal({
 
   if (!open) return null;
 
-  const allSelected = candidates.length > 0 && selected.size === candidates.length;
-  const hardFailCount  = candidates.filter(c => c.kind === 'hard_fail').length;
-  const borderlineCount = candidates.filter(c => c.kind === 'borderline').length;
+  const totalSelectable = selectableKeys.length;
+  const allSelected = totalSelectable > 0 && selected.size === totalSelectable;
+  const predOkCount = candidates.filter(c => c.ml_label === 'OK').length;
+  const predNgCount = candidates.filter(c => c.ml_label === 'NG').length;
+  const dupCount    = candidates.filter(c => c.imported_batch_id).length;
 
   return (
     <div className="ml-modal-overlay" onClick={onClose}>
@@ -160,18 +194,21 @@ export default function ImportFromInspectionsModal({
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-              <input type="checkbox" checked={includeHardFail}
-                     onChange={e => setIncludeHardFail(e.target.checked)} />
-              <span>Hard Fail <span style={{ opacity: .6, fontSize: 11 }}>(ML said NG)</span></span>
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-              <input type="checkbox" checked={includeBorderline}
-                     onChange={e => setIncludeBorderline(e.target.checked)} />
-              <span>Borderline <span style={{ opacity: .6, fontSize: 11 }}>(0.03 ≤ p_ok ≤ 0.3)</span></span>
-            </label>
-            <div className="ml-form-row" style={{ marginLeft: 'auto', minWidth: 120 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap', marginTop: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 11, opacity: .7 }}>ML Predicted:</span>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                <input type="checkbox" checked={includePredOk}
+                       onChange={e => setIncludePredOk(e.target.checked)} />
+                <span style={{ color: '#22c55e', fontWeight: 600 }}>OK</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                <input type="checkbox" checked={includePredNg}
+                       onChange={e => setIncludePredNg(e.target.checked)} />
+                <span style={{ color: '#ef4444', fontWeight: 600 }}>NG</span>
+              </label>
+            </div>
+            <div className="ml-form-row" style={{ minWidth: 100 }}>
               <label className="ml-label">Limit</label>
               <input className="ml-form-input" type="number" min={1} max={500} step={10}
                      value={limit} onChange={e => setLimit(Number(e.target.value) || 100)} />
@@ -185,35 +222,55 @@ export default function ImportFromInspectionsModal({
             <div className="ml-alert ml-alert-error" style={{ marginTop: 8 }}>{errorMsg}</div>
           )}
 
-          {/* Result summary + select all */}
+          {/* Result summary + select all + batch name */}
           {candidates.length > 0 && (
-            <div className="ml-subhint" style={{
-              display: 'flex', alignItems: 'center', gap: 12, marginTop: 12, marginBottom: 6,
-            }}>
-              <span><b>{candidates.length}</b> candidates</span>
-              <span style={{ color: '#ef4444' }}>{hardFailCount} hard-fail</span>
-              <span style={{ color: '#fbbf24' }}>{borderlineCount} borderline</span>
-              <span style={{ marginLeft: 'auto' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={allSelected} onChange={toggleAll} />
-                  <span>Select all ({selected.size})</span>
-                </label>
-              </span>
-            </div>
+            <>
+              <div className="ml-subhint" style={{
+                display: 'flex', alignItems: 'center', gap: 12, marginTop: 12, marginBottom: 6, flexWrap: 'wrap',
+              }}>
+                <span><b>{candidates.length}</b> candidates</span>
+                <span style={{ color: '#22c55e' }}>{predOkCount} pred OK</span>
+                <span style={{ color: '#ef4444' }}>{predNgCount} pred NG</span>
+                {dupCount > 0 && (
+                  <span style={{ opacity: .6 }}>· {dupCount} already imported</span>
+                )}
+                <span style={{ marginLeft: 'auto' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={allSelected} onChange={toggleAll}
+                           disabled={totalSelectable === 0} />
+                    <span>Select all ({selected.size}/{totalSelectable})</span>
+                  </label>
+                </span>
+              </div>
+
+              <div className="ml-form-row" style={{ marginTop: 4 }}>
+                <label className="ml-label">Batch name (optional)</label>
+                <input className="ml-form-input" type="text" maxLength={80}
+                       placeholder="Auto-generated from current time"
+                       value={batchName} onChange={e => setBatchName(e.target.value)} />
+              </div>
+            </>
           )}
 
           {/* Char crop grid */}
           <div className="ml-insp-grid">
             {candidates.map(c => {
               const k = keyOf(c);
+              const dup = !!c.imported_batch_id;
               const isSel = selected.has(k);
               return (
                 <button
                   key={k}
                   type="button"
-                  className={`ml-insp-card ${c.kind} ${isSel ? 'selected' : ''}`}
-                  onClick={() => toggleOne(k)}
-                  title={`${c.recipe_name} · ${c.camera_serial} · frame ${c.frame_idx} · ${c.timestamp ?? ''}`}
+                  className={`ml-insp-card ${c.ml_label === 'OK' ? 'pred-ok' : 'pred-ng'} ${isSel ? 'selected' : ''} ${dup ? 'duplicate' : ''}`}
+                  onClick={() => toggleOne(k, dup)}
+                  disabled={dup}
+                  style={dup ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
+                  title={
+                    dup
+                      ? `Already imported in batch "${c.imported_batch_name}"`
+                      : `${c.recipe_name} · ${c.camera_serial} · frame ${c.frame_idx} · ${c.timestamp ?? ''}`
+                  }
                 >
                   <img
                     src={`data:image/jpeg;base64,${c.crop_b64}`}
@@ -227,6 +284,13 @@ export default function ImportFromInspectionsModal({
                     </span>
                     <span className="ml-insp-card-prob">{(c.ml_p_ok * 100).toFixed(0)}%</span>
                   </div>
+                  {dup && (
+                    <span style={{
+                      position: 'absolute', top: 2, left: 2,
+                      fontSize: 9, fontWeight: 600, padding: '1px 5px',
+                      borderRadius: 3, background: 'rgba(75,85,99,.9)', color: '#fff',
+                    }}>imported</span>
+                  )}
                 </button>
               );
             })}

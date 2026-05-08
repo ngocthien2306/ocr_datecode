@@ -203,6 +203,7 @@ def build_dataset(
     severity_dist: Optional[Dict[str, float]] = None,
     ok_synth_target: int = 0,
     embed_progress_cb: Optional[Callable[[float], None]] = None,
+    imported_char_files: Optional[List[Tuple[Path, str, Optional[str]]]] = None,
 ) -> Tuple[
     np.ndarray, np.ndarray, List[np.ndarray], List[Optional[str]],
     Dict[str, Dict[str, int]], int, int,
@@ -212,6 +213,10 @@ def build_dataset(
 
     Groups crops by char_id for char-balanced NG augmentation, then embeds all
     crops via SupCon ONNX (128-dim L2-normalized).
+
+    `imported_char_files`: optional list of (abs_crop_path, label, char_id)
+    from the Imported Chars pool — merged into the per-char OK/NG buckets
+    before augmentation, so they participate identically to Label-tab crops.
 
     Returns (all lists / arrays share order):
         X: feature matrix (N, 128)
@@ -227,6 +232,18 @@ def build_dataset(
     # Group OK / NG crops by char_id (key='_unknown' if char_id missing).
     ok_by_char: Dict[str, List[np.ndarray]] = defaultdict(list)
     ng_by_char: Dict[str, List[np.ndarray]] = defaultdict(list)
+
+    # Imported chars from the active-learning pool — read each pre-cropped JPEG
+    # and bucket it by char_id/label like a regular crop.
+    if imported_char_files:
+        for crop_path, label, char_id in imported_char_files:
+            if label not in ("OK", "NG"):
+                continue
+            crop = cv.imread(str(crop_path))
+            if crop is None:
+                continue
+            key = char_id or "_unknown"
+            (ok_by_char if label == "OK" else ng_by_char)[key].append(crop)
 
     # B2 — Load each source image only once per training run, then crop all of
     # its segments from the in-memory array. Previously crop_segment did one
@@ -464,6 +481,7 @@ def train_model(
     request: TrainRequest,
     model_save_path: Path,
     progress_cb: Optional[Callable[[str, float], None]] = None,
+    imported_char_files: Optional[List[Tuple[Path, str, Optional[str]]]] = None,
 ) -> Dict[str, Any]:
     """
     Train a binary classifier (rf / svm / mlp / centroid) on SupCon embedding
@@ -505,6 +523,7 @@ def train_model(
         severity_dist=severity_dist,
         ok_synth_target=ok_synth_target,
         embed_progress_cb=_embed_progress,
+        imported_char_files=imported_char_files,
     )
     _emit("training_classifier", 60)
 
