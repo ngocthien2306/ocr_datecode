@@ -90,13 +90,20 @@ kill_port 5173
 pkill -f "camera_management_service.py" 2>/dev/null || true
 pkill ngrok 2>/dev/null || true
 
-# Clean up any leftover Firefox instance + stale profile lock so the new
-# `firefox http://localhost:5173` call does not hit "already running" dialog.
-pkill -u "$USER" firefox 2>/dev/null || true
-sleep 1
-for lock_file in "$HOME"/.mozilla/firefox/*.default*/lock "$HOME"/.mozilla/firefox/*.default*/.parentlock; do
-    [ -e "$lock_file" ] && rm -f "$lock_file" 2>/dev/null || true
-done
+# Firefox: graceful shutdown if any leftover instance is alive. Avoid SIGKILL
+# here — it leaves session state marked as crashed and triggers the
+# "Open in Troubleshoot Mode?" dialog on next launch.
+if pgrep -u "$USER" firefox >/dev/null 2>&1; then
+    pkill -u "$USER" firefox 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        pgrep -u "$USER" firefox >/dev/null 2>&1 || break
+        sleep 1
+    done
+    if pgrep -u "$USER" firefox >/dev/null 2>&1; then
+        pkill -9 -u "$USER" firefox 2>/dev/null || true
+        sleep 1
+    fi
+fi
 
 sleep 2
 
