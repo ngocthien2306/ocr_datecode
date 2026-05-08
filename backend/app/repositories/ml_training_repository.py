@@ -226,15 +226,25 @@ class MLTrainingRepository:
         return out
 
     async def get_imported_provenance_keys(self, project_id: str) -> Dict[str, str]:
-        """Return {f"{inspection_id}:{annotation_idx}": batch_id} for all imports in project.
-        Used to dedup the inspection-candidates list."""
+        """Return {composite_key: batch_id} for all imports in project, where
+        composite_key = f"{inspection_id}:{camera_serial}:{frame_idx}:{annotation_idx}".
+
+        A single inspection can have multiple frames sharing annotation_idx
+        values, so the dedup key must include camera + frame.
+        """
         out: Dict[str, str] = {}
         cursor = self.char_imports.find(
             {"project_id": project_id},
-            {"inspection_id": 1, "annotation_idx": 1, "batch_id": 1},
+            {
+                "inspection_id": 1, "camera_serial": 1,
+                "frame_idx": 1, "annotation_idx": 1, "batch_id": 1,
+            },
         )
         async for doc in cursor:
-            key = f"{doc.get('inspection_id')}:{doc.get('annotation_idx')}"
+            key = (
+                f"{doc.get('inspection_id')}:{doc.get('camera_serial', '')}:"
+                f"{doc.get('frame_idx', 0)}:{doc.get('annotation_idx')}"
+            )
             out[key] = str(doc.get("batch_id", ""))
         return out
 

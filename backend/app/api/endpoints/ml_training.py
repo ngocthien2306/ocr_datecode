@@ -9,7 +9,7 @@ import shutil
 import uuid
 from functools import partial
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2 as cv
 import joblib
@@ -1233,7 +1233,9 @@ async def get_inspection_candidates(
                     if char_crop is None or char_crop.size == 0:
                         continue
 
-                    key = f"{inspection_id}:{ann_idx}"
+                    cam_serial = cam.get("serial_number", "")
+                    frame_idx_i = int(frame.get("frame_idx", 0))
+                    key = f"{inspection_id}:{cam_serial}:{frame_idx_i}:{ann_idx}"
                     imported_batch_id = imported_keys.get(key)
                     p_ok = float(r.get("ml_p_ok") or 0.0)
 
@@ -1343,18 +1345,25 @@ async def create_char_import_batch(
     # Pre-fetch dedup keys to skip already-imported items.
     imported_keys = await repo.get_imported_provenance_keys(project_id)
 
-    # Group selections by inspection_id for efficient doc loading.
-    by_insp: Dict[str, List[int]] = {}
+    # Group selections by inspection_id, then index per (camera_serial, frame_idx)
+    # so we only crop chars from the exact frame the user picked — annotation_idx
+    # alone is not unique within an inspection (each frame reuses the same
+    # indices for its char positions).
+    by_insp: Dict[str, Dict[Tuple[str, int], set]] = {}
     for sel in request.selections:
-        key = f"{sel.inspection_id}:{sel.annotation_idx}"
-        if key in imported_keys:
+        comp_key = (
+            f"{sel.inspection_id}:{sel.camera_serial}:"
+            f"{sel.frame_idx}:{sel.annotation_idx}"
+        )
+        if comp_key in imported_keys:
             skipped += 1
             continue
-        by_insp.setdefault(sel.inspection_id, []).append(sel.annotation_idx)
+        slot = by_insp.setdefault(sel.inspection_id, {})
+        slot.setdefault((sel.camera_serial, sel.frame_idx), set()).add(sel.annotation_idx)
 
     coll = db.get_collection("inference_results")
 
-    for insp_id, ann_idxs in by_insp.items():
+    for insp_id, frame_map in by_insp.items():
         try:
             try:
                 _id = ObjectId(insp_id)
@@ -1371,7 +1380,13 @@ async def create_char_import_batch(
             ts_doc = doc.get("timestamp")
 
             for cam in doc.get("camera_results", []):
+                cam_serial = cam.get("serial_number", "")
                 for frame in cam.get("frames", []):
+                    frame_idx_i = int(frame.get("frame_idx", 0))
+                    wanted_idxs = frame_map.get((cam_serial, frame_idx_i))
+                    if not wanted_idxs:
+                        continue
+
                     cv_data = frame.get("char_verification") or {}
                     results = cv_data.get("results") or []
                     if not results:
@@ -1383,7 +1398,7 @@ async def create_char_import_batch(
                     }
                     expected_by_idx = {r.get("annotation_idx"): r for r in results}
 
-                    needed = [i for i in ann_idxs if i in region_by_idx and i in expected_by_idx]
+                    needed = [i for i in wanted_idxs if i in region_by_idx and i in expected_by_idx]
                     if not needed:
                         continue
 

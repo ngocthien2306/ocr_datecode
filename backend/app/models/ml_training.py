@@ -239,6 +239,10 @@ class MLCharImportInDB(BaseModel):
 class CharImportSelection(BaseModel):
     inspection_id: str
     annotation_idx: int
+    # camera_serial + frame_idx scope the selection to ONE specific char crop —
+    # a single inspection has multiple frames sharing annotation_idx values.
+    camera_serial: str = ""
+    frame_idx: int = 0
 
 
 class CharImportCreateRequest(BaseModel):

@@ -349,7 +349,12 @@ export const mlTrainingAPI = {
 
   createCharImportBatch: (
     projectId: string,
-    selections: Array<{ inspection_id: string; annotation_idx: number }>,
+    selections: Array<{
+      inspection_id: string;
+      annotation_idx: number;
+      camera_serial: string;
+      frame_idx: number;
+    }>,
     batch_name?: string,
   ) =>
     api.post<{

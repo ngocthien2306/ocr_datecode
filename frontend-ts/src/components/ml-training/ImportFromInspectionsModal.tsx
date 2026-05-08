@@ -103,7 +103,10 @@ export default function ImportFromInspectionsModal({
     }
   };
 
-  const keyOf = (c: InspectionCandidate) => `${c.inspection_id}:${c.annotation_idx}`;
+  // Composite key — annotation_idx alone is not unique within an inspection
+  // (a single inspection has multiple frames sharing the same indices).
+  const keyOf = (c: InspectionCandidate) =>
+    `${c.inspection_id}:${c.camera_serial}:${c.frame_idx}:${c.annotation_idx}`;
 
   const toggleOne = (k: string, disabled: boolean) => {
     if (disabled) return;
@@ -135,7 +138,12 @@ export default function ImportFromInspectionsModal({
     try {
       const selections = candidates
         .filter(c => selected.has(keyOf(c)))
-        .map(c => ({ inspection_id: c.inspection_id, annotation_idx: c.annotation_idx }));
+        .map(c => ({
+          inspection_id: c.inspection_id,
+          annotation_idx: c.annotation_idx,
+          camera_serial: c.camera_serial,
+          frame_idx: c.frame_idx,
+        }));
       const result = await mlTrainingAPI.createCharImportBatch(
         projectId, selections, batchName.trim() || undefined,
       );
