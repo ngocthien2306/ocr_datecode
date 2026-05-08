@@ -191,7 +191,7 @@ export default function ImageTab({ project, onRefresh }: Props) {
                 onClick={() => toggleAvailable(img.filename)}
                 title={img.filename}
               >
-                <img src={img.url} alt={img.filename} loading="lazy" />
+                <img src={img.url} alt={img.filename} loading="lazy" crossOrigin="anonymous" />
                 {selectedAvailable.has(img.filename) && (
                   <div className="ml-image-thumb-check"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg></div>
                 )}
@@ -296,7 +296,7 @@ export default function ImageTab({ project, onRefresh }: Props) {
                 onClick={() => toggleProject(img.filename)}
                 title={img.filename}
               >
-                <img src={img.url} alt={img.filename} loading="lazy" />
+                <img src={img.url} alt={img.filename} loading="lazy" crossOrigin="anonymous" />
                 {selectedProject.has(img.filename) && (
                   <div className="ml-image-thumb-check"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg></div>
                 )}

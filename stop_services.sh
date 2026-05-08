@@ -10,7 +10,7 @@ if [ -f "$PID_FILE" ]; then
     echo "📋 Reading PIDs from $PID_FILE..."
     source "$PID_FILE"
     
-    for pid_var in BACKEND_PID FRONTEND_PID AI_PID NGROK_API_PID NGROK_FRONTEND_PID; do
+    for pid_var in BACKEND_PID FRONTEND_PID AI_PID NGROK_API_PID NGROK_FRONTEND_PID FIREFOX_PID; do
         pid_value=$(eval echo \$$pid_var)
         if [ -n "$pid_value" ] && kill -0 "$pid_value" 2>/dev/null; then
             echo "   Killing $pid_var ($pid_value)..."
@@ -34,6 +34,19 @@ pkill -f "camera_management_service.py" || echo "   No camera service running"
 
 echo "🌐 Stopping ngrok tunnels..."
 pkill ngrok || echo "   No ngrok processes running"
+
+echo "🦊 Stopping Firefox (localhost:5173)..."
+pkill -f "firefox.*localhost:5173" 2>/dev/null || true
+# Fallback: kill any remaining firefox process owned by current user
+pkill -u "$USER" firefox 2>/dev/null || echo "   No firefox processes running"
+
+# Wait for Firefox to release its profile lock cleanly
+sleep 1
+
+# Remove stale Firefox profile lock files (in case Firefox was hung)
+for lock_file in "$HOME"/.mozilla/firefox/*.default*/lock "$HOME"/.mozilla/firefox/*.default*/.parentlock; do
+    [ -e "$lock_file" ] && rm -f "$lock_file" 2>/dev/null || true
+done
 
 echo ""
 echo "✅ All services stopped!"

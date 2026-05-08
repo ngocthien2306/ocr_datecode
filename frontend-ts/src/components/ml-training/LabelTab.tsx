@@ -804,7 +804,7 @@ export default function LabelTab({ project, onRefresh }: Props) {
               onClick={() => selectImage(img.filename)}
               style={{ position: 'relative' }}
             >
-              <img className="ml-label-image-thumb" src={img.url} alt={img.filename} loading="lazy" />
+              <img className="ml-label-image-thumb" src={img.url} alt={img.filename} loading="lazy" crossOrigin="anonymous" />
               <span className="ml-label-image-name">{img.filename}</span>
               {/* Annotation done badge */}
               {img.has_annotation && (

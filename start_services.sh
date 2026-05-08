@@ -90,6 +90,14 @@ kill_port 5173
 pkill -f "camera_management_service.py" 2>/dev/null || true
 pkill ngrok 2>/dev/null || true
 
+# Clean up any leftover Firefox instance + stale profile lock so the new
+# `firefox http://localhost:5173` call does not hit "already running" dialog.
+pkill -u "$USER" firefox 2>/dev/null || true
+sleep 1
+for lock_file in "$HOME"/.mozilla/firefox/*.default*/lock "$HOME"/.mozilla/firefox/*.default*/.parentlock; do
+    [ -e "$lock_file" ] && rm -f "$lock_file" 2>/dev/null || true
+done
+
 sleep 2
 
 # 1. Start Backend (FastAPI)
@@ -147,12 +155,11 @@ export DISPLAY="$CURRENT_DISPLAY"
 export XAUTHORITY="$HOME/.Xauthority"
 
 # Open Firefox
+FIREFOX_PID=""
 if command -v firefox &> /dev/null; then
     firefox http://localhost:5173 > "$LOG_DIR/firefox.log" 2>&1 &
     FIREFOX_PID=$!
     echo "   PID: $FIREFOX_PID (DISPLAY=$DISPLAY)"
-    
-    echo "FIREFOX_PID=$FIREFOX_PID" >> "$LOG_DIR/pids.txt"
 else
     echo "⚠️  Firefox not found. Please install Firefox."
 fi
@@ -164,6 +171,7 @@ FRONTEND_PID=$FRONTEND_PID
 AI_PID=$AI_PID
 NGROK_API_PID=$NGROK_API_PID
 NGROK_FRONTEND_PID=$NGROK_FRONTEND_PID
+FIREFOX_PID=$FIREFOX_PID
 EOF
 
 echo ""
