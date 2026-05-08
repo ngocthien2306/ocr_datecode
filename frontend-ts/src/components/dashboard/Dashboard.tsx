@@ -969,6 +969,9 @@ export default function Dashboard({ onLogout }: DashboardProps) {
         const latest = await receiptsAPI.getLatestLoadedRecipe();
         if (latest && latest.recipe_id) {
           setRunningRecipeId(latest.recipe_id);
+          // On first mount (app open / F5), if a recipe is already loaded,
+          // jump straight into the realtime inference page.
+          setCurrentSection('realtime');
         } else {
           setRunningRecipeId(null);
         }
