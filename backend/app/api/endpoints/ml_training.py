@@ -1365,12 +1365,14 @@ async def create_char_import_batch(
 
     for insp_id, frame_map in by_insp.items():
         try:
-            try:
-                _id = ObjectId(insp_id)
-            except Exception:
+            # inference_results._id is stored as a STRING (not ObjectId) — see
+            # inference_result_repository.delete_by_id / get_by_id which query
+            # with the raw string. Querying with ObjectId here would silently
+            # miss every doc.
+            if not insp_id:
                 errors.append({"inspection_id": insp_id, "reason": "invalid_id"})
                 continue
-            doc = await coll.find_one({"_id": _id})
+            doc = await coll.find_one({"_id": insp_id})
             if not doc:
                 errors.append({"inspection_id": insp_id, "reason": "not_found"})
                 continue
