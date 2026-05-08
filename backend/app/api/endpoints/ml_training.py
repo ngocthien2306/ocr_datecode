@@ -1036,15 +1036,43 @@ def _imported_chars_dir(project_id: str) -> Path:
     return ML_BASE / project_id / "imported_chars"
 
 
+def _prefer_original(image_path: str) -> str:
+    """Swap a `_viz.jpg` suffix to `_org.jpg` so we crop from the raw frame
+    instead of the bbox-overlaid visualization. Other suffixes are returned
+    unchanged."""
+    if not image_path:
+        return image_path
+    if image_path.endswith("_viz.jpg"):
+        return image_path[:-len("_viz.jpg")] + "_org.jpg"
+    if image_path.endswith("_viz.jpeg"):
+        return image_path[:-len("_viz.jpeg")] + "_org.jpeg"
+    if image_path.endswith("_viz.png"):
+        return image_path[:-len("_viz.png")] + "_org.png"
+    return image_path
+
+
 def _resolve_inspection_image(image_path: str) -> Optional[Path]:
-    """Resolve a relative inspection image path to an absolute Path on disk."""
+    """Resolve a relative inspection image path to an absolute Path on disk.
+
+    Prefers the original frame (`_org.<ext>`) over the visualization
+    (`_viz.<ext>`); falls back to the literal path if `_org` doesn't exist.
+    """
     if not image_path:
         return None
-    p = Path(image_path)
-    if p.is_absolute() and p.exists():
-        return p
-    candidate = _INSPECTION_UPLOADS / image_path
-    return candidate if candidate.exists() else None
+
+    def _resolve_one(candidate_path: str) -> Optional[Path]:
+        p = Path(candidate_path)
+        if p.is_absolute() and p.exists():
+            return p
+        candidate = _INSPECTION_UPLOADS / candidate_path
+        return candidate if candidate.exists() else None
+
+    org_path = _prefer_original(image_path)
+    if org_path != image_path:
+        resolved = _resolve_one(org_path)
+        if resolved is not None:
+            return resolved
+    return _resolve_one(image_path)
 
 
 def _crop_from_polygon(img, points: List[List[float]], padding: int = 4):
