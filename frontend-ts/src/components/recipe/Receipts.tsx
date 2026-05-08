@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { receiptsAPI } from '@/services/api';
+import type { RecipeSortBy } from '@/services/recipes';
 import RecipeFormModal from './RecipeFormModal';
 import RecipeViewModal from './RecipeViewModal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
@@ -40,7 +41,8 @@ export default function Receipts() {
   });
 
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedDate, setSelectedDate] = useState('all');
+  const [activeSearch, setActiveSearch] = useState('');   // committed search query — drives effect-based reload
+  const [sortBy, setSortBy] = useState<RecipeSortBy>('created_desc');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const itemsPerPage = 10;
@@ -83,12 +85,16 @@ export default function Receipts() {
   const [runningRecipeId, setRunningRecipeId] = useState<string | null>(null);
   
 
-  // Load receipts from API
+  // Load receipts from API — re-runs when page, sort, or committed search changes
   useEffect(() => {
     loadReceipts();
+  }, [currentPage, sortBy, activeSearch]);
+
+  // Statistics + running recipe — once per mount
+  useEffect(() => {
     loadStatistics();
     checkRunningRecipe();
-  }, [currentPage]);
+  }, []);
 
   // Check for running recipe
   const checkRunningRecipe = async () => {
@@ -140,8 +146,11 @@ export default function Receipts() {
     try {
       setLoading(true);
       const skip = (currentPage - 1) * itemsPerPage;
-      const data = await receiptsAPI.getAllReceipts(skip, itemsPerPage, true);
-      
+      const trimmed = activeSearch.trim();
+      const data = trimmed
+        ? await receiptsAPI.searchReceipts(trimmed, skip, itemsPerPage, sortBy)
+        : await receiptsAPI.getAllReceipts(skip, itemsPerPage, true, sortBy);
+
       const transformedReceipts = data.map(recipe => ({
         id: recipe.id,
         name: recipe.name,
@@ -179,10 +188,17 @@ export default function Receipts() {
 
       setReceipts(transformedReceipts);
 
-      // Calculate total pages
-      const countData = await receiptsAPI.getReceiptsCount(true);
-      setTotalPages(Math.ceil(countData.count / itemsPerPage));
-      
+      // Pagination total — only meaningful in list mode (BE search has no count endpoint).
+      // For search results, treat what came back as the full set.
+      if (trimmed) {
+        // Approximate: if we got fewer than itemsPerPage we're on the last page;
+        // otherwise allow next page to fetch (BE will return [] if past the end).
+        setTotalPages(data.length < itemsPerPage ? currentPage : currentPage + 1);
+      } else {
+        const countData = await receiptsAPI.getReceiptsCount(true);
+        setTotalPages(Math.max(1, Math.ceil(countData.count / itemsPerPage)));
+      }
+
       setError(null);
     } catch (err) {
       console.error('Error loading receipts:', err);
@@ -201,59 +217,12 @@ export default function Receipts() {
     }
   };
 
-  const handleSearch = async () => {
-    if (!searchTerm.trim()) {
-      loadReceipts();
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const data = await receiptsAPI.searchReceipts(searchTerm);
-      
-      const transformedReceipts = data.map(recipe => ({
-        id: recipe.id,
-        name: recipe.name,
-        productCode: recipe.product_code,
-        date: recipe.created_at ? new Date(recipe.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-        camera: `Camera Settings: ${recipe.camera_settings?.exposure_time || 'N/A'}ms`,
-        products: 0,
-        passed: 0,
-        failed: 0,
-        operator: recipe.created_by_name || recipe.created_by || 'System',
-        status: (recipe.is_active ? 'Active' : 'Inactive') as 'Active' | 'Inactive',
-        description: recipe.description || '',
-        // Include all recipe fields for editing
-        cameras: recipe.cameras || [],
-        camera_templates: recipe.camera_templates || [],
-        delay_reject: recipe.delay_reject,
-        reject_pulse: recipe.reject_pulse,
-        reject_method: recipe.reject_method || 'DIO_OUT',
-        do_reject_number: recipe.do_reject_number,
-        do_alarm_number: recipe.do_alarm_number ?? 0,
-        normal_pulse_ms: recipe.normal_pulse_ms ?? 250.0,
-        cameraSettings: recipe.camera_settings,
-        modelThresholds: recipe.model_thresholds,
-        template_config: recipe.template_config,
-        roi_config: recipe.roi_config,
-        is_active: recipe.is_active,
-        ocr_model_type: recipe.ocr_model_type || '',
-        ml_project_id: recipe.ml_project_id || '',
-        ml_model_id: recipe.ml_model_id || '',
-        defect_model: recipe.defect_model || 'arcface',
-        classifier_backend: recipe.classifier_backend || 'embedding',
-        createdAt: recipe.created_at || new Date().toISOString(),
-        updatedAt: recipe.updated_at || new Date().toISOString()
-      }));
-
-      setReceipts(transformedReceipts);
-      setError(null);
-    } catch (err) {
-      console.error('Error searching receipts:', err);
-      setError('Failed to search receipts. Please try again.');
-    } finally {
-      setLoading(false);
-    }
+  // Commit the search input as the active query and reset to page 1.
+  // The list-loading effect (which depends on `activeSearch` + `sortBy` +
+  // `currentPage`) re-runs and fetches via the right endpoint.
+  const handleSearch = () => {
+    setCurrentPage(1);
+    setActiveSearch(searchTerm);
   };
 
   const handleCreateReceipt = () => {
@@ -583,17 +552,19 @@ export default function Receipts() {
 
   
 
-  const filteredReceipts = receipts.filter(receipt => {
-    const matchesSearch =
-      receipt.id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      receipt.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      receipt.productCode?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      receipt.operator?.toLowerCase().includes(searchTerm.toLowerCase());
-
-    const matchesDate = selectedDate === 'all' || receipt.date === selectedDate;
-
-    return matchesSearch && matchesDate;
-  });
+  // Pin the currently-running recipe to the top of the visible page (if it's
+  // present in the loaded slice). Server already sorted by `sort_by`; we only
+  // reorder client-side so the running recipe is immediately findable. If the
+  // running recipe lives on a different page in the chosen sort, it stays
+  // there — toggling sort to `updated_desc` after a load brings it forward.
+  const filteredReceipts = useMemo(() => {
+    if (!runningRecipeId) return receipts;
+    const idx = receipts.findIndex(r => r.id === runningRecipeId);
+    if (idx <= 0) return receipts;
+    const running = receipts[idx];
+    if (!running) return receipts;
+    return [running, ...receipts.slice(0, idx), ...receipts.slice(idx + 1)];
+  }, [receipts, runningRecipeId]);
 
   // Render different views based on viewMode
   if (viewMode === 'create' || viewMode === 'edit') {
@@ -876,13 +847,17 @@ export default function Receipts() {
         <div className="filter-buttons">
           <select
             className="filter-select"
-            value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
+            value={sortBy}
+            onChange={(e) => {
+              setSortBy(e.target.value as RecipeSortBy);
+              setCurrentPage(1);
+            }}
+            title="Sort recipes"
           >
-            <option value="all">All Dates</option>
-            {[...new Set(receipts.map(r => r.date))].map(date => (
-              <option key={date} value={date}>{date}</option>
-            ))}
+            <option value="created_desc">Created (newest)</option>
+            <option value="created_asc">Created (oldest)</option>
+            <option value="updated_desc">Updated (newest)</option>
+            <option value="updated_asc">Updated (oldest)</option>
           </select>
           <button className="filter-btn" onClick={() => toast.info('Export feature - to be implemented')}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none">

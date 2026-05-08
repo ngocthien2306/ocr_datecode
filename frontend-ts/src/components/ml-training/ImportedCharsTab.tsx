@@ -3,6 +3,23 @@ import {
   mlTrainingAPI, MLProject, CharImportBatch, CharImportItem,
 } from '@/services/mlTraining';
 import ImportFromInspectionsModal from './ImportFromInspectionsModal';
+import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import { useToast } from '@/contexts/ToastContext';
+
+interface ConfirmDialogState {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  type: 'warning' | 'danger' | 'info';
+  confirmText?: string;
+  onConfirm: (() => void) | null;
+}
+
+interface RenameDialogState {
+  isOpen: boolean;
+  initialValue: string;
+  onSubmit: ((next: string) => void) | null;
+}
 
 interface Props {
   project: MLProject;
@@ -20,6 +37,15 @@ interface Props {
  * automatically when `include_imported_chars` is on.
  */
 export default function ImportedCharsTab({ project, onRefresh }: Props) {
+  const toast = useToast();
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>({
+    isOpen: false, title: '', message: '', type: 'warning', onConfirm: null,
+  });
+  const [renameDialog, setRenameDialog] = useState<RenameDialogState>({
+    isOpen: false, initialValue: '', onSubmit: null,
+  });
+  const [renameValue, setRenameValue] = useState('');
+
   const [batches, setBatches] = useState<CharImportBatch[]>([]);
   const [loadingBatches, setLoadingBatches] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -86,50 +112,75 @@ export default function ImportedCharsTab({ project, onRefresh }: Props) {
     setSelected(new Set());
   };
 
-  const handleRenameBatch = async (batch: CharImportBatch) => {
-    const next = prompt('Batch name:', batch.name);
-    if (next === null) return;
-    const trimmed = next.trim();
-    if (!trimmed || trimmed === batch.name) return;
-    try {
-      await mlTrainingAPI.renameCharImportBatch(project.id, batch.id, trimmed);
-      setBatches(prev => prev.map(b => b.id === batch.id ? { ...b, name: trimmed } : b));
-    } catch (e: any) {
-      alert(e?.response?.data?.detail ?? 'Rename failed');
-    }
+  const handleRenameBatch = (batch: CharImportBatch) => {
+    setRenameValue(batch.name);
+    setRenameDialog({
+      isOpen: true,
+      initialValue: batch.name,
+      onSubmit: async (next: string) => {
+        const trimmed = next.trim();
+        if (!trimmed || trimmed === batch.name) return;
+        try {
+          await mlTrainingAPI.renameCharImportBatch(project.id, batch.id, trimmed);
+          setBatches(prev => prev.map(b => b.id === batch.id ? { ...b, name: trimmed } : b));
+          toast.success('Batch renamed');
+        } catch (e: any) {
+          toast.error(e?.response?.data?.detail ?? 'Rename failed');
+        }
+      },
+    });
   };
 
-  const handleDeleteBatch = async (batch: CharImportBatch) => {
-    if (!confirm(`Delete batch "${batch.name}" and all ${batch.total} chars in it?`)) return;
-    try {
-      await mlTrainingAPI.deleteCharImportBatch(project.id, batch.id);
-      setBatches(prev => prev.filter(b => b.id !== batch.id));
-      setCharsByBatch(prev => {
-        const next = new Map(prev);
-        next.delete(batch.id);
-        return next;
-      });
-      if (openBatchId === batch.id) setOpenBatchId(null);
-      onRefresh();
-    } catch (e: any) {
-      alert(e?.response?.data?.detail ?? 'Delete failed');
-    }
+  const handleDeleteBatch = (batch: CharImportBatch) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete batch',
+      message: `Delete batch "${batch.name}" and all ${batch.total} chars in it?`,
+      type: 'danger',
+      confirmText: 'Delete',
+      onConfirm: async () => {
+        try {
+          await mlTrainingAPI.deleteCharImportBatch(project.id, batch.id);
+          setBatches(prev => prev.filter(b => b.id !== batch.id));
+          setCharsByBatch(prev => {
+            const next = new Map(prev);
+            next.delete(batch.id);
+            return next;
+          });
+          if (openBatchId === batch.id) setOpenBatchId(null);
+          onRefresh();
+          toast.success('Batch deleted');
+        } catch (e: any) {
+          toast.error(e?.response?.data?.detail ?? 'Delete failed');
+        }
+      },
+    });
   };
 
-  const handleImported = async () => {
+  const handleImported = async (result: { imported: number; skipped: number; errors: any[] }) => {
     await loadBatches();
     onRefresh();
+    if (result.imported > 0) {
+      const skip = result.skipped > 0 ? ` · skipped ${result.skipped}` : '';
+      toast.success(`Imported ${result.imported} char(s)${skip}`);
+    } else if (result.errors?.length) {
+      toast.error(`Import failed: ${result.errors[0].reason ?? 'unknown'}`);
+    } else {
+      toast.warning('Nothing imported (all candidates already in pool)');
+    }
   };
 
   // ── Per-char actions ───────────────────────────────────────────────────
-  const flipLabel = async (item: CharImportItem) => {
-    const nextLabel = item.label === 'OK' ? 'NG' : 'OK';
+  // Direct setter — clicking OK/NG button picks that label rather than
+  // toggling. No-op when already at the desired label.
+  const setLabel = async (item: CharImportItem, nextLabel: 'OK' | 'NG') => {
+    if (item.label === nextLabel) return;
     try {
       const updated = await mlTrainingAPI.updateCharImport(project.id, item.id, { label: nextLabel });
       patchCharInState(updated);
       bumpBatchCount(item.batch_id, item.label, nextLabel);
     } catch (e: any) {
-      alert(e?.response?.data?.detail ?? 'Update failed');
+      toast.error(e?.response?.data?.detail ?? 'Update failed');
     }
   };
 
@@ -146,18 +197,26 @@ export default function ImportedCharsTab({ project, onRefresh }: Props) {
       const updated = await mlTrainingAPI.updateCharImport(project.id, item.id, { char_id: next || null });
       patchCharInState(updated);
     } catch (e: any) {
-      alert(e?.response?.data?.detail ?? 'Update failed');
+      toast.error(e?.response?.data?.detail ?? 'Update failed');
     }
   };
 
-  const deleteChar = async (item: CharImportItem) => {
-    if (!confirm(`Delete this "${item.char_id ?? '?'}" char?`)) return;
-    try {
-      await mlTrainingAPI.deleteCharImport(project.id, item.id);
-      removeCharFromState(item);
-    } catch (e: any) {
-      alert(e?.response?.data?.detail ?? 'Delete failed');
-    }
+  const deleteChar = (item: CharImportItem) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete char',
+      message: `Delete this "${item.char_id ?? '?'}" char?`,
+      type: 'danger',
+      confirmText: 'Delete',
+      onConfirm: async () => {
+        try {
+          await mlTrainingAPI.deleteCharImport(project.id, item.id);
+          removeCharFromState(item);
+        } catch (e: any) {
+          toast.error(e?.response?.data?.detail ?? 'Delete failed');
+        }
+      },
+    });
   };
 
   // ── Bulk actions ───────────────────────────────────────────────────────
@@ -187,34 +246,44 @@ export default function ImportedCharsTab({ project, onRefresh }: Props) {
       ));
       setSelected(new Set());
     } catch (e: any) {
-      alert(e?.response?.data?.detail ?? 'Bulk update failed');
+      toast.error(e?.response?.data?.detail ?? 'Bulk update failed');
     }
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkDelete = () => {
     if (!openBatchId || selected.size === 0) return;
-    if (!confirm(`Delete ${selected.size} char(s)?`)) return;
+    const targetBatchId = openBatchId;
     const ids = Array.from(selected);
-    try {
-      await mlTrainingAPI.bulkCharImports(project.id, { char_ids: ids, delete: true });
-      const items = charsByBatch.get(openBatchId) || [];
-      const removed = items.filter(i => ids.includes(i.id));
-      const okDelta = -removed.filter(i => i.label === 'OK').length;
-      const ngDelta = -removed.filter(i => i.label === 'NG').length;
-      setCharsByBatch(prev => {
-        const next = new Map(prev);
-        next.set(openBatchId, items.filter(i => !ids.includes(i.id)));
-        return next;
-      });
-      setBatches(prev => prev.map(b =>
-        b.id === openBatchId
-          ? { ...b, total: b.total + okDelta + ngDelta, ok_count: b.ok_count + okDelta, ng_count: b.ng_count + ngDelta }
-          : b
-      ));
-      setSelected(new Set());
-    } catch (e: any) {
-      alert(e?.response?.data?.detail ?? 'Bulk delete failed');
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete chars',
+      message: `Delete ${ids.length} char(s)?`,
+      type: 'danger',
+      confirmText: 'Delete',
+      onConfirm: async () => {
+        try {
+          await mlTrainingAPI.bulkCharImports(project.id, { char_ids: ids, delete: true });
+          const items = charsByBatch.get(targetBatchId) || [];
+          const removed = items.filter(i => ids.includes(i.id));
+          const okDelta = -removed.filter(i => i.label === 'OK').length;
+          const ngDelta = -removed.filter(i => i.label === 'NG').length;
+          setCharsByBatch(prev => {
+            const next = new Map(prev);
+            next.set(targetBatchId, items.filter(i => !ids.includes(i.id)));
+            return next;
+          });
+          setBatches(prev => prev.map(b =>
+            b.id === targetBatchId
+              ? { ...b, total: b.total + okDelta + ngDelta, ok_count: b.ok_count + okDelta, ng_count: b.ng_count + ngDelta }
+              : b
+          ));
+          setSelected(new Set());
+          toast.success(`Deleted ${ids.length} char(s)`);
+        } catch (e: any) {
+          toast.error(e?.response?.data?.detail ?? 'Bulk delete failed');
+        }
+      },
+    });
   };
 
   // ── State helpers ──────────────────────────────────────────────────────
@@ -291,23 +360,23 @@ export default function ImportedCharsTab({ project, onRefresh }: Props) {
 
   // ── Render ─────────────────────────────────────────────────────────────
   return (
-    <div className="ml-imported-tab" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 12, overflow: 'auto' }}>
+    <div className="ml-imp-tab">
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      <div className="ml-imp-toolbar">
         <button className="ml-btn ml-btn-primary" onClick={() => setImportOpen(true)}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" style={{ marginRight: 4 }}>
             <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
           </svg>
           Import from Inspections
         </button>
-        <span style={{ fontSize: 13, opacity: .8 }}>
+        <span className="ml-imp-totals">
           <b>{totals.total}</b> chars total
-          {' · '}<span style={{ color: '#22c55e' }}>{totals.ok} OK</span>
-          {' · '}<span style={{ color: '#ef4444' }}>{totals.ng} NG</span>
-          {' · '}<span style={{ opacity: .7 }}>{batches.length} batch(es)</span>
+          {' · '}<span className="ok-count">{totals.ok} OK</span>
+          {' · '}<span className="ng-count">{totals.ng} NG</span>
+          {' · '}<span className="muted">{batches.length} batch(es)</span>
         </span>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontSize: 11, opacity: .7 }}>Filter:</span>
+          <span className="ml-imp-filter-label">Filter:</span>
           {(['all', 'OK', 'NG'] as const).map(f => (
             <button key={f}
               className={`ml-augment-chip ${labelFilter === f ? 'selected' : ''}`}
@@ -337,34 +406,39 @@ export default function ImportedCharsTab({ project, onRefresh }: Props) {
       {batches.map(b => {
         const isOpen = openBatchId === b.id;
         return (
-          <div key={b.id} className="ml-char-group" style={{ borderRadius: 6 }}>
-            <div className="ml-char-group-header" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px' }}>
-              <button onClick={() => handleToggleBatch(b.id)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', display: 'flex', alignItems: 'center', gap: 8, flex: 1, textAlign: 'left' }}>
+          <div key={b.id} className="ml-imp-batch">
+            <div className="ml-imp-batch-header">
+              <button className="ml-imp-batch-toggle" onClick={() => handleToggleBatch(b.id)}>
                 <span style={{ width: 12, textAlign: 'center' }}>{isOpen ? '▼' : '▶'}</span>
-                <span style={{ fontWeight: 600 }}>{b.name}</span>
-                <span style={{ fontSize: 11, opacity: .65 }}>{fmtDate(b.created_at)}</span>
-                <span style={{ fontSize: 12, opacity: .8 }}>· {b.total} chars</span>
-                <span style={{ color: '#22c55e' }}>{b.ok_count} OK</span>
-                <span style={{ color: '#ef4444' }}>{b.ng_count} NG</span>
+                <span className="ml-imp-batch-name">{b.name}</span>
+                <span className="ml-imp-batch-date">{fmtDate(b.created_at)}</span>
+                <span className="ml-imp-batch-meta">· {b.total} chars</span>
+                <span className="ok-count" style={{ color: '#16a34a' }}>{b.ok_count} OK</span>
+                <span className="ng-count" style={{ color: '#dc2626' }}>{b.ng_count} NG</span>
               </button>
               <button className="ml-btn ml-btn-secondary ml-btn-sm" onClick={() => handleRenameBatch(b)} title="Rename batch">
-                ✏️
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 20h9M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z"
+                    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
               </button>
               <button className="ml-btn ml-btn-secondary ml-btn-sm" onClick={() => handleDeleteBatch(b)} title="Delete batch">
-                🗑
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                  <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6"
+                    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
               </button>
             </div>
 
             {/* Char grid (only when open) */}
             {isOpen && (
-              <div style={{ padding: 10, borderTop: '1px solid #2d3148' }}>
+              <div className="ml-imp-batch-body">
                 {/* Bulk action bar */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                <div className="ml-imp-bulk-bar">
                   <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
                     <input type="checkbox" checked={allSelectedInView} onChange={toggleSelectAllVisible}
                            disabled={visibleChars.length === 0} />
-                    <span style={{ fontSize: 12 }}>Select all ({selected.size}/{visibleChars.length})</span>
+                    <span>Select all ({selected.size}/{visibleChars.length})</span>
                   </label>
                   <button className="ml-btn ml-btn-secondary ml-btn-sm" onClick={() => handleBulkSet('OK')} disabled={selected.size === 0}>
                     Set OK
@@ -372,19 +446,14 @@ export default function ImportedCharsTab({ project, onRefresh }: Props) {
                   <button className="ml-btn ml-btn-secondary ml-btn-sm" onClick={() => handleBulkSet('NG')} disabled={selected.size === 0}>
                     Set NG
                   </button>
-                  <button className="ml-btn ml-btn-secondary ml-btn-sm" onClick={handleBulkDelete} disabled={selected.size === 0}
-                          style={{ color: '#ef4444' }}>
+                  <button className="ml-btn ml-btn-danger ml-btn-sm" onClick={handleBulkDelete} disabled={selected.size === 0}>
                     Delete selected
                   </button>
-                  {loadingChars && <span style={{ fontSize: 11, opacity: .6 }}>Loading…</span>}
+                  {loadingChars && <span style={{ opacity: .6 }}>Loading…</span>}
                 </div>
 
-                {/* Char grid — bigger cards (~96px) per user request */}
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))',
-                  gap: 8,
-                }}>
+                {/* Char grid */}
+                <div className="ml-imp-grid">
                   {visibleChars.map(item => (
                     <CharCard
                       key={item.id}
@@ -399,7 +468,7 @@ export default function ImportedCharsTab({ project, onRefresh }: Props) {
                           return next;
                         });
                       }}
-                      onFlipLabel={() => flipLabel(item)}
+                      onSetLabel={(label) => setLabel(item, label)}
                       onStartEdit={() => startEditChar(item)}
                       onChangeEdit={setEditingValue}
                       onCommitEdit={() => commitEditChar(item)}
@@ -426,6 +495,53 @@ export default function ImportedCharsTab({ project, onRefresh }: Props) {
         onClose={() => setImportOpen(false)}
         onImported={handleImported}
       />
+
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+        confirmText={confirmDialog.confirmText ?? 'Confirm'}
+        onClose={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={() => confirmDialog.onConfirm?.()}
+      />
+
+      {renameDialog.isOpen && (
+        <div className="ml-modal-overlay" onClick={() => setRenameDialog(prev => ({ ...prev, isOpen: false }))}>
+          <div className="ml-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
+            <div className="ml-modal-header">
+              <h3>Rename batch</h3>
+              <button className="ml-modal-close" onClick={() => setRenameDialog(prev => ({ ...prev, isOpen: false }))}>×</button>
+            </div>
+            <div className="ml-modal-body">
+              <label className="ml-label">New name</label>
+              <input
+                className="ml-form-input"
+                autoFocus
+                value={renameValue}
+                onChange={e => setRenameValue(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    renameDialog.onSubmit?.(renameValue);
+                    setRenameDialog(prev => ({ ...prev, isOpen: false }));
+                  } else if (e.key === 'Escape') {
+                    setRenameDialog(prev => ({ ...prev, isOpen: false }));
+                  }
+                }}
+              />
+            </div>
+            <div className="ml-modal-footer">
+              <button className="ml-btn ml-btn-secondary"
+                onClick={() => setRenameDialog(prev => ({ ...prev, isOpen: false }))}>Cancel</button>
+              <button className="ml-btn ml-btn-primary"
+                onClick={() => {
+                  renameDialog.onSubmit?.(renameValue);
+                  setRenameDialog(prev => ({ ...prev, isOpen: false }));
+                }}>Rename</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -438,7 +554,7 @@ interface CharCardProps {
   editing: boolean;
   editingValue: string;
   onToggleSelect: () => void;
-  onFlipLabel: () => void;
+  onSetLabel: (label: 'OK' | 'NG') => void;
   onStartEdit: () => void;
   onChangeEdit: (v: string) => void;
   onCommitEdit: () => void;
@@ -448,48 +564,28 @@ interface CharCardProps {
 
 function CharCard({
   item, selected, editing, editingValue,
-  onToggleSelect, onFlipLabel, onStartEdit, onChangeEdit, onCommitEdit, onCancelEdit, onDelete,
+  onToggleSelect, onSetLabel, onStartEdit, onChangeEdit, onCommitEdit, onCancelEdit, onDelete,
 }: CharCardProps) {
   return (
-    <div
-      className={`ml-imp-card ${selected ? 'selected' : ''}`}
-      style={{
-        position: 'relative',
-        background: '#0f1117',
-        border: selected ? '2px solid #3b82f6' : '1px solid #2d3148',
-        borderRadius: 5,
-        padding: 4,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 4,
-      }}
-    >
-      {/* Selection checkbox top-left */}
-      <input type="checkbox" checked={selected} onChange={onToggleSelect}
-        style={{ position: 'absolute', top: 4, left: 4, zIndex: 2, cursor: 'pointer' }} />
+    <div className={`ml-imp-card ${selected ? 'selected' : ''}`}>
+      <input
+        type="checkbox"
+        className="ml-imp-card-checkbox"
+        checked={selected}
+        onChange={onToggleSelect}
+      />
 
-      {/* Delete button top-right (visible on hover via opacity) */}
-      <button onClick={onDelete}
-        title="Delete"
-        style={{
-          position: 'absolute', top: 2, right: 2, zIndex: 2,
-          width: 18, height: 18, padding: 0,
-          background: 'rgba(239,68,68,.85)', color: '#fff',
-          border: 'none', borderRadius: 3, cursor: 'pointer',
-          fontSize: 11, lineHeight: 1,
-        }}>×</button>
+      <button className="ml-imp-card-delete" onClick={onDelete} title="Delete">×</button>
 
-      {/* Crop image */}
-      <div style={{ width: '100%', aspectRatio: '1', background: '#000', borderRadius: 3, overflow: 'hidden' }}>
-        <img src={item.crop_url} alt={item.char_id ?? '?'}
-             style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
+      <div className="ml-imp-card-img-wrap">
+        <img className="ml-imp-card-img" src={item.crop_url} alt={item.char_id ?? '?'} />
       </div>
 
-      {/* Footer: char_id (editable inline) + label badge */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'space-between', minHeight: 22 }}>
+      <div className="ml-imp-card-footer">
         {editing ? (
           <input
             autoFocus
+            className="ml-imp-charid-input"
             value={editingValue}
             onChange={e => onChangeEdit(e.target.value)}
             onBlur={onCommitEdit}
@@ -497,35 +593,29 @@ function CharCard({
               if (e.key === 'Enter') onCommitEdit();
               else if (e.key === 'Escape') onCancelEdit();
             }}
-            style={{
-              flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600,
-              padding: '1px 4px', background: '#1f2937', color: '#fff',
-              border: '1px solid #3b82f6', borderRadius: 3,
-              fontFamily: 'monospace', textAlign: 'center',
-            }}
           />
         ) : (
-          <button onClick={onStartEdit} title="Click to edit char_id"
-            style={{
-              flex: 1, minWidth: 0, padding: '1px 4px',
-              background: 'transparent', border: '1px dashed transparent',
-              color: '#fff', fontFamily: 'monospace', fontSize: 13,
-              fontWeight: 600, cursor: 'pointer', textAlign: 'center',
-              borderRadius: 3,
-            }}
-            onMouseEnter={e => (e.currentTarget.style.borderColor = '#3b82f6')}
-            onMouseLeave={e => (e.currentTarget.style.borderColor = 'transparent')}
-          >{item.char_id || '—'}</button>
+          <button className="ml-imp-charid" onClick={onStartEdit} title="Click to edit char_id">
+            {item.char_id || '—'}
+          </button>
         )}
-        <button onClick={onFlipLabel} title={`Click to flip → ${item.label === 'OK' ? 'NG' : 'OK'}`}
-          className={`ml-label-badge ${item.label === 'OK' ? 'ok' : 'ng'}`}
-          style={{ cursor: 'pointer', border: 'none' }}>
-          {item.label}
-        </button>
+        <div className="ml-imp-label-toggle" role="group" aria-label="Pick label">
+          <button
+            type="button"
+            className={`ok ${item.label === 'OK' ? 'active' : ''}`}
+            onClick={() => onSetLabel('OK')}
+            title="Mark as OK"
+          >OK</button>
+          <button
+            type="button"
+            className={`ng ${item.label === 'NG' ? 'active' : ''}`}
+            onClick={() => onSetLabel('NG')}
+            title="Mark as NG"
+          >NG</button>
+        </div>
       </div>
 
-      {/* ML hint (small, secondary) */}
-      <div style={{ fontSize: 9, opacity: .55, textAlign: 'center', lineHeight: 1.2 }}>
+      <div className="ml-imp-card-meta">
         ML: {item.ml_label} · {(item.ml_p_ok * 100).toFixed(0)}%
       </div>
     </div>

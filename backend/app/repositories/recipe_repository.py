@@ -105,18 +105,31 @@ class RecipeRepository:
             return RecipeInDB(**recipe)
         return None
     
+    _SORT_MAP = {
+        "created_desc": ("created_at", -1),
+        "created_asc":  ("created_at",  1),
+        "updated_desc": ("updated_at", -1),
+        "updated_asc":  ("updated_at",  1),
+    }
+
+    @classmethod
+    def _resolve_sort(cls, sort_by: Optional[str]):
+        return cls._SORT_MAP.get(sort_by or "", cls._SORT_MAP["created_desc"])
+
     async def get_all(
-        self, 
-        skip: int = 0, 
+        self,
+        skip: int = 0,
         limit: int = 100,
-        is_active: Optional[bool] = None
+        is_active: Optional[bool] = None,
+        sort_by: Optional[str] = None,
     ) -> List[RecipeInDB]:
         """Get all recipes with pagination"""
         query = {}
         if is_active is not None:
             query["is_active"] = is_active
-        
-        cursor = self.collection.find(query).skip(skip).limit(limit).sort("created_at", -1)
+
+        sort_field, sort_dir = self._resolve_sort(sort_by)
+        cursor = self.collection.find(query).skip(skip).limit(limit).sort(sort_field, sort_dir)
         recipes = []
         async for recipe in cursor:
             recipe["_id"] = str(recipe["_id"])
@@ -212,7 +225,13 @@ class RecipeRepository:
         
         return await self.collection.count_documents(query)
     
-    async def search(self, query: str, skip: int = 0, limit: int = 100) -> List[RecipeInDB]:
+    async def search(
+        self,
+        query: str,
+        skip: int = 0,
+        limit: int = 100,
+        sort_by: Optional[str] = None,
+    ) -> List[RecipeInDB]:
         """Search recipes by name or product code"""
         search_query = {
             "$or": [
@@ -221,8 +240,9 @@ class RecipeRepository:
                 {"description": {"$regex": query, "$options": "i"}}
             ]
         }
-        
-        cursor = self.collection.find(search_query).skip(skip).limit(limit).sort("created_at", -1)
+
+        sort_field, sort_dir = self._resolve_sort(sort_by)
+        cursor = self.collection.find(search_query).skip(skip).limit(limit).sort(sort_field, sort_dir)
         recipes = []
         async for recipe in cursor:
             recipe["_id"] = str(recipe["_id"])

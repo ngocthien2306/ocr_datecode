@@ -405,6 +405,11 @@ async def list_recipes(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
     is_active: Optional[bool] = None,
+    sort_by: str = Query(
+        "created_desc",
+        pattern="^(created|updated)_(desc|asc)$",
+        description="Sort order: created_desc (default), created_asc, updated_desc, updated_asc",
+    ),
     current_user: UserInDB = Depends(get_current_user),
     recipe_repo: RecipeRepository = Depends(get_recipe_repository),
     user_repo: UserRepository = Depends(get_user_repository)
@@ -417,7 +422,7 @@ async def list_recipes(
     According to requirements:
     - Operator: Can only load receipt and input datecode field to verify with read content
     """
-    recipes = await recipe_repo.get_all(skip=skip, limit=limit, is_active=is_active)
+    recipes = await recipe_repo.get_all(skip=skip, limit=limit, is_active=is_active, sort_by=sort_by)
 
     # Collect unique user IDs for batch lookup
     user_ids = set()
@@ -437,6 +442,11 @@ async def search_recipes(
     q: str = Query(..., min_length=1, description="Search query"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
+    sort_by: str = Query(
+        "created_desc",
+        pattern="^(created|updated)_(desc|asc)$",
+        description="Sort order: created_desc (default), created_asc, updated_desc, updated_asc",
+    ),
     current_user: UserInDB = Depends(get_current_user),
     recipe_repo: RecipeRepository = Depends(get_recipe_repository),
     user_repo: UserRepository = Depends(get_user_repository)
@@ -446,7 +456,7 @@ async def search_recipes(
 
     **Permission**: All authenticated users
     """
-    recipes = await recipe_repo.search(q, skip=skip, limit=limit)
+    recipes = await recipe_repo.search(q, skip=skip, limit=limit, sort_by=sort_by)
 
     # Batch lookup user names
     user_ids = set()

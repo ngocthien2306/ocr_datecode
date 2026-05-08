@@ -1547,6 +1547,39 @@ async def list_char_imports(
 
 
 @router.patch(
+    "/ml/projects/{project_id}/char-imports/chars/bulk",
+    tags=["ML Training"],
+)
+async def bulk_update_char_imports(
+    project_id: str,
+    body: CharImportBulkUpdate,
+    repo: MLTrainingRepository = Depends(get_repo),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    if not body.char_ids:
+        return {"updated": 0}
+
+    if body.delete:
+        crop_paths = await repo.bulk_delete_char_imports(body.char_ids)
+        for rel in crop_paths:
+            abs_path = _PROJECT_ROOT / "public" / rel
+            try:
+                if abs_path.exists():
+                    abs_path.unlink()
+            except Exception:
+                logger.exception(f"[char-imports] failed to unlink {abs_path}")
+        return {"deleted": len(crop_paths)}
+
+    if body.label is not None:
+        if body.label not in ("OK", "NG"):
+            raise HTTPException(400, "label must be 'OK' or 'NG'")
+        n = await repo.bulk_update_char_imports(body.char_ids, {"label": body.label})
+        return {"updated": n}
+
+    raise HTTPException(400, "Nothing to do — set `label` or `delete=true`")
+
+
+@router.patch(
     "/ml/projects/{project_id}/char-imports/chars/{char_id}",
     tags=["ML Training"],
 )
@@ -1594,36 +1627,3 @@ async def delete_char_import(
     except Exception:
         logger.exception(f"[char-imports] failed to unlink {abs_path}")
     return {"ok": True}
-
-
-@router.patch(
-    "/ml/projects/{project_id}/char-imports/chars/bulk",
-    tags=["ML Training"],
-)
-async def bulk_update_char_imports(
-    project_id: str,
-    body: CharImportBulkUpdate,
-    repo: MLTrainingRepository = Depends(get_repo),
-    current_user: UserInDB = Depends(get_current_user),
-):
-    if not body.char_ids:
-        return {"updated": 0}
-
-    if body.delete:
-        crop_paths = await repo.bulk_delete_char_imports(body.char_ids)
-        for rel in crop_paths:
-            abs_path = _PROJECT_ROOT / "public" / rel
-            try:
-                if abs_path.exists():
-                    abs_path.unlink()
-            except Exception:
-                logger.exception(f"[char-imports] failed to unlink {abs_path}")
-        return {"deleted": len(crop_paths)}
-
-    if body.label is not None:
-        if body.label not in ("OK", "NG"):
-            raise HTTPException(400, "label must be 'OK' or 'NG'")
-        n = await repo.bulk_update_char_imports(body.char_ids, {"label": body.label})
-        return {"updated": n}
-
-    raise HTTPException(400, "Nothing to do — set `label` or `delete=true`")

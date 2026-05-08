@@ -1365,3 +1365,237 @@ body.dark-mode .ml-insp-card.selected    { background: #1e3a5f; border-color: #3
 body.dark-mode .ml-insp-card-img         { background: #0f1117; border-color: #2d3148; }
 body.dark-mode .ml-insp-card-label.ok    { background: rgba(34,197,94,.12); color: #4ade80; }
 body.dark-mode .ml-insp-card-label.ng    { background: rgba(239,68,68,.15); color: #f87171; }
+
+/* ──────────────────────────────────────────────────────────────────────
+ * IMPORTED CHARS TAB
+ * Theme-aware classes for the Imported Chars view (batches + char cards).
+ * Light variables sit at the top; body.dark-mode overrides are at the bottom
+ * to match the rest of this file.
+ * ────────────────────────────────────────────────────────────────────── */
+
+.ml-imp-tab {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
+  flex: 1;
+  background: #ffffff;
+  color: #1f2937;
+}
+
+.ml-imp-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.ml-imp-totals { font-size: 13px; opacity: .85; }
+.ml-imp-totals b { color: #111827; }
+.ml-imp-totals .ok-count { color: #16a34a; }
+.ml-imp-totals .ng-count { color: #dc2626; }
+.ml-imp-totals .muted    { opacity: .65; }
+
+.ml-imp-filter-label { font-size: 11px; color: #6b7280; }
+
+.ml-imp-batch {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fafafa;
+}
+.ml-imp-batch-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+}
+.ml-imp-batch-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  text-align: left;
+  padding: 0;
+  font: inherit;
+}
+.ml-imp-batch-name { font-weight: 600; color: #111827; }
+.ml-imp-batch-date { font-size: 11px; opacity: .6; }
+.ml-imp-batch-meta { font-size: 12px; opacity: .8; }
+
+.ml-imp-batch-body {
+  padding: 10px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.ml-imp-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.ml-imp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+.ml-imp-card {
+  position: relative;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 5px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ml-imp-card.selected {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 1px #2563eb inset;
+}
+.ml-imp-card-img-wrap {
+  width: 100%;
+  aspect-ratio: 1;
+  background: #ffffff;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.ml-imp-card-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.ml-imp-card-checkbox {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 2;
+  cursor: pointer;
+}
+.ml-imp-card-delete {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  z-index: 2;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: rgba(239, 68, 68, .85);
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.ml-imp-card-footer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: space-between;
+  min-height: 22px;
+}
+
+.ml-imp-charid {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 4px;
+  background: transparent;
+  border: 1px dashed transparent;
+  color: inherit;
+  font-family: monospace;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  border-radius: 3px;
+}
+.ml-imp-charid:hover { border-color: #2563eb; }
+
+.ml-imp-charid-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 1px 4px;
+  background: #ffffff;
+  color: #111827;
+  border: 1px solid #2563eb;
+  border-radius: 3px;
+  font-family: monospace;
+  text-align: center;
+}
+
+/* OK/NG selector — two side-by-side buttons; click directly the one you want. */
+.ml-imp-label-toggle {
+  display: inline-flex;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.ml-imp-label-toggle button {
+  background: #ffffff;
+  color: #6b7280;
+  border: none;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: background .12s, color .12s;
+}
+.ml-imp-label-toggle button.active.ok {
+  background: #dcfce7;
+  color: #15803d;
+}
+.ml-imp-label-toggle button.active.ng {
+  background: #fee2e2;
+  color: #dc2626;
+}
+.ml-imp-label-toggle button:not(.active):hover { background: #f3f4f6; }
+
+.ml-imp-card-meta {
+  font-size: 9px;
+  opacity: .55;
+  text-align: center;
+  line-height: 1.2;
+}
+
+/* ── Imported Chars: dark-mode overrides ── */
+body.dark-mode .ml-imp-tab {
+  background: #0f1117;
+  color: #e2e8f0;
+}
+body.dark-mode .ml-imp-totals b      { color: #f1f5f9; }
+body.dark-mode .ml-imp-totals .ok-count { color: #4ade80; }
+body.dark-mode .ml-imp-totals .ng-count { color: #f87171; }
+body.dark-mode .ml-imp-filter-label  { color: #9ca3af; }
+body.dark-mode .ml-imp-batch         { background: #141821; border-color: #2d3148; }
+body.dark-mode .ml-imp-batch-body    { border-top-color: #2d3148; }
+body.dark-mode .ml-imp-batch-name    { color: #e2e8f0; }
+body.dark-mode .ml-imp-batch-date    { color: #6b7280; }
+
+body.dark-mode .ml-imp-card          { background: #0f1117; border-color: #2d3148; }
+body.dark-mode .ml-imp-card.selected { border-color: #3b82f6; box-shadow: 0 0 0 1px #3b82f6 inset; }
+body.dark-mode .ml-imp-card-img-wrap { background: #000; }
+body.dark-mode .ml-imp-charid:hover  { border-color: #3b82f6; }
+body.dark-mode .ml-imp-charid-input  { background: #1f2937; color: #fff; border-color: #3b82f6; }
+
+body.dark-mode .ml-imp-label-toggle  { border-color: #374151; }
+body.dark-mode .ml-imp-label-toggle button {
+  background: #1f2937;
+  color: #9ca3af;
+}
+body.dark-mode .ml-imp-label-toggle button.active.ok { background: #14532d; color: #4ade80; }
+body.dark-mode .ml-imp-label-toggle button.active.ng { background: #7f1d1d; color: #fca5a5; }
+body.dark-mode .ml-imp-label-toggle button:not(.active):hover { background: #374151; }

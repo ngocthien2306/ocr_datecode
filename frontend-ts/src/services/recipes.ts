@@ -1,9 +1,15 @@
 import api from './http';
 import type { Recipe, RecipeCreate, RecipeUpdate, CountResponse, Statistics } from '@/types';
 
+export type RecipeSortBy = 'created_desc' | 'created_asc' | 'updated_desc' | 'updated_asc';
+
 export const recipesAPI = {
-  getAllRecipes: async (skip = 0, limit = 100, isActive: boolean | null = null): Promise<Recipe[]> => {
-    const params: Record<string, number | boolean> = { skip, limit };
+  getAllRecipes: async (
+    skip = 0, limit = 100,
+    isActive: boolean | null = null,
+    sortBy: RecipeSortBy = 'created_desc',
+  ): Promise<Recipe[]> => {
+    const params: Record<string, number | boolean | string> = { skip, limit, sort_by: sortBy };
     if (isActive !== null) {
       params.is_active = isActive;
     }
@@ -11,9 +17,12 @@ export const recipesAPI = {
     return response.data;
   },
 
-  searchRecipes: async (query: string, skip = 0, limit = 100): Promise<Recipe[]> => {
+  searchRecipes: async (
+    query: string, skip = 0, limit = 100,
+    sortBy: RecipeSortBy = 'created_desc',
+  ): Promise<Recipe[]> => {
     const response = await api.get<Recipe[]>('/recipes/search', {
-      params: { q: query, skip, limit },
+      params: { q: query, skip, limit, sort_by: sortBy },
     });
     return response.data;
   },
@@ -77,12 +86,19 @@ export const recipesAPI = {
 };
 
 export const receiptsAPI = {
-  getAllReceipts: async (skip = 0, limit = 100, isActive: boolean | null = null): Promise<Recipe[]> => {
-    return recipesAPI.getAllRecipes(skip, limit, isActive);
+  getAllReceipts: async (
+    skip = 0, limit = 100,
+    isActive: boolean | null = null,
+    sortBy: RecipeSortBy = 'created_desc',
+  ): Promise<Recipe[]> => {
+    return recipesAPI.getAllRecipes(skip, limit, isActive, sortBy);
   },
 
-  searchReceipts: async (query: string, skip = 0, limit = 100): Promise<Recipe[]> => {
-    return recipesAPI.searchRecipes(query, skip, limit);
+  searchReceipts: async (
+    query: string, skip = 0, limit = 100,
+    sortBy: RecipeSortBy = 'created_desc',
+  ): Promise<Recipe[]> => {
+    return recipesAPI.searchRecipes(query, skip, limit, sortBy);
   },
 
   getReceiptById: async (receiptId: string): Promise<Recipe> => {

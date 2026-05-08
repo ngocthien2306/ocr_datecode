@@ -177,6 +177,17 @@ export const cameraImageUrl = (filename: string) =>
 export const projectImageUrl = (projectId: string, filename: string) =>
   `${SERVER_ORIGIN}/api/ml-files/${projectId}/images/${encodeURIComponent(filename)}`;
 
+/** Prepend the server origin to a backend-relative URL (e.g. "/api/ml-files/...").
+ * Already-absolute URLs are returned as-is. */
+const toFullUrl = (relOrAbs: string): string =>
+  /^https?:\/\//i.test(relOrAbs) ? relOrAbs : `${SERVER_ORIGIN}${relOrAbs}`;
+
+/** Map a CharImportItem so its crop_url becomes an absolute URL. */
+const _hydrateCharImport = (item: CharImportItem): CharImportItem => ({
+  ...item,
+  crop_url: toFullUrl(item.crop_url),
+});
+
 // ──────── API client ───────────────────────────────────────────────────────
 
 export const mlTrainingAPI = {
@@ -376,12 +387,12 @@ export const mlTrainingAPI = {
   listCharImports: (projectId: string, opts?: { batch_id?: string; label?: 'OK' | 'NG' }) =>
     api.get<CharImportItem[]>(`/ml/projects/${projectId}/char-imports/chars`, {
       params: opts,
-    }).then(r => r.data),
+    }).then(r => r.data.map(_hydrateCharImport)),
 
   updateCharImport: (projectId: string, charId: string, update: { char_id?: string | null; label?: 'OK' | 'NG' }) =>
     api.patch<CharImportItem>(
       `/ml/projects/${projectId}/char-imports/chars/${charId}`, update,
-    ).then(r => r.data),
+    ).then(r => _hydrateCharImport(r.data)),
 
   deleteCharImport: (projectId: string, charId: string) =>
     api.delete(`/ml/projects/${projectId}/char-imports/chars/${charId}`).then(r => r.data),
