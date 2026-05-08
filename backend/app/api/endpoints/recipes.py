@@ -238,6 +238,7 @@ def recipe_to_response(recipe: RecipeInDB, user_names_map: dict = None) -> Recip
         ml_model_id=getattr(recipe, 'ml_model_id', None),
         defect_model=getattr(recipe, 'defect_model', None),
         classifier_backend=getattr(recipe, 'classifier_backend', None),
+        wrinkle_conf=getattr(recipe, 'wrinkle_conf', None),
         created_by=recipe.created_by,
         updated_by=recipe.updated_by,
         created_by_name=created_by_name,
@@ -1019,6 +1020,7 @@ async def clone_recipe(
         ml_model_id=getattr(original_recipe, 'ml_model_id', None),
         defect_model=getattr(original_recipe, 'defect_model', None),
         classifier_backend=getattr(original_recipe, 'classifier_backend', None),
+        wrinkle_conf=getattr(original_recipe, 'wrinkle_conf', None),
     )
 
     # Create the cloned recipe
@@ -1159,6 +1161,7 @@ async def load_recipe(
         'ml_model_id': getattr(recipe, 'ml_model_id', None),
         'defect_model': getattr(recipe, 'defect_model', None),
         'classifier_backend': getattr(recipe, 'classifier_backend', None),
+        'wrinkle_conf': getattr(recipe, 'wrinkle_conf', None),
     }
 
     # Send load recipe command via WebSocket to CameraManagement service
@@ -1185,6 +1188,7 @@ async def load_recipe(
         'ml_model_id': getattr(recipe, 'ml_model_id', None),
         'defect_model': getattr(recipe, 'defect_model', None),
         'classifier_backend': getattr(recipe, 'classifier_backend', None),
+        'wrinkle_conf': getattr(recipe, 'wrinkle_conf', None),
     }
 
     success = await send_load_recipe(recipe_dict)
@@ -1483,6 +1487,7 @@ async def update_recipe_realtime(
         'ml_model_id': getattr(recipe, 'ml_model_id', None),
         'defect_model': getattr(recipe, 'defect_model', None),
         'classifier_backend': getattr(recipe, 'classifier_backend', None),
+        'wrinkle_conf': getattr(recipe, 'wrinkle_conf', None),
     }
 
     # 4. Merge update_data into recipe_dict (in-memory, NOT saved to DB)
@@ -1497,6 +1502,10 @@ async def update_recipe_realtime(
     if 'normal_pulse_ms' in update_data:
         recipe_dict['normal_pulse_ms'] = update_data['normal_pulse_ms']
         logger.info(f"📝 [REALTIME UPDATE] normal_pulse_ms → {update_data['normal_pulse_ms']} ms")
+
+    if 'wrinkle_conf' in update_data:
+        recipe_dict['wrinkle_conf'] = update_data['wrinkle_conf']
+        logger.info(f"📝 [REALTIME UPDATE] wrinkle_conf → {update_data['wrinkle_conf']}")
 
     # Update camera settings
     if 'cameras' in update_data:
@@ -1527,6 +1536,15 @@ async def update_recipe_realtime(
                             if 'center_offset_threshold_right' in tmpl:
                                 existing_tmpl['center_offset_threshold_right'] = tmpl['center_offset_threshold_right']
                                 logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id} Template {tmpl_idx}: center_offset_threshold_right → {tmpl['center_offset_threshold_right']}")
+                            if 'wrinkle_area' in tmpl:
+                                existing_tmpl['wrinkle_area'] = tmpl['wrinkle_area']
+                                logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id} Template {tmpl_idx}: wrinkle_area → {tmpl['wrinkle_area']}")
+                            if 'wrinkle_min_area' in tmpl:
+                                existing_tmpl['wrinkle_min_area'] = tmpl['wrinkle_min_area']
+                                logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id} Template {tmpl_idx}: wrinkle_min_area → {tmpl['wrinkle_min_area']}")
+                            if 'wrinkle_max_area' in tmpl:
+                                existing_tmpl['wrinkle_max_area'] = tmpl['wrinkle_max_area']
+                                logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id} Template {tmpl_idx}: wrinkle_max_area → {tmpl['wrinkle_max_area']}")
                             # Support online template image replacement
                             if 'image_url' in tmpl:
                                 existing_tmpl['image_url'] = tmpl['image_url']

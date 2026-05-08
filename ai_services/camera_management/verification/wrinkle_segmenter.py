@@ -343,27 +343,45 @@ class WrinkledSegmenterTRT:
         angle: float,
         crop_offset:  Tuple[int, int],
         frame_shape:  Tuple[int, ...],
-        min_area:     Optional[int] = None,  # per-frame override; falls back to self.min_area
+        min_area:     Optional[int] = None,    # per-frame total threshold (sum of valid regions)
+        min_region_area: float = 0.0,          # per-region: ignore regions smaller than this
+        max_region_area: float = 0.0,          # per-region: any region ≥ this → FAIL (0 = disabled)
+        conf_threshold:  float = 0.0,          # per-frame post-filter on detection score
     ) -> Dict[str, Any]:
         """
-        Filter masks > min_area → back-project → extract contours.
+        FAIL conditions (OR logic):
+          - any region area ≥ max_region_area  (critical, when max_region_area > 0)
+          - sum(valid regions) ≥ min_area      (total threshold)
+
+        Per-region filters applied first:
+          - score < conf_threshold       → drop
+          - area  < min_region_area      → drop
 
         Returns wrinkled_check dict:
-          ok            : bool  (False nếu có wrinkled > min_area)
+          ok            : bool
           has_wrinkled  : bool
+          triggered_by  : 'critical' | 'total' | None
           wrinkled_count: int
-          min_area      : int   (threshold used for this frame)
+          total_area    : int
+          min_area      : int   (total threshold used)
+          min_region_area, max_region_area, conf_threshold : echo back for debug
           wrinkled_boxes: list[{score, area, area_pct, contour, corners}]
         """
         effective_min_area = min_area if min_area is not None else self.min_area
         crop_area = int(w * h)
 
+        empty_payload = {
+            'ok': True, 'has_wrinkled': False, 'triggered_by': None,
+            'wrinkled_count': 0, 'total_area': 0,
+            'min_area': effective_min_area,
+            'min_region_area': min_region_area,
+            'max_region_area': max_region_area,
+            'conf_threshold': conf_threshold,
+            'wrinkled_boxes': []
+        }
+
         if len(seg_boxes) == 0 or seg_masks is None:
-            return {
-                'ok': True, 'has_wrinkled': False,
-                'wrinkled_count': 0, 'total_area': 0,
-                'min_area': effective_min_area, 'wrinkled_boxes': []
-            }
+            return empty_payload
 
         # Back-project tất cả masks về frame space
         frame_masks = self.back_project_masks(
@@ -372,11 +390,19 @@ class WrinkledSegmenterTRT:
 
         wrinkled_boxes = []
         for i, (box, mask_frame) in enumerate(zip(seg_boxes, frame_masks)):
+            score = float(box[4])
+            # Per-frame conf filter (post-hoc — predict_batch may have used a lower batch-min conf)
+            if score < conf_threshold:
+                continue
+
             # Tính area trong crop space (consistent với min_area threshold)
             mask_crop = seg_masks[i]
             area = int(np.sum(mask_crop > 0.5))
 
-            score = float(box[4])
+            # Per-region min filter — drop noisy small regions
+            if min_region_area > 0 and area < min_region_area:
+                continue
+
             area_pct = area / max(crop_area, 1) * 100
 
             # Contour trong frame space (JSON serializable)
@@ -397,20 +423,32 @@ class WrinkledSegmenterTRT:
             })
 
         total_area = sum(b['area'] for b in wrinkled_boxes)
-        has_wrinkled = total_area >= effective_min_area
+
+        # Critical: bất kỳ vùng đơn nào ≥ max_region_area → FAIL ngay (kể cả total chưa đạt)
+        has_critical = max_region_area > 0 and any(b['area'] >= max_region_area for b in wrinkled_boxes)
+        # Total: tổng các vùng hợp lệ ≥ ngưỡng → FAIL
+        total_exceeded = total_area >= effective_min_area
+
+        has_wrinkled = has_critical or total_exceeded
+        triggered_by = 'critical' if has_critical else ('total' if total_exceeded else None)
 
         if has_wrinkled:
             logger.info(
-                f"Wrinkled detected: {len(wrinkled_boxes)} region(s), "
-                f"total_area={total_area}px areas={[b['area'] for b in wrinkled_boxes]}px"
+                f"Wrinkled detected ({triggered_by}): {len(wrinkled_boxes)} region(s), "
+                f"total_area={total_area}px areas={[b['area'] for b in wrinkled_boxes]}px "
+                f"thresholds: total={effective_min_area} max={max_region_area} min={min_region_area} conf={conf_threshold:.2f}"
             )
 
         return {
             'ok'            : not has_wrinkled,
             'has_wrinkled'  : has_wrinkled,
+            'triggered_by'  : triggered_by,
             'wrinkled_count': len(wrinkled_boxes),
             'total_area'    : total_area,
             'min_area'      : effective_min_area,
+            'min_region_area': min_region_area,
+            'max_region_area': max_region_area,
+            'conf_threshold': conf_threshold,
             'wrinkled_boxes': wrinkled_boxes,
         }
 

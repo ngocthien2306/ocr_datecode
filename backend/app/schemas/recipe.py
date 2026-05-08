@@ -28,7 +28,9 @@ class TemplateImage(BaseModel):
     center_offset_threshold_left: float = Field(default=50.0, ge=0.0, le=500.0, description="Left alignment threshold in pixels (0-500)")
     center_offset_threshold_right: float = Field(default=50.0, ge=0.0, le=500.0, description="Right alignment threshold in pixels (0-500)")
     center_offset_threshold: float = Field(default=50.0, ge=0.0, le=500.0, description="Center alignment threshold in pixels (0-500)")
-    wrinkle_area: Optional[float] = Field(default=2000.0, ge=0.0, description="Minimum wrinkle region area threshold in pixels (used by wrinkle segmenter)")
+    wrinkle_area: Optional[float] = Field(default=2000.0, ge=0.0, description="Total wrinkle area threshold in pixels — sum of valid regions ≥ this value → FAIL")
+    wrinkle_min_area: Optional[float] = Field(default=0.0, ge=0.0, description="Per-region min area filter — regions smaller than this are ignored (0 = no filter)")
+    wrinkle_max_area: Optional[float] = Field(default=0.0, ge=0.0, description="Per-region critical area — any region ≥ this value triggers FAIL immediately (0 = disabled)")
 
 class CameraTemplates(BaseModel):
     """Templates configuration for a camera"""
@@ -118,6 +120,9 @@ class RecipeBase(BaseModel):
     defect_model: Optional[str] = Field(default="arcface", description="Embedding model used for defect detection: arcface | supcon")
     classifier_backend: Optional[str] = Field(default="embedding", description="Active classifier method: 'embedding' (defect_model cosine) | 'ml' (trained ML model)")
 
+    # Wrinkle segmentation model confidence threshold (recipe-level, applies to all cameras)
+    wrinkle_conf: Optional[float] = Field(default=0.25, ge=0.0, le=1.0, description="Confidence threshold for wrinkle segmentation model (0.0 - 1.0)")
+
 
 class RecipeCreate(RecipeBase):
     """Schema for creating a new recipe"""
@@ -147,6 +152,7 @@ class RecipeUpdate(BaseModel):
     ml_model_id: Optional[str] = None
     defect_model: Optional[str] = None
     classifier_backend: Optional[str] = None
+    wrinkle_conf: Optional[float] = Field(None, ge=0.0, le=1.0)
 
 
 class RecipeInDB(RecipeBase):

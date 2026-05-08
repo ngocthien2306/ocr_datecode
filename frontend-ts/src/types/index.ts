@@ -182,6 +182,7 @@ export interface Recipe {
   ml_model_id?: string;
   defect_model?: string;
   classifier_backend?: string;
+  wrinkle_conf?: number;
   created_by?: string;
   updated_by?: string;
   created_by_name?: string;  // Full name of creator
@@ -260,6 +261,7 @@ export interface Receipt {
   ml_model_id?: string;
   defect_model?: string;
   classifier_backend?: string;
+  wrinkle_conf?: number;
   createdAt: string;
   updatedAt: string;
 }

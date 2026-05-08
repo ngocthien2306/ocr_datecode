@@ -182,6 +182,7 @@ export default function Receipts() {
         ml_model_id: recipe.ml_model_id || '',
         defect_model: recipe.defect_model || 'arcface',
         classifier_backend: recipe.classifier_backend || 'embedding',
+        wrinkle_conf: recipe.wrinkle_conf ?? 0.25,
         createdAt: recipe.created_at || new Date().toISOString(),
         updatedAt: recipe.updated_at || new Date().toISOString()
       }));

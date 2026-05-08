@@ -380,13 +380,21 @@ class MultiCameraPipeline(InferencePipelineTemplate):
 
             # Get center_offset_threshold from first template (multi-camera uses first template only)
             center_offset_threshold = None
+            center_offset_threshold_left = 50.0
+            center_offset_threshold_right = 50.0
             wrinkle_area = None
+            wrinkle_min_area = 0.0
+            wrinkle_max_area = 0.0
             if camera.templates and len(camera.templates) > 0:
                 template = camera.templates[0]
                 center_offset_threshold = template.get('center_offset_threshold', 50.0)
                 center_offset_threshold_left = template.get('center_offset_threshold_left', 50.0)
                 center_offset_threshold_right = template.get('center_offset_threshold_right', 50.0)
                 wrinkle_area = template.get('wrinkle_area', None)
+                wrinkle_min_area = template.get('wrinkle_min_area', 0.0) or 0.0
+                wrinkle_max_area = template.get('wrinkle_max_area', 0.0) or 0.0
+
+            wrinkle_conf = getattr(camera, 'wrinkle_conf', 0.25)
 
             if result.get('success') and frames:
                 frames_data.append({
@@ -396,7 +404,10 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     'center_offset_threshold': center_offset_threshold,
                     'center_offset_threshold_left': center_offset_threshold_left,
                     'center_offset_threshold_right': center_offset_threshold_right,
-                    'wrinkle_area': wrinkle_area
+                    'wrinkle_area': wrinkle_area,
+                    'wrinkle_min_area': wrinkle_min_area,
+                    'wrinkle_max_area': wrinkle_max_area,
+                    'wrinkle_conf': wrinkle_conf,
                 })
                 serial_numbers.append(serial_number)
 

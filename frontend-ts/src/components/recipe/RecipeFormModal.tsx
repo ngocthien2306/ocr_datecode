@@ -57,6 +57,7 @@ interface FormDataType {
   ml_model_id: string;
   defect_model: string;
   classifier_backend: string;
+  wrinkle_conf: number;
 }
 
 interface Template {
@@ -69,7 +70,9 @@ interface Template {
   annotations: Annotation[];
   center_offset_threshold_left?: number;   // Center alignment threshold left in pixels (0-500)
   center_offset_threshold_right?: number;  // Center alignment threshold right in pixels (0-500)
-  wrinkle_area?: number;                   // Minimum wrinkle region area threshold in pixels
+  wrinkle_area?: number;                   // Total wrinkle area threshold (sum of valid regions ≥ → FAIL)
+  wrinkle_min_area?: number;               // Per-region: ignore regions smaller than this (0 = no filter)
+  wrinkle_max_area?: number;               // Per-region: any region ≥ this triggers FAIL immediately (0 = disabled)
 }
 
 interface CameraTemplates {
@@ -115,6 +118,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     ml_model_id: '',
     defect_model: 'arcface',
     classifier_backend: 'embedding',
+    wrinkle_conf: 0.25,
   });
 
   const [templateImage, setTemplateImage] = useState<string | null>(null);
@@ -216,7 +220,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               annotations: template.annotations,
               center_offset_threshold_left: template.center_offset_threshold_left ?? 50.0,   // Default to 50px
               center_offset_threshold_right: template.center_offset_threshold_right ?? 50.0,  // Default to 50px
-              wrinkle_area: template.wrinkle_area ?? 2000.0  // Default to 2000px
+              wrinkle_area: template.wrinkle_area ?? 2000.0,
+              wrinkle_min_area: template.wrinkle_min_area ?? 0.0,
+              wrinkle_max_area: template.wrinkle_max_area ?? 0.0
             }));
 
             // Load function_type for this camera (default to 'OCR' if not set)
@@ -274,6 +280,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         ml_model_id: recipeAny.ml_model_id || '',
         defect_model: recipeAny.defect_model || 'arcface',
         classifier_backend: recipeAny.classifier_backend || 'embedding',
+        wrinkle_conf: recipeAny.wrinkle_conf ?? 0.25,
       });
 
       if (recipeAny.template_config?.template_image) {
@@ -328,6 +335,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         ml_model_id: '',
         defect_model: 'arcface',
         classifier_backend: 'embedding',
+        wrinkle_conf: 0.25,
       });
       setTemplateImage(null);
       setAnnotations([]);
@@ -635,7 +643,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               annotations: template.annotations,
               center_offset_threshold_left: template.center_offset_threshold_left ?? 50.0,
               center_offset_threshold_right: template.center_offset_threshold_right ?? 50.0,
-              wrinkle_area: template.wrinkle_area ?? 2000.0
+              wrinkle_area: template.wrinkle_area ?? 2000.0,
+              wrinkle_min_area: template.wrinkle_min_area ?? 0.0,
+              wrinkle_max_area: template.wrinkle_max_area ?? 0.0
             }))
           });
         }
@@ -655,6 +665,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         ml_model_id:   formData.ml_model_id   || null,
         defect_model:  formData.defect_model  || 'arcface',
         classifier_backend: formData.classifier_backend || 'embedding',
+        wrinkle_conf: formData.wrinkle_conf ?? 0.25,
       };
       
       await onSubmit(submitData);
@@ -861,7 +872,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           annotations: clonedAnnotations,  // Use cloned annotations
           center_offset_threshold_left: sourceTemplate?.center_offset_threshold_left || 50.0,
           center_offset_threshold_right: sourceTemplate?.center_offset_threshold_right || 50.0,
-          wrinkle_area: sourceTemplate?.wrinkle_area ?? 2000.0
+          wrinkle_area: sourceTemplate?.wrinkle_area ?? 2000.0,
+          wrinkle_min_area: sourceTemplate?.wrinkle_min_area ?? 0.0,
+          wrinkle_max_area: sourceTemplate?.wrinkle_max_area ?? 0.0
         };
 
         newTemplates.push(newTemplate);
@@ -950,7 +963,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               annotations: [],
               center_offset_threshold_left: 50.0,   // Default center alignment threshold left
               center_offset_threshold_right: 50.0,  // Default center alignment threshold right
-              wrinkle_area: 2000.0                  // Default wrinkle area threshold
+              wrinkle_area: 2000.0,                 // Default total wrinkle area threshold
+              wrinkle_min_area: 0.0,                // Default per-region min (0 = no filter)
+              wrinkle_max_area: 0.0                 // Default per-region critical (0 = disabled)
             };
 
             setCameraTemplates(prev => ({
@@ -1962,6 +1977,43 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                     )}
                   </div>
                 </div>
+
+                {/* ── Wrinkle Detection ── */}
+                <h3>Wrinkle Detection</h3>
+                <div className="form-group">
+                  <label>
+                    Confidence Threshold
+                    <span style={{ marginLeft: 12, fontWeight: 600, fontFamily: 'monospace' }}>
+                      {(formData.wrinkle_conf ?? 0.25).toFixed(2)}
+                    </span>
+                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={formData.wrinkle_conf ?? 0.25}
+                      onChange={(e) => setFormData(prev => ({ ...prev, wrinkle_conf: parseFloat(e.target.value) }))}
+                      style={{ flex: 1 }}
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={formData.wrinkle_conf ?? 0.25}
+                      onChange={(e) => {
+                        const v = Math.max(0, Math.min(1, parseFloat(e.target.value) || 0));
+                        setFormData(prev => ({ ...prev, wrinkle_conf: v }));
+                      }}
+                      style={{ width: 80 }}
+                    />
+                  </div>
+                  <small className="field-description">
+                    Detection score threshold for the wrinkle segmentation model. Lower = more sensitive (more regions kept), higher = stricter.
+                  </small>
+                </div>
               </div>
             )}
 
@@ -2178,13 +2230,33 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                           />
                                         </div>
                                         <div className="filmstrip-setting-row">
-                                          <span className="filmstrip-setting-label">Wrinkle:</span>
+                                          <span className="filmstrip-setting-label">Wrinkle Total:</span>
                                           <input type="number" min="0" max="100000" step="100"
                                             value={template.wrinkle_area ?? 2000}
-                                            onChange={(e) => { e.stopPropagation(); const v = Math.max(0, parseFloat(e.target.value) || 2000); setCameraTemplates(prev => ({ ...prev, [selectedCameraForTemplate]: prev[selectedCameraForTemplate]?.map((t, i) => i === idx ? { ...t, wrinkle_area: v } : t) || [] })); }}
+                                            onChange={(e) => { e.stopPropagation(); const v = Math.max(0, parseFloat(e.target.value) || 0); setCameraTemplates(prev => ({ ...prev, [selectedCameraForTemplate]: prev[selectedCameraForTemplate]?.map((t, i) => i === idx ? { ...t, wrinkle_area: v } : t) || [] })); }}
                                             onClick={(e) => e.stopPropagation()}
                                             className="filmstrip-setting-input wide"
-                                            title="Minimum wrinkle region area (px²)"
+                                            title="Total wrinkle area threshold — sum of valid regions ≥ this value → FAIL (px²)"
+                                          />
+                                        </div>
+                                        <div className="filmstrip-setting-row">
+                                          <span className="filmstrip-setting-label">Wrinkle Min:</span>
+                                          <input type="number" min="0" max="100000" step="100"
+                                            value={template.wrinkle_min_area ?? 0}
+                                            onChange={(e) => { e.stopPropagation(); const v = Math.max(0, parseFloat(e.target.value) || 0); setCameraTemplates(prev => ({ ...prev, [selectedCameraForTemplate]: prev[selectedCameraForTemplate]?.map((t, i) => i === idx ? { ...t, wrinkle_min_area: v } : t) || [] })); }}
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="filmstrip-setting-input wide"
+                                            title="Per-region min area — regions smaller than this are ignored (0 = no filter, px²)"
+                                          />
+                                        </div>
+                                        <div className="filmstrip-setting-row">
+                                          <span className="filmstrip-setting-label">Wrinkle Max:</span>
+                                          <input type="number" min="0" max="100000" step="100"
+                                            value={template.wrinkle_max_area ?? 0}
+                                            onChange={(e) => { e.stopPropagation(); const v = Math.max(0, parseFloat(e.target.value) || 0); setCameraTemplates(prev => ({ ...prev, [selectedCameraForTemplate]: prev[selectedCameraForTemplate]?.map((t, i) => i === idx ? { ...t, wrinkle_max_area: v } : t) || [] })); }}
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="filmstrip-setting-input wide"
+                                            title="Per-region critical — any region ≥ this triggers FAIL immediately (0 = disabled, px²)"
                                           />
                                         </div>
                                         <div className="filmstrip-stats">

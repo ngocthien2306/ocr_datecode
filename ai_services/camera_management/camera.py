@@ -272,6 +272,7 @@ class Camera:
         self.expected_texts: Dict[int, Dict[int, str]] = {}  # Map template_idx -> {region_idx -> expected_text}
         self.matching_threshold: float = 0.85  # Template matching similarity threshold
         self.recognition_threshold: float = 0.5  # OCR recognition confidence threshold
+        self.wrinkle_conf: float = 0.25  # Wrinkle segmentation model confidence threshold (recipe-level)
 
         # Frame tracking
         self.frame_idx = 0
@@ -1137,6 +1138,8 @@ class Camera:
             self.ml_model_id = recipe_data.get("ml_model_id")
             self.defect_model = recipe_data.get("defect_model") or "arcface"
             self.classifier_backend = recipe_data.get("classifier_backend") or "embedding"
+            wc = recipe_data.get("wrinkle_conf")
+            self.wrinkle_conf = float(wc) if wc is not None else 0.25
             logger.info(
                 f"[{self.serial_number}] Loaded thresholds: "
                 f"matching={self.matching_threshold}, recognition={self.recognition_threshold}"
