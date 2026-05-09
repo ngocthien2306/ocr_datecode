@@ -2241,6 +2241,17 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                         className="filmstrip-name-input"
                                       />
                                       <div className="filmstrip-settings">
+                                        {(() => {
+                                          const hasLabel = template.annotations?.some(a => a.type === 'label');
+                                          const hasProduct = template.annotations?.some(a => a.type === 'product');
+                                          if (!hasLabel || !hasProduct) {
+                                            return (
+                                              <div className="filmstrip-setting-hint" style={{ fontSize: 11, opacity: 0.7, padding: '4px 6px', fontStyle: 'italic' }}>
+                                                ⓘ Add 'product' and 'label' annotations to configure offset/wrinkle thresholds.
+                                              </div>
+                                            );
+                                          }
+                                          return (<>
                                         <div className="filmstrip-setting-row">
                                           <span className="filmstrip-setting-label">Offset L/R:</span>
                                           {(() => {
@@ -2326,6 +2337,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                             title="Per-region critical — any region ≥ this triggers FAIL immediately (0 = disabled, px²)"
                                           />
                                         </div>
+                                        </>);
+                                        })()}
                                         <div className="filmstrip-stats">
                                           {hasTemplateRegion && <span className="stat">T</span>}
                                           <span className="stat">{template.annotations.filter(a => ['text', 'barcode', 'datecode'].includes(a.type!)).length}R</span>
