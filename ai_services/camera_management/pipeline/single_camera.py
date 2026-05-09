@@ -441,6 +441,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 wrinkle_max_area = template.get('wrinkle_max_area', 0.0) or 0.0
 
             wrinkle_conf = getattr(camera, 'wrinkle_conf', 0.25)
+            wrinkle_show_when_pass = getattr(camera, 'wrinkle_show_when_pass', True)
 
             if result.get('success') and idx < len(frames):
                 frames_data.append({
@@ -455,6 +456,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     'wrinkle_min_area': wrinkle_min_area,
                     'wrinkle_max_area': wrinkle_max_area,
                     'wrinkle_conf': wrinkle_conf,
+                    'wrinkle_show_when_pass': wrinkle_show_when_pass,
                 })
             else:
                 frames_data.append({
@@ -467,6 +469,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     'wrinkle_min_area': wrinkle_min_area,
                     'wrinkle_max_area': wrinkle_max_area,
                     'wrinkle_conf': wrinkle_conf,
+                    'wrinkle_show_when_pass': wrinkle_show_when_pass,
                 })
 
         # Filter valid frames for batch processing

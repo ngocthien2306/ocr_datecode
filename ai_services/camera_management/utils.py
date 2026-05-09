@@ -407,7 +407,7 @@ def draw_inference_bboxes(
         cv2.polylines(result_img, [pts], isClosed=True, color=color,
                      thickness=line_thickness, lineType=cv2.LINE_AA)
 
-        # Draw type-tag for 'label' polygon (giống style YOLO label box trước đây)
+        # Draw type-tag for 'label' polygon (same style as the previous YOLO label box)
         if bbox_type == 'label' and len(points) > 0:
             tag_text = "LABEL"
             (tw, th), tbase = cv2.getTextSize(
@@ -680,8 +680,8 @@ def draw_detected_obb_boxes(
     }
 
     # Draw each detected box
-    # NOTE: 'label' tạm ẩn — dùng template polygon transformed (SuperPoint) làm reference,
-    # không cần visualize YOLO label box
+    # NOTE: 'label' temporarily hidden — using template polygon (transformed via SuperPoint)
+    # as the reference; no need to visualize the YOLO label box
     for box_type in ['product', 'wrinkled']:
         if box_type not in detected_boxes:
             continue

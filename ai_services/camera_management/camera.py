@@ -273,6 +273,7 @@ class Camera:
         self.matching_threshold: float = 0.85  # Template matching similarity threshold
         self.recognition_threshold: float = 0.5  # OCR recognition confidence threshold
         self.wrinkle_conf: float = 0.25  # Wrinkle segmentation model confidence threshold (recipe-level)
+        self.wrinkle_show_when_pass: bool = True  # Draw wrinkle contour even when frame PASSes (debug)
 
         # Frame tracking
         self.frame_idx = 0
@@ -1140,6 +1141,8 @@ class Camera:
             self.classifier_backend = recipe_data.get("classifier_backend") or "embedding"
             wc = recipe_data.get("wrinkle_conf")
             self.wrinkle_conf = float(wc) if wc is not None else 0.25
+            wsp = recipe_data.get("wrinkle_show_when_pass")
+            self.wrinkle_show_when_pass = bool(wsp) if wsp is not None else True
             logger.info(
                 f"[{self.serial_number}] Loaded thresholds: "
                 f"matching={self.matching_threshold}, recognition={self.recognition_threshold}"

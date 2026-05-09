@@ -58,6 +58,7 @@ interface FormDataType {
   defect_model: string;
   classifier_backend: string;
   wrinkle_conf: number;
+  wrinkle_show_when_pass: boolean;
 }
 
 interface Template {
@@ -120,6 +121,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     defect_model: 'arcface',
     classifier_backend: 'embedding',
     wrinkle_conf: 0.25,
+    wrinkle_show_when_pass: true,
   });
 
   const [templateImage, setTemplateImage] = useState<string | null>(null);
@@ -283,6 +285,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         defect_model: recipeAny.defect_model || 'arcface',
         classifier_backend: recipeAny.classifier_backend || 'embedding',
         wrinkle_conf: recipeAny.wrinkle_conf ?? 0.25,
+        wrinkle_show_when_pass: recipeAny.wrinkle_show_when_pass ?? true,
       });
 
       if (recipeAny.template_config?.template_image) {
@@ -338,6 +341,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         defect_model: 'arcface',
         classifier_backend: 'embedding',
         wrinkle_conf: 0.25,
+        wrinkle_show_when_pass: true,
       });
       setTemplateImage(null);
       setAnnotations([]);
@@ -669,6 +673,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         defect_model:  formData.defect_model  || 'arcface',
         classifier_backend: formData.classifier_backend || 'embedding',
         wrinkle_conf: formData.wrinkle_conf ?? 0.25,
+        wrinkle_show_when_pass: formData.wrinkle_show_when_pass ?? true,
       };
       
       await onSubmit(submitData);
@@ -2021,6 +2026,19 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                   </div>
                   <small className="field-description">
                     Detection score threshold for the wrinkle segmentation model. Lower = more sensitive (more regions kept), higher = stricter.
+                  </small>
+                </div>
+                <div className="form-group" style={{ marginTop: 8 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={formData.wrinkle_show_when_pass ?? true}
+                      onChange={(e) => setFormData(prev => ({ ...prev, wrinkle_show_when_pass: e.target.checked }))}
+                    />
+                    <span>Show wrinkle regions even when frame passes</span>
+                  </label>
+                  <small className="field-description">
+                    On → draws wrinkle contour on the result image even when the bottle PASSes (debug/monitoring). Off → draws only on FAIL.
                   </small>
                 </div>
               </div>

@@ -262,6 +262,7 @@ class ProductVerificationService:
                 center_offset_threshold_left=data.get('center_offset_threshold_left'),
                 center_offset_threshold_right=data.get('center_offset_threshold_right'),
                 center_offset_unit=data.get('center_offset_unit', 'px'),
+                wrinkle_show_when_pass=data.get('wrinkle_show_when_pass', True),
                 pre_computed_wrinkled_check=wrinkled_checks.get(orig_idx),
             )
 
@@ -310,6 +311,7 @@ class ProductVerificationService:
         center_offset_threshold_left: Optional[float] = None,
         center_offset_threshold_right: Optional[float] = None,
         center_offset_unit: str = 'px',
+        wrinkle_show_when_pass: bool = True,
         pre_computed_wrinkled_check: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         serial_number = camera.serial_number
@@ -442,10 +444,11 @@ class ProductVerificationService:
                 'class': str(label_box['class']),
                 'corners': label_box['corners'].tolist() if isinstance(label_box['corners'], np.ndarray) else label_box['corners']
             }
-        # Vẽ tất cả wrinkle candidate (sau khi đã filter conf + min_region_area),
-        # bất kể frame PASS hay FAIL — để debug/giám sát trực quan
+        # Draw wrinkle candidates (already filtered by conf + min_region_area):
+        # - When wrinkle FAILS (has_wrinkled=True): always draw
+        # - When PASS: only draw if wrinkle_show_when_pass=True (recipe option)
         wrinkled_boxes_to_draw = wrinkled_check.get('wrinkled_boxes', [])
-        if wrinkled_boxes_to_draw:
+        if wrinkled_boxes_to_draw and (wrinkled_check.get('has_wrinkled', False) or wrinkle_show_when_pass):
             detected_boxes['wrinkled'] = wrinkled_boxes_to_draw
 
         return {
@@ -590,7 +593,7 @@ class ProductVerificationService:
         threshold_left = center_offset_threshold_left if center_offset_threshold_left is not None else default_threshold
         threshold_right = center_offset_threshold_right if center_offset_threshold_right is not None else default_threshold
 
-        # --- Reference: luôn dùng template polygon type='label' đã transform bằng SuperPoint ---
+        # --- Reference: always use template polygon type='label' transformed by SuperPoint ---
         template_region = next(
             (bbox for bbox in transformed_bboxes if bbox.get('type') == 'label'),
             None
@@ -605,10 +608,10 @@ class ProductVerificationService:
         template_poly = np.array(template_region['points'], dtype=np.float32)
         ref_center_x = float(np.mean(template_poly[:, 0]))
         ref_center_y = float(np.mean(template_poly[:, 1]))
-        # Width axis-aligned của polygon — dùng để convert % → px
+        # Axis-aligned width of polygon — used to convert % → px
         ref_width = float(np.max(template_poly[:, 0]) - np.min(template_poly[:, 0]))
 
-        # --- Convert ngưỡng theo đơn vị ---
+        # --- Convert thresholds based on unit ---
         unit = (center_offset_unit or 'px').lower()
         if unit == 'pct':
             threshold_left_px  = ref_width * (threshold_left  / 100.0)
@@ -617,16 +620,16 @@ class ProductVerificationService:
             threshold_left_px  = float(threshold_left)
             threshold_right_px = float(threshold_right)
 
-        # --- Tâm của product box ---
+        # --- Product box center ---
         product_corners = product_box['corners']
         if isinstance(product_corners, list):
             product_corners = np.array(product_corners, dtype=np.float32)
         product_center_x = float(np.mean(product_corners[:, 0]))
         product_center_y = float(np.mean(product_corners[:, 1]))
 
-        # --- Tính độ lệch theo X ---
-        # offset_x > 0: product nằm bên PHẢI reference
-        # offset_x < 0: product nằm bên TRÁI reference
+        # --- Compute X-axis offset ---
+        # offset_x > 0: product is on the RIGHT of reference
+        # offset_x < 0: product is on the LEFT of reference
         offset_x = product_center_x - ref_center_x
         abs_offset_x = abs(offset_x)
 
@@ -657,10 +660,10 @@ class ProductVerificationService:
             'direction': direction,
             'unit': unit,
             'ref_width': ref_width,
-            # Giá trị raw theo unit người dùng nhập
+            # Raw values as entered by user (in selected unit)
             'threshold_left': float(threshold_left),
             'threshold_right': float(threshold_right),
-            # Giá trị đã convert sang px tại runtime
+            # Values converted to px at runtime
             'threshold_left_px': float(threshold_left_px),
             'threshold_right_px': float(threshold_right_px),
             'threshold_used_px': float(threshold_used_px),

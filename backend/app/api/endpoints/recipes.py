@@ -239,6 +239,7 @@ def recipe_to_response(recipe: RecipeInDB, user_names_map: dict = None) -> Recip
         defect_model=getattr(recipe, 'defect_model', None),
         classifier_backend=getattr(recipe, 'classifier_backend', None),
         wrinkle_conf=getattr(recipe, 'wrinkle_conf', None),
+        wrinkle_show_when_pass=getattr(recipe, 'wrinkle_show_when_pass', None),
         created_by=recipe.created_by,
         updated_by=recipe.updated_by,
         created_by_name=created_by_name,
@@ -1021,6 +1022,7 @@ async def clone_recipe(
         defect_model=getattr(original_recipe, 'defect_model', None),
         classifier_backend=getattr(original_recipe, 'classifier_backend', None),
         wrinkle_conf=getattr(original_recipe, 'wrinkle_conf', None),
+        wrinkle_show_when_pass=getattr(original_recipe, 'wrinkle_show_when_pass', None),
     )
 
     # Create the cloned recipe
@@ -1162,6 +1164,7 @@ async def load_recipe(
         'defect_model': getattr(recipe, 'defect_model', None),
         'classifier_backend': getattr(recipe, 'classifier_backend', None),
         'wrinkle_conf': getattr(recipe, 'wrinkle_conf', None),
+        'wrinkle_show_when_pass': getattr(recipe, 'wrinkle_show_when_pass', None),
     }
 
     # Send load recipe command via WebSocket to CameraManagement service
@@ -1189,6 +1192,7 @@ async def load_recipe(
         'defect_model': getattr(recipe, 'defect_model', None),
         'classifier_backend': getattr(recipe, 'classifier_backend', None),
         'wrinkle_conf': getattr(recipe, 'wrinkle_conf', None),
+        'wrinkle_show_when_pass': getattr(recipe, 'wrinkle_show_when_pass', None),
     }
 
     success = await send_load_recipe(recipe_dict)
@@ -1488,6 +1492,7 @@ async def update_recipe_realtime(
         'defect_model': getattr(recipe, 'defect_model', None),
         'classifier_backend': getattr(recipe, 'classifier_backend', None),
         'wrinkle_conf': getattr(recipe, 'wrinkle_conf', None),
+        'wrinkle_show_when_pass': getattr(recipe, 'wrinkle_show_when_pass', None),
     }
 
     # 4. Merge update_data into recipe_dict (in-memory, NOT saved to DB)
@@ -1506,6 +1511,10 @@ async def update_recipe_realtime(
     if 'wrinkle_conf' in update_data:
         recipe_dict['wrinkle_conf'] = update_data['wrinkle_conf']
         logger.info(f"📝 [REALTIME UPDATE] wrinkle_conf → {update_data['wrinkle_conf']}")
+
+    if 'wrinkle_show_when_pass' in update_data:
+        recipe_dict['wrinkle_show_when_pass'] = update_data['wrinkle_show_when_pass']
+        logger.info(f"📝 [REALTIME UPDATE] wrinkle_show_when_pass → {update_data['wrinkle_show_when_pass']}")
 
     # Update camera settings
     if 'cameras' in update_data:

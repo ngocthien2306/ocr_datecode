@@ -424,9 +424,9 @@ class WrinkledSegmenterTRT:
 
         total_area = sum(b['area'] for b in wrinkled_boxes)
 
-        # Critical: bất kỳ vùng đơn nào ≥ max_region_area → FAIL ngay (kể cả total chưa đạt)
+        # Critical: any single region ≥ max_region_area → FAIL immediately (even if total hasn't reached)
         has_critical = max_region_area > 0 and any(b['area'] >= max_region_area for b in wrinkled_boxes)
-        # Total: tổng các vùng hợp lệ ≥ ngưỡng → FAIL
+        # Total: sum of valid regions ≥ threshold → FAIL
         total_exceeded = total_area >= effective_min_area
 
         has_wrinkled = has_critical or total_exceeded

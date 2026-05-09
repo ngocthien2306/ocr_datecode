@@ -183,6 +183,7 @@ export interface Recipe {
   defect_model?: string;
   classifier_backend?: string;
   wrinkle_conf?: number;
+  wrinkle_show_when_pass?: boolean;
   created_by?: string;
   updated_by?: string;
   created_by_name?: string;  // Full name of creator
@@ -262,6 +263,7 @@ export interface Receipt {
   defect_model?: string;
   classifier_backend?: string;
   wrinkle_conf?: number;
+  wrinkle_show_when_pass?: boolean;
   createdAt: string;
   updatedAt: string;
 }
