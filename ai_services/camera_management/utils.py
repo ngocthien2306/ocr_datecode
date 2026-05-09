@@ -1363,34 +1363,22 @@ def _init_reject_logger():
     if _reject_logger is not None:
         return _reject_logger
 
-    # Create logs directory if not exists
-    log_dir = Path(__file__).parent.parent / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
+    from logging_config import make_handler, get_log_dir
 
-    # Create log file path with date
-    today = datetime.now().strftime("%Y-%m-%d")
-    _reject_log_file = log_dir / f"reject_actions_{today}.log"
-
-    # Create logger
+    # Logger writes to {repo_root}/logs/reject_actions/{YYYY-MM-DD}.log (auto-rotated)
     _reject_logger = logging.getLogger("reject_actions")
     _reject_logger.setLevel(logging.INFO)
-    _reject_logger.propagate = False  # Don't propagate to root logger
-
-    # Remove existing handlers
+    _reject_logger.propagate = False
     _reject_logger.handlers.clear()
 
-    # Create file handler
-    file_handler = logging.FileHandler(_reject_log_file, mode='a', encoding='utf-8')
-    file_handler.setLevel(logging.INFO)
-
-    # Create formatter with precise timing
-    formatter = logging.Formatter(
-        '%(asctime)s.%(msecs)03d | %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+    file_handler = make_handler(
+        "reject_actions",
+        fmt='%(asctime)s.%(msecs)03d | %(message)s',
     )
-    file_handler.setFormatter(formatter)
-
+    file_handler.formatter.datefmt = '%Y-%m-%d %H:%M:%S'
+    setattr(file_handler, "_marker", "daily-reject_actions")
     _reject_logger.addHandler(file_handler)
+    _reject_log_file = Path(file_handler.baseFilename)
 
     logger.info(f"Reject action logger initialized: {_reject_log_file}")
 

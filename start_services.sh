@@ -12,9 +12,13 @@ USER_HOME="$HOME"
 BACKEND_DIR="${USER_HOME}/Source/ocr_datecode/backend"
 FRONTEND_DIR="${USER_HOME}/Source/ocr_datecode/frontend-ts"
 AI_SERVICES_DIR="${USER_HOME}/Source/ocr_datecode/ai_services"
-LOG_DIR="${USER_HOME}/Source/ocr_datecode/logs"
+# Logs from this script (stdout/stderr of background processes) are ephemeral —
+# wiped on every start. Persistent app logs live under logs/{backend,...}/.
+LOGS_ROOT="${USER_HOME}/Source/ocr_datecode/logs"
+LOG_DIR="${LOGS_ROOT}/start_services"
 
-# Create log directory
+mkdir -p "$LOGS_ROOT"
+rm -rf "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 
 # === STEP 0: Camera Check ===

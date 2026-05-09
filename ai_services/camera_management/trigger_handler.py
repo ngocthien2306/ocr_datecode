@@ -239,29 +239,20 @@ class TriggerHandler:
 
     def _monitoring_loop(self):
         """Monitoring loop - logs statistics every N seconds"""
-        import os
+        from logging_config import make_handler
 
-        # Setup file logger
-        log_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, 'trigger_stats.log')
-
-        # Create file handler
-        file_handler = logging.FileHandler(log_file, mode='a')
-        file_handler.setLevel(logging.INFO)
-        file_formatter = logging.Formatter(
-            '%(asctime)s - STATS - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        file_handler.setFormatter(file_formatter)
-
-        # Create stats logger
+        # Setup dedicated stats logger → {repo_root}/logs/trigger_stats/{YYYY-MM-DD}.log
         stats_logger = logging.getLogger('trigger_stats')
         stats_logger.setLevel(logging.INFO)
-        stats_logger.addHandler(file_handler)
         stats_logger.propagate = False
-
-        logger.info(f"Statistics logging to: {log_file}")
+        if not any(getattr(h, "_marker", None) == "daily-trigger_stats" for h in stats_logger.handlers):
+            file_handler = make_handler(
+                "trigger_stats",
+                fmt='%(asctime)s - STATS - %(message)s',
+            )
+            setattr(file_handler, "_marker", "daily-trigger_stats")
+            stats_logger.addHandler(file_handler)
+        logger.info("Statistics logging to: trigger_stats/{date}.log")
 
         try:
             while self._monitoring:
@@ -335,28 +326,25 @@ class TriggerHandler:
 
     def _setup_pulse_logger(self):
         """Setup dedicated file logger for pulse width measurements"""
-
-        log_dir = f"{home}/Source/ocr_datecode/ai_services/logs"
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, 'pulse_width.log')
+        from logging_config import make_handler
 
         pulse_logger = logging.getLogger('pulse_width')
         pulse_logger.setLevel(logging.INFO)
         pulse_logger.propagate = False
 
         # Avoid duplicate handlers if called multiple times
-        if not pulse_logger.handlers:
-            file_handler = logging.FileHandler(log_file, mode='a')
-            file_handler.setLevel(logging.INFO)
-            formatter = logging.Formatter(
-                '%(asctime)s.%(msecs)03d | %(message)s',
-                datefmt='%Y-%m-%d %H:%M:%S'
+        if not any(getattr(h, "_marker", None) == "daily-pulse_width" for h in pulse_logger.handlers):
+            file_handler = make_handler(
+                "pulse_width",
+                fmt='%(asctime)s.%(msecs)03d | %(message)s',
             )
-            file_handler.setFormatter(formatter)
+            # Override datefmt for millisecond format
+            file_handler.formatter.datefmt = '%Y-%m-%d %H:%M:%S'
+            setattr(file_handler, "_marker", "daily-pulse_width")
             pulse_logger.addHandler(file_handler)
 
         self._pulse_logger = pulse_logger
-        logger.info(f"Pulse width logging to: {log_file}")
+        logger.info("Pulse width logging to: pulse_width/{date}.log")
 
     def _log_pulse_width(self, di_number: int, rise_time: float, fall_time: float,
                          stuck_count: int = 1):

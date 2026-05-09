@@ -27,24 +27,14 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from camera_management.camera_manager import CameraManager
 from camera_management.websocket_client import CameraWebSocketClient
+from logging_config import setup_category_logger
 
 # Import for API calls
 import requests
 home = os.environ.get('HOME')
 
-# Configure logging
-LOGS_DIR = Path(f"{home}/Source/ocr_datecode/backend/logs")
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(LOGS_DIR / 'camera_management.log', mode='a')
-    ]
-)
-
+# Centralized logging → {repo_root}/logs/camera_management/{YYYY-MM-DD}.log
+setup_category_logger("camera_management")
 logger = logging.getLogger(__name__)
 
 

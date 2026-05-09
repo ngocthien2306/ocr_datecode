@@ -1,0 +1,101 @@
+"""
+Centralized logging config for OCR DateCode (AI services side).
+
+Mirrors backend/app/utils/logging_config.py — duplicated because the two
+services run as separate Python processes and don't share a package.
+
+Logs go to {repo_root}/logs/{category}/{YYYY-MM-DD}.log.
+"""
+import logging
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+# repo_root = parents[1] (ai_services/logging_config.py → ai_services → repo)
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+LOGS_ROOT = _REPO_ROOT / "logs"
+
+CATEGORIES = [
+    "backend",
+    "camera_settings",
+    "camera_management",
+    "trigger_stats",
+    "pulse_width",
+    "reject_actions",
+    "obb_rotation",
+    "start_services",
+]
+
+DEFAULT_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+
+def get_log_dir(category: str) -> Path:
+    folder = LOGS_ROOT / category
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+class DailyRotatingFileHandler(logging.FileHandler):
+    """Writes to {log_dir}/{YYYY-MM-DD}.log; rotates when local date changes."""
+
+    def __init__(self, log_dir: Path, encoding: str = "utf-8"):
+        self._log_dir = log_dir
+        self._current_date = self._today()
+        filename = log_dir / f"{self._current_date}.log"
+        super().__init__(str(filename), mode="a", encoding=encoding, delay=False)
+
+    @staticmethod
+    def _today() -> str:
+        return datetime.now().strftime("%Y-%m-%d")
+
+    def emit(self, record: logging.LogRecord) -> None:
+        today = self._today()
+        if today != self._current_date:
+            try:
+                self.close()
+            except Exception:
+                pass
+            self._current_date = today
+            self.baseFilename = str(self._log_dir / f"{today}.log")
+            self.stream = self._open()
+        super().emit(record)
+
+
+def make_handler(category: str, level: int = logging.INFO,
+                 fmt: str = DEFAULT_FORMAT) -> DailyRotatingFileHandler:
+    handler = DailyRotatingFileHandler(get_log_dir(category))
+    handler.setLevel(level)
+    handler.setFormatter(logging.Formatter(fmt))
+    return handler
+
+
+def setup_category_logger(
+    category: str,
+    *,
+    level: int = logging.INFO,
+    fmt: str = DEFAULT_FORMAT,
+    add_console: bool = True,
+    logger_name: Optional[str] = None,
+) -> logging.Logger:
+    target = logging.getLogger(logger_name) if logger_name else logging.getLogger()
+    target.setLevel(level)
+
+    file_marker = f"daily-{category}"
+    has_file = any(getattr(h, "_marker", None) == file_marker for h in target.handlers)
+    if not has_file:
+        fh = make_handler(category, level=level, fmt=fmt)
+        setattr(fh, "_marker", file_marker)
+        target.addHandler(fh)
+
+    if add_console:
+        has_console = any(
+            isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)
+            for h in target.handlers
+        )
+        if not has_console:
+            ch = logging.StreamHandler()
+            ch.setLevel(level)
+            ch.setFormatter(logging.Formatter(fmt))
+            target.addHandler(ch)
+
+    return target

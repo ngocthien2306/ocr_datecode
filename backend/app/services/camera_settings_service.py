@@ -3,25 +3,20 @@ Camera Settings Service
 Service to manage camera runtime settings via JSON files
 """
 import json
-import os
 import logging
 from typing import Optional, Dict
 from pathlib import Path
 from datetime import datetime
 
-# Setup logging to file
-home = os.environ.get('HOME')
-LOGS_DIR = Path(f"{home}/Source/ocr_datecode/backend/logs")
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
+from app.utils.logging_config import make_handler
 
-# Configure file handler for settings service
-file_handler = logging.FileHandler(LOGS_DIR / 'camera_settings.log', mode='a')
-file_handler.setLevel(logging.INFO)
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-
+# Attach DailyRotatingFileHandler → {repo_root}/logs/camera_settings/{YYYY-MM-DD}.log
 logger = logging.getLogger(__name__)
-logger.addHandler(file_handler)
 logger.setLevel(logging.INFO)
+if not any(getattr(h, "_marker", None) == "daily-camera_settings" for h in logger.handlers):
+    _h = make_handler("camera_settings")
+    setattr(_h, "_marker", "daily-camera_settings")
+    logger.addHandler(_h)
 
 
 class CameraSettingsService:

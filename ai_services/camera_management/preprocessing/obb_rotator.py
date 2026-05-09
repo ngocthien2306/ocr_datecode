@@ -31,24 +31,23 @@ def _get_rotation_file_logger() -> logging.Logger:
     if _rotation_file_logger is not None:
         return _rotation_file_logger
 
-    log_dir = Path(HOME) / 'Source' / 'ocr_datecode' / 'ai_services' / 'logs'
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / 'obb_rotation.log'
+    from logging_config import make_handler
 
     _rotation_file_logger = logging.getLogger('obb_rotation')
     _rotation_file_logger.setLevel(logging.DEBUG)
     _rotation_file_logger.propagate = False  # don't bubble to root logger
 
-    if not _rotation_file_logger.handlers:
-        fh = logging.FileHandler(log_path, encoding='utf-8')
-        fh.setLevel(logging.DEBUG)
-        fh.setFormatter(logging.Formatter(
-            '%(asctime)s  %(levelname)-8s  %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        ))
+    if not any(getattr(h, "_marker", None) == "daily-obb_rotation" for h in _rotation_file_logger.handlers):
+        fh = make_handler(
+            "obb_rotation",
+            level=logging.DEBUG,
+            fmt='%(asctime)s  %(levelname)-8s  %(message)s',
+        )
+        fh.formatter.datefmt = '%Y-%m-%d %H:%M:%S'
+        setattr(fh, "_marker", "daily-obb_rotation")
         _rotation_file_logger.addHandler(fh)
 
-    logger.info(f"OBB rotation log: {log_path}")
+    logger.info("OBB rotation log: obb_rotation/{date}.log")
     return _rotation_file_logger
 
 

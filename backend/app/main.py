@@ -10,24 +10,14 @@ from app.repositories.user_repository import UserRepository
 from app.repositories.recipe_repository import RecipeRepository
 from app.repositories.action_log_repository import ActionLogRepository
 import logging
-from pathlib import Path
 
-from app.api.endpoints import auth, users, recipes, cameras, upload, action_logs, inference_results, trigger_simulator, agent, jetson_monitoring, storage, ml_training
+from app.api.endpoints import auth, users, recipes, cameras, upload, action_logs, inference_results, trigger_simulator, agent, jetson_monitoring, storage, ml_training, system_logs
 from app.api.websocket import camera_ws
 from app.services.socketio_service import socket_app
+from app.utils.logging_config import setup_category_logger
 
-# Setup logging to file
-LOGS_DIR = Path(__file__).parent.parent.parent / "backend" / "logs"
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),  # Console output
-        logging.FileHandler(LOGS_DIR / 'backend.log', mode='a')  # File output
-    ]
-)
+# Centralized logging → {repo_root}/logs/backend/{YYYY-MM-DD}.log
+setup_category_logger("backend")
 logger = logging.getLogger(__name__)
 
 
@@ -72,6 +62,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Warning: Jetson monitoring service failed to start: {e}")
 
+    # Start log cleanup scheduler
+    try:
+        from app.services import log_cleanup_scheduler
+        log_cleanup_scheduler.start()
+        print("✅ Log cleanup scheduler started")
+    except Exception as e:
+        print(f"⚠️ Warning: Log cleanup scheduler failed to start: {e}")
+
     # Mark orphan ML training records as failed — if the previous process was
     # OOM-killed mid-training, the model record stays at status='training' and
     # poisons the project state. This sweep flips them back to 'failed' so the
@@ -107,6 +105,14 @@ async def lifespan(app: FastAPI):
         from app.services.jetson_monitoring_service import jetson_monitoring_service
         await jetson_monitoring_service.stop_monitoring()
         print("🛑 Jetson monitoring service stopped")
+    except Exception:
+        pass
+
+    # Stop log cleanup scheduler
+    try:
+        from app.services import log_cleanup_scheduler
+        await log_cleanup_scheduler.stop()
+        print("🛑 Log cleanup scheduler stopped")
     except Exception:
         pass
 
@@ -150,6 +156,7 @@ app.include_router(agent.router, prefix="/api", tags=["AI Agent"])
 app.include_router(jetson_monitoring.router, prefix="/api", tags=["Jetson Monitoring"])
 app.include_router(storage.router, prefix="/api", tags=["Storage Management"])
 app.include_router(ml_training.router, prefix="/api", tags=["ML Training"])
+app.include_router(system_logs.router, prefix="/api/system-logs", tags=["System Logs"])
 
 # WebSocket endpoints
 app.include_router(camera_ws.router, tags=["WebSocket"])
