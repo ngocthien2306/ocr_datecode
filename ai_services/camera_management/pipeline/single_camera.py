@@ -426,6 +426,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             center_offset_threshold = None
             center_offset_threshold_left = 50.0
             center_offset_threshold_right = 50.0
+            center_offset_unit = 'px'
             wrinkle_area = None
             wrinkle_min_area = 0.0
             wrinkle_max_area = 0.0
@@ -434,6 +435,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 center_offset_threshold = template.get('center_offset_threshold', 50.0)
                 center_offset_threshold_left = template.get('center_offset_threshold_left', 50.0)
                 center_offset_threshold_right = template.get('center_offset_threshold_right', 50.0)
+                center_offset_unit = template.get('center_offset_unit', 'px') or 'px'
                 wrinkle_area = template.get('wrinkle_area', None)
                 wrinkle_min_area = template.get('wrinkle_min_area', 0.0) or 0.0
                 wrinkle_max_area = template.get('wrinkle_max_area', 0.0) or 0.0
@@ -448,6 +450,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     'center_offset_threshold': center_offset_threshold,
                     'center_offset_threshold_left': center_offset_threshold_left,
                     'center_offset_threshold_right': center_offset_threshold_right,
+                    'center_offset_unit': center_offset_unit,
                     'wrinkle_area': wrinkle_area,
                     'wrinkle_min_area': wrinkle_min_area,
                     'wrinkle_max_area': wrinkle_max_area,
@@ -459,6 +462,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     'transformed_bboxes': [],
                     'camera': camera,
                     'center_offset_threshold': center_offset_threshold,
+                    'center_offset_unit': center_offset_unit,
                     'wrinkle_area': wrinkle_area,
                     'wrinkle_min_area': wrinkle_min_area,
                     'wrinkle_max_area': wrinkle_max_area,

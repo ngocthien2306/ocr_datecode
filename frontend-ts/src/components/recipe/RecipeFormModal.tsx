@@ -68,8 +68,9 @@ interface Template {
   image_width?: number;
   image_height?: number;
   annotations: Annotation[];
-  center_offset_threshold_left?: number;   // Center alignment threshold left in pixels (0-500)
-  center_offset_threshold_right?: number;  // Center alignment threshold right in pixels (0-500)
+  center_offset_threshold_left?: number;   // Center alignment threshold left (value in px or %, depending on center_offset_unit)
+  center_offset_threshold_right?: number;  // Center alignment threshold right (value in px or %, depending on center_offset_unit)
+  center_offset_unit?: 'px' | 'pct';       // Unit for center_offset_threshold_left/right
   wrinkle_area?: number;                   // Total wrinkle area threshold (sum of valid regions ≥ → FAIL)
   wrinkle_min_area?: number;               // Per-region: ignore regions smaller than this (0 = no filter)
   wrinkle_max_area?: number;               // Per-region: any region ≥ this triggers FAIL immediately (0 = disabled)
@@ -218,8 +219,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               image_width: template.image_width,
               image_height: template.image_height,
               annotations: template.annotations,
-              center_offset_threshold_left: template.center_offset_threshold_left ?? 50.0,   // Default to 50px
-              center_offset_threshold_right: template.center_offset_threshold_right ?? 50.0,  // Default to 50px
+              center_offset_threshold_left: template.center_offset_threshold_left ?? 50.0,
+              center_offset_threshold_right: template.center_offset_threshold_right ?? 50.0,
+              center_offset_unit: (template.center_offset_unit as 'px' | 'pct') ?? 'px',
               wrinkle_area: template.wrinkle_area ?? 2000.0,
               wrinkle_min_area: template.wrinkle_min_area ?? 0.0,
               wrinkle_max_area: template.wrinkle_max_area ?? 0.0
@@ -643,6 +645,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               annotations: template.annotations,
               center_offset_threshold_left: template.center_offset_threshold_left ?? 50.0,
               center_offset_threshold_right: template.center_offset_threshold_right ?? 50.0,
+              center_offset_unit: template.center_offset_unit ?? 'px',
               wrinkle_area: template.wrinkle_area ?? 2000.0,
               wrinkle_min_area: template.wrinkle_min_area ?? 0.0,
               wrinkle_max_area: template.wrinkle_max_area ?? 0.0
@@ -872,6 +875,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           annotations: clonedAnnotations,  // Use cloned annotations
           center_offset_threshold_left: sourceTemplate?.center_offset_threshold_left || 50.0,
           center_offset_threshold_right: sourceTemplate?.center_offset_threshold_right || 50.0,
+          center_offset_unit: sourceTemplate?.center_offset_unit ?? 'px',
           wrinkle_area: sourceTemplate?.wrinkle_area ?? 2000.0,
           wrinkle_min_area: sourceTemplate?.wrinkle_min_area ?? 0.0,
           wrinkle_max_area: sourceTemplate?.wrinkle_max_area ?? 0.0
@@ -961,11 +965,12 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               image_width: width,
               image_height: height,
               annotations: [],
-              center_offset_threshold_left: 50.0,   // Default center alignment threshold left
-              center_offset_threshold_right: 50.0,  // Default center alignment threshold right
-              wrinkle_area: 2000.0,                 // Default total wrinkle area threshold
-              wrinkle_min_area: 0.0,                // Default per-region min (0 = no filter)
-              wrinkle_max_area: 0.0                 // Default per-region critical (0 = disabled)
+              center_offset_threshold_left: 50.0,
+              center_offset_threshold_right: 50.0,
+              center_offset_unit: 'px' as const,    // Default unit (BC with old recipes)
+              wrinkle_area: 2000.0,
+              wrinkle_min_area: 0.0,
+              wrinkle_max_area: 0.0
             };
 
             setCameraTemplates(prev => ({
@@ -1925,58 +1930,62 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                   </div>
                 </div>
 
-                {/* ── Model Thresholds ── */}
-                <h3>Model Thresholds</h3>
-                <div className="thresholds-grid">
-                  <div className="form-group">
-                    <label>Detection <span className="required">*</span></label>
-                    <input type="number" value={formData.model_thresholds.detection_threshold}
-                           onChange={(e) => handleModelThresholdChange('detection_threshold', e.target.value)}
-                           step="0.01" min="0" max="1" placeholder="0.0 - 1.0"
-                           className={errors['model_thresholds.detection_threshold'] ? 'error' : ''} />
-                    {errors['model_thresholds.detection_threshold'] && (
-                      <span className="error-message">{errors['model_thresholds.detection_threshold']}</span>
-                    )}
-                  </div>
-                  <div className="form-group">
-                    <label>Recognition <span className="required">*</span></label>
-                    <input type="number" value={formData.model_thresholds.recognition_threshold}
-                           onChange={(e) => handleModelThresholdChange('recognition_threshold', e.target.value)}
-                           step="0.01" min="0" max="1" placeholder="0.0 - 1.0"
-                           className={errors['model_thresholds.recognition_threshold'] ? 'error' : ''} />
-                    {errors['model_thresholds.recognition_threshold'] && (
-                      <span className="error-message">{errors['model_thresholds.recognition_threshold']}</span>
-                    )}
-                  </div>
-                  <div className="form-group">
-                    <label>Matching <span className="required">*</span></label>
-                    <input type="number" value={formData.model_thresholds.matching_threshold}
-                           onChange={(e) => handleModelThresholdChange('matching_threshold', e.target.value)}
-                           step="0.01" min="0" max="1" placeholder="0.0 - 1.0"
-                           className={errors['model_thresholds.matching_threshold'] ? 'error' : ''} />
-                    {errors['model_thresholds.matching_threshold'] && (
-                      <span className="error-message">{errors['model_thresholds.matching_threshold']}</span>
-                    )}
-                  </div>
-                  <div className="form-group">
-                    <label>Min Text (px)</label>
-                    <input type="number" value={formData.model_thresholds.min_text_size || ''}
-                           onChange={(e) => handleModelThresholdChange('min_text_size', e.target.value)} min="1"
-                           className={errors['model_thresholds.min_text_size'] ? 'error' : ''} />
-                    {errors['model_thresholds.min_text_size'] && (
-                      <span className="error-message">{errors['model_thresholds.min_text_size']}</span>
-                    )}
-                  </div>
-                  <div className="form-group">
-                    <label>Max Text (px)</label>
-                    <input type="number" value={formData.model_thresholds.max_text_size || ''}
-                           onChange={(e) => handleModelThresholdChange('max_text_size', e.target.value)} min="1"
-                           className={errors['model_thresholds.max_text_size'] ? 'error' : ''} />
-                    {errors['model_thresholds.max_text_size'] && (
-                      <span className="error-message">{errors['model_thresholds.max_text_size']}</span>
-                    )}
-                  </div>
-                </div>
+                {/* ── Model Thresholds ── HIDDEN: not wired to AI service yet (dead config) ── */}
+                {false && (
+                  <>
+                    <h3>Model Thresholds</h3>
+                    <div className="thresholds-grid">
+                      <div className="form-group">
+                        <label>Detection <span className="required">*</span></label>
+                        <input type="number" value={formData.model_thresholds.detection_threshold}
+                               onChange={(e) => handleModelThresholdChange('detection_threshold', e.target.value)}
+                               step="0.01" min="0" max="1" placeholder="0.0 - 1.0"
+                               className={errors['model_thresholds.detection_threshold'] ? 'error' : ''} />
+                        {errors['model_thresholds.detection_threshold'] && (
+                          <span className="error-message">{errors['model_thresholds.detection_threshold']}</span>
+                        )}
+                      </div>
+                      <div className="form-group">
+                        <label>Recognition <span className="required">*</span></label>
+                        <input type="number" value={formData.model_thresholds.recognition_threshold}
+                               onChange={(e) => handleModelThresholdChange('recognition_threshold', e.target.value)}
+                               step="0.01" min="0" max="1" placeholder="0.0 - 1.0"
+                               className={errors['model_thresholds.recognition_threshold'] ? 'error' : ''} />
+                        {errors['model_thresholds.recognition_threshold'] && (
+                          <span className="error-message">{errors['model_thresholds.recognition_threshold']}</span>
+                        )}
+                      </div>
+                      <div className="form-group">
+                        <label>Matching <span className="required">*</span></label>
+                        <input type="number" value={formData.model_thresholds.matching_threshold}
+                               onChange={(e) => handleModelThresholdChange('matching_threshold', e.target.value)}
+                               step="0.01" min="0" max="1" placeholder="0.0 - 1.0"
+                               className={errors['model_thresholds.matching_threshold'] ? 'error' : ''} />
+                        {errors['model_thresholds.matching_threshold'] && (
+                          <span className="error-message">{errors['model_thresholds.matching_threshold']}</span>
+                        )}
+                      </div>
+                      <div className="form-group">
+                        <label>Min Text (px)</label>
+                        <input type="number" value={formData.model_thresholds.min_text_size || ''}
+                               onChange={(e) => handleModelThresholdChange('min_text_size', e.target.value)} min="1"
+                               className={errors['model_thresholds.min_text_size'] ? 'error' : ''} />
+                        {errors['model_thresholds.min_text_size'] && (
+                          <span className="error-message">{errors['model_thresholds.min_text_size']}</span>
+                        )}
+                      </div>
+                      <div className="form-group">
+                        <label>Max Text (px)</label>
+                        <input type="number" value={formData.model_thresholds.max_text_size || ''}
+                               onChange={(e) => handleModelThresholdChange('max_text_size', e.target.value)} min="1"
+                               className={errors['model_thresholds.max_text_size'] ? 'error' : ''} />
+                        {errors['model_thresholds.max_text_size'] && (
+                          <span className="error-message">{errors['model_thresholds.max_text_size']}</span>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
 
                 {/* ── Wrinkle Detection ── */}
                 <h3>Wrinkle Detection</h3>
@@ -2216,18 +2225,58 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                       <div className="filmstrip-settings">
                                         <div className="filmstrip-setting-row">
                                           <span className="filmstrip-setting-label">Offset L/R:</span>
-                                          <input type="number" min="0" max="500"
-                                            value={template.center_offset_threshold_left ?? 50}
-                                            onChange={(e) => { e.stopPropagation(); const v = Math.max(0, Math.min(500, parseFloat(e.target.value) || 50)); setCameraTemplates(prev => ({ ...prev, [selectedCameraForTemplate]: prev[selectedCameraForTemplate]?.map((t, i) => i === idx ? { ...t, center_offset_threshold_left: v } : t) || [] })); }}
-                                            onClick={(e) => e.stopPropagation()}
-                                            className="filmstrip-setting-input"
-                                          />
-                                          <input type="number" min="0" max="500"
-                                            value={template.center_offset_threshold_right ?? 50}
-                                            onChange={(e) => { e.stopPropagation(); const v = Math.max(0, Math.min(500, parseFloat(e.target.value) || 50)); setCameraTemplates(prev => ({ ...prev, [selectedCameraForTemplate]: prev[selectedCameraForTemplate]?.map((t, i) => i === idx ? { ...t, center_offset_threshold_right: v } : t) || [] })); }}
-                                            onClick={(e) => e.stopPropagation()}
-                                            className="filmstrip-setting-input"
-                                          />
+                                          {(() => {
+                                            const unit = template.center_offset_unit ?? 'px';
+                                            const isPct = unit === 'pct';
+                                            const maxVal = isPct ? 100 : 500;
+                                            const stepVal = isPct ? 0.5 : 1;
+                                            return (
+                                              <>
+                                                <input type="number" min="0" max={maxVal} step={stepVal}
+                                                  value={template.center_offset_threshold_left ?? (isPct ? 25 : 50)}
+                                                  onChange={(e) => { e.stopPropagation(); const v = Math.max(0, Math.min(maxVal, parseFloat(e.target.value) || 0)); setCameraTemplates(prev => ({ ...prev, [selectedCameraForTemplate]: prev[selectedCameraForTemplate]?.map((t, i) => i === idx ? { ...t, center_offset_threshold_left: v } : t) || [] })); }}
+                                                  onClick={(e) => e.stopPropagation()}
+                                                  className="filmstrip-setting-input"
+                                                  title={`Left offset threshold (${isPct ? '% of label width' : 'pixels'})`}
+                                                />
+                                                <input type="number" min="0" max={maxVal} step={stepVal}
+                                                  value={template.center_offset_threshold_right ?? (isPct ? 25 : 50)}
+                                                  onChange={(e) => { e.stopPropagation(); const v = Math.max(0, Math.min(maxVal, parseFloat(e.target.value) || 0)); setCameraTemplates(prev => ({ ...prev, [selectedCameraForTemplate]: prev[selectedCameraForTemplate]?.map((t, i) => i === idx ? { ...t, center_offset_threshold_right: v } : t) || [] })); }}
+                                                  onClick={(e) => e.stopPropagation()}
+                                                  className="filmstrip-setting-input"
+                                                  title={`Right offset threshold (${isPct ? '% of label width' : 'pixels'})`}
+                                                />
+                                                <select
+                                                  value={unit}
+                                                  onChange={(e) => {
+                                                    e.stopPropagation();
+                                                    const newUnit = e.target.value as 'px' | 'pct';
+                                                    setCameraTemplates(prev => ({
+                                                      ...prev,
+                                                      [selectedCameraForTemplate]: prev[selectedCameraForTemplate]?.map((t, i) => {
+                                                        if (i !== idx) return t;
+                                                        // Reset thresholds to sensible defaults for the new unit
+                                                        const defaultVal = newUnit === 'pct' ? 25 : 50;
+                                                        return {
+                                                          ...t,
+                                                          center_offset_unit: newUnit,
+                                                          center_offset_threshold_left: defaultVal,
+                                                          center_offset_threshold_right: defaultVal,
+                                                        };
+                                                      }) || [],
+                                                    }));
+                                                  }}
+                                                  onClick={(e) => e.stopPropagation()}
+                                                  className="filmstrip-setting-input"
+                                                  style={{ minWidth: 56 }}
+                                                  title="Unit: pixels or percent of label reference width"
+                                                >
+                                                  <option value="px">px</option>
+                                                  <option value="pct">%</option>
+                                                </select>
+                                              </>
+                                            );
+                                          })()}
                                         </div>
                                         <div className="filmstrip-setting-row">
                                           <span className="filmstrip-setting-label">Wrinkle Total:</span>

@@ -407,6 +407,40 @@ def draw_inference_bboxes(
         cv2.polylines(result_img, [pts], isClosed=True, color=color,
                      thickness=line_thickness, lineType=cv2.LINE_AA)
 
+        # Draw type-tag for 'label' polygon (giống style YOLO label box trước đây)
+        if bbox_type == 'label' and len(points) > 0:
+            tag_text = "LABEL"
+            (tw, th), tbase = cv2.getTextSize(
+                tag_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.8, text_thickness
+            )
+            tag_x = int(points[0][0])
+            tag_y = int(points[0][1]) - 6
+            if tag_y - th - 4 < 0:
+                tag_y = int(points[0][1]) + th + 8
+            if tag_x + tw + 8 > width:
+                tag_x = width - tw - 8
+            if tag_x < 0:
+                tag_x = 0
+            # Background filled rectangle
+            cv2.rectangle(
+                result_img,
+                (tag_x, tag_y - th - 4),
+                (tag_x + tw + 8, tag_y + tbase),
+                color,
+                -1
+            )
+            # White text on colored background
+            cv2.putText(
+                result_img,
+                tag_text,
+                (tag_x + 4, tag_y - 2),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale * 0.8,
+                (255, 255, 255),
+                text_thickness,
+                cv2.LINE_AA
+            )
+
         # Draw label with background box if available
         if text_label and len(points) > 0:
             # Get text size
@@ -646,7 +680,9 @@ def draw_detected_obb_boxes(
     }
 
     # Draw each detected box
-    for box_type in ['product', 'label', 'wrinkled']:
+    # NOTE: 'label' tạm ẩn — dùng template polygon transformed (SuperPoint) làm reference,
+    # không cần visualize YOLO label box
+    for box_type in ['product', 'wrinkled']:
         if box_type not in detected_boxes:
             continue
 

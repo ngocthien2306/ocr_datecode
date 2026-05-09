@@ -1536,6 +1536,9 @@ async def update_recipe_realtime(
                             if 'center_offset_threshold_right' in tmpl:
                                 existing_tmpl['center_offset_threshold_right'] = tmpl['center_offset_threshold_right']
                                 logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id} Template {tmpl_idx}: center_offset_threshold_right → {tmpl['center_offset_threshold_right']}")
+                            if 'center_offset_unit' in tmpl:
+                                existing_tmpl['center_offset_unit'] = tmpl['center_offset_unit']
+                                logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id} Template {tmpl_idx}: center_offset_unit → {tmpl['center_offset_unit']}")
                             if 'wrinkle_area' in tmpl:
                                 existing_tmpl['wrinkle_area'] = tmpl['wrinkle_area']
                                 logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id} Template {tmpl_idx}: wrinkle_area → {tmpl['wrinkle_area']}")
