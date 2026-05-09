@@ -29,6 +29,7 @@ CATEGORIES = [
     "pulse_width",
     "reject_actions",
     "obb_rotation",
+    "camera_check",
     "start_services",
 ]
 

@@ -7,6 +7,7 @@ import time
 import sys
 import logging
 import os
+from datetime import datetime
 import pypylon.pylon as py
 
 SUDO_PASSWORD = "1"
@@ -21,17 +22,18 @@ IFACE_SUBNETS = {
 }
 EXPECTED_COUNT = 2
 
-LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
-LOG_FILE = os.path.join(LOG_DIR, "camera_check_all.log")
+# Log to centralized {repo}/logs/camera_check/{YYYY-MM-DD}.log
+LOG_DIR = os.path.join(os.path.dirname(__file__), "logs", "camera_check")
 
 
 def setup_logger():
     os.makedirs(LOG_DIR, exist_ok=True)
+    log_file = os.path.join(LOG_DIR, f"{datetime.now().strftime('%Y-%m-%d')}.log")
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         handlers=[
-            logging.FileHandler(LOG_FILE),
+            logging.FileHandler(log_file, mode="a"),
             logging.StreamHandler(sys.stdout),
         ],
     )

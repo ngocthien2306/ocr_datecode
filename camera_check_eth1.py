@@ -5,12 +5,12 @@ import time
 import sys
 import logging
 import os
+from datetime import datetime
 import pypylon.pylon as py
 
 INTERFACE = "eth1"
-USER_HOME = "/home/suntech"
-LOG_DIR = os.path.join(USER_HOME, "Source/ocr_datecode/logs")
-LOG_FILE = os.path.join(LOG_DIR, "camera_check.log")
+# Log to centralized {repo}/logs/camera_check/{YYYY-MM-DD}.log
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "camera_check")
 SUDO_PASSWORD = "1"
 
 MAX_ATTEMPTS = 10
@@ -29,11 +29,12 @@ def sudo_run(cmd):
 
 def setup_logger():
     os.makedirs(LOG_DIR, exist_ok=True)
+    log_file = os.path.join(LOG_DIR, f"{datetime.now().strftime('%Y-%m-%d')}.log")
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         handlers=[
-            logging.FileHandler(LOG_FILE),
+            logging.FileHandler(log_file, mode="a"),
             logging.StreamHandler(sys.stdout),
         ],
     )
