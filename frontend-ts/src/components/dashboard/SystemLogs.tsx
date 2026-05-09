@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import api, { API_BASE_URL } from '@/services/http';
 import { useToast } from '@/contexts/ToastContext';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import '@/styles/SystemLogs.css';
 
 interface CategoryItem {
   category: string;
@@ -27,6 +28,14 @@ interface CleanupConfig {
 
 type LevelFilter = '' | 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
 
+interface ConfirmDialogState {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  type: 'warning' | 'danger' | 'info';
+  onConfirm: (() => void) | null;
+}
+
 const formatBytes = (n: number): string => {
   if (!n) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB'];
@@ -47,16 +56,35 @@ const lineLevel = (line: string): LevelFilter | '' => {
   return '';
 };
 
-const levelColor = (level: string): string => {
-  switch (level) {
-    case 'CRITICAL': return '#dc2626';
-    case 'ERROR':    return '#ef4444';
-    case 'WARNING':  return '#f59e0b';
-    case 'INFO':     return '#9ca3af';
-    case 'DEBUG':    return '#6b7280';
-    default:         return 'inherit';
-  }
-};
+// ── Inline SVG icons (theme-aware via stroke="currentColor") ──────────────
+const IconPlay = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+    <path d="M5 4l14 8-14 8V4z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+  </svg>
+);
+const IconStop = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+    <rect x="6" y="6" width="12" height="12" rx="1" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+  </svg>
+);
+const IconDownload = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"
+          stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+const IconTrash = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+    <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6"
+          stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+const IconInfo = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+    <path d="M12 16v-5M12 8h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+  </svg>
+);
 
 const SystemLogs: React.FC = () => {
   const toast = useToast();
@@ -84,9 +112,9 @@ const SystemLogs: React.FC = () => {
   const [cfgSaving, setCfgSaving] = useState(false);
 
   // Confirm dialog
-  const [confirm, setConfirm] = useState<null | {
-    title: string; message: string; onConfirm: () => void;
-  }>(null);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>({
+    isOpen: false, title: '', message: '', type: 'warning', onConfirm: null,
+  });
 
   const viewerRef = useRef<HTMLDivElement>(null);
 
@@ -135,8 +163,7 @@ const SystemLogs: React.FC = () => {
     try {
       const { data } = await api.get<CleanupConfig>('/system-logs/cleanup-config');
       setCleanupCfg(data);
-    } catch (e: any) {
-      // Not fatal — use defaults
+    } catch {
       setCleanupCfg({
         enabled: false, keep_days: 30, compress_after_days: 7,
         schedule_hour: 0, schedule_minute: 30,
@@ -152,7 +179,6 @@ const SystemLogs: React.FC = () => {
   }, [selectedCategory, loadDates]);
 
   useEffect(() => {
-    // Stop live tail whenever selection changes
     stopLive();
     if (selectedCategory && selectedDate) {
       loadFile(selectedCategory, selectedDate);
@@ -168,14 +194,13 @@ const SystemLogs: React.FC = () => {
     }
   }, [lines, autoScroll]);
 
-  // Cleanup on unmount
   useEffect(() => () => stopLive(), []);
 
-  // ── Live tail (SSE via fetch + ReadableStream so Authorization header works) ─
+  // ── Live tail (SSE via fetch + ReadableStream) ─────────────────────────────
   const startLive = useCallback(async () => {
     if (!selectedCategory || !selectedDate || liveOn) return;
     if (selectedDate !== todayStr()) {
-      toast.info('Live tail is only available for today\'s log');
+      toast.info("Live tail is only available for today's log");
       return;
     }
     const ac = new AbortController();
@@ -197,7 +222,6 @@ const SystemLogs: React.FC = () => {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
-        // SSE messages are separated by \n\n
         let idx = buffer.indexOf('\n\n');
         while (idx !== -1) {
           const block = buffer.slice(0, idx);
@@ -254,17 +278,21 @@ const SystemLogs: React.FC = () => {
     }).catch(e => toast.error(e.message));
   };
 
-  const deleteFile = () => {
+  const askDeleteFile = () => {
     if (!selectedCategory || !selectedDate) return;
-    setConfirm({
+    setConfirmDialog({
+      isOpen: true,
       title: 'Delete log file',
       message: `Delete ${selectedCategory}/${selectedDate}.log? This cannot be undone.`,
+      type: 'danger',
       onConfirm: async () => {
         try {
           await api.delete(`/system-logs/${selectedCategory}/${selectedDate}`);
           toast.success('Deleted');
           setSelectedDate(null);
-          await loadDates(selectedCategory);
+          if (selectedCategory) {
+            await loadDates(selectedCategory);
+          }
           await loadCategories();
         } catch (e: any) {
           toast.error(`Delete failed: ${e?.response?.data?.detail || e.message}`);
@@ -273,11 +301,13 @@ const SystemLogs: React.FC = () => {
     });
   };
 
-  const deleteCategory = () => {
+  const askDeleteCategory = () => {
     if (!selectedCategory) return;
-    setConfirm({
+    setConfirmDialog({
+      isOpen: true,
       title: 'Delete entire category',
       message: `Delete ALL log files in '${selectedCategory}'? This cannot be undone.`,
+      type: 'danger',
       onConfirm: async () => {
         try {
           await api.delete(`/system-logs/${selectedCategory}`);
@@ -324,17 +354,12 @@ const SystemLogs: React.FC = () => {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div style={{ display: 'flex', height: 'calc(100vh - 160px)', minHeight: 480, gap: 0 }}>
+    <div className="syslogs-root" style={{ display: 'flex', height: 'calc(100vh - 160px)', minHeight: 480 }}>
       {/* Sidebar: Categories + Cleanup config */}
-      <div style={{
-        width: 240,
-        flexShrink: 0,
-        borderRight: '1px solid var(--color-border, #2a2f3a)',
-        display: 'flex', flexDirection: 'column',
-      }}>
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-border, #2a2f3a)' }}>
-          <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>CATEGORIES</div>
-          <div style={{ fontSize: 11, opacity: 0.5 }}>Total: {formatBytes(totalDisk)}</div>
+      <div className="syslogs-pane" style={{ width: 240, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+        <div className="syslogs-pane-header" style={{ padding: '12px 16px' }}>
+          <div style={{ fontSize: 11, marginBottom: 4 }}>CATEGORIES</div>
+          <div style={{ fontSize: 11, opacity: 0.7 }}>Total: {formatBytes(totalDisk)}</div>
         </div>
         <div style={{ overflow: 'auto', flex: 1 }}>
           {categories.map(c => (
@@ -342,18 +367,10 @@ const SystemLogs: React.FC = () => {
               key={c.category}
               type="button"
               onClick={() => setSelectedCategory(c.category)}
-              style={{
-                display: 'block', width: '100%', textAlign: 'left',
-                padding: '10px 16px', border: 'none',
-                background: selectedCategory === c.category ? 'rgba(59,130,246,.15)' : 'transparent',
-                color: 'var(--color-text, #e5e7eb)',
-                cursor: 'pointer', fontSize: 13,
-                borderLeft: selectedCategory === c.category
-                  ? '3px solid var(--color-primary, #3b82f6)' : '3px solid transparent',
-              }}
+              className={`syslogs-item ${selectedCategory === c.category ? 'active' : ''}`}
             >
-              <div style={{ fontWeight: 500 }}>{c.category}</div>
-              <div style={{ fontSize: 10, opacity: 0.6, marginTop: 2 }}>
+              <div className="syslogs-item-name">{c.category}</div>
+              <div className="syslogs-item-meta">
                 {c.file_count} file{c.file_count !== 1 ? 's' : ''} · {formatBytes(c.size)}
               </div>
             </button>
@@ -362,11 +379,8 @@ const SystemLogs: React.FC = () => {
 
         {/* Cleanup config panel */}
         {cleanupCfg && (
-          <div style={{
-            borderTop: '1px solid var(--color-border, #2a2f3a)',
-            padding: 12, fontSize: 12,
-          }}>
-            <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 8 }}>AUTO CLEANUP</div>
+          <div className="syslogs-pane-section" style={{ padding: 12, fontSize: 12 }}>
+            <div className="syslogs-cleanup-label">AUTO CLEANUP</div>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, cursor: 'pointer' }}>
               <input
                 type="checkbox"
@@ -376,37 +390,41 @@ const SystemLogs: React.FC = () => {
               <span>Enabled</span>
             </label>
             <div style={{ marginBottom: 6 }}>
-              <label style={{ display: 'block', fontSize: 11, opacity: 0.7 }}>Keep (days)</label>
+              <label className="syslogs-cleanup-label">Keep (days)</label>
               <input
                 type="number" min={1} max={3650}
                 value={cleanupCfg.keep_days}
                 onChange={e => setCleanupCfg({ ...cleanupCfg, keep_days: parseInt(e.target.value) || 1 })}
-                style={{ width: '100%', padding: 4, fontSize: 12 }}
+                className="syslogs-num"
+                style={{ width: '100%' }}
               />
             </div>
             <div style={{ marginBottom: 6 }}>
-              <label style={{ display: 'block', fontSize: 11, opacity: 0.7 }}>Compress after (days)</label>
+              <label className="syslogs-cleanup-label">Compress after (days)</label>
               <input
                 type="number" min={1}
                 value={cleanupCfg.compress_after_days}
                 onChange={e => setCleanupCfg({ ...cleanupCfg, compress_after_days: parseInt(e.target.value) || 1 })}
-                style={{ width: '100%', padding: 4, fontSize: 12 }}
+                className="syslogs-num"
+                style={{ width: '100%' }}
               />
             </div>
             <div style={{ marginBottom: 8 }}>
-              <label style={{ display: 'block', fontSize: 11, opacity: 0.7 }}>Schedule (HH:MM)</label>
+              <label className="syslogs-cleanup-label">Schedule (HH:MM)</label>
               <div style={{ display: 'flex', gap: 4 }}>
                 <input
                   type="number" min={0} max={23}
                   value={cleanupCfg.schedule_hour}
                   onChange={e => setCleanupCfg({ ...cleanupCfg, schedule_hour: parseInt(e.target.value) || 0 })}
-                  style={{ width: '50%', padding: 4, fontSize: 12 }}
+                  className="syslogs-num"
+                  style={{ width: '50%' }}
                 />
                 <input
                   type="number" min={0} max={59}
                   value={cleanupCfg.schedule_minute}
                   onChange={e => setCleanupCfg({ ...cleanupCfg, schedule_minute: parseInt(e.target.value) || 0 })}
-                  style={{ width: '50%', padding: 4, fontSize: 12 }}
+                  className="syslogs-num"
+                  style={{ width: '50%' }}
                 />
               </div>
             </div>
@@ -414,12 +432,8 @@ const SystemLogs: React.FC = () => {
               type="button"
               onClick={saveCleanupCfg}
               disabled={cfgSaving}
-              style={{
-                width: '100%', padding: '6px 8px', fontSize: 12,
-                background: 'var(--color-primary, #3b82f6)', color: '#fff',
-                border: 'none', borderRadius: 4, cursor: 'pointer',
-                opacity: cfgSaving ? 0.6 : 1,
-              }}
+              className="syslogs-btn syslogs-btn-primary"
+              style={{ width: '100%', justifyContent: 'center' }}
             >
               {cfgSaving ? 'Saving…' : 'Save'}
             </button>
@@ -428,22 +442,16 @@ const SystemLogs: React.FC = () => {
       </div>
 
       {/* Middle: Dates */}
-      <div style={{
-        width: 200, flexShrink: 0,
-        borderRight: '1px solid var(--color-border, #2a2f3a)',
-        display: 'flex', flexDirection: 'column',
-      }}>
-        <div style={{
-          padding: '12px 16px', borderBottom: '1px solid var(--color-border, #2a2f3a)',
-          fontSize: 11, opacity: 0.6, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        }}>
+      <div className="syslogs-pane" style={{ width: 200, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+        <div className="syslogs-pane-header"
+          style={{ padding: '12px 16px', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span>DATES</span>
           {selectedCategory && dates.length > 0 && (
             <button
               type="button"
-              onClick={deleteCategory}
+              onClick={askDeleteCategory}
               title="Clear all files in this category"
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', fontSize: 11 }}
+              className="syslogs-btn-link"
             >
               Clear all
             </button>
@@ -455,34 +463,19 @@ const SystemLogs: React.FC = () => {
               key={d.date}
               type="button"
               onClick={() => setSelectedDate(d.date)}
-              style={{
-                display: 'block', width: '100%', textAlign: 'left',
-                padding: '8px 16px', border: 'none',
-                background: selectedDate === d.date ? 'rgba(59,130,246,.15)' : 'transparent',
-                color: 'var(--color-text, #e5e7eb)',
-                cursor: 'pointer', fontSize: 12,
-                borderLeft: selectedDate === d.date
-                  ? '3px solid var(--color-primary, #3b82f6)' : '3px solid transparent',
-              }}
+              className={`syslogs-item ${selectedDate === d.date ? 'active' : ''}`}
+              style={{ padding: '8px 16px' }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span>{d.date}</span>
-                {d.compressed && (
-                  <span style={{ fontSize: 9, opacity: 0.6, padding: '1px 4px', border: '1px solid currentColor', borderRadius: 2 }}>
-                    GZ
-                  </span>
-                )}
-                {d.date === todayStr() && (
-                  <span style={{ fontSize: 9, color: '#22c55e', marginLeft: 'auto' }}>● LIVE</span>
-                )}
+                <span className="syslogs-item-name-sm">{d.date}</span>
+                {d.compressed && <span className="syslogs-tag-gz">GZ</span>}
+                {d.date === todayStr() && <span className="syslogs-tag-live">● LIVE</span>}
               </div>
-              <div style={{ fontSize: 10, opacity: 0.6, marginTop: 2 }}>
-                {formatBytes(d.size)}
-              </div>
+              <div className="syslogs-item-meta">{formatBytes(d.size)}</div>
             </button>
           ))}
           {dates.length === 0 && selectedCategory && (
-            <div style={{ padding: 16, fontSize: 12, opacity: 0.5 }}>No log files</div>
+            <div className="syslogs-hint-empty">No log files</div>
           )}
         </div>
       </div>
@@ -490,23 +483,16 @@ const SystemLogs: React.FC = () => {
       {/* Viewer */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {/* Toolbar */}
-        <div style={{
-          display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap',
-          padding: '8px 16px', borderBottom: '1px solid var(--color-border, #2a2f3a)',
-          fontSize: 12,
-        }}>
+        <div className="syslogs-toolbar"
+          style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '8px 16px' }}>
           {selectedDate && selectedDate === todayStr() && (
             <button
               type="button"
               onClick={liveOn ? stopLive : startLive}
-              style={{
-                padding: '6px 12px',
-                background: liveOn ? '#ef4444' : '#22c55e',
-                color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer',
-                fontSize: 12, fontWeight: 500,
-              }}
+              className={`syslogs-btn ${liveOn ? 'syslogs-btn-stop' : 'syslogs-btn-success'}`}
             >
-              {liveOn ? '■ Stop' : '▶ Live'}
+              {liveOn ? <IconStop /> : <IconPlay />}
+              <span>{liveOn ? 'Stop' : 'Live'}</span>
             </button>
           )}
           <input
@@ -514,12 +500,13 @@ const SystemLogs: React.FC = () => {
             placeholder="Search..."
             value={search}
             onChange={e => setSearch(e.target.value)}
-            style={{ padding: 6, fontSize: 12, minWidth: 180, flex: 1, maxWidth: 300 }}
+            className="syslogs-search"
+            style={{ minWidth: 180, flex: 1, maxWidth: 300 }}
           />
           <select
             value={levelFilter}
             onChange={e => setLevelFilter(e.target.value as LevelFilter)}
-            style={{ padding: 6, fontSize: 12 }}
+            className="syslogs-select"
           >
             <option value="">All levels</option>
             <option value="DEBUG">Debug</option>
@@ -531,14 +518,14 @@ const SystemLogs: React.FC = () => {
           <select
             value={tailLines}
             onChange={e => setTailLines(parseInt(e.target.value))}
-            style={{ padding: 6, fontSize: 12 }}
+            className="syslogs-select"
           >
             <option value={200}>Last 200</option>
             <option value={500}>Last 500</option>
             <option value={2000}>Last 2000</option>
             <option value={10000}>Last 10000</option>
           </select>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 12 }}>
             <input
               type="checkbox" checked={autoScroll}
               onChange={e => setAutoScroll(e.target.checked)}
@@ -548,15 +535,13 @@ const SystemLogs: React.FC = () => {
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
             {selectedDate && (
               <>
-                <button type="button" onClick={downloadFile} style={{ padding: '6px 10px', fontSize: 12 }}>
-                  ⬇ Download
+                <button type="button" onClick={downloadFile} className="syslogs-btn">
+                  <IconDownload />
+                  <span>Download</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={deleteFile}
-                  style={{ padding: '6px 10px', fontSize: 12, color: '#ef4444' }}
-                >
-                  🗑 Delete
+                <button type="button" onClick={askDeleteFile} className="syslogs-btn syslogs-btn-danger">
+                  <IconTrash />
+                  <span>Delete</span>
                 </button>
               </>
             )}
@@ -564,31 +549,19 @@ const SystemLogs: React.FC = () => {
         </div>
 
         {/* Lines */}
-        <div
-          ref={viewerRef}
-          style={{
-            flex: 1, overflow: 'auto', padding: '8px 12px',
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-            fontSize: 12, lineHeight: 1.5,
-            background: 'var(--color-bg-secondary, #0f1117)',
-          }}
-        >
-          {loadingFile && <div style={{ opacity: 0.6 }}>Loading…</div>}
+        <div ref={viewerRef} className="syslogs-viewer" style={{ flex: 1, overflow: 'auto', padding: '8px 12px' }}>
+          {loadingFile && <div className="syslogs-empty">Loading…</div>}
           {!loadingFile && filteredLines.length === 0 && (
-            <div style={{ opacity: 0.5 }}>
+            <div className="syslogs-empty"
+              style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <IconInfo />
               {selectedDate ? 'No matching lines' : 'Select a category and date'}
             </div>
           )}
           {!loadingFile && filteredLines.map((ln, i) => {
             const lvl = lineLevel(ln);
             return (
-              <div
-                key={i}
-                style={{
-                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                  color: levelColor(lvl),
-                }}
-              >
+              <div key={i} className={`syslogs-line ${lvl ? `syslogs-line-${lvl}` : ''}`}>
                 {ln}
               </div>
             );
@@ -596,13 +569,10 @@ const SystemLogs: React.FC = () => {
         </div>
 
         {/* Status bar */}
-        <div style={{
-          padding: '4px 12px', fontSize: 11, opacity: 0.6,
-          borderTop: '1px solid var(--color-border, #2a2f3a)',
-          display: 'flex', gap: 12,
-        }}>
+        <div className="syslogs-statusbar"
+          style={{ padding: '4px 12px', display: 'flex', gap: 12 }}>
           <span>{filteredLines.length}/{lines.length} lines</span>
-          {liveOn && <span style={{ color: '#22c55e' }}>● Live tailing</span>}
+          {liveOn && <span className="syslogs-status-live">● Live tailing</span>}
           {selectedCategory && selectedDate && (
             <span style={{ marginLeft: 'auto' }}>
               {selectedCategory}/{selectedDate}.log
@@ -611,16 +581,17 @@ const SystemLogs: React.FC = () => {
         </div>
       </div>
 
-      {confirm && (
-        <ConfirmDialog
-          isOpen={true}
-          title={confirm.title}
-          message={confirm.message}
-          type="danger"
-          onConfirm={() => { confirm.onConfirm(); setConfirm(null); }}
-          onClose={() => setConfirm(null)}
-        />
-      )}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+        onClose={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
+        onConfirm={() => {
+          confirmDialog.onConfirm?.();
+          setConfirmDialog({ ...confirmDialog, isOpen: false });
+        }}
+      />
     </div>
   );
 };

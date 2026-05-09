@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import AuditLog from './AuditLog';
 import SystemLogs from './SystemLogs';
+import '@/styles/SystemLogs.css';
 
 type LogsSubTab = 'audit' | 'system';
 
@@ -8,16 +9,8 @@ const Logs: React.FC = () => {
   const [subTab, setSubTab] = useState<LogsSubTab>('audit');
 
   return (
-    <div className="logs-page">
-      <div
-        className="logs-subtabs"
-        style={{
-          display: 'flex',
-          gap: 4,
-          padding: '8px 16px 0',
-          borderBottom: '1px solid var(--color-border, #2a2f3a)',
-        }}
-      >
+    <div className="logs-page" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div className="logs-subtabs" style={{ display: 'flex', gap: 4, padding: '8px 16px 0' }}>
         {([
           { key: 'audit',  label: 'Audit Log' },
           { key: 'system', label: 'System Logs' },
@@ -27,21 +20,6 @@ const Logs: React.FC = () => {
             type="button"
             onClick={() => setSubTab(t.key)}
             className={`logs-subtab-btn ${subTab === t.key ? 'active' : ''}`}
-            style={{
-              padding: '8px 16px',
-              border: 'none',
-              borderBottom: subTab === t.key
-                ? '2px solid var(--color-primary, #3b82f6)'
-                : '2px solid transparent',
-              background: 'transparent',
-              color: subTab === t.key
-                ? 'var(--color-text, #e5e7eb)'
-                : 'var(--color-text-muted, #9ca3af)',
-              cursor: 'pointer',
-              fontSize: 14,
-              fontWeight: subTab === t.key ? 600 : 400,
-              marginBottom: -1,
-            }}
           >
             {t.label}
           </button>
