@@ -730,11 +730,13 @@ def draw_detected_obb_boxes(
 
             # Prepare label text
             score = single_box.get('score', 0.0)
-            label_parts = [f"{box_type.upper()}"]
-
-            # For wrinkled with multiple boxes, add index
-            if isinstance(box_data, list) and len(boxes_to_draw) > 1:
-                label_parts[0] = f"{box_type.upper()}#{idx+1}"
+            if box_type == 'wrinkled':
+                # Bỏ chữ "WRINKLED", chỉ hiển thị #1, #2,... (kèm score nếu show_details)
+                label_parts = [f"#{idx+1}"]
+            else:
+                label_parts = [f"{box_type.upper()}"]
+                if isinstance(box_data, list) and len(boxes_to_draw) > 1:
+                    label_parts[0] = f"{box_type.upper()}#{idx+1}"
 
             if show_details:
                 label_parts.append(f"{score:.2f}")

@@ -442,8 +442,11 @@ class ProductVerificationService:
                 'class': str(label_box['class']),
                 'corners': label_box['corners'].tolist() if isinstance(label_box['corners'], np.ndarray) else label_box['corners']
             }
-        if wrinkled_check.get('has_wrinkled', False):
-            detected_boxes['wrinkled'] = wrinkled_check['wrinkled_boxes']
+        # Vẽ tất cả wrinkle candidate (sau khi đã filter conf + min_region_area),
+        # bất kể frame PASS hay FAIL — để debug/giám sát trực quan
+        wrinkled_boxes_to_draw = wrinkled_check.get('wrinkled_boxes', [])
+        if wrinkled_boxes_to_draw:
+            detected_boxes['wrinkled'] = wrinkled_boxes_to_draw
 
         return {
             'match': bool(overall_match),
