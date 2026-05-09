@@ -45,7 +45,14 @@ const formatBytes = (n: number): string => {
   return `${v.toFixed(v >= 100 ? 0 : 1)} ${units[i]}`;
 };
 
-const todayStr = (): string => new Date().toISOString().slice(0, 10);
+const todayStr = (): string => {
+  // Local time YYYY-MM-DD (must match backend DailyRotatingFileHandler which
+  // uses datetime.now() = local time)
+  const d = new Date();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${m}-${day}`;
+};
 
 const lineLevel = (line: string): LevelFilter | '' => {
   if (line.includes(' CRITICAL ') || line.includes('- CRITICAL -')) return 'CRITICAL';
