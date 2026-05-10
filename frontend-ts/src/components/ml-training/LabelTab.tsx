@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, FabricImage, Rect } from 'fabric';
 import { mlTrainingAPI, AnnotationRegion, CharSegment, MLProject, ProjectImage } from '@/services/mlTraining';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import { useToast } from '@/contexts/ToastContext';
 
 interface ConfirmState {
   title: string;
@@ -16,6 +17,10 @@ const uuidv4 = () => crypto.randomUUID();
 interface Props {
   project: MLProject;
   onRefresh: () => void;
+  // Deep-link from Train-tab "Open in Label" button — auto-loads the image
+  // and selects the matching segment so the user can edit in context.
+  deepLink?: { tab: 'label'; filename: string; segmentId: string } | null;
+  onDeepLinkConsumed?: () => void;
 }
 
 type DrawMode = 'select' | 'draw-region' | 'draw-char';
@@ -49,7 +54,8 @@ function applyZoomVisuals(canvas: Canvas, zoom: number) {
   });
 }
 
-export default function LabelTab({ project, onRefresh }: Props) {
+export default function LabelTab({ project, onRefresh, deepLink, onDeepLinkConsumed }: Props) {
+  const toast = useToast();
   const [images, setImages]         = useState<ProjectImage[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
 
@@ -119,6 +125,23 @@ export default function LabelTab({ project, onRefresh }: Props) {
     setRegions([]);
     setExpandedRegions(new Set());
   }, [project.id]);
+
+  // Consume incoming deep-link from Train tab. Runs once per non-null link
+  // value, then signals parent to clear so re-mounts don't re-trigger.
+  useEffect(() => {
+    if (!deepLink) return;
+    selectImage(deepLink.filename).then(() => {
+      // selectImage finishes after annotation load; segment is rendered then.
+      setSelectedSegId(deepLink.segmentId);
+    }).catch(() => {
+      // Surface to user — silent failure here looked like the link did nothing.
+      toast.error(`Image "${deepLink.filename}" not found — it may have been deleted`);
+    });
+    onDeepLinkConsumed?.();
+    // selectImage depends on project state (closure); no need to thread it
+    // into deps because deepLink is the only trigger we want.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLink]);
 
   // ── Select image → load into canvas ──────────────────────────────────────
   const selectImage = useCallback(async (filename: string) => {

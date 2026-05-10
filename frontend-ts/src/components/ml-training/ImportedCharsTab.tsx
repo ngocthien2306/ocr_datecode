@@ -24,6 +24,10 @@ interface RenameDialogState {
 interface Props {
   project: MLProject;
   onRefresh: () => void;
+  // Deep-link from the Train-tab "Open in Imported Chars" button — auto-opens
+  // the matching batch and scrolls the char card into view.
+  deepLink?: { tab: 'imports'; batchId: string; charId: string } | null;
+  onDeepLinkConsumed?: () => void;
 }
 
 /**
@@ -36,7 +40,7 @@ interface Props {
  * The Train tab pulls labelled chars (any batch, any char) into its dataset
  * automatically when `include_imported_chars` is on.
  */
-export default function ImportedCharsTab({ project, onRefresh }: Props) {
+export default function ImportedCharsTab({ project, onRefresh, deepLink, onDeepLinkConsumed }: Props) {
   const toast = useToast();
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>({
     isOpen: false, title: '', message: '', type: 'warning', onConfirm: null,
@@ -106,6 +110,32 @@ export default function ImportedCharsTab({ project, onRefresh }: Props) {
       loadChars(openBatchId);
     }
   }, [openBatchId]);
+
+  // Track a charId we should scroll-to once its batch finishes loading. This
+  // is the deep-link "Open in Imported Chars" path from the Train-tab popover.
+  const [pendingScrollChar, setPendingScrollChar] = useState<string | null>(null);
+  useEffect(() => {
+    if (!deepLink) return;
+    setOpenBatchId(deepLink.batchId);
+    setPendingScrollChar(deepLink.charId);
+    onDeepLinkConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLink]);
+
+  // Scroll + highlight pulse once the batch chars are in state.
+  useEffect(() => {
+    if (!pendingScrollChar || !openBatchId) return;
+    if (!charsByBatch.has(openBatchId)) return;  // wait for load
+    const el = document.querySelector<HTMLElement>(
+      `[data-imp-char-id="${CSS.escape(pendingScrollChar)}"]`,
+    );
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('ml-imp-card-flash');
+      setTimeout(() => el.classList.remove('ml-imp-card-flash'), 1600);
+    }
+    setPendingScrollChar(null);
+  }, [pendingScrollChar, openBatchId, charsByBatch]);
 
   const handleToggleBatch = (batchId: string) => {
     setOpenBatchId(prev => (prev === batchId ? null : batchId));
@@ -567,7 +597,8 @@ function CharCard({
   onToggleSelect, onSetLabel, onStartEdit, onChangeEdit, onCommitEdit, onCancelEdit, onDelete,
 }: CharCardProps) {
   return (
-    <div className={`ml-imp-card ${selected ? 'selected' : ''}`}>
+    <div className={`ml-imp-card ${selected ? 'selected' : ''}`}
+      data-imp-char-id={item.id}>
       <input
         type="checkbox"
         className="ml-imp-card-checkbox"

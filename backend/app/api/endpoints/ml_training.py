@@ -520,6 +520,65 @@ async def save_annotation(
     return ann.model_dump(by_alias=False)
 
 
+class _SegmentPatch(BaseModel):
+    char_id: Optional[str] = None    # empty string clears char_id; None = no change
+    label:   Optional[str] = None    # 'OK' | 'NG' | None = no change
+
+
+@router.patch(
+    "/ml/projects/{project_id}/annotations/{filename}/segments/{segment_id}",
+    tags=["ML Training"],
+)
+async def patch_segment(
+    project_id: str,
+    filename: str,
+    segment_id: str,
+    patch: _SegmentPatch,
+    repo: MLTrainingRepository = Depends(get_repo),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Inline-edit a single char segment from the Train-tab popover.
+
+    Atomic at the doc level — multiple users can fix different segments in the
+    same image without stepping on each other. Empty `char_id` clears it; null
+    means "leave unchanged".
+    """
+    payload: Dict[str, Any] = {}
+    if patch.char_id is not None:
+        # Empty string → store None so downstream code treats it as "missing".
+        payload["char_id"] = patch.char_id.strip() or None
+    if patch.label is not None:
+        if patch.label not in ("OK", "NG"):
+            raise HTTPException(400, "label must be 'OK' or 'NG'")
+        payload["label"] = patch.label
+    if not payload:
+        raise HTTPException(400, "Nothing to update")
+
+    ann = await repo.patch_segment(project_id, filename, segment_id, payload)
+    if ann is None:
+        raise HTTPException(404, "Annotation or segment not found")
+    await repo.refresh_labeled_count(project_id)
+    return ann.model_dump(by_alias=False)
+
+
+@router.delete(
+    "/ml/projects/{project_id}/annotations/{filename}/segments/{segment_id}",
+    tags=["ML Training"],
+)
+async def delete_segment(
+    project_id: str,
+    filename: str,
+    segment_id: str,
+    repo: MLTrainingRepository = Depends(get_repo),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    ann = await repo.delete_segment(project_id, filename, segment_id)
+    if ann is None:
+        raise HTTPException(404, "Annotation not found")
+    await repo.refresh_labeled_count(project_id)
+    return {"ok": True}
+
+
 # ════════════════════════════════════════ LABELED CROPS (Train tab) ═══════
 
 @router.get("/ml/projects/{project_id}/labeled-crops", tags=["ML Training"])

@@ -12,6 +12,32 @@ import {
   TrainingLogEntry,
   TrainRequest,
 } from '@/services/mlTraining';
+import CropEditPopover, { EditTarget, DeepLink } from './CropEditPopover';
+
+// ── Module-level cache (P1) ─────────────────────────────────────────────────
+// Keyed by project.id; survives TrainTab unmount so switching sub-tabs (or
+// hitting F5 on the project page once and coming back) doesn't show an empty
+// loading state. Strategy: hydrate state from cache synchronously on mount,
+// then always background-refetch — user sees the prior data instantly while
+// the network call refreshes it. Stale-while-revalidate, à la SWR.
+//
+// Cache invalidation is implicit: every successful fetch overwrites the
+// entry, and project deletion is rare enough that we accept a small leak
+// rather than threading a clear path through every codepath.
+interface TrainTabCache {
+  crops:           LabeledCrop[];
+  importedCrops:   CharImportItem[];
+  importedBatches: CharImportBatch[];
+  models:          MLModel[];
+}
+const trainTabCache = new Map<string, TrainTabCache>();
+const _readCache = (id: string): Partial<TrainTabCache> => trainTabCache.get(id) ?? {};
+const _writeCache = (id: string, patch: Partial<TrainTabCache>) => {
+  const prev = trainTabCache.get(id) ?? {
+    crops: [], importedCrops: [], importedBatches: [], models: [],
+  };
+  trainTabCache.set(id, { ...prev, ...patch });
+};
 
 // Render any crop item — handles both inline base64 (LabeledCrop / SyntheticCrop)
 // and absolute URLs (CharImportItem from the imported pool, served as static
@@ -74,6 +100,10 @@ function bucketByChar<T extends { char_id?: string | null; label: string }>(
 interface Props {
   project: MLProject;
   onRefresh: () => void;
+  // When user clicks "Open in Label tab" / "Open in Imported Chars tab" inside
+  // the crop edit popover, the parent dispatches the deep link to the right
+  // sub-tab and pre-selects the matching annotation/batch.
+  onJumpTo?: (link: DeepLink) => void;
 }
 
 const AUGMENT_OPTIONS = [
@@ -179,6 +209,11 @@ type DisplayCrop = {
   label: string;
   char_id?: string | null;
   batch_name?: string | null;   // shown as a small badge for imported crops
+  // ── edit routing (set only for labeled/imported; synthetic stays read-only) ─
+  _editSource?: 'labeled' | 'imported';
+  _editKey?: string;     // segment_id (labeled) | char doc id (imported)
+  _filename?: string;    // labeled only
+  _batchId?: string;     // imported only
 };
 
 interface CharGroupedCropsProps {
@@ -186,8 +221,9 @@ interface CharGroupedCropsProps {
   expanded: Set<string>;
   onToggleExpand: (key: string) => void;
   emptyText: string;
+  onEdit?: (item: DisplayCrop) => void;
 }
-function CharGroupedCrops({ buckets, expanded, onToggleExpand, emptyText }: CharGroupedCropsProps) {
+function CharGroupedCrops({ buckets, expanded, onToggleExpand, emptyText, onEdit }: CharGroupedCropsProps) {
   if (buckets.length === 0) {
     return (
       <div className="ml-empty-state" style={{ minHeight: '100px' }}>
@@ -216,17 +252,24 @@ function CharGroupedCrops({ buckets, expanded, onToggleExpand, emptyText }: Char
             </button>
             {isOpen && (
               <div className="ml-crops-grid" style={{ padding: 6 }}>
-                {b.items.map((item, i) => (
-                  <div key={i} className="ml-crop-card" style={{ position: 'relative' }}>
-                    <LazyImage src={cropSrc(item)} alt={`crop-${i}`} />
-                    <span className={`ml-label-badge ${item.label === 'OK' ? 'ok' : 'ng'}`}>{item.label}</span>
-                    {item.batch_name && (
-                      <span className="ml-imported-batch-badge top-right" title={`Batch: ${item.batch_name}`}>
-                        {item.batch_name}
-                      </span>
-                    )}
-                  </div>
-                ))}
+                {b.items.map((item, i) => {
+                  const editable = !!(item._editSource && onEdit);
+                  return (
+                    <div key={i}
+                      className={`ml-crop-card${editable ? ' editable' : ''}`}
+                      style={{ position: 'relative' }}
+                      onClick={editable ? () => onEdit!(item) : undefined}
+                      title={editable ? 'Click to edit' : undefined}>
+                      <LazyImage src={cropSrc(item)} alt={`crop-${i}`} />
+                      <span className={`ml-label-badge ${item.label === 'OK' ? 'ok' : 'ng'}`}>{item.label}</span>
+                      {item.batch_name && (
+                        <span className="ml-imported-batch-badge top-right" title={`Batch: ${item.batch_name}`}>
+                          {item.batch_name}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -237,9 +280,10 @@ function CharGroupedCrops({ buckets, expanded, onToggleExpand, emptyText }: Char
 }
 
 // ── CropGrid ───────────────────────────────────────────────────────────────
-function CropGrid({ items, emptyText }: {
+function CropGrid({ items, emptyText, onEdit }: {
   items: Array<DisplayCrop>;
   emptyText: string;
+  onEdit?: (item: DisplayCrop) => void;
 }) {
   if (items.length === 0) {
     return (
@@ -255,29 +299,36 @@ function CropGrid({ items, emptyText }: {
   }
   return (
     <div className="ml-crops-grid">
-      {items.map((crop, i) => (
-        <div key={i} className="ml-crop-card" style={{ position: 'relative' }}>
-          <LazyImage src={cropSrc(crop)} alt={`crop-${i}`} />
-          <span className={`ml-label-badge ${crop.label === 'OK' ? 'ok' : 'ng'}`}>{crop.label}</span>
-          {crop.char_id && (
-            <span
-              title={`char_id: ${crop.char_id}`}
-              style={{
-                position: 'absolute', top: 2, right: 2,
-                fontSize: 10, fontWeight: 600, padding: '1px 5px',
-                borderRadius: 3, background: '#3b82f6', color: '#fff',
-                fontFamily: 'monospace', lineHeight: 1.3,
-                boxShadow: '0 1px 2px rgba(0,0,0,.3)',
-              }}
-            >{crop.char_id}</span>
-          )}
-          {crop.batch_name && (
-            <span className="ml-imported-batch-badge" title={`Batch: ${crop.batch_name}`}>
-              {crop.batch_name}
-            </span>
-          )}
-        </div>
-      ))}
+      {items.map((crop, i) => {
+        const editable = !!(crop._editSource && onEdit);
+        return (
+          <div key={i}
+            className={`ml-crop-card${editable ? ' editable' : ''}`}
+            style={{ position: 'relative' }}
+            onClick={editable ? () => onEdit!(crop) : undefined}
+            title={editable ? 'Click to edit' : undefined}>
+            <LazyImage src={cropSrc(crop)} alt={`crop-${i}`} />
+            <span className={`ml-label-badge ${crop.label === 'OK' ? 'ok' : 'ng'}`}>{crop.label}</span>
+            {crop.char_id && (
+              <span
+                title={`char_id: ${crop.char_id}`}
+                style={{
+                  position: 'absolute', top: 2, right: 2,
+                  fontSize: 10, fontWeight: 600, padding: '1px 5px',
+                  borderRadius: 3, background: '#3b82f6', color: '#fff',
+                  fontFamily: 'monospace', lineHeight: 1.3,
+                  boxShadow: '0 1px 2px rgba(0,0,0,.3)',
+                }}
+              >{crop.char_id}</span>
+            )}
+            {crop.batch_name && (
+              <span className="ml-imported-batch-badge" title={`Batch: ${crop.batch_name}`}>
+                {crop.batch_name}
+              </span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -387,16 +438,18 @@ function TestSetCropCard({ item }: { item: TestSetCropResult }) {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────
-export default function TrainTab({ project, onRefresh }: Props) {
-  // Crops
-  const [crops, setCrops] = useState<LabeledCrop[]>([]);
+export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
+  // Crops — hydrate from module cache so tab-switch returns are instant.
+  const _initial = _readCache(project.id);
+  const [crops, setCrops] = useState<LabeledCrop[]>(_initial.crops ?? []);
+  // Show spinner only when cache miss, so cached views don't flash a loader.
   const [loadingCrops, setLoadingCrops] = useState(false);
   const [cropsTab, setCropsTab] = useState<'real' | 'imported' | 'synthetic'>('real');
   const [cropFilter, setCropFilter] = useState<'all' | 'OK' | 'NG'>('all');
 
   // Imported chars pool (active learning) — surfaced here for parity with Real Data
-  const [importedCrops, setImportedCrops] = useState<CharImportItem[]>([]);
-  const [importedBatches, setImportedBatches] = useState<CharImportBatch[]>([]);
+  const [importedCrops, setImportedCrops] = useState<CharImportItem[]>(_initial.importedCrops ?? []);
+  const [importedBatches, setImportedBatches] = useState<CharImportBatch[]>(_initial.importedBatches ?? []);
   const [loadingImported, setLoadingImported] = useState(false);
   const [importedBatchFilter, setImportedBatchFilter] = useState<'all' | string>('all');
   const [viewMode, setViewMode] = useState<'grouped' | 'flat'>('grouped');
@@ -427,7 +480,16 @@ export default function TrainTab({ project, onRefresh }: Props) {
   const [threshold, setThreshold] = useState(50); // percent, 0–100
   const [centroidTemperature, setCentroidTemperature] = useState(5.0);
   const [includeImportedChars, setIncludeImportedChars] = useState(true);
-  const [importedStats, setImportedStats] = useState<{ ok: number; ng: number; batches: number }>({ ok: 0, ng: 0, batches: 0 });
+  const [importedStats, setImportedStats] = useState<{ ok: number; ng: number; batches: number }>(() => {
+    // Derive initial stats from the cached batches so the toggle text shows
+    // the right count instantly on remount (avoids the brief "0 OK · 0 NG" flash).
+    const b = _initial.importedBatches ?? [];
+    return {
+      ok: b.reduce((s, x) => s + x.ok_count, 0),
+      ng: b.reduce((s, x) => s + x.ng_count, 0),
+      batches: b.length,
+    };
+  });
   // NG augmentation severity weights — auto-normalized BE side
   const [severitySubtle, setSeveritySubtle] = useState(10);
   const [severityLight,  setSeverityLight ] = useState(50);
@@ -442,7 +504,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
 
   // Training state
   const [training, setTraining] = useState(false);
-  const [models, setModels] = useState<MLModel[]>([]);
+  const [models, setModels] = useState<MLModel[]>(_initial.models ?? []);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Live training progress
@@ -470,6 +532,19 @@ export default function TrainTab({ project, onRefresh }: Props) {
   const [predictResults, setPredictResults] = useState<any[] | null>(null);
   const predictInputRef = useRef<HTMLInputElement>(null);
 
+  // Inline crop editor (Train-tab popover) — null when closed.
+  const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
+
+  // Mount tracker so popover-triggered async refreshes don't setState on an
+  // already-unmounted TrainTab when the user switches sub-tabs mid-save.
+  // Reset on every mount — Strict Mode dev runs mount→unmount→mount, which
+  // would otherwise leave the ref stuck at false after the first cleanup.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
   // Test set crops
   const [testSetCrops, setTestSetCrops] = useState<TestSetCropResult[]>([]);
   const [loadingTestSet, setLoadingTestSet] = useState(false);
@@ -477,11 +552,15 @@ export default function TrainTab({ project, onRefresh }: Props) {
   const [testsetExpanded, setTestsetExpanded] = useState<Set<string>>(new Set());
 
   // ── Load crops ────────────────────────────────────────────────────────
+  // Spinner only on cache miss — when we already have crops from a previous
+  // mount, the user keeps seeing them while the background refetch runs.
   const loadCrops = useCallback(async () => {
-    setLoadingCrops(true);
+    const hadCache = (trainTabCache.get(project.id)?.crops?.length ?? 0) > 0;
+    if (!hadCache) setLoadingCrops(true);
     try {
       const data = await mlTrainingAPI.getLabeledCrops(project.id);
       setCrops(data.crops);
+      _writeCache(project.id, { crops: data.crops });
     } catch { /* ignore */ }
     finally { setLoadingCrops(false); }
   }, [project.id]);
@@ -531,6 +610,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
     try {
       const list = await mlTrainingAPI.listModels(project.id);
       setModels(list);
+      _writeCache(project.id, { models: list });
       setSelectedModelId(prev => {
         if (prev) return prev;
         return list.find(m => m.status === 'completed')?.id ?? null;
@@ -554,7 +634,9 @@ export default function TrainTab({ project, onRefresh }: Props) {
   // One round-trip pulls every imported char in the project; batches give us
   // the batch_name lookup and the OK/NG totals shown in the toggle.
   const loadImported = useCallback(async () => {
-    setLoadingImported(true);
+    const cached = trainTabCache.get(project.id);
+    const hadCache = (cached?.importedCrops?.length ?? 0) > 0;
+    if (!hadCache) setLoadingImported(true);
     try {
       const [batchList, charList] = await Promise.all([
         mlTrainingAPI.listCharImportBatches(project.id),
@@ -562,6 +644,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
       ]);
       setImportedBatches(batchList);
       setImportedCrops(charList);
+      _writeCache(project.id, { importedBatches: batchList, importedCrops: charList });
       const ok = batchList.reduce((s, b) => s + b.ok_count, 0);
       const ng = batchList.reduce((s, b) => s + b.ng_count, 0);
       setImportedStats({ ok, ng, batches: batchList.length });
@@ -755,7 +838,21 @@ export default function TrainTab({ project, onRefresh }: Props) {
   // case of two browser windows on the same project.
   const hasRunningTraining = models.some(m => m.status === 'training' || m.status === 'pending');
   const canTrain = okCrops.length + ngCrops.length >= 2 && !training && !hasRunningTraining;
-  const filteredCrops = cropFilter === 'all' ? crops : cropFilter === 'OK' ? okCrops : ngCrops;
+
+  // Map LabeledCrop → DisplayCrop, attaching segment metadata for edit routing.
+  const labeledDisplay: DisplayCrop[] = useMemo(() => crops.map(c => ({
+    crop_b64: c.crop_b64,
+    label: c.label,
+    char_id: c.char_id,
+    _editSource: 'labeled' as const,
+    _editKey: c.segment_id,
+    _filename: c.filename,
+  })), [crops]);
+
+  const filteredLabeledDisplay = useMemo(() => {
+    if (cropFilter === 'all') return labeledDisplay;
+    return labeledDisplay.filter(c => c.label === cropFilter);
+  }, [labeledDisplay, cropFilter]);
 
   // ── Imported crops display + filtering ─────────────────────────────────
   // batch_name lookup so each card can show which batch it came from.
@@ -771,6 +868,9 @@ export default function TrainTab({ project, onRefresh }: Props) {
     label: c.label,
     char_id: c.char_id,
     batch_name: batchNameById.get(c.batch_id) ?? null,
+    _editSource: 'imported' as const,
+    _editKey: c.id,
+    _batchId: c.batch_id,
   })), [importedCrops, batchNameById]);
 
   const importedByBatch = importedBatchFilter === 'all'
@@ -790,6 +890,47 @@ export default function TrainTab({ project, onRefresh }: Props) {
 
   const importedOk = importedDisplay.filter(c => c.label === 'OK').length;
   const importedNg = importedDisplay.length - importedOk;
+
+  // Build an EditTarget from the clicked card. Synthetic crops have no
+  // _editSource so onEdit is gated upstream and never invoked for them.
+  const handleEdit = useCallback((item: DisplayCrop) => {
+    if (!item._editSource || !item._editKey) return;
+    const initialLabel = (item.label === 'OK' || item.label === 'NG') ? item.label : null;
+    const previewSrc = cropSrc(item) || null;
+    if (item._editSource === 'labeled' && item._filename) {
+      setEditTarget({
+        source: 'labeled',
+        projectId: project.id,
+        filename: item._filename,
+        segmentId: item._editKey,
+        initialCharId: item.char_id ?? null,
+        initialLabel,
+        previewSrc,
+      });
+    } else if (item._editSource === 'imported' && item._batchId) {
+      setEditTarget({
+        source: 'imported',
+        projectId: project.id,
+        charId: item._editKey,
+        batchId: item._batchId,
+        initialCharId: item.char_id ?? null,
+        initialLabel,
+        previewSrc,
+      });
+    }
+  }, [project.id]);
+
+  const handleEditSaved = useCallback(() => {
+    // Async refreshes — guard against unmount so we don't setState on a
+    // TrainTab the user already navigated away from. The setters inside
+    // loadCrops/loadImported then become no-ops because the components
+    // owning that state are gone, but the network call has already gone out;
+    // the ref check just suppresses React's unmounted-setState warning.
+    if (!mountedRef.current) return;
+    loadCrops();
+    loadImported();
+    onRefresh();
+  }, [loadCrops, loadImported, onRefresh]);
 
   // Model label helper
   const modelLabel = (m: MLModel) => {
@@ -1328,13 +1469,15 @@ export default function TrainTab({ project, onRefresh }: Props) {
                 ? <div className="ml-empty-state"><div className="ml-loading-spinner" /></div>
                 : viewMode === 'grouped'
                     ? <CharGroupedCrops
-                        buckets={bucketByChar(filteredCrops)}
+                        buckets={bucketByChar(filteredLabeledDisplay)}
                         expanded={expandedChars}
                         onToggleExpand={toggleCharExpanded}
                         emptyText={crops.length === 0 ? 'No labeled characters yet. Go to Label tab.' : `No ${cropFilter} crops found.`}
+                        onEdit={handleEdit}
                       />
-                    : <CropGrid items={filteredCrops}
-                        emptyText={crops.length === 0 ? 'No labeled characters yet. Go to Label tab.' : `No ${cropFilter} crops found.`} />
+                    : <CropGrid items={filteredLabeledDisplay}
+                        emptyText={crops.length === 0 ? 'No labeled characters yet. Go to Label tab.' : `No ${cropFilter} crops found.`}
+                        onEdit={handleEdit} />
             )}
             {cropsTab === 'imported' && (() => {
               if (loadingImported) {
@@ -1362,8 +1505,9 @@ export default function TrainTab({ project, onRefresh }: Props) {
                     expanded={expandedChars}
                     onToggleExpand={toggleCharExpanded}
                     emptyText={emptyMsg}
+                    onEdit={handleEdit}
                   />
-                : <CropGrid items={importedFiltered} emptyText={emptyMsg} />;
+                : <CropGrid items={importedFiltered} emptyText={emptyMsg} onEdit={handleEdit} />;
             })()}
             {cropsTab === 'synthetic' && (() => {
               const merged: DisplayCrop[] = [
@@ -1771,6 +1915,13 @@ export default function TrainTab({ project, onRefresh }: Props) {
           )}
         </div>
       </div>
+
+      <CropEditPopover
+        target={editTarget}
+        onClose={() => setEditTarget(null)}
+        onSaved={handleEditSaved}
+        onJumpTo={onJumpTo}
+      />
     </div>
   );
 }

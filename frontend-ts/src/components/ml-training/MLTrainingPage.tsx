@@ -5,6 +5,7 @@ import ImageTab from './ImageTab';
 import LabelTab from './LabelTab';
 import ImportedCharsTab from './ImportedCharsTab';
 import TrainTab from './TrainTab';
+import { DeepLink } from './CropEditPopover';
 
 type TabId = 'images' | 'label' | 'imports' | 'train';
 
@@ -16,6 +17,15 @@ export default function MLTrainingPage({ onClose }: Props) {
   const [tab, setTab] = useState<TabId>('images');
   const [projects, setProjects] = useState<MLProject[]>([]);
   const [activeProject, setActiveProject] = useState<MLProject | null>(null);
+  // Deep-link payload set when user clicks "Open in {tab}" inside the Train-tab
+  // crop editor. The target tab consumes it on mount, then calls clearDeepLink
+  // so re-mounts don't re-trigger the focus.
+  const [deepLink, setDeepLink] = useState<DeepLink | null>(null);
+  const handleJumpTo = useCallback((link: DeepLink) => {
+    setTab(link.tab);
+    setDeepLink(link);
+  }, []);
+  const clearDeepLink = useCallback(() => setDeepLink(null), []);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [showNewProjectForm, setShowNewProjectForm] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
@@ -279,13 +289,18 @@ export default function MLTrainingPage({ onClose }: Props) {
                 <ImageTab project={activeProject} onRefresh={refreshActiveProject} />
               )}
               {tab === 'label' && (
-                <LabelTab project={activeProject} onRefresh={refreshActiveProject} />
+                <LabelTab project={activeProject} onRefresh={refreshActiveProject}
+                  deepLink={deepLink && deepLink.tab === 'label' ? deepLink : null}
+                  onDeepLinkConsumed={clearDeepLink} />
               )}
               {tab === 'imports' && (
-                <ImportedCharsTab project={activeProject} onRefresh={refreshActiveProject} />
+                <ImportedCharsTab project={activeProject} onRefresh={refreshActiveProject}
+                  deepLink={deepLink && deepLink.tab === 'imports' ? deepLink : null}
+                  onDeepLinkConsumed={clearDeepLink} />
               )}
               {tab === 'train' && (
-                <TrainTab project={activeProject} onRefresh={refreshActiveProject} />
+                <TrainTab project={activeProject} onRefresh={refreshActiveProject}
+                  onJumpTo={handleJumpTo} />
               )}
             </>
           )}

@@ -785,28 +785,48 @@ def get_labeled_crops(
 ) -> List[Dict[str, Any]]:
     """
     Collect all labeled character crops for the Train tab preview grid.
-    Returns list of {segment_id, region_id, filename, label, crop_b64}.
+
+    Loads each source image **once** and crops every OK/NG segment from the
+    in-memory ndarray. Mirrors the optimization already done in
+    `build_dataset` — previously this called crop_segment per-segment, which
+    re-imread the same file 30+ times per image (3000 imreads on a typical
+    100-image / 30-segments project). Returns list of
+    {segment_id, region_id, filename, label, crop_b64, char_id}.
     """
     result = []
     for ann in annotations:
-        img_path = images_dir / ann.filename
-        for region in ann.regions:
-            for seg in region.segments:
-                if seg.label not in ("OK", "NG"):
-                    continue
-                crop = crop_segment(img_path, {
-                    "x": seg.x, "y": seg.y, "w": seg.w, "h": seg.h,
-                })
-                if crop is None:
-                    continue
-                result.append({
-                    "segment_id": seg.id,
-                    "region_id": region.id,
-                    "filename": ann.filename,
-                    "label": seg.label,
-                    "crop_b64": img_to_b64(crop),
-                    "char_id": seg.char_id,
-                })
+        # Collect all valid (region, seg) pairs first so we can decide whether
+        # the imread is even worth doing.
+        items = [
+            (region, seg)
+            for region in ann.regions
+            for seg in region.segments
+            if seg.label in ("OK", "NG")
+        ]
+        if not items:
+            continue
+        img = cv.imread(str(images_dir / ann.filename))
+        if img is None:
+            continue
+        img_h, img_w = img.shape[:2]
+        for region, seg in items:
+            # 2px padding (matches crop_segment default) — kept inline to
+            # avoid per-call overhead.
+            px = max(0, int(seg.x * img_w) - 2)
+            py = max(0, int(seg.y * img_h) - 2)
+            pw = min(int(seg.w * img_w) + 4, img_w - px)
+            ph = min(int(seg.h * img_h) + 4, img_h - py)
+            if pw <= 0 or ph <= 0:
+                continue
+            crop = img[py:py + ph, px:px + pw]
+            result.append({
+                "segment_id": seg.id,
+                "region_id":  region.id,
+                "filename":   ann.filename,
+                "label":      seg.label,
+                "crop_b64":   img_to_b64(crop),
+                "char_id":    seg.char_id,
+            })
     return result
 
 

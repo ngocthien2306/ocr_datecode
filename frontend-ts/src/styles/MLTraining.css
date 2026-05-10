@@ -1183,6 +1183,86 @@ body.dark-mode .ml-crops-tab-btn.dim:not(.active) { color: #4b5563; }
 body.dark-mode .ml-train-need-samples   { color: #6b7280; }
 body.dark-mode .ml-train-running-banner { color: #93c5fd; background: rgba(59,130,246,.12); border-color: rgba(59,130,246,.35); }
 
+/* ── Crop edit popover (inline editor for Train tab + TestSet) ──────────── */
+.ml-crop-edit-modal { max-width: 380px; }
+.ml-crop-edit-body  { display: flex; flex-direction: column; gap: 10px; }
+.ml-crop-edit-preview {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+}
+.ml-crop-edit-preview img {
+  max-width: 140px;
+  max-height: 100px;
+  object-fit: contain;
+  display: block;
+  background: #fff;
+  border-radius: 3px;
+}
+.ml-crop-edit-source-tag {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(59, 130, 246, .85);
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+body.dark-mode .ml-crop-edit-preview     { background: #0f1117; border-color: #2d3148; }
+body.dark-mode .ml-crop-edit-preview img { background: #000; }
+
+.ml-crop-edit-label-toggle {
+  display: flex;
+  gap: 6px;
+}
+.ml-crop-edit-label-toggle button {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+  color: #6b7280;
+  transition: all .12s;
+}
+.ml-crop-edit-label-toggle button.ok.active {
+  background: rgba(74, 222, 128, .15);
+  border-color: #22c55e;
+  color: #16a34a;
+}
+.ml-crop-edit-label-toggle button.ng.active {
+  background: rgba(248, 113, 113, .15);
+  border-color: #ef4444;
+  color: #dc2626;
+}
+body.dark-mode .ml-crop-edit-label-toggle button         { background: #1f2937; border-color: #374151; color: #9ca3af; }
+body.dark-mode .ml-crop-edit-label-toggle button.ok.active { background: rgba(74,222,128,.15); border-color: #22c55e; color: #4ade80; }
+body.dark-mode .ml-crop-edit-label-toggle button.ng.active { background: rgba(248,113,113,.15); border-color: #ef4444; color: #f87171; }
+
+.ml-crop-edit-footer { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* Visual hint that a card is clickable for edit */
+.ml-crop-card.editable        { cursor: pointer; }
+.ml-crop-card.editable:hover  { outline: 2px solid rgba(59, 130, 246, .5); outline-offset: -1px; }
+
+/* Flash highlight when a deep-link scrolls to a target imported card. */
+@keyframes ml-imp-card-flash-anim {
+  0%   { box-shadow: 0 0 0 3px rgba(59, 130, 246, .9); }
+  60%  { box-shadow: 0 0 0 3px rgba(59, 130, 246, .5); }
+  100% { box-shadow: 0 0 0 3px rgba(59, 130, 246, 0); }
+}
+.ml-imp-card-flash { animation: ml-imp-card-flash-anim 1.5s ease-out; }
+
 /* ── char_id input in Label tab ────────────────────── */
 .ml-char-input {
   width: 28px;

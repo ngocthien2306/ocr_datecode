@@ -124,6 +124,40 @@ class MLTrainingRepository:
             out.append(MLAnnotationInDB(**_to_str_id(doc)))
         return out
 
+    async def patch_segment(self, project_id: str, filename: str, segment_id: str,
+                            patch: Dict[str, Any]) -> Optional[MLAnnotationInDB]:
+        """Atomically update fields on one char segment inside an annotation.
+
+        Used by the Train-tab inline editor — avoids the get→modify→put race
+        that would happen if we reused save_annotation for single-segment edits.
+        Mongo arrayFilters target the matching segment in the nested
+        regions[].segments[] array directly.
+        """
+        if not patch:
+            return await self.get_annotation(project_id, filename)
+        set_clause = {f"regions.$[].segments.$[s].{k}": v for k, v in patch.items()}
+        set_clause["updated_at"] = datetime.utcnow()
+        doc = await self.annotations.find_one_and_update(
+            {"project_id": project_id, "filename": filename},
+            {"$set": set_clause},
+            array_filters=[{"s.id": segment_id}],
+            return_document=True,
+        )
+        return MLAnnotationInDB(**_to_str_id(doc)) if doc else None
+
+    async def delete_segment(self, project_id: str, filename: str,
+                             segment_id: str) -> Optional[MLAnnotationInDB]:
+        """Atomically remove one segment from every region that contains it."""
+        doc = await self.annotations.find_one_and_update(
+            {"project_id": project_id, "filename": filename},
+            {
+                "$pull": {"regions.$[].segments": {"id": segment_id}},
+                "$set":  {"updated_at": datetime.utcnow()},
+            },
+            return_document=True,
+        )
+        return MLAnnotationInDB(**_to_str_id(doc)) if doc else None
+
     # ─────────────────────────────── Models ──────────────────────────
 
     async def create_model_record(self, project_id: str, algorithm: str,

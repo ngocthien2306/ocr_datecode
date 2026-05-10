@@ -264,6 +264,22 @@ export const mlTrainingAPI = {
       { regions }
     ).then(r => r.data),
 
+  // Atomic per-segment edit — used by the Train-tab inline popover.
+  // Send `char_id: ''` to clear it; `null`/undefined = leave unchanged.
+  patchSegment: (
+    projectId: string, filename: string, segmentId: string,
+    patch: { char_id?: string | null; label?: 'OK' | 'NG' },
+  ) =>
+    api.patch<AnnotationData>(
+      `/ml/projects/${projectId}/annotations/${encodeURIComponent(filename)}/segments/${encodeURIComponent(segmentId)}`,
+      patch,
+    ).then(r => r.data),
+
+  deleteSegment: (projectId: string, filename: string, segmentId: string) =>
+    api.delete(
+      `/ml/projects/${projectId}/annotations/${encodeURIComponent(filename)}/segments/${encodeURIComponent(segmentId)}`,
+    ).then(r => r.data),
+
   // Labeled crops (Train tab)
   getLabeledCrops: (projectId: string) =>
     api.get<{ crops: LabeledCrop[]; count: number }>(
