@@ -4,12 +4,23 @@ import {
   LabeledCrop,
   SyntheticCrop,
   SyntheticOkCrop,
+  CharImportItem,
+  CharImportBatch,
   MLModel,
   MLProject,
   TestSetCropResult,
   TrainingLogEntry,
   TrainRequest,
 } from '@/services/mlTraining';
+
+// Render any crop item — handles both inline base64 (LabeledCrop / SyntheticCrop)
+// and absolute URLs (CharImportItem from the imported pool, served as static
+// JPEGs from the BE). Returning '' lets <img> show alt text without throwing.
+const cropSrc = (item: { crop_b64?: string | null; crop_url?: string | null }): string => {
+  if (item.crop_b64) return `data:image/jpeg;base64,${item.crop_b64}`;
+  if (item.crop_url) return item.crop_url;
+  return '';
+};
 
 interface CharBucket<T> {
   char_id: string | null;  // null = no char_id (still trained, just shown separately)
@@ -162,8 +173,16 @@ function CharStatsBanner({ buckets, viewMode, onToggleView }: CharStatsBannerPro
 }
 
 // ── Grouped crops (sections per char_id, collapsible) ──────────────────────
+type DisplayCrop = {
+  crop_b64?: string | null;
+  crop_url?: string | null;
+  label: string;
+  char_id?: string | null;
+  batch_name?: string | null;   // shown as a small badge for imported crops
+};
+
 interface CharGroupedCropsProps {
-  buckets: CharBucket<{ crop_b64: string; label: string; char_id?: string | null }>[];
+  buckets: CharBucket<DisplayCrop>[];
   expanded: Set<string>;
   onToggleExpand: (key: string) => void;
   emptyText: string;
@@ -199,8 +218,13 @@ function CharGroupedCrops({ buckets, expanded, onToggleExpand, emptyText }: Char
               <div className="ml-crops-grid" style={{ padding: 6 }}>
                 {b.items.map((item, i) => (
                   <div key={i} className="ml-crop-card" style={{ position: 'relative' }}>
-                    <LazyImage src={`data:image/jpeg;base64,${item.crop_b64}`} alt={`crop-${i}`} />
+                    <LazyImage src={cropSrc(item)} alt={`crop-${i}`} />
                     <span className={`ml-label-badge ${item.label === 'OK' ? 'ok' : 'ng'}`}>{item.label}</span>
+                    {item.batch_name && (
+                      <span className="ml-imported-batch-badge top-right" title={`Batch: ${item.batch_name}`}>
+                        {item.batch_name}
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>
@@ -214,7 +238,7 @@ function CharGroupedCrops({ buckets, expanded, onToggleExpand, emptyText }: Char
 
 // ── CropGrid ───────────────────────────────────────────────────────────────
 function CropGrid({ items, emptyText }: {
-  items: Array<{ crop_b64: string; label: string; char_id?: string | null }>;
+  items: Array<DisplayCrop>;
   emptyText: string;
 }) {
   if (items.length === 0) {
@@ -233,7 +257,7 @@ function CropGrid({ items, emptyText }: {
     <div className="ml-crops-grid">
       {items.map((crop, i) => (
         <div key={i} className="ml-crop-card" style={{ position: 'relative' }}>
-          <LazyImage src={`data:image/jpeg;base64,${crop.crop_b64}`} alt={`crop-${i}`} />
+          <LazyImage src={cropSrc(crop)} alt={`crop-${i}`} />
           <span className={`ml-label-badge ${crop.label === 'OK' ? 'ok' : 'ng'}`}>{crop.label}</span>
           {crop.char_id && (
             <span
@@ -246,6 +270,11 @@ function CropGrid({ items, emptyText }: {
                 boxShadow: '0 1px 2px rgba(0,0,0,.3)',
               }}
             >{crop.char_id}</span>
+          )}
+          {crop.batch_name && (
+            <span className="ml-imported-batch-badge" title={`Batch: ${crop.batch_name}`}>
+              {crop.batch_name}
+            </span>
           )}
         </div>
       ))}
@@ -362,8 +391,14 @@ export default function TrainTab({ project, onRefresh }: Props) {
   // Crops
   const [crops, setCrops] = useState<LabeledCrop[]>([]);
   const [loadingCrops, setLoadingCrops] = useState(false);
-  const [cropsTab, setCropsTab] = useState<'real' | 'synthetic'>('real');
+  const [cropsTab, setCropsTab] = useState<'real' | 'imported' | 'synthetic'>('real');
   const [cropFilter, setCropFilter] = useState<'all' | 'OK' | 'NG'>('all');
+
+  // Imported chars pool (active learning) — surfaced here for parity with Real Data
+  const [importedCrops, setImportedCrops] = useState<CharImportItem[]>([]);
+  const [importedBatches, setImportedBatches] = useState<CharImportBatch[]>([]);
+  const [loadingImported, setLoadingImported] = useState(false);
+  const [importedBatchFilter, setImportedBatchFilter] = useState<'all' | string>('all');
   const [viewMode, setViewMode] = useState<'grouped' | 'flat'>('grouped');
   const [expandedChars, setExpandedChars] = useState<Set<string>>(new Set());
   const toggleCharExpanded = useCallback((key: string) => {
@@ -451,42 +486,95 @@ export default function TrainTab({ project, onRefresh }: Props) {
     finally { setLoadingCrops(false); }
   }, [project.id]);
 
-  // ── Load models ───────────────────────────────────────────────────────
-  const loadModels = useCallback(async () => {
-    try {
-      const list = await mlTrainingAPI.listModels(project.id);
-      setModels(list);
-      // Auto-select first completed model on initial load only
-      setSelectedModelId(prev => {
-        if (prev) return prev;
-        return list.find(m => m.status === 'completed')?.id ?? null;
-      });
-    } catch { /* ignore */ }
-  }, [project.id]);
+  // ── Polling helper (used by both fresh-train + auto-resume on remount) ──
+  // loadModelsRef breaks the circular dep: pollTraining ends by reloading the
+  // models list, but loadModels itself can also kick off polling.
+  const loadModelsRef = useRef<(() => Promise<void>) | null>(null);
 
-  // ── Load imported chars stats (count summary for the toggle) ──────────
-  const loadImportedStats = useCallback(async () => {
-    try {
-      const list = await mlTrainingAPI.listCharImportBatches(project.id);
-      const ok = list.reduce((s, b) => s + b.ok_count, 0);
-      const ng = list.reduce((s, b) => s + b.ng_count, 0);
-      setImportedStats({ ok, ng, batches: list.length });
-    } catch { /* ignore */ }
-  }, [project.id]);
-
-  useEffect(() => {
-    loadCrops();
-    loadModels();
-    loadImportedStats();
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [project.id]);
-
-  // Auto-select newly completed model after training
+  // Hoisted above startPolling because the polling closure references it.
   const handleModelCompleted = useCallback((modelId: string) => {
     setSelectedModelId(modelId);
     setResultsTab('metrics');
     setTestSetCrops([]);
   }, []);
+
+  const startPolling = useCallback((modelId: string) => {
+    if (pollRef.current) return;  // already polling — don't double-spawn
+    let since = 0;
+    pollRef.current = setInterval(async () => {
+      try {
+        const data = await mlTrainingAPI.getTrainingLogs(project.id, modelId, since);
+        if (data.logs.length > 0) {
+          setTrainLogs(prev => [...prev, ...data.logs]);
+          since = data.next_since;
+        }
+        if (data.phase != null) setTrainPhase(data.phase);
+        if (data.progress != null) setTrainProgress(data.progress);
+        if (data.status === 'completed' || data.status === 'failed') {
+          clearInterval(pollRef.current!);
+          pollRef.current = null;
+          setTraining(false);
+          await loadModelsRef.current?.();
+          await onRefresh();
+          if (data.status === 'completed') handleModelCompleted(modelId);
+        }
+      } catch { /* ignore */ }
+    }, 1500);
+  // handleModelCompleted is hoisted below — declared as useCallback there with [] deps so stable.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id, onRefresh]);
+
+  // ── Load models ───────────────────────────────────────────────────────
+  // Side-effect: if any model is mid-training, auto-resume the polling so
+  // remount/F5 picks up live progress + buffered logs from the server.
+  const loadModels = useCallback(async () => {
+    try {
+      const list = await mlTrainingAPI.listModels(project.id);
+      setModels(list);
+      setSelectedModelId(prev => {
+        if (prev) return prev;
+        return list.find(m => m.status === 'completed')?.id ?? null;
+      });
+      const inProgress = list.find(m => m.status === 'training' || m.status === 'pending');
+      if (inProgress && !pollRef.current) {
+        const startedAt = inProgress.created_at ? Date.parse(inProgress.created_at) : Date.now();
+        setTraining(true);
+        setTrainStartedAt(startedAt);
+        setTrainPhase(inProgress.phase ?? null);
+        setTrainProgress(inProgress.progress ?? 0);
+        setTrainLogs([]);  // since=0 will refetch whatever the server still has buffered
+        startPolling(inProgress.id);
+      }
+    } catch { /* ignore */ }
+  }, [project.id, startPolling]);
+
+  useEffect(() => { loadModelsRef.current = loadModels; }, [loadModels]);
+
+  // ── Load imported chars (full list + batch summary) ──────────────────
+  // One round-trip pulls every imported char in the project; batches give us
+  // the batch_name lookup and the OK/NG totals shown in the toggle.
+  const loadImported = useCallback(async () => {
+    setLoadingImported(true);
+    try {
+      const [batchList, charList] = await Promise.all([
+        mlTrainingAPI.listCharImportBatches(project.id),
+        mlTrainingAPI.listCharImports(project.id),
+      ]);
+      setImportedBatches(batchList);
+      setImportedCrops(charList);
+      const ok = batchList.reduce((s, b) => s + b.ok_count, 0);
+      const ng = batchList.reduce((s, b) => s + b.ng_count, 0);
+      setImportedStats({ ok, ng, batches: batchList.length });
+    } catch { /* ignore */ }
+    finally { setLoadingImported(false); }
+  }, [project.id]);
+
+  useEffect(() => {
+    loadCrops();
+    loadModels();
+    loadImported();
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [project.id]);
 
   // ── Preview synthetic NG (only NG is generated — no OK augmentation) ──
   const handlePreviewSynthetic = async () => {
@@ -540,27 +628,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
         include_imported_chars: includeImportedChars,
       };
       const { model_id } = await mlTrainingAPI.startTraining(project.id, req);
-
-      let since = 0;
-      pollRef.current = setInterval(async () => {
-        try {
-          const data = await mlTrainingAPI.getTrainingLogs(project.id, model_id, since);
-          if (data.logs.length > 0) {
-            setTrainLogs(prev => [...prev, ...data.logs]);
-            since = data.next_since;
-          }
-          if (data.phase != null) setTrainPhase(data.phase);
-          if (data.progress != null) setTrainProgress(data.progress);
-          if (data.status === 'completed' || data.status === 'failed') {
-            clearInterval(pollRef.current!);
-            pollRef.current = null;
-            setTraining(false);
-            await loadModels();
-            await onRefresh();
-            if (data.status === 'completed') handleModelCompleted(model_id);
-          }
-        } catch { /* ignore */ }
-      }, 1500);
+      startPolling(model_id);
     } catch (e: any) {
       setTraining(false);
       alert(e?.response?.data?.detail ?? 'Training failed');
@@ -681,8 +749,47 @@ export default function TrainTab({ project, onRefresh }: Props) {
   // ── Stats ──────────────────────────────────────────────────────────────
   const okCrops  = crops.filter(c => c.label === 'OK');
   const ngCrops  = crops.filter(c => c.label === 'NG');
-  const canTrain = okCrops.length + ngCrops.length >= 2 && !training;
+  // Block another Start when *any* model on this project is mid-training.
+  // Catches the remount window (loadModels resumed, models[].status='training'
+  // but local `training` flag may still be flipping to true) and the rare
+  // case of two browser windows on the same project.
+  const hasRunningTraining = models.some(m => m.status === 'training' || m.status === 'pending');
+  const canTrain = okCrops.length + ngCrops.length >= 2 && !training && !hasRunningTraining;
   const filteredCrops = cropFilter === 'all' ? crops : cropFilter === 'OK' ? okCrops : ngCrops;
+
+  // ── Imported crops display + filtering ─────────────────────────────────
+  // batch_name lookup so each card can show which batch it came from.
+  const batchNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const b of importedBatches) m.set(b.id, b.name);
+    return m;
+  }, [importedBatches]);
+
+  // Map CharImportItem → DisplayCrop shape (URL-based, plus batch badge).
+  const importedDisplay: DisplayCrop[] = useMemo(() => importedCrops.map(c => ({
+    crop_url: c.crop_url,
+    label: c.label,
+    char_id: c.char_id,
+    batch_name: batchNameById.get(c.batch_id) ?? null,
+  })), [importedCrops, batchNameById]);
+
+  const importedByBatch = importedBatchFilter === 'all'
+    ? importedDisplay
+    : importedDisplay.filter((_, i) => importedCrops[i]?.batch_id === importedBatchFilter);
+  const importedFiltered = cropFilter === 'all'
+    ? importedByBatch
+    : importedByBatch.filter(c => c.label === cropFilter);
+
+  // Dataset that BE will actually see when training. Used by computeAugmentStats
+  // and the Training preview so numbers match the backend log output.
+  const datasetForTraining: DisplayCrop[] = useMemo(() => {
+    const real: DisplayCrop[] = crops;
+    if (!includeImportedChars || importedDisplay.length === 0) return real;
+    return [...real, ...importedDisplay];
+  }, [crops, importedDisplay, includeImportedChars]);
+
+  const importedOk = importedDisplay.filter(c => c.label === 'OK').length;
+  const importedNg = importedDisplay.length - importedOk;
 
   // Model label helper
   const modelLabel = (m: MLModel) => {
@@ -701,14 +808,43 @@ export default function TrainTab({ project, onRefresh }: Props) {
         <div className="ml-section-title">Dataset</div>
         <div className="ml-metric-row">
           <div className="ml-metric-card">
-            <div className="ml-metric-value" style={{ color: '#4ade80' }}>{okCrops.length}</div>
-            <div className="ml-metric-label">OK samples</div>
+            <div className="ml-metric-value ml-metric-value-ok">
+              {okCrops.length}
+              {includeImportedChars && importedOk > 0 && (
+                <span className="ml-imported-extra">+{importedOk}</span>
+              )}
+            </div>
+            <div className="ml-metric-label">
+              OK samples
+              {includeImportedChars && importedOk > 0 && (
+                <span className="ml-metric-sub">labeled + imported</span>
+              )}
+            </div>
           </div>
           <div className="ml-metric-card">
-            <div className="ml-metric-value" style={{ color: '#f87171' }}>{ngCrops.length}</div>
-            <div className="ml-metric-label">NG samples</div>
+            <div className="ml-metric-value ml-metric-value-ng">
+              {ngCrops.length}
+              {includeImportedChars && importedNg > 0 && (
+                <span className="ml-imported-extra">+{importedNg}</span>
+              )}
+            </div>
+            <div className="ml-metric-label">
+              NG samples
+              {includeImportedChars && importedNg > 0 && (
+                <span className="ml-metric-sub">labeled + imported</span>
+              )}
+            </div>
           </div>
         </div>
+
+        {/* Total used for training — tổng thực sự BE sẽ thấy. Chỉ hiện khi
+            toggle ON & có imported, nếu không thì 2 card trên đã đủ rõ. */}
+        {includeImportedChars && (importedOk + importedNg) > 0 && (
+          <div className="ml-imported-summary">
+            Training set: <b className="ok">{okCrops.length + importedOk}</b> OK ·{' '}
+            <b className="ng">{ngCrops.length + importedNg}</b> NG
+          </div>
+        )}
 
         {/* Imported Chars pool toggle */}
         <div className="ml-form-group" style={{ marginTop: 4 }}>
@@ -733,7 +869,7 @@ export default function TrainTab({ project, onRefresh }: Props) {
         <div className="ml-form-group">
           {([
             { key: 'rf',       label: 'Random Forest',     tag: 'Binary (needs OK + NG)' },
-            { key: 'svm',      label: 'SVM (RBF kernel)',  tag: 'Binary (needs OK + NG)' },
+            { key: 'svm',      label: 'SVM (RBF kernel)',  tag: 'Binary (needs OK + NG) — class-weight balanced' },
             { key: 'mlp',      label: 'Neural Net (MLP)',  tag: 'Binary (needs OK + NG)' },
             { key: 'centroid', label: 'Nearest Centroid',  tag: 'Global mean OK + mean NG (no model fit)' },
           ] as const).map(opt => (
@@ -762,12 +898,21 @@ export default function TrainTab({ project, onRefresh }: Props) {
               value={nEstimators} onChange={e => setNEstimators(Number(e.target.value))} />
           </div>
         )}
-        {(algorithm === 'svm' || algorithm === 'mlp') && (
+        {algorithm === 'svm' && (
           <div className="ml-form-group">
-            <label className="ml-form-label">{algorithm === 'svm' ? 'C (regularization)' : 'Max iterations'}</label>
+            <label className="ml-form-label">C (regularization)</label>
+            <input className="ml-form-input" type="number" step={0.5} min={0.1} max={100}
+              value={svmC} onChange={e => setSvmC(Number(e.target.value))} />
+            <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4 }}>
+              Convergence runs unbounded — Max iterations field is ignored for SVM.
+            </div>
+          </div>
+        )}
+        {algorithm === 'mlp' && (
+          <div className="ml-form-group">
+            <label className="ml-form-label">Max iterations</label>
             <input className="ml-form-input" type="number"
-              value={algorithm === 'svm' ? svmC : maxIter}
-              onChange={e => algorithm === 'svm' ? setSvmC(Number(e.target.value)) : setMaxIter(Number(e.target.value))} />
+              value={maxIter} onChange={e => setMaxIter(Number(e.target.value))} />
           </div>
         )}
         {algorithm === 'centroid' && (
@@ -920,18 +1065,21 @@ export default function TrainTab({ project, onRefresh }: Props) {
         </div>
 
         {/* ── Train Preview — per-char breakdown before user clicks Train ── */}
+        {/* Uses datasetForTraining (= crops + imported when toggle ON) so the
+            preview numbers match what BE will actually compute. */}
         {(() => {
-          const buckets = bucketByChar(crops);
+          const buckets = bucketByChar(datasetForTraining);
           if (buckets.length === 0) return null;
           const named = buckets.filter(b => b.char_id !== null);
           const unnamedSamples = buckets
             .filter(b => b.char_id === null)
             .reduce((sum, b) => sum + b.items.length, 0);
           const { nOkReal, nNgReal, nNgAug, totalNg } =
-            computeAugmentStats(crops, augmentFactor);
+            computeAugmentStats(datasetForTraining, augmentFactor);
           const f = augmentFactor;
           const maxOkPerChar = named.reduce((m, b) => Math.max(m, b.ok), 0);
           const targetPerChar = f >= 2 ? f * maxOkPerChar : 0;
+          const usingImported = includeImportedChars && importedDisplay.length > 0;
           return (
             <div className="ml-train-preview">
               <div className="ml-train-preview-title">🚀 Training preview</div>
@@ -949,6 +1097,15 @@ export default function TrainTab({ project, onRefresh }: Props) {
                 Dataset: {nOkReal} OK · {nNgReal}+{nNgAug}={totalNg} NG{f >= 2 ? ` (target ${targetPerChar}/char)` : ''}
                 {f < 2 && <span style={{ color: '#9ca3af' }}> · no augmentation</span>}
               </div>
+              {usingImported && (
+                <div className="ml-train-preview-imported-note">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+                    <path d="M12 8v8M8 12h8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                  includes {importedOk} OK · {importedNg} NG from imported pool
+                </div>
+              )}
               {f >= 2 && nOkReal > 0 && (
                 <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2 }}>
                   Char-balanced NG — every char tops up to {targetPerChar} NG samples
@@ -968,8 +1125,18 @@ export default function TrainTab({ project, onRefresh }: Props) {
           }
         </button>
 
-        {!canTrain && !training && (
-          <div style={{ fontSize: '11px', color: '#6b7280', textAlign: 'center' }}>
+        {!canTrain && !training && hasRunningTraining && (
+          <div className="ml-train-running-banner">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+              <path d="M12 7v5l3 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            Training already in progress for this project — wait for it to finish
+            (live progress will resume above).
+          </div>
+        )}
+        {!canTrain && !training && !hasRunningTraining && (
+          <div className="ml-train-need-samples">
             Need at least 2 labeled samples in Label tab
           </div>
         )}
@@ -1041,8 +1208,10 @@ export default function TrainTab({ project, onRefresh }: Props) {
               <span style={{ fontSize: '12px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '.05em' }}>
                 Labeled Crops
               </span>
-              <button className="ml-btn ml-btn-secondary ml-btn-sm" onClick={loadCrops} disabled={loadingCrops}>
-                {loadingCrops
+              <button className="ml-btn ml-btn-secondary ml-btn-sm"
+                onClick={() => { loadCrops(); loadImported(); }}
+                disabled={loadingCrops || loadingImported}>
+                {loadingCrops || loadingImported
                   ? <span className="ml-loading-spinner" style={{ width: 12, height: 12, borderWidth: 2 }} />
                   : <><svg width="12" height="12" viewBox="0 0 24 24" fill="none">
                       <path d="M1 4v6h6M23 20v-6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -1052,19 +1221,32 @@ export default function TrainTab({ project, onRefresh }: Props) {
               </button>
             </div>
             <div style={{ display: 'flex', padding: '8px 14px 0' }}>
+              {/* Imported tab is dimmed when toggle OFF — crops still browsable
+                  for inspection but won't enter the training set. */}
               {([
-                { key: 'real', label: `Real Data (${crops.length})` },
-                { key: 'synthetic', label: `Synthetic (${syntheticCrops.length + syntheticOkCrops.length})` },
-              ] as const).map(tab => (
-                <button key={tab.key} onClick={() => setCropsTab(tab.key)} style={{
-                  padding: '5px 12px', fontSize: '12px', border: 'none',
-                  borderBottom: cropsTab === tab.key ? '2px solid #3b82f6' : '2px solid transparent',
-                  background: 'transparent', color: cropsTab === tab.key ? '#60a5fa' : '#6b7280',
-                  cursor: 'pointer', fontWeight: cropsTab === tab.key ? 600 : 400, transition: 'color .12s',
-                }}>{tab.label}</button>
-              ))}
+                { key: 'real', label: `Real Data (${crops.length})`, count: crops.length, dim: false },
+                {
+                  key: 'imported',
+                  label: `Imported (${importedDisplay.length})`,
+                  count: importedDisplay.length,
+                  dim: !includeImportedChars,
+                },
+                { key: 'synthetic', label: `Synthetic (${syntheticCrops.length + syntheticOkCrops.length})`, count: syntheticCrops.length + syntheticOkCrops.length, dim: false },
+              ] as const).map(tab => {
+                const active = cropsTab === tab.key;
+                const cls = `ml-crops-tab-btn${active ? ' active' : ''}${tab.dim ? ' dim' : ''}`;
+                return (
+                  <button key={tab.key} onClick={() => setCropsTab(tab.key)}
+                    className={cls}
+                    title={
+                      tab.key === 'imported' && tab.dim
+                        ? 'Toggle "Include imported chars" OFF — these crops won\'t enter the training set'
+                        : undefined
+                    }>{tab.label}</button>
+                );
+              })}
             </div>
-            {cropsTab === 'real' ? (
+            {cropsTab === 'real' && (
               <div style={{ display: 'flex', gap: '6px', padding: '8px 14px' }}>
                 {(['all', 'OK', 'NG'] as const).map(f => (
                   <button key={f} onClick={() => setCropFilter(f)} style={{
@@ -1077,17 +1259,59 @@ export default function TrainTab({ project, onRefresh }: Props) {
                   </button>
                 ))}
               </div>
-            ) : <div style={{ height: '8px' }} />}
+            )}
+            {cropsTab === 'imported' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '8px 14px' }}>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  {(['all', 'OK', 'NG'] as const).map(f => {
+                    const c = f === 'all' ? importedDisplay.length : f === 'OK' ? importedOk : importedNg;
+                    return (
+                      <button key={f} onClick={() => setCropFilter(f)} style={{
+                        padding: '3px 10px', fontSize: '11px', borderRadius: '12px', border: '1px solid', cursor: 'pointer', transition: 'all .12s',
+                        borderColor: cropFilter === f ? (f === 'OK' ? '#4ade80' : f === 'NG' ? '#f87171' : '#3b82f6') : '#2d3148',
+                        background: cropFilter === f ? (f === 'OK' ? 'rgba(74,222,128,.12)' : f === 'NG' ? 'rgba(248,113,113,.12)' : 'rgba(59,130,246,.12)') : 'transparent',
+                        color: cropFilter === f ? (f === 'OK' ? '#4ade80' : f === 'NG' ? '#f87171' : '#60a5fa') : '#6b7280',
+                      }}>
+                        {f === 'all' ? `All (${c})` : `${f} (${c})`}
+                      </button>
+                    );
+                  })}
+                  {importedBatches.length > 0 && (
+                    <select value={importedBatchFilter}
+                      onChange={e => setImportedBatchFilter(e.target.value as 'all' | string)}
+                      className="ml-form-select"
+                      style={{ marginLeft: 'auto', fontSize: 11, padding: '3px 6px', maxWidth: 180 }}>
+                      <option value="all">All batches ({importedBatches.length})</option>
+                      {importedBatches.map(b => (
+                        <option key={b.id} value={b.id}>{b.name} ({b.total})</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                {!includeImportedChars && (
+                  <span className="ml-imported-toggle-warn">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+                        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    Toggle "Include imported chars" is OFF — these crops won't be used for training.
+                  </span>
+                )}
+              </div>
+            )}
+            {cropsTab === 'synthetic' && <div style={{ height: '8px' }} />}
             {/* Stats banner showing char coverage + view mode toggle */}
             {(() => {
-              const synthAll: Array<{ crop_b64: string; label: string; char_id?: string | null }> = [
+              const synthAll: DisplayCrop[] = [
                 ...syntheticCrops,
                 ...syntheticOkCrops.map(c => ({
                   crop_b64: c.crop_b64, label: 'OK', char_id: c.char_id,
                 })),
               ];
-              const src: Array<{ crop_b64: string; label: string; char_id?: string | null }> =
-                cropsTab === 'real' ? crops : synthAll;
+              const src: DisplayCrop[] =
+                cropsTab === 'real' ? crops :
+                cropsTab === 'imported' ? importedDisplay :
+                synthAll;
               const sourceBuckets = bucketByChar(src);
               return (
                 <CharStatsBanner
@@ -1112,8 +1336,37 @@ export default function TrainTab({ project, onRefresh }: Props) {
                     : <CropGrid items={filteredCrops}
                         emptyText={crops.length === 0 ? 'No labeled characters yet. Go to Label tab.' : `No ${cropFilter} crops found.`} />
             )}
+            {cropsTab === 'imported' && (() => {
+              if (loadingImported) {
+                return <div className="ml-empty-state"><div className="ml-loading-spinner" /></div>;
+              }
+              if (importedDisplay.length === 0) {
+                return (
+                  <div className="ml-empty-state" style={{ minHeight: '120px' }}>
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.4 }}>
+                      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"
+                        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    <span style={{ fontSize: '12px', color: '#6b7280', marginTop: '6px' }}>
+                      No imported chars yet. Open the <b>Imported Chars</b> tab to add some.
+                    </span>
+                  </div>
+                );
+              }
+              const emptyMsg = importedBatchFilter !== 'all'
+                ? `No ${cropFilter === 'all' ? '' : cropFilter + ' '}crops in this batch.`
+                : `No ${cropFilter} crops found.`;
+              return viewMode === 'grouped'
+                ? <CharGroupedCrops
+                    buckets={bucketByChar(importedFiltered)}
+                    expanded={expandedChars}
+                    onToggleExpand={toggleCharExpanded}
+                    emptyText={emptyMsg}
+                  />
+                : <CropGrid items={importedFiltered} emptyText={emptyMsg} />;
+            })()}
             {cropsTab === 'synthetic' && (() => {
-              const merged: Array<{ crop_b64: string; label: string; char_id?: string | null }> = [
+              const merged: DisplayCrop[] = [
                 ...syntheticCrops,
                 ...syntheticOkCrops.map(c => ({
                   crop_b64: c.crop_b64, label: 'OK', char_id: c.char_id,

@@ -430,9 +430,20 @@ _cache: Dict[str, Dict[str, Any]] = {}
 
 
 def _get_or_build_cache(annotations: List[MLAnnotationInDB],
-                       images_dir: Path) -> Dict[str, Any]:
-    """Return {style, ok_crops_by_char, mean_size}. Cached per images_dir."""
+                       images_dir: Path,
+                       imported_ok_crops: Optional[List[Tuple[np.ndarray, str]]] = None,
+                       ) -> Dict[str, Any]:
+    """Return {style, ok_crops_by_char, mean_size}. Cached per images_dir.
+
+    `imported_ok_crops`: optional list of (crop_bgr, char_id) from the active-
+    learning pool. When provided, they augment the OK pool used to build style
+    and per-char BG samples, so chars only present in imports still get
+    realistic synthesis. The cache key includes len(imported) to invalidate
+    when the import set changes (sufficient for typical workflows).
+    """
     key = str(images_dir.resolve())
+    if imported_ok_crops:
+        key = f"{key}:imp{len(imported_ok_crops)}"
     if key in _cache:
         return _cache[key]
 
@@ -449,6 +460,12 @@ def _get_or_build_cache(annotations: List[MLAnnotationInDB],
                 if crop is None:
                     continue
                 ok_crops_by_char.setdefault(seg.char_id, []).append(crop)
+
+    if imported_ok_crops:
+        for crop, cid in imported_ok_crops:
+            if not cid or crop is None:
+                continue
+            ok_crops_by_char.setdefault(cid, []).append(crop)
 
     all_crops: List[np.ndarray] = []
     for v in ok_crops_by_char.values():
@@ -506,6 +523,7 @@ def synthesize_ok_from_annotations(
     char_filter: Optional[List[str]] = None,
     rotation_max_deg: float = 5.0,
     size_jitter: float = 0.30,
+    imported_ok_crops: Optional[List[Tuple[np.ndarray, str]]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Generate synthetic OK crops to top-up chars below `target_n_per_char`.
@@ -519,6 +537,10 @@ def synthesize_ok_from_annotations(
         char_filter:        optional list of char_ids to restrict to.
         rotation_max_deg:   max rotation per sample (±deg).
         size_jitter:        relative size jitter per sample.
+        imported_ok_crops:  optional (crop_bgr, char_id) pairs from the
+                            Imported Chars pool — merged into the OK pool used
+                            for style fingerprint + BG sampling. Lets chars
+                            only present in imports get covered.
 
     Returns list of {crop_b64, char_id, font_name, rotation_deg, source}.
     """
@@ -531,7 +553,7 @@ def synthesize_ok_from_annotations(
     rng = random.Random()
     np.random.seed(int(time.time()) % (2**31))
 
-    bundle = _get_or_build_cache(annotations, images_dir)
+    bundle = _get_or_build_cache(annotations, images_dir, imported_ok_crops)
     style = bundle['style']
     ok_by_char = bundle['ok_crops_by_char']
     target_size = bundle['mean_size']

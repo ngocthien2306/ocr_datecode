@@ -1061,6 +1061,128 @@ body.dark-mode .ml-status-chip.miss  { color: #f87171; }
 body.dark-mode .ml-train-preview       { background: #0f1117; border-color: #2d3148; color: #9ca3af; }
 body.dark-mode .ml-train-preview-title { color: #e5e7eb; }
 
+/* ── Imported chars preview (Train tab) ──────────────────────────────── */
+/* Soft purple accent throughout — distinct from blue (real) and orange (synth). */
+.ml-train-preview-imported-note {
+  font-size: 10px;
+  color: #7c3aed;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+body.dark-mode .ml-train-preview-imported-note { color: #c4b5fd; }
+
+.ml-imported-extra {
+  font-size: 11px;
+  color: #7c3aed;
+  margin-left: 4px;
+}
+body.dark-mode .ml-imported-extra { color: #c4b5fd; }
+
+.ml-metric-sub {
+  font-size: 9px;
+  opacity: .7;
+  display: block;
+}
+
+/* OK / NG variants for metric values — keeps colors theme-aware. */
+.ml-metric-value-ok { color: #16a34a; }
+.ml-metric-value-ng { color: #dc2626; }
+body.dark-mode .ml-metric-value-ok { color: #4ade80; }
+body.dark-mode .ml-metric-value-ng { color: #f87171; }
+
+.ml-imported-summary {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 2px;
+  padding: 4px 8px;
+  background: rgba(124, 58, 237, .07);
+  border: 1px dashed rgba(124, 58, 237, .35);
+  border-radius: 4px;
+}
+.ml-imported-summary .ok { color: #16a34a; font-weight: 600; }
+.ml-imported-summary .ng { color: #dc2626; font-weight: 600; }
+body.dark-mode .ml-imported-summary { color: #9ca3af; background: rgba(168, 85, 247, .10); border-color: rgba(168, 85, 247, .35); }
+body.dark-mode .ml-imported-summary .ok { color: #4ade80; }
+body.dark-mode .ml-imported-summary .ng { color: #f87171; }
+
+.ml-imported-toggle-warn {
+  font-size: 10px;
+  color: #b45309;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+body.dark-mode .ml-imported-toggle-warn { color: #fbbf24; }
+
+.ml-imported-batch-badge {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(124, 58, 237, .85);
+  color: #fff;
+  max-width: 50px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.dark-mode .ml-imported-batch-badge { background: rgba(168, 85, 247, .85); }
+.ml-imported-batch-badge.top-right { top: 2px; right: 2px; bottom: auto; }
+
+/* Tab buttons inside the Labeled Crops panel header. Pre-existing tabs were
+   inline-styled — centralizing here so the new "Imported" tab gets the same
+   theme-aware treatment, plus a `dim` state when its toggle is OFF. */
+.ml-crops-tab-btn {
+  padding: 5px 12px;
+  font-size: 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  font-weight: 400;
+  transition: color .12s;
+}
+.ml-crops-tab-btn.active {
+  border-bottom-color: #2563eb;
+  color: #2563eb;
+  font-weight: 600;
+}
+.ml-crops-tab-btn.dim:not(.active) {
+  color: #cbd5e1;
+  opacity: .55;
+}
+body.dark-mode .ml-crops-tab-btn         { color: #6b7280; }
+body.dark-mode .ml-crops-tab-btn.active  { border-bottom-color: #3b82f6; color: #60a5fa; }
+body.dark-mode .ml-crops-tab-btn.dim:not(.active) { color: #4b5563; }
+
+/* Train button helper text. The "running" banner uses an info-blue accent so
+   the user understands the project is already busy; the "need samples" banner
+   stays neutral. */
+.ml-train-need-samples {
+  font-size: 11px;
+  color: #6b7280;
+  text-align: center;
+}
+.ml-train-running-banner {
+  font-size: 11px;
+  color: #1d4ed8;
+  background: rgba(59, 130, 246, .08);
+  border: 1px solid rgba(59, 130, 246, .25);
+  border-radius: 4px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+}
+body.dark-mode .ml-train-need-samples   { color: #6b7280; }
+body.dark-mode .ml-train-running-banner { color: #93c5fd; background: rgba(59,130,246,.12); border-color: rgba(59,130,246,.35); }
+
 /* ── char_id input in Label tab ────────────────────── */
 .ml-char-input {
   width: 28px;

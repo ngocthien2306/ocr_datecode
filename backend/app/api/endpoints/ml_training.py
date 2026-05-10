@@ -590,11 +590,30 @@ async def preview_synthetic_ok_endpoint(
     from app.services.ml_ok_synthesize import synthesize_ok_from_annotations
 
     annotations = await repo.list_annotations(project_id)
-    if not annotations:
-        raise HTTPException(400, "No annotations — label some OK chars first")
     images_dir = _images_dir(project_id)
 
+    # Pull imported OK crops from the active-learning pool so preview matches
+    # what training will actually use (E in the design).
+    imported_chars = await repo.list_char_imports(project_id)
+    imported_ok_paths = [
+        (_PROJECT_ROOT / "public" / c.crop_path, c.char_id)
+        for c in imported_chars
+        if c.label == "OK" and c.char_id
+    ]
+
+    if not annotations and not imported_ok_paths:
+        raise HTTPException(
+            400,
+            "No OK samples — label some in Label tab or import chars first",
+        )
+
     def _build():
+        imported_ok: List[Tuple[Any, str]] = []
+        for p, cid in imported_ok_paths:
+            img = cv.imread(str(p))
+            if img is not None:
+                imported_ok.append((img, cid))
+
         synth = synthesize_ok_from_annotations(
             annotations, images_dir,
             target_n_per_char=request.target_n_per_char,
@@ -602,6 +621,7 @@ async def preview_synthetic_ok_endpoint(
             char_filter=request.char_filter,
             rotation_max_deg=request.rotation_max_deg,
             size_jitter=request.size_jitter,
+            imported_ok_crops=imported_ok or None,
         )
         # Encode crops → b64 for transport (drop raw ndarray)
         return [{

@@ -123,7 +123,7 @@ class TrainRequest(BaseModel):
     test_split: float = 0.2         # fraction for test set
     threshold: float = 0.5          # prob_ok >= threshold → label OK
     n_estimators: int = 100         # RF only
-    max_iter: int = 500             # MLP/SVM only
+    max_iter: int = 500             # MLP only (SVC ignores it — runs unbounded)
     C: float = 1.0                  # SVM only
     hidden_layer_sizes: List[int] = [128, 64]  # MLP only
     centroid_temperature: float = 5.0   # centroid only — sigmoid scale

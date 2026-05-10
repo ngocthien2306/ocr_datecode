@@ -234,7 +234,10 @@ def build_dataset(
     ng_by_char: Dict[str, List[np.ndarray]] = defaultdict(list)
 
     # Imported chars from the active-learning pool — read each pre-cropped JPEG
-    # and bucket it by char_id/label like a regular crop.
+    # and bucket it by char_id/label like a regular crop. Track imported OK
+    # crops separately (with their char_id) so OK synthesis can use them as
+    # extra style/BG references without re-reading from disk.
+    imported_ok_for_synth: List[Tuple[np.ndarray, str]] = []
     if imported_char_files:
         for crop_path, label, char_id in imported_char_files:
             if label not in ("OK", "NG"):
@@ -244,6 +247,8 @@ def build_dataset(
                 continue
             key = char_id or "_unknown"
             (ok_by_char if label == "OK" else ng_by_char)[key].append(crop)
+            if label == "OK" and char_id:
+                imported_ok_for_synth.append((crop, char_id))
 
     # B2 — Load each source image only once per training run, then crop all of
     # its segments from the in-memory array. Previously crop_segment did one
@@ -288,6 +293,8 @@ def build_dataset(
     # --- OK synthesis (font-render) — top up chars below target_n ---
     # Generates plausible OK samples for chars with too few real labels. Only
     # runs when target > 0; failures are logged but non-fatal.
+    # Imported OK crops are forwarded so synthesis can build style/BG pools
+    # from chars that only exist in the Imported Chars pool.
     n_ok_synth = 0
     if ok_synth_target and ok_synth_target > 0:
         try:
@@ -296,6 +303,7 @@ def build_dataset(
                 annotations, images_dir,
                 target_n_per_char=ok_synth_target,
                 only_below_threshold=True,
+                imported_ok_crops=imported_ok_for_synth or None,
             )
             for item in synth:
                 cid = item['char_id'] or "_unknown"
@@ -630,12 +638,16 @@ def _build_classifier(request: TrainRequest):
             class_weight="balanced",   # safety net for imbalanced datasets
         )
     elif algo == "svm":
+        # max_iter previously took request.max_iter (default 500), which is
+        # the MLP knob. 500 iters of libsvm SMO on ~5k 128-dim samples often
+        # cuts training short → underfit (saw OK recall ~0.55 in practice).
+        # Let SVC run to its own convergence criterion (max_iter=-1 = unbounded).
         from sklearn.svm import SVC
         return SVC(
             C=request.C,
             kernel="rbf",
             probability=True,
-            max_iter=request.max_iter,
+            max_iter=-1,
             random_state=42,
             class_weight="balanced",
         )
