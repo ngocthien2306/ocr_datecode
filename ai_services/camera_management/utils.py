@@ -700,6 +700,14 @@ def draw_detected_obb_boxes(
             # Get color
             color = colors.get(box_type, (255, 255, 255))
 
+            # Extract corners once — used by OBB drawing AND label anchor below
+            corners = single_box.get('corners')
+            if corners is not None:
+                if isinstance(corners, list):
+                    corners = np.array(corners, dtype=np.int32)
+                else:
+                    corners = corners.astype(np.int32)
+
             # Wrinkled box: ưu tiên vẽ contour mask (instance seg), fallback corners (OBB)
             contour = single_box.get('contour')
             if box_type == 'wrinkled' and contour is not None:
@@ -710,15 +718,17 @@ def draw_detected_obb_boxes(
                 cv2.addWeighted(overlay, 0.35, result_img, 0.65, 0, result_img)
                 # Outline
                 cv2.polylines(result_img, [contour_arr], True, color, line_thickness + 1, cv2.LINE_AA)
+                # Derive corners from contour bounding rect when not provided — label anchor needs it
+                if corners is None:
+                    x_b, y_b, bw_b, bh_b = cv2.boundingRect(contour_arr)
+                    corners = np.array(
+                        [[x_b, y_b], [x_b + bw_b, y_b], [x_b + bw_b, y_b + bh_b], [x_b, y_b + bh_b]],
+                        dtype=np.int32,
+                    )
             else:
                 # Fallback: vẽ OBB corners (product, label, hoặc wrinkled cũ)
-                corners = single_box.get('corners')
                 if corners is None:
                     continue
-                if isinstance(corners, list):
-                    corners = np.array(corners, dtype=np.int32)
-                else:
-                    corners = corners.astype(np.int32)
 
                 for i in range(4):
                     pt1 = tuple(corners[i])
