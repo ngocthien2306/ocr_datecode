@@ -712,8 +712,11 @@
   font-weight: 500;
   font-size: 11px;
 }
-.ml-training-phase-badge.phase-completed { background: #dcfce7; color: #166534; }
-.ml-training-phase-badge.phase-failed    { background: #fee2e2; color: #991b1b; }
+.ml-training-phase-badge.phase-completed  { background: #dcfce7; color: #166534; }
+.ml-training-phase-badge.phase-failed     { background: #fee2e2; color: #991b1b; }
+.ml-training-phase-badge.phase-cancelling { background: #fef3c7; color: #92400e; }
+.ml-training-phase-badge.phase-cancelled  { background: #f3f4f6; color: #6b7280; }
+.ml-training-stop-btn { margin-left: auto; }
 .ml-training-progress-pct {
   font-weight: 600;
   font-size: 12px;
@@ -909,8 +912,10 @@ body.dark-mode .ml-report-pre          { background: #0d1117; border-color: #2d3
 body.dark-mode .ml-progress-bar-wrapper { background: #1f2937; }
 body.dark-mode .ml-training-progress-panel { background: #1a1d2e; border-color: #2d3148; }
 body.dark-mode .ml-training-phase-badge    { background: #1e3a5f; color: #93c5fd; }
-body.dark-mode .ml-training-phase-badge.phase-completed { background: #14532d; color: #86efac; }
-body.dark-mode .ml-training-phase-badge.phase-failed    { background: #7f1d1d; color: #fca5a5; }
+body.dark-mode .ml-training-phase-badge.phase-completed  { background: #14532d; color: #86efac; }
+body.dark-mode .ml-training-phase-badge.phase-failed     { background: #7f1d1d; color: #fca5a5; }
+body.dark-mode .ml-training-phase-badge.phase-cancelling { background: #78350f; color: #fcd34d; }
+body.dark-mode .ml-training-phase-badge.phase-cancelled  { background: #374151; color: #9ca3af; }
 body.dark-mode .ml-training-progress-track { background: #2d3148; }
 body.dark-mode .ml-training-eta            { color: #94a3b8; }
 body.dark-mode .ml-training-log-panel      { background: #0f172a; color: #cbd5e1; border-color: #2d3148; }

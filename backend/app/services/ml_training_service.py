@@ -497,6 +497,10 @@ class CentroidClassifier:
         return np.stack([1.0 - p_ok, p_ok], axis=1)        # (N, 2): [p_ng, p_ok]
 
 
+class TrainingCancelled(Exception):
+    pass
+
+
 def train_model(
     annotations: List[MLAnnotationInDB],
     images_dir: Path,
@@ -504,6 +508,7 @@ def train_model(
     model_save_path: Path,
     progress_cb: Optional[Callable[[str, float], None]] = None,
     imported_char_files: Optional[List[Tuple[Path, str, Optional[str]]]] = None,
+    cancel_check: Optional[Callable[[], bool]] = None,
 ) -> Dict[str, Any]:
     """
     Train a binary classifier (rf / svm / mlp / centroid) on SupCon embedding
@@ -516,7 +521,12 @@ def train_model(
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 
+    def _check_cancel():
+        if cancel_check is not None and cancel_check():
+            raise TrainingCancelled("Cancelled by user")
+
     def _emit(phase: str, pct: float) -> None:
+        _check_cancel()
         if progress_cb is None:
             return
         try:
@@ -534,6 +544,7 @@ def train_model(
     # the 10..55% global range so the UI bar moves smoothly through this phase
     # instead of sitting at 5% until embedding finishes.
     def _embed_progress(frac: float) -> None:
+        _check_cancel()
         if progress_cb is not None:
             try:
                 progress_cb("embedding", 10.0 + 45.0 * float(frac))

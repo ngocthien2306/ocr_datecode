@@ -989,6 +989,9 @@ async def start_training(
     return {"model_id": model_id, "status": "training"}
 
 
+_CANCEL_FLAGS: Dict[str, bool] = {}
+
+
 async def _run_training_bg(
     repo: MLTrainingRepository,
     project_id: str,
@@ -997,6 +1000,7 @@ async def _run_training_bg(
     request: TrainRequest,
     imported_files: Optional[List[tuple]] = None,
 ):
+    from app.services.ml_training_service import TrainingCancelled
     images_dir = _images_dir(project_id)
     model_path = _models_dir(project_id) / f"{model_id}.joblib"
 
@@ -1032,6 +1036,11 @@ async def _run_training_bg(
         except Exception:
             logger.exception("[ML] Failed to schedule progress update")
 
+    _CANCEL_FLAGS[model_id] = False
+
+    def _is_cancelled() -> bool:
+        return _CANCEL_FLAGS.get(model_id, False)
+
     try:
         metrics = await loop.run_in_executor(
             None,
@@ -1043,6 +1052,7 @@ async def _run_training_bg(
                 model_path,
                 progress_cb=_progress_cb,
                 imported_char_files=imported_files or [],
+                cancel_check=_is_cancelled,
             ),
         )
         await repo.update_model_record(model_id, {
@@ -1056,6 +1066,23 @@ async def _run_training_bg(
         log_buffer.push(model_id, f"[ML] Training completed (acc_test={metrics.get('accuracy_test', 0):.3f})")
         logger.info(f"[ML] Training completed for project {project_id}, model {model_id}")
 
+    except TrainingCancelled:
+        log_buffer.push(model_id, "[ML] Training cancelled by user", level="WARNING")
+        await repo.update_model_record(model_id, {
+            "status": "cancelled",
+            "error": "Cancelled by user",
+            "phase": "cancelled",
+        })
+        await repo.set_status(project_id, "active")
+        try:
+            if model_path.exists():
+                model_path.unlink()
+            sidecar = model_path.parent / f"{model_path.stem}_test_set.json"
+            if sidecar.exists():
+                sidecar.unlink()
+        except Exception:
+            logger.exception("[ML] Failed to clean cancelled model files")
+
     except Exception as e:
         logger.exception(f"[ML] Training failed for project {project_id}")
         log_buffer.push(model_id, f"[ML] Training failed: {e}", level="ERROR")
@@ -1067,6 +1094,7 @@ async def _run_training_bg(
         await repo.set_status(project_id, "active")
     finally:
         detach_log_handler(handler)
+        _CANCEL_FLAGS.pop(model_id, None)
 
 
 @router.get("/ml/projects/{project_id}/models", tags=["ML Training"])
@@ -1119,6 +1147,28 @@ async def get_training_logs(
         "status":     model_record.status,
         "error":      model_record.error,
     }
+
+
+@router.post(
+    "/ml/projects/{project_id}/models/{model_id}/cancel",
+    tags=["ML Training"],
+)
+async def cancel_training(
+    project_id: str,
+    model_id: str,
+    repo: MLTrainingRepository = Depends(get_repo),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    models = await repo.list_models(project_id)
+    model_record = next((m for m in models if m.id == model_id), None)
+    if not model_record:
+        raise HTTPException(404, "Model not found")
+    if model_record.status not in ("training", "pending"):
+        raise HTTPException(409, f"Model status is '{model_record.status}', not cancellable")
+    _CANCEL_FLAGS[model_id] = True
+    await repo.update_model_record(model_id, {"phase": "cancelling"})
+    get_log_buffer().push(model_id, "[ML] Cancel requested", level="WARNING")
+    return {"ok": True, "model_id": model_id}
 
 
 # ════════════════════════════════════════ PREDICTION ═════════════════════

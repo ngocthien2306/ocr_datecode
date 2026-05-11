@@ -154,7 +154,7 @@ export interface MLModel {
   augment_factor: number;
   metrics: MLModelMetrics;
   model_path: string;
-  status: 'pending' | 'training' | 'completed' | 'failed';
+  status: 'pending' | 'training' | 'completed' | 'failed' | 'cancelled';
   error?: string;
   created_at: string;
   phase?: string | null;
@@ -173,7 +173,7 @@ export interface TrainingLogResponse {
   next_since: number;
   phase: string | null;
   progress: number;
-  status: 'pending' | 'training' | 'completed' | 'failed';
+  status: 'pending' | 'training' | 'completed' | 'failed' | 'cancelled';
   error: string | null;
 }
 
@@ -405,6 +405,11 @@ export const mlTrainingAPI = {
     api.get<TrainingLogResponse>(
       `/ml/projects/${projectId}/models/${modelId}/logs`,
       { params: { since } },
+    ).then(r => r.data),
+
+  cancelTraining: (projectId: string, modelId: string) =>
+    api.post<{ ok: boolean; model_id: string }>(
+      `/ml/projects/${projectId}/models/${modelId}/cancel`,
     ).then(r => r.data),
 
   // Prediction

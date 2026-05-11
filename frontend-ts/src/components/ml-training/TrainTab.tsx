@@ -527,6 +527,8 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
   const [trainPhase, setTrainPhase] = useState<string | null>(null);
   const [trainProgress, setTrainProgress] = useState(0);
   const [trainStartedAt, setTrainStartedAt] = useState<number | null>(null);
+  const [trainingModelId, setTrainingModelId] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const [, setNowTick] = useState(0);     // forces re-render every 1s during training (for elapsed/ETA)
   const logScrollRef = useRef<HTMLDivElement>(null);
 
@@ -604,10 +606,12 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
         }
         if (data.phase != null) setTrainPhase(data.phase);
         if (data.progress != null) setTrainProgress(data.progress);
-        if (data.status === 'completed' || data.status === 'failed') {
+        if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
           clearInterval(pollRef.current!);
           pollRef.current = null;
           setTraining(false);
+          setTrainingModelId(null);
+          setCancelling(false);
           await loadModelsRef.current?.();
           await onRefresh();
           if (data.status === 'completed') handleModelCompleted(modelId);
@@ -637,7 +641,8 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
         setTrainStartedAt(startedAt);
         setTrainPhase(inProgress.phase ?? null);
         setTrainProgress(inProgress.progress ?? 0);
-        setTrainLogs([]);  // since=0 will refetch whatever the server still has buffered
+        setTrainLogs([]);
+        setTrainingModelId(inProgress.id);
         startPolling(inProgress.id);
       }
     } catch { /* ignore */ }
@@ -728,6 +733,7 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
         include_imported_chars: includeImportedChars,
       };
       const { model_id } = await mlTrainingAPI.startTraining(project.id, req);
+      setTrainingModelId(model_id);
       startPolling(model_id);
     } catch (e: any) {
       setTraining(false);
@@ -759,6 +765,8 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
       case 'saving':              return 'Đang lưu model';
       case 'completed':           return 'Hoàn tất';
       case 'failed':              return 'Thất bại';
+      case 'cancelling':          return 'Đang huỷ';
+      case 'cancelled':           return 'Đã huỷ';
       default:                    return p ? p : 'Đang khởi động';
     }
   };
@@ -936,6 +944,17 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
       });
     }
   }, [project.id]);
+
+  const handleCancelTraining = useCallback(async () => {
+    if (!trainingModelId || cancelling) return;
+    setCancelling(true);
+    try {
+      await mlTrainingAPI.cancelTraining(project.id, trainingModelId);
+    } catch (e: any) {
+      setCancelling(false);
+      alert(e?.response?.data?.detail ?? 'Cancel failed');
+    }
+  }, [trainingModelId, cancelling, project.id]);
 
   const handleEditSaved = useCallback(() => {
     // Async refreshes — guard against unmount so we don't setState on a
@@ -1312,16 +1331,26 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
           <div className="ml-training-progress-panel">
             <div className="ml-training-phase-row">
               <span className={`ml-training-phase-badge phase-${trainPhase || 'preparing'}`}>
-                {phaseLabel(trainPhase)}
+                {phaseLabel(cancelling ? 'cancelling' : trainPhase)}
               </span>
               <span className="ml-training-progress-pct">{trainProgress.toFixed(0)}%</span>
+              <button className="ml-btn ml-btn-danger ml-btn-sm ml-training-stop-btn"
+                onClick={handleCancelTraining}
+                disabled={cancelling || !trainingModelId}
+                title="Cancel training (will stop at next phase checkpoint)">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" style={{ marginRight: 3 }}>
+                  <rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" />
+                </svg>
+                {cancelling ? 'Stopping…' : 'Stop'}
+              </button>
             </div>
             <div className="ml-training-progress-track">
               <div className="ml-training-progress-fill" style={{ width: `${trainProgress}%` }} />
             </div>
             <div className="ml-training-eta">
               Đã chạy {fmtDuration(elapsedSec)}
-              {etaSec != null && <> · còn ~{fmtDuration(etaSec)}</>}
+              {etaSec != null && !cancelling && <> · còn ~{fmtDuration(etaSec)}</>}
+              {cancelling && <span style={{ color: '#f59e0b' }}> · chờ phase tiếp theo để dừng…</span>}
             </div>
             <div className="ml-training-log-panel" ref={logScrollRef}>
               {trainLogs.length === 0 ? (
