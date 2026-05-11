@@ -631,6 +631,16 @@ class _SynthOKRequest(BaseModel):
     char_filter: Optional[List[str]] = None
     rotation_max_deg: float = 5.0
     size_jitter: float = 0.30
+    font_paths: Optional[List[str]] = None
+    style_sample_n: int = 64
+    sample_strategy: str = "random"
+    char_fill_min: float = 0.85
+    char_fill_max: float = 0.95
+    bg_per_char: int = 24
+    fill_min: float = 0.10
+    fill_max: float = 0.65
+    min_contrast: float = 20.0
+    max_retries: int = 4
 
 
 @router.post("/ml/projects/{project_id}/preview-synthetic-ok", tags=["ML Training"])
@@ -681,6 +691,16 @@ async def preview_synthetic_ok_endpoint(
             rotation_max_deg=request.rotation_max_deg,
             size_jitter=request.size_jitter,
             imported_ok_crops=imported_ok or None,
+            font_paths=request.font_paths,
+            style_sample_n=request.style_sample_n,
+            sample_strategy=request.sample_strategy,
+            bg_per_char=request.bg_per_char,
+            char_fill_min=request.char_fill_min,
+            char_fill_max=request.char_fill_max,
+            fill_min=request.fill_min,
+            fill_max=request.fill_max,
+            min_contrast=request.min_contrast,
+            max_retries=request.max_retries,
         )
         # Encode crops → b64 for transport (drop raw ndarray)
         return [{
@@ -696,6 +716,222 @@ async def preview_synthetic_ok_endpoint(
     except (ValueError, RuntimeError) as e:
         raise HTTPException(400, str(e))
     return {"crops": crops, "count": len(crops)}
+
+
+# ════════════════════════════════════════ FONT MANAGEMENT ══════════════════
+
+_FONTS_ALLOWED_EXTS = {".ttf", ".otf", ".ttc"}
+_FONTS_MAX_BYTES = 5 * 1024 * 1024
+
+
+@router.get("/ml/fonts/discover", tags=["ML Training"])
+async def fonts_discover(
+    preview_chars: str = "",
+    current_user: UserInDB = Depends(get_current_user),
+):
+    from app.services.ml_font_preview import list_fonts
+    return await asyncio.get_event_loop().run_in_executor(
+        None, list_fonts, preview_chars,
+    )
+
+
+@router.post("/ml/fonts/upload", tags=["ML Training"])
+async def fonts_upload(
+    file: UploadFile = File(...),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    from app.services.ml_font_preview import (
+        _FONT_DIR, render_preview_b64, clear_preview_cache,
+    )
+    from app.services.ml_ok_synthesize import _measure_stroke_ratio
+
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in _FONTS_ALLOWED_EXTS:
+        raise HTTPException(400, f"Unsupported font format: {suffix}")
+    content = await file.read()
+    if len(content) > _FONTS_MAX_BYTES:
+        raise HTTPException(400, "Font file exceeds 5 MB")
+
+    _FONT_DIR.mkdir(parents=True, exist_ok=True)
+    dst = _FONT_DIR / Path(file.filename).name
+    if dst.exists():
+        raise HTTPException(409, f"Font already exists: {dst.name}")
+    dst.write_bytes(content)
+
+    ratio = _measure_stroke_ratio(str(dst))
+    if ratio is None:
+        try:
+            dst.unlink()
+        except Exception:
+            pass
+        raise HTTPException(400, "Font file is invalid or unreadable")
+
+    warning = None
+    if not (0.08 <= ratio <= 0.22):
+        warning = f"stroke {ratio:.2f} outside recommended [0.08, 0.22] — synthesis may look off"
+
+    clear_preview_cache()
+    return {
+        "path": str(dst.resolve()),
+        "filename": dst.name,
+        "name": dst.stem,
+        "stroke_ratio": round(ratio, 3),
+        "source": "project",
+        "preview_b64": render_preview_b64(str(dst), ""),
+        "warning": warning,
+    }
+
+
+@router.delete("/ml/fonts/{filename}", tags=["ML Training"])
+async def fonts_delete(
+    filename: str,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    from app.services.ml_font_preview import _FONT_DIR, clear_preview_cache
+    target = (_FONT_DIR / filename).resolve()
+    try:
+        target.relative_to(_FONT_DIR.resolve())
+    except ValueError:
+        raise HTTPException(400, "Path traversal not allowed")
+    if not target.exists():
+        raise HTTPException(404, "Font not found")
+    target.unlink()
+    clear_preview_cache()
+    return {"ok": True}
+
+
+# ════════════════════════════════════════ SYNTH-OK INTROSPECTION ═══════════
+
+class _SynthOKStyleRequest(BaseModel):
+    style_sample_n: int = 64
+    sample_strategy: str = "random"
+    include_imported: bool = True
+    n_thumbnails: int = 4
+
+
+@router.post(
+    "/ml/projects/{project_id}/synth-ok-style",
+    tags=["ML Training"],
+)
+async def synth_ok_style(
+    project_id: str,
+    request: _SynthOKStyleRequest,
+    repo: MLTrainingRepository = Depends(get_repo),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    from app.services.ml_ok_synthesize import _get_or_build_cache
+
+    annotations = await repo.list_annotations(project_id)
+    images_dir = _images_dir(project_id)
+
+    imported_ok_paths: List[Tuple[Path, str]] = []
+    if request.include_imported:
+        imported_chars = await repo.list_char_imports(project_id)
+        imported_ok_paths = [
+            (_PROJECT_ROOT / "public" / c.crop_path, c.char_id)
+            for c in imported_chars if c.label == "OK" and c.char_id
+        ]
+
+    if not annotations and not imported_ok_paths:
+        raise HTTPException(400, "No OK samples to fingerprint")
+
+    def _build():
+        imported_ok: List[Tuple[Any, str]] = []
+        for p, cid in imported_ok_paths:
+            img = cv.imread(str(p))
+            if img is not None:
+                imported_ok.append((img, cid))
+        bundle = _get_or_build_cache(
+            annotations, images_dir, imported_ok or None,
+            style_sample_n=request.style_sample_n,
+            sample_strategy=request.sample_strategy,
+        )
+        st = bundle["style"]
+        sample = bundle.get("sample_used") or []
+        thumbs = sample[: max(0, request.n_thumbnails)]
+        return {
+            "ink_bgr":   list(st["ink_bgr"]),
+            "bg_bgr":    list(st["bg_bgr"]),
+            "mean_w":    st["mean_w"],
+            "mean_h":    st["mean_h"],
+            "blur_sigma": st["blur_sigma"],
+            "noise_std": st["noise_std"],
+            "n_analyzed": st["n_analyzed"],
+            "ink_bg_contrast": st["ink_bg_contrast"],
+            "sample_b64s": [img_to_b64(c) for c in thumbs],
+        }
+
+    try:
+        return await asyncio.get_event_loop().run_in_executor(None, _build)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get(
+    "/ml/projects/{project_id}/synth-ok-bg-pool",
+    tags=["ML Training"],
+)
+async def synth_ok_bg_pool(
+    project_id: str,
+    n_per_char: int = 4,
+    chars: str = "",
+    repo: MLTrainingRepository = Depends(get_repo),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    from app.services.ml_ok_synthesize import _get_or_build_cache, _get_bgs_for_char
+    import random as _random
+
+    annotations = await repo.list_annotations(project_id)
+    images_dir = _images_dir(project_id)
+    imported_chars = await repo.list_char_imports(project_id)
+    imported_ok_paths = [
+        (_PROJECT_ROOT / "public" / c.crop_path, c.char_id)
+        for c in imported_chars if c.label == "OK" and c.char_id
+    ]
+    if not annotations and not imported_ok_paths:
+        raise HTTPException(400, "No OK samples for BG pool")
+
+    requested = [c.strip() for c in (chars or "").split(",") if c.strip()]
+
+    def _build():
+        imported_ok: List[Tuple[Any, str]] = []
+        for p, cid in imported_ok_paths:
+            img = cv.imread(str(p))
+            if img is not None:
+                imported_ok.append((img, cid))
+        bundle = _get_or_build_cache(annotations, images_dir, imported_ok or None)
+        target_size = bundle["mean_size"]
+        rng = _random.Random()
+        ok_by_char = bundle["ok_crops_by_char"]
+        target_chars = requested if requested else list(ok_by_char.keys())[:6]
+        out: Dict[str, List[str]] = {}
+        n = max(1, min(int(n_per_char), 12))
+        for cid in target_chars:
+            if cid not in ok_by_char:
+                continue
+            bgs = _get_bgs_for_char(bundle, cid, target_size, rng, n=n)
+            out[cid] = [img_to_b64(b) for b in bgs[:n]]
+        return out
+
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(None, _build)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(400, str(e))
+    return result
+
+
+@router.post(
+    "/ml/projects/{project_id}/synth-ok-cache/clear",
+    tags=["ML Training"],
+)
+async def synth_ok_cache_clear(
+    project_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    from app.services.ml_ok_synthesize import clear_cache
+    images_dir = _images_dir(project_id)
+    clear_cache(images_dir)
+    return {"ok": True}
 
 
 # ════════════════════════════════════════ TRAINING ════════════════════════

@@ -204,6 +204,7 @@ def build_dataset(
     ok_synth_target: int = 0,
     embed_progress_cb: Optional[Callable[[float], None]] = None,
     imported_char_files: Optional[List[Tuple[Path, str, Optional[str]]]] = None,
+    synth_ok_options: Optional[Dict[str, Any]] = None,
 ) -> Tuple[
     np.ndarray, np.ndarray, List[np.ndarray], List[Optional[str]],
     Dict[str, Dict[str, int]], int, int,
@@ -299,11 +300,24 @@ def build_dataset(
     if ok_synth_target and ok_synth_target > 0:
         try:
             from app.services.ml_ok_synthesize import synthesize_ok_from_annotations
+            opts = synth_ok_options or {}
             synth = synthesize_ok_from_annotations(
                 annotations, images_dir,
                 target_n_per_char=ok_synth_target,
                 only_below_threshold=True,
                 imported_ok_crops=imported_ok_for_synth or None,
+                font_paths=opts.get("font_paths"),
+                style_sample_n=opts.get("style_sample_n", 64),
+                sample_strategy=opts.get("sample_strategy", "random"),
+                bg_per_char=opts.get("bg_per_char", 24),
+                rotation_max_deg=opts.get("rotation_max_deg", 5.0),
+                size_jitter=opts.get("size_jitter", 0.30),
+                char_fill_min=opts.get("char_fill_min", 0.85),
+                char_fill_max=opts.get("char_fill_max", 0.95),
+                fill_min=opts.get("fill_min", 0.10),
+                fill_max=opts.get("fill_max", 0.65),
+                min_contrast=opts.get("min_contrast", 20.0),
+                max_retries=opts.get("max_retries", 4),
             )
             for item in synth:
                 cid = item['char_id'] or "_unknown"
@@ -526,12 +540,18 @@ def train_model(
             except Exception:
                 logger.exception("[train_model] embed progress_cb failed")
 
+    synth_ok_options = None
+    raw_opts = getattr(request, "synth_ok_options", None)
+    if raw_opts is not None:
+        synth_ok_options = raw_opts.model_dump() if hasattr(raw_opts, "model_dump") else dict(raw_opts)
+
     X, y, crops_raw, char_ids_raw, char_stats, n_ok, n_ng = build_dataset(
         annotations, images_dir, request.augment_factor,
         severity_dist=severity_dist,
         ok_synth_target=ok_synth_target,
         embed_progress_cb=_embed_progress,
         imported_char_files=imported_char_files,
+        synth_ok_options=synth_ok_options,
     )
     _emit("training_classifier", 60)
 

@@ -404,7 +404,9 @@ def _synthesize_char(ch: str, n: int, style: Dict[str, Any], fonts: List[str],
                      pad_frac_min: float = 0.05, pad_frac_max: float = 0.15,
                      min_width: int = 12, max_width: int = 90,
                      char_fill_min: float = 0.85, char_fill_max: float = 0.95,
-                     max_retries: int = 4) -> List[Tuple[np.ndarray, str, float]]:
+                     max_retries: int = 4,
+                     fill_min: float = 0.10, fill_max: float = 0.65,
+                     min_contrast: float = 20.0) -> List[Tuple[np.ndarray, str, float]]:
     out = []
     for _ in range(n):
         for _ in range(max_retries):
@@ -414,12 +416,13 @@ def _synthesize_char(ch: str, n: int, style: Dict[str, Any], fonts: List[str],
                 pad_frac_min, pad_frac_max, min_width, max_width,
                 char_fill_min, char_fill_max,
             )
-            ok, _ = _validate(crop)
+            ok, _ = _validate(crop, fill_min=fill_min, fill_max=fill_max,
+                              min_contrast=min_contrast)
             if ok:
                 out.append((crop, fp, rot))
                 break
         else:
-            out.append((crop, fp, rot))   # keep last attempt
+            out.append((crop, fp, rot))
     return out
 
 
@@ -432,18 +435,10 @@ _cache: Dict[str, Dict[str, Any]] = {}
 def _get_or_build_cache(annotations: List[MLAnnotationInDB],
                        images_dir: Path,
                        imported_ok_crops: Optional[List[Tuple[np.ndarray, str]]] = None,
+                       style_sample_n: int = 64,
+                       sample_strategy: str = "random",
                        ) -> Dict[str, Any]:
-    """Return {style, ok_crops_by_char, mean_size}. Cached per images_dir.
-
-    `imported_ok_crops`: optional list of (crop_bgr, char_id) from the active-
-    learning pool. When provided, they augment the OK pool used to build style
-    and per-char BG samples, so chars only present in imports still get
-    realistic synthesis. The cache key includes len(imported) to invalidate
-    when the import set changes (sufficient for typical workflows).
-    """
-    key = str(images_dir.resolve())
-    if imported_ok_crops:
-        key = f"{key}:imp{len(imported_ok_crops)}"
+    key = f"{str(images_dir.resolve())}:imp{len(imported_ok_crops or [])}:n{style_sample_n}:{sample_strategy}"
     if key in _cache:
         return _cache[key]
 
@@ -473,14 +468,29 @@ def _get_or_build_cache(annotations: List[MLAnnotationInDB],
     if not all_crops:
         raise ValueError("No real OK crops with char_id in this project — cannot synthesize")
 
-    style = _extract_style_from_crops(all_crops[:64])  # cap analysis cost
-
-    # Per-char cached BG pool (lazy).
+    rng = random.Random(42)
+    n = max(1, min(int(style_sample_n), len(all_crops)))
+    if sample_strategy == "first":
+        sample = all_crops[:n]
+    elif sample_strategy == "stratified":
+        per_char = max(1, n // max(1, len(ok_crops_by_char)))
+        sample = []
+        for v in ok_crops_by_char.values():
+            sample.extend(rng.sample(v, min(per_char, len(v))))
+        sample = sample[:n]
+        if len(sample) < n:
+            extra = [c for c in all_crops if c not in sample]
+            rng.shuffle(extra)
+            sample.extend(extra[:n - len(sample)])
+    else:
+        sample = rng.sample(all_crops, n)
+    style = _extract_style_from_crops(sample)
     bundle = {
         'style': style,
         'ok_crops_by_char': ok_crops_by_char,
-        'bg_pool_by_char': {},   # filled lazily per char
+        'bg_pool_by_char': {},
         'mean_size': (style['mean_w'] + 4, style['mean_h'] + 4),
+        'sample_used': sample,
     }
     _cache[key] = bundle
     logger.info(f"[ok-synth cache] built for {key}: {len(all_crops)} crops, "
@@ -524,6 +534,16 @@ def synthesize_ok_from_annotations(
     rotation_max_deg: float = 5.0,
     size_jitter: float = 0.30,
     imported_ok_crops: Optional[List[Tuple[np.ndarray, str]]] = None,
+    font_paths: Optional[List[str]] = None,
+    style_sample_n: int = 64,
+    sample_strategy: str = "random",
+    bg_per_char: int = 24,
+    char_fill_min: float = 0.85,
+    char_fill_max: float = 0.95,
+    fill_min: float = 0.10,
+    fill_max: float = 0.65,
+    min_contrast: float = 20.0,
+    max_retries: int = 4,
 ) -> List[Dict[str, Any]]:
     """
     Generate synthetic OK crops to top-up chars below `target_n_per_char`.
@@ -544,7 +564,10 @@ def synthesize_ok_from_annotations(
 
     Returns list of {crop_b64, char_id, font_name, rotation_deg, source}.
     """
-    fonts = discover_fonts()
+    if font_paths:
+        fonts = [p for p in font_paths if os.path.exists(p)]
+    else:
+        fonts = discover_fonts()
     if not fonts:
         raise RuntimeError(
             f"No usable fonts found in {_FONT_DIR} (and no system fallback). "
@@ -553,7 +576,10 @@ def synthesize_ok_from_annotations(
     rng = random.Random()
     np.random.seed(int(time.time()) % (2**31))
 
-    bundle = _get_or_build_cache(annotations, images_dir, imported_ok_crops)
+    bundle = _get_or_build_cache(
+        annotations, images_dir, imported_ok_crops,
+        style_sample_n=style_sample_n, sample_strategy=sample_strategy,
+    )
     style = bundle['style']
     ok_by_char = bundle['ok_crops_by_char']
     target_size = bundle['mean_size']
@@ -570,10 +596,13 @@ def synthesize_ok_from_annotations(
                   if only_below_threshold else target_n_per_char)
         if n_need <= 0:
             continue
-        bgs = _get_bgs_for_char(bundle, char_id, target_size, rng)
+        bgs = _get_bgs_for_char(bundle, char_id, target_size, rng, n=bg_per_char)
         results = _synthesize_char(
             char_id, n_need, style, fonts, target_size, bgs, rng,
             rotation_max_deg=rotation_max_deg, size_jitter=size_jitter,
+            char_fill_min=char_fill_min, char_fill_max=char_fill_max,
+            max_retries=max_retries, fill_min=fill_min, fill_max=fill_max,
+            min_contrast=min_contrast,
         )
         for crop, fp, rot in results:
             out.append({

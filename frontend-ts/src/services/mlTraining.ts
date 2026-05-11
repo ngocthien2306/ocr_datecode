@@ -95,6 +95,44 @@ export interface TrainRequest {
   ok_synth_target?: number;         // Top-up each char to N OK via font-render synth (0=off)
   centroid_temperature?: number;    // Sigmoid temperature for centroid algo (default 5.0)
   include_imported_chars?: boolean; // Merge labeled crops from Imported Chars pool (default true)
+  synth_ok_options?: SyntheticOkOptions;
+}
+
+export interface SyntheticOkOptions {
+  font_paths?: string[] | null;
+  style_sample_n?: number;
+  sample_strategy?: 'first' | 'random' | 'stratified';
+  rotation_max_deg?: number;
+  size_jitter?: number;
+  char_fill_min?: number;
+  char_fill_max?: number;
+  bg_per_char?: number;
+  fill_min?: number;
+  fill_max?: number;
+  min_contrast?: number;
+  max_retries?: number;
+}
+
+export interface FontInfo {
+  path: string;
+  filename: string;
+  name: string;
+  stroke_ratio: number | null;
+  source: 'project' | 'system';
+  preview_b64: string | null;
+  warning?: string | null;
+}
+
+export interface SynthOkStyle {
+  ink_bgr: number[];
+  bg_bgr: number[];
+  mean_w: number;
+  mean_h: number;
+  blur_sigma: number;
+  noise_std: number;
+  n_analyzed: number;
+  ink_bg_contrast: number;
+  sample_b64s: string[];
 }
 
 export interface MLModelMetrics {
@@ -301,10 +339,55 @@ export const mlTrainingAPI = {
     char_filter?: string[] | null;
     rotation_max_deg?: number;
     size_jitter?: number;
+    font_paths?: string[] | null;
+    style_sample_n?: number;
+    sample_strategy?: 'first' | 'random' | 'stratified';
+    char_fill_min?: number;
+    char_fill_max?: number;
+    bg_per_char?: number;
+    fill_min?: number;
+    fill_max?: number;
+    min_contrast?: number;
+    max_retries?: number;
   }) =>
     api.post<{ crops: SyntheticOkCrop[]; count: number }>(
       `/ml/projects/${projectId}/preview-synthetic-ok`, opts
     ).then(r => r.data),
+
+  fontsDiscover: (previewChars?: string) =>
+    api.get<FontInfo[]>(`/ml/fonts/discover`, {
+      params: { preview_chars: previewChars ?? '' },
+    }).then(r => r.data),
+
+  fontUpload: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post<FontInfo>(`/ml/fonts/upload`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then(r => r.data);
+  },
+
+  fontDelete: (filename: string) =>
+    api.delete(`/ml/fonts/${encodeURIComponent(filename)}`).then(r => r.data),
+
+  synthOkStyle: (projectId: string, opts: {
+    style_sample_n?: number;
+    sample_strategy?: 'first' | 'random' | 'stratified';
+    include_imported?: boolean;
+    n_thumbnails?: number;
+  }) =>
+    api.post<SynthOkStyle>(
+      `/ml/projects/${projectId}/synth-ok-style`, opts,
+    ).then(r => r.data),
+
+  synthOkBgPool: (projectId: string, opts: { n_per_char?: number; chars?: string }) =>
+    api.get<Record<string, string[]>>(
+      `/ml/projects/${projectId}/synth-ok-bg-pool`,
+      { params: opts },
+    ).then(r => r.data),
+
+  synthOkCacheClear: (projectId: string) =>
+    api.post(`/ml/projects/${projectId}/synth-ok-cache/clear`).then(r => r.data),
 
   // Training
   startTraining: (projectId: string, req: TrainRequest) =>

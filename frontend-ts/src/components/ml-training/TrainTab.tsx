@@ -13,6 +13,8 @@ import {
   TrainRequest,
 } from '@/services/mlTraining';
 import CropEditPopover, { EditTarget, DeepLink } from './CropEditPopover';
+import SyntheticOkOptionsModal from './SyntheticOkOptionsModal';
+import type { SyntheticOkOptions } from '@/services/mlTraining';
 
 // ── Module-level cache (P1) ─────────────────────────────────────────────────
 // Keyed by project.id; survives TrainTab unmount so switching sub-tabs (or
@@ -468,6 +470,19 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
 
   // Synthetic OK preview (font-render)
   const [syntheticOkCrops, setSyntheticOkCrops] = useState<SyntheticOkCrop[]>([]);
+  const [synthOkOptionsOpen, setSynthOkOptionsOpen] = useState(false);
+  const [synthOkOptions, setSynthOkOptions] = useState<SyntheticOkOptions>(() => {
+    try {
+      const raw = localStorage.getItem(`ml_synth_ok_opts_${project.id}`);
+      if (raw) return JSON.parse(raw);
+    } catch { /* ignore */ }
+    return {};
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(`ml_synth_ok_opts_${project.id}`, JSON.stringify(synthOkOptions));
+    } catch { /* ignore */ }
+  }, [synthOkOptions, project.id]);
   const [loadingSynthOk, setLoadingSynthOk] = useState(false);
   const [okSynthTarget, setOkSynthTarget] = useState(15);
 
@@ -680,6 +695,7 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
       const data = await mlTrainingAPI.previewSyntheticOk(project.id, {
         target_n_per_char: okSynthTarget,
         only_below_threshold: true,
+        ...synthOkOptions,
       });
       setSyntheticOkCrops(data.crops);
     } catch (e: any) {
@@ -707,6 +723,7 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
         C: svmC,
         severity_dist: severityDist,
         ok_synth_target: okSynthTarget,
+        synth_ok_options: synthOkOptions,
         centroid_temperature: centroidTemperature,
         include_imported_chars: includeImportedChars,
       };
@@ -1082,6 +1099,16 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
               onChange={e => setOkSynthTarget(Math.max(0, Number(e.target.value) || 0))}
               className="ml-form-input"
               style={{ width: 64, textAlign: 'center', padding: '4px 6px' }} />
+            <button className="ml-btn ml-btn-secondary ml-btn-sm"
+              onClick={() => setSynthOkOptionsOpen(true)}
+              title="Configure fonts, sample strategy, and validation">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" style={{ marginRight: 4 }}>
+                <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
+                <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"
+                  stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Options
+            </button>
             <button className="ml-btn ml-btn-secondary ml-btn-sm"
               onClick={handlePreviewSynthOk} disabled={loadingSynthOk || okSynthTarget <= 0}
               title="Render synthetic OK crops to fill chars below the target count">
@@ -1921,6 +1948,18 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
         onClose={() => setEditTarget(null)}
         onSaved={handleEditSaved}
         onJumpTo={onJumpTo}
+      />
+
+      <SyntheticOkOptionsModal
+        open={synthOkOptionsOpen}
+        projectId={project.id}
+        initial={synthOkOptions}
+        previewChars={Array.from(new Set([
+          ...crops.map(c => c.char_id ?? '').filter(Boolean),
+          ...importedCrops.map(c => c.char_id ?? '').filter(Boolean),
+        ])).slice(0, 12).join('')}
+        onClose={() => setSynthOkOptionsOpen(false)}
+        onSave={setSynthOkOptions}
       />
     </div>
   );

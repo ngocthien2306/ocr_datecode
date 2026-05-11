@@ -117,24 +117,35 @@ class MLModelInDB(BaseModel):
 
 # ─────────────────────────────────── Request / Response bodies ───────
 
+class SyntheticOkOptions(BaseModel):
+    font_paths: Optional[List[str]] = None
+    style_sample_n: int = 64
+    sample_strategy: str = "random"
+    rotation_max_deg: float = 5.0
+    size_jitter: float = 0.30
+    char_fill_min: float = 0.85
+    char_fill_max: float = 0.95
+    bg_per_char: int = 24
+    fill_min: float = 0.10
+    fill_max: float = 0.65
+    min_contrast: float = 20.0
+    max_retries: int = 4
+
+
 class TrainRequest(BaseModel):
-    algorithm: str = "rf"           # "rf" | "svm" | "mlp" | "centroid"
-    augment_factor: int = 0         # 0=off, 2=x2 ...
-    test_split: float = 0.2         # fraction for test set
-    threshold: float = 0.5          # prob_ok >= threshold → label OK
-    n_estimators: int = 100         # RF only
-    max_iter: int = 500             # MLP only (SVC ignores it — runs unbounded)
-    C: float = 1.0                  # SVM only
-    hidden_layer_sizes: List[int] = [128, 64]  # MLP only
-    centroid_temperature: float = 5.0   # centroid only — sigmoid scale
-    # NG augmentation severity distribution (auto-normalized to sum=1)
-    # Default: 10% subtle / 50% light / 35% medium / 5% heavy
+    algorithm: str = "rf"
+    augment_factor: int = 0
+    test_split: float = 0.2
+    threshold: float = 0.5
+    n_estimators: int = 100
+    max_iter: int = 500
+    C: float = 1.0
+    hidden_layer_sizes: List[int] = [128, 64]
+    centroid_temperature: float = 5.0
     severity_dist: Optional[Dict[str, float]] = None
-    # If > 0, top up each char to N OK samples via font-render synthesis.
-    # 0 = disabled (default).
     ok_synth_target: int = 0
-    # Whether to merge labeled crops from the Imported Chars pool into training.
     include_imported_chars: bool = True
+    synth_ok_options: Optional[SyntheticOkOptions] = None
 
 
 class SyntheticPreviewRequest(BaseModel):

@@ -1263,6 +1263,81 @@ body.dark-mode .ml-crop-edit-label-toggle button.ng.active { background: rgba(24
 }
 .ml-imp-card-flash { animation: ml-imp-card-flash-anim 1.5s ease-out; }
 
+/* ── Synthetic OK Options modal ────────────────────────────────────────── */
+.ml-synth-ok-modal { max-width: 720px; max-height: 86vh; display: flex; flex-direction: column; }
+.ml-synth-ok-body { overflow-y: auto; max-height: 70vh; display: flex; flex-direction: column; gap: 8px; }
+.ml-synth-ok-footer { display: flex; align-items: center; gap: 8px; }
+
+.ml-synth-section { border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; }
+.ml-synth-section-header {
+  width: 100%; display: flex; align-items: center; gap: 6px;
+  padding: 8px 12px; background: transparent; border: none;
+  cursor: pointer; text-align: left; font-size: 13px; font-weight: 600; color: #1e293b;
+}
+.ml-synth-section-header:hover { background: rgba(59,130,246,.06); }
+.ml-synth-section-body { padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.ml-synth-section-actions { display: flex; gap: 6px; align-items: center; }
+body.dark-mode .ml-synth-section { background: #1a1d27; border-color: #2d3148; }
+body.dark-mode .ml-synth-section-header { color: #e5e7eb; }
+body.dark-mode .ml-synth-section-header:hover { background: rgba(59,130,246,.12); }
+
+.ml-synth-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }
+.ml-synth-row .ml-form-label { margin: 0; }
+.ml-num-sm { width: 64px; padding: 3px 6px; }
+.ml-synth-strategy { display: flex; gap: 8px; }
+.ml-radio { display: flex; align-items: center; gap: 3px; cursor: pointer; }
+
+.ml-color-swatch {
+  display: inline-block; width: 18px; height: 18px; border-radius: 3px;
+  border: 1px solid rgba(0,0,0,.2);
+}
+.ml-synth-stat { font-family: monospace; opacity: .75; }
+
+.ml-thumb-row { display: flex; gap: 4px; flex-wrap: wrap; }
+.ml-thumb-sm {
+  width: 36px; height: 36px; object-fit: contain;
+  background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 3px;
+}
+body.dark-mode .ml-thumb-sm { background: #0f1117; border-color: #2d3148; }
+
+.ml-bg-pool-row { display: flex; align-items: center; gap: 6px; }
+.ml-bg-pool-cid { width: 26px; font-family: monospace; font-weight: 600; color: #6b7280; }
+
+.ml-synth-slider-row { display: flex; align-items: center; gap: 8px; }
+.ml-synth-slider-row .ml-form-label { width: 130px; flex-shrink: 0; }
+.ml-synth-slider-value { width: 56px; text-align: right; font-family: monospace; opacity: .8; }
+
+.ml-font-list { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; }
+.ml-font-item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border: 1px solid #e2e8f0; border-radius: 4px; cursor: pointer;
+  background: #fafafa;
+}
+.ml-font-item:hover { background: #f0f9ff; }
+.ml-font-item.selected { background: #eff6ff; border-color: #3b82f6; }
+.ml-font-meta { display: flex; flex-direction: column; gap: 2px; min-width: 130px; }
+.ml-font-name { font-size: 12px; font-weight: 600; color: #1e293b; }
+.ml-font-source-tag {
+  font-size: 9px; padding: 1px 5px; border-radius: 3px;
+  text-transform: uppercase; letter-spacing: .04em; align-self: flex-start;
+}
+.ml-font-source-tag.system  { background: #e2e8f0; color: #64748b; }
+.ml-font-source-tag.project { background: rgba(124,58,237,.15); color: #7c3aed; }
+.ml-font-stroke { font-size: 10px; opacity: .65; }
+.ml-font-preview {
+  flex: 1; min-width: 180px; max-height: 36px; object-fit: contain;
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 3px;
+}
+body.dark-mode .ml-font-item            { background: #0f1117; border-color: #2d3148; }
+body.dark-mode .ml-font-item:hover      { background: #1f2937; }
+body.dark-mode .ml-font-item.selected   { background: #1e3a5f; border-color: #3b82f6; }
+body.dark-mode .ml-font-name            { color: #e5e7eb; }
+body.dark-mode .ml-font-source-tag.system  { background: #374151; color: #9ca3af; }
+body.dark-mode .ml-font-source-tag.project { background: rgba(168,85,247,.20); color: #c4b5fd; }
+body.dark-mode .ml-font-preview         { background: #f8fafc; border-color: #2d3148; }
+
+.ml-live-card { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10px; }
+
 /* ── char_id input in Label tab ────────────────────── */
 .ml-char-input {
   width: 28px;
