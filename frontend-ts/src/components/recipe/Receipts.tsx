@@ -184,6 +184,7 @@ export default function Receipts() {
         classifier_backend: recipe.classifier_backend || 'embedding',
         wrinkle_conf: recipe.wrinkle_conf ?? 0.25,
         wrinkle_show_when_pass: recipe.wrinkle_show_when_pass ?? true,
+        matching_conf: recipe.matching_conf ?? 0.20,
         createdAt: recipe.created_at || new Date().toISOString(),
         updatedAt: recipe.updated_at || new Date().toISOString()
       }));
@@ -319,6 +320,7 @@ export default function Receipts() {
         ml_model_id: clonedRecipe.ml_model_id || '',
         defect_model: clonedRecipe.defect_model || 'arcface',
         classifier_backend: clonedRecipe.classifier_backend || 'embedding',
+        matching_conf: clonedRecipe.matching_conf ?? 0.20,
         createdAt: clonedRecipe.created_at || new Date().toISOString(),
         updatedAt: clonedRecipe.updated_at || new Date().toISOString()
       };

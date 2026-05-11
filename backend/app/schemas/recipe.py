@@ -125,6 +125,9 @@ class RecipeBase(BaseModel):
     wrinkle_conf: Optional[float] = Field(default=0.25, ge=0.0, le=1.0, description="Confidence threshold for wrinkle segmentation model (0.0 - 1.0)")
     wrinkle_show_when_pass: Optional[bool] = Field(default=True, description="Draw detected wrinkle regions on _viz.jpg even when frame passes (for debugging/visualization)")
 
+    # SuperPoint matching confidence threshold (recipe-level): skip OCR/verify when inlier_ratio falls below this
+    matching_conf: Optional[float] = Field(default=0.20, ge=0.0, le=1.0, description="SuperPoint matching confidence threshold (inliers/total_matches). Below this, verify is skipped and frame is marked FAIL early.")
+
 
 class RecipeCreate(RecipeBase):
     """Schema for creating a new recipe"""
@@ -156,6 +159,7 @@ class RecipeUpdate(BaseModel):
     classifier_backend: Optional[str] = None
     wrinkle_conf: Optional[float] = Field(None, ge=0.0, le=1.0)
     wrinkle_show_when_pass: Optional[bool] = None
+    matching_conf: Optional[float] = Field(None, ge=0.0, le=1.0)
 
 
 class RecipeInDB(RecipeBase):

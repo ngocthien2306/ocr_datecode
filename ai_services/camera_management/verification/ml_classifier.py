@@ -31,23 +31,88 @@ _EMB_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 # 4 levels up: verification → camera_management → ai_services → repo root
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _SUPCON_PATH = _REPO_ROOT / "weights/supcon_128_efficientnet_b2_20260429-073504"
+# TensorRT engine cache — SHARED with BE training (backend/app/services/ml_training_service.py).
+# Both services point _BACKEND_DIR / _REPO_ROOT to project root, so the cache dir resolves
+# to the same physical path; the engine BE builds during training is reused at inference time.
+_TRT_CACHE_DIR = _REPO_ROOT / "cache" / "supcon_trt"
+
+# Explicit TRT optimization profile for SupCon (input: dynamic batch x 3 x 64 x 64).
+# Must match BE config so both services hit the SAME engine file in shared cache.
+#   min  =   1  → single-crop inference
+#   opt  =  48  → average chars per frame (recipe-typical)
+#   max  = 128  → batch ceiling; embed_crops chunks above this size
+_TRT_PROFILE_MIN = "input:1x3x64x64"
+_TRT_PROFILE_OPT = "input:48x3x64x64"
+_TRT_PROFILE_MAX = "input:128x3x64x64"
 
 _supcon_session = None  # singleton ONNX session
 
 
 def _get_supcon_session():
-    """Lazy-init singleton ONNX session for SupCon embedder."""
+    """
+    Lazy-init singleton ONNX session for SupCon embedder.
+
+    Provider preference: TensorRT → CUDA → CPU. TRT engine is cached on disk at
+    `_TRT_CACHE_DIR` and shared with BE training, so the (slow) build runs only
+    once per Jetson/JetPack version. Subsequent restarts load instantly.
+
+    On Mac dev (no TRT/CUDA), falls back cleanly to CPU.
+    """
     global _supcon_session
     if _supcon_session is None:
         import onnxruntime as ort
         onnx_path = _SUPCON_PATH / "model.onnx"
         if not onnx_path.exists():
             raise FileNotFoundError(f"SupCon model not found at {onnx_path}")
-        providers = (["CUDAExecutionProvider", "CPUExecutionProvider"]
-                     if "CUDAExecutionProvider" in ort.get_available_providers()
-                     else ["CPUExecutionProvider"])
-        _supcon_session = ort.InferenceSession(str(onnx_path), providers=providers)
-        logger.info(f"[SupCon] loaded {onnx_path.name} on {_supcon_session.get_providers()[0]}")
+
+        sess_options = ort.SessionOptions()
+        sess_options.enable_mem_pattern = False
+        sess_options.enable_cpu_mem_arena = False
+        sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        sess_options.intra_op_num_threads = int(os.environ.get("ML_ORT_INTRA_THREADS", "4"))
+        sess_options.log_severity_level = 3  # suppress dynamic-axes warnings
+
+        available = set(ort.get_available_providers())
+        providers: List[Any] = []
+        cache_existed = False
+        if "TensorrtExecutionProvider" in available:
+            _TRT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cache_existed = any(_TRT_CACHE_DIR.iterdir())
+            trt_fp16 = os.environ.get("ML_TRT_FP16", "1") not in ("0", "false", "False")
+            providers.append((
+                "TensorrtExecutionProvider",
+                {
+                    "trt_engine_cache_enable":  True,
+                    "trt_engine_cache_path":    str(_TRT_CACHE_DIR),
+                    "trt_fp16_enable":          trt_fp16,
+                    # 256 MB workspace — fits comfortably on Jetson Orin 8GB.
+                    "trt_max_workspace_size":   256 * 1024 * 1024,
+                    # Explicit shape profile — avoids mid-production rebuilds when
+                    # batch size varies between recipes.
+                    "trt_profile_min_shapes":   _TRT_PROFILE_MIN,
+                    "trt_profile_opt_shapes":   _TRT_PROFILE_OPT,
+                    "trt_profile_max_shapes":   _TRT_PROFILE_MAX,
+                },
+            ))
+        if "CUDAExecutionProvider" in available:
+            providers.append((
+                "CUDAExecutionProvider",
+                {
+                    "cudnn_conv_algo_search":    "HEURISTIC",
+                    "do_copy_in_default_stream": True,
+                },
+            ))
+        providers.append("CPUExecutionProvider")
+
+        _supcon_session = ort.InferenceSession(
+            str(onnx_path), sess_options=sess_options, providers=providers,
+        )
+        active = _supcon_session.get_providers()[0]
+        cache_state = (
+            f"cache={'HIT' if cache_existed else 'MISS'} ({_TRT_CACHE_DIR})"
+            if active == "TensorrtExecutionProvider" else "no-cache"
+        )
+        logger.info(f"[SupCon] loaded {onnx_path.name} on {active} — {cache_state}")
     return _supcon_session
 
 

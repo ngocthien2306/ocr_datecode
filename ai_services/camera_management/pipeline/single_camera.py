@@ -170,12 +170,17 @@ class SingleCameraPipeline(InferencePipelineTemplate):
         rotation_matrices = preprocessed.get('rotation_matrices', [None] * len(target_imgs))
 
         try:
+            # Per-recipe matching-confidence gate (default 0.20 = 20%)
+            camera = context.cameras_to_process[0]
+            matching_conf = float(getattr(camera, 'matching_conf', 0.20) or 0.20)
+
             # Use first matcher for batch inference
             batch_result = matchers[0].match_batch(
                 target_imgs=target_imgs,
                 templates=matchers,
                 score_threshold=0.3,
-                ransac_threshold=5.0
+                ransac_threshold=5.0,
+                min_confidence=matching_conf,
             )
 
             if not batch_result.get('success', False):
@@ -219,9 +224,13 @@ class SingleCameraPipeline(InferencePipelineTemplate):
         context: PipelineContext,
         inference_results: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Verify text and template for each frame"""
-        preprocessed = context.cameras_to_process[0]  # Actually stored in preprocess return
-        # Re-get preprocessed data
+        """
+        Verify text/char/template/product for each frame.
+
+        Char ML verification is BATCHED across all eligible frames in a single
+        embedder call to amortize the model's fixed setup cost (≈50-310ms).
+        Template + product verify stay per-frame (cheap, independent state).
+        """
         camera = context.cameras_to_process[0]
         serial_number = camera.serial_number
         frames = context.results[serial_number].get('frames', [])
@@ -231,84 +240,103 @@ class SingleCameraPipeline(InferencePipelineTemplate):
 
         transformed_results = inference_results['transformed_results']
 
-        # Batch product verification (NEW)
-        # Collect all frames that need product verification and verify them in batch
+        # Batch product verification (existing optimization)
         product_verification_results = self._batch_verify_products(
             context, camera, frames, transformed_results
         )
 
-        verified_frames = []
-
+        # ── Phase 0: initialize per-frame result skeletons ──
+        verified_frames: List[Dict[str, Any]] = []
         for idx, result in enumerate(transformed_results):
+            verified_frames.append({
+                'frame_idx':            idx,
+                'result':               'PASS' if result.get('success') else 'FAIL',
+                'confidence':           float(result.get('confidence', 0.0)),
+                'inliers':              int(result.get('inliers', 0)),
+                'total_matches':        int(result.get('total_matches', 0)),
+                'timings':              dict(result.get('timings', {})),
+                'transformed_bboxes':   result.get('transformed_bboxes', []),
+                'text_verification':    None,
+                'char_verification':    None,
+                'template_verification': None,
+                'product_verification': None,
+            })
+
+        # ── Phase 1: collect frames eligible for text/char verification ──
+        text_verify_indices: List[int] = []
+        text_verify_data: List[Dict[str, Any]] = []
+        if (camera.function_type in ('Check_Type_Product', 'Check_Color') and
+                context.text_verification_service):
+            for idx, result in enumerate(transformed_results):
+                if not result.get('success'):
+                    continue
+                frame_expected_texts = camera.expected_texts.get(idx, {})
+                if not frame_expected_texts:
+                    continue
+                matcher = matchers[idx] if idx < len(matchers) else matchers[0]
+                sim_template_img = None
+                sim_original_bboxes = None
+                if hasattr(matcher, 'template_img') and hasattr(matcher, 'other_bboxes'):
+                    sim_template_img = matcher.template_img
+                    sim_original_bboxes = matcher.other_bboxes
+                text_verify_indices.append(idx)
+                text_verify_data.append({
+                    'frame_img':          frames[idx],
+                    'transformed_bboxes': verified_frames[idx]['transformed_bboxes'],
+                    'expected_texts':     frame_expected_texts,
+                    'camera':             camera,
+                    'template_img':       sim_template_img,
+                    'original_bboxes':    sim_original_bboxes,
+                })
+
+        # ── Phase 2: SINGLE batched verify across eligible frames ──
+        per_frame_ocr_ms = {idx: 0.0 for idx in range(len(transformed_results))}
+        if text_verify_data:
+            t_batched_start = time.perf_counter()
+            batched_verifs = context.text_verification_service.verify_text_regions_batched_frames(
+                text_verify_data
+            )
+            t_batched_total_ms = (time.perf_counter() - t_batched_start) * 1000
+            # Distribute the batched cost evenly across participating frames so per-frame
+            # timing logs stay meaningful.
+            per_frame_share = t_batched_total_ms / max(1, len(text_verify_data))
+
+            for idx, verification in zip(text_verify_indices, batched_verifs):
+                fr = verified_frames[idx]
+                text_verification = verification.get('text') or {}
+                char_verification = verification.get('char') or {}
+                fr['text_verification'] = text_verification
+                fr['char_verification'] = char_verification
+                per_frame_ocr_ms[idx] = per_frame_share
+
+                # Update bboxes with recognized text
+                context.text_verification_service.update_bboxes_with_recognized_text(
+                    fr['transformed_bboxes'], text_verification
+                )
+
+                # Mark failed text bboxes
+                for text_result in text_verification.get('results', []):
+                    annotation_idx = text_result.get('annotation_idx')
+                    if annotation_idx is not None and not text_result.get('match', False):
+                        for bbox in fr['transformed_bboxes']:
+                            if (bbox.get('type') in ['text', 'datecode'] and
+                                    bbox.get('annotation_index') == annotation_idx):
+                                bbox['verification_status'] = 'fail'
+
+                # Mark failed char bboxes
+                for char_result in char_verification.get('results', []):
+                    annotation_idx = char_result.get('annotation_idx')
+                    if annotation_idx is not None and not char_result.get('match', False):
+                        for bbox in fr['transformed_bboxes']:
+                            if (bbox.get('type') == 'char' and
+                                    bbox.get('annotation_index') == annotation_idx):
+                                bbox['verification_status'] = 'fail'
+
+        # ── Phase 3: per-frame template + product verify + final decision ──
+        for idx, result in enumerate(transformed_results):
+            frame_result = verified_frames[idx]
             frame = frames[idx]
             matcher = matchers[idx] if idx < len(matchers) else matchers[0]
-
-            frame_result = {
-                'frame_idx': idx,
-                'result': 'PASS' if result.get('success') else 'FAIL',
-                'confidence': float(result.get('confidence', 0.0)),
-                'inliers': int(result.get('inliers', 0)),
-                'total_matches': int(result.get('total_matches', 0)),
-                'timings': result.get('timings', {}),
-                'transformed_bboxes': result.get('transformed_bboxes', []),
-                'text_verification': None,
-                'template_verification': None
-            }
-
-            # Text verification
-            t_ocr_ms = 0.0
-            if (result.get('success') and
-                camera.function_type in ('Check_Type_Product', 'Check_Color') and
-                context.text_verification_service):
-
-                frame_expected_texts = camera.expected_texts.get(idx, {})
-
-                if frame_expected_texts:
-                    # Get template_img + original_bboxes for sim check
-                    sim_template_img = None
-                    sim_original_bboxes = None
-                    if hasattr(matcher, 'template_img') and hasattr(matcher, 'other_bboxes'):
-                        sim_template_img = matcher.template_img
-                        sim_original_bboxes = matcher.other_bboxes
-
-                    t_ocr_start = time.perf_counter()
-                    verification = context.text_verification_service.verify_text_regions(
-                        frame_img=frame,
-                        transformed_bboxes=frame_result['transformed_bboxes'],
-                        expected_texts=frame_expected_texts,
-                        camera=camera,
-                        template_img=sim_template_img,
-                        original_bboxes=sim_original_bboxes,
-                    )
-                    t_ocr_ms = (time.perf_counter() - t_ocr_start) * 1000
-                    text_verification = verification.get('text') or {}
-                    char_verification = verification.get('char') or {}
-                    frame_result['text_verification'] = text_verification
-                    frame_result['char_verification'] = char_verification
-
-                    # Update bboxes with recognized text (text/datecode only)
-                    context.text_verification_service.update_bboxes_with_recognized_text(
-                        frame_result['transformed_bboxes'],
-                        text_verification
-                    )
-
-                    # Mark failed text bboxes with verification_status
-                    for text_result in text_verification.get('results', []):
-                        annotation_idx = text_result.get('annotation_idx')
-                        if annotation_idx is not None and not text_result.get('match', False):
-                            for bbox in frame_result['transformed_bboxes']:
-                                if (bbox.get('type') in ['text', 'datecode'] and
-                                    bbox.get('annotation_index') == annotation_idx):
-                                    bbox['verification_status'] = 'fail'
-
-                    # Mark failed char bboxes with verification_status
-                    for char_result in char_verification.get('results', []):
-                        annotation_idx = char_result.get('annotation_idx')
-                        if annotation_idx is not None and not char_result.get('match', False):
-                            for bbox in frame_result['transformed_bboxes']:
-                                if (bbox.get('type') == 'char' and
-                                    bbox.get('annotation_index') == annotation_idx):
-                                    bbox['verification_status'] = 'fail'
 
             # Template verification
             if (result.get('success') and
@@ -325,14 +353,12 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 )
                 frame_result['template_verification'] = template_verification
 
-                # Mark failed template bbox with verification_status
                 if template_verification and not template_verification.get('match', True):
                     for bbox in frame_result['transformed_bboxes']:
                         if bbox.get('type') == 'template':
                             bbox['verification_status'] = 'fail'
 
             # Product verification — skip for Check_Color
-            frame_result['product_verification'] = None
             if (result.get('success') and
                 context.product_verification_service and
                 camera.function_type != 'Check_Color' and
@@ -341,16 +367,16 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 product_verification = product_verification_results[idx]
                 frame_result['product_verification'] = product_verification
 
-                # Mark failed product bbox with verification_status
                 if (product_verification and
-                    not product_verification.get('skipped', True) and
-                    not product_verification.get('match', True)):
+                        not product_verification.get('skipped', True) and
+                        not product_verification.get('match', True)):
                     for bbox in frame_result['transformed_bboxes']:
                         if bbox.get('type') == 'product':
                             bbox['verification_status'] = 'fail'
 
-            # Merge verification timings into frame_result['timings']
-            timings = dict(frame_result['timings'])
+            # Merge verification timings
+            timings = frame_result['timings']
+            t_ocr_ms = per_frame_ocr_ms.get(idx, 0.0)
             if t_ocr_ms > 0:
                 timings['ocr_ms'] = t_ocr_ms
             template_verif = frame_result.get('template_verification') or {}
@@ -365,23 +391,20 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 + timings.get('template_verification_ms', 0.0)
                 + timings.get('product_verification_ms', 0.0)
             )
-            frame_result['timings'] = timings
 
-            # Determine final pass/fail (text AND char both must pass)
+            # Final pass/fail (text AND char AND template AND product)
             text_ok = (frame_result['text_verification'] is None or
-                      frame_result['text_verification'].get('all_match', True))
-            char_ok = (frame_result.get('char_verification') is None or
-                      frame_result['char_verification'].get('all_match', True))
+                       frame_result['text_verification'].get('all_match', True))
+            char_ok = (frame_result['char_verification'] is None or
+                       frame_result['char_verification'].get('all_match', True))
             template_ok = (frame_result['template_verification'] is None or
-                         frame_result['template_verification'].get('match', True))
+                           frame_result['template_verification'].get('match', True))
             product_ok = (frame_result['product_verification'] is None or
-                         frame_result['product_verification'].get('skipped', True) or
-                         frame_result['product_verification'].get('match', True))
+                          frame_result['product_verification'].get('skipped', True) or
+                          frame_result['product_verification'].get('match', True))
 
             if not (text_ok and char_ok and template_ok and product_ok):
                 frame_result['result'] = 'FAIL'
-
-            verified_frames.append(frame_result)
 
         # Determine overall result
         overall = 'PASS'

@@ -351,7 +351,8 @@ class SuperPointEngineTRT:
         target_imgs: List[np.ndarray],
         templates: List[TemplateConfig],
         score_threshold: float = 0.3,
-        ransac_threshold: float = 5.0
+        ransac_threshold: float = 5.0,
+        min_confidence: float = 0.20,
     ) -> Dict:
         """
         Match multiple template-target pairs in a single batch inference.
@@ -361,6 +362,8 @@ class SuperPointEngineTRT:
             templates: List of TemplateConfig instances
             score_threshold: Matching score threshold
             ransac_threshold: RANSAC threshold
+            min_confidence: Minimum RANSAC inlier ratio. Below this → success=False
+                            so caller can skip OCR/verify on bogus homographies.
 
         Returns:
             Dict with batch results:
@@ -462,7 +465,8 @@ class SuperPointEngineTRT:
                     template,
                     target_imgs[idx],
                     score_threshold,
-                    ransac_threshold
+                    ransac_threshold,
+                    min_confidence,
                 )
                 futures.append(future)
 
@@ -517,7 +521,8 @@ class SuperPointEngineTRT:
         template: TemplateConfig,
         target_img_full: np.ndarray,
         score_threshold: float,
-        ransac_threshold: float
+        ransac_threshold: float,
+        min_confidence: float = 0.20,
     ) -> Dict:
         """Post-process a single template-target pair from batch outputs"""
 
@@ -627,6 +632,27 @@ class SuperPointEngineTRT:
         inliers = np.sum(mask)
         confidence = inliers / len(m_kpts0)
 
+        # ── Matching-confidence gate ────────────────────────────────────────
+        # If RANSAC inlier ratio is too low, the homography is unreliable and
+        # transformed bboxes can degenerate (huge / negative / outside frame),
+        # making downstream OCR + char-ML waste 1-3s per frame on garbage.
+        # Bail out early so the pipeline marks FAIL without running verify.
+        if confidence < min_confidence:
+            logger.warning(
+                f"[MATCH-GATE] Low match confidence: {confidence:.3f} < {min_confidence:.2f} "
+                f"(inliers={int(inliers)}, total={len(m_kpts0)}) — skip verify"
+            )
+            return {
+                'success': False,
+                'error': f'low_match_conf:{confidence:.3f}<{min_confidence:.2f}',
+                'homography': None,
+                'confidence': float(confidence),
+                'inliers': int(inliers),
+                'total_matches': len(valid_matches),
+                'transformed_bboxes': [],
+                'target_img': target_img_full,
+            }
+
         # Transform bboxes
         scale_matrix = np.array([
             [1/template.scale, 0, 0],
@@ -680,7 +706,8 @@ class SuperPointEngineTRT:
         template: TemplateConfig,
         target_img_full: np.ndarray,
         score_threshold: float,
-        ransac_threshold: float
+        ransac_threshold: float,
+        min_confidence: float = 0.20,
     ) -> Tuple[int, Dict, float]:
         """
         Wrapper for _postprocess_pair that returns index + result + timing.
@@ -700,7 +727,8 @@ class SuperPointEngineTRT:
             template=template,
             target_img_full=target_img_full,
             score_threshold=score_threshold,
-            ransac_threshold=ransac_threshold
+            ransac_threshold=ransac_threshold,
+            min_confidence=min_confidence,
         )
 
         postprocess_time = (time.time() - t_start) * 1000  # Convert to ms
@@ -774,7 +802,8 @@ class SuperPointMatcherTRTOptimized:
         target_imgs: List[np.ndarray],
         templates: List['SuperPointMatcherTRTOptimized'],
         score_threshold: float = 0.3,
-        ransac_threshold: float = 5.0
+        ransac_threshold: float = 5.0,
+        min_confidence: float = 0.20,
     ) -> Dict:
         """
         Match multiple template-target pairs in a single batch inference.
@@ -784,6 +813,9 @@ class SuperPointMatcherTRTOptimized:
             templates: List of SuperPointMatcherTRTOptimized instances
             score_threshold: Matching score threshold
             ransac_threshold: RANSAC threshold
+            min_confidence: Minimum RANSAC inlier ratio (per-recipe). Pairs
+                            below this return success=False so callers can
+                            skip OCR/verify on bogus homographies.
 
         Returns:
             Batch result dict
@@ -795,5 +827,6 @@ class SuperPointMatcherTRTOptimized:
             target_imgs=target_imgs,
             templates=template_configs,
             score_threshold=score_threshold,
-            ransac_threshold=ransac_threshold
+            ransac_threshold=ransac_threshold,
+            min_confidence=min_confidence,
         )

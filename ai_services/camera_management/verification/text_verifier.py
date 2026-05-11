@@ -690,6 +690,122 @@ class TextVerificationService:
         logger.info(f"Char {backend_label} batch: {len(char_items)} regions in {elapsed:.1f}ms")
         return out
 
+    def _run_char_batch_for_frames(
+        self,
+        char_items_per_frame: List[List[Dict[str, Any]]],
+    ) -> List[Dict[Tuple[str, int], Dict[str, Any]]]:
+        """
+        Char classify with a SINGLE batch call across crops from multiple frames.
+
+        Amortizes the embedding model's fixed setup cost (≈50-310ms per call,
+        whichever provider) by merging char crops from N frames into one
+        classify_batch invocation, then splitting results back per frame.
+
+        Args:
+            char_items_per_frame: List of char_items lists (one per frame).
+                Items follow the same shape as _run_char_batch input.
+
+        Returns:
+            List of {(serial, ann_idx) → result_dict} maps, one per input
+            frame, in the same order as `char_items_per_frame`.
+            Empty input frames return {} at that index.
+        """
+        n_frames = len(char_items_per_frame)
+        if n_frames == 0:
+            return []
+
+        # Flatten with boundaries so we can split results back per frame.
+        flat: List[Dict[str, Any]] = []
+        boundaries: List[int] = []  # cumulative end index per frame
+        for frame_items in char_items_per_frame:
+            flat.extend(frame_items)
+            boundaries.append(len(flat))
+
+        if not flat:
+            return [{} for _ in range(n_frames)]
+
+        t0 = time.perf_counter()
+
+        # Sanity: all items in a single pipeline tick come from the same camera
+        # → same recipe → same backend. Warn if assumption is violated.
+        backends = {(m.get('classifier_backend') or DEFAULT_CHAR_CLASSIFIER_BACKEND).lower() for m in flat}
+        if len(backends) > 1:
+            logger.warning(
+                f"[_run_char_batch_for_frames] mixed backends {backends} across frames — "
+                "falling back to per-frame char batches"
+            )
+            return [self._run_char_batch(items) for items in char_items_per_frame]
+
+        backend = next(iter(backends))
+        if backend == "embedding":
+            defect_model = (flat[0].get('defect_model') or 'arcface').lower()
+            embed_service = (
+                self.embedding_classifier_services.get(defect_model)
+                or self.embedding_classifier_service
+            )
+            if not embed_service:
+                logger.warning(
+                    f"No embedding service for defect_model='{defect_model}'. "
+                    f"Available: {list(self.embedding_classifier_services.keys())}"
+                )
+                return [{} for _ in range(n_frames)]
+            batch_input = [
+                {
+                    'region_img':     m['cropped_region'],
+                    'template_crop':  m.get('template_crop'),
+                    'conf_threshold': m['conf_threshold'],
+                    'serial_number':  m['serial_number'],
+                    'annotation_idx': m['annotation_idx'],
+                }
+                for m in flat
+            ]
+            results = embed_service.classify_batch(batch_input)
+            backend_label = f"Embedding[{defect_model}]"
+        else:
+            if not self.ml_classifier_service:
+                return [{} for _ in range(n_frames)]
+            batch_input = [
+                {
+                    'region_img':     m['cropped_region'],
+                    'project_id':     m['ml_project_id'],
+                    'model_id':       m['ml_model_id'],
+                    'conf_threshold': m['conf_threshold'],
+                    'serial_number':  m['serial_number'],
+                    'annotation_idx': m['annotation_idx'],
+                }
+                for m in flat
+            ]
+            results = self.ml_classifier_service.classify_batch(batch_input)
+            backend_label = "ML"
+
+        # Split results back per frame using boundaries.
+        per_frame: List[Dict[Tuple[str, int], Dict[str, Any]]] = []
+        prev = 0
+        for end_idx, frame_items in zip(boundaries, char_items_per_frame):
+            chunk_items = flat[prev:end_idx]
+            chunk_results = results[prev:end_idx]
+            out: Dict[Tuple[str, int], Dict[str, Any]] = {}
+            for m, r in zip(chunk_items, chunk_results):
+                key = (m['serial_number'], m['annotation_idx'])
+                out[key] = {
+                    'annotation_idx': int(m['annotation_idx']),
+                    'expected':       m.get('expected_text', ''),
+                    'match':          bool(r.get('ml_pass', False)),
+                    'ml_label':       r.get('label', 'NG'),
+                    'ml_p_ok':        float(r.get('p_ok', 0.0)),
+                    'threshold':      float(m['conf_threshold']),
+                    'error':          r.get('error'),
+                }
+            per_frame.append(out)
+            prev = end_idx
+
+        elapsed = (time.perf_counter() - t0) * 1000
+        logger.info(
+            f"Char {backend_label} batched-frames: {len(flat)} regions across "
+            f"{n_frames} frame(s) in {elapsed:.1f}ms (1 batch call)"
+        )
+        return per_frame
+
     # ── Helper: build ocr/sim/ml items from a single (camera, template) context ──
 
     def _validate_text_bbox(
@@ -1095,6 +1211,153 @@ class TextVerificationService:
             'text': {'all_match': text_all_match, 'results': text_results},
             'char': {'all_match': char_all_match, 'results': char_results},
         }
+
+    # ── Public API: single camera, multiple frames (one batched char ML call) ──
+
+    def verify_text_regions_batched_frames(
+        self,
+        frames_data: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Verify text + char regions for N frames of the SAME camera using a
+        SINGLE char ML batch call across all frames.
+
+        Mirrors `verify_text_regions` semantics per frame but amortizes the
+        embedder's fixed setup cost (≈50-310ms depending on provider) over
+        all frames instead of paying it once per frame.
+
+        Args:
+            frames_data: List of dicts, each with keys matching the args of
+                `verify_text_regions`:
+                    frame_img: np.ndarray
+                    transformed_bboxes: List[Dict]
+                    expected_texts: Dict[int, str]
+                    camera: Camera
+                    template_img: Optional[np.ndarray]
+                    original_bboxes: Optional[List[Dict]]
+
+        Returns:
+            List of {'text': {...}, 'char': {...}} dicts — one per input
+            frame, in the same order. Identical shape to verify_text_regions.
+        """
+        n_frames = len(frames_data)
+        empty_pass = {'all_match': True, 'results': []}
+        empty_fail = {'all_match': False, 'results': []}
+
+        if n_frames == 0:
+            return []
+
+        if not self.is_available:
+            logger.warning("OCR model not available, skipping batched text verification")
+            return [{'text': empty_fail, 'char': empty_pass} for _ in range(n_frames)]
+
+        t_v_start = time.perf_counter()
+
+        # ── Phase 1: build items for every frame ──
+        t_build_start = time.perf_counter()
+        per_frame_items: List[Dict[str, Any]] = []
+        for fd in frames_data:
+            camera = fd['camera']
+            ocr_items, sim_items, char_items, text_bboxes, char_bboxes, invalid_map = (
+                self._build_items_for_camera(
+                    serial_number=camera.serial_number,
+                    frame_img=fd['frame_img'],
+                    transformed_bboxes=fd['transformed_bboxes'],
+                    expected_texts=fd['expected_texts'],
+                    camera=camera,
+                    template_img=fd.get('template_img'),
+                    original_bboxes=fd.get('original_bboxes'),
+                )
+            )
+            per_frame_items.append({
+                'ocr_items':   ocr_items,
+                'sim_items':   sim_items,
+                'char_items':  char_items,
+                'text_bboxes': text_bboxes,
+                'char_bboxes': char_bboxes,
+                'invalid_map': invalid_map,
+                'serial':      camera.serial_number,
+            })
+        t_build_ms = (time.perf_counter() - t_build_start) * 1000
+
+        # ── Phase 2: per-frame OCR (already batched internally; cheap relative to char) ──
+        t_ocr_start = time.perf_counter()
+        per_frame_text_map: List[Dict[Tuple[str, int], Dict[str, Any]]] = []
+        for items in per_frame_items:
+            text_region_map: Dict[Tuple[str, int], Dict[str, Any]] = {}
+            if items['ocr_items']:
+                text_region_map = self._run_ocr_batch_with_checks(
+                    items['ocr_items'], items['sim_items'], case_sensitive=True,
+                )
+            text_region_map.update(
+                (k, v) for k, v in items['invalid_map'].items() if 'recognized' in v
+            )
+            per_frame_text_map.append(text_region_map)
+        t_ocr_ms = (time.perf_counter() - t_ocr_start) * 1000
+
+        # ── Phase 3: MERGED char ML batch across all frames ──
+        t_char_start = time.perf_counter()
+        per_frame_char_map = self._run_char_batch_for_frames(
+            [items['char_items'] for items in per_frame_items]
+        )
+        # Inject invalid-bbox entries per-frame
+        for i, items in enumerate(per_frame_items):
+            per_frame_char_map[i].update(
+                (k, v) for k, v in items['invalid_map'].items() if 'ml_label' in v
+            )
+        t_char_ms = (time.perf_counter() - t_char_start) * 1000
+
+        # ── Phase 4: assemble per-frame {text, char} results ──
+        out: List[Dict[str, Any]] = []
+        for items, text_map, char_map in zip(per_frame_items, per_frame_text_map, per_frame_char_map):
+            serial = items['serial']
+
+            text_results: List[Dict[str, Any]] = []
+            text_all_match = True
+            for bbox in items['text_bboxes']:
+                ann_idx = bbox.get('annotation_index')
+                if ann_idx is None:
+                    continue
+                r = text_map.get((serial, ann_idx))
+                if r is None:
+                    continue
+                text_results.append(r)
+                if not r.get('match', False):
+                    text_all_match = False
+            if items['text_bboxes'] and not text_results:
+                text_all_match = False
+
+            char_results: List[Dict[str, Any]] = []
+            char_all_match = True
+            for bbox in items['char_bboxes']:
+                ann_idx = bbox.get('annotation_index')
+                if ann_idx is None:
+                    continue
+                r = char_map.get((serial, ann_idx))
+                if r is None:
+                    continue
+                char_results.append(r)
+                if not r.get('match', False):
+                    char_all_match = False
+            if items['char_bboxes'] and not char_results:
+                char_all_match = False
+
+            out.append({
+                'text': {'all_match': text_all_match, 'results': text_results},
+                'char': {'all_match': char_all_match, 'results': char_results},
+            })
+
+        t_v_total = (time.perf_counter() - t_v_start) * 1000
+        total_chars = sum(len(items['char_items']) for items in per_frame_items)
+        total_ocrs = sum(len(items['ocr_items']) for items in per_frame_items)
+        logger.info(
+            f"verify_text_regions_batched_frames: frames={n_frames}, "
+            f"build={t_build_ms:.1f}ms, ocr={t_ocr_ms:.1f}ms (n={total_ocrs}), "
+            f"char={t_char_ms:.1f}ms (n={total_chars}, 1 batch call), "
+            f"total={t_v_total:.1f}ms"
+        )
+
+        return out
 
     # ── Public API: multi camera batch ──
 

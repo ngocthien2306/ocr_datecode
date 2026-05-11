@@ -123,12 +123,20 @@ class MultiCameraPipeline(InferencePipelineTemplate):
         crop_areas = preprocessed['crop_areas']
 
         try:
+            # Per-recipe matching-confidence gate (shared across all cameras in batch).
+            # Use cameras_to_process[0]; cameras under the same recipe carry identical matching_conf.
+            cameras_in_batch = context.cameras_to_process or []
+            matching_conf = 0.20
+            if cameras_in_batch:
+                matching_conf = float(getattr(cameras_in_batch[0], 'matching_conf', 0.20) or 0.20)
+
             # Single batch inference call
             batch_result = matchers[0].match_batch(
                 target_imgs=target_imgs,
                 templates=matchers,
                 score_threshold=0.3,
-                ransac_threshold=5.0
+                ransac_threshold=5.0,
+                min_confidence=matching_conf,
             )
 
             if not batch_result.get('success', False):

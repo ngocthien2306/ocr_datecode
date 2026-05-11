@@ -221,7 +221,8 @@ class SuperPointMatcherTRT:
         target_imgs: List[np.ndarray],
         templates: List['SuperPointMatcherTRT'],
         score_threshold: float = 0.3,
-        ransac_threshold: float = 5.0
+        ransac_threshold: float = 5.0,
+        min_confidence: float = 0.20,
     ) -> Dict:
         """
         Match multiple template-target pairs in a single batch inference
@@ -231,6 +232,7 @@ class SuperPointMatcherTRT:
             templates: List of matcher instances (one per camera with its template)
             score_threshold: Matching score threshold
             ransac_threshold: RANSAC threshold for homography
+            min_confidence: Minimum RANSAC inlier ratio. Below → success=False.
 
         Returns:
             Dict with batch results:
@@ -326,7 +328,8 @@ class SuperPointMatcherTRT:
                 matcher=matcher,
                 target_img_full=target_imgs[idx],
                 score_threshold=score_threshold,
-                ransac_threshold=ransac_threshold
+                ransac_threshold=ransac_threshold,
+                min_confidence=min_confidence,
             )
 
             per_camera_postprocess.append((time.time() - t_post) * 1000)
@@ -362,7 +365,8 @@ class SuperPointMatcherTRT:
         matcher: 'SuperPointMatcherTRT',
         target_img_full: np.ndarray,
         score_threshold: float,
-        ransac_threshold: float
+        ransac_threshold: float,
+        min_confidence: float = 0.20,
     ) -> Dict:
         """
         Post-process a single template-target pair from batch outputs
@@ -497,6 +501,25 @@ class SuperPointMatcherTRT:
 
         inliers = np.sum(mask)
         confidence = inliers / len(m_kpts0)
+
+        # ── Matching-confidence gate ────────────────────────────────────────
+        # Low RANSAC inlier ratio → unreliable homography → degenerate bboxes
+        # that would waste 1-3s in downstream OCR/char-ML. Bail out early.
+        if confidence < min_confidence:
+            logger.warning(
+                f"[MATCH-GATE] Low match confidence: {confidence:.3f} < {min_confidence:.2f} "
+                f"(inliers={int(inliers)}, total={len(m_kpts0)}) — skip verify"
+            )
+            return {
+                'success': False,
+                'error': f'low_match_conf:{confidence:.3f}<{min_confidence:.2f}',
+                'homography': None,
+                'confidence': float(confidence),
+                'inliers': int(inliers),
+                'total_matches': len(valid_matches),
+                'transformed_bboxes': [],
+                'target_img': target_img_full,
+            }
 
         # Transform bboxes to full-size image
         scale_matrix = np.array([

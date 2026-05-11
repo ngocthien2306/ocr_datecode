@@ -59,6 +59,7 @@ interface FormDataType {
   classifier_backend: string;
   wrinkle_conf: number;
   wrinkle_show_when_pass: boolean;
+  matching_conf: number;
 }
 
 interface Template {
@@ -122,6 +123,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     classifier_backend: 'embedding',
     wrinkle_conf: 0.25,
     wrinkle_show_when_pass: true,
+    matching_conf: 0.20,
   });
 
   const [templateImage, setTemplateImage] = useState<string | null>(null);
@@ -286,6 +288,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         classifier_backend: recipeAny.classifier_backend || 'embedding',
         wrinkle_conf: recipeAny.wrinkle_conf ?? 0.25,
         wrinkle_show_when_pass: recipeAny.wrinkle_show_when_pass ?? true,
+        matching_conf: recipeAny.matching_conf ?? 0.20,
       });
 
       if (recipeAny.template_config?.template_image) {
@@ -342,6 +345,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         classifier_backend: 'embedding',
         wrinkle_conf: 0.25,
         wrinkle_show_when_pass: true,
+        matching_conf: 0.20,
       });
       setTemplateImage(null);
       setAnnotations([]);
@@ -674,8 +678,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         classifier_backend: formData.classifier_backend || 'embedding',
         wrinkle_conf: formData.wrinkle_conf ?? 0.25,
         wrinkle_show_when_pass: formData.wrinkle_show_when_pass ?? true,
+        matching_conf: formData.matching_conf ?? 0.20,
       };
-      
+
       await onSubmit(submitData);
       handleClose();
     } catch (error: any) {
@@ -1992,54 +1997,95 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                   </>
                 )}
 
-                {/* ── Wrinkle Detection ── */}
-                <h3>Wrinkle Detection</h3>
-                <div className="form-group">
-                  <label>
-                    Confidence Threshold
-                    <span style={{ marginLeft: 12, fontWeight: 600, fontFamily: 'monospace' }}>
-                      {(formData.wrinkle_conf ?? 0.25).toFixed(2)}
-                    </span>
-                  </label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={formData.wrinkle_conf ?? 0.25}
-                      onChange={(e) => setFormData(prev => ({ ...prev, wrinkle_conf: parseFloat(e.target.value) }))}
-                      style={{ flex: 1 }}
-                    />
-                    <input
-                      type="number"
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={formData.wrinkle_conf ?? 0.25}
-                      onChange={(e) => {
-                        const v = Math.max(0, Math.min(1, parseFloat(e.target.value) || 0));
-                        setFormData(prev => ({ ...prev, wrinkle_conf: v }));
-                      }}
-                      style={{ width: 80 }}
-                    />
+                {/* ── Matching Confidence + Wrinkle Detection (50/50 row) ── */}
+                <div className="model-columns">
+                  <div className="model-column">
+                    <h3>Matching Confidence</h3>
+                    <div className="form-group">
+                      <label>
+                        Threshold
+                        <span style={{ marginLeft: 12, fontWeight: 600, fontFamily: 'monospace' }}>
+                          {((formData.matching_conf ?? 0.20) * 100).toFixed(0)}%
+                        </span>
+                      </label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          value={formData.matching_conf ?? 0.20}
+                          onChange={(e) => setFormData(prev => ({ ...prev, matching_conf: parseFloat(e.target.value) }))}
+                          style={{ flex: 1 }}
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          value={formData.matching_conf ?? 0.20}
+                          onChange={(e) => {
+                            const v = Math.max(0, Math.min(1, parseFloat(e.target.value) || 0));
+                            setFormData(prev => ({ ...prev, matching_conf: v }));
+                          }}
+                          style={{ width: 80 }}
+                        />
+                      </div>
+                      <small className="field-description">
+                        Skip OCR/verify when SuperPoint inlier ratio falls below this threshold. Higher = stricter (fewer false PASS, more FAIL).
+                      </small>
+                    </div>
                   </div>
-                  <small className="field-description">
-                    Detection score threshold for the wrinkle segmentation model. Lower = more sensitive (more regions kept), higher = stricter.
-                  </small>
-                </div>
-                <div className="form-group" style={{ marginTop: 8 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={formData.wrinkle_show_when_pass ?? true}
-                      onChange={(e) => setFormData(prev => ({ ...prev, wrinkle_show_when_pass: e.target.checked }))}
-                    />
-                    <span>Show wrinkle regions even when frame passes</span>
-                  </label>
-                  <small className="field-description">
-                    On → draws wrinkle contour on the result image even when the bottle PASSes (debug/monitoring). Off → draws only on FAIL.
-                  </small>
+                  <div className="model-column">
+                    <h3>Wrinkle Detection</h3>
+                    <div className="form-group">
+                      <label>
+                        Confidence Threshold
+                        <span style={{ marginLeft: 12, fontWeight: 600, fontFamily: 'monospace' }}>
+                          {(formData.wrinkle_conf ?? 0.25).toFixed(2)}
+                        </span>
+                      </label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          value={formData.wrinkle_conf ?? 0.25}
+                          onChange={(e) => setFormData(prev => ({ ...prev, wrinkle_conf: parseFloat(e.target.value) }))}
+                          style={{ flex: 1 }}
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          value={formData.wrinkle_conf ?? 0.25}
+                          onChange={(e) => {
+                            const v = Math.max(0, Math.min(1, parseFloat(e.target.value) || 0));
+                            setFormData(prev => ({ ...prev, wrinkle_conf: v }));
+                          }}
+                          style={{ width: 80 }}
+                        />
+                      </div>
+                      <small className="field-description">
+                        Detection score threshold for the wrinkle segmentation model. Lower = more sensitive (more regions kept), higher = stricter.
+                      </small>
+                    </div>
+                    <div className="form-group" style={{ marginTop: 8 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={formData.wrinkle_show_when_pass ?? true}
+                          onChange={(e) => setFormData(prev => ({ ...prev, wrinkle_show_when_pass: e.target.checked }))}
+                        />
+                        <span>Show wrinkle regions even when frame passes</span>
+                      </label>
+                      <small className="field-description">
+                        On → draws wrinkle contour on the result image even when the bottle PASSes (debug/monitoring). Off → draws only on FAIL.
+                      </small>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}

@@ -35,7 +35,16 @@ _TRT_CACHE_DIR = _BACKEND_DIR / "cache" / "supcon_trt"
 
 # Default ONNX inference batch size — tuned for Jetson Orin 8GB unified memory.
 # Override via env var for higher-RAM machines (e.g. ML_EMBED_BATCH_SIZE=128 on workstation).
-_DEFAULT_EMBED_BATCH_SIZE = int(os.environ.get("ML_EMBED_BATCH_SIZE", "32"))
+# Default 48 matches the SupCon TRT optimization profile `opt` shape so training
+# batches hit the engine's optimal path.
+_DEFAULT_EMBED_BATCH_SIZE = int(os.environ.get("ML_EMBED_BATCH_SIZE", "48"))
+
+# Explicit TRT optimization profile for SupCon (input: dynamic batch x 3 x 64 x 64).
+# MUST match AI service config (ai_services/camera_management/verification/ml_classifier.py)
+# so both processes hit the SAME engine file in shared cache `_TRT_CACHE_DIR`.
+_TRT_PROFILE_MIN = "input:1x3x64x64"
+_TRT_PROFILE_OPT = "input:48x3x64x64"
+_TRT_PROFILE_MAX = "input:128x3x64x64"
 
 _supcon_session = None  # singleton ONNX session (lazy-loaded on first call)
 
@@ -76,8 +85,10 @@ def _get_supcon_session():
 
         available = set(ort.get_available_providers())
         providers: List[Any] = []
+        cache_existed = False
         if "TensorrtExecutionProvider" in available:
             _TRT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cache_existed = any(_TRT_CACHE_DIR.iterdir())
             trt_fp16 = os.environ.get("ML_TRT_FP16", "1") not in ("0", "false", "False")
             providers.append((
                 "TensorrtExecutionProvider",
@@ -87,6 +98,12 @@ def _get_supcon_session():
                     "trt_fp16_enable":          trt_fp16,
                     # 256 MB workspace — fits comfortably on Jetson Orin 8GB.
                     "trt_max_workspace_size":   256 * 1024 * 1024,
+                    # Explicit shape profile — shared with AI inference service so
+                    # both build/load the SAME engine file. Prevents mid-production
+                    # rebuilds when batch shapes vary across recipes.
+                    "trt_profile_min_shapes":   _TRT_PROFILE_MIN,
+                    "trt_profile_opt_shapes":   _TRT_PROFILE_OPT,
+                    "trt_profile_max_shapes":   _TRT_PROFILE_MAX,
                 },
             ))
         if "CUDAExecutionProvider" in available:
@@ -107,8 +124,12 @@ def _get_supcon_session():
             providers=providers,
         )
         active = _supcon_session.get_providers()[0]
+        cache_state = (
+            f"cache={'HIT' if cache_existed else 'MISS'} ({_TRT_CACHE_DIR})"
+            if active == "TensorrtExecutionProvider" else "no-cache"
+        )
         logger.info(f"[SupCon] loaded {onnx_path.name} on {active} "
-                    f"(batch={_DEFAULT_EMBED_BATCH_SIZE})")
+                    f"(batch={_DEFAULT_EMBED_BATCH_SIZE}) — {cache_state}")
     return _supcon_session
 
 
