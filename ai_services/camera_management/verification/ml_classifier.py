@@ -75,25 +75,25 @@ def _get_supcon_session():
         available = set(ort.get_available_providers())
         providers: List[Any] = []
         cache_existed = False
-        if "TensorrtExecutionProvider" in available:
-            _TRT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            cache_existed = any(_TRT_CACHE_DIR.iterdir())
-            trt_fp16 = os.environ.get("ML_TRT_FP16", "1") not in ("0", "false", "False")
-            providers.append((
-                "TensorrtExecutionProvider",
-                {
-                    "trt_engine_cache_enable":  True,
-                    "trt_engine_cache_path":    str(_TRT_CACHE_DIR),
-                    "trt_fp16_enable":          trt_fp16,
-                    # 256 MB workspace — fits comfortably on Jetson Orin 8GB.
-                    "trt_max_workspace_size":   256 * 1024 * 1024,
-                    # Explicit shape profile — avoids mid-production rebuilds when
-                    # batch size varies between recipes.
-                    "trt_profile_min_shapes":   _TRT_PROFILE_MIN,
-                    "trt_profile_opt_shapes":   _TRT_PROFILE_OPT,
-                    "trt_profile_max_shapes":   _TRT_PROFILE_MAX,
-                },
-            ))
+        # if "TensorrtExecutionProvider" in available:
+        #     _TRT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        #     cache_existed = any(_TRT_CACHE_DIR.iterdir())
+        #     trt_fp16 = os.environ.get("ML_TRT_FP16", "1") not in ("0", "false", "False")
+        #     providers.append((
+        #         "TensorrtExecutionProvider",
+        #         {
+        #             "trt_engine_cache_enable":  True,
+        #             "trt_engine_cache_path":    str(_TRT_CACHE_DIR),
+        #             "trt_fp16_enable":          trt_fp16,
+        #             # 256 MB workspace — fits comfortably on Jetson Orin 8GB.
+        #             "trt_max_workspace_size":   256 * 1024 * 1024,
+        #             # Explicit shape profile — avoids mid-production rebuilds when
+        #             # batch size varies between recipes.
+        #             "trt_profile_min_shapes":   _TRT_PROFILE_MIN,
+        #             "trt_profile_opt_shapes":   _TRT_PROFILE_OPT,
+        #             "trt_profile_max_shapes":   _TRT_PROFILE_MAX,
+        #         },
+        #     ))
         if "CUDAExecutionProvider" in available:
             providers.append((
                 "CUDAExecutionProvider",
