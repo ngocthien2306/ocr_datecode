@@ -68,11 +68,23 @@ export default function SyntheticOkOptionsModal({
     setLivePreview([]);
   }, [open]);
 
+  const fontsInitRef = useRef(false);
   useEffect(() => {
     if (!open) return;
     setLoadingFonts(true);
     mlTrainingAPI.fontsDiscover(previewChars)
-      .then(setFonts)
+      .then(list => {
+        setFonts(list);
+        if (!fontsInitRef.current && opts.font_paths === undefined && list.length > 0) {
+          const notoFonts = list.filter(f => /noto/i.test(f.name));
+          if (notoFonts.length > 0) {
+            setOpts(p => ({ ...p, font_paths: notoFonts.map(f => f.path) }));
+            const names = notoFonts.map(f => f.name).join(', ');
+            toast.info(`Default fonts: ${names}`);
+          }
+          fontsInitRef.current = true;
+        }
+      })
       .catch(() => toast.error('Failed to load fonts'))
       .finally(() => setLoadingFonts(false));
   }, [open, previewChars]);
