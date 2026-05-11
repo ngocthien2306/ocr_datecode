@@ -132,7 +132,7 @@ def main():
     logging.info("Camera check started")
     logging.info(f"Interface: {INTERFACE}")
     logging.info(f"Max attempts: {MAX_ATTEMPTS}")
-    logging.info(f"Log file: {LOG_FILE}")
+    # logging.info(f"Log file: {LOG_FILE}")
     logging.info("=" * 50)
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
