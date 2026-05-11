@@ -1332,7 +1332,14 @@ body.dark-mode .ml-thumb-sm { background: #0f1117; border-color: #2d3148; }
 .ml-font-preview {
   flex: 1; min-width: 180px; max-height: 36px; object-fit: contain;
   background: #fff; border: 1px solid #e2e8f0; border-radius: 3px;
+  pointer-events: none;
 }
+.ml-font-delete-btn {
+  opacity: .5;
+  transition: opacity .12s, color .12s;
+}
+.ml-font-item:hover .ml-font-delete-btn { opacity: 1; }
+.ml-font-delete-btn:hover { color: #dc2626; }
 body.dark-mode .ml-font-item            { background: #0f1117; border-color: #2d3148; }
 body.dark-mode .ml-font-item:hover      { background: #1f2937; }
 body.dark-mode .ml-font-item.selected   { background: #1e3a5f; border-color: #3b82f6; }

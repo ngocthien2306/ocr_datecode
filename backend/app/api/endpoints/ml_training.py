@@ -1165,10 +1165,33 @@ async def cancel_training(
         raise HTTPException(404, "Model not found")
     if model_record.status not in ("training", "pending"):
         raise HTTPException(409, f"Model status is '{model_record.status}', not cancellable")
-    _CANCEL_FLAGS[model_id] = True
-    await repo.update_model_record(model_id, {"phase": "cancelling"})
-    get_log_buffer().push(model_id, "[ML] Cancel requested", level="WARNING")
-    return {"ok": True, "model_id": model_id}
+
+    if model_id in _CANCEL_FLAGS:
+        _CANCEL_FLAGS[model_id] = True
+        await repo.update_model_record(model_id, {"phase": "cancelling"})
+        get_log_buffer().push(model_id, "[ML] Cancel requested", level="WARNING")
+        return {"ok": True, "model_id": model_id, "mode": "cooperative"}
+
+    await repo.update_model_record(model_id, {
+        "status":   "failed",
+        "error":    "Stuck record reset by user (no in-process task — likely from a previous service instance)",
+        "phase":    "failed",
+        "progress": 0.0,
+    })
+    await repo.set_status(project_id, "active")
+    get_log_buffer().push(model_id, "[ML] Stuck record force-failed by user", level="WARNING")
+
+    model_path = _models_dir(project_id) / f"{model_id}.joblib"
+    try:
+        if model_path.exists():
+            model_path.unlink()
+        sidecar = model_path.parent / f"{model_path.stem}_test_set.json"
+        if sidecar.exists():
+            sidecar.unlink()
+    except Exception:
+        logger.exception("[ML] Failed to clean stuck model files")
+
+    return {"ok": True, "model_id": model_id, "mode": "force_failed"}
 
 
 # ════════════════════════════════════════ PREDICTION ═════════════════════

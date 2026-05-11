@@ -154,16 +154,25 @@ export default function SyntheticOkOptionsModal({
     }
   };
 
-  const selectedSet = useMemo(() => new Set(opts.font_paths ?? []), [opts.font_paths]);
-  const useAllFonts = opts.font_paths == null;
+  const selectedSet = useMemo(() => {
+    if (opts.font_paths == null) return new Set(fonts.map(f => f.path));
+    return new Set(opts.font_paths);
+  }, [opts.font_paths, fonts]);
+  const usingAll = opts.font_paths == null || (fonts.length > 0 && selectedSet.size === fonts.length);
 
   const toggleFont = (path: string) => {
     setOpts(prev => {
-      const cur = new Set(prev.font_paths ?? []);
+      const base = prev.font_paths ?? fonts.map(f => f.path);
+      const cur = new Set(base);
       if (cur.has(path)) cur.delete(path); else cur.add(path);
-      return { ...prev, font_paths: cur.size === 0 ? null : Array.from(cur) };
+      const next = Array.from(cur);
+      const allSelected = next.length === fonts.length && fonts.every(f => cur.has(f.path));
+      return { ...prev, font_paths: allSelected ? null : next };
     });
   };
+
+  const selectAllFonts = () => setOpts(p => ({ ...p, font_paths: null }));
+  const clearAllFonts  = () => setOpts(p => ({ ...p, font_paths: [] }));
 
   const handleSave = () => {
     onSave(opts);
@@ -202,19 +211,24 @@ export default function SyntheticOkOptionsModal({
 
             {/* ── FONTS ── */}
             <Section
-              title={`Fonts (${useAllFonts ? `using all ${fonts.length}` : `${selectedSet.size}/${fonts.length} selected`})`}
+              title={`Fonts (${selectedSet.size}/${fonts.length} selected${usingAll ? ' — all' : ''})`}
               isOpen={openSection.fonts} onToggle={() => toggleSection('fonts')}>
               <div className="ml-synth-section-actions">
                 <button className="ml-btn ml-btn-secondary ml-btn-sm"
-                  onClick={() => setOpts(p => ({ ...p, font_paths: useAllFonts ? [] : null }))}>
-                  {useAllFonts ? 'Pick specific' : 'Use all (auto)'}
+                  onClick={selectAllFonts} disabled={usingAll}>
+                  Select all
                 </button>
                 <button className="ml-btn ml-btn-secondary ml-btn-sm"
-                  onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+                  onClick={clearAllFonts} disabled={selectedSet.size === 0}>
+                  Clear all
+                </button>
+                <button className="ml-btn ml-btn-secondary ml-btn-sm"
+                  onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                  style={{ marginLeft: 'auto' }}>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" style={{ marginRight: 4 }}>
                     <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                   </svg>
-                  {uploading ? 'Uploading…' : 'Upload font'}
+                  {uploading ? 'Uploading…' : 'Upload .ttf/.otf'}
                 </button>
                 <input ref={fileInputRef} type="file" accept=".ttf,.otf,.ttc"
                   style={{ display: 'none' }}
@@ -223,19 +237,32 @@ export default function SyntheticOkOptionsModal({
                     if (f) handleUpload(f);
                   }} />
               </div>
+              {selectedSet.size === 0 && fonts.length > 0 && (
+                <div className="ml-imported-toggle-warn" style={{ marginTop: 2 }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+                      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  No font selected — will fall back to all auto-discovered fonts.
+                </div>
+              )}
               {loadingFonts && <div className="ml-empty-state" style={{ minHeight: 60 }}>
                 <div className="ml-loading-spinner" />
               </div>}
               <div className="ml-font-list">
                 {fonts.map(f => {
-                  const isPicked = !useAllFonts && selectedSet.has(f.path);
+                  const isPicked = selectedSet.has(f.path);
                   return (
-                    <label key={f.path}
-                      className={`ml-font-item${isPicked ? ' selected' : ''}`}>
+                    <div key={f.path}
+                      className={`ml-font-item${isPicked ? ' selected' : ''}`}
+                      onClick={() => toggleFont(f.path)}
+                      role="button" tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleFont(f.path); } }}
+                      style={{ cursor: 'pointer' }}>
                       <input type="checkbox"
-                        disabled={useAllFonts}
-                        checked={useAllFonts || isPicked}
-                        onChange={() => toggleFont(f.path)} />
+                        checked={isPicked}
+                        onChange={() => toggleFont(f.path)}
+                        onClick={(e) => e.stopPropagation()} />
                       <div className="ml-font-meta">
                         <span className="ml-font-name">{f.name}</span>
                         <span className={`ml-font-source-tag ${f.source}`}>{f.source}</span>
@@ -248,16 +275,16 @@ export default function SyntheticOkOptionsModal({
                           src={`data:image/png;base64,${f.preview_b64}`} />
                       )}
                       {f.source === 'project' && (
-                        <button className="ml-btn ml-btn-danger ml-btn-sm"
-                          onClick={(e) => { e.preventDefault(); setConfirmDelete(f); }}
-                          title="Delete font">
+                        <button className="ml-btn ml-btn-secondary ml-btn-sm ml-font-delete-btn"
+                          onClick={(e) => { e.stopPropagation(); setConfirmDelete(f); }}
+                          title="Delete this uploaded font file (permanent)">
                           <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
                             <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6"
                               stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                           </svg>
                         </button>
                       )}
-                    </label>
+                    </div>
                   );
                 })}
                 {fonts.length === 0 && !loadingFonts && (
