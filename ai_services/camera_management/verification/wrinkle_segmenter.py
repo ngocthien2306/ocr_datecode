@@ -347,6 +347,8 @@ class WrinkledSegmenterTRT:
         min_region_area: float = 0.0,          # per-region: ignore regions smaller than this
         max_region_area: float = 0.0,          # per-region: any region ≥ this → FAIL (0 = disabled)
         conf_threshold:  float = 0.0,          # per-frame post-filter on detection score
+        mask_polygons:   Optional[List[np.ndarray]] = None,  # frame-space polygons of 'mask' annotations
+        mask_overlap_threshold: float = 0.6,    # region with overlap fraction >= this is excluded
     ) -> Dict[str, Any]:
         """
         FAIL conditions (OR logic):
@@ -377,6 +379,8 @@ class WrinkledSegmenterTRT:
             'min_region_area': min_region_area,
             'max_region_area': max_region_area,
             'conf_threshold': conf_threshold,
+            'mask_overlap_threshold': mask_overlap_threshold,
+            'excluded_by_mask': 0,
             'wrinkled_boxes': []
         }
 
@@ -388,7 +392,17 @@ class WrinkledSegmenterTRT:
             seg_masks, cx, cy, angle, crop_offset, frame_shape
         )
 
+        # Build union of 'mask' annotation polygons in frame space (rasterized once per frame)
+        union_mask = None
+        if mask_polygons:
+            union_mask = np.zeros(frame_shape[:2], dtype=np.uint8)
+            for poly in mask_polygons:
+                pts = np.asarray(poly, dtype=np.int32).reshape(-1, 2)
+                if len(pts) >= 3:
+                    cv2.fillPoly(union_mask, [pts], 1)
+
         wrinkled_boxes = []
+        excluded_by_mask = 0
         for i, (box, mask_frame) in enumerate(zip(seg_boxes, frame_masks)):
             score = float(box[4])
             # Per-frame conf filter (post-hoc — predict_batch may have used a lower batch-min conf)
@@ -402,6 +416,17 @@ class WrinkledSegmenterTRT:
             # Per-region min filter — drop noisy small regions
             if min_region_area > 0 and area < min_region_area:
                 continue
+
+            # Mask exclusion: drop region if >= threshold fraction of its pixels fall inside union mask
+            if union_mask is not None:
+                binary_region = (mask_frame > 0.5)
+                region_pixels = int(binary_region.sum())
+                if region_pixels > 0:
+                    overlap_pixels = int(np.logical_and(binary_region, union_mask > 0).sum())
+                    overlap_ratio = overlap_pixels / region_pixels
+                    if overlap_ratio >= mask_overlap_threshold:
+                        excluded_by_mask += 1
+                        continue
 
             area_pct = area / max(crop_area, 1) * 100
 
@@ -436,7 +461,12 @@ class WrinkledSegmenterTRT:
             logger.info(
                 f"Wrinkled detected ({triggered_by}): {len(wrinkled_boxes)} region(s), "
                 f"total_area={total_area}px areas={[b['area'] for b in wrinkled_boxes]}px "
-                f"thresholds: total={effective_min_area} max={max_region_area} min={min_region_area} conf={conf_threshold:.2f}"
+                f"thresholds: total={effective_min_area} max={max_region_area} min={min_region_area} conf={conf_threshold:.2f} "
+                f"mask_excluded={excluded_by_mask}"
+            )
+        elif excluded_by_mask > 0:
+            logger.info(
+                f"Wrinkled: {excluded_by_mask} region(s) excluded by mask (overlap>={mask_overlap_threshold:.2f})"
             )
 
         return {
@@ -449,6 +479,8 @@ class WrinkledSegmenterTRT:
             'min_region_area': min_region_area,
             'max_region_area': max_region_area,
             'conf_threshold': conf_threshold,
+            'mask_overlap_threshold': mask_overlap_threshold,
+            'excluded_by_mask': excluded_by_mask,
             'wrinkled_boxes': wrinkled_boxes,
         }
 

@@ -124,6 +124,7 @@ class RecipeBase(BaseModel):
     # Wrinkle segmentation model confidence threshold (recipe-level, applies to all cameras)
     wrinkle_conf: Optional[float] = Field(default=0.25, ge=0.0, le=1.0, description="Confidence threshold for wrinkle segmentation model (0.0 - 1.0)")
     wrinkle_show_when_pass: Optional[bool] = Field(default=True, description="Draw detected wrinkle regions on _viz.jpg even when frame passes (for debugging/visualization)")
+    mask_overlap_threshold: Optional[float] = Field(default=0.6, ge=0.0, le=1.0, description="Wrinkle region with >= this fraction of pixels inside a 'mask' annotation will be excluded (0.0 - 1.0)")
 
     # SuperPoint matching confidence threshold (recipe-level): skip OCR/verify when inlier_ratio falls below this
     matching_conf: Optional[float] = Field(default=0.20, ge=0.0, le=1.0, description="SuperPoint matching confidence threshold (inliers/total_matches). Below this, verify is skipped and frame is marked FAIL early.")
@@ -160,6 +161,7 @@ class RecipeUpdate(BaseModel):
     wrinkle_conf: Optional[float] = Field(None, ge=0.0, le=1.0)
     wrinkle_show_when_pass: Optional[bool] = None
     matching_conf: Optional[float] = Field(None, ge=0.0, le=1.0)
+    mask_overlap_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
 
 
 class RecipeInDB(RecipeBase):

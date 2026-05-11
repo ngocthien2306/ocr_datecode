@@ -169,6 +169,7 @@ export XAUTHORITY="$HOME/.Xauthority"
 FIREFOX_PID=""
 if command -v firefox &> /dev/null; then
     firefox --kiosk http://localhost:5173 > "$LOG_DIR/firefox.log" 2>&1 &
+    # firefox http://localhost:5173 > "$LOG_DIR/firefox.log" 2>&1 &
     FIREFOX_PID=$!
     echo "   PID: $FIREFOX_PID (DISPLAY=$DISPLAY)"
 else

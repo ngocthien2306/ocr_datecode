@@ -712,9 +712,17 @@ class ProductVerificationService:
             wrinkle_min_area = data.get('wrinkle_min_area', 0.0)  # per-template per-region min
             wrinkle_max_area = data.get('wrinkle_max_area', 0.0)  # per-template per-region critical
             wrinkle_conf = data.get('wrinkle_conf', 0.25)         # per-recipe conf threshold
+            mask_overlap_threshold = data.get('mask_overlap_threshold', 0.6)
+            # Extract 'mask' polygons from transformed_bboxes (frame-space coords)
+            mask_polygons = [
+                np.array(b['points'], dtype=np.float32)
+                for b in data['transformed_bboxes']
+                if b.get('type') == 'mask' and b.get('points')
+            ]
             crops_info.append((
                 orig_idx, crop, cx, cy, w, h, angle, crop_offset,
-                data['frame_img'], wrinkle_area, wrinkle_min_area, wrinkle_max_area, wrinkle_conf
+                data['frame_img'], wrinkle_area, wrinkle_min_area, wrinkle_max_area, wrinkle_conf,
+                mask_polygons, mask_overlap_threshold
             ))
 
         if not crops_info:
@@ -723,6 +731,7 @@ class ProductVerificationService:
         # Batch predict — predict_batch only accepts a single conf for the whole batch.
         # Use the min conf across frames as a lower bound; per-frame post-hoc filter is
         # applied inside build_wrinkled_check via conf_threshold.
+        # NOTE: tuple index 12 is wrinkle_conf (kept in sync with crops_info layout above).
         batch_min_conf = min(ci[12] for ci in crops_info)
         crops = [ci[1] for ci in crops_info]
         try:
@@ -746,7 +755,8 @@ class ProductVerificationService:
         # Build wrinkled_check per frame (each frame has its own thresholds)
         for j, ci in enumerate(crops_info):
             (orig_idx, _crop, cx, cy, w, h, angle, crop_offset, frame_img,
-             wrinkle_area, wrinkle_min_area, wrinkle_max_area, wrinkle_conf) = ci
+             wrinkle_area, wrinkle_min_area, wrinkle_max_area, wrinkle_conf,
+             mask_polygons, mask_overlap_threshold) = ci
             seg_boxes, seg_masks = seg_results[j]
             wrinkled_checks[orig_idx] = self.wrinkle_seg.build_wrinkled_check(
                 seg_boxes=seg_boxes,
@@ -758,6 +768,8 @@ class ProductVerificationService:
                 min_region_area=wrinkle_min_area,
                 max_region_area=wrinkle_max_area,
                 conf_threshold=wrinkle_conf,
+                mask_polygons=mask_polygons,
+                mask_overlap_threshold=mask_overlap_threshold,
             )
 
         return wrinkled_checks

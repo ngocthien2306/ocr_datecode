@@ -60,6 +60,7 @@ interface FormDataType {
   wrinkle_conf: number;
   wrinkle_show_when_pass: boolean;
   matching_conf: number;
+  mask_overlap_threshold: number;
 }
 
 interface Template {
@@ -124,6 +125,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     wrinkle_conf: 0.25,
     wrinkle_show_when_pass: true,
     matching_conf: 0.20,
+    mask_overlap_threshold: 0.6,
   });
 
   const [templateImage, setTemplateImage] = useState<string | null>(null);
@@ -289,6 +291,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         wrinkle_conf: recipeAny.wrinkle_conf ?? 0.25,
         wrinkle_show_when_pass: recipeAny.wrinkle_show_when_pass ?? true,
         matching_conf: recipeAny.matching_conf ?? 0.20,
+        mask_overlap_threshold: recipeAny.mask_overlap_threshold ?? 0.6,
       });
 
       if (recipeAny.template_config?.template_image) {
@@ -346,6 +349,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         wrinkle_conf: 0.25,
         wrinkle_show_when_pass: true,
         matching_conf: 0.20,
+        mask_overlap_threshold: 0.6,
       });
       setTemplateImage(null);
       setAnnotations([]);
@@ -679,6 +683,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         wrinkle_conf: formData.wrinkle_conf ?? 0.25,
         wrinkle_show_when_pass: formData.wrinkle_show_when_pass ?? true,
         matching_conf: formData.matching_conf ?? 0.20,
+        mask_overlap_threshold: formData.mask_overlap_threshold ?? 0.6,
       };
 
       await onSubmit(submitData);
@@ -2083,6 +2088,40 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       </label>
                       <small className="field-description">
                         On → draws wrinkle contour on the result image even when the bottle PASSes (debug/monitoring). Off → draws only on FAIL.
+                      </small>
+                    </div>
+                    <div className="form-group" style={{ marginTop: 8 }}>
+                      <label>
+                        Mask Overlap Threshold
+                        <span style={{ marginLeft: 12, fontWeight: 600, fontFamily: 'monospace' }}>
+                          {((formData.mask_overlap_threshold ?? 0.6) * 100).toFixed(0)}%
+                        </span>
+                      </label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={formData.mask_overlap_threshold ?? 0.6}
+                          onChange={(e) => setFormData(prev => ({ ...prev, mask_overlap_threshold: parseFloat(e.target.value) }))}
+                          style={{ flex: 1 }}
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={formData.mask_overlap_threshold ?? 0.6}
+                          onChange={(e) => {
+                            const v = Math.max(0, Math.min(1, parseFloat(e.target.value) || 0));
+                            setFormData(prev => ({ ...prev, mask_overlap_threshold: v }));
+                          }}
+                          style={{ width: 80 }}
+                        />
+                      </div>
+                      <small className="field-description">
+                        Wrinkle regions with this fraction (or more) of pixels inside a "mask" annotation are excluded from the wrinkle check.
                       </small>
                     </div>
                   </div>

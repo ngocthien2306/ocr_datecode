@@ -16,6 +16,7 @@ const ANNOTATION_TYPES: AnnotationType[] = [
   { value: 'product', label: 'Product', color: '#7513dd', needsText: false },
   { value: 'label', label: 'Label', color: '#ad6df1', needsText: false },
   { value: 'char', label: 'Character (ML)', color: '#fbbf24', needsText: true },
+  { value: 'mask', label: 'Mask', color: '#94a3b8', needsText: false },
 ];
 
 interface Point {

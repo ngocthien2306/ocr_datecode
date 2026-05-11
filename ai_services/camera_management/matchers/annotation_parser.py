@@ -65,7 +65,7 @@ class AnnotationParser:
                     ann, ann_idx, img_width, img_height, "template"
                 )
 
-            elif ann_type in ["product", "label"]:
+            elif ann_type in ["product", "label", "mask"]:
                 bbox = AnnotationParser._parse_flexible_bbox(
                     ann, ann_idx, img_width, img_height, ann_type
                 )

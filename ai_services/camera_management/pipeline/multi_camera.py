@@ -406,6 +406,7 @@ class MultiCameraPipeline(InferencePipelineTemplate):
 
             wrinkle_conf = getattr(camera, 'wrinkle_conf', 0.25)
             wrinkle_show_when_pass = getattr(camera, 'wrinkle_show_when_pass', True)
+            mask_overlap_threshold = getattr(camera, 'mask_overlap_threshold', 0.6)
 
             if result.get('success') and frames:
                 frames_data.append({
@@ -421,6 +422,7 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     'wrinkle_max_area': wrinkle_max_area,
                     'wrinkle_conf': wrinkle_conf,
                     'wrinkle_show_when_pass': wrinkle_show_when_pass,
+                    'mask_overlap_threshold': mask_overlap_threshold,
                 })
                 serial_numbers.append(serial_number)
 

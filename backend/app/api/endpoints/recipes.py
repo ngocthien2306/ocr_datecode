@@ -241,6 +241,7 @@ def recipe_to_response(recipe: RecipeInDB, user_names_map: dict = None) -> Recip
         wrinkle_conf=getattr(recipe, 'wrinkle_conf', None),
         wrinkle_show_when_pass=getattr(recipe, 'wrinkle_show_when_pass', None),
         matching_conf=getattr(recipe, 'matching_conf', None),
+        mask_overlap_threshold=getattr(recipe, 'mask_overlap_threshold', None),
         created_by=recipe.created_by,
         updated_by=recipe.updated_by,
         created_by_name=created_by_name,
@@ -1025,6 +1026,7 @@ async def clone_recipe(
         wrinkle_conf=getattr(original_recipe, 'wrinkle_conf', None),
         wrinkle_show_when_pass=getattr(original_recipe, 'wrinkle_show_when_pass', None),
         matching_conf=getattr(original_recipe, 'matching_conf', None),
+        mask_overlap_threshold=getattr(original_recipe, 'mask_overlap_threshold', None),
     )
 
     # Create the cloned recipe
@@ -1168,6 +1170,7 @@ async def load_recipe(
         'wrinkle_conf': getattr(recipe, 'wrinkle_conf', None),
         'wrinkle_show_when_pass': getattr(recipe, 'wrinkle_show_when_pass', None),
         'matching_conf': getattr(recipe, 'matching_conf', None),
+        'mask_overlap_threshold': getattr(recipe, 'mask_overlap_threshold', None),
     }
 
     # Send load recipe command via WebSocket to CameraManagement service
@@ -1197,6 +1200,7 @@ async def load_recipe(
         'wrinkle_conf': getattr(recipe, 'wrinkle_conf', None),
         'wrinkle_show_when_pass': getattr(recipe, 'wrinkle_show_when_pass', None),
         'matching_conf': getattr(recipe, 'matching_conf', None),
+        'mask_overlap_threshold': getattr(recipe, 'mask_overlap_threshold', None),
     }
 
     success = await send_load_recipe(recipe_dict)
@@ -1498,6 +1502,7 @@ async def update_recipe_realtime(
         'wrinkle_conf': getattr(recipe, 'wrinkle_conf', None),
         'wrinkle_show_when_pass': getattr(recipe, 'wrinkle_show_when_pass', None),
         'matching_conf': getattr(recipe, 'matching_conf', None),
+        'mask_overlap_threshold': getattr(recipe, 'mask_overlap_threshold', None),
     }
 
     # 4. Merge update_data into recipe_dict (in-memory, NOT saved to DB)

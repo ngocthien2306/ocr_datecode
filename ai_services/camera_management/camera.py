@@ -275,6 +275,7 @@ class Camera:
         self.wrinkle_conf: float = 0.25  # Wrinkle segmentation model confidence threshold (recipe-level)
         self.wrinkle_show_when_pass: bool = True  # Draw wrinkle contour even when frame PASSes (debug)
         self.matching_conf: float = 0.20  # SuperPoint matching inlier_ratio threshold; below → skip verify
+        self.mask_overlap_threshold: float = 0.6  # Wrinkle region inside 'mask' annotation by >= this fraction is excluded
 
         # Frame tracking
         self.frame_idx = 0
@@ -1146,6 +1147,8 @@ class Camera:
             self.wrinkle_show_when_pass = bool(wsp) if wsp is not None else True
             mc = recipe_data.get("matching_conf")
             self.matching_conf = float(mc) if mc is not None else 0.20
+            mot = recipe_data.get("mask_overlap_threshold")
+            self.mask_overlap_threshold = float(mot) if mot is not None else 0.6
             logger.info(
                 f"[{self.serial_number}] Loaded thresholds: "
                 f"matching={self.matching_threshold}, recognition={self.recognition_threshold}"
