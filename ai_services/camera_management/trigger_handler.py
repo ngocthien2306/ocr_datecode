@@ -101,7 +101,7 @@ class TriggerHandler:
         self._camera_cumulative_lock = threading.Lock()
 
         # Auto-restart on consecutive capture failures per camera
-        _CAPTURE_FAIL_RESTART_N = 1          # consecutive failures before restart
+        _CAPTURE_FAIL_RESTART_N = 2          # consecutive failures before restart
         _CAPTURE_FAIL_COOLDOWN_S = 20.0      # minimum seconds between restarts
         self._capture_fail_restart_n = _CAPTURE_FAIL_RESTART_N
         self._capture_fail_cooldown_s = _CAPTURE_FAIL_COOLDOWN_S

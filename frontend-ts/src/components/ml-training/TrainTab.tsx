@@ -1983,10 +1983,7 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
         open={synthOkOptionsOpen}
         projectId={project.id}
         initial={synthOkOptions}
-        previewChars={Array.from(new Set([
-          ...crops.map(c => c.char_id ?? '').filter(Boolean),
-          ...importedCrops.map(c => c.char_id ?? '').filter(Boolean),
-        ])).slice(0, 12).join('')}
+        previewChars=""
         onClose={() => setSynthOkOptionsOpen(false)}
         onSave={setSynthOkOptions}
       />

@@ -44,8 +44,19 @@ export default function SyntheticOkOptionsModal({
   const [fonts, setFonts] = useState<FontInfo[]>([]);
   const [loadingFonts, setLoadingFonts] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [fontSearch, setFontSearch] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [confirmDelete, setConfirmDelete] = useState<FontInfo | null>(null);
+
+  const filteredFonts = useMemo(() => {
+    const q = fontSearch.trim().toLowerCase();
+    if (!q) return fonts;
+    return fonts.filter(f =>
+      f.name.toLowerCase().includes(q) ||
+      f.filename.toLowerCase().includes(q) ||
+      f.source.includes(q),
+    );
+  }, [fonts, fontSearch]);
 
   const [openSection, setOpenSection] = useState<Record<string, boolean>>({
     fonts: true, style: false, bg: false, gen: false, val: false, live: false,
@@ -261,8 +272,31 @@ export default function SyntheticOkOptionsModal({
               {loadingFonts && <div className="ml-empty-state" style={{ minHeight: 60 }}>
                 <div className="ml-loading-spinner" />
               </div>}
+              {!loadingFonts && fonts.length > 0 && (
+                <div className="ml-font-search-row">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+                    <path d="M21 21l-4.35-4.35" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                  <input className="ml-form-input ml-font-search-input"
+                    placeholder="Search font name (e.g. noto, bold, project)…"
+                    value={fontSearch}
+                    onChange={e => setFontSearch(e.target.value)} />
+                  {fontSearch && (
+                    <button className="ml-font-search-clear" onClick={() => setFontSearch('')}
+                      aria-label="Clear search" title="Clear">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                        <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                      </svg>
+                    </button>
+                  )}
+                  <span className="ml-font-search-count">
+                    {fontSearch ? `${filteredFonts.length}/${fonts.length}` : `${fonts.length}`}
+                  </span>
+                </div>
+              )}
               <div className="ml-font-list">
-                {fonts.map(f => {
+                {filteredFonts.map(f => {
                   const isPicked = selectedSet.has(f.path);
                   return (
                     <div key={f.path}
@@ -302,6 +336,11 @@ export default function SyntheticOkOptionsModal({
                 {fonts.length === 0 && !loadingFonts && (
                   <div className="ml-empty-state" style={{ minHeight: 50, fontSize: 12 }}>
                     No fonts. Upload a .ttf/.otf above.
+                  </div>
+                )}
+                {fonts.length > 0 && filteredFonts.length === 0 && (
+                  <div className="ml-empty-state" style={{ minHeight: 50, fontSize: 12 }}>
+                    No font matches "{fontSearch}".
                   </div>
                 )}
               </div>

@@ -14,15 +14,18 @@ from app.services.ml_ok_synthesize import (
 _PREVIEW_CACHE: Dict[Tuple[str, float, str, int, int, str, str], str] = {}
 
 
+_DEFAULT_PREVIEW = "0123456789\nABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz"
+
+
 def _ensure_chars(chars: str) -> str:
     chars = (chars or "").strip()
     if not chars:
-        chars = "0123456789AB"
-    return chars[:24]
+        return _DEFAULT_PREVIEW
+    return chars[:200]
 
 
 def render_preview_b64(font_path: str, chars: str,
-                       width: int = 240, height: int = 40,
+                       width: int = 420, height: int = 84,
                        bg_hex: str = "#ffffff", ink_hex: str = "#111111") -> Optional[str]:
     chars = _ensure_chars(chars)
     if not os.path.exists(font_path):
@@ -35,9 +38,9 @@ def render_preview_b64(font_path: str, chars: str,
     if key in _PREVIEW_CACHE:
         return _PREVIEW_CACHE[key]
 
+    text = "\n".join(" ".join(line) for line in chars.split("\n"))
     img = Image.new("RGB", (width, height), bg_hex)
     draw = ImageDraw.Draw(img)
-    spaced = " ".join(chars)
     fs_lo, fs_hi = 8, height
     while fs_hi - fs_lo > 1:
         fs = (fs_lo + fs_hi) // 2
@@ -45,7 +48,7 @@ def render_preview_b64(font_path: str, chars: str,
             font = ImageFont.truetype(font_path, fs)
         except Exception:
             return None
-        l, t, r, b = draw.textbbox((0, 0), spaced, font=font)
+        l, t, r, b = draw.multiline_textbbox((0, 0), text, font=font, spacing=2)
         if (r - l) > width - 8 or (b - t) > height - 4:
             fs_hi = fs
         else:
@@ -54,10 +57,10 @@ def render_preview_b64(font_path: str, chars: str,
         font = ImageFont.truetype(font_path, fs_lo)
     except Exception:
         return None
-    l, t, r, b = draw.textbbox((0, 0), spaced, font=font)
+    l, t, r, b = draw.multiline_textbbox((0, 0), text, font=font, spacing=2)
     cx = (width - (r - l)) // 2 - l
     cy = (height - (b - t)) // 2 - t
-    draw.text((cx, cy), spaced, font=font, fill=ink_hex)
+    draw.multiline_text((cx, cy), text, font=font, fill=ink_hex, spacing=2)
     buf = BytesIO()
     img.save(buf, format="PNG", optimize=True)
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")

@@ -1312,6 +1312,33 @@ body.dark-mode .ml-thumb-sm { background: #0f1117; border-color: #2d3148; }
 .ml-synth-slider-row .ml-form-label { width: 130px; flex-shrink: 0; }
 .ml-synth-slider-value { width: 56px; text-align: right; font-family: monospace; opacity: .8; }
 
+.ml-font-search-row {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 6px;
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 4px;
+  color: #6b7280;
+}
+.ml-font-search-input {
+  flex: 1; padding: 4px 6px; font-size: 12px;
+  background: transparent; border: none; outline: none;
+  color: #1e293b;
+}
+.ml-font-search-clear {
+  background: transparent; border: none; cursor: pointer;
+  padding: 2px 4px; color: #6b7280; display: flex; align-items: center;
+  border-radius: 3px;
+}
+.ml-font-search-clear:hover { background: rgba(0,0,0,.06); color: #1e293b; }
+.ml-font-search-count {
+  font-size: 11px; color: #94a3b8; font-variant-numeric: tabular-nums;
+  padding-right: 4px;
+}
+body.dark-mode .ml-font-search-row    { background: #1a1d27; border-color: #2d3148; color: #9ca3af; }
+body.dark-mode .ml-font-search-input  { color: #e5e7eb; }
+body.dark-mode .ml-font-search-clear:hover { background: rgba(255,255,255,.08); color: #e5e7eb; }
+body.dark-mode .ml-font-search-count  { color: #64748b; }
+
 .ml-font-list { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; }
 .ml-font-item {
   display: flex; align-items: center; gap: 8px; padding: 6px 8px;
@@ -1330,7 +1357,7 @@ body.dark-mode .ml-thumb-sm { background: #0f1117; border-color: #2d3148; }
 .ml-font-source-tag.project { background: rgba(124,58,237,.15); color: #7c3aed; }
 .ml-font-stroke { font-size: 10px; opacity: .65; }
 .ml-font-preview {
-  flex: 1; min-width: 180px; max-height: 36px; object-fit: contain;
+  flex: 1; min-width: 220px; max-height: 84px; object-fit: contain;
   background: #fff; border: 1px solid #e2e8f0; border-radius: 3px;
   pointer-events: none;
 }
