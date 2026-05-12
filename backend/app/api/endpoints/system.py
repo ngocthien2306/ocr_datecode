@@ -125,11 +125,16 @@ def _trigger_restart_all() -> None:
     """
     Fire `sudo systemctl restart ocr-all` with hardcoded password. Returns
     immediately — the restart kills this backend process, so we cannot await.
-    Reuses the same pattern as trigger_handler._restart_service.
+
+    Reuses the same pattern as trigger_handler._restart_service, with a 5s
+    delay (not 1s) so the FE has time to receive the "completed" event,
+    fire its post-train callback, and display the "Restarting…" modal
+    before this backend gets killed. Without the delay, the modal often
+    flashes for <1s and the user misses it.
     """
     subprocess.Popen(
         ["bash", "-c",
-         'sleep 1; echo "1" | sudo -S systemctl restart ocr-all >/dev/null 2>&1'],
+         'sleep 5; echo "1" | sudo -S systemctl restart ocr-all >/dev/null 2>&1'],
         start_new_session=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

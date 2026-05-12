@@ -643,9 +643,13 @@ export default function TrainTab({
           setTraining(false);
           setTrainingModelId(null);
           setCancelling(false);
+          // Fire completion callback BEFORE the slow refetches so the parent
+          // can show the "Restarting…" modal immediately. BE only sleeps 5s
+          // before killing itself; the model-list reload below races against
+          // that kill and may not finish, but the modal must already be up.
+          if (data.status === 'completed') handleModelCompleted(modelId);
           await loadModelsRef.current?.();
           await onRefresh();
-          if (data.status === 'completed') handleModelCompleted(modelId);
         }
       } catch { /* ignore */ }
     }, 1500);
