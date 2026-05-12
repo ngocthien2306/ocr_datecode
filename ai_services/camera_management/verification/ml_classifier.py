@@ -34,7 +34,7 @@ _SUPCON_PATH = _REPO_ROOT / "weights/supcon_128_efficientnet_b2_20260429-073504"
 # TensorRT engine cache — SHARED with BE training (backend/app/services/ml_training_service.py).
 # Both services point _BACKEND_DIR / _REPO_ROOT to project root, so the cache dir resolves
 # to the same physical path; the engine BE builds during training is reused at inference time.
-_TRT_CACHE_DIR = _REPO_ROOT / "cache" / "supcon_trt"
+_TRT_CACHE_DIR = _REPO_ROOT / "cache" / "supcon_trt_ai"
 
 # Explicit TRT optimization profile for SupCon (input: dynamic batch x 3 x 64 x 64).
 # Must match BE config so both services hit the SAME engine file in shared cache.
@@ -75,25 +75,31 @@ def _get_supcon_session():
         available = set(ort.get_available_providers())
         providers: List[Any] = []
         cache_existed = False
-        # if "TensorrtExecutionProvider" in available:
-        #     _TRT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        #     cache_existed = any(_TRT_CACHE_DIR.iterdir())
-        #     trt_fp16 = os.environ.get("ML_TRT_FP16", "1") not in ("0", "false", "False")
-        #     providers.append((
-        #         "TensorrtExecutionProvider",
-        #         {
-        #             "trt_engine_cache_enable":  True,
-        #             "trt_engine_cache_path":    str(_TRT_CACHE_DIR),
-        #             "trt_fp16_enable":          trt_fp16,
-        #             # 256 MB workspace — fits comfortably on Jetson Orin 8GB.
-        #             "trt_max_workspace_size":   256 * 1024 * 1024,
-        #             # Explicit shape profile — avoids mid-production rebuilds when
-        #             # batch size varies between recipes.
-        #             "trt_profile_min_shapes":   _TRT_PROFILE_MIN,
-        #             "trt_profile_opt_shapes":   _TRT_PROFILE_OPT,
-        #             "trt_profile_max_shapes":   _TRT_PROFILE_MAX,
-        #         },
-        #     ))
+        trt_skipped_no_cache = False
+        # TRT engine build is slow (minutes). To avoid stalling the first request,
+        # only enable TRT when the cache directory is already populated. Pre-build
+        # offline via scripts/build_supcon_trt.sh.
+        if "TensorrtExecutionProvider" in available:
+            cache_existed = _TRT_CACHE_DIR.exists() and any(_TRT_CACHE_DIR.iterdir())
+            if cache_existed:
+                trt_fp16 = os.environ.get("ML_TRT_FP16", "1") not in ("0", "false", "False")
+                providers.append((
+                    "TensorrtExecutionProvider",
+                    {
+                        "trt_engine_cache_enable":  True,
+                        "trt_engine_cache_path":    str(_TRT_CACHE_DIR),
+                        "trt_fp16_enable":          trt_fp16,
+                        # 256 MB workspace — fits comfortably on Jetson Orin 8GB.
+                        "trt_max_workspace_size":   256 * 1024 * 1024,
+                        # Explicit shape profile — avoids mid-production rebuilds when
+                        # batch size varies between recipes.
+                        "trt_profile_min_shapes":   _TRT_PROFILE_MIN,
+                        "trt_profile_opt_shapes":   _TRT_PROFILE_OPT,
+                        "trt_profile_max_shapes":   _TRT_PROFILE_MAX,
+                    },
+                ))
+            else:
+                trt_skipped_no_cache = True
         if "CUDAExecutionProvider" in available:
             providers.append((
                 "CUDAExecutionProvider",
@@ -108,10 +114,15 @@ def _get_supcon_session():
             str(onnx_path), sess_options=sess_options, providers=providers,
         )
         active = _supcon_session.get_providers()[0]
-        cache_state = (
-            f"cache={'HIT' if cache_existed else 'MISS'} ({_TRT_CACHE_DIR})"
-            if active == "TensorrtExecutionProvider" else "no-cache"
-        )
+        if active == "TensorrtExecutionProvider":
+            cache_state = f"cache=HIT ({_TRT_CACHE_DIR})"
+        elif trt_skipped_no_cache:
+            cache_state = (
+                f"TRT available but skipped — no cache at {_TRT_CACHE_DIR}; "
+                "run scripts/build_supcon_trt.sh to pre-build"
+            )
+        else:
+            cache_state = "no-cache"
         logger.info(f"[SupCon] loaded {onnx_path.name} on {active} — {cache_state}")
     return _supcon_session
 

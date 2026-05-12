@@ -112,6 +112,16 @@ class TextVerificationService:
     # Use a generous ceiling (2×) so only truly bogus bboxes are rejected.
     MAX_TEXT_CROP_DIM = 2500
 
+    # Char quad shape guard — SuperPoint homography failure makes the projected
+    # quad severely trapezoidal / bow-tie / collapsed. ML classifier is then
+    # forced to classify noise, slow + always wrong. Reject these early as NG.
+    # All thresholds tuned loose; tighten after observing real recipe behavior.
+    CHAR_QUAD_MIN_EDGE_RATIO    = 0.5    # min(top,bot)/max(top,bot)  AND  min(L,R)/max(L,R)
+    CHAR_QUAD_MAX_TOP_BOT_ANGLE = 22.0   # degrees between top edge vec and bottom edge vec
+    CHAR_QUAD_MIN_EDGE_PX       = 3.0    # any edge shorter than this → degenerate
+    CHAR_QUAD_ASPECT_DEV_MIN    = 0.5    # transformed (w/h) / original (w/h) must be in
+    CHAR_QUAD_ASPECT_DEV_MAX    = 2.0    # this band — else char shape got warped
+
     def __init__(
         self,
         text_recognizer: Any,
@@ -847,6 +857,127 @@ class TextVerificationService:
 
         return True, None
 
+    @classmethod
+    def _validate_char_quad(
+        cls,
+        points: List,
+        original_points: Optional[List] = None,
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Shape sanity for char quads coming from SuperPoint homography.
+
+        When the template doesn't match, the projected quad becomes severely
+        trapezoidal / bow-tie / collapsed. Cropping such a region warps noise
+        into the ML classifier — slow AND always wrong. Cheap geometric checks
+        catch these before crop+embed+predict.
+
+        Checks (in order):
+          1. min edge length ≥ MIN_EDGE_PX (degenerate guard)
+          2. min(top,bot)/max(top,bot) ≥ MIN_EDGE_RATIO (horizontal trapezoid)
+          3. min(left,right)/max(left,right) ≥ MIN_EDGE_RATIO (vertical trapezoid)
+          4. angle between top edge and bottom edge ≤ MAX_TOP_BOT_ANGLE
+             (top/bottom should be roughly parallel)
+          5. convexity — cross products of consecutive edges same sign
+             (bow-tie / self-intersecting quad = homography blew up)
+          6. aspect ratio deviation vs original within [ASPECT_DEV_MIN, MAX]
+             (skipped if original_points not provided)
+
+        Returns (is_valid, reason_if_invalid).
+        """
+        try:
+            pts = np.asarray(points, dtype=np.float32)
+            if pts.shape != (4, 2):
+                return False, 'quad_bad_shape'
+        except Exception:
+            return False, 'quad_malformed'
+
+        # Reorder to TL, TR, BR, BL using same heuristic as crop_text_region.
+        s = pts.sum(axis=1)
+        d = np.diff(pts, axis=1).ravel()
+        try:
+            tl = pts[int(np.argmin(s))]
+            br = pts[int(np.argmax(s))]
+            tr = pts[int(np.argmin(d))]
+            bl = pts[int(np.argmax(d))]
+        except Exception:
+            return False, 'quad_order_failed'
+
+        top    = tr - tl
+        bottom = br - bl
+        left   = bl - tl
+        right  = br - tr
+
+        len_top    = float(np.linalg.norm(top))
+        len_bottom = float(np.linalg.norm(bottom))
+        len_left   = float(np.linalg.norm(left))
+        len_right  = float(np.linalg.norm(right))
+
+        # (1) min edge length
+        min_edge = min(len_top, len_bottom, len_left, len_right)
+        if min_edge < cls.CHAR_QUAD_MIN_EDGE_PX:
+            return False, f'edge_too_small_{min_edge:.1f}px'
+
+        # (2) horizontal ratio (top vs bottom)
+        h_ratio = min(len_top, len_bottom) / max(len_top, len_bottom)
+        if h_ratio < cls.CHAR_QUAD_MIN_EDGE_RATIO:
+            return False, f'h_ratio={h_ratio:.2f}<{cls.CHAR_QUAD_MIN_EDGE_RATIO}'
+
+        # (3) vertical ratio (left vs right)
+        v_ratio = min(len_left, len_right) / max(len_left, len_right)
+        if v_ratio < cls.CHAR_QUAD_MIN_EDGE_RATIO:
+            return False, f'v_ratio={v_ratio:.2f}<{cls.CHAR_QUAD_MIN_EDGE_RATIO}'
+
+        # (4) top-bottom angle: both vectors should point in nearly the same direction.
+        cos_a = float(np.dot(top, bottom) / max(len_top * len_bottom, 1e-6))
+        cos_a = max(-1.0, min(1.0, cos_a))
+        angle_deg = float(np.degrees(np.arccos(cos_a)))
+        if angle_deg > cls.CHAR_QUAD_MAX_TOP_BOT_ANGLE:
+            return False, f'top_bot_angle={angle_deg:.1f}°>{cls.CHAR_QUAD_MAX_TOP_BOT_ANGLE}'
+
+        # (5) convexity — consecutive edge cross products must have consistent sign.
+        ordered = [tl, tr, br, bl]
+        crosses = []
+        for i in range(4):
+            a = ordered[i]
+            b = ordered[(i + 1) % 4]
+            c = ordered[(i + 2) % 4]
+            crosses.append((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]))
+        pos = sum(1 for x in crosses if x > 1e-3)
+        neg = sum(1 for x in crosses if x < -1e-3)
+        if pos > 0 and neg > 0:
+            return False, 'non_convex_quad'
+
+        # (6) aspect ratio vs original template quad — skip if no template ref.
+        if original_points is not None:
+            try:
+                opts = np.asarray(original_points, dtype=np.float32)
+                if opts.shape == (4, 2):
+                    os_ = opts.sum(axis=1)
+                    od_ = np.diff(opts, axis=1).ravel()
+                    otl = opts[int(np.argmin(os_))]
+                    obr = opts[int(np.argmax(os_))]
+                    otr = opts[int(np.argmin(od_))]
+                    obl = opts[int(np.argmax(od_))]
+                    o_top = float(np.linalg.norm(otr - otl))
+                    o_bot = float(np.linalg.norm(obr - obl))
+                    o_left = float(np.linalg.norm(obl - otl))
+                    o_right = float(np.linalg.norm(obr - otr))
+
+                    tgt_w = (len_top + len_bottom) / 2.0
+                    tgt_h = (len_left + len_right) / 2.0
+                    orig_w = (o_top + o_bot) / 2.0
+                    orig_h = (o_left + o_right) / 2.0
+
+                    tgt_ar = tgt_w / max(tgt_h, 1e-6)
+                    orig_ar = orig_w / max(orig_h, 1e-6)
+                    dev = tgt_ar / max(orig_ar, 1e-6)
+                    if not (cls.CHAR_QUAD_ASPECT_DEV_MIN <= dev <= cls.CHAR_QUAD_ASPECT_DEV_MAX):
+                        return False, f'aspect_dev={dev:.2f}'
+            except Exception:
+                pass
+
+        return True, None
+
     def _build_items_for_camera(
         self,
         serial_number: str,
@@ -898,10 +1029,13 @@ class TextVerificationService:
         else:
             use_char_task = bool(self.embedding_classifier_service or self.embedding_classifier_services)
 
-        # For embedding backend: build original points map for char bboxes so we
-        # can crop the template region from template_img per char.
+        # Original char points map — used for:
+        #   (a) embedding backend: cropping template region per char
+        #   (b) BOTH backends: aspect-ratio deviation check in _validate_char_quad
+        # Build for every backend so the quad shape guard can compare against
+        # the template's natural aspect ratio.
         original_char_bbox_map: Dict[int, Dict[str, Any]] = {}
-        if use_char_task and camera_backend == "embedding":
+        if use_char_task:
             for ob in (original_bboxes or []):
                 if ob.get('type') == 'char':
                     idx = ob.get('annotation_index')
@@ -1024,6 +1158,27 @@ class TextVerificationService:
                         'match': False, 'ml_label': 'NG', 'ml_p_ok': 0.0,
                         'threshold': float(conf_threshold),
                         'error': f'invalid_bbox:{reason}',
+                    }
+                    continue
+
+                # Shape sanity on the transformed quad — SuperPoint sometimes
+                # projects a wildly deformed bbox when the template doesn't
+                # match. Reject as NG here so we don't waste a crop + embed +
+                # classifier call on a region full of noise.
+                orig_pts_for_check = None
+                if ann_idx in original_char_bbox_map:
+                    orig_pts_for_check = original_char_bbox_map[ann_idx].get('points')
+                quad_ok, quad_reason = self._validate_char_quad(points, orig_pts_for_check)
+                if not quad_ok:
+                    logger.warning(
+                        f"[{serial_number}] Char ann {ann_idx} ('{expected_char}'): "
+                        f"deformed quad → NG, reason={quad_reason}"
+                    )
+                    invalid_map[(serial_number, ann_idx)] = {
+                        'annotation_idx': int(ann_idx), 'expected': expected_char,
+                        'match': False, 'ml_label': 'NG', 'ml_p_ok': 0.0,
+                        'threshold': float(conf_threshold),
+                        'error': f'deformed_quad:{quad_reason}',
                     }
                     continue
 
