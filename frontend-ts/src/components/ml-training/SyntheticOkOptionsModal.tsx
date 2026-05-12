@@ -92,6 +92,18 @@ export default function SyntheticOkOptionsModal({
       .finally(() => setGlyphLoading(false));
   }, [open, projectId]);
 
+  // Fire `synth-ok-cache/clear` whenever the modal transitions from open→closed
+  // so the BE drops its style fingerprint + BG pool + OK crop cache (200-500MB
+  // typical). Re-open will rebuild lazily as the user expands sections.
+  // Ref-tracked so we don't fire on initial mount.
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    if (wasOpenRef.current && !open) {
+      mlTrainingAPI.synthOkCacheClear(projectId).catch(() => { /* best-effort */ });
+    }
+    wasOpenRef.current = open;
+  }, [open, projectId]);
+
   const handleRebuildGlyphs = useCallback(async () => {
     setGlyphBuilding(true);
     try {

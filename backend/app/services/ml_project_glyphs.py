@@ -19,7 +19,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -74,21 +74,63 @@ def build_glyph_dict(
     For each char with ≥min_samples OK crops, return the averaged soft glyph
     mask (uint8). Char keys with too few usable samples are skipped — callers
     should fall back to a TTF font for them.
+
+    Uses a running-sum accumulator so peak memory is constant (one float64
+    canvas per char) instead of N×canvas via np.stack — important when the
+    project has hundreds of OK crops.
     """
     glyphs: Dict[str, np.ndarray] = {}
     for cid, crops in ok_crops_by_char.items():
         if not cid:
             continue
-        normalized: List[np.ndarray] = []
+        acc = np.zeros((GLYPH_CANVAS, GLYPH_CANVAS), dtype=np.float64)
+        count = 0
         for crop in crops:
             m = _center_normalize_to_canvas(crop)
             if m is not None:
-                normalized.append(m)
-        if len(normalized) < min_samples:
+                acc += m              # implicit cast uint8 → float64
+                count += 1
+        if count < min_samples:
             continue
-        avg = np.mean(np.stack(normalized, axis=0).astype(np.float32), axis=0)
-        glyphs[cid] = np.clip(avg, 0, 255).astype(np.uint8)
+        avg = (acc / count).clip(0, 255).astype(np.uint8)
+        glyphs[cid] = avg
     return glyphs
+
+
+def build_glyph_dict_streaming(
+    crops_iter: Iterable[Tuple[str, np.ndarray]],
+    min_samples: int = 1,
+) -> Tuple[Dict[str, np.ndarray], Dict[str, int]]:
+    """
+    Streaming variant: caller yields (char_id, crop_bgr) pairs one at a time.
+    Each crop is normalized and folded into a running average then discarded
+    — peak memory is O(unique_chars × canvas²), not O(total_crops × canvas²).
+
+    Returns (glyphs, sample_counts). Counts include only crops that produced
+    a usable normalized mask (others silently dropped).
+    """
+    acc: Dict[str, np.ndarray] = {}
+    counts: Dict[str, int] = {}
+    for cid, crop in crops_iter:
+        if not cid:
+            continue
+        m = _center_normalize_to_canvas(crop)
+        if m is None:
+            continue
+        if cid not in acc:
+            acc[cid] = np.zeros((GLYPH_CANVAS, GLYPH_CANVAS), dtype=np.float64)
+            counts[cid] = 0
+        acc[cid] += m
+        counts[cid] += 1
+
+    glyphs: Dict[str, np.ndarray] = {}
+    sample_counts: Dict[str, int] = {}
+    for cid, total in acc.items():
+        n = counts.get(cid, 0)
+        if n >= min_samples:
+            glyphs[cid] = (total / n).clip(0, 255).astype(np.uint8)
+            sample_counts[cid] = n
+    return glyphs, sample_counts
 
 
 # ─────────────────────────────────────────────── Persist layer

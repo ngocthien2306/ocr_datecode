@@ -2072,7 +2072,7 @@ async def rebuild_project_glyphs(
     pool (labeled annotations + imported OK). Each rebuild reflects all OK
     samples that exist at call time — so labeling more chars → richer glyphs.
     """
-    from app.services.ml_project_glyphs import build_glyph_dict, save_glyph_dict
+    from app.services.ml_project_glyphs import build_glyph_dict_streaming, save_glyph_dict
 
     annotations = await repo.list_annotations(project_id)
     imported_chars = await repo.list_char_imports(project_id)
@@ -2087,32 +2087,35 @@ async def rebuild_project_glyphs(
     project_dir = _project_dir(project_id)
 
     def _build():
-        # Collect OK crops by char_id — labeled first, then imported
+        # Stream OK crops one at a time directly into the glyph accumulator
+        # so we never hold the full per-char crop lists in memory. With ~500
+        # OK samples this drops peak from ~50MB (lists of small crops) to a
+        # constant ~constant (one float64 canvas per unique char).
         from app.services.ml_segment_service import crop_segment
-        ok_by_char: Dict[str, List[Any]] = {}
-        for ann in annotations:
-            img_path = images_dir / ann.filename
-            for region in ann.regions:
-                for seg in region.segments:
-                    if seg.label != "OK" or not seg.char_id:
-                        continue
-                    crop = crop_segment(img_path, {
-                        "x": seg.x, "y": seg.y, "w": seg.w, "h": seg.h,
-                    })
-                    if crop is None:
-                        continue
-                    ok_by_char.setdefault(seg.char_id, []).append(crop)
-        for p, cid in imported_ok_paths:
-            img = cv.imread(str(p))
-            if img is None:
-                continue
-            ok_by_char.setdefault(cid, []).append(img)
 
-        if not any(ok_by_char.values()):
+        def _iter_crops():
+            for ann in annotations:
+                img_path = images_dir / ann.filename
+                for region in ann.regions:
+                    for seg in region.segments:
+                        if seg.label != "OK" or not seg.char_id:
+                            continue
+                        crop = crop_segment(img_path, {
+                            "x": seg.x, "y": seg.y, "w": seg.w, "h": seg.h,
+                        })
+                        if crop is not None:
+                            yield seg.char_id, crop
+                        # crop goes out of scope after yield consumed → GC'd
+            for p, cid in imported_ok_paths:
+                if not cid:
+                    continue
+                img = cv.imread(str(p))
+                if img is not None:
+                    yield cid, img
+
+        glyphs, sample_counts = build_glyph_dict_streaming(_iter_crops(), min_samples=1)
+        if not glyphs:
             raise ValueError("No usable OK crops")
-
-        sample_counts = {c: len(v) for c, v in ok_by_char.items()}
-        glyphs = build_glyph_dict(ok_by_char, min_samples=1)
         return save_glyph_dict(project_dir, glyphs, sample_counts=sample_counts)
 
     try:

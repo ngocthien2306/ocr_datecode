@@ -1105,6 +1105,13 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   // "page flashes then modal pops" UX of doing the check inside the page.
   const [mlEntryConfirmOpen, setMlEntryConfirmOpen] = useState(false);
   const [mlEntryStopping, setMlEntryStopping] = useState(false);
+  // ConfirmDialog calls onClose AFTER onConfirm (synchronously), which would
+  // race with our async stop+enter flow — onClose would dismiss the modal
+  // and mount MLTrainingPage before aiServiceStop finished, leaving the
+  // child component thinking AI is still running. This ref tells the
+  // onClose handler "the confirm path owns the dismiss + enter — don't
+  // dispatch a second one".
+  const stopInProgressRef = useRef(false);
 
   const enterMLTrainingSection = useCallback(() => {
     setIsLoading(true);
@@ -1127,6 +1134,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   }, [enterMLTrainingSection]);
 
   const handleStopAIAndEnter = useCallback(async () => {
+    stopInProgressRef.current = true;    // suppress the racing onClose call
     setMlEntryStopping(true);
     try {
       await mlTrainingAPI.aiServiceStop();
@@ -1135,10 +1143,15 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     }
     setMlEntryStopping(false);
     setMlEntryConfirmOpen(false);
+    stopInProgressRef.current = false;
     enterMLTrainingSection();
   }, [enterMLTrainingSection]);
 
   const handleKeepAIAndEnter = useCallback(() => {
+    // ConfirmDialog dispatches onClose right after onConfirm — if a stop
+    // is in flight, the confirm handler owns the dismiss/enter sequence,
+    // so we no-op here to avoid mounting MLTrainingPage before AI is down.
+    if (stopInProgressRef.current) return;
     setMlEntryConfirmOpen(false);
     enterMLTrainingSection();
   }, [enterMLTrainingSection]);

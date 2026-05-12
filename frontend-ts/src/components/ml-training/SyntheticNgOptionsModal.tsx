@@ -187,17 +187,17 @@ export default function SyntheticNgOptionsModal({
     }
   }, [projectId, severity, charFilter, toast]);
 
-  // Auto-fire all 4 severity + 10 defect previews once per open so the modal
-  // already has thumbnails the moment the user looks at it. Suppress
-  // per-call warning toasts on the auto run so we don't spam 14 warnings
-  // when the project has no OK samples yet.
+  // Auto-fire only the 4 severity previews on open. The 10 defect-type cards
+  // start empty — user clicks Re-create on each card when they want to
+  // inspect it. Originally we auto-fired all 14 calls, but that spiked BE
+  // memory by ~1GB every time the modal opened (each preview-synthetic
+  // request populates the synth cache with style fingerprint + BG pool).
   useEffect(() => {
     if (!open || autoFiredRef.current) return;
     autoFiredRef.current = true;
     const sevs: (keyof SeverityDist)[] = ['subtle', 'light', 'medium', 'heavy'];
     sevs.forEach(s => { void fetchSeverityPreview(s, { silent: true }); });
-    NG_DEFECT_TYPES.forEach(d => { void fetchDefectPreview(d, { silent: true }); });
-  }, [open, fetchSeverityPreview, fetchDefectPreview]);
+  }, [open, fetchSeverityPreview]);
 
   const handleGenerateLive = async () => {
     setLoadingLive(true);
