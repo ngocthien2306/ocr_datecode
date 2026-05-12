@@ -81,7 +81,8 @@ class RejectScheduler:
             'total_scheduled': 0,
             'total_rejected': 0,     # Actually triggered
             'total_cancelled': 0,    # Cancelled (PASS)
-            'total_missed': 0,       # Too late (negative delay)
+            'total_missed': 0,       # Too late (negative delay) - dropped
+            'total_late_rejects': 0, # Too late but fired anyway (allow_late_reject=True)
             'max_queue_depth': 0,
             'plc_rejects': 0,        # PLC rejects
             'dio_rejects': 0,        # DIO rejects
@@ -188,6 +189,7 @@ class RejectScheduler:
                 f"Fallback: {self._stats['plc_fallbacks']}, Reconnect: {self._stats['plc_reconnects']}), "
                 f"Cancelled: {self._stats['total_cancelled']}, "
                 f"Missed: {self._stats['total_missed']}, "
+                f"Late: {self._stats['total_late_rejects']}, "
                 f"Max Queue: {self._stats['max_queue_depth']}"
             )
 
@@ -198,7 +200,8 @@ class RejectScheduler:
         inference_time: float,
         delay_reject: int,  # ms
         do_number: int,
-        alarm_number: int = -1  # Alarm DO/D number (-1 = no alarm)
+        alarm_number: int = -1,  # Alarm DO/D number (-1 = no alarm)
+        allow_late_reject: bool = False  # Fire immediately when inference_time > delay_reject
     ) -> bool:
         """
         Schedule a reject action (with optional alarm)
@@ -210,10 +213,13 @@ class RejectScheduler:
             delay_reject: Time from camera to reject station (milliseconds)
             do_number: DO/D pin number for reject
             alarm_number: DO/D pin number for alarm (-1 to disable)
+            allow_late_reject: If True, fire reject immediately when inference_time > delay_reject
+                              instead of dropping it. Use for carton/alarm-only systems where
+                              late reject (firing after product has passed) is harmless.
 
         Returns:
             True if scheduled successfully
-            False if delay is negative (too late)
+            False if delay is negative AND allow_late_reject=False (too late, dropped)
 
         Timing calculation:
             delay_reject_sec = delay_reject / 1000.0
@@ -236,20 +242,32 @@ class RejectScheduler:
         # Calculate delay
         delay_reject_sec = delay_reject / 1000.0
         delay_needed = delay_reject_sec - inference_time
+        late_fire = False
 
         # Check if too late
         if delay_needed < 0:
-            logger.error(
-                f"[Group #{group_id}] ❌ REJECT TOO LATE! "
-                f"inference_time={inference_time:.3f}s > delay_reject={delay_reject_sec:.3f}s, "
-                f"deficit={-delay_needed:.3f}s"
-            )
-            with self._stats_lock:
-                self._stats['total_missed'] += 1
-            return False
+            if allow_late_reject:
+                logger.warning(
+                    f"[Group #{group_id}] ⚠️ REJECT LATE — firing immediately "
+                    f"(inference_time={inference_time:.3f}s > delay_reject={delay_reject_sec:.3f}s, "
+                    f"deficit={-delay_needed:.3f}s)"
+                )
+                late_fire = True
+                with self._stats_lock:
+                    self._stats['total_late_rejects'] += 1
+            else:
+                logger.error(
+                    f"[Group #{group_id}] ❌ REJECT TOO LATE! "
+                    f"inference_time={inference_time:.3f}s > delay_reject={delay_reject_sec:.3f}s, "
+                    f"deficit={-delay_needed:.3f}s"
+                )
+                with self._stats_lock:
+                    self._stats['total_missed'] += 1
+                return False
 
         # Calculate absolute reject time
-        T_reject = T_capture_complete + delay_reject_sec
+        # Late fire: T_reject = now → scheduler picks it up on next tick (~1ms)
+        T_reject = time.time() if late_fire else (T_capture_complete + delay_reject_sec)
 
         # Increment reject counter
         with self._reject_counter_lock:
@@ -653,6 +671,7 @@ class RejectScheduler:
                     f"Fallback: {stats['plc_fallbacks']}, Reconnect: {stats['plc_reconnects']}), "
                     f"Cancelled: {stats['total_cancelled']}, "
                     f"Missed: {stats['total_missed']}, "
+                    f"Late: {stats['total_late_rejects']}, "
                     f"Max Queue: {stats['max_queue_depth']}, "
                     f"Active: {active_queue}"
                 )

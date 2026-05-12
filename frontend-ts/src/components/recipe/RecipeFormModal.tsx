@@ -32,6 +32,7 @@ interface FormDataType {
   reject_method: string;
   do_reject_number: number;
   do_alarm_number: number;
+  allow_late_reject: boolean;
   normal_pulse_ms: number;
   is_active: boolean;
   cameras: RecipeCamera[];
@@ -97,6 +98,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     reject_method: 'DIO_OUT',
     do_reject_number: 2,
     do_alarm_number: 0,
+    allow_late_reject: false,
     normal_pulse_ms: 0,
     is_active: true,
     cameras: [],
@@ -265,6 +267,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         reject_method: recipeAny.reject_method || 'DIO_OUT',
         do_reject_number: recipeAny.do_reject_number !== undefined ? recipeAny.do_reject_number : 0,
         do_alarm_number: recipeAny.do_alarm_number !== undefined ? recipeAny.do_alarm_number : 0,
+        allow_late_reject: recipeAny.allow_late_reject === true,
         normal_pulse_ms: recipeAny.normal_pulse_ms !== undefined ? recipeAny.normal_pulse_ms : 0,
         is_active: recipeAny.is_active !== undefined ? recipeAny.is_active : (recipeAny.status === 'Active'),
         cameras: normalizedCameras,
@@ -321,6 +324,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         reject_method: 'DIO_OUT',
         do_reject_number: 2,
         do_alarm_number: 0,
+        allow_late_reject: false,
         normal_pulse_ms: 0,
         is_active: true,
         cameras: [],
@@ -1535,6 +1539,16 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                     <small style={{display: 'block', marginTop: 4, color: '#666'}}>
                       Digital Output port for alarm output (0-4)
                     </small>
+                  </div>
+                  <div className="form-group">
+                    <label>Allow Late Reject</label>
+                    <input
+                      type="checkbox"
+                      name="allow_late_reject"
+                      checked={formData.allow_late_reject}
+                      onChange={handleInputChange}
+                      style={{width: 'auto', alignSelf: 'flex-start', marginRight: 'auto'}}
+                    />
                   </div>
                   <div className="form-group">
                     <label>Normal Pulse Width (ms)</label>

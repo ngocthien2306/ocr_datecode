@@ -225,6 +225,7 @@ def recipe_to_response(recipe: RecipeInDB, user_names_map: dict = None) -> Recip
         reject_method=recipe.reject_method if hasattr(recipe, 'reject_method') else 'DIO_OUT',
         do_reject_number=recipe.do_reject_number if hasattr(recipe, 'do_reject_number') else 0,
         do_alarm_number=recipe.do_alarm_number if hasattr(recipe, 'do_alarm_number') else 0,
+        allow_late_reject=getattr(recipe, 'allow_late_reject', False),
         normal_pulse_ms=getattr(recipe, 'normal_pulse_ms', 0.0),
         cameras=cameras_data,
         camera_templates=camera_templates_data,
@@ -1012,6 +1013,7 @@ async def clone_recipe(
         reject_method=getattr(original_recipe, 'reject_method', 'DIO_OUT'),
         do_reject_number=getattr(original_recipe, 'do_reject_number', 0),
         do_alarm_number=getattr(original_recipe, 'do_alarm_number', 0),
+        allow_late_reject=getattr(original_recipe, 'allow_late_reject', False),
         normal_pulse_ms=getattr(original_recipe, 'normal_pulse_ms', 0.0),
         camera_settings=to_dict(original_recipe.camera_settings),
         model_thresholds=to_dict(original_recipe.model_thresholds),
@@ -1157,6 +1159,7 @@ async def load_recipe(
         'reject_method': getattr(recipe, 'reject_method', 'DIO_OUT'),
         'do_reject_number': recipe.do_reject_number,
         'do_alarm_number': getattr(recipe, 'do_alarm_number', 0),
+        'allow_late_reject': getattr(recipe, 'allow_late_reject', False),
         'normal_pulse_ms': getattr(recipe, 'normal_pulse_ms', 0.0),
         'product_code': recipe.product_code,
         'camera_templates': _to_primitive(camera_templates),
@@ -1185,6 +1188,7 @@ async def load_recipe(
         'reject_method': getattr(recipe, 'reject_method', 'DIO_OUT'),
         'do_reject_number': recipe.do_reject_number,
         'do_alarm_number': getattr(recipe, 'do_alarm_number', 0),
+        'allow_late_reject': getattr(recipe, 'allow_late_reject', False),
         'normal_pulse_ms': getattr(recipe, 'normal_pulse_ms', 0.0),
         'cameras': enriched_cameras,  # Use enriched cameras with function_type
         'camera_templates': _to_primitive(camera_templates),
@@ -1487,6 +1491,7 @@ async def update_recipe_realtime(
         'reject_method': getattr(recipe, 'reject_method', 'DIO_OUT'),
         'do_reject_number': recipe.do_reject_number,
         'do_alarm_number': getattr(recipe, 'do_alarm_number', 0),
+        'allow_late_reject': getattr(recipe, 'allow_late_reject', False),
         'normal_pulse_ms': getattr(recipe, 'normal_pulse_ms', 0.0),
         'cameras': enriched_cameras,
         'camera_templates': _to_primitive(camera_templates),
@@ -1509,6 +1514,10 @@ async def update_recipe_realtime(
     if 'delay_reject' in update_data:
         recipe_dict['delay_reject'] = update_data['delay_reject']
         logger.info(f"📝 [REALTIME UPDATE] delay_reject → {update_data['delay_reject']} ms")
+
+    if 'allow_late_reject' in update_data:
+        recipe_dict['allow_late_reject'] = update_data['allow_late_reject']
+        logger.info(f"📝 [REALTIME UPDATE] allow_late_reject → {update_data['allow_late_reject']}")
 
     if 'reject_pulse' in update_data:
         recipe_dict['reject_pulse'] = update_data['reject_pulse']

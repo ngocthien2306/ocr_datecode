@@ -989,6 +989,7 @@ class InferenceHandler:
             delay_reject = camera.delay_reject  # ms
             do_reject_number = camera.do_reject_number
             do_alarm_number = camera.do_alarm_number
+            allow_late_reject = getattr(camera, 'allow_late_reject', False)
 
             # Use timeout as inference_time for reject timing calculation
             success = self.reject_scheduler.schedule_reject(
@@ -997,7 +998,8 @@ class InferenceHandler:
                 inference_time=timeout_seconds,
                 delay_reject=delay_reject,
                 do_number=do_reject_number,
-                alarm_number=do_alarm_number
+                alarm_number=do_alarm_number,
+                allow_late_reject=allow_late_reject
             )
 
             if success:
@@ -1375,6 +1377,7 @@ class InferenceHandler:
                 delay_reject = camera.delay_reject  # ms
                 do_reject_number = camera.do_reject_number
                 do_alarm_number = camera.do_alarm_number
+                allow_late_reject = getattr(camera, 'allow_late_reject', False)
 
                 if stuck_count > 1:
                     # Schedule N rejects with per-bottle timing offset
@@ -1390,7 +1393,8 @@ class InferenceHandler:
                             delay_reject=delay_reject,
                             do_number=do_reject_number,
                             # Alarm only on first bottle to avoid duplicate alarms
-                            alarm_number=do_alarm_number if i == 0 else -1
+                            alarm_number=do_alarm_number if i == 0 else -1,
+                            allow_late_reject=allow_late_reject
                         )
                         if success:
                             logger.info(
@@ -1411,7 +1415,8 @@ class InferenceHandler:
                         inference_time=inference_time,
                         delay_reject=delay_reject,
                         do_number=do_reject_number,
-                        alarm_number=do_alarm_number
+                        alarm_number=do_alarm_number,
+                        allow_late_reject=allow_late_reject
                     )
                     if success:
                         logger.info(
