@@ -137,15 +137,42 @@ def _trigger_restart_all() -> None:
 
 
 def cleanup_stale_training_flag() -> bool:
-    """Called from BE startup. Deletes flag if leftover from previous crash."""
-    if TRAINING_MODE_FLAG.exists():
+    """
+    Called from BE startup.
+
+    Recovery semantics:
+    - No flag → nothing to do.
+    - Flag + AI service ALREADY running → just delete the flag (normal case
+      after ocr-all restart: start_services.sh has already respawned AI).
+    - Flag + AI service NOT running → backend likely crashed mid-training
+      session, leaving the user without AI. Auto-spawn AI back so we don't
+      land in an orphan state where camera is off forever.
+    """
+    if not TRAINING_MODE_FLAG.exists():
+        return False
+
+    if _is_ai_service_active():
         try:
             TRAINING_MODE_FLAG.unlink()
-            logger.info(f"[system] cleaned stale training-mode flag: {TRAINING_MODE_FLAG}")
+            logger.info(f"[system] cleaned training-mode flag (AI already running)")
             return True
         except Exception:
-            logger.exception(f"[system] failed to unlink stale flag")
-    return False
+            logger.exception(f"[system] failed to unlink flag")
+        return False
+
+    # AI off + flag present → recover by spawning AI service back.
+    logger.warning(
+        f"[system] orphan training-mode flag at {TRAINING_MODE_FLAG} with AI service down "
+        "— auto-recovering AI service (likely backend crashed mid-session)"
+    )
+    try:
+        pid = _spawn_ai_service()
+        TRAINING_MODE_FLAG.unlink()
+        logger.warning(f"[system] auto-spawned AI service (pid={pid}) after crash recovery")
+        return True
+    except Exception:
+        logger.exception("[system] AI service recovery failed — leaving flag for next startup")
+        return False
 
 
 # ─────────────────────────────────────────────── Endpoints

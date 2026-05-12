@@ -36,22 +36,24 @@ export default function MLTrainingPage({ onClose }: Props) {
   // Updated by TrainTab via the onTrainingStateChange callback.
   const [trainingActive, setTrainingActive] = useState(false);
 
-  // Modal flags
-  const [showEntryConfirm, setShowEntryConfirm] = useState(false);
+  // Modal flags. Entry-confirm is owned by the parent (Dashboard) so the
+  // page doesn't flash before the dialog appears.
   const [showRestartingModal, setShowRestartingModal] = useState(false);
   const [showStartingAIModal, setShowStartingAIModal] = useState(false);
   const [showCloseDuringTrainModal, setShowCloseDuringTrainModal] = useState(false);
+  const [showRestartFailedModal, setShowRestartFailedModal] = useState(false);
 
-  // ── Probe AI service status on mount → confirm stop if running ─────────
+  // ── Probe AI service status on mount ──────────────────────────────────
+  // Dashboard already asked the user about stopping AI before mounting us.
+  // We just check the BE flag to know whether we should auto-start on exit.
   useEffect(() => {
     (async () => {
       try {
         const status = await mlTrainingAPI.aiServiceStatus();
-        if (status.active) {
-          setShowEntryConfirm(true);
-        } else if (status.in_training_mode) {
-          // BE lock file says we (a previous session) stopped AI for training.
-          // Mark so we auto-start on exit.
+        // BE keeps a flag file when /stop is called. Presence == "we owe a
+        // restart on close". Both fresh-stop (from Dashboard) and stale-flag
+        // (previous session) end up here, which is the desired behavior.
+        if (!status.active && status.in_training_mode) {
           setAiStoppedHere(true);
         }
       } catch (e) {
@@ -60,38 +62,58 @@ export default function MLTrainingPage({ onClose }: Props) {
     })();
   }, []);
 
-  const handleConfirmStopAI = useCallback(async () => {
-    setShowEntryConfirm(false);
-    try {
-      await mlTrainingAPI.aiServiceStop();
-      setAiStoppedHere(true);
-    } catch (e) {
-      console.error('[MLTrainingPage] ai-service stop failed', e);
-    }
-  }, []);
-
-  const handleKeepAI = useCallback(() => setShowEntryConfirm(false), []);
-
   // ── Training-complete handler: BE will auto-restart ocr-all ────────────
-  // FE shows a "Restarting..." modal until backend health responds OR the
-  // 60s safety timeout fires. In practice Firefox kiosk is killed by
-  // stop_services.sh before the modal closes, then restarted fresh.
+  // Detection logic:
+  //   1. Poll /api/health every 2s.
+  //   2. Until we see at least one FAILED health check, BE hasn't been
+  //      killed yet — restart hasn't kicked in.
+  //   3. After we see a fail (BE down) and then a success (BE back) → real
+  //      restart cycle completed → reload page.
+  //   4. If 15s pass with NO failed health checks → restart silently
+  //      failed (bad sudo password, systemctl error, …). Show error modal.
+  //   5. 60s overall timeout as a safety net.
+  // In practice Firefox kiosk is killed by stop_services.sh well before the
+  // page reload above runs; this is the fallback when something prevents it.
   const handleTrainingComplete = useCallback(() => {
     setTrainingActive(false);
     setShowRestartingModal(true);
-    const interval = setInterval(async () => {
+
+    const startedAt = Date.now();
+    let sawHealthFail = false;
+    let interval: ReturnType<typeof setInterval> | null = null;
+    let safetyTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const cleanup = () => {
+      if (interval) { clearInterval(interval); interval = null; }
+      if (safetyTimeout) { clearTimeout(safetyTimeout); safetyTimeout = null; }
+    };
+
+    interval = setInterval(async () => {
+      const elapsed = Date.now() - startedAt;
       try {
         await mlTrainingAPI.apiHealth();
-        setShowRestartingModal(false);
-        clearInterval(interval);
-        // BE is back up — reload to pick up fresh state.
-        // Firefox kiosk should already be reopening; this is a safety net.
-        window.location.reload();
-      } catch { /* still down, keep polling */ }
+        // Health OK
+        if (sawHealthFail) {
+          // BE went down then came back up — real restart cycle done.
+          setShowRestartingModal(false);
+          cleanup();
+          window.location.reload();
+        } else if (elapsed > 15_000) {
+          // 15s passed, BE never went down → restart never happened.
+          // sudo password wrong, systemctl error, or some other failure.
+          setShowRestartingModal(false);
+          setShowRestartFailedModal(true);
+          cleanup();
+        }
+        // else: BE still alive but restart may still be on its way — wait.
+      } catch {
+        sawHealthFail = true;
+      }
     }, 2000);
-    setTimeout(() => {
-      clearInterval(interval);
+
+    safetyTimeout = setTimeout(() => {
       setShowRestartingModal(false);
+      cleanup();
     }, 60_000);
   }, []);
 
@@ -425,34 +447,7 @@ export default function MLTrainingPage({ onClose }: Props) {
         </div>
       </div>
 
-      {/* ── Modals: AI service lifecycle ── */}
-
-      {showEntryConfirm && (
-        <div className="ml-modal-overlay" onClick={handleKeepAI}>
-          <div className="ml-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
-            <div className="ml-modal-header">
-              <h3>📷 Tạm dừng Camera để training?</h3>
-            </div>
-            <div className="ml-modal-body" style={{ padding: 16, fontSize: 13, lineHeight: 1.5 }}>
-              <div className="ml-imported-toggle-warn">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
-                    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                <span>Nếu đang chạy sản xuất, dây chuyền sẽ tạm dừng.</span>
-              </div>
-            </div>
-            <div className="ml-modal-footer">
-              <button className="ml-btn ml-btn-secondary" onClick={handleKeepAI}>
-                Giữ chạy
-              </button>
-              <button className="ml-btn ml-btn-primary" onClick={handleConfirmStopAI}>
-                Tạm dừng
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ── Modals: AI service lifecycle (entry-confirm owned by Dashboard) ── */}
 
       {showRestartingModal && (
         <div className="ml-modal-overlay">
@@ -482,6 +477,30 @@ export default function MLTrainingPage({ onClose }: Props) {
               <p style={{ margin: 0 }}>
                 Đang bật lại camera, vui lòng chờ…
               </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRestartFailedModal && (
+        <div className="ml-modal-overlay" onClick={() => setShowRestartFailedModal(false)}>
+          <div className="ml-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
+            <div className="ml-modal-header">
+              <h3>⚠️ Khởi động lại thất bại</h3>
+            </div>
+            <div className="ml-modal-body" style={{ padding: 16, fontSize: 13, lineHeight: 1.5 }}>
+              <p style={{ marginTop: 0 }}>
+                Training đã hoàn tất nhưng hệ thống chưa khởi động lại được tự động.
+              </p>
+              <p style={{ marginBottom: 0 }}>
+                Vui lòng khởi động lại thủ công để áp dụng model mới.
+              </p>
+            </div>
+            <div className="ml-modal-footer">
+              <button className="ml-btn ml-btn-primary"
+                onClick={() => setShowRestartFailedModal(false)}>
+                OK
+              </button>
             </div>
           </div>
         </div>

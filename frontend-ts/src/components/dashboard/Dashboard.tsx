@@ -11,6 +11,7 @@ import Documentation from './Documentation';
 import System from '../../pages/System';
 import CameraManagement from '../camera/CameraManagement';
 import ConfirmDialog from '../shared/ConfirmDialog';
+import { mlTrainingAPI } from '@/services/mlTraining';
 import RecipeLoadingTemplates from '../shared/RecipeLoadingTemplates';
 import RecipeChart from './RecipeChart';
 import { camerasAPI } from '@/services/api';
@@ -1096,11 +1097,62 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     }
   };
 
+  // ── ML Training entry confirm (block before mount) ─────────────────────
+  // When user navigates to AI Training section, we check whether the AI
+  // camera service is running. If so, ask first whether to stop it —
+  // training is heavy and the service eats ~1.5GB RAM. Only after the
+  // confirm resolves do we actually mount MLTrainingPage. This avoids the
+  // "page flashes then modal pops" UX of doing the check inside the page.
+  const [mlEntryConfirmOpen, setMlEntryConfirmOpen] = useState(false);
+  const [mlEntryStopping, setMlEntryStopping] = useState(false);
+
+  const enterMLTrainingSection = useCallback(() => {
+    setIsLoading(true);
+    setCurrentSection('ml-training');
+    setTimeout(() => setIsLoading(false), 1000);
+  }, []);
+
+  const proceedToMLTraining = useCallback(async () => {
+    try {
+      const status = await mlTrainingAPI.aiServiceStatus();
+      if (status.active) {
+        setMlEntryConfirmOpen(true);     // ask user before mounting
+      } else {
+        enterMLTrainingSection();        // already off → go straight in
+      }
+    } catch (e) {
+      console.warn('[Dashboard] ai-service status probe failed', e);
+      enterMLTrainingSection();          // probe failed → still let them in
+    }
+  }, [enterMLTrainingSection]);
+
+  const handleStopAIAndEnter = useCallback(async () => {
+    setMlEntryStopping(true);
+    try {
+      await mlTrainingAPI.aiServiceStop();
+    } catch (e) {
+      console.error('[Dashboard] ai-service stop failed', e);
+    }
+    setMlEntryStopping(false);
+    setMlEntryConfirmOpen(false);
+    enterMLTrainingSection();
+  }, [enterMLTrainingSection]);
+
+  const handleKeepAIAndEnter = useCallback(() => {
+    setMlEntryConfirmOpen(false);
+    enterMLTrainingSection();
+  }, [enterMLTrainingSection]);
+
   // Handle section change with loading
   const handleSectionChange = (section: Section) => {
+    // Intercept ml-training to ask about stopping the AI camera service first
+    if (section === 'ml-training' && currentSection !== 'ml-training') {
+      proceedToMLTraining();
+      return;
+    }
     setIsLoading(true);
     setCurrentSection(section);
-    
+
     // Simulate loading time of 1000ms
     setTimeout(() => {
       setIsLoading(false);
@@ -1165,6 +1217,23 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       </>
     );
   }
+
+  // Entry-confirm dialog for ml-training section (asks before mounting
+  // MLTrainingPage so the page doesn't flash before the dialog appears).
+  const mlEntryDialog = (
+    <ConfirmDialog
+      isOpen={mlEntryConfirmOpen}
+      type="warning"
+      title="Tạm dừng Camera để training?"
+      message={mlEntryStopping
+        ? 'Đang tạm dừng camera, vui lòng chờ…'
+        : 'Nếu đang chạy sản xuất, dây chuyền sẽ tạm dừng. Camera sẽ tự bật lại sau khi training xong.'}
+      confirmText={mlEntryStopping ? 'Đang xử lý…' : 'Tạm dừng'}
+      cancelText="Giữ chạy"
+      onClose={handleKeepAIAndEnter}
+      onConfirm={handleStopAIAndEnter}
+    />
+  );
 
   // If realtime section, render InferenceRealtime fullscreen (no dashboard-container)
   if (currentSection === 'realtime') {
@@ -1853,6 +1922,9 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
       {/* AI Agent Chat Widget */}
       <AgentChatWidget />
+
+      {/* AI Training entry confirm — appears before mounting MLTrainingPage */}
+      {mlEntryDialog}
     </div>
   );
 }
