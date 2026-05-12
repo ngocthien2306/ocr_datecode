@@ -12,7 +12,7 @@ from app.repositories.action_log_repository import ActionLogRepository
 import logging
 from pathlib import Path
 
-from app.api.endpoints import auth, users, recipes, cameras, upload, action_logs, inference_results, trigger_simulator, agent, jetson_monitoring, storage, ml_training, system_logs
+from app.api.endpoints import auth, users, recipes, cameras, upload, action_logs, inference_results, trigger_simulator, agent, jetson_monitoring, storage, ml_training, system_logs, system
 from app.api.websocket import camera_ws
 from app.services.socketio_service import socket_app
 from app.utils.logging_config import setup_category_logger
@@ -99,6 +99,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Warning: ML orphan cleanup failed: {e}")
 
+    # Clean up stale "ai stopped for training" flag in case backend crashed
+    # mid-training-session and left the lock behind. Without this, the FE
+    # would think AI is in training-mode forever after a system reboot.
+    try:
+        from app.api.endpoints.system import cleanup_stale_training_flag
+        if cleanup_stale_training_flag():
+            print("♻️  Cleaned stale training-mode flag")
+    except Exception as e:
+        print(f"⚠️ Warning: training-mode flag cleanup failed: {e}")
+
     yield
 
     # Stop Jetson monitoring service
@@ -158,6 +168,7 @@ app.include_router(jetson_monitoring.router, prefix="/api", tags=["Jetson Monito
 app.include_router(storage.router, prefix="/api", tags=["Storage Management"])
 app.include_router(ml_training.router, prefix="/api", tags=["ML Training"])
 app.include_router(system_logs.router, prefix="/api/system-logs", tags=["System Logs"])
+app.include_router(system.router, prefix="/api", tags=["System"])
 
 # WebSocket endpoints
 app.include_router(camera_ws.router, tags=["WebSocket"])

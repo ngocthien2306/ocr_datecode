@@ -425,6 +425,28 @@ export const mlTrainingAPI = {
       { drop_onnx_session: dropOnnxSession },
     ).then(r => r.data),
 
+  // ── System control (AI service lifecycle + restart) ────────────────────
+  apiHealth: () =>
+    api.get<{ status: string }>(`/health`).then(r => r.data),
+
+  aiServiceStatus: () =>
+    api.get<{ active: boolean; pids: number[]; in_training_mode: boolean }>(
+      `/system/ai-service/status`,
+    ).then(r => r.data),
+
+  aiServiceStop: () =>
+    api.post<{ stopped: boolean; killed: number; method: string }>(
+      `/system/ai-service/stop`, {},
+    ).then(r => r.data),
+
+  aiServiceStart: () =>
+    api.post<{ started: boolean; pid?: number; reason?: string }>(
+      `/system/ai-service/start`, {},
+    ).then(r => r.data),
+
+  restartAll: () =>
+    api.post<{ triggered: boolean }>(`/system/restart-all`, {}).then(r => r.data),
+
   fontsDiscover: (previewChars?: string) =>
     api.get<FontInfo[]>(`/ml/fonts/discover`, {
       params: { preview_chars: previewChars ?? '' },

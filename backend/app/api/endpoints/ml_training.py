@@ -1088,6 +1088,23 @@ async def _run_training_bg(
         log_buffer.push(model_id, f"[ML] Training completed (acc_test={metrics.get('accuracy_test', 0):.3f})")
         logger.info(f"[ML] Training completed for project {project_id}, model {model_id}")
 
+        # Auto-restart ocr-all so the freshly trained model gets picked up by
+        # the AI camera service. Done with a small delay so the FE has time
+        # to receive the "completed" status before the backend dies.
+        # Trigger is fire-and-forget — _trigger_restart_all schedules a
+        # detached bash that sleeps then runs systemctl, surviving this
+        # backend's death. Only happens on the success path (NOT on cancel
+        # or failure paths below, where we explicitly want the user to
+        # inspect the error before any restart).
+        try:
+            from app.api.endpoints.system import _trigger_restart_all
+            _trigger_restart_all()
+            log_buffer.push(model_id,
+                            "[ML] System will auto-restart to apply new model")
+            logger.warning(f"[ML] Auto-restart triggered after training {model_id}")
+        except Exception:
+            logger.exception("[ML] auto-restart trigger failed (training still ok)")
+
     except TrainingCancelled:
         log_buffer.push(model_id, "[ML] Training cancelled by user", level="WARNING")
         await repo.update_model_record(model_id, {

@@ -114,6 +114,15 @@ interface Props {
   // the crop edit popover, the parent dispatches the deep link to the right
   // sub-tab and pre-selects the matching annotation/batch.
   onJumpTo?: (link: DeepLink) => void;
+  // Notify parent when any model on this project is mid-training (true) or
+  // when all training has settled (false). Parent uses this to gate the
+  // Close button: closing during a live training shows a "system will
+  // auto-restart when complete" confirmation.
+  onTrainingStateChange?: (active: boolean) => void;
+  // Fires once when a model transitions to status='completed'. Parent uses
+  // this to show the "Restarting…" modal because the BE auto-restarts ocr-all
+  // on successful training (see endpoints/ml_training.py).
+  onTrainingComplete?: () => void;
 }
 
 const AUGMENT_OPTIONS = [
@@ -448,7 +457,10 @@ function TestSetCropCard({ item }: { item: TestSetCropResult }) {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────
-export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
+export default function TrainTab({
+  project, onRefresh, onJumpTo,
+  onTrainingStateChange, onTrainingComplete,
+}: Props) {
   // Crops — hydrate from module cache so tab-switch returns are instant.
   const _initial = _readCache(project.id);
   const [crops, setCrops] = useState<LabeledCrop[]>(_initial.crops ?? []);
@@ -608,7 +620,10 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
     setSelectedModelId(modelId);
     setResultsTab('metrics');
     setTestSetCrops([]);
-  }, []);
+    // Notify parent — BE has just kicked off ocr-all restart, so parent
+    // should show its "Restarting…" modal and start polling /api/health.
+    onTrainingComplete?.();
+  }, [onTrainingComplete]);
 
   const startPolling = useCallback((modelId: string) => {
     if (pollRef.current) return;  // already polling — don't double-spawn
@@ -904,6 +919,12 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
   // but local `training` flag may still be flipping to true) and the rare
   // case of two browser windows on the same project.
   const hasRunningTraining = models.some(m => m.status === 'training' || m.status === 'pending');
+
+  // Bubble training-active state up so the parent's Close button can gate
+  // on it ("training in progress, system will auto-restart" confirm modal).
+  useEffect(() => {
+    onTrainingStateChange?.(hasRunningTraining);
+  }, [hasRunningTraining, onTrainingStateChange]);
   const canTrain = okCrops.length + ngCrops.length >= 2 && !training && !hasRunningTraining;
 
   // Map LabeledCrop → DisplayCrop, attaching segment metadata for edit routing.
