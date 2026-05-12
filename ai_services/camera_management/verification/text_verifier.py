@@ -34,6 +34,7 @@ from .text_ocr_utils import (
     calculate_text_similarity,
     pick_winning_candidate,
 )
+from .char_preprocess import remove_fragments_local_bg
 
 if TYPE_CHECKING:
     from ..camera import Camera
@@ -1187,6 +1188,16 @@ class TextVerificationService:
                 try:
                     _t = time.perf_counter()
                     cropped = crop_text_region(frame_img, points)
+                    # Loại fragment kí tự lân cận lọt vào crop — bbox project
+                    # qua SuperPoint đôi lúc lấn sang neighbor (vd crop '8' dính
+                    # rìa '4'). Giữ chữ chính + defect bên trong, fill local-bg.
+                    try:
+                        cropped, _frag_mask = remove_fragments_local_bg(cropped)
+                    except Exception as e_clean:
+                        logger.debug(
+                            f"[{serial_number}] fragment-clean failed ann {ann_idx}: "
+                            f"{e_clean} — using raw crop"
+                        )
                     crop_char_total_ms += (time.perf_counter() - _t) * 1000
                 except Exception as e:
                     invalid_map[(serial_number, ann_idx)] = {
