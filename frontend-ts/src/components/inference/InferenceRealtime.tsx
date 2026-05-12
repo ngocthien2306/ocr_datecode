@@ -873,6 +873,12 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
         try {
           await receiptsAPI.stopReceipt(runningRecipeId);
 
+          // Notify other views (e.g. Receipts page) so their cached
+          // runningRecipeId can be cleared without waiting for a remount.
+          window.dispatchEvent(new CustomEvent('recipeStopped', {
+            detail: { recipeId: runningRecipeId }
+          }));
+
           // Add log
           const stopLog: InferenceLog = {
             id: `stop-${Date.now()}`,

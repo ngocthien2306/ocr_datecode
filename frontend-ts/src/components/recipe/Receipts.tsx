@@ -96,6 +96,17 @@ export default function Receipts() {
     checkRunningRecipe();
   }, []);
 
+  // Listen for stop events fired from other views (e.g. InferenceRealtime).
+  // Tab navigation does not remount Receipts, so without this the Stop button
+  // can linger on a recipe that has already been stopped elsewhere.
+  useEffect(() => {
+    const handleRecipeStopped = () => {
+      setRunningRecipeId(null);
+    };
+    window.addEventListener('recipeStopped', handleRecipeStopped);
+    return () => window.removeEventListener('recipeStopped', handleRecipeStopped);
+  }, []);
+
   // Check for running recipe
   const checkRunningRecipe = async () => {
     try {
