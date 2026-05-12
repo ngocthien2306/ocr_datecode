@@ -20,6 +20,7 @@ const DEFAULTS: Required<Omit<SyntheticOkOptions, 'font_paths'>> & { font_paths:
   min_contrast: 20,
   max_retries: 4,
   use_project_glyphs: false,
+  position_overshoot_px: 2,
 };
 
 interface Props {
@@ -555,6 +556,16 @@ export default function SyntheticOkOptionsModal({
               <SliderRow label="Char fill max" value={opts.char_fill_max ?? 0.95}
                 min={0.5} max={1.0} step={0.01} fmt={v => `${(v * 100).toFixed(0)}%`}
                 onChange={v => setOpts(p => ({ ...p, char_fill_max: v }))} />
+              <SliderRow label="Position overshoot (px)"
+                value={opts.position_overshoot_px ?? 2}
+                min={0} max={8} step={1}
+                onChange={v => setOpts(p => ({ ...p, position_overshoot_px: v }))} />
+              <div style={{ fontSize: 11, color: '#9ca3af', marginTop: -2, marginBottom: 6 }}>
+                Random position offset spans the full margin between ink bbox and
+                canvas. Overshoot lets the glyph extend N px past the canvas edge
+                (0 = stays fully inside). High <b>char fill max</b> shrinks the
+                shift range automatically.
+              </div>
             </Section>
 
             {/* ── VALIDATION ── */}

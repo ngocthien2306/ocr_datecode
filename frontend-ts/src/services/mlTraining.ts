@@ -135,6 +135,10 @@ export interface SyntheticOkOptions {
   // When true, the project-derived glyph dict joins the font pool. Build it
   // via the "Rebuild" button in the modal (or POST /glyphs/rebuild).
   use_project_glyphs?: boolean;
+  // Max pixels the rendered glyph may extend past the canvas edge after the
+  // random position offset. Offset itself spans the full unused margin between
+  // ink bbox and canvas, so high char_fill_max naturally limits shift range.
+  position_overshoot_px?: number;
 }
 
 export interface ProjectGlyphsInfo {

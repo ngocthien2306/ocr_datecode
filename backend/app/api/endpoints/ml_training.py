@@ -646,6 +646,10 @@ class _SynthOKRequest(BaseModel):
     # When True, include project-derived glyph dict in the font pool. The
     # synth pipeline mixes it with any TTFs the user also selected.
     use_project_glyphs: bool = False
+    # Random position offset uses the full remaining margin between ink bbox
+    # and canvas edge; `position_overshoot_px` lets the ink shoot past the
+    # canvas by N px to mimic real crop misalignment.
+    position_overshoot_px: int = 1
 
 
 @router.post("/ml/projects/{project_id}/preview-synthetic-ok", tags=["ML Training"])
@@ -724,6 +728,7 @@ async def preview_synthetic_ok_endpoint(
             min_contrast=request.min_contrast,
             max_retries=request.max_retries,
             project_glyphs=glyphs,
+            position_overshoot_px=request.position_overshoot_px,
         )
         # Encode crops → b64 for transport (drop raw ndarray)
         return [{

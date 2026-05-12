@@ -366,6 +366,7 @@ def build_dataset(
                 min_contrast=opts.get("min_contrast", 20.0),
                 max_retries=opts.get("max_retries", 4),
                 project_glyphs=glyphs,
+                position_overshoot_px=opts.get("position_overshoot_px", 2),
             )
             for item in synth:
                 cid = item['char_id'] or "_unknown"

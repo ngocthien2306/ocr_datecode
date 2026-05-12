@@ -1194,7 +1194,7 @@ class TextVerificationService:
                     try:
                         cropped, _frag_mask = remove_fragments_local_bg(cropped)
                     except Exception as e_clean:
-                        logger.debug(
+                        logger.info(
                             f"[{serial_number}] fragment-clean failed ann {ann_idx}: "
                             f"{e_clean} — using raw crop"
                         )

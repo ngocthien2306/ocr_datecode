@@ -169,7 +169,16 @@ def _extract_style_from_crops(crops: List[np.ndarray]) -> Dict[str, Any]:
 
 def _inpaint_clean(img: np.ndarray, dilate_iters: int = 5,
                    validate: bool = True) -> Tuple[np.ndarray, bool]:
-    """Inpaint char out → clean BG. ok_flag=False if ghost ink remains."""
+    """Inpaint char out → clean BG. ok_flag=False if ghost ink remains.
+
+    Post-inpaint cleanup so the patched region is invisible when the new
+    composited char no longer covers it (e.g. after a position offset):
+      (B) Overwrite TELEA's flat fill with noise sampled from the real-bg
+          distribution so the patch matches surrounding bg statistics.
+      (A) Light Gaussian blur to dissolve the seam between sampled patch
+          and real bg. `_apply_camera_noise` downstream re-adds high-freq
+          texture, so realism isn't lost.
+    """
     img = _ensure_bgr(img)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     _, mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
@@ -178,14 +187,33 @@ def _inpaint_clean(img: np.ndarray, dilate_iters: int = 5,
     kernel = np.ones((3, 3), np.uint8)
     mask_dil = cv2.dilate(mask, kernel, iterations=dilate_iters)
     clean = cv2.inpaint(img, mask_dil, 4, cv2.INPAINT_TELEA)
+
+    inside = mask_dil > 0
+    outside = ~inside
+
+    # (B) Noise-fill the patched region using real-bg statistics. Sampled from
+    # the ORIGINAL img (not the TELEA result) so we get true bg variance, not
+    # the smoothed-out TELEA approximation.
+    if outside.sum() > 50 and inside.any():
+        bg_pixels = img[outside]
+        bg_mean = bg_pixels.mean(axis=0)
+        bg_std = np.maximum(bg_pixels.std(axis=0), 1.0)
+        n_in = int(inside.sum())
+        sampled = np.random.normal(loc=bg_mean, scale=bg_std,
+                                   size=(n_in, 3)).astype(np.float32)
+        clean[inside] = np.clip(sampled, 0, 255).astype(np.uint8)
+
+    # (A) Gaussian blur dissolves the boundary between sampled patch and real
+    # bg; sigma=1.5 is enough to make the seam invisible without flattening
+    # the bg texture much (camera_noise re-injects high-freq variance).
+    clean = cv2.GaussianBlur(clean, (0, 0), sigmaX=1.5)
+
     if not validate:
+        return clean, True
+    if inside.sum() < 10 or outside.sum() < 10:
         return clean, True
     clean_gray = cv2.cvtColor(clean, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(clean_gray, 40, 120)
-    inside = mask_dil > 0
-    outside = ~inside
-    if inside.sum() < 10 or outside.sum() < 10:
-        return clean, True
     edge_in = edges[inside].mean() / 255.0
     edge_out = edges[outside].mean() / 255.0
     ok = (edge_in <= edge_out * 2.5 + 0.02)
@@ -231,7 +259,8 @@ def _char_natural_aspect(font_path: str, ch: str) -> float:
 def _render_char_alpha(ch: str, canvas_size: Tuple[int, int], font_path: str,
                        target_h_frac: float = 0.85, jitter: bool = True,
                        rng: Optional[random.Random] = None,
-                       rotation_deg: float = 0.0) -> np.ndarray:
+                       rotation_deg: float = 0.0,
+                       position_overshoot_px: int = 2) -> np.ndarray:
     rng = rng or random.Random()
     W, H = canvas_size
     img = Image.new('L', (W, H), 0)
@@ -252,8 +281,16 @@ def _render_char_alpha(ch: str, canvas_size: Tuple[int, int], font_path: str,
     cx = (W - cw) // 2 - l
     cy = (H - chh) // 2 - t
     if jitter:
-        cx += rng.randint(-2, 2)
-        cy += rng.randint(-2, 2)
+        # Use the full remaining margin between ink bbox and canvas edge as
+        # the shift range, plus `position_overshoot_px` so the glyph may go
+        # slightly off-canvas (mimics real crop misalignment). Auto-shrinks
+        # when char_fill_max is high (cw ~ W → little room → little shift).
+        max_dx = max(0, (W - cw) // 2) + max(0, position_overshoot_px)
+        max_dy = max(0, (H - chh) // 2) + max(0, position_overshoot_px)
+        if max_dx > 0:
+            cx += rng.randint(-max_dx, max_dx)
+        if max_dy > 0:
+            cy += rng.randint(-max_dy, max_dy)
     draw.text((cx, cy), ch, font=font, fill=255)
     arr = np.array(img)
     if abs(rotation_deg) > 0.01:
@@ -267,7 +304,8 @@ def _render_glyph_alpha_from_dict(ch: str, canvas_size: Tuple[int, int],
                                   target_h_frac: float = 0.85,
                                   jitter: bool = True,
                                   rng: Optional[random.Random] = None,
-                                  rotation_deg: float = 0.0) -> Optional[np.ndarray]:
+                                  rotation_deg: float = 0.0,
+                                  position_overshoot_px: int = 2) -> Optional[np.ndarray]:
     """
     Render alpha mask using a project-derived glyph mask instead of a TTF.
     Returns None when `ch` is not in the dict — caller falls back to a font.
@@ -306,8 +344,14 @@ def _render_glyph_alpha_from_dict(ch: str, canvas_size: Tuple[int, int],
     cx = (W - tw) // 2
     cy = (H - th_resized) // 2
     if jitter:
-        cx += rng.randint(-2, 2)
-        cy += rng.randint(-2, 2)
+        # Same scheme as _render_char_alpha — shift across full available margin
+        # plus a small overshoot. tw/th_resized are the tight ink bbox dims.
+        max_dx = max(0, (W - tw) // 2) + max(0, position_overshoot_px)
+        max_dy = max(0, (H - th_resized) // 2) + max(0, position_overshoot_px)
+        if max_dx > 0:
+            cx += rng.randint(-max_dx, max_dx)
+        if max_dy > 0:
+            cy += rng.randint(-max_dy, max_dy)
     x0_o = max(0, cx); y0_o = max(0, cy)
     x1_o = min(W, cx + tw); y1_o = min(H, cy + th_resized)
     src_x0 = max(0, -cx); src_y0 = max(0, -cy)
@@ -325,7 +369,8 @@ def _composite_on_bg(ch: str, real_bg: np.ndarray, ink_bgr: Tuple[int, int, int]
                      font_path: str, target_h_frac: float = 0.85,
                      jitter: bool = True, rng: Optional[random.Random] = None,
                      rotation_deg: float = 0.0,
-                     project_glyphs: Optional[Dict[str, np.ndarray]] = None) -> Optional[np.ndarray]:
+                     project_glyphs: Optional[Dict[str, np.ndarray]] = None,
+                     position_overshoot_px: int = 2) -> Optional[np.ndarray]:
     H, W = real_bg.shape[:2]
     if font_path == PROJECT_GLYPHS_TOKEN:
         if not project_glyphs:
@@ -334,11 +379,13 @@ def _composite_on_bg(ch: str, real_bg: np.ndarray, ink_bgr: Tuple[int, int, int]
             ch, (W, H), project_glyphs,
             target_h_frac=target_h_frac, jitter=jitter, rng=rng,
             rotation_deg=rotation_deg,
+            position_overshoot_px=position_overshoot_px,
         )
         if mask is None:
             return None
     else:
-        mask = _render_char_alpha(ch, (W, H), font_path, target_h_frac, jitter, rng, rotation_deg)
+        mask = _render_char_alpha(ch, (W, H), font_path, target_h_frac, jitter, rng, rotation_deg,
+                                  position_overshoot_px=position_overshoot_px)
     soft = cv2.GaussianBlur(mask, (3, 3), 0.6).astype(np.float32) / 255.0
     bg = real_bg.astype(np.float32)
     ink = np.array([ink_bgr[0], ink_bgr[1], ink_bgr[2]],
@@ -352,14 +399,16 @@ def _render_solid_bg(ch: str, canvas_size: Tuple[int, int],
                      font_path: str, target_h_frac: float = 0.85,
                      jitter: bool = True, rng: Optional[random.Random] = None,
                      rotation_deg: float = 0.0,
-                     project_glyphs: Optional[Dict[str, np.ndarray]] = None) -> Optional[np.ndarray]:
+                     project_glyphs: Optional[Dict[str, np.ndarray]] = None,
+                     position_overshoot_px: int = 2) -> Optional[np.ndarray]:
     W, H = canvas_size
     bg_arr = np.full((H, W, 3),
                      (int(bg_bgr[0]), int(bg_bgr[1]), int(bg_bgr[2])), dtype=np.uint8)
     return _composite_on_bg(ch, bg_arr, ink_bgr, font_path,
                             target_h_frac=target_h_frac, jitter=jitter,
                             rng=rng, rotation_deg=rotation_deg,
-                            project_glyphs=project_glyphs)
+                            project_glyphs=project_glyphs,
+                            position_overshoot_px=position_overshoot_px)
 
 
 # ─────────────────────────────────────────────── Camera artifacts
@@ -443,6 +492,7 @@ def _synth_one(ch: str, style: Dict[str, Any], fonts: List[str],
                min_width: int, max_width: int,
                char_fill_min: float, char_fill_max: float,
                project_glyphs: Optional[Dict[str, np.ndarray]] = None,
+               position_overshoot_px: int = 2,
                ) -> Tuple[np.ndarray, str, float]:
     # If user picks project glyphs but the dict misses this char, transparently
     # fall back to a real font for THIS crop so coverage gaps don't kill the
@@ -486,12 +536,14 @@ def _synth_one(ch: str, style: Dict[str, Any], fonts: List[str],
             bg = cv2.resize(bg, (sw, sh))
         crop = _composite_on_bg(ch, bg, style['ink_bgr'], font_path,
                                 target_h_frac=h_frac, jitter=True, rng=rng,
-                                rotation_deg=rot, project_glyphs=project_glyphs)
+                                rotation_deg=rot, project_glyphs=project_glyphs,
+                                position_overshoot_px=position_overshoot_px)
     else:
         crop = _render_solid_bg(ch, (sw, sh), style['ink_bgr'], style['bg_bgr'],
                                 font_path, target_h_frac=h_frac, jitter=True,
                                 rng=rng, rotation_deg=rot,
-                                project_glyphs=project_glyphs)
+                                project_glyphs=project_glyphs,
+                                position_overshoot_px=position_overshoot_px)
     # If project-glyph render returned None (race-y check above missed), retry
     # once with a real font instead of failing the whole synth attempt.
     if crop is None:
@@ -500,11 +552,13 @@ def _synth_one(ch: str, style: Dict[str, Any], fonts: List[str],
             font_path = rng.choice(real_fonts)
             crop = (_composite_on_bg(ch, bg, style['ink_bgr'], font_path,
                                      target_h_frac=h_frac, jitter=True, rng=rng,
-                                     rotation_deg=rot)
+                                     rotation_deg=rot,
+                                     position_overshoot_px=position_overshoot_px)
                     if real_bgs else
                     _render_solid_bg(ch, (sw, sh), style['ink_bgr'], style['bg_bgr'],
                                      font_path, target_h_frac=h_frac, jitter=True,
-                                     rng=rng, rotation_deg=rot))
+                                     rng=rng, rotation_deg=rot,
+                                     position_overshoot_px=position_overshoot_px))
         if crop is None:
             raise ValueError(f"render failed for char '{ch}' even after font fallback")
     crop = _apply_chromatic_aberration(crop, shift_px=1, rng=rng)
@@ -526,6 +580,7 @@ def _synthesize_char(ch: str, n: int, style: Dict[str, Any], fonts: List[str],
                      fill_min: float = 0.10, fill_max: float = 0.65,
                      min_contrast: float = 20.0,
                      project_glyphs: Optional[Dict[str, np.ndarray]] = None,
+                     position_overshoot_px: int = 2,
                      ) -> List[Tuple[np.ndarray, str, float]]:
     out = []
     for _ in range(n):
@@ -536,6 +591,7 @@ def _synthesize_char(ch: str, n: int, style: Dict[str, Any], fonts: List[str],
                 pad_frac_min, pad_frac_max, min_width, max_width,
                 char_fill_min, char_fill_max,
                 project_glyphs=project_glyphs,
+                position_overshoot_px=position_overshoot_px,
             )
             ok, _ = _validate(crop, fill_min=fill_min, fill_max=fill_max,
                               min_contrast=min_contrast)
@@ -682,6 +738,7 @@ def synthesize_ok_from_annotations(
     min_contrast: float = 20.0,
     max_retries: int = 4,
     project_glyphs: Optional[Dict[str, np.ndarray]] = None,
+    position_overshoot_px: int = 2,
 ) -> List[Dict[str, Any]]:
     """
     Generate synthetic OK crops to top-up chars below `target_n_per_char`.
@@ -752,6 +809,7 @@ def synthesize_ok_from_annotations(
             max_retries=max_retries, fill_min=fill_min, fill_max=fill_max,
             min_contrast=min_contrast,
             project_glyphs=project_glyphs if use_project_glyphs else None,
+            position_overshoot_px=position_overshoot_px,
         )
         for crop, fp, rot in results:
             out.append({

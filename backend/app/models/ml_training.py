@@ -134,6 +134,11 @@ class SyntheticOkOptions(BaseModel):
     # pool alongside any selected TTFs. Glyph dict is loaded from disk —
     # build/rebuild via POST /ml/projects/{id}/glyphs/rebuild.
     use_project_glyphs: bool = False
+    # Max pixels the rendered glyph may shoot past the canvas edge when the
+    # random position offset is applied. The offset itself uses the full
+    # remaining margin between ink bbox and canvas, so a high `char_fill_max`
+    # naturally limits how far the glyph can shift even with overshoot > 0.
+    position_overshoot_px: int = 2
 
 
 class TrainRequest(BaseModel):
