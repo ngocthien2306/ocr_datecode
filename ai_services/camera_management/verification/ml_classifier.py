@@ -80,27 +80,27 @@ def _get_supcon_session():
         # TRT engine build is slow (minutes). To avoid stalling the first request,
         # only enable TRT when the cache directory is already populated. Pre-build
         # offline via scripts/build_supcon_trt.sh.
-        if "TensorrtExecutionProvider" in available:
-            cache_existed = _TRT_CACHE_DIR.exists() and any(_TRT_CACHE_DIR.iterdir())
-            if cache_existed:
-                trt_fp16 = os.environ.get("ML_TRT_FP16", "1") not in ("0", "false", "False")
-                providers.append((
-                    "TensorrtExecutionProvider",
-                    {
-                        "trt_engine_cache_enable":  True,
-                        "trt_engine_cache_path":    str(_TRT_CACHE_DIR),
-                        "trt_fp16_enable":          trt_fp16,
-                        # 256 MB workspace — fits comfortably on Jetson Orin 8GB.
-                        "trt_max_workspace_size":   256 * 1024 * 1024,
-                        # Explicit shape profile — avoids mid-production rebuilds when
-                        # batch size varies between recipes.
-                        "trt_profile_min_shapes":   _TRT_PROFILE_MIN,
-                        "trt_profile_opt_shapes":   _TRT_PROFILE_OPT,
-                        "trt_profile_max_shapes":   _TRT_PROFILE_MAX,
-                    },
-                ))
-            else:
-                trt_skipped_no_cache = True
+        # if "TensorrtExecutionProvider" in available:
+        #     cache_existed = _TRT_CACHE_DIR.exists() and any(_TRT_CACHE_DIR.iterdir())
+        #     if cache_existed:
+        #         trt_fp16 = os.environ.get("ML_TRT_FP16", "1") not in ("0", "false", "False")
+        #         providers.append((
+        #             "TensorrtExecutionProvider",
+        #             {
+        #                 "trt_engine_cache_enable":  True,
+        #                 "trt_engine_cache_path":    str(_TRT_CACHE_DIR),
+        #                 "trt_fp16_enable":          trt_fp16,
+        #                 # 256 MB workspace — fits comfortably on Jetson Orin 8GB.
+        #                 "trt_max_workspace_size":   256 * 1024 * 1024,
+        #                 # Explicit shape profile — avoids mid-production rebuilds when
+        #                 # batch size varies between recipes.
+        #                 "trt_profile_min_shapes":   _TRT_PROFILE_MIN,
+        #                 "trt_profile_opt_shapes":   _TRT_PROFILE_OPT,
+        #                 "trt_profile_max_shapes":   _TRT_PROFILE_MAX,
+        #             },
+        #         ))
+        #     else:
+        #         trt_skipped_no_cache = True
         if "CUDAExecutionProvider" in available:
             providers.append((
                 "CUDAExecutionProvider",
