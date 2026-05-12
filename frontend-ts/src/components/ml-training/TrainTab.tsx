@@ -723,7 +723,11 @@ export default function TrainTab({
     try {
       const data = await mlTrainingAPI.previewSynthetic(
         project.id, augmentFactor, 'NG', severityDist,
-        { enabled_defect_types: synthNgOptions.enabled_defect_types ?? null }
+        {
+          enabled_defect_types: synthNgOptions.enabled_defect_types ?? null,
+          cut_frac_min: synthNgOptions.cut_frac_min,
+          cut_frac_max: synthNgOptions.cut_frac_max,
+        }
       );
       setSyntheticCrops(data.crops);
     } catch { /* ignore */ }
@@ -770,6 +774,8 @@ export default function TrainTab({
         centroid_temperature: centroidTemperature,
         include_imported_chars: includeImportedChars,
         enabled_defect_types: synthNgOptions.enabled_defect_types ?? null,
+        cut_frac_min: synthNgOptions.cut_frac_min,
+        cut_frac_max: synthNgOptions.cut_frac_max,
       };
       const { model_id } = await mlTrainingAPI.startTraining(project.id, req);
       setTrainingModelId(model_id);

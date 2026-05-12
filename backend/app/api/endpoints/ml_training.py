@@ -620,6 +620,7 @@ async def preview_synthetic_endpoint(
         annotations, images_dir, request.augment_factor, request.label,
         request.severity_dist, request.force_defect_type, request.char_filter,
         request.enabled_defect_types,
+        request.cut_frac_min, request.cut_frac_max,
     )
     return {"crops": crops, "count": len(crops)}
 

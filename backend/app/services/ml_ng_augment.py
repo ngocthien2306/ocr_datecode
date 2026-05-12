@@ -46,6 +46,11 @@ DEFAULT_SEVERITY_DIST: Dict[str, float] = {
 DEFAULT_MIN_CHANGE = 0.015            # reject augmentation if mean diff/255 < this
 MAX_RETRY = 3                         # per-sample retry on min-change failure
 
+# Heavy-tier cut band — fraction of char bbox along the cut axis.
+# Exposed to the API so the modal slider can override the [min, max] range.
+DEFAULT_HEAVY_CUT_FRAC_MIN = 0.10
+DEFAULT_HEAVY_CUT_FRAC_MAX = 0.50
+
 
 # ─────────────────────────────────────────────── Mask helpers
 
@@ -125,6 +130,8 @@ def _ink_zones_vertical(mask: np.ndarray):
 def _defect_cut_horizontal(img, params, rng):
     h, w = img.shape[:2]
     mask = _get_char_mask(img)
+    if not mask.any():
+        return img.copy()
     bg = _get_avg_color(img, ~mask)
     zones = _ink_zones_horizontal(mask)
     if zones is None:
@@ -132,17 +139,43 @@ def _defect_cut_horizontal(img, params, rng):
     zy0, zy1 = zones.get(params.get('zone', 'middle'), zones['middle'])
     if zy1 <= zy0 + 1:
         zy1 = zy0 + 2
-    band_h = max(2, params.get('band_h', rng.randint(3, 6)))
+
+    # Caller may pass band_frac (% of char bbox height) — preferred for heavy
+    # tier so the cut scales with glyph size. Falls back to legacy band_h
+    # pixel param for light/medium/subtle tiers.
+    band_frac = params.get('band_frac')
+    if band_frac is not None:
+        bbox = _get_char_bbox(mask)
+        char_h = max(2, bbox[3] - bbox[1]) if bbox else h
+        band_h = max(2, int(char_h * float(band_frac)))
+    else:
+        band_h = max(2, params.get('band_h', rng.randint(3, 6)))
+
     cy = rng.randint(zy0, max(zy0, zy1 - 1))
     bp = max(0, cy - band_h // 2)
+
+    # Mask-aware: erase only ink pixels inside the band. Background outside
+    # the glyph stays untouched. We dilate the ink mask by 2px to also wipe
+    # the anti-aliased halo around strokes — otherwise the original silhouette
+    # leaves a faint outline ("ghost edge") inside the cut zone. `bg` is still
+    # sampled from the un-dilated background to keep the fill colour clean.
+    mask_with_halo = cv2.dilate(
+        mask.astype(np.uint8),
+        np.ones((3, 3), np.uint8),
+        iterations=2,
+    ).astype(bool)
+    band_mask = np.zeros_like(mask, dtype=bool)
+    band_mask[bp:min(h, bp + band_h), :] = True
     out = img.copy()
-    out[bp:min(h, bp + band_h), :] = bg
+    out[band_mask & mask_with_halo] = bg
     return out
 
 
 def _defect_cut_vertical(img, params, rng):
     h, w = img.shape[:2]
     mask = _get_char_mask(img)
+    if not mask.any():
+        return img.copy()
     bg = _get_avg_color(img, ~mask)
     zones = _ink_zones_vertical(mask)
     if zones is None:
@@ -150,11 +183,28 @@ def _defect_cut_vertical(img, params, rng):
     zx0, zx1 = zones.get(params.get('zone', 'middle'), zones['middle'])
     if zx1 <= zx0 + 1:
         zx1 = zx0 + 2
-    band_w = max(2, params.get('band_w', rng.randint(3, 6)))
+
+    band_frac = params.get('band_frac')
+    if band_frac is not None:
+        bbox = _get_char_bbox(mask)
+        char_w = max(2, bbox[2] - bbox[0]) if bbox else w
+        band_w = max(2, int(char_w * float(band_frac)))
+    else:
+        band_w = max(2, params.get('band_w', rng.randint(3, 6)))
+
     cx = rng.randint(zx0, max(zx0, zx1 - 1))
     bp = max(0, cx - band_w // 2)
+
+    # Dilated mask wipes the AA halo too — see comment in _defect_cut_horizontal.
+    mask_with_halo = cv2.dilate(
+        mask.astype(np.uint8),
+        np.ones((3, 3), np.uint8),
+        iterations=2,
+    ).astype(bool)
+    band_mask = np.zeros_like(mask, dtype=bool)
+    band_mask[:, bp:min(w, bp + band_w)] = True
     out = img.copy()
-    out[:, bp:min(w, bp + band_w)] = bg
+    out[band_mask & mask_with_halo] = bg
     return out
 
 
@@ -517,7 +567,9 @@ def _pick_subtle_defect(rng: random.Random,
 
 
 def _build_defect_params(defect: str, severity: str,
-                         rng: random.Random) -> Dict[str, Any]:
+                         rng: random.Random,
+                         cut_frac_min: float = DEFAULT_HEAVY_CUT_FRAC_MIN,
+                         cut_frac_max: float = DEFAULT_HEAVY_CUT_FRAC_MAX) -> Dict[str, Any]:
     """Generate per-severity params for a single defect type. Mirrors the
     inline blocks inside `_pick_defects` so forced-defect previews use the
     same parameter distributions as the regular path."""
@@ -588,8 +640,10 @@ def _build_defect_params(defect: str, severity: str,
             params['fade_alpha'] = rng.uniform(0.25, 0.45)
     else:  # heavy
         if defect.startswith('cut_'):
-            key = 'band_h' if defect.endswith('horizontal') else 'band_w'
-            params[key] = rng.randint(5, 8)
+            # User-tunable fraction of char bbox along the cut axis. Default
+            # range (0.10, 0.50) lets heavy actually carve a chunk of the
+            # glyph so 'B'→'D', 'E'→'[', etc. become realistic.
+            params['band_frac'] = rng.uniform(cut_frac_min, cut_frac_max)
         elif defect == 'block_overlay':
             params['frac'] = rng.uniform(0.30, 0.45)
         elif defect == 'segment_removal':
@@ -616,11 +670,15 @@ def _build_defect_params(defect: str, severity: str,
 def _pick_defects(char: Optional[str], severity: str, rng: random.Random,
                   edge_cut_prob: float = 0.40,
                   force_defect_type: Optional[str] = None,
-                  enabled_defect_types: Optional[List[str]] = None) -> List[Tuple[str, Dict[str, Any]]]:
+                  enabled_defect_types: Optional[List[str]] = None,
+                  cut_frac_min: float = DEFAULT_HEAVY_CUT_FRAC_MIN,
+                  cut_frac_max: float = DEFAULT_HEAVY_CUT_FRAC_MAX) -> List[Tuple[str, Dict[str, Any]]]:
     if force_defect_type:
         if force_defect_type not in NG_AUG_TYPES:
             raise ValueError(f"Unknown defect type: {force_defect_type}")
-        return [(force_defect_type, _build_defect_params(force_defect_type, severity, rng))]
+        return [(force_defect_type, _build_defect_params(
+            force_defect_type, severity, rng,
+            cut_frac_min=cut_frac_min, cut_frac_max=cut_frac_max))]
 
     # Whitelist filter — None means "all enabled" (legacy behavior).
     enabled_set: Optional[set] = None
@@ -668,7 +726,7 @@ def _pick_defects(char: Optional[str], severity: str, rng: random.Random,
             if severity == 'light':
                 bp[key] = rng.randint(3, 4)
             elif severity == 'heavy':
-                bp[key] = rng.randint(5, 9)
+                bp['band_frac'] = rng.uniform(cut_frac_min, cut_frac_max)
         elif defect == 'edge_erosion':
             if severity == 'light':
                 bp['ratio'] = rng.uniform(0.04, 0.07)
@@ -738,8 +796,7 @@ def _pick_defects(char: Optional[str], severity: str, rng: random.Random,
                 params['fade_alpha'] = rng.uniform(0.25, 0.45)
         else:  # heavy
             if defect.startswith('cut_'):
-                key = 'band_h' if defect.endswith('horizontal') else 'band_w'
-                params[key] = rng.randint(5, 8)
+                params['band_frac'] = rng.uniform(cut_frac_min, cut_frac_max)
             elif defect == 'block_overlay':
                 params['frac'] = rng.uniform(0.30, 0.45)
             elif defect == 'segment_removal':
@@ -816,6 +873,8 @@ def augment_ng(
     rng: Optional[random.Random] = None,
     force_defect_type: Optional[str] = None,
     enabled_defect_types: Optional[List[str]] = None,
+    cut_frac_min: Optional[float] = None,
+    cut_frac_max: Optional[float] = None,
 ) -> List[Tuple[np.ndarray, str]]:
     """
     Generate `n` realistic NG variants of `char_img`.
@@ -825,12 +884,24 @@ def augment_ng(
     subtle/light/medium/heavy). Per-char boost rules apply when `char_id`
     matches an entry in CHAR_DEFECT_BOOSTS.
 
+    `cut_frac_min` / `cut_frac_max` control the HEAVY-tier cut band width as
+    a fraction of the char bbox (default 0.10–0.50). They have no effect on
+    light/medium/subtle cuts, which keep their existing pixel-based sizes.
+
     Each augmentation is retried up to MAX_RETRY times if `_change_ratio` falls
     below `min_change` — guarantees defects are visually noticeable.
     """
     if rng is None:
         rng = random.Random()
     dist = _normalize_severity_dist(severity_dist)
+
+    # Normalize user range. Clamp to (0, 1], swap if min > max.
+    cmin = DEFAULT_HEAVY_CUT_FRAC_MIN if cut_frac_min is None else float(cut_frac_min)
+    cmax = DEFAULT_HEAVY_CUT_FRAC_MAX if cut_frac_max is None else float(cut_frac_max)
+    cmin = max(0.01, min(0.99, cmin))
+    cmax = max(0.01, min(0.99, cmax))
+    if cmin > cmax:
+        cmin, cmax = cmax, cmin
 
     # Convert grayscale → BGR so colored defects (tape_overlay) work
     if char_img.ndim == 2:
@@ -846,7 +917,9 @@ def augment_ng(
             severity = _pick_severity(rng, dist)
             defects = _pick_defects(char_id, severity, rng,
                                     force_defect_type=force_defect_type,
-                                    enabled_defect_types=enabled_defect_types)
+                                    enabled_defect_types=enabled_defect_types,
+                                    cut_frac_min=cmin,
+                                    cut_frac_max=cmax)
             aug, primary = _apply_defects(base, defects, rng)
             if _change_ratio(base, aug) >= min_change:
                 out.append((aug, primary))

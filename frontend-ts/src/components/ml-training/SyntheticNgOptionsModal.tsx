@@ -12,6 +12,11 @@ const DEFAULT_SEVERITY: SeverityDist = {
   heavy:  0,
 };
 
+// Heavy-tier cut band defaults — fraction of char bbox along cut axis.
+// Mirrors DEFAULT_HEAVY_CUT_FRAC_MIN/MAX in backend ml_ng_augment.py.
+const DEFAULT_CUT_FRAC_MIN = 0.10;
+const DEFAULT_CUT_FRAC_MAX = 0.50;
+
 // Cap the auto-derived char filter so the per-defect grid stays tight even
 // when the project has many distinct chars.
 const PREVIEW_CHARS_MAX = 8;
@@ -59,6 +64,13 @@ export default function SyntheticNgOptionsModal({
   const [severity, setSeverity] = useState<SeverityDist>(() =>
     normalizeSeverity(initial.severity_dist));
 
+  // Heavy-tier cut size range (% of char bbox). Only affects cut_horizontal /
+  // cut_vertical when severity='heavy'. Stored as 0..1 floats, displayed as %.
+  const [cutFracMin, setCutFracMin] = useState<number>(
+    initial.cut_frac_min ?? DEFAULT_CUT_FRAC_MIN);
+  const [cutFracMax, setCutFracMax] = useState<number>(
+    initial.cut_frac_max ?? DEFAULT_CUT_FRAC_MAX);
+
   // Defect type whitelist. null/undefined → treat as "all selected". We
   // keep this normalized as a Set internally for fast lookups, but persist
   // it back as either an explicit array or null (= all).
@@ -82,7 +94,7 @@ export default function SyntheticNgOptionsModal({
   }, [availableChars]);
 
   const [openSection, setOpenSection] = useState<Record<string, boolean>>({
-    severity: true, defects: true, live: false,
+    severity: true, cut: true, defects: true, live: false,
   });
   const toggleSection = (k: string) =>
     setOpenSection(p => ({ ...p, [k]: !p[k] }));
@@ -108,7 +120,9 @@ export default function SyntheticNgOptionsModal({
     setEnabledSet(initial.enabled_defect_types == null
       ? new Set(NG_DEFECT_TYPES)
       : new Set(initial.enabled_defect_types));
-    setOpenSection({ severity: true, defects: true, live: false });
+    setCutFracMin(initial.cut_frac_min ?? DEFAULT_CUT_FRAC_MIN);
+    setCutFracMax(initial.cut_frac_max ?? DEFAULT_CUT_FRAC_MAX);
+    setOpenSection({ severity: true, cut: true, defects: true, live: false });
     setDefectPreview({});
     setDefectLoading({});
     setSeverityPreview({});
@@ -152,6 +166,8 @@ export default function SyntheticNgOptionsModal({
             ? null
             : (Array.from(enabledSet) as NgDefectType[]),
           char_filter: charFilter,
+          cut_frac_min: cutFracMin,
+          cut_frac_max: cutFracMax,
         }
       );
       setSeverityPreview(p => ({ ...p, [sev]: r.crops.slice(0, 6) }));
@@ -163,7 +179,7 @@ export default function SyntheticNgOptionsModal({
     } finally {
       setSeverityLoading(p => ({ ...p, [sev]: false }));
     }
-  }, [projectId, allSelected, enabledSet, charFilter, toast]);
+  }, [projectId, allSelected, enabledSet, charFilter, cutFracMin, cutFracMax, toast]);
 
   const fetchDefectPreview = useCallback(async (
     defect: NgDefectType,
@@ -173,7 +189,12 @@ export default function SyntheticNgOptionsModal({
     try {
       const r = await mlTrainingAPI.previewSynthetic(
         projectId, 2, 'NG', severity,
-        { force_defect_type: defect, char_filter: charFilter }
+        {
+          force_defect_type: defect,
+          char_filter: charFilter,
+          cut_frac_min: cutFracMin,
+          cut_frac_max: cutFracMax,
+        }
       );
       // Cap to 6 thumbnails per defect to keep grid tight
       setDefectPreview(p => ({ ...p, [defect]: r.crops.slice(0, 6) }));
@@ -185,7 +206,7 @@ export default function SyntheticNgOptionsModal({
     } finally {
       setDefectLoading(p => ({ ...p, [defect]: false }));
     }
-  }, [projectId, severity, charFilter, toast]);
+  }, [projectId, severity, charFilter, cutFracMin, cutFracMax, toast]);
 
   // Auto-fire only the 4 severity previews on open. The 10 defect-type cards
   // start empty — user clicks Re-create on each card when they want to
@@ -207,6 +228,8 @@ export default function SyntheticNgOptionsModal({
           ? null
           : (Array.from(enabledSet) as NgDefectType[]),
         char_filter: charFilter,
+        cut_frac_min: cutFracMin,
+        cut_frac_max: cutFracMax,
       });
       setLivePreview(r.crops.slice(0, 12));
     } catch (e: any) {
@@ -224,6 +247,8 @@ export default function SyntheticNgOptionsModal({
       enabled_defect_types: allSelected
         ? null
         : (Array.from(enabledSet) as NgDefectType[]),
+      cut_frac_min: cutFracMin,
+      cut_frac_max: cutFracMax,
     });
     onClose();
   };
@@ -231,6 +256,8 @@ export default function SyntheticNgOptionsModal({
   const handleReset = () => {
     setSeverity({ ...DEFAULT_SEVERITY });
     setEnabledSet(new Set(NG_DEFECT_TYPES));
+    setCutFracMin(DEFAULT_CUT_FRAC_MIN);
+    setCutFracMax(DEFAULT_CUT_FRAC_MAX);
     setDefectPreview({});
     setSeverityPreview({});
     setLivePreview([]);
@@ -319,6 +346,59 @@ export default function SyntheticNgOptionsModal({
                 All weights zero — backend will fall back to default 10/50/35/5.
               </div>
             )}
+          </Section>
+
+          {/* ── HEAVY CUT SIZE RANGE ── */}
+          <Section title={`Heavy cut size (${Math.round(cutFracMin * 100)}–${Math.round(cutFracMax * 100)}% of char)`}
+            isOpen={openSection.cut} onToggle={() => toggleSection('cut')}>
+            <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 8 }}>
+              Heavy-tier <b>cut_horizontal</b> / <b>cut_vertical</b> wipe ink along
+              a band sized as a % of the character bbox. Background outside the
+              glyph is left untouched, so the cut looks like a missing stroke
+              (e.g. B→D, E→[, 0→U). Other severities use small fixed bands.
+            </div>
+            <div className="ml-synth-slider-row">
+              <span className="ml-form-label" style={{ width: 80 }} title="Lower bound of the heavy cut band">
+                Min
+              </span>
+              <input type="range" min={1} max={99} step={1}
+                value={Math.round(cutFracMin * 100)}
+                onChange={e => {
+                  const v = Number(e.target.value) / 100;
+                  setCutFracMin(v);
+                  // Keep min <= max so the BE doesn't have to swap silently.
+                  if (v > cutFracMax) setCutFracMax(v);
+                }}
+                style={{ flex: 1, accentColor: '#ef4444' }} />
+              <span className="ml-synth-slider-value">{Math.round(cutFracMin * 100)}%</span>
+            </div>
+            <div className="ml-synth-slider-row">
+              <span className="ml-form-label" style={{ width: 80 }} title="Upper bound of the heavy cut band">
+                Max
+              </span>
+              <input type="range" min={1} max={99} step={1}
+                value={Math.round(cutFracMax * 100)}
+                onChange={e => {
+                  const v = Number(e.target.value) / 100;
+                  setCutFracMax(v);
+                  if (v < cutFracMin) setCutFracMin(v);
+                }}
+                style={{ flex: 1, accentColor: '#ef4444' }} />
+              <span className="ml-synth-slider-value">{Math.round(cutFracMax * 100)}%</span>
+            </div>
+            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+              <button className="ml-btn ml-btn-secondary ml-btn-sm"
+                onClick={() => { setCutFracMin(DEFAULT_CUT_FRAC_MIN); setCutFracMax(DEFAULT_CUT_FRAC_MAX); }}
+                title="Reset to backend default range (10–50%)">
+                Default 10–50%
+              </button>
+              <button className="ml-btn ml-btn-secondary ml-btn-sm"
+                onClick={() => fetchSeverityPreview('heavy')}
+                disabled={severityLoading.heavy}
+                title="Re-render the heavy preview with the new range">
+                Refresh heavy preview
+              </button>
+            </div>
           </Section>
 
           {/* ── DEFECT TYPES (per-type preview + enable checkbox) ── */}

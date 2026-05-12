@@ -152,6 +152,10 @@ class TrainRequest(BaseModel):
     synth_ok_options: Optional[SyntheticOkOptions] = None
     # Whitelist of NG defect types to apply during augmentation. None = all.
     enabled_defect_types: Optional[List[str]] = None
+    # Heavy-tier cut band as a fraction of char bbox. None = backend defaults
+    # (0.10–0.50). Only affects cut_horizontal / cut_vertical at HEAVY severity.
+    cut_frac_min: Optional[float] = None
+    cut_frac_max: Optional[float] = None
 
 
 class SyntheticPreviewRequest(BaseModel):
@@ -167,6 +171,10 @@ class SyntheticPreviewRequest(BaseModel):
     # When set, only these defect types are eligible during augmentation
     # (overrides the default 10-type pool). None = all types enabled.
     enabled_defect_types: Optional[List[str]] = None
+    # Heavy-tier cut band as a fraction of char bbox. None = backend defaults
+    # (0.10–0.50). Only affects cut_horizontal / cut_vertical at HEAVY severity.
+    cut_frac_min: Optional[float] = None
+    cut_frac_max: Optional[float] = None
 
 
 class TestSetRequest(BaseModel):

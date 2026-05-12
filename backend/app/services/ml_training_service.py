@@ -229,6 +229,8 @@ def build_dataset(
     imported_char_files: Optional[List[Tuple[Path, str, Optional[str]]]] = None,
     synth_ok_options: Optional[Dict[str, Any]] = None,
     enabled_defect_types: Optional[List[str]] = None,
+    cut_frac_min: Optional[float] = None,
+    cut_frac_max: Optional[float] = None,
 ) -> Tuple[
     np.ndarray, np.ndarray, List[np.ndarray], List[Optional[str]],
     Dict[str, Dict[str, int]], int, int,
@@ -412,7 +414,9 @@ def build_dataset(
                 for aug_img, tag in augment_ng(crop, n=n_this,
                                                 char_id=char_id if char_id != "_unknown" else None,
                                                 severity_dist=severity_dist,
-                                                enabled_defect_types=enabled_defect_types):
+                                                enabled_defect_types=enabled_defect_types,
+                                                cut_frac_min=cut_frac_min,
+                                                cut_frac_max=cut_frac_max):
                     aug_ng_by_char[char_id].append(aug_img)
                     if tag in aug_ng_type_counts[char_id]:
                         aug_ng_type_counts[char_id][tag] += 1
@@ -587,6 +591,8 @@ def train_model(
     severity_dist = getattr(request, 'severity_dist', None)
     ok_synth_target = int(getattr(request, 'ok_synth_target', 0) or 0)
     enabled_defect_types = getattr(request, 'enabled_defect_types', None)
+    cut_frac_min = getattr(request, 'cut_frac_min', None)
+    cut_frac_max = getattr(request, 'cut_frac_max', None)
 
     # Embedding is the dominant cost — stream per-batch sub-progress mapped to
     # the 10..55% global range so the UI bar moves smoothly through this phase
@@ -612,6 +618,8 @@ def train_model(
         imported_char_files=imported_char_files,
         synth_ok_options=synth_ok_options,
         enabled_defect_types=enabled_defect_types,
+        cut_frac_min=cut_frac_min,
+        cut_frac_max=cut_frac_max,
     )
     _emit("training_classifier", 60)
 
@@ -990,6 +998,8 @@ def generate_synthetic_crops(
     force_defect_type: Optional[str] = None,
     char_filter: Optional[List[str]] = None,
     enabled_defect_types: Optional[List[str]] = None,
+    cut_frac_min: Optional[float] = None,
+    cut_frac_max: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
     """
     Generate synthetic NG crops from OK samples for preview.
@@ -1069,7 +1079,9 @@ def generate_synthetic_crops(
                                             char_id=seg.char_id,
                                             severity_dist=severity_dist,
                                             force_defect_type=force_defect_type,
-                                            enabled_defect_types=enabled_defect_types):
+                                            enabled_defect_types=enabled_defect_types,
+                                            cut_frac_min=cut_frac_min,
+                                            cut_frac_max=cut_frac_max):
             result.append({
                 "source_segment_id": seg.id,
                 "filename": filename,

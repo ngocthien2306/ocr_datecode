@@ -208,3 +208,4 @@ training/runs
 training/onnx_results
 .gitnexus
 cache/
+tests/fragment_removal_demo

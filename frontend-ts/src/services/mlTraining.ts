@@ -94,6 +94,10 @@ export interface SyntheticNgOptions {
   severity_dist?: SeverityDist;
   // null/undefined = all 10 defect types enabled. Array = explicit whitelist.
   enabled_defect_types?: NgDefectType[] | null;
+  // Heavy-tier cut band as a fraction of char bbox (0.01–0.99). Only used
+  // when severity='heavy'. Undefined → BE defaults (0.10–0.50).
+  cut_frac_min?: number;
+  cut_frac_max?: number;
 }
 
 export interface TrainRequest {
@@ -111,6 +115,8 @@ export interface TrainRequest {
   include_imported_chars?: boolean; // Merge labeled crops from Imported Chars pool (default true)
   synth_ok_options?: SyntheticOkOptions;
   enabled_defect_types?: string[] | null;  // NG defect-type whitelist; null = all
+  cut_frac_min?: number;  // heavy-tier cut band lower bound (% of char bbox)
+  cut_frac_max?: number;  // heavy-tier cut band upper bound (% of char bbox)
 }
 
 export interface SyntheticOkOptions {
@@ -359,6 +365,8 @@ export const mlTrainingAPI = {
                        force_defect_type?: string;
                        char_filter?: string[] | null;
                        enabled_defect_types?: NgDefectType[] | null;
+                       cut_frac_min?: number;
+                       cut_frac_max?: number;
                      }) =>
     api.post<{ crops: SyntheticCrop[]; count: number }>(
       `/ml/projects/${projectId}/preview-synthetic`,
@@ -369,6 +377,8 @@ export const mlTrainingAPI = {
         force_defect_type: opts?.force_defect_type,
         char_filter: opts?.char_filter ?? null,
         enabled_defect_types: opts?.enabled_defect_types ?? null,
+        cut_frac_min: opts?.cut_frac_min,
+        cut_frac_max: opts?.cut_frac_max,
       }
     ).then(r => r.data),
 
