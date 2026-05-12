@@ -2135,3 +2135,52 @@ async def project_glyphs_info(
         "sample_counts":  meta.get("sample_counts", {}),
         "thumbnails":     thumbs,
     }
+
+
+# ════════════════════════════════════════ TRAINING RESOURCE RELEASE ════════
+
+class _ReleaseRequest(BaseModel):
+    # When True, also drop the SupCon ONNX session. Penalty: ~3-8s reload on
+    # the next embed/predict call. Default False so a follow-up predict from
+    # Realtime tab stays fast.
+    drop_onnx_session: bool = False
+
+
+@router.post(
+    "/ml/projects/{project_id}/release-training-resources",
+    tags=["ML Training"],
+)
+async def release_training_resources_endpoint(
+    project_id: str,
+    request: Optional[_ReleaseRequest] = None,
+    repo: MLTrainingRepository = Depends(get_repo),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """
+    Drop in-memory training caches when the user finishes a session
+    (e.g. closes the ML Training Studio). Hard-rejects with 409 if any
+    training is still running for this project — closing the UI must NOT
+    affect a background training job; the job keeps going and resources
+    stay live.
+    """
+    # Block release while any training is mid-run for this project.
+    # Status 'training' or 'pending' both count as "in progress".
+    models = await repo.list_models(project_id)
+    in_progress = [m for m in models if m.status in ("training", "pending")]
+    if in_progress:
+        raise HTTPException(
+            409,
+            f"Training in progress for {len(in_progress)} model(s); "
+            "resources kept. Cancel training first if you really want to release.",
+        )
+
+    from app.services.ml_training_service import release_training_resources
+    images_dir = _images_dir(project_id)
+    drop_onnx = bool(request.drop_onnx_session) if request else False
+
+    # Run cleanup off the event loop — gc.collect on big training arrays can
+    # take a few hundred ms and we don't want to block other API requests.
+    released = await asyncio.get_event_loop().run_in_executor(
+        None, release_training_resources, images_dir, drop_onnx,
+    )
+    return {"released": True, **released}

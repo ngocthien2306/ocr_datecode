@@ -26,6 +26,22 @@ export default function MLTrainingPage({ onClose }: Props) {
     setDeepLink(link);
   }, []);
   const clearDeepLink = useCallback(() => setDeepLink(null), []);
+
+  // Closing the studio is the cue to release the per-project training caches
+  // backend keeps around (synth pool, etc.). BE rejects with 409 if a training
+  // is still running — that's fine, we ignore the error and proceed to close.
+  // Background training keeps going regardless.
+  const handleClose = useCallback(async () => {
+    if (activeProject) {
+      try {
+        await mlTrainingAPI.releaseTrainingResources(activeProject.id);
+      } catch (e) {
+        // 409 (training in progress) is expected and ignored.
+        console.debug('[MLTrainingPage] release skipped:', e);
+      }
+    }
+    onClose();
+  }, [activeProject, onClose]);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [showNewProjectForm, setShowNewProjectForm] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
@@ -166,7 +182,7 @@ export default function MLTrainingPage({ onClose }: Props) {
             </span>
           )}
         </div>
-        <button className="ml-close-btn" onClick={onClose}>
+        <button className="ml-close-btn" onClick={handleClose}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
           Close
         </button>

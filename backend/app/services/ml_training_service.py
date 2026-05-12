@@ -746,6 +746,77 @@ def _build_classifier(request: TrainRequest):
         raise ValueError(f"Unknown algorithm: {algo}")
 
 
+# ──────────────────────────────────────── Resource cleanup ──
+
+def release_training_resources(
+    images_dir: Optional[Path] = None,
+    drop_onnx_session: bool = False,
+) -> Dict[str, Any]:
+    """
+    Free RAM/VRAM held by the training pipeline once it's no longer needed
+    (e.g. user closed the ML Training Studio after a finished run).
+
+    Safe to call multiple times — idempotent. Caller MUST verify no training
+    is in progress before invoking; this function does not check status.
+
+    Args:
+        images_dir: project images dir → drops the per-project synth cache
+                    (style fingerprint + BG pool). Pass None to drop ALL.
+        drop_onnx_session: also release the SupCon ONNX session. Penalty
+                    ~3-8s reload on next embed/predict call. Default False
+                    so a follow-up predict from the Realtime tab stays fast.
+
+    Returns dict with what was released so the caller can log/display it.
+    """
+    import gc as _gc
+    global _supcon_session
+
+    released = {
+        "synth_cache_cleared": False,
+        "onnx_session_dropped": False,
+        "gc_collected_objects": 0,
+        "malloc_trim_called": False,
+    }
+
+    # Synth cache (style + BG pool) — biggest RAM hog after training
+    try:
+        from app.services.ml_ok_synthesize import clear_cache
+        clear_cache(images_dir)
+        released["synth_cache_cleared"] = True
+    except Exception:
+        logger.exception("[cleanup] synth cache clear failed")
+
+    if drop_onnx_session and _supcon_session is not None:
+        try:
+            del _supcon_session
+        except Exception:
+            pass
+        _supcon_session = None
+        released["onnx_session_dropped"] = True
+        logger.info("[cleanup] ONNX session released — will reload on next embed")
+
+    # Force Python GC — sklearn/numpy keep refs the cycle collector may
+    # not get to immediately.
+    released["gc_collected_objects"] = _gc.collect()
+
+    # Hint glibc malloc to return freed memory to the OS. Without this
+    # `free -h` still shows high RSS even after gc.collect() because Python
+    # holds onto the chunks for reuse.
+    try:
+        import ctypes
+        import ctypes.util
+        libname = ctypes.util.find_library("c") or "libc.so.6"
+        libc = ctypes.CDLL(libname)
+        libc.malloc_trim(0)
+        released["malloc_trim_called"] = True
+    except Exception:
+        # macOS doesn't have malloc_trim — not fatal.
+        pass
+
+    logger.info(f"[cleanup] released: {released}")
+    return released
+
+
 # ──────────────────────────────────────── Prediction ──
 
 def _load_model_bundle(model_path: Path):

@@ -407,6 +407,24 @@ export const mlTrainingAPI = {
       { params: { include_thumbnails: includeThumbnails } }
     ).then(r => r.data),
 
+  // Drop in-memory training caches for this project. Server rejects (409)
+  // if any training is still running — UX is to fire-and-forget and ignore
+  // any 409 so closing the page never blocks on this.
+  releaseTrainingResources: (
+    projectId: string,
+    dropOnnxSession = false,
+  ) =>
+    api.post<{
+      released: boolean;
+      synth_cache_cleared?: boolean;
+      onnx_session_dropped?: boolean;
+      gc_collected_objects?: number;
+      malloc_trim_called?: boolean;
+    }>(
+      `/ml/projects/${projectId}/release-training-resources`,
+      { drop_onnx_session: dropOnnxSession },
+    ).then(r => r.data),
+
   fontsDiscover: (previewChars?: string) =>
     api.get<FontInfo[]>(`/ml/fonts/discover`, {
       params: { preview_chars: previewChars ?? '' },
