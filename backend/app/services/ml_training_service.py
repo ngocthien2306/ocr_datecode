@@ -29,7 +29,9 @@ EMBED_SIZE = 64                              # input image size for embedder (ma
 _EMB_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 _EMB_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 _BACKEND_DIR = Path(__file__).parent.parent.parent.parent
+
 _SUPCON_PATH = _BACKEND_DIR / "weights/supcon_128_efficientnet_b2_20260429-073504"
+# _SUPCON_PATH = _BACKEND_DIR / "weights/supcon_128_efficientnet_b2_20260429-073504"
 # TensorRT engine cache survives process restarts; rebuilt only when GPU/JetPack changes.
 _TRT_CACHE_DIR = _BACKEND_DIR / "cache" / "supcon_trt"
 
@@ -226,6 +228,7 @@ def build_dataset(
     embed_progress_cb: Optional[Callable[[float], None]] = None,
     imported_char_files: Optional[List[Tuple[Path, str, Optional[str]]]] = None,
     synth_ok_options: Optional[Dict[str, Any]] = None,
+    enabled_defect_types: Optional[List[str]] = None,
 ) -> Tuple[
     np.ndarray, np.ndarray, List[np.ndarray], List[Optional[str]],
     Dict[str, Dict[str, int]], int, int,
@@ -320,14 +323,35 @@ def build_dataset(
     n_ok_synth = 0
     if ok_synth_target and ok_synth_target > 0:
         try:
-            from app.services.ml_ok_synthesize import synthesize_ok_from_annotations
+            from app.services.ml_ok_synthesize import (
+                synthesize_ok_from_annotations, PROJECT_GLYPHS_TOKEN,
+            )
+            from app.services.ml_project_glyphs import load_glyph_dict
             opts = synth_ok_options or {}
+
+            # Load project glyph dict if user opted in (use_project_glyphs flag
+            # OR the token already present in font_paths). project_dir derived
+            # from images_dir's parent — images_dir is {project_dir}/images.
+            fp = list(opts.get("font_paths") or [])
+            if opts.get("use_project_glyphs") and PROJECT_GLYPHS_TOKEN not in fp:
+                fp.append(PROJECT_GLYPHS_TOKEN)
+            glyphs = None
+            if PROJECT_GLYPHS_TOKEN in fp:
+                glyphs = load_glyph_dict(images_dir.parent)
+                if glyphs is None:
+                    logger.warning(
+                        "[build_dataset] use_project_glyphs=True but no glyph "
+                        "dict found — rebuild glyphs in the modal first. "
+                        "Falling back to TTFs."
+                    )
+                    fp = [p for p in fp if p != PROJECT_GLYPHS_TOKEN]
+
             synth = synthesize_ok_from_annotations(
                 annotations, images_dir,
                 target_n_per_char=ok_synth_target,
                 only_below_threshold=True,
                 imported_ok_crops=imported_ok_for_synth or None,
-                font_paths=opts.get("font_paths"),
+                font_paths=fp,
                 style_sample_n=opts.get("style_sample_n", 64),
                 sample_strategy=opts.get("sample_strategy", "random"),
                 bg_per_char=opts.get("bg_per_char", 24),
@@ -339,6 +363,7 @@ def build_dataset(
                 fill_max=opts.get("fill_max", 0.65),
                 min_contrast=opts.get("min_contrast", 20.0),
                 max_retries=opts.get("max_retries", 4),
+                project_glyphs=glyphs,
             )
             for item in synth:
                 cid = item['char_id'] or "_unknown"
@@ -386,7 +411,8 @@ def build_dataset(
                 # Pass char_id so augment_ng can apply per-char boost rules
                 for aug_img, tag in augment_ng(crop, n=n_this,
                                                 char_id=char_id if char_id != "_unknown" else None,
-                                                severity_dist=severity_dist):
+                                                severity_dist=severity_dist,
+                                                enabled_defect_types=enabled_defect_types):
                     aug_ng_by_char[char_id].append(aug_img)
                     if tag in aug_ng_type_counts[char_id]:
                         aug_ng_type_counts[char_id][tag] += 1
@@ -560,6 +586,7 @@ def train_model(
     _emit("preparing", 5)
     severity_dist = getattr(request, 'severity_dist', None)
     ok_synth_target = int(getattr(request, 'ok_synth_target', 0) or 0)
+    enabled_defect_types = getattr(request, 'enabled_defect_types', None)
 
     # Embedding is the dominant cost — stream per-batch sub-progress mapped to
     # the 10..55% global range so the UI bar moves smoothly through this phase
@@ -584,6 +611,7 @@ def train_model(
         embed_progress_cb=_embed_progress,
         imported_char_files=imported_char_files,
         synth_ok_options=synth_ok_options,
+        enabled_defect_types=enabled_defect_types,
     )
     _emit("training_classifier", 60)
 
@@ -888,6 +916,9 @@ def generate_synthetic_crops(
     augment_factor: int,
     label: str = "NG",
     severity_dist: Optional[Dict[str, float]] = None,
+    force_defect_type: Optional[str] = None,
+    char_filter: Optional[List[str]] = None,
+    enabled_defect_types: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Generate synthetic NG crops from OK samples for preview.
@@ -910,27 +941,70 @@ def generate_synthetic_crops(
     if label not in ("NG", "BOTH"):
         return []
 
-    result = []
+    char_whitelist = set(char_filter) if char_filter else None
+
+    # Collect candidate (image_path, filename, segment) source tuples first so
+    # we can reorder them. Annotation-order iteration would otherwise yield 6+
+    # crops of the most-labeled char before any other appears in the preview.
+    source_segs: List[Tuple[Path, str, Any]] = []
     for ann in annotations:
         img_path = images_dir / ann.filename
         for region in ann.regions:
             for seg in region.segments:
                 if seg.label != "OK":
                     continue
-                crop = crop_segment(img_path, {
-                    "x": seg.x, "y": seg.y, "w": seg.w, "h": seg.h,
-                })
-                if crop is None:
+                if char_whitelist is not None and (seg.char_id or '') not in char_whitelist:
                     continue
-                for aug_img, aug_tag in augment_ng(crop, n=n_per_sample,
-                                                    char_id=seg.char_id,
-                                                    severity_dist=severity_dist):
-                    result.append({
-                        "source_segment_id": seg.id,
-                        "filename": ann.filename,
-                        "label": "NG",
-                        "crop_b64": img_to_b64(aug_img),
-                        "char_id": seg.char_id,
-                        "aug_type": aug_tag,
-                    })
+                source_segs.append((img_path, ann.filename, seg))
+
+    # When the caller passed a char_filter, round-robin segments by char_id so
+    # the first N preview crops cover N distinct chars (instead of repeating
+    # the same one). No reordering when no filter — preserves existing
+    # behavior for training callers that consume the whole result.
+    if char_whitelist is not None and len(source_segs) > 1:
+        from collections import defaultdict
+        by_char: Dict[str, List[Tuple[Path, str, Any]]] = defaultdict(list)
+        for sp in source_segs:
+            by_char[sp[2].char_id or ''].append(sp)
+        # Honor the caller's char_filter ordering so the preview lines up
+        # with the user's typed input (e.g. "BEST230" → B,E,S,T,2,3,0).
+        # Dedupe while preserving order; chars not in the project drop out.
+        seen: set = set()
+        ordered_chars: List[str] = []
+        for c in (char_filter or []):
+            if c not in seen and c in by_char:
+                seen.add(c)
+                ordered_chars.append(c)
+        # Tack on any chars that somehow appeared in source but not in
+        # char_filter (defensive — char_whitelist filter above should make
+        # this empty).
+        ordered_chars += [c for c in by_char if c not in seen]
+        interleaved: List[Tuple[Path, str, Any]] = []
+        max_per_char = max((len(v) for v in by_char.values()), default=0)
+        for i in range(max_per_char):
+            for c in ordered_chars:
+                if i < len(by_char[c]):
+                    interleaved.append(by_char[c][i])
+        source_segs = interleaved
+
+    result = []
+    for img_path, filename, seg in source_segs:
+        crop = crop_segment(img_path, {
+            "x": seg.x, "y": seg.y, "w": seg.w, "h": seg.h,
+        })
+        if crop is None:
+            continue
+        for aug_img, aug_tag in augment_ng(crop, n=n_per_sample,
+                                            char_id=seg.char_id,
+                                            severity_dist=severity_dist,
+                                            force_defect_type=force_defect_type,
+                                            enabled_defect_types=enabled_defect_types):
+            result.append({
+                "source_segment_id": seg.id,
+                "filename": filename,
+                "label": "NG",
+                "crop_b64": img_to_b64(aug_img),
+                "char_id": seg.char_id,
+                "aug_type": aug_tag,
+            })
     return result

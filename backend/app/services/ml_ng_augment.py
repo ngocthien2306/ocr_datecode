@@ -490,9 +490,15 @@ _FRAGILE_LIGHT_ONLY = {'dropout_dots', 'crack', 'local_blob',
 
 # ─────────────────────────────────────────────── Defect picker
 
-def _pick_subtle_defect(rng: random.Random) -> List[Tuple[str, Dict[str, Any]]]:
-    weights = [_SUBTLE_WEIGHTS[d] for d in _SUBTLE_POOL]
-    defect = rng.choices(_SUBTLE_POOL, weights=weights, k=1)[0]
+def _pick_subtle_defect(rng: random.Random,
+                        enabled: Optional[set] = None) -> List[Tuple[str, Dict[str, Any]]]:
+    pool = _SUBTLE_POOL if enabled is None else [d for d in _SUBTLE_POOL if d in enabled]
+    if not pool:
+        # User disabled every subtle-eligible defect → fall back to the enabled
+        # set so the caller still gets a single defect to apply.
+        pool = list(enabled) if enabled else list(_SUBTLE_POOL)
+    weights = [_SUBTLE_WEIGHTS.get(d, 1.0) for d in pool]
+    defect = rng.choices(pool, weights=weights, k=1)[0]
     params: Dict[str, Any] = {}
     if defect == 'stroke_thinning':
         params['n_breaks'] = 1
@@ -510,10 +516,123 @@ def _pick_subtle_defect(rng: random.Random) -> List[Tuple[str, Dict[str, Any]]]:
     return [(defect, params)]
 
 
-def _pick_defects(char: Optional[str], severity: str, rng: random.Random,
-                  edge_cut_prob: float = 0.40) -> List[Tuple[str, Dict[str, Any]]]:
+def _build_defect_params(defect: str, severity: str,
+                         rng: random.Random) -> Dict[str, Any]:
+    """Generate per-severity params for a single defect type. Mirrors the
+    inline blocks inside `_pick_defects` so forced-defect previews use the
+    same parameter distributions as the regular path."""
+    params: Dict[str, Any] = {}
+    if defect in ('cut_horizontal', 'cut_vertical'):
+        zones = (['top_edge', 'top_band', 'middle', 'bot_band', 'bot_edge']
+                 if defect == 'cut_horizontal' else
+                 ['left_edge', 'left_band', 'middle', 'right_band', 'right_edge'])
+        params['zone'] = rng.choice(zones)
+
     if severity == 'subtle':
-        return _pick_subtle_defect(rng)
+        if defect == 'stroke_thinning':
+            params['n_breaks'] = 1
+            params['break_size'] = rng.randint(3, 5)
+            params['fade_alpha'] = rng.uniform(0.30, 0.50)
+        elif defect == 'cut_horizontal':
+            params['band_h'] = rng.randint(2, 4)
+        elif defect == 'cut_vertical':
+            params['band_w'] = rng.randint(2, 4)
+        elif defect == 'tape_overlay':
+            params['band_frac'] = rng.uniform(0.10, 0.18)
+            params['alpha'] = rng.uniform(0.40, 0.55)
+    elif severity == 'light':
+        if defect.startswith('cut_'):
+            key = 'band_h' if defect.endswith('horizontal') else 'band_w'
+            params[key] = rng.randint(3, 4)
+        elif defect == 'block_overlay':
+            params['frac'] = rng.uniform(0.10, 0.18)
+        elif defect == 'segment_removal':
+            params['frac'] = rng.uniform(0.10, 0.18)
+        elif defect == 'dropout_dots':
+            params['n'] = rng.randint(4, 8)
+        elif defect == 'local_blob':
+            params['n'] = rng.randint(1, 2)
+        elif defect == 'crack':
+            params['thickness'] = 1
+        elif defect == 'edge_erosion':
+            params['ratio'] = rng.uniform(0.04, 0.07)
+            params['position'] = rng.choice(['top', 'bottom'])
+        elif defect == 'tape_overlay':
+            params['band_frac'] = rng.uniform(0.12, 0.20)
+            params['alpha'] = rng.uniform(0.45, 0.65)
+        elif defect == 'stroke_thinning':
+            params['n_breaks'] = 1
+            params['break_size'] = rng.randint(3, 5)
+            params['fade_alpha'] = rng.uniform(0.35, 0.55)
+    elif severity == 'medium':
+        if defect.startswith('cut_'):
+            key = 'band_h' if defect.endswith('horizontal') else 'band_w'
+            params[key] = rng.randint(4, 6)
+        elif defect == 'block_overlay':
+            params['frac'] = rng.uniform(0.20, 0.35)
+        elif defect == 'segment_removal':
+            params['frac'] = rng.uniform(0.18, 0.28)
+        elif defect == 'dropout_dots':
+            params['n'] = rng.randint(8, 14)
+        elif defect == 'local_blob':
+            params['n'] = rng.randint(2, 3)
+        elif defect == 'edge_erosion':
+            params['ratio'] = rng.uniform(0.07, 0.12)
+            params['position'] = rng.choice(['top', 'bottom', 'both'])
+        elif defect == 'tape_overlay':
+            params['band_frac'] = rng.uniform(0.20, 0.30)
+            params['alpha'] = rng.uniform(0.60, 0.80)
+        elif defect == 'stroke_thinning':
+            params['n_breaks'] = rng.randint(1, 2)
+            params['break_size'] = rng.randint(4, 6)
+            params['fade_alpha'] = rng.uniform(0.25, 0.45)
+    else:  # heavy
+        if defect.startswith('cut_'):
+            key = 'band_h' if defect.endswith('horizontal') else 'band_w'
+            params[key] = rng.randint(5, 8)
+        elif defect == 'block_overlay':
+            params['frac'] = rng.uniform(0.30, 0.45)
+        elif defect == 'segment_removal':
+            params['frac'] = rng.uniform(0.25, 0.38)
+        elif defect == 'dropout_dots':
+            params['n'] = rng.randint(14, 22)
+        elif defect == 'local_blob':
+            params['n'] = rng.randint(2, 4)
+        elif defect == 'crack':
+            params['thickness'] = rng.choice([1, 2])
+        elif defect == 'edge_erosion':
+            params['ratio'] = rng.uniform(0.12, 0.18)
+            params['position'] = 'both'
+        elif defect == 'tape_overlay':
+            params['band_frac'] = rng.uniform(0.28, 0.40)
+            params['alpha'] = rng.uniform(0.70, 0.88)
+        elif defect == 'stroke_thinning':
+            params['n_breaks'] = 2
+            params['break_size'] = rng.randint(5, 7)
+            params['fade_alpha'] = rng.uniform(0.15, 0.35)
+    return params
+
+
+def _pick_defects(char: Optional[str], severity: str, rng: random.Random,
+                  edge_cut_prob: float = 0.40,
+                  force_defect_type: Optional[str] = None,
+                  enabled_defect_types: Optional[List[str]] = None) -> List[Tuple[str, Dict[str, Any]]]:
+    if force_defect_type:
+        if force_defect_type not in NG_AUG_TYPES:
+            raise ValueError(f"Unknown defect type: {force_defect_type}")
+        return [(force_defect_type, _build_defect_params(force_defect_type, severity, rng))]
+
+    # Whitelist filter — None means "all enabled" (legacy behavior).
+    enabled_set: Optional[set] = None
+    if enabled_defect_types is not None:
+        enabled_set = {d for d in enabled_defect_types if d in NG_AUG_TYPES}
+        if not enabled_set:
+            # Empty whitelist would cause an unrecoverable loop; treat as "no
+            # restriction" so training still produces NG samples.
+            enabled_set = None
+
+    if severity == 'subtle':
+        return _pick_subtle_defect(rng, enabled=enabled_set)
 
     weights = dict(_DEFAULT_WEIGHTS)
     boosts: List[Tuple[str, Optional[str], int]] = []
@@ -525,6 +644,13 @@ def _pick_defects(char: Optional[str], severity: str, rng: random.Random,
         weights['segment_removal'] *= 0.7
     if char and char in _FRAGILE:
         weights = {k: v for k, v in weights.items() if k in _FRAGILE_LIGHT_ONLY}
+    if enabled_set is not None:
+        weights = {k: v for k, v in weights.items() if k in enabled_set}
+        boosts = [b for b in boosts if b[0] in enabled_set]
+        if not weights:
+            # Char-specific filters wiped out the enabled set — fall back to
+            # the enabled set with uniform weights so we still produce a defect.
+            weights = {d: 1.0 for d in enabled_set}
 
     n_defects = rng.randint(1, 2) if severity == 'light' else rng.randint(2, 3)
     use_edge_cut = bool(boosts) and rng.random() < edge_cut_prob
@@ -688,6 +814,8 @@ def augment_ng(
     severity_dist: Optional[Dict[str, float]] = None,
     min_change: float = DEFAULT_MIN_CHANGE,
     rng: Optional[random.Random] = None,
+    force_defect_type: Optional[str] = None,
+    enabled_defect_types: Optional[List[str]] = None,
 ) -> List[Tuple[np.ndarray, str]]:
     """
     Generate `n` realistic NG variants of `char_img`.
@@ -716,7 +844,9 @@ def augment_ng(
     for _ in range(n):
         for attempt in range(MAX_RETRY):
             severity = _pick_severity(rng, dist)
-            defects = _pick_defects(char_id, severity, rng)
+            defects = _pick_defects(char_id, severity, rng,
+                                    force_defect_type=force_defect_type,
+                                    enabled_defect_types=enabled_defect_types)
             aug, primary = _apply_defects(base, defects, rng)
             if _change_ratio(base, aug) >= min_change:
                 out.append((aug, primary))

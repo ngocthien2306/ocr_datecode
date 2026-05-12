@@ -82,6 +82,20 @@ export interface SeverityDist {
   heavy: number;
 }
 
+// 10 NG defect types — keep in sync with NG_AUG_TYPES in ml_ng_augment.py
+export const NG_DEFECT_TYPES = [
+  'cut_horizontal', 'cut_vertical', 'segment_removal',
+  'dropout_dots', 'crack', 'block_overlay', 'local_blob',
+  'edge_erosion', 'tape_overlay', 'stroke_thinning',
+] as const;
+export type NgDefectType = typeof NG_DEFECT_TYPES[number];
+
+export interface SyntheticNgOptions {
+  severity_dist?: SeverityDist;
+  // null/undefined = all 10 defect types enabled. Array = explicit whitelist.
+  enabled_defect_types?: NgDefectType[] | null;
+}
+
 export interface TrainRequest {
   algorithm: MLAlgorithm;
   augment_factor: number;
@@ -96,6 +110,7 @@ export interface TrainRequest {
   centroid_temperature?: number;    // Sigmoid temperature for centroid algo (default 5.0)
   include_imported_chars?: boolean; // Merge labeled crops from Imported Chars pool (default true)
   synth_ok_options?: SyntheticOkOptions;
+  enabled_defect_types?: string[] | null;  // NG defect-type whitelist; null = all
 }
 
 export interface SyntheticOkOptions {
@@ -111,6 +126,19 @@ export interface SyntheticOkOptions {
   fill_max?: number;
   min_contrast?: number;
   max_retries?: number;
+  // When true, the project-derived glyph dict joins the font pool. Build it
+  // via the "Rebuild" button in the modal (or POST /glyphs/rebuild).
+  use_project_glyphs?: boolean;
+}
+
+export interface ProjectGlyphsInfo {
+  built: boolean;
+  built_at?: number;
+  chars_covered?: string[];
+  count?: number;
+  canvas?: number;
+  sample_counts?: Record<string, number>;
+  thumbnails?: Record<string, string>;   // char_id → base64 PNG
 }
 
 export interface FontInfo {
@@ -326,10 +354,22 @@ export const mlTrainingAPI = {
 
   // Preview synthetic NG (generated from OK samples). OK augmentation removed.
   previewSynthetic: (projectId: string, augmentFactor: number,
-                     label: 'NG' = 'NG', severityDist?: SeverityDist) =>
+                     label: 'NG' = 'NG', severityDist?: SeverityDist,
+                     opts?: {
+                       force_defect_type?: string;
+                       char_filter?: string[] | null;
+                       enabled_defect_types?: NgDefectType[] | null;
+                     }) =>
     api.post<{ crops: SyntheticCrop[]; count: number }>(
       `/ml/projects/${projectId}/preview-synthetic`,
-      { augment_factor: augmentFactor, label, severity_dist: severityDist }
+      {
+        augment_factor: augmentFactor,
+        label,
+        severity_dist: severityDist,
+        force_defect_type: opts?.force_defect_type,
+        char_filter: opts?.char_filter ?? null,
+        enabled_defect_types: opts?.enabled_defect_types ?? null,
+      }
     ).then(r => r.data),
 
   // Preview synthetic OK (font-render → composite on real BG → camera noise)
@@ -349,9 +389,22 @@ export const mlTrainingAPI = {
     fill_max?: number;
     min_contrast?: number;
     max_retries?: number;
+    use_project_glyphs?: boolean;
   }) =>
     api.post<{ crops: SyntheticOkCrop[]; count: number }>(
       `/ml/projects/${projectId}/preview-synthetic-ok`, opts
+    ).then(r => r.data),
+
+  // Project glyph dictionary (custom "font" derived from real OK pool)
+  projectGlyphsRebuild: (projectId: string) =>
+    api.post<{ count: number; chars_covered: string[]; built_at: number }>(
+      `/ml/projects/${projectId}/glyphs/rebuild`
+    ).then(r => r.data),
+
+  projectGlyphsInfo: (projectId: string, includeThumbnails = true) =>
+    api.get<ProjectGlyphsInfo>(
+      `/ml/projects/${projectId}/glyphs/info`,
+      { params: { include_thumbnails: includeThumbnails } }
     ).then(r => r.data),
 
   fontsDiscover: (previewChars?: string) =>

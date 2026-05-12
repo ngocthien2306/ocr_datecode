@@ -130,6 +130,10 @@ class SyntheticOkOptions(BaseModel):
     fill_max: float = 0.65
     min_contrast: float = 20.0
     max_retries: int = 4
+    # When True, the project-derived glyph dictionary is added to the font
+    # pool alongside any selected TTFs. Glyph dict is loaded from disk —
+    # build/rebuild via POST /ml/projects/{id}/glyphs/rebuild.
+    use_project_glyphs: bool = False
 
 
 class TrainRequest(BaseModel):
@@ -146,12 +150,23 @@ class TrainRequest(BaseModel):
     ok_synth_target: int = 0
     include_imported_chars: bool = True
     synth_ok_options: Optional[SyntheticOkOptions] = None
+    # Whitelist of NG defect types to apply during augmentation. None = all.
+    enabled_defect_types: Optional[List[str]] = None
 
 
 class SyntheticPreviewRequest(BaseModel):
     augment_factor: int             # must be >= 2
     label: str = "NG"               # Only 'NG' is supported (OK aug removed)
     severity_dist: Optional[Dict[str, float]] = None
+    # When set, every generated crop applies exactly this defect type. Used by
+    # the NG options modal to preview a single error class at a time.
+    force_defect_type: Optional[str] = None
+    # Optional char_id whitelist — restricts source OK samples used to render
+    # the preview (per-defect previews use a single char to keep grid small).
+    char_filter: Optional[List[str]] = None
+    # When set, only these defect types are eligible during augmentation
+    # (overrides the default 10-type pool). None = all types enabled.
+    enabled_defect_types: Optional[List[str]] = None
 
 
 class TestSetRequest(BaseModel):

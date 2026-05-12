@@ -1377,6 +1377,48 @@ body.dark-mode .ml-font-preview         { background: #f8fafc; border-color: #2d
 
 .ml-live-card { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10px; }
 
+/* ── NG defect-per-type preview grid (SyntheticNgOptionsModal) ─────── */
+.ml-ng-defect-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.ml-ng-defect-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 5px;
+  padding: 6px 8px;
+  background: #fafbfc;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ml-ng-defect-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.ml-ng-defect-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+}
+.ml-ng-defect-card.disabled { opacity: 0.45; }
+.ml-ng-defect-card.disabled .ml-ng-defect-title { text-decoration: line-through; }
+
+/* ── Severity row with inline preview thumbnails ─────────────────── */
+.ml-ng-severity-row { display: flex; flex-direction: column; gap: 4px; }
+.ml-ng-severity-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 88px;    /* align under slider, past the label */
+  min-height: 38px;
+  flex-wrap: wrap;
+}
+body.dark-mode .ml-ng-defect-card { background: #1a1d27; border-color: #2d3148; }
+body.dark-mode .ml-ng-defect-title { color: #e5e7eb; }
+
 /* ── char_id input in Label tab ────────────────────── */
 .ml-char-input {
   width: 28px;

@@ -618,7 +618,8 @@ async def preview_synthetic_endpoint(
     crops = await asyncio.get_event_loop().run_in_executor(
         None, generate_synthetic_crops,
         annotations, images_dir, request.augment_factor, request.label,
-        request.severity_dist,
+        request.severity_dist, request.force_defect_type, request.char_filter,
+        request.enabled_defect_types,
     )
     return {"crops": crops, "count": len(crops)}
 
@@ -641,6 +642,9 @@ class _SynthOKRequest(BaseModel):
     fill_max: float = 0.65
     min_contrast: float = 20.0
     max_retries: int = 4
+    # When True, include project-derived glyph dict in the font pool. The
+    # synth pipeline mixes it with any TTFs the user also selected.
+    use_project_glyphs: bool = False
 
 
 @router.post("/ml/projects/{project_id}/preview-synthetic-ok", tags=["ML Training"])
@@ -677,11 +681,28 @@ async def preview_synthetic_ok_endpoint(
         )
 
     def _build():
+        from app.services.ml_project_glyphs import load_glyph_dict
+        from app.services.ml_ok_synthesize import PROJECT_GLYPHS_TOKEN
+
         imported_ok: List[Tuple[Any, str]] = []
         for p, cid in imported_ok_paths:
             img = cv.imread(str(p))
             if img is not None:
                 imported_ok.append((img, cid))
+
+        # Decide whether to inject the project glyph token + load dict from
+        # disk. font_paths may already contain the token; the flag is an
+        # equivalent user-friendly switch.
+        glyphs = None
+        fp = list(request.font_paths or [])
+        if request.use_project_glyphs and PROJECT_GLYPHS_TOKEN not in fp:
+            fp.append(PROJECT_GLYPHS_TOKEN)
+        if PROJECT_GLYPHS_TOKEN in fp:
+            glyphs = load_glyph_dict(_project_dir(project_id))
+            if glyphs is None:
+                # Remove the token so synth doesn't fail — quietly fall back
+                # to TTFs. UI will surface a warning via /glyphs/info.
+                fp = [p for p in fp if p != PROJECT_GLYPHS_TOKEN]
 
         synth = synthesize_ok_from_annotations(
             annotations, images_dir,
@@ -691,7 +712,7 @@ async def preview_synthetic_ok_endpoint(
             rotation_max_deg=request.rotation_max_deg,
             size_jitter=request.size_jitter,
             imported_ok_crops=imported_ok or None,
-            font_paths=request.font_paths,
+            font_paths=fp,
             style_sample_n=request.style_sample_n,
             sample_strategy=request.sample_strategy,
             bg_per_char=request.bg_per_char,
@@ -701,6 +722,7 @@ async def preview_synthetic_ok_endpoint(
             fill_max=request.fill_max,
             min_contrast=request.min_contrast,
             max_retries=request.max_retries,
+            project_glyphs=glyphs,
         )
         # Encode crops → b64 for transport (drop raw ndarray)
         return [{
@@ -2015,3 +2037,101 @@ async def delete_char_import(
     except Exception:
         logger.exception(f"[char-imports] failed to unlink {abs_path}")
     return {"ok": True}
+
+
+# ════════════════════════════════════════ PROJECT GLYPHS (custom font) ═════
+
+@router.post(
+    "/ml/projects/{project_id}/glyphs/rebuild",
+    tags=["ML Training"],
+)
+async def rebuild_project_glyphs(
+    project_id: str,
+    repo: MLTrainingRepository = Depends(get_repo),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """
+    Build (or rebuild) the project-derived glyph dictionary from current OK
+    pool (labeled annotations + imported OK). Each rebuild reflects all OK
+    samples that exist at call time — so labeling more chars → richer glyphs.
+    """
+    from app.services.ml_project_glyphs import build_glyph_dict, save_glyph_dict
+
+    annotations = await repo.list_annotations(project_id)
+    imported_chars = await repo.list_char_imports(project_id)
+    imported_ok_paths = [
+        (_PROJECT_ROOT / "public" / c.crop_path, c.char_id)
+        for c in imported_chars if c.label == "OK" and c.char_id
+    ]
+    if not annotations and not imported_ok_paths:
+        raise HTTPException(400, "No OK samples to build glyphs from")
+
+    images_dir = _images_dir(project_id)
+    project_dir = _project_dir(project_id)
+
+    def _build():
+        # Collect OK crops by char_id — labeled first, then imported
+        from app.services.ml_segment_service import crop_segment
+        ok_by_char: Dict[str, List[Any]] = {}
+        for ann in annotations:
+            img_path = images_dir / ann.filename
+            for region in ann.regions:
+                for seg in region.segments:
+                    if seg.label != "OK" or not seg.char_id:
+                        continue
+                    crop = crop_segment(img_path, {
+                        "x": seg.x, "y": seg.y, "w": seg.w, "h": seg.h,
+                    })
+                    if crop is None:
+                        continue
+                    ok_by_char.setdefault(seg.char_id, []).append(crop)
+        for p, cid in imported_ok_paths:
+            img = cv.imread(str(p))
+            if img is None:
+                continue
+            ok_by_char.setdefault(cid, []).append(img)
+
+        if not any(ok_by_char.values()):
+            raise ValueError("No usable OK crops")
+
+        sample_counts = {c: len(v) for c, v in ok_by_char.items()}
+        glyphs = build_glyph_dict(ok_by_char, min_samples=1)
+        return save_glyph_dict(project_dir, glyphs, sample_counts=sample_counts)
+
+    try:
+        meta = await asyncio.get_event_loop().run_in_executor(None, _build)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(400, str(e))
+
+    # Bust the synth cache so subsequent previews see the new glyphs.
+    from app.services.ml_ok_synthesize import clear_cache
+    clear_cache(images_dir)
+    return meta
+
+
+@router.get(
+    "/ml/projects/{project_id}/glyphs/info",
+    tags=["ML Training"],
+)
+async def project_glyphs_info(
+    project_id: str,
+    include_thumbnails: bool = True,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Return glyph metadata (chars covered, built_at, sample counts) and
+    optionally per-char preview thumbnails (base64 PNG)."""
+    from app.services.ml_project_glyphs import load_meta, load_thumbnails
+    project_dir = _project_dir(project_id)
+    meta = load_meta(project_dir)
+    if meta is None:
+        return {"built": False}
+    thumbs = load_thumbnails(project_dir) if include_thumbnails else {}
+    return {
+        "built":          True,
+        "built_at":       meta.get("built_at"),
+        "chars_covered":  meta.get("chars_covered", []),
+        "count":          meta.get("count", 0),
+        "canvas":         meta.get("canvas"),
+        "sample_counts":  meta.get("sample_counts", {}),
+        "thumbnails":     thumbs,
+    }

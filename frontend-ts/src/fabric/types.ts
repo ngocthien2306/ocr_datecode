@@ -31,6 +31,7 @@ export const ANNOTATION_TYPES = {
   PRODUCT: 'product',
   LABEL: 'label',
   CHAR: 'char',
+  MASK: 'mask',
 };
 
 export const SHAPE_TYPES = {
@@ -47,4 +48,5 @@ export const TYPE_CONFIGS = [
   { value: 'product', label: 'Product', color: '#7513dd', needsText: false },
   { value: 'label', label: 'Label', color: '#ad6df1', needsText: false },
   { value: 'char', label: 'Character (ML)', color: '#fbbf24', needsText: true },
+  { value: 'mask', label: 'Mask', color: '#94a3b8', needsText: false },
 ];

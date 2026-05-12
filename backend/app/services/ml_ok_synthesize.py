@@ -35,6 +35,12 @@ from app.services.ml_segment_service import crop_segment
 logger = logging.getLogger(__name__)
 
 
+# Special font path that signals "use the project-derived glyph dictionary"
+# instead of a real TTF. Callers pass this in `font_paths` to mix project
+# glyphs with regular fonts (random pick per crop). See `ml_project_glyphs`.
+PROJECT_GLYPHS_TOKEN = "__project_glyphs__"
+
+
 # ─────────────────────────────────────────────── Font discovery
 
 _BACKEND_DIR = Path(__file__).parent.parent.parent.parent
@@ -256,12 +262,83 @@ def _render_char_alpha(ch: str, canvas_size: Tuple[int, int], font_path: str,
     return arr
 
 
+def _render_glyph_alpha_from_dict(ch: str, canvas_size: Tuple[int, int],
+                                  glyph_dict: Dict[str, np.ndarray],
+                                  target_h_frac: float = 0.85,
+                                  jitter: bool = True,
+                                  rng: Optional[random.Random] = None,
+                                  rotation_deg: float = 0.0) -> Optional[np.ndarray]:
+    """
+    Render alpha mask using a project-derived glyph mask instead of a TTF.
+    Returns None when `ch` is not in the dict — caller falls back to a font.
+
+    Adds stochastic threshold + ±1px morph so stroke thickness has variance
+    even though the source is a single averaged mask.
+    """
+    if ch not in glyph_dict:
+        return None
+    rng = rng or random.Random()
+    W, H = canvas_size
+    src = glyph_dict[ch]
+    ys, xs = np.where(src > 20)
+    if len(xs) < 3:
+        return None
+    x0, x1 = int(xs.min()), int(xs.max()) + 1
+    y0, y1 = int(ys.min()), int(ys.max()) + 1
+    ink = src[y0:y1, x0:x1]
+
+    th = max(8, int(H * target_h_frac))
+    ih, iw = ink.shape
+    scale = th / ih
+    tw = max(1, int(round(iw * scale)))
+    th_resized = max(1, int(round(ih * scale)))
+    resized = cv2.resize(ink, (tw, th_resized), interpolation=cv2.INTER_AREA)
+
+    # Stochastic threshold → variance in stroke thickness across crops.
+    thr = rng.randint(110, 180)
+    binary = (resized >= thr).astype(np.uint8) * 255
+    if rng.random() < 0.3:
+        k = np.ones((2, 2), np.uint8)
+        binary = (cv2.dilate(binary, k) if rng.random() < 0.5
+                  else cv2.erode(binary, k))
+
+    out = np.zeros((H, W), dtype=np.uint8)
+    cx = (W - tw) // 2
+    cy = (H - th_resized) // 2
+    if jitter:
+        cx += rng.randint(-2, 2)
+        cy += rng.randint(-2, 2)
+    x0_o = max(0, cx); y0_o = max(0, cy)
+    x1_o = min(W, cx + tw); y1_o = min(H, cy + th_resized)
+    src_x0 = max(0, -cx); src_y0 = max(0, -cy)
+    src_x1 = src_x0 + (x1_o - x0_o); src_y1 = src_y0 + (y1_o - y0_o)
+    if x1_o > x0_o and y1_o > y0_o:
+        out[y0_o:y1_o, x0_o:x1_o] = binary[src_y0:src_y1, src_x0:src_x1]
+
+    if abs(rotation_deg) > 0.01:
+        M = cv2.getRotationMatrix2D((W / 2, H / 2), rotation_deg, 1.0)
+        out = cv2.warpAffine(out, M, (W, H), flags=cv2.INTER_LINEAR, borderValue=0)
+    return out
+
+
 def _composite_on_bg(ch: str, real_bg: np.ndarray, ink_bgr: Tuple[int, int, int],
                      font_path: str, target_h_frac: float = 0.85,
                      jitter: bool = True, rng: Optional[random.Random] = None,
-                     rotation_deg: float = 0.0) -> np.ndarray:
+                     rotation_deg: float = 0.0,
+                     project_glyphs: Optional[Dict[str, np.ndarray]] = None) -> Optional[np.ndarray]:
     H, W = real_bg.shape[:2]
-    mask = _render_char_alpha(ch, (W, H), font_path, target_h_frac, jitter, rng, rotation_deg)
+    if font_path == PROJECT_GLYPHS_TOKEN:
+        if not project_glyphs:
+            return None
+        mask = _render_glyph_alpha_from_dict(
+            ch, (W, H), project_glyphs,
+            target_h_frac=target_h_frac, jitter=jitter, rng=rng,
+            rotation_deg=rotation_deg,
+        )
+        if mask is None:
+            return None
+    else:
+        mask = _render_char_alpha(ch, (W, H), font_path, target_h_frac, jitter, rng, rotation_deg)
     soft = cv2.GaussianBlur(mask, (3, 3), 0.6).astype(np.float32) / 255.0
     bg = real_bg.astype(np.float32)
     ink = np.array([ink_bgr[0], ink_bgr[1], ink_bgr[2]],
@@ -274,13 +351,15 @@ def _render_solid_bg(ch: str, canvas_size: Tuple[int, int],
                      ink_bgr: Tuple[int, int, int], bg_bgr: Tuple[int, int, int],
                      font_path: str, target_h_frac: float = 0.85,
                      jitter: bool = True, rng: Optional[random.Random] = None,
-                     rotation_deg: float = 0.0) -> np.ndarray:
+                     rotation_deg: float = 0.0,
+                     project_glyphs: Optional[Dict[str, np.ndarray]] = None) -> Optional[np.ndarray]:
     W, H = canvas_size
     bg_arr = np.full((H, W, 3),
                      (int(bg_bgr[0]), int(bg_bgr[1]), int(bg_bgr[2])), dtype=np.uint8)
     return _composite_on_bg(ch, bg_arr, ink_bgr, font_path,
                             target_h_frac=target_h_frac, jitter=jitter,
-                            rng=rng, rotation_deg=rotation_deg)
+                            rng=rng, rotation_deg=rotation_deg,
+                            project_glyphs=project_glyphs)
 
 
 # ─────────────────────────────────────────────── Camera artifacts
@@ -362,13 +441,35 @@ def _synth_one(ch: str, style: Dict[str, Any], fonts: List[str],
                size_jitter: float, aspect_aware: bool,
                pad_frac_min: float, pad_frac_max: float,
                min_width: int, max_width: int,
-               char_fill_min: float, char_fill_max: float
+               char_fill_min: float, char_fill_max: float,
+               project_glyphs: Optional[Dict[str, np.ndarray]] = None,
                ) -> Tuple[np.ndarray, str, float]:
+    # If user picks project glyphs but the dict misses this char, transparently
+    # fall back to a real font for THIS crop so coverage gaps don't kill the
+    # synthesis loop. Done before any rendering work.
     font_path = rng.choice(fonts)
+    if font_path == PROJECT_GLYPHS_TOKEN:
+        if not project_glyphs or ch not in project_glyphs:
+            real_fonts = [f for f in fonts if f != PROJECT_GLYPHS_TOKEN]
+            if not real_fonts:
+                raise ValueError(
+                    f"char '{ch}' has no project glyph and no TTF fallback in font_paths"
+                )
+            font_path = rng.choice(real_fonts)
+
     sh = (max(20, int(round(size[1] * rng.uniform(1 - size_jitter, 1 + size_jitter))))
           if size_jitter > 0 else size[1])
     if aspect_aware:
-        aspect = _char_natural_aspect(font_path, ch)
+        if font_path == PROJECT_GLYPHS_TOKEN and project_glyphs and ch in project_glyphs:
+            # Aspect from the actual averaged glyph mask
+            g = project_glyphs[ch]
+            ys, xs = np.where(g > 20)
+            if len(xs) > 3 and len(ys) > 3:
+                aspect = max(1, xs.max() - xs.min()) / max(1, ys.max() - ys.min())
+            else:
+                aspect = 0.55
+        else:
+            aspect = _char_natural_aspect(font_path, ch)
         pad = rng.uniform(pad_frac_min, pad_frac_max) * sh
         sw = max(min_width, min(max_width, int(round(aspect * sh + pad))))
     elif size_jitter > 0:
@@ -384,11 +485,28 @@ def _synth_one(ch: str, style: Dict[str, Any], fonts: List[str],
         if bg.shape[1] != sw or bg.shape[0] != sh:
             bg = cv2.resize(bg, (sw, sh))
         crop = _composite_on_bg(ch, bg, style['ink_bgr'], font_path,
-                                target_h_frac=h_frac, jitter=True, rng=rng, rotation_deg=rot)
+                                target_h_frac=h_frac, jitter=True, rng=rng,
+                                rotation_deg=rot, project_glyphs=project_glyphs)
     else:
         crop = _render_solid_bg(ch, (sw, sh), style['ink_bgr'], style['bg_bgr'],
                                 font_path, target_h_frac=h_frac, jitter=True,
-                                rng=rng, rotation_deg=rot)
+                                rng=rng, rotation_deg=rot,
+                                project_glyphs=project_glyphs)
+    # If project-glyph render returned None (race-y check above missed), retry
+    # once with a real font instead of failing the whole synth attempt.
+    if crop is None:
+        real_fonts = [f for f in fonts if f != PROJECT_GLYPHS_TOKEN]
+        if real_fonts:
+            font_path = rng.choice(real_fonts)
+            crop = (_composite_on_bg(ch, bg, style['ink_bgr'], font_path,
+                                     target_h_frac=h_frac, jitter=True, rng=rng,
+                                     rotation_deg=rot)
+                    if real_bgs else
+                    _render_solid_bg(ch, (sw, sh), style['ink_bgr'], style['bg_bgr'],
+                                     font_path, target_h_frac=h_frac, jitter=True,
+                                     rng=rng, rotation_deg=rot))
+        if crop is None:
+            raise ValueError(f"render failed for char '{ch}' even after font fallback")
     crop = _apply_chromatic_aberration(crop, shift_px=1, rng=rng)
     crop = _apply_camera_noise(crop, style, rng=rng)
     sigma = max(0.3, style['blur_sigma'] * rng.uniform(0.6, 1.0))
@@ -406,7 +524,9 @@ def _synthesize_char(ch: str, n: int, style: Dict[str, Any], fonts: List[str],
                      char_fill_min: float = 0.85, char_fill_max: float = 0.95,
                      max_retries: int = 4,
                      fill_min: float = 0.10, fill_max: float = 0.65,
-                     min_contrast: float = 20.0) -> List[Tuple[np.ndarray, str, float]]:
+                     min_contrast: float = 20.0,
+                     project_glyphs: Optional[Dict[str, np.ndarray]] = None,
+                     ) -> List[Tuple[np.ndarray, str, float]]:
     out = []
     for _ in range(n):
         for _ in range(max_retries):
@@ -415,6 +535,7 @@ def _synthesize_char(ch: str, n: int, style: Dict[str, Any], fonts: List[str],
                 rotation_max_deg, size_jitter, aspect_aware,
                 pad_frac_min, pad_frac_max, min_width, max_width,
                 char_fill_min, char_fill_max,
+                project_glyphs=project_glyphs,
             )
             ok, _ = _validate(crop, fill_min=fill_min, fill_max=fill_max,
                               min_contrast=min_contrast)
@@ -525,6 +646,22 @@ def clear_cache(images_dir: Optional[Path] = None) -> None:
 
 # ─────────────────────────────────────────────── Public API
 
+def _resolve_fonts(font_paths: Optional[List[str]]) -> Tuple[List[str], bool]:
+    """
+    Split caller-supplied font_paths into (real_font_files, want_project_glyphs).
+    Strips the PROJECT_GLYPHS_TOKEN out so downstream callers see only files,
+    then re-adds the token to the rng pool inside _synth_one if needed.
+    """
+    want_project = False
+    real: List[str] = []
+    for p in (font_paths or []):
+        if p == PROJECT_GLYPHS_TOKEN:
+            want_project = True
+        elif os.path.exists(p):
+            real.append(p)
+    return real, want_project
+
+
 def synthesize_ok_from_annotations(
     annotations: List[MLAnnotationInDB],
     images_dir: Path,
@@ -544,6 +681,7 @@ def synthesize_ok_from_annotations(
     fill_max: float = 0.65,
     min_contrast: float = 20.0,
     max_retries: int = 4,
+    project_glyphs: Optional[Dict[str, np.ndarray]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Generate synthetic OK crops to top-up chars below `target_n_per_char`.
@@ -565,13 +703,23 @@ def synthesize_ok_from_annotations(
     Returns list of {crop_b64, char_id, font_name, rotation_deg, source}.
     """
     if font_paths:
-        fonts = [p for p in font_paths if os.path.exists(p)]
+        real_fonts, want_project = _resolve_fonts(font_paths)
     else:
-        fonts = discover_fonts()
+        real_fonts = discover_fonts()
+        want_project = False
+
+    # Build the final font pool — `_synth_one` rolls one entry per crop, so
+    # adding PROJECT_GLYPHS_TOKEN once gives it a roughly equal probability
+    # with each TTF the user selected. If the user selected ONLY project
+    # glyphs, the pool will be just the token (single entry).
+    fonts: List[str] = list(real_fonts)
+    use_project_glyphs = bool(want_project and project_glyphs)
+    if use_project_glyphs:
+        fonts.append(PROJECT_GLYPHS_TOKEN)
     if not fonts:
         raise RuntimeError(
             f"No usable fonts found in {_FONT_DIR} (and no system fallback). "
-            "Drop .ttf/.otf files in weights/fonts/."
+            "Drop .ttf/.otf files in weights/fonts/, or build project glyphs."
         )
     rng = random.Random()
     np.random.seed(int(time.time()) % (2**31))
@@ -603,12 +751,14 @@ def synthesize_ok_from_annotations(
             char_fill_min=char_fill_min, char_fill_max=char_fill_max,
             max_retries=max_retries, fill_min=fill_min, fill_max=fill_max,
             min_contrast=min_contrast,
+            project_glyphs=project_glyphs if use_project_glyphs else None,
         )
         for crop, fp, rot in results:
             out.append({
                 'crop': crop,
                 'char_id': char_id,
-                'font_name': os.path.basename(fp),
+                'font_name': ('project_glyph' if fp == PROJECT_GLYPHS_TOKEN
+                              else os.path.basename(fp)),
                 'rotation_deg': round(rot, 2),
                 'source': 'synthetic_ok',
             })

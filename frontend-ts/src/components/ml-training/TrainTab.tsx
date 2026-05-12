@@ -14,7 +14,15 @@ import {
 } from '@/services/mlTraining';
 import CropEditPopover, { EditTarget, DeepLink } from './CropEditPopover';
 import SyntheticOkOptionsModal from './SyntheticOkOptionsModal';
-import type { SyntheticOkOptions } from '@/services/mlTraining';
+import SyntheticNgOptionsModal from './SyntheticNgOptionsModal';
+import type { SyntheticOkOptions, SyntheticNgOptions, SeverityDist } from '@/services/mlTraining';
+
+const DEFAULT_SEVERITY_DIST: SeverityDist = {
+  subtle: 10,
+  light:  50,
+  medium: 35,
+  heavy:  5,
+};
 
 // ── Module-level cache (P1) ─────────────────────────────────────────────────
 // Keyed by project.id; survives TrainTab unmount so switching sub-tabs (or
@@ -505,17 +513,25 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
       batches: b.length,
     };
   });
-  // NG augmentation severity weights — auto-normalized BE side
-  const [severitySubtle, setSeveritySubtle] = useState(10);
-  const [severityLight,  setSeverityLight ] = useState(50);
-  const [severityMedium, setSeverityMedium] = useState(35);
-  const [severityHeavy,  setSeverityHeavy ] = useState(5);
-  const severityDist = useMemo(() => ({
-    subtle: severitySubtle,
-    light:  severityLight,
-    medium: severityMedium,
-    heavy:  severityHeavy,
-  }), [severitySubtle, severityLight, severityMedium, severityHeavy]);
+  // NG augmentation options — severity_dist now lives in SyntheticNgOptionsModal.
+  // Persisted per-project so the user's chosen severity mix + future NG fields
+  // survive tab switches and reloads, same pattern as synthOkOptions.
+  const [synthNgOptionsOpen, setSynthNgOptionsOpen] = useState(false);
+  const [synthNgOptions, setSynthNgOptions] = useState<SyntheticNgOptions>(() => {
+    try {
+      const raw = localStorage.getItem(`ml_synth_ng_opts_${project.id}`);
+      if (raw) return JSON.parse(raw);
+    } catch { /* ignore */ }
+    return { severity_dist: { ...DEFAULT_SEVERITY_DIST } };
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(`ml_synth_ng_opts_${project.id}`, JSON.stringify(synthNgOptions));
+    } catch { /* ignore */ }
+  }, [synthNgOptions, project.id]);
+  const severityDist = useMemo<SeverityDist>(() =>
+    synthNgOptions.severity_dist ?? { ...DEFAULT_SEVERITY_DIST },
+  [synthNgOptions]);
 
   // Training state
   const [training, setTraining] = useState(false);
@@ -686,7 +702,10 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
     setSyntheticCrops([]);
     setCropsTab('synthetic');
     try {
-      const data = await mlTrainingAPI.previewSynthetic(project.id, augmentFactor, 'NG', severityDist);
+      const data = await mlTrainingAPI.previewSynthetic(
+        project.id, augmentFactor, 'NG', severityDist,
+        { enabled_defect_types: synthNgOptions.enabled_defect_types ?? null }
+      );
       setSyntheticCrops(data.crops);
     } catch { /* ignore */ }
     finally { setLoadingSynthetic(false); }
@@ -731,6 +750,7 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
         synth_ok_options: synthOkOptions,
         centroid_temperature: centroidTemperature,
         include_imported_chars: includeImportedChars,
+        enabled_defect_types: synthNgOptions.enabled_defect_types ?? null,
       };
       const { model_id } = await mlTrainingAPI.startTraining(project.id, req);
       setTrainingModelId(model_id);
@@ -857,6 +877,28 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
   // ── Stats ──────────────────────────────────────────────────────────────
   const okCrops  = crops.filter(c => c.label === 'OK');
   const ngCrops  = crops.filter(c => c.label === 'NG');
+
+  // Distinct OK chars in this project — used to auto-derive the NG modal's
+  // preview char filter so previews always sample from chars that actually
+  // exist. Sort by frequency desc so the most-labeled chars come first.
+  const availableNgPreviewChars = useMemo<string[]>(() => {
+    const count = new Map<string, number>();
+    for (const c of crops) {
+      if (c.label === 'OK' && c.char_id) {
+        count.set(c.char_id, (count.get(c.char_id) ?? 0) + 1);
+      }
+    }
+    if (includeImportedChars) {
+      for (const c of importedCrops) {
+        if (c.label === 'OK' && c.char_id) {
+          count.set(c.char_id, (count.get(c.char_id) ?? 0) + 1);
+        }
+      }
+    }
+    return Array.from(count.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([c]) => c);
+  }, [crops, importedCrops, includeImportedChars]);
   // Block another Start when *any* model on this project is mid-training.
   // Catches the remount window (loadModels resumed, models[].status='training'
   // but local `training` flag may still be flipping to true) and the rare
@@ -1158,9 +1200,19 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
                   onClick={() => setAugmentFactor(opt.value)}>{opt.label}</button>
               ))}
             </div>
+            <button className="ml-btn ml-btn-secondary ml-btn-sm"
+              style={{ marginLeft: 'auto' }}
+              onClick={() => setSynthNgOptionsOpen(true)}
+              title="Configure severity mix and preview defect types">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" style={{ marginRight: 4 }}>
+                <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
+                <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"
+                  stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              NG Options
+            </button>
             {augmentFactor >= 2 && (
               <button className="ml-btn ml-btn-secondary ml-btn-sm"
-                style={{ marginLeft: 'auto' }}
                 onClick={() => handlePreviewSynthetic()} disabled={loadingSynthetic}
                 title="Preview synthetic NG crops generated from OK samples">
                 {loadingSynthetic
@@ -1173,46 +1225,6 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
               </button>
             )}
           </div>
-          {/* {augmentFactor >= 2 && (() => {
-            const { nOkReal, nNgReal, nNgAug, totalOk, totalNg } =
-              computeAugmentStats(crops, augmentFactor);
-            return (
-              <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>
-                → OK: <b>{totalOk}</b> (no aug) &nbsp;|&nbsp;
-                NG: {nNgReal} real + {nNgAug} aug = <b>{totalNg}</b>
-                {nOkReal === 0 && <span style={{ color: '#f59e0b' }}> · no OK samples with char_id</span>}
-              </div>
-            );
-          })()} */}
-
-          {/* ── NG severity distribution sliders (auto-normalized BE side) ── */}
-          {augmentFactor >= 2 && (() => {
-            const total = severitySubtle + severityLight + severityMedium + severityHeavy;
-            const pct = (v: number) => total > 0 ? (v / total * 100).toFixed(0) : '0';
-            const rows: { key: string; label: string; value: number; setter: (n: number) => void; color: string; hint: string }[] = [
-              { key: 'subtle', label: 'Subtle',  value: severitySubtle, setter: setSeveritySubtle, color: '#9ca3af', hint: '1 light defect (mild break / tiny cut)' },
-              { key: 'light',  label: 'Light',   value: severityLight,  setter: setSeverityLight,  color: '#3b82f6', hint: '1-2 mild defects' },
-              { key: 'medium', label: 'Medium',  value: severityMedium, setter: setSeverityMedium, color: '#f59e0b', hint: '2-3 medium defects' },
-              { key: 'heavy',  label: 'Heavy',   value: severityHeavy,  setter: setSeverityHeavy,  color: '#ef4444', hint: '2-3 strong defects (cuts, tape, blocks)' },
-            ];
-            return (
-              <div style={{ marginTop: 8, padding: '6px 8px', borderRadius: 4, background: 'rgba(148,163,184,.06)', border: '1px solid rgba(148,163,184,.18)' }}>
-                <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
-                  <span>NG severity mix</span>
-                  <span style={{ opacity: 0.6 }}>{total === 0 ? '⚠ all zero — uses default' : `total ${total}`}</span>
-                </div>
-                {rows.map(r => (
-                  <div key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, marginTop: 2 }}>
-                    <span style={{ color: r.color, width: 56 }} title={r.hint}>{r.label}</span>
-                    <input type="range" min={0} max={100} step={1} value={r.value}
-                           onChange={e => r.setter(Number(e.target.value))}
-                           style={{ flex: 1, accentColor: r.color }} />
-                    <span style={{ width: 36, textAlign: 'right', color: '#6b7280' }}>{pct(r.value)}%</span>
-                  </div>
-                ))}
-              </div>
-            );
-          })()}
         </div>
 
         {/* ── OK Threshold ── */}
@@ -1986,6 +1998,15 @@ export default function TrainTab({ project, onRefresh, onJumpTo }: Props) {
         previewChars=""
         onClose={() => setSynthOkOptionsOpen(false)}
         onSave={setSynthOkOptions}
+      />
+
+      <SyntheticNgOptionsModal
+        open={synthNgOptionsOpen}
+        projectId={project.id}
+        initial={synthNgOptions}
+        availableChars={availableNgPreviewChars}
+        onClose={() => setSynthNgOptionsOpen(false)}
+        onSave={setSynthNgOptions}
       />
     </div>
   );

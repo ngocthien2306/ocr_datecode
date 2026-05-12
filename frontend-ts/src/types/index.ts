@@ -185,6 +185,7 @@ export interface Recipe {
   wrinkle_conf?: number;
   wrinkle_show_when_pass?: boolean;
   matching_conf?: number;
+  mask_overlap_threshold?: number;
   created_by?: string;
   updated_by?: string;
   created_by_name?: string;  // Full name of creator
@@ -266,6 +267,7 @@ export interface Receipt {
   wrinkle_conf?: number;
   wrinkle_show_when_pass?: boolean;
   matching_conf?: number;
+  mask_overlap_threshold?: number;
   createdAt: string;
   updatedAt: string;
 }

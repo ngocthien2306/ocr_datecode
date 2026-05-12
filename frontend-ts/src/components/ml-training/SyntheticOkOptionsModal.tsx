@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   mlTrainingAPI, FontInfo, SynthOkStyle, SyntheticOkOptions, SyntheticOkCrop,
+  ProjectGlyphsInfo,
 } from '@/services/mlTraining';
 import { useToast } from '@/contexts/ToastContext';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
@@ -18,6 +19,7 @@ const DEFAULTS: Required<Omit<SyntheticOkOptions, 'font_paths'>> & { font_paths:
   fill_max: 0.65,
   min_contrast: 20,
   max_retries: 4,
+  use_project_glyphs: false,
 };
 
 interface Props {
@@ -59,8 +61,13 @@ export default function SyntheticOkOptionsModal({
   }, [fonts, fontSearch]);
 
   const [openSection, setOpenSection] = useState<Record<string, boolean>>({
-    fonts: true, style: false, bg: false, gen: false, val: false, live: false,
+    glyph: true, fonts: true, style: false, bg: false, gen: false, val: false, live: false,
   });
+
+  // Project glyph dictionary (custom "font" built from real OK pool)
+  const [glyphInfo, setGlyphInfo] = useState<ProjectGlyphsInfo | null>(null);
+  const [glyphLoading, setGlyphLoading] = useState(false);
+  const [glyphBuilding, setGlyphBuilding] = useState(false);
   const toggleSection = (k: string) => setOpenSection(p => ({ ...p, [k]: !p[k] }));
 
   const [style, setStyle] = useState<SynthOkStyle | null>(null);
@@ -73,11 +80,31 @@ export default function SyntheticOkOptionsModal({
   useEffect(() => {
     if (!open) return;
     setOpts({ ...DEFAULTS, ...initial });
-    setOpenSection({ fonts: true, style: false, bg: false, gen: false, val: false, live: false });
+    setOpenSection({ glyph: true, fonts: true, style: false, bg: false, gen: false, val: false, live: false });
     setStyle(null);
     setBgPool({});
     setLivePreview([]);
-  }, [open]);
+    // Probe glyph dict status on open so the section shows current state.
+    setGlyphLoading(true);
+    mlTrainingAPI.projectGlyphsInfo(projectId, true)
+      .then(setGlyphInfo)
+      .catch(() => setGlyphInfo({ built: false }))
+      .finally(() => setGlyphLoading(false));
+  }, [open, projectId]);
+
+  const handleRebuildGlyphs = useCallback(async () => {
+    setGlyphBuilding(true);
+    try {
+      await mlTrainingAPI.projectGlyphsRebuild(projectId);
+      const info = await mlTrainingAPI.projectGlyphsInfo(projectId, true);
+      setGlyphInfo(info);
+      toast.success(`Built ${info.count ?? 0} glyphs from project OK pool`);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail ?? 'Glyph rebuild failed');
+    } finally {
+      setGlyphBuilding(false);
+    }
+  }, [projectId, toast]);
 
   const fontsInitRef = useRef(false);
   useEffect(() => {
@@ -86,12 +113,19 @@ export default function SyntheticOkOptionsModal({
     mlTrainingAPI.fontsDiscover(previewChars)
       .then(list => {
         setFonts(list);
+        // For brand-new projects (no saved font_paths in localStorage), default
+        // to NotoSansCJKtc-Regular only — not the whole Noto family — so the
+        // generator gets a single consistent glyph metric. Existing saved
+        // selections are preserved (font_paths === null means "all", and an
+        // explicit array means user picked).
         if (!fontsInitRef.current && opts.font_paths === undefined && list.length > 0) {
-          const notoFonts = list.filter(f => /noto/i.test(f.name));
-          if (notoFonts.length > 0) {
-            setOpts(p => ({ ...p, font_paths: notoFonts.map(f => f.path) }));
-            const names = notoFonts.map(f => f.name).join(', ');
-            toast.info(`Default fonts: ${names}`);
+          const target = list.find(f =>
+            /NotoSansCJKtc-Regular/i.test(f.filename) ||
+            /NotoSansCJKtc-Regular/i.test(f.name),
+          );
+          if (target) {
+            setOpts(p => ({ ...p, font_paths: [target.path] }));
+            toast.info(`Default font: ${target.name}`);
           }
           fontsInitRef.current = true;
         }
@@ -231,6 +265,86 @@ export default function SyntheticOkOptionsModal({
           </div>
 
           <div className="ml-modal-body ml-synth-ok-body">
+
+            {/* ── PROJECT GLYPH (custom font from real OK pool) ── */}
+            <Section
+              title={`Project glyph (custom font)${glyphInfo?.built ? ` — ${glyphInfo.count ?? 0} chars` : ''}`}
+              isOpen={openSection.glyph} onToggle={() => toggleSection('glyph')}>
+              <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 6 }}>
+                Build a glyph dictionary from your labeled OK samples and use it as a
+                "custom font" alongside Noto. Glyph shapes will match your project's
+                real ink distribution — usually fixes "real char predicted NG" cases.
+              </div>
+              <div className="ml-synth-section-actions">
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input type="checkbox"
+                    checked={!!opts.use_project_glyphs}
+                    disabled={!glyphInfo?.built}
+                    onChange={e => setOpts(p => ({ ...p, use_project_glyphs: e.target.checked }))} />
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>
+                    Include project glyph in font pool
+                  </span>
+                </label>
+                <button className="ml-btn ml-btn-secondary ml-btn-sm"
+                  onClick={handleRebuildGlyphs}
+                  disabled={glyphBuilding}
+                  style={{ marginLeft: 'auto' }}
+                  title="Rebuild glyph dictionary from current OK pool. Run again every time you label more OK samples.">
+                  {glyphBuilding
+                    ? <><span className="ml-loading-spinner" style={{ width: 11, height: 11, borderWidth: 2 }} /> Building…</>
+                    : <>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" style={{ marginRight: 3 }}>
+                          <path d="M1 4v6h6M23 20v-6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          <path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        {glyphInfo?.built ? 'Rebuild' : 'Build from project OK'}
+                      </>
+                  }
+                </button>
+              </div>
+              {glyphLoading && (
+                <div className="ml-empty-state" style={{ minHeight: 40 }}>
+                  <div className="ml-loading-spinner" />
+                </div>
+              )}
+              {!glyphLoading && !glyphInfo?.built && (
+                <div className="ml-imported-toggle-warn" style={{ marginTop: 4 }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+                      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  Not built yet. Click <b>Build from project OK</b> above to create a glyph for every char in your labeled OK pool.
+                </div>
+              )}
+              {glyphInfo?.built && (
+                <>
+                  <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4 }}>
+                    Built from {Object.values(glyphInfo.sample_counts ?? {}).reduce((s, n) => s + n, 0)} samples — rebuild whenever you label more OK.
+                  </div>
+                  <div className="ml-ng-defect-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(74px, 1fr))' }}>
+                    {(glyphInfo.chars_covered ?? []).map(cid => {
+                      const thumb = glyphInfo.thumbnails?.[cid];
+                      const n = glyphInfo.sample_counts?.[cid] ?? 0;
+                      return (
+                        <div key={cid} className="ml-ng-defect-card"
+                          style={{ alignItems: 'center', padding: 4 }}
+                          title={`'${cid}' — averaged from ${n} OK sample${n !== 1 ? 's' : ''}`}>
+                          <div style={{ fontSize: 11, fontWeight: 700, fontFamily: 'monospace' }}>
+                            {cid} <span style={{ opacity: 0.5, fontWeight: 400 }}>×{n}</span>
+                          </div>
+                          {thumb && (
+                            <img className="ml-thumb-sm"
+                              alt={cid}
+                              src={`data:image/png;base64,${thumb}`}
+                              style={{ width: 40, height: 40 }} />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </Section>
 
             {/* ── FONTS ── */}
             <Section
