@@ -676,6 +676,7 @@ class TextVerificationService:
                     'conf_threshold': m['conf_threshold'],
                     'serial_number':  m['serial_number'],
                     'annotation_idx': m['annotation_idx'],
+                    'expected_text':  m.get('expected_text', ''),
                 }
                 for m in char_items
             ]
@@ -782,6 +783,7 @@ class TextVerificationService:
                     'conf_threshold': m['conf_threshold'],
                     'serial_number':  m['serial_number'],
                     'annotation_idx': m['annotation_idx'],
+                    'expected_text':  m.get('expected_text', ''),
                 }
                 for m in flat
             ]
