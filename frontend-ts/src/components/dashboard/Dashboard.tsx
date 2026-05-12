@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import '@/styles/Dashboard.css';
 import UserManagement from './UserManagement';
 import Receipts from '../recipe/Receipts';
