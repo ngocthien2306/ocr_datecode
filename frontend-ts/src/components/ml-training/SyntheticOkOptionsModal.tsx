@@ -20,7 +20,7 @@ const DEFAULTS: Required<Omit<SyntheticOkOptions, 'font_paths'>> & { font_paths:
   min_contrast: 20,
   max_retries: 4,
   use_project_glyphs: false,
-  position_overshoot_px: 2,
+  position_overshoot_px: 1,
 };
 
 interface Props {
