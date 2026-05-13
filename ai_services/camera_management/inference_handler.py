@@ -325,7 +325,7 @@ class InferenceHandler:
         # default (arcface) for backward compat with paths that still read it.
         _embedding_weights_map = {
             'arcface': f"{home}/Source/ocr_datecode/weights/arcface_128_b3_20260428-190614",
-            'supcon':  f"{home}/Source/ocr_datecode/weights/supcon_128_efficientnet_b2_20260429-073504",
+            'supcon':  f"{home}/Source/ocr_datecode/weights/supcon_128_binary_b2_20260513-043909",
         }
         self.embedding_classifier_services: Dict[str, EmbeddingClassifierService] = {}
         for name, weights_dir in _embedding_weights_map.items():
