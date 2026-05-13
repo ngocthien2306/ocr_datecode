@@ -31,7 +31,7 @@ _EMB_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 _EMB_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 # 4 levels up: verification → camera_management → ai_services → repo root
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-_SUPCON_PATH = _REPO_ROOT / "weights/supcon_128_binary_b2_20260513-043909"
+_SUPCON_PATH = _REPO_ROOT / "weights/supcon_128_efficientnet_b2_20260429-073504"
 # TensorRT engine cache — SHARED with BE training (backend/app/services/ml_training_service.py).
 # Both services point _BACKEND_DIR / _REPO_ROOT to project root, so the cache dir resolves
 # to the same physical path; the engine BE builds during training is reused at inference time.

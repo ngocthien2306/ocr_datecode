@@ -30,8 +30,8 @@ _EMB_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 _EMB_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 _BACKEND_DIR = Path(__file__).parent.parent.parent.parent
 
-_SUPCON_PATH = _BACKEND_DIR / "weights/supcon_128_binary_b2_20260513-043909"
-# _SUPCON_PATH = _BACKEND_DIR / "weights/supcon_128_efficientnet_b2_20260429-073504"
+# _SUPCON_PATH = _BACKEND_DIR / "weights/supcon_128_binary_b2_20260513-043909"
+_SUPCON_PATH = _BACKEND_DIR / "weights/supcon_128_efficientnet_b2_20260429-073504"
 # TensorRT engine cache survives process restarts; rebuilt only when GPU/JetPack changes.
 _TRT_CACHE_DIR = _BACKEND_DIR / "cache" / "supcon_trt"
 
