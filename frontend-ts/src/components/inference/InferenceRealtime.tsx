@@ -6,6 +6,7 @@ import { receiptsAPI } from '@/services/recipes';
 import { camerasAPI } from '@/services/cameras';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import InferenceRealtimeSettingsModal from './InferenceRealtimeSettingsModal';
+import TemplateTextEditDialog, { type TextEditItem } from './TemplateTextEditDialog';
 import { API_BASE_URL } from '@/config/api';
 import { useToast } from '@/contexts/ToastContext';
 
@@ -274,6 +275,22 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
   const [isGettingLiveTemplate, setIsGettingLiveTemplate] = useState(false);
   const [settingTemplateKey, setSettingTemplateKey] = useState<string | null>(null); // "sn_frameIdx"
 
+  interface PendingTemplateData {
+    sn: string;
+    frameIdx: number;
+    newImageUrl: string;
+    uploadWidth: number;
+    uploadHeight: number;
+    recipeCam: any;
+    templateName: string | undefined;
+    recipeAnnotations: any[];
+    detectedRegions: any[];
+    textVerification: any;
+    textEditItems: TextEditItem[];
+  }
+  const [pendingTemplateData, setPendingTemplateData] = useState<PendingTemplateData | null>(null);
+  const [isConfirmingTemplate, setIsConfirmingTemplate] = useState(false);
+
   // Auto scroll to bottom
   const scrollToBottom = () => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -474,6 +491,42 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
     });
   };
 
+  // Build full recipe payload for DB save (PUT /recipes/{id})
+  // Merges updatedData over current runningRecipe.metadata, preserving all required fields
+  // (name, image_url, wrinkle_*, etc.) that realtime payloads omit.
+  const buildFullRecipePayloadForDB = (metadata: any, updatedData: any) => {
+    const cameras = (metadata?.cameras ?? []).map((cam: any) => {
+      const patch = (updatedData.cameras ?? []).find((c: any) => c.camera_id === cam.camera_id);
+      return patch ? { ...cam, ...patch } : cam;
+    });
+
+    const camera_templates = (metadata?.camera_templates ?? []).map((ct: any) => {
+      const patchCT = (updatedData.camera_templates ?? []).find((c: any) => c.camera_id === ct.camera_id);
+      return {
+        camera_id: ct.camera_id,
+        templates: (ct.templates ?? []).map((tmpl: any, idx: number) => {
+          const patchTmpl = patchCT?.templates?.[idx];
+          if (!patchTmpl) return tmpl;
+          return {
+            ...tmpl,
+            ...patchTmpl,
+            name: tmpl.name,
+            image_url: patchTmpl.image_url ?? tmpl.image_url,
+            image_width: patchTmpl.image_width ?? tmpl.image_width,
+            image_height: patchTmpl.image_height ?? tmpl.image_height,
+          };
+        }),
+      };
+    });
+
+    return {
+      delay_reject: updatedData.delay_reject ?? metadata?.delay_reject,
+      reject_pulse: updatedData.reject_pulse ?? metadata?.reject_pulse,
+      cameras,
+      camera_templates,
+    };
+  };
+
   const handleGetLiveTemplates = async () => {
     if (!latestResults?.camera_results?.length) return;
     setIsGettingLiveTemplate(true);
@@ -601,7 +654,102 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
     return uploadRes.json();
   };
 
-  // Set live captured frame as new template (realtime, no DB save)
+  // Steps 4-8: build annotations (with user-confirmed texts), apply realtime + save DB
+  const finishSetAsTemplate = async (data: PendingTemplateData, confirmedItems: TextEditItem[]) => {
+    const { frameIdx, newImageUrl, uploadWidth, uploadHeight, recipeCam, templateName, recipeAnnotations, detectedRegions, textVerification } = data;
+
+    // 4. Build new annotations from detected regions + text_verification
+    let newAnnotations = buildNewAnnotations(
+      recipeAnnotations, detectedRegions, textVerification, uploadWidth, uploadHeight
+    );
+
+    // Override text fields with user-confirmed values from the dialog
+    confirmedItems.forEach(item => {
+      if (newAnnotations[item.idx]) {
+        newAnnotations[item.idx] = { ...newAnnotations[item.idx], text: item.newText };
+      }
+    });
+
+    // 5. Build realtime payload (partial camera fields only — backend patches in-place)
+    const cameras = (runningRecipe?.metadata?.cameras ?? []).map((cam: any) => ({
+      camera_id: cam.camera_id,
+      exposure_time: cam.exposure_time,
+      delay_trigger: cam.delay_trigger,
+      delay_interval: cam.delay_interval,
+      gain: cam.gain,
+    }));
+
+    const cameraTemplates = (runningRecipe?.metadata?.camera_templates ?? []).map((ct: any) => ({
+      camera_id: ct.camera_id,
+      templates: (ct.templates ?? []).map((t: any, tIdx: number) => {
+        const isTarget = ct.camera_id === recipeCam?.camera_id &&
+          (templateName ? t.name === templateName : tIdx === frameIdx);
+        return {
+          annotations: isTarget ? newAnnotations : (t.annotations ?? []),
+          image_url: isTarget ? newImageUrl : t.image_url,
+          image_width: isTarget ? uploadWidth : t.image_width,
+          image_height: isTarget ? uploadHeight : t.image_height,
+          center_offset_threshold_left: t.center_offset_threshold_left,
+          center_offset_threshold_right: t.center_offset_threshold_right,
+        };
+      }),
+    }));
+
+    // 6. Apply to camera service (realtime)
+    await receiptsAPI.updateRecipeRealtime(runningRecipeId!, {
+      delay_reject: runningRecipe?.metadata?.delay_reject,
+      reject_pulse: runningRecipe?.metadata?.reject_pulse,
+      cameras,
+      camera_templates: cameraTemplates,
+    });
+
+    // 7. Update local runningRecipe state
+    setRunningRecipe((prev: any) => {
+      if (!prev) return prev;
+      const updatedCTs = (prev.metadata?.camera_templates ?? []).map((ct: any) => {
+        if (ct.camera_id !== recipeCam?.camera_id) return ct;
+        return {
+          ...ct,
+          templates: (ct.templates ?? []).map((t: any, tIdx: number) => {
+            const isTarget = templateName ? t.name === templateName : tIdx === frameIdx;
+            if (!isTarget) return t;
+            return { ...t, image_url: newImageUrl, image_width: uploadWidth, image_height: uploadHeight, annotations: newAnnotations };
+          }),
+        };
+      });
+      return { ...prev, metadata: { ...prev.metadata, camera_templates: updatedCTs } };
+    });
+
+    // 8. Save to DB — spread existing template to preserve name, wrinkle_*, center_offset_unit
+    const dbCameraTemplates = (runningRecipe?.metadata?.camera_templates ?? []).map((ct: any) => ({
+      camera_id: ct.camera_id,
+      templates: (ct.templates ?? []).map((t: any, tIdx: number) => {
+        const isTarget = ct.camera_id === recipeCam?.camera_id &&
+          (templateName ? t.name === templateName : tIdx === frameIdx);
+        if (!isTarget) return t;
+        return { ...t, annotations: newAnnotations, image_url: newImageUrl, image_width: uploadWidth, image_height: uploadHeight };
+      }),
+    }));
+    try {
+      await receiptsAPI.updateReceipt(runningRecipeId!, {
+        delay_reject: runningRecipe?.metadata?.delay_reject,
+        reject_pulse: runningRecipe?.metadata?.reject_pulse,
+        cameras: runningRecipe?.metadata?.cameras,
+        camera_templates: dbCameraTemplates,
+      } as any);
+    } catch (dbErr: any) {
+      if ((dbErr as any).response?.status === 403) {
+        toast.warning('Template applied to camera service only (no permission to save to database)');
+      } else {
+        toast.warning('Template applied but failed to save to database');
+      }
+    }
+
+    toast.success(`Template updated and saved: ${templateName ?? `Frame ${frameIdx + 1}`}`);
+  };
+
+  // Set live captured frame as new template.
+  // If the frame has text/datecode annotations, shows a review dialog before applying.
   const handleSetAsTemplate = async (sn: string, frameIdx: number) => {
     const key = `${sn}_${frameIdx}`;
     if (settingTemplateKey === key) return;
@@ -621,7 +769,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
       const detectedRegions: any[] = inferenceFrame?.detected_regions ?? [];
       const textVerification = inferenceFrame?.text_verification;
 
-      // 3. Get recipe annotations for this frame (by template_name)
+      // 3. Get recipe annotations for this frame
       const recipeCam = runningRecipe?.metadata?.cameras?.find((c: any) => c.serial_number === sn);
       const recipeCT = runningRecipe?.metadata?.camera_templates?.find(
         (ct: any) => ct.camera_id === recipeCam?.camera_id
@@ -632,67 +780,59 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
         : recipeCT?.templates?.[frameIdx];
       const recipeAnnotations: any[] = recipeTemplate?.annotations ?? [];
 
-      // 4. Build new annotations
-      const newAnnotations = buildNewAnnotations(
-        recipeAnnotations, detectedRegions, textVerification, uploadWidth, uploadHeight
-      );
+      const pendingData: PendingTemplateData = {
+        sn, frameIdx, newImageUrl, uploadWidth, uploadHeight,
+        recipeCam, templateName, recipeAnnotations, detectedRegions, textVerification,
+        textEditItems: [],
+      };
 
-      // 5. Build full payload from runningRecipe (preserves all previous realtime changes)
-      const cameras = (runningRecipe?.metadata?.cameras ?? []).map((cam: any) => ({
-        camera_id: cam.camera_id,
-        exposure_time: cam.exposure_time,
-        delay_trigger: cam.delay_trigger,
-        delay_interval: cam.delay_interval,
-        gain: cam.gain,
-      }));
-
-      const cameraTemplates = (runningRecipe?.metadata?.camera_templates ?? []).map((ct: any) => ({
-        camera_id: ct.camera_id,
-        templates: (ct.templates ?? []).map((t: any, tIdx: number) => {
-          const isTarget = ct.camera_id === recipeCam?.camera_id &&
-            (templateName ? t.name === templateName : tIdx === frameIdx);
+      // 4. Collect text/datecode annotations for user review
+      const textEditItems: TextEditItem[] = recipeAnnotations
+        .map((ann: any, idx: number): TextEditItem | null => {
+          if (ann.type !== 'text' && ann.type !== 'datecode') return null;
+          const tvResult = textVerification?.results?.find((r: any) => r.annotation_idx === idx);
           return {
-            annotations: isTarget ? newAnnotations : (t.annotations ?? []),
-            image_url: isTarget ? newImageUrl : t.image_url,
-            image_width: isTarget ? uploadWidth : t.image_width,
-            image_height: isTarget ? uploadHeight : t.image_height,
-            center_offset_threshold_left: t.center_offset_threshold_left,
-            center_offset_threshold_right: t.center_offset_threshold_right,
+            idx,
+            type: ann.type,
+            label: `Region ${idx + 1}`,
+            oldText: ann.text ?? '',
+            newText: tvResult?.expected ?? ann.text ?? '',
           };
-        }),
-      }));
+        })
+        .filter((item): item is TextEditItem => item !== null);
 
-      // 6. Call update-realtime with full payload
-      await receiptsAPI.updateRecipeRealtime(runningRecipeId, {
-        delay_reject: runningRecipe?.metadata?.delay_reject,
-        reject_pulse: runningRecipe?.metadata?.reject_pulse,
-        cameras,
-        camera_templates: cameraTemplates,
-      });
+      if (textEditItems.length > 0) {
+        // Show review dialog — release button loading, dialog takes over
+        setPendingTemplateData({ ...pendingData, textEditItems });
+        setSettingTemplateKey(null);
+        return;
+      }
 
-      // 7. Update runningRecipe state so subsequent calls remain consistent
-      setRunningRecipe((prev: any) => {
-        if (!prev) return prev;
-        const updatedCTs = (prev.metadata?.camera_templates ?? []).map((ct: any) => {
-          if (ct.camera_id !== recipeCam?.camera_id) return ct;
-          return {
-            ...ct,
-            templates: (ct.templates ?? []).map((t: any, tIdx: number) => {
-              const isTarget = templateName ? t.name === templateName : tIdx === frameIdx;
-              if (!isTarget) return t;
-              return { ...t, image_url: newImageUrl, image_width: uploadWidth, image_height: uploadHeight, annotations: newAnnotations };
-            }),
-          };
-        });
-        return { ...prev, metadata: { ...prev.metadata, camera_templates: updatedCTs } };
-      });
-
-      toast.success(`Template updated: ${templateName ?? `Frame ${frameIdx + 1}`}`);
+      // No text/datecode annotations — apply directly
+      await finishSetAsTemplate(pendingData, []);
     } catch (err: any) {
       toast.error(err.message || 'Failed to set template');
     } finally {
       setSettingTemplateKey(null);
     }
+  };
+
+  const handleDialogConfirm = async (confirmedItems: TextEditItem[]) => {
+    if (!pendingTemplateData) return;
+    setIsConfirmingTemplate(true);
+    try {
+      await finishSetAsTemplate(pendingTemplateData, confirmedItems);
+      setPendingTemplateData(null);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to set template');
+    } finally {
+      setIsConfirmingTemplate(false);
+    }
+  };
+
+  const handleDialogCancel = () => {
+    setPendingTemplateData(null);
+    toast.info('Template update cancelled');
   };
 
   // Update duration every second
@@ -2159,17 +2299,18 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
         onUpdate={async (updatedData) => {
           if (!runningRecipeId) return;
 
+          // Snapshot metadata BEFORE setState (setState is async — we need current values for DB save)
+          const metadataSnapshot = runningRecipe?.metadata;
+
           try {
             await receiptsAPI.updateRecipeRealtime(runningRecipeId, updatedData);
-            toast.success('Recipe updated in realtime (not saved to database)');
 
-            // Merge updatedData into runningRecipe state (since backend doesn't save to DB)
+            // Merge updatedData into runningRecipe state
             setRunningRecipe((prev: any) => {
               if (!prev) return prev;
 
               const updated = { ...prev };
 
-              // Update basic fields
               if (updatedData.delay_reject !== undefined) {
                 updated.metadata = { ...updated.metadata, delay_reject: updatedData.delay_reject };
               }
@@ -2177,21 +2318,16 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                 updated.metadata = { ...updated.metadata, reject_pulse: updatedData.reject_pulse };
               }
 
-              // Update cameras
               if (updatedData.cameras && Array.isArray(updatedData.cameras)) {
                 updated.metadata = {
                   ...updated.metadata,
                   cameras: (updated.metadata?.cameras || []).map((cam: any) => {
                     const updateCam = updatedData.cameras.find((c: any) => c.camera_id === cam.camera_id);
-                    if (updateCam) {
-                      return { ...cam, ...updateCam };
-                    }
-                    return cam;
+                    return updateCam ? { ...cam, ...updateCam } : cam;
                   })
                 };
               }
 
-              // Update camera_templates
               if (updatedData.camera_templates && Array.isArray(updatedData.camera_templates)) {
                 updated.metadata = {
                   ...updated.metadata,
@@ -2202,10 +2338,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                         ...ct,
                         templates: (ct.templates || []).map((tmpl: any, idx: number) => {
                           const updateTmpl = updateCT.templates?.[idx];
-                          if (updateTmpl) {
-                            return { ...tmpl, ...updateTmpl };
-                          }
-                          return tmpl;
+                          return updateTmpl ? { ...tmpl, ...updateTmpl } : tmpl;
                         })
                       };
                     }
@@ -2216,12 +2349,36 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
 
               return updated;
             });
+
+            // Save to DB using the pre-setState snapshot merged with updatedData
+            // (preserves image_url, name, wrinkle_* etc. that the modal payload omits)
+            const dbPayload = buildFullRecipePayloadForDB(metadataSnapshot, updatedData);
+            try {
+              await receiptsAPI.updateReceipt(runningRecipeId, dbPayload as any);
+              toast.success('Recipe updated and saved to database');
+            } catch (dbErr: any) {
+              if (dbErr.response?.status === 403) {
+                toast.warning('Applied to camera service only (no permission to save to database)');
+              } else {
+                toast.warning('Applied to camera service but failed to save to database');
+              }
+            }
           } catch (error: any) {
             console.error('Error updating recipe realtime:', error);
             toast.error(error.response?.data?.detail || 'Failed to update recipe');
             throw error;
           }
         }}
+      />
+
+      {/* Template Text Edit Dialog */}
+      <TemplateTextEditDialog
+        isOpen={!!pendingTemplateData}
+        templateName={pendingTemplateData?.templateName}
+        items={pendingTemplateData?.textEditItems ?? []}
+        isLoading={isConfirmingTemplate}
+        onConfirm={handleDialogConfirm}
+        onCancel={handleDialogCancel}
       />
 
       {/* Confirm Dialog */}
