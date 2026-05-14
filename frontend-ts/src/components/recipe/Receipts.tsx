@@ -198,6 +198,10 @@ export default function Receipts() {
         wrinkle_show_when_pass: recipe.wrinkle_show_when_pass ?? true,
         matching_conf: recipe.matching_conf ?? 0.20,
         mask_overlap_threshold: recipe.mask_overlap_threshold ?? 0.6,
+        match_erosion_enabled: recipe.match_erosion_enabled ?? false,
+        match_erosion_kernel_w: recipe.match_erosion_kernel_w ?? 80,
+        match_erosion_kernel_h: recipe.match_erosion_kernel_h ?? 1,
+        match_erosion_iterations: recipe.match_erosion_iterations ?? 1,
         createdAt: recipe.created_at || new Date().toISOString(),
         updatedAt: recipe.updated_at || new Date().toISOString()
       }));
@@ -336,6 +340,10 @@ export default function Receipts() {
         classifier_backend: clonedRecipe.classifier_backend || 'embedding',
         matching_conf: clonedRecipe.matching_conf ?? 0.20,
         mask_overlap_threshold: clonedRecipe.mask_overlap_threshold ?? 0.6,
+        match_erosion_enabled: clonedRecipe.match_erosion_enabled ?? false,
+        match_erosion_kernel_w: clonedRecipe.match_erosion_kernel_w ?? 80,
+        match_erosion_kernel_h: clonedRecipe.match_erosion_kernel_h ?? 1,
+        match_erosion_iterations: clonedRecipe.match_erosion_iterations ?? 1,
         createdAt: clonedRecipe.created_at || new Date().toISOString(),
         updatedAt: clonedRecipe.updated_at || new Date().toISOString()
       };

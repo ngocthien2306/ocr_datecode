@@ -55,6 +55,7 @@ interface CharVerificationResult {
   ml_p_ok: number;
   threshold: number;
   error?: string | null;
+  mask_diff_b64?: string | null;  // PNG base64 — XOR diff of aligned template/target masks
 }
 
 interface CharVerification {
@@ -1706,7 +1707,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                       <th className="col-confidence">p_ok</th>
                       <th className="col-confidence">Match</th>
                       <th className="col-confidence">Threshold</th>
-
+                      <th className="col-confidence">Diff Mask</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1735,6 +1736,32 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                           <span className="confidence-value">
                             {(r.threshold * 100).toFixed(1)}%
                           </span>
+                        </td>
+                        <td className="col-confidence">
+                          {r.mask_diff_b64 ? (
+                            <img
+                              src={`data:image/png;base64,${r.mask_diff_b64}`}
+                              alt={`diff mask #${r.annotation_idx}`}
+                              title={`#${r.annotation_idx} · diff XOR (white = differing pixels)`}
+                              style={{
+                                width: 32,
+                                height: 32,
+                                imageRendering: 'pixelated',
+                                border: '1px solid var(--border-color, #ccc)',
+                                background: '#000',
+                                cursor: 'zoom-in',
+                              }}
+                              onClick={(e) => {
+                                // Toggle 32 ↔ 128 on click for quick visual inspection
+                                const img = e.currentTarget;
+                                const big = img.style.width === '128px';
+                                img.style.width = big ? '32px' : '128px';
+                                img.style.height = big ? '32px' : '128px';
+                              }}
+                            />
+                          ) : (
+                            <span style={{ color: 'var(--text-muted, #888)' }}>—</span>
+                          )}
                         </td>
                       </tr>
                     ))}

@@ -696,6 +696,7 @@ class TextVerificationService:
                 'ml_p_ok':        float(r.get('p_ok', 0.0)),
                 'threshold':      float(m['conf_threshold']),
                 'error':          r.get('error'),
+                'mask_diff_b64':  r.get('mask_diff_b64'),
             }
 
         elapsed = (time.perf_counter() - t0) * 1000
@@ -808,6 +809,7 @@ class TextVerificationService:
                     'ml_p_ok':        float(r.get('p_ok', 0.0)),
                     'threshold':      float(m['conf_threshold']),
                     'error':          r.get('error'),
+                    'mask_diff_b64':  r.get('mask_diff_b64'),
                 }
             per_frame.append(out)
             prev = end_idx

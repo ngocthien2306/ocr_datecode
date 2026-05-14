@@ -243,6 +243,10 @@ def recipe_to_response(recipe: RecipeInDB, user_names_map: dict = None) -> Recip
         wrinkle_show_when_pass=getattr(recipe, 'wrinkle_show_when_pass', None),
         matching_conf=getattr(recipe, 'matching_conf', None),
         mask_overlap_threshold=getattr(recipe, 'mask_overlap_threshold', None),
+        match_erosion_enabled=getattr(recipe, 'match_erosion_enabled', False),
+        match_erosion_kernel_w=getattr(recipe, 'match_erosion_kernel_w', 80),
+        match_erosion_kernel_h=getattr(recipe, 'match_erosion_kernel_h', 1),
+        match_erosion_iterations=getattr(recipe, 'match_erosion_iterations', 1),
         created_by=recipe.created_by,
         updated_by=recipe.updated_by,
         created_by_name=created_by_name,
@@ -1029,6 +1033,10 @@ async def clone_recipe(
         wrinkle_show_when_pass=getattr(original_recipe, 'wrinkle_show_when_pass', None),
         matching_conf=getattr(original_recipe, 'matching_conf', None),
         mask_overlap_threshold=getattr(original_recipe, 'mask_overlap_threshold', None),
+        match_erosion_enabled=getattr(original_recipe, 'match_erosion_enabled', False),
+        match_erosion_kernel_w=getattr(original_recipe, 'match_erosion_kernel_w', 80),
+        match_erosion_kernel_h=getattr(original_recipe, 'match_erosion_kernel_h', 1),
+        match_erosion_iterations=getattr(original_recipe, 'match_erosion_iterations', 1),
     )
 
     # Create the cloned recipe
@@ -1174,6 +1182,10 @@ async def load_recipe(
         'wrinkle_show_when_pass': getattr(recipe, 'wrinkle_show_when_pass', None),
         'matching_conf': getattr(recipe, 'matching_conf', None),
         'mask_overlap_threshold': getattr(recipe, 'mask_overlap_threshold', None),
+        'match_erosion_enabled': getattr(recipe, 'match_erosion_enabled', False),
+        'match_erosion_kernel_w': getattr(recipe, 'match_erosion_kernel_w', 80),
+        'match_erosion_kernel_h': getattr(recipe, 'match_erosion_kernel_h', 1),
+        'match_erosion_iterations': getattr(recipe, 'match_erosion_iterations', 1),
     }
 
     # Send load recipe command via WebSocket to CameraManagement service
@@ -1205,6 +1217,10 @@ async def load_recipe(
         'wrinkle_show_when_pass': getattr(recipe, 'wrinkle_show_when_pass', None),
         'matching_conf': getattr(recipe, 'matching_conf', None),
         'mask_overlap_threshold': getattr(recipe, 'mask_overlap_threshold', None),
+        'match_erosion_enabled': getattr(recipe, 'match_erosion_enabled', False),
+        'match_erosion_kernel_w': getattr(recipe, 'match_erosion_kernel_w', 80),
+        'match_erosion_kernel_h': getattr(recipe, 'match_erosion_kernel_h', 1),
+        'match_erosion_iterations': getattr(recipe, 'match_erosion_iterations', 1),
     }
 
     success = await send_load_recipe(recipe_dict)
@@ -1508,6 +1524,10 @@ async def update_recipe_realtime(
         'wrinkle_show_when_pass': getattr(recipe, 'wrinkle_show_when_pass', None),
         'matching_conf': getattr(recipe, 'matching_conf', None),
         'mask_overlap_threshold': getattr(recipe, 'mask_overlap_threshold', None),
+        'match_erosion_enabled': getattr(recipe, 'match_erosion_enabled', False),
+        'match_erosion_kernel_w': getattr(recipe, 'match_erosion_kernel_w', 80),
+        'match_erosion_kernel_h': getattr(recipe, 'match_erosion_kernel_h', 1),
+        'match_erosion_iterations': getattr(recipe, 'match_erosion_iterations', 1),
     }
 
     # 4. Merge update_data into recipe_dict (in-memory, NOT saved to DB)
@@ -1538,6 +1558,19 @@ async def update_recipe_realtime(
     if 'matching_conf' in update_data:
         recipe_dict['matching_conf'] = update_data['matching_conf']
         logger.info(f"📝 [REALTIME UPDATE] matching_conf → {update_data['matching_conf']}")
+
+    if 'match_erosion_enabled' in update_data:
+        recipe_dict['match_erosion_enabled'] = update_data['match_erosion_enabled']
+        logger.info(f"📝 [REALTIME UPDATE] match_erosion_enabled → {update_data['match_erosion_enabled']}")
+    if 'match_erosion_kernel_w' in update_data:
+        recipe_dict['match_erosion_kernel_w'] = update_data['match_erosion_kernel_w']
+        logger.info(f"📝 [REALTIME UPDATE] match_erosion_kernel_w → {update_data['match_erosion_kernel_w']}")
+    if 'match_erosion_kernel_h' in update_data:
+        recipe_dict['match_erosion_kernel_h'] = update_data['match_erosion_kernel_h']
+        logger.info(f"📝 [REALTIME UPDATE] match_erosion_kernel_h → {update_data['match_erosion_kernel_h']}")
+    if 'match_erosion_iterations' in update_data:
+        recipe_dict['match_erosion_iterations'] = update_data['match_erosion_iterations']
+        logger.info(f"📝 [REALTIME UPDATE] match_erosion_iterations → {update_data['match_erosion_iterations']}")
 
     # Update camera settings
     if 'cameras' in update_data:

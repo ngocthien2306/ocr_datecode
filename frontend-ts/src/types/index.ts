@@ -187,6 +187,10 @@ export interface Recipe {
   wrinkle_show_when_pass?: boolean;
   matching_conf?: number;
   mask_overlap_threshold?: number;
+  match_erosion_enabled?: boolean;
+  match_erosion_kernel_w?: number;
+  match_erosion_kernel_h?: number;
+  match_erosion_iterations?: number;
   created_by?: string;
   updated_by?: string;
   created_by_name?: string;  // Full name of creator
@@ -272,6 +276,10 @@ export interface Receipt {
   wrinkle_show_when_pass?: boolean;
   matching_conf?: number;
   mask_overlap_threshold?: number;
+  match_erosion_enabled?: boolean;
+  match_erosion_kernel_w?: number;
+  match_erosion_kernel_h?: number;
+  match_erosion_iterations?: number;
   createdAt: string;
   updatedAt: string;
 }

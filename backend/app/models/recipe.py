@@ -137,6 +137,12 @@ class RecipeBase(BaseModel):
     # SuperPoint matching confidence threshold (recipe-level): skip OCR/verify when inlier_ratio falls below this
     matching_conf: Optional[float] = Field(default=0.20, ge=0.0, le=1.0, description="SuperPoint matching confidence threshold (inliers/total_matches). Below this, verify is skipped and frame is marked FAIL early.")
 
+    # Horizontal erosion preprocessing before SuperPoint matching
+    match_erosion_enabled: Optional[bool] = Field(default=False, description="Apply horizontal erosion to crop area before SuperPoint matching to suppress variable text (date codes)")
+    match_erosion_kernel_w: Optional[int] = Field(default=80, ge=1, le=300, description="Horizontal erosion kernel width in pixels (larger = heavier erosion)")
+    match_erosion_kernel_h: Optional[int] = Field(default=1, ge=1, le=50, description="Erosion kernel height in pixels (1 = pure horizontal, 15 = fills letter gaps)")
+    match_erosion_iterations: Optional[int] = Field(default=1, ge=1, le=5, description="Number of erosion iterations (more = stronger effect)")
+
 
 class RecipeCreate(RecipeBase):
     """Schema for creating a new recipe"""
@@ -169,6 +175,10 @@ class RecipeUpdate(BaseModel):
     wrinkle_show_when_pass: Optional[bool] = None
     matching_conf: Optional[float] = Field(None, ge=0.0, le=1.0)
     mask_overlap_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
+    match_erosion_enabled: Optional[bool] = None
+    match_erosion_kernel_w: Optional[int] = Field(None, ge=1, le=300)
+    match_erosion_kernel_h: Optional[int] = Field(None, ge=1, le=50)
+    match_erosion_iterations: Optional[int] = Field(None, ge=1, le=5)
 
 
 class RecipeInDB(RecipeBase):

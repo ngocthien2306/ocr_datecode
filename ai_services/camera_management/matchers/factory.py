@@ -9,6 +9,7 @@ import json
 import shutil
 import logging
 import cv2
+import numpy as np
 from pathlib import Path
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 
@@ -156,6 +157,17 @@ class MatcherFactory:
                     template_idx=template_idx
                 )
 
+            # Apply horizontal erosion to suppress variable text (date codes) before matching
+            if getattr(camera, 'match_erosion_enabled', False):
+                final_template_path = self._apply_erosion(
+                    template_path=final_template_path,
+                    kernel_w=getattr(camera, 'match_erosion_kernel_w', 80),
+                    kernel_h=getattr(camera, 'match_erosion_kernel_h', 1),
+                    iterations=getattr(camera, 'match_erosion_iterations', 1),
+                    serial_number=serial_number,
+                    template_idx=template_idx
+                )
+
             # Create annotation JSON file
             ann_json_path = self._create_annotation_file(
                 template_path=final_template_path,
@@ -291,6 +303,32 @@ class MatcherFactory:
         )
 
         return cropped_path, adjusted_template, adjusted_others
+
+    def _apply_erosion(
+        self,
+        template_path: Path,
+        kernel_w: int,
+        kernel_h: int,
+        iterations: int,
+        serial_number: str,
+        template_idx: int
+    ) -> Path:
+        """Apply horizontal erosion to suppress variable text before SuperPoint matching."""
+        img = cv2.imread(str(template_path))
+        if img is None:
+            logger.warning(f"[{serial_number}] Template {template_idx}: Erosion skipped — cannot read image")
+            return template_path
+
+        kernel = np.ones((kernel_h, kernel_w), np.uint8)
+        eroded = cv2.erode(img, kernel, iterations=iterations)
+
+        eroded_path = template_path.parent / (template_path.stem + "_eroded" + template_path.suffix)
+        cv2.imwrite(str(eroded_path), eroded)
+        logger.info(
+            f"[{serial_number}] Template {template_idx}: Erosion applied "
+            f"(kernel={kernel_w}x{kernel_h}, iter={iterations}) → {eroded_path.name}"
+        )
+        return eroded_path
 
     def _create_annotation_file(
         self,

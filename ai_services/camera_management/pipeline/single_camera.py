@@ -10,11 +10,11 @@ import logging
 import time
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 
-from .base import InferencePipelineTemplate, PipelineContext
-
-
-from ..camera import Camera
+import cv2
 import numpy as np
+
+from .base import InferencePipelineTemplate, PipelineContext
+from ..camera import Camera
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +143,14 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 frame_for_inference = self._crop_func(frame, crop_area)
             else:
                 frame_for_inference = frame
+
+            # Apply horizontal erosion to suppress variable text before SuperPoint matching
+            if getattr(camera, 'match_erosion_enabled', False):
+                kw = getattr(camera, 'match_erosion_kernel_w', 80)
+                kh = getattr(camera, 'match_erosion_kernel_h', 1)
+                iters = getattr(camera, 'match_erosion_iterations', 1)
+                kernel = np.ones((kh, kw), np.uint8)
+                frame_for_inference = cv2.erode(frame_for_inference, kernel, iterations=iters)
 
             target_imgs.append(frame_for_inference)
             crop_areas.append(crop_area)

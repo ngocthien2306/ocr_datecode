@@ -12,6 +12,7 @@ Class name `EmbeddingClassifierService` is preserved for caller compatibility,
 but no embedding model is loaded — pure OpenCV pipeline.
 """
 
+import base64
 import logging
 import os
 import time
@@ -207,7 +208,23 @@ def _compute_char_quality(
         "pixel_conf": float(pixel_conf),
         "px_tmpl":    px1,
         "px_tgt":     px2,
+        # Centroid-aligned masks (pre-dilate) — used by classify_batch to build a
+        # diff-XOR debug image showing only the differing pixels.
+        "_mask_tmpl_aligned": _center_by_centroid(_tight_crop(t1),      size),
+        "_mask_tgt_aligned":  _center_by_centroid(_tight_crop(t2_base), size),
     }
+
+
+def _encode_diff_mask_b64(mask_tmpl: np.ndarray, mask_tgt: np.ndarray) -> Optional[str]:
+    """XOR 2 aligned masks → PNG base64. Returns None if encode fails."""
+    try:
+        diff = cv2.bitwise_xor(mask_tmpl, mask_tgt)
+        ok, buf = cv2.imencode('.png', diff)
+        if not ok:
+            return None
+        return base64.b64encode(buf.tobytes()).decode('ascii')
+    except Exception:
+        return None
 
 
 class EmbeddingClassifierService:
@@ -470,6 +487,9 @@ class EmbeddingClassifierService:
                 metrics = _compute_char_quality(tmpl_gray, tgt_gray)
                 p_ok = float(metrics['confidence'])
                 label = "OK" if p_ok >= conf_thr else "NG"
+                mask_b64 = _encode_diff_mask_b64(
+                    metrics['_mask_tmpl_aligned'], metrics['_mask_tgt_aligned']
+                )
                 results[i] = {
                     'ml_pass': (label == "OK"),
                     'p_ok': round(p_ok, 4),
@@ -477,6 +497,7 @@ class EmbeddingClassifierService:
                     'threshold': conf_thr,
                     'time_ms': 0.0,  # filled after batch
                     'error': None,
+                    'mask_diff_b64': mask_b64,
                 }
 
                 if debug_dir is not None:

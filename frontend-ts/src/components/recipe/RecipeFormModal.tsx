@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
+import erosionBeforeImg from '@/assets/demo/erosion_before.jpg';
+import erosionAfterImg from '@/assets/demo/erosion_after.jpg';
 import TemplateEditor from './TemplateEditorRefactored';
 import AnnotationsPanel from '@/components/shared/AnnotationsPanel';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
@@ -62,6 +64,10 @@ interface FormDataType {
   wrinkle_show_when_pass: boolean;
   matching_conf: number;
   mask_overlap_threshold: number;
+  match_erosion_enabled: boolean;
+  match_erosion_kernel_w: number;
+  match_erosion_kernel_h: number;
+  match_erosion_iterations: number;
 }
 
 interface Template {
@@ -84,11 +90,63 @@ interface CameraTemplates {
   [cameraId: string]: Template[];
 }
 
+function applyErosionToImageData(src: ImageData, kw: number, kh: number): ImageData {
+  const { width, height, data } = src;
+  const out = new ImageData(width, height);
+  const halfW = Math.floor(kw / 2);
+  const halfH = Math.floor(kh / 2);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let minR = 255, minG = 255, minB = 255;
+      for (let dy = -halfH; dy <= halfH; dy++) {
+        const ny = Math.max(0, Math.min(height - 1, y + dy));
+        for (let dx = -halfW; dx <= halfW; dx++) {
+          const nx = Math.max(0, Math.min(width - 1, x + dx));
+          const i = (ny * width + nx) * 4;
+          if (data[i]   < minR) minR = data[i];
+          if (data[i+1] < minG) minG = data[i+1];
+          if (data[i+2] < minB) minB = data[i+2];
+        }
+      }
+      const o = (y * width + x) * 4;
+      out.data[o] = minR; out.data[o+1] = minG; out.data[o+2] = minB; out.data[o+3] = 255;
+    }
+  }
+  return out;
+}
+
 export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = null, mode = 'create' }: RecipeFormModalProps) {
   const [activeTab, setActiveTab] = useState<string>('basic');
   const toast = useToast();
   const { canPerformAction, user } = useUser();
   const isOperator = user?.role === 'operator';
+  const [erosionPreviewUrl, setErosionPreviewUrl] = useState<string>(erosionAfterImg);
+  const [isComputingPreview, setIsComputingPreview] = useState(false);
+
+  const computeErosionPreview = async () => {
+    setIsComputingPreview(true);
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = erosionBeforeImg;
+      await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = rej; });
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width; canvas.height = img.height;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(img, 0, 0);
+      const kw = formData.match_erosion_kernel_w ?? 80;
+      const kh = formData.match_erosion_kernel_h ?? 1;
+      const iters = Math.max(1, formData.match_erosion_iterations ?? 1);
+      let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      for (let i = 0; i < iters; i++) imageData = applyErosionToImageData(imageData, kw, kh);
+      ctx.putImageData(imageData, 0, 0);
+      setErosionPreviewUrl(canvas.toDataURL('image/jpeg', 0.9));
+    } catch {
+      toast.error('Preview failed');
+    } finally {
+      setIsComputingPreview(false);
+    }
+  };
   const [formData, setFormData] = useState<FormDataType>({
     name: '',
     product_code: '',
@@ -128,6 +186,10 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     wrinkle_show_when_pass: true,
     matching_conf: 0.20,
     mask_overlap_threshold: 0.6,
+    match_erosion_enabled: false,
+    match_erosion_kernel_w: 80,
+    match_erosion_kernel_h: 1,
+    match_erosion_iterations: 1,
   });
 
   const [templateImage, setTemplateImage] = useState<string | null>(null);
@@ -295,6 +357,10 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         wrinkle_show_when_pass: recipeAny.wrinkle_show_when_pass ?? true,
         matching_conf: recipeAny.matching_conf ?? 0.20,
         mask_overlap_threshold: recipeAny.mask_overlap_threshold ?? 0.6,
+        match_erosion_enabled: recipeAny.match_erosion_enabled ?? false,
+        match_erosion_kernel_w: recipeAny.match_erosion_kernel_w ?? 80,
+        match_erosion_kernel_h: recipeAny.match_erosion_kernel_h ?? 1,
+        match_erosion_iterations: recipeAny.match_erosion_iterations ?? 1,
       });
 
       if (recipeAny.template_config?.template_image) {
@@ -354,6 +420,10 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         wrinkle_show_when_pass: true,
         matching_conf: 0.20,
         mask_overlap_threshold: 0.6,
+        match_erosion_enabled: false,
+        match_erosion_kernel_w: 80,
+        match_erosion_kernel_h: 1,
+        match_erosion_iterations: 1,
       });
       setTemplateImage(null);
       setAnnotations([]);
@@ -688,6 +758,10 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         wrinkle_show_when_pass: formData.wrinkle_show_when_pass ?? true,
         matching_conf: formData.matching_conf ?? 0.20,
         mask_overlap_threshold: formData.mask_overlap_threshold ?? 0.6,
+        match_erosion_enabled: formData.match_erosion_enabled ?? false,
+        match_erosion_kernel_w: formData.match_erosion_kernel_w ?? 80,
+        match_erosion_kernel_h: formData.match_erosion_kernel_h ?? 1,
+        match_erosion_iterations: formData.match_erosion_iterations ?? 1,
       };
 
       await onSubmit(submitData);
@@ -2054,6 +2128,81 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         Skip OCR/verify when SuperPoint inlier ratio falls below this threshold. Higher = stricter (fewer false PASS, more FAIL).
                       </small>
                     </div>
+                    <div className="form-group" style={{ marginTop: 8 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={formData.match_erosion_enabled ?? false}
+                          onChange={(e) => setFormData(prev => ({ ...prev, match_erosion_enabled: e.target.checked }))}
+                        />
+                        <span>Horizontal Erosion Pre-processing</span>
+                      </label>
+                      <small className="field-description">
+                        Apply morphological erosion horizontally before SuperPoint matching to suppress variable date code text.
+                      </small>
+                    </div>
+                    {(formData.match_erosion_enabled ?? false) && (
+                      <>
+                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                          <div className="form-group" style={{ flex: 1, minWidth: 100 }}>
+                            <label>Kernel Width (px)</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={300}
+                              value={formData.match_erosion_kernel_w ?? 80}
+                              onChange={(e) => setFormData(prev => ({ ...prev, match_erosion_kernel_w: Math.max(1, Math.min(300, parseInt(e.target.value) || 1)) }))}
+                            />
+                          </div>
+                          <div className="form-group" style={{ flex: 1, minWidth: 100 }}>
+                            <label>Kernel Height (px)</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={50}
+                              value={formData.match_erosion_kernel_h ?? 1}
+                              onChange={(e) => setFormData(prev => ({ ...prev, match_erosion_kernel_h: Math.max(1, Math.min(50, parseInt(e.target.value) || 1)) }))}
+                            />
+                          </div>
+                          <div className="form-group" style={{ flex: 1, minWidth: 100 }}>
+                            <label>Iterations</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={5}
+                              value={formData.match_erosion_iterations ?? 1}
+                              onChange={(e) => setFormData(prev => ({ ...prev, match_erosion_iterations: Math.max(1, Math.min(5, parseInt(e.target.value) || 1)) }))}
+                            />
+                          </div>
+                        </div>
+                        <div style={{ marginTop: 10, borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.25)' }}>
+                          <div style={{ padding: '6px 10px 6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                            <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#475569' }}>Effect Preview</span>
+                            <button
+                              type="button"
+                              onClick={computeErosionPreview}
+                              disabled={isComputingPreview}
+                              style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, border: '1px solid rgba(59,130,246,0.5)', background: 'rgba(59,130,246,0.15)', color: '#60a5fa', cursor: 'pointer', fontWeight: 600, opacity: isComputingPreview ? 0.6 : 1 }}
+                            >
+                              {isComputingPreview ? 'Computing…' : 'Preview'}
+                            </button>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, background: 'rgba(255,255,255,0.05)' }}>
+                            <div style={{ padding: '8px 10px', background: 'rgba(0,0,0,0.2)' }}>
+                              <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6, fontWeight: 600 }}>Original</div>
+                              <img src={erosionBeforeImg} alt="Before erosion" style={{ width: '100%', borderRadius: 4, display: 'block' }} />
+                            </div>
+                            <div style={{ padding: '8px 10px', background: 'rgba(0,0,0,0.2)' }}>
+                              <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6, fontWeight: 600 }}>After Erosion</div>
+                              <img src={erosionPreviewUrl} alt="After erosion" style={{ width: '100%', borderRadius: 4, display: 'block', opacity: isComputingPreview ? 0.4 : 1, transition: 'opacity 0.2s' }} />
+                            </div>
+                          </div>
+                          <div style={{ padding: '6px 10px', fontSize: 11, color: '#475569', fontStyle: 'italic' }}>
+                            Date code numbers merge into uniform dark bands — structural layout preserved for SuperPoint matching.
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
                   <div className="model-column">
                     <h3>Wrinkle Detection</h3>
