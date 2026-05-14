@@ -1240,6 +1240,13 @@ class TextVerificationService:
                         try:
                             _t = time.perf_counter()
                             template_crop = crop_text_region(template_img, orig_points)
+                            try:
+                                template_crop, _frag_mask_tpl = remove_fragments_local_bg(template_crop)
+                            except Exception as e_clean:
+                                logger.info(
+                                    f"[{serial_number}] fragment-clean template failed ann {ann_idx}: "
+                                    f"{e_clean} — using raw template crop"
+                                )
                             crop_template_total_ms += (time.perf_counter() - _t) * 1000
                         except Exception as e:
                             logger.warning(
