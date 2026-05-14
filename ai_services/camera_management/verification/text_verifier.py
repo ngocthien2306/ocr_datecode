@@ -1196,7 +1196,7 @@ class TextVerificationService:
                     orig_pts_for_check = original_char_bbox_map[ann_idx].get('points')
                 quad_ok, quad_reason = self._validate_char_quad(points, orig_pts_for_check)
                 if not quad_ok:
-                    logger.warning(
+                    logger.info(
                         f"[{serial_number}] Char ann {ann_idx} ('{expected_char}'): "
                         f"deformed quad → NG, reason={quad_reason}"
                     )
@@ -1216,6 +1216,7 @@ class TextVerificationService:
                     # rìa '4'). Giữ chữ chính + defect bên trong, fill local-bg.
                     try:
                         cropped, _frag_mask = remove_fragments_local_bg(cropped)
+                        logger.info(f"[{serial_number}] fragment-clean succeeded ann {ann_idx}")
                     except Exception as e_clean:
                         logger.info(
                             f"[{serial_number}] fragment-clean failed ann {ann_idx}: "
