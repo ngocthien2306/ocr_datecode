@@ -468,6 +468,53 @@
   margin-bottom: 0;
 }
 
+/* Template bank — adaptive multi-template sub-card under Defect Model */
+.template-bank-card {
+  padding: 12px;
+  margin-top: 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+.template-bank-card.disabled {
+  opacity: 0.55;
+}
+.template-bank-card__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.template-bank-card__hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  opacity: 0.72;
+}
+.template-bank-card__hint--small {
+  font-size: 11px;
+  opacity: 0.65;
+  margin-top: 6px;
+}
+.template-bank-card__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.template-bank-card__row > label {
+  min-width: 70px;
+  font-weight: 500;
+}
+.template-bank-card__row input[type="number"] {
+  width: 80px;
+}
+.template-bank-card__row > span.unit {
+  font-size: 12px;
+  opacity: 0.65;
+}
+
 /* Model thresholds: compact 5-column grid */
 .thresholds-grid {
   display: grid;
@@ -2525,4 +2572,16 @@ body.dark-mode .btn-delete-template:hover {
   body.dark-mode .vertical-tabs {
     border-bottom-color: #374151;
   }
+}
+
+/* Dark mode template bank sub-card */
+body.dark-mode .template-bank-card {
+  border-color: #374151;
+  background: rgba(255, 255, 255, 0.03);
+}
+body.dark-mode .template-bank-card__row > label {
+  color: #d1d5db;
+}
+body.dark-mode .template-bank-card__title {
+  color: #f3f4f6;
 }

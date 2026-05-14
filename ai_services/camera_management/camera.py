@@ -1147,6 +1147,19 @@ class Camera:
             self.ml_model_id = recipe_data.get("ml_model_id")
             self.defect_model = recipe_data.get("defect_model") or "arcface"
             self.classifier_backend = recipe_data.get("classifier_backend") or "embedding"
+            # Template bank — adaptive multi-template per (recipe, camera, ann_idx)
+            tbe = recipe_data.get("template_bank_enabled")
+            self.template_bank_enabled = bool(tbe) if tbe is not None else False
+            tbs = recipe_data.get("template_bank_size")
+            self.template_bank_size = int(tbs) if tbs is not None else 10
+            # Version key: changes when recipe is re-saved → bank dynamic gets wiped on next load.
+            # Use recipe.updated_at if present; else fall back to recipe.id (stable, no wipe).
+            self.template_version_key = str(
+                recipe_data.get("updated_at")
+                or recipe_data.get("_id")
+                or recipe_data.get("id")
+                or ""
+            )
             wc = recipe_data.get("wrinkle_conf")
             self.wrinkle_conf = float(wc) if wc is not None else 0.25
             wsp = recipe_data.get("wrinkle_show_when_pass")

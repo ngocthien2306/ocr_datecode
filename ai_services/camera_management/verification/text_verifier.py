@@ -661,10 +661,21 @@ class TextVerificationService:
                     'conf_threshold': m['conf_threshold'],
                     'serial_number':  m['serial_number'],
                     'annotation_idx': m['annotation_idx'],
+                    # Template bank context (camera carries per-recipe settings)
+                    'recipe_id':                m.get('recipe_id'),
+                    'template_bank_enabled':    bool(m.get('template_bank_enabled', False)),
+                    'template_bank_size':       int(m.get('template_bank_size', 10)),
+                    'template_version_key':     m.get('template_version_key'),
                 }
                 for m in char_items
             ]
             results = embed_service.classify_batch(batch_input)
+            # Commit bank adds for chars that PASSED — strips _bank_try_add from results.
+            # Per-char gating only (frame-level gating could be added later via caller).
+            try:
+                embed_service.commit_bank_adds(results, should_commit=True)
+            except Exception as e:
+                logger.warning(f"commit_bank_adds (single-frame) failed: {e}")
             backend_label = f"Embedding[{defect_model}]"
         else:
             if not self.ml_classifier_service:
@@ -769,10 +780,18 @@ class TextVerificationService:
                     'conf_threshold': m['conf_threshold'],
                     'serial_number':  m['serial_number'],
                     'annotation_idx': m['annotation_idx'],
+                    'recipe_id':                m.get('recipe_id'),
+                    'template_bank_enabled':    bool(m.get('template_bank_enabled', False)),
+                    'template_bank_size':       int(m.get('template_bank_size', 10)),
+                    'template_version_key':     m.get('template_version_key'),
                 }
                 for m in flat
             ]
             results = embed_service.classify_batch(batch_input)
+            try:
+                embed_service.commit_bank_adds(results, should_commit=True)
+            except Exception as e:
+                logger.warning(f"commit_bank_adds (multi-frame) failed: {e}")
             backend_label = f"Embedding[{defect_model}]"
         else:
             if not self.ml_classifier_service:
@@ -1250,6 +1269,11 @@ class TextVerificationService:
                     'ml_model_id': ml_model_id,
                     'defect_model': getattr(camera, 'defect_model', None) or 'arcface',
                     'classifier_backend': camera_backend,
+                    # Template bank context (read from camera; falsy = bank disabled, single-template path)
+                    'recipe_id':             getattr(camera, 'recipe_id', None),
+                    'template_bank_enabled': bool(getattr(camera, 'template_bank_enabled', False)),
+                    'template_bank_size':    int(getattr(camera, 'template_bank_size', 10) or 10),
+                    'template_version_key':  getattr(camera, 'template_version_key', None),
                 })
 
         # Log crop-time aggregates so caller can see if cropping is the slow part

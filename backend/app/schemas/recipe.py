@@ -121,6 +121,8 @@ class RecipeBase(BaseModel):
     ml_model_id: Optional[str] = Field(default=None, description="Trained ML model ID within the ML project")
     defect_model: Optional[str] = Field(default="arcface", description="Embedding model used for defect detection: arcface | supcon")
     classifier_backend: Optional[str] = Field(default="embedding", description="Active classifier method: 'embedding' (defect_model cosine) | 'ml' (trained ML model)")
+    template_bank_enabled: Optional[bool] = Field(default=False, description="Enable adaptive template bank for embedding-mode char verification")
+    template_bank_size: Optional[int] = Field(default=10, ge=1, le=50, description="Max dynamic templates per (camera, annotation)")
 
     # Wrinkle segmentation model confidence threshold (recipe-level, applies to all cameras)
     wrinkle_conf: Optional[float] = Field(default=0.25, ge=0.0, le=1.0, description="Confidence threshold for wrinkle segmentation model (0.0 - 1.0)")
@@ -166,6 +168,8 @@ class RecipeUpdate(BaseModel):
     ml_model_id: Optional[str] = None
     defect_model: Optional[str] = None
     classifier_backend: Optional[str] = None
+    template_bank_enabled: Optional[bool] = None
+    template_bank_size: Optional[int] = Field(None, ge=1, le=50)
     wrinkle_conf: Optional[float] = Field(None, ge=0.0, le=1.0)
     wrinkle_show_when_pass: Optional[bool] = None
     matching_conf: Optional[float] = Field(None, ge=0.0, le=1.0)

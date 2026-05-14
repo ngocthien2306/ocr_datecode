@@ -13,9 +13,12 @@ but no embedding model is loaded — pure OpenCV pipeline.
 """
 
 import base64
+import json
 import logging
 import os
 import time
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
@@ -26,6 +29,12 @@ logger = logging.getLogger(__name__)
 # Minimum grayscale std-dev for a crop to be considered a real character.
 # A black/white uniform patch → std ≈ 0. Typical characters → std > 15.
 MIN_CROP_STD: float = 8.0
+
+# Template bank tuning (hardcoded — exposed via recipe.template_bank_size/enabled)
+BANK_ADD_THRESHOLD: float        = 0.90  # p_ok ≥ this → eligible for bank add
+BANK_DIVERSITY_THRESHOLD: float  = 0.98  # skip add if too similar to existing
+BANK_SANITY_THRESHOLD: float     = 0.70  # skip add if too dissimilar to all (outlier)
+BANK_VALIDATE_THRESHOLD: float   = 0.85  # min similarity vs seed to survive on-load validate
 
 
 def _crop_std(bgr: np.ndarray) -> float:
@@ -227,6 +236,427 @@ def _encode_diff_mask_b64(mask_tmpl: np.ndarray, mask_tgt: np.ndarray) -> Option
         return None
 
 
+# --------------------------------------------------------------------------- #
+# Template Bank — online adaptive multi-template per (recipe, camera, ann_idx)
+# --------------------------------------------------------------------------- #
+
+@dataclass
+class TemplateRecord:
+    """One template slot with pre-computed features for fast runtime compare."""
+    raw_bgr: np.ndarray      # original BGR crop (for inspection / re-encode to disk)
+    t1: np.ndarray           # (64,64) uint8 thresh+aligned (for px_count, blur_tm)
+    t1_blur: np.ndarray      # (64,64) float32 pre-Gaussian σ=1.2 (for multi-scale TM)
+    a_centroid: np.ndarray   # (64,64) uint8 centroid-aligned + dilated (for IoU)
+    px_count: int
+    added_at: float
+    is_seed: bool = False
+    hit_count: int = 0       # bumped each time this template is the best-match in compare()
+
+    @classmethod
+    def from_bgr(cls, bgr: np.ndarray, is_seed: bool = False) -> Optional['TemplateRecord']:
+        """Pre-compute all features from a raw BGR crop. Returns None on failure."""
+        try:
+            gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY) if bgr.ndim == 3 else bgr
+            tb = _to_thresh_norm(gray)
+            t1 = _fit_to_square(_deskew_char(_tight_crop(tb)), (64, 64))
+            if np.count_nonzero(t1) == 0:
+                return None
+            t1_blur = cv2.GaussianBlur(t1.astype(np.float32), (0, 0), sigmaX=1.2)
+            a = _center_by_centroid(_tight_crop(t1), (64, 64))
+            k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            a_dilated = cv2.dilate(a, k, iterations=1)
+            return cls(
+                raw_bgr=bgr.copy(),
+                t1=t1, t1_blur=t1_blur, a_centroid=a_dilated,
+                px_count=int(np.count_nonzero(t1)),
+                added_at=time.time(),
+                is_seed=is_seed,
+            )
+        except Exception as e:
+            logger.warning(f"TemplateRecord.from_bgr failed: {e}")
+            return None
+
+
+def _compare_target_vs_record(
+    target_t1: np.ndarray,
+    target_t1_blur: np.ndarray,
+    target_a_dilated: np.ndarray,
+    target_px: int,
+    tmpl: 'TemplateRecord',
+) -> Dict[str, float]:
+    """Single template ↔ pre-processed target comparison using cached tmpl features.
+    All inputs are already 64×64 (template + target same shape after preprocessing)."""
+    # (1) pixel confidence
+    ratio = target_px / (tmpl.px_count + 1e-6)
+    pixel_conf = float(np.clip(1.0 - abs(ratio - 1.0) * (1.0 / 1.4), 0.0, 1.0))
+
+    # (2) multi-scale blurred TM
+    best_tm = 0.0
+    for scale in (0.85, 0.92, 1.0, 1.08, 1.15):
+        s = (max(tmpl.t1.shape[1], int(64 * scale)),
+             max(tmpl.t1.shape[0], int(64 * scale)))
+        # Re-fit target at this scale (cheap — t1 is 64x64)
+        if s == (64, 64):
+            t2_blur = target_t1_blur
+        else:
+            t2 = _fit_to_square(target_t1, s)
+            t2_blur = cv2.GaussianBlur(t2.astype(np.float32), (0, 0), sigmaX=1.2)
+        result = cv2.matchTemplate(t2_blur, tmpl.t1_blur, cv2.TM_CCOEFF_NORMED)
+        best_tm = max(best_tm, float(result.max()))
+    blur_tm = float(np.clip(best_tm, 0.0, 1.0))
+
+    # (3) IoU on centroid-aligned + dilated masks
+    iou = _iou(tmpl.a_centroid, target_a_dilated)
+
+    tm_conf = max(blur_tm, iou)
+    confidence = min(tm_conf, pixel_conf)
+    return {
+        "confidence": float(confidence),
+        "tm_conf": float(tm_conf),
+        "blur_tm": float(blur_tm),
+        "iou": float(iou),
+        "pixel_conf": float(pixel_conf),
+    }
+
+
+def _preprocess_target_for_bank(target_bgr_or_gray: np.ndarray) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, int]]:
+    """Pre-compute target features once (shared across all template comparisons in bank).
+    Returns (t1, t1_blur, a_dilated, px_count) or None on failure."""
+    try:
+        gray = (cv2.cvtColor(target_bgr_or_gray, cv2.COLOR_BGR2GRAY)
+                if target_bgr_or_gray.ndim == 3 else target_bgr_or_gray)
+        tb = _to_thresh_norm(gray)
+        t1 = _fit_to_square(_deskew_char(_tight_crop(tb)), (64, 64))
+        if np.count_nonzero(t1) == 0:
+            return None
+        t1_blur = cv2.GaussianBlur(t1.astype(np.float32), (0, 0), sigmaX=1.2)
+        a = _center_by_centroid(_tight_crop(t1), (64, 64))
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        a_dilated = cv2.dilate(a, k, iterations=1)
+        return t1, t1_blur, a_dilated, int(np.count_nonzero(t1))
+    except Exception as e:
+        logger.warning(f"preprocess_target_for_bank failed: {e}")
+        return None
+
+
+class TemplateBank:
+    """One bank per (recipe_id, camera_serial, annotation_idx).
+    Seed templates locked from recipe; dynamic templates auto-collected at runtime."""
+
+    def __init__(self, bank_dir: Path, size: int):
+        self.bank_dir = bank_dir
+        self.size = max(1, int(size))
+        self.seed: List[TemplateRecord] = []
+        self.dynamic: List[TemplateRecord] = []
+        self._dynamic_filenames: List[str] = []  # parallel to self.dynamic
+
+    @classmethod
+    def load_or_create(
+        cls,
+        bank_dir: Path,
+        size: int,
+        seed_bgr: np.ndarray,
+    ) -> 'TemplateBank':
+        """Build bank: seed from recipe + load+validate dynamic from disk."""
+        bank = cls(bank_dir, size)
+        seed_rec = TemplateRecord.from_bgr(seed_bgr, is_seed=True)
+        if seed_rec is not None:
+            bank.seed.append(seed_rec)
+        else:
+            logger.warning(f"Bank {bank_dir}: seed template could not be encoded")
+            return bank  # empty bank — caller should fallback
+
+        if not bank_dir.exists():
+            bank_dir.mkdir(parents=True, exist_ok=True)
+            return bank
+
+        # Validate each persisted dynamic vs seed
+        for png in sorted(bank_dir.glob('dynamic_*.png')):
+            try:
+                img = cv2.imread(str(png))
+                if img is None:
+                    png.unlink()
+                    continue
+                # Compute similarity against seed
+                target_pre = _preprocess_target_for_bank(img)
+                if target_pre is None:
+                    png.unlink()
+                    continue
+                t1, t1b, ad, pxc = target_pre
+                metrics = _compare_target_vs_record(t1, t1b, ad, pxc, seed_rec)
+                if metrics['confidence'] < BANK_VALIDATE_THRESHOLD:
+                    logger.info(f"Bank {bank_dir.name}: drop stale {png.name} "
+                                f"(sim vs seed={metrics['confidence']:.2f} < {BANK_VALIDATE_THRESHOLD})")
+                    png.unlink()
+                    continue
+                rec = TemplateRecord.from_bgr(img)
+                if rec is None:
+                    png.unlink()
+                    continue
+                bank.dynamic.append(rec)
+                bank._dynamic_filenames.append(png.name)
+            except Exception as e:
+                logger.warning(f"Bank {bank_dir}: failed to load {png}: {e}")
+
+        # Cap to size (in case persisted files exceed configured size)
+        if len(bank.dynamic) > bank.size:
+            bank.dynamic = bank.dynamic[:bank.size]
+            bank._dynamic_filenames = bank._dynamic_filenames[:bank.size]
+
+        logger.info(f"TemplateBank {bank_dir.name}: 1 seed + {len(bank.dynamic)}/{bank.size} dynamic loaded")
+        return bank
+
+    def all_templates(self) -> List[TemplateRecord]:
+        """Seed + dynamic, ordered by hit_count desc (best-first for early termination)."""
+        return sorted(self.seed + self.dynamic, key=lambda t: -t.hit_count)
+
+    def compare(self, target_gray: np.ndarray, threshold: float) -> Tuple[float, Optional[Dict[str, float]], Optional[TemplateRecord]]:
+        """Find best template ↔ target match. Early-terminate when conf ≥ threshold.
+        Returns (best_conf, best_metrics, best_template)."""
+        target_pre = _preprocess_target_for_bank(target_gray)
+        if target_pre is None:
+            return 0.0, None, None
+        t1, t1b, ad, pxc = target_pre
+
+        best_conf = 0.0
+        best_metrics: Optional[Dict[str, float]] = None
+        best_template: Optional[TemplateRecord] = None
+
+        for tmpl in self.all_templates():
+            # Cheap filter: pixel-count ratio sanity (skip clearly hopeless candidates)
+            ratio = pxc / (tmpl.px_count + 1e-6)
+            if abs(ratio - 1.0) > 0.4:
+                continue
+            metrics = _compare_target_vs_record(t1, t1b, ad, pxc, tmpl)
+            if metrics['confidence'] > best_conf:
+                best_conf = metrics['confidence']
+                best_metrics = metrics
+                best_template = tmpl
+            if best_conf >= threshold:
+                break  # early-terminate
+
+        if best_template is not None:
+            best_template.hit_count += 1
+
+        # Embed aligned masks for caller (diff XOR rendering)
+        if best_metrics is not None and best_template is not None:
+            best_metrics['_mask_tmpl_aligned'] = best_template.a_centroid
+            best_metrics['_mask_tgt_aligned']  = ad
+
+        return best_conf, best_metrics, best_template
+
+    def try_add(self, target_bgr: np.ndarray, p_ok: float) -> bool:
+        """Add target as new dynamic template if conditions are met.
+        Returns True if added."""
+        if p_ok < BANK_ADD_THRESHOLD:
+            return False
+
+        # Diversity & sanity checks
+        target_pre = _preprocess_target_for_bank(target_bgr)
+        if target_pre is None:
+            return False
+        t1, t1b, ad, pxc = target_pre
+
+        sims = []
+        for tmpl in (self.seed + self.dynamic):
+            ratio = pxc / (tmpl.px_count + 1e-6)
+            if abs(ratio - 1.0) > 0.4:
+                sims.append(0.0)
+                continue
+            m = _compare_target_vs_record(t1, t1b, ad, pxc, tmpl)
+            sims.append(m['confidence'])
+
+        if not sims:
+            return False
+        if max(sims) > BANK_DIVERSITY_THRESHOLD:
+            return False  # too similar to existing — waste of slot
+        if max(sims) < BANK_SANITY_THRESHOLD:
+            return False  # too different from any existing → outlier suspicious
+
+        new_rec = TemplateRecord.from_bgr(target_bgr)
+        if new_rec is None:
+            return False
+
+        if len(self.dynamic) < self.size:
+            self._append(new_rec)
+        else:
+            self._replace_weakest(new_rec)
+        return True
+
+    def _append(self, rec: TemplateRecord) -> None:
+        """Add a new dynamic slot and persist to disk."""
+        try:
+            idx = len(self.dynamic)
+            # Find next available filename to avoid collisions
+            filename = self._next_filename()
+            self.dynamic.append(rec)
+            self._dynamic_filenames.append(filename)
+            self._save_record_to_disk(rec, filename)
+            logger.info(f"Bank {self.bank_dir.name}: appended {filename} ({len(self.dynamic)}/{self.size})")
+        except Exception as e:
+            logger.warning(f"Bank {self.bank_dir.name}: failed to append: {e}")
+
+    def _replace_weakest(self, rec: TemplateRecord) -> None:
+        """Replace the dynamic slot with lowest avg pairwise similarity to rest."""
+        try:
+            n = len(self.dynamic)
+            if n == 0:
+                return
+            avg_sims = []
+            for i, t in enumerate(self.dynamic):
+                others = [o for j, o in enumerate(self.dynamic) if j != i] + self.seed
+                if not others:
+                    avg_sims.append(1.0)
+                    continue
+                t_t1, t_t1b, t_ad, t_pxc = t.t1, t.t1_blur, t.a_centroid, t.px_count
+                ss = [_compare_target_vs_record(t_t1, t_t1b, t_ad, t_pxc, o)['confidence']
+                      for o in others]
+                avg_sims.append(float(np.mean(ss)) if ss else 1.0)
+            weakest = int(np.argmin(avg_sims))
+            old_filename = self._dynamic_filenames[weakest]
+            # Remove old file
+            try:
+                (self.bank_dir / old_filename).unlink(missing_ok=True)
+            except Exception:
+                pass
+            new_filename = self._next_filename()
+            self.dynamic[weakest] = rec
+            self._dynamic_filenames[weakest] = new_filename
+            self._save_record_to_disk(rec, new_filename)
+            logger.info(f"Bank {self.bank_dir.name}: replaced {old_filename} → {new_filename} "
+                        f"(slot {weakest}, avg_sim was {avg_sims[weakest]:.2f})")
+        except Exception as e:
+            logger.warning(f"Bank {self.bank_dir.name}: failed to replace weakest: {e}")
+
+    def _next_filename(self) -> str:
+        """Next available dynamic_NNN.png that doesn't collide on disk."""
+        existing = {p.name for p in self.bank_dir.glob('dynamic_*.png')}
+        for i in range(10000):
+            cand = f"dynamic_{i:03d}.png"
+            if cand not in existing and cand not in self._dynamic_filenames:
+                return cand
+        # Fallback (very unlikely)
+        return f"dynamic_{int(time.time())}.png"
+
+    def _save_record_to_disk(self, rec: TemplateRecord, filename: str) -> None:
+        try:
+            self.bank_dir.mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(str(self.bank_dir / filename), rec.raw_bgr)
+        except Exception as e:
+            logger.warning(f"Bank {self.bank_dir}: imwrite failed for {filename}: {e}")
+
+    def clear_dynamic(self) -> None:
+        """Drop all dynamic templates (keep seed). Deletes files on disk."""
+        self.dynamic.clear()
+        self._dynamic_filenames.clear()
+        if self.bank_dir.exists():
+            for png in self.bank_dir.glob('dynamic_*.png'):
+                try:
+                    png.unlink()
+                except Exception:
+                    pass
+        logger.info(f"Bank {self.bank_dir.name}: cleared all dynamic templates")
+
+
+class TemplateBankRegistry:
+    """Process-wide registry of TemplateBank instances keyed by
+    (recipe_id, camera_serial, annotation_idx)."""
+
+    def __init__(self, base_dir: str):
+        self.base_dir = Path(base_dir)
+        self._banks: Dict[Tuple[str, str, int], TemplateBank] = {}
+
+    def _bank_path(self, recipe_id: str, camera_serial: str, ann_idx: int) -> Path:
+        return self.base_dir / str(recipe_id) / str(camera_serial) / f"ann_{int(ann_idx):03d}"
+
+    def get_or_create(
+        self,
+        recipe_id: str,
+        camera_serial: str,
+        ann_idx: int,
+        seed_bgr: np.ndarray,
+        size: int,
+        seed_version_key: Optional[str] = None,
+    ) -> TemplateBank:
+        """Get bank, lazy-loading from disk on first access.
+
+        seed_version_key: if provided, stored in meta.json. On future loads, if
+            current seed_version_key differs → dynamic templates are wiped (seed changed).
+        """
+        key = (str(recipe_id), str(camera_serial), int(ann_idx))
+        bank = self._banks.get(key)
+        if bank is not None and bank.size == size:
+            return bank
+
+        bank_dir = self._bank_path(recipe_id, camera_serial, ann_idx)
+        # Seed-version invalidation: if seed in recipe changed, clear stale dynamic
+        if seed_version_key is not None:
+            self._invalidate_if_seed_changed(bank_dir, seed_version_key)
+
+        bank = TemplateBank.load_or_create(bank_dir, size, seed_bgr)
+        self._banks[key] = bank
+        return bank
+
+    def _invalidate_if_seed_changed(self, bank_dir: Path, seed_version_key: str) -> None:
+        meta_path = bank_dir / 'meta.json'
+        bank_dir.mkdir(parents=True, exist_ok=True)
+        prev_key = None
+        if meta_path.exists():
+            try:
+                prev_key = json.loads(meta_path.read_text()).get('seed_version_key')
+            except Exception:
+                prev_key = None
+
+        if prev_key == seed_version_key:
+            return  # no change
+
+        # Only wipe when there was a PREVIOUS key (real seed change).
+        # First-run case (prev_key is None) just stamps meta — does NOT wipe.
+        if prev_key is not None:
+            for png in bank_dir.glob('dynamic_*.png'):
+                try:
+                    png.unlink()
+                except Exception:
+                    pass
+            logger.info(f"Bank {bank_dir.name}: seed changed ({prev_key} → {seed_version_key}), "
+                        f"dynamic templates wiped")
+
+        try:
+            meta_path.write_text(json.dumps({
+                'seed_version_key': seed_version_key,
+                'updated_at': time.time(),
+            }))
+        except Exception:
+            pass
+
+    def get_existing(self, recipe_id: str, camera_serial: str, ann_idx: int) -> Optional[TemplateBank]:
+        """Return bank if already loaded, else None (does NOT create)."""
+        return self._banks.get((str(recipe_id), str(camera_serial), int(ann_idx)))
+
+    def reset(
+        self,
+        recipe_id: Optional[str] = None,
+        camera_serial: Optional[str] = None,
+        ann_idx: Optional[int] = None,
+    ) -> int:
+        """Clear in-memory + on-disk dynamic templates matching criteria.
+        Returns number of banks reset."""
+        to_reset = []
+        for key in list(self._banks.keys()):
+            rid, cs, ai = key
+            if recipe_id is not None and rid != str(recipe_id):
+                continue
+            if camera_serial is not None and cs != str(camera_serial):
+                continue
+            if ann_idx is not None and ai != int(ann_idx):
+                continue
+            to_reset.append(key)
+        for key in to_reset:
+            self._banks[key].clear_dynamic()
+            del self._banks[key]
+        return len(to_reset)
+
+
 class EmbeddingClassifierService:
     """
     Per-character OK/NG classifier (CV-based, no model).
@@ -273,9 +703,14 @@ class EmbeddingClassifierService:
         if self.save_debug_images:
             os.makedirs(self.debug_path, exist_ok=True)
 
+        # Template bank registry — persists to filesystem.
+        # Filesystem path is sibling of debug_path so it shares the same root.
+        bank_base = os.path.join(os.path.dirname(self.debug_path), 'template_banks')
+        self.bank_registry = TemplateBankRegistry(bank_base)
+
         logger.info(
             f"EmbeddingClassifierService (CV-based mode): no model loaded, "
-            f"debug={self.debug_path}"
+            f"debug={self.debug_path}, bank_base={bank_base}"
         )
 
     def classify_batch(
@@ -474,18 +909,44 @@ class EmbeddingClassifierService:
             template = item['template_crop']
             conf_thr = float(item.get('conf_threshold', 0.5))
 
-            try:
-                tmpl_gray = (
-                    cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-                    if template.ndim == 3 else template
-                )
-                tgt_gray = (
-                    cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-                    if region.ndim == 3 else region
-                )
+            # Optional bank context (backward-compat: if missing → single-template path)
+            bank_enabled = bool(item.get('template_bank_enabled', False))
+            bank_size    = int(item.get('template_bank_size', 10))
+            recipe_id    = item.get('recipe_id')
+            serial       = item.get('serial_number', '')
+            ann_idx      = item.get('annotation_idx', -1)
+            # seed_version_key: signal that recipe seed changed → invalidate dynamic
+            # Use hash of seed bytes (cheap + change-sensitive)
+            seed_version_key = item.get('template_version_key')
 
-                metrics = _compute_char_quality(tmpl_gray, tgt_gray)
-                p_ok = float(metrics['confidence'])
+            try:
+                metrics: Optional[Dict[str, Any]] = None
+                best_template = None
+                p_ok = 0.0
+
+                if bank_enabled and recipe_id and ann_idx >= 0:
+                    bank = self.bank_registry.get_or_create(
+                        recipe_id=str(recipe_id),
+                        camera_serial=str(serial),
+                        ann_idx=int(ann_idx),
+                        seed_bgr=template,
+                        size=bank_size,
+                        seed_version_key=seed_version_key,
+                    )
+                    if bank.seed:
+                        tgt_gray = (cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+                                    if region.ndim == 3 else region)
+                        p_ok, metrics, best_template = bank.compare(tgt_gray, conf_thr)
+
+                # Fallback to single-template if bank path returned nothing or disabled
+                if metrics is None:
+                    tmpl_gray = (cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+                                 if template.ndim == 3 else template)
+                    tgt_gray = (cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+                                if region.ndim == 3 else region)
+                    metrics = _compute_char_quality(tmpl_gray, tgt_gray)
+                    p_ok = float(metrics['confidence'])
+
                 label = "OK" if p_ok >= conf_thr else "NG"
                 mask_b64 = _encode_diff_mask_b64(
                     metrics['_mask_tmpl_aligned'], metrics['_mask_tgt_aligned']
@@ -499,6 +960,15 @@ class EmbeddingClassifierService:
                     'error': None,
                     'mask_diff_b64': mask_b64,
                 }
+                # Stash bank context for post-batch try_add (only set when bank was used)
+                if bank_enabled and recipe_id and ann_idx >= 0 and best_template is not None:
+                    results[i]['_bank_try_add'] = {
+                        'recipe_id': str(recipe_id),
+                        'serial': str(serial),
+                        'ann_idx': int(ann_idx),
+                        'target_bgr': region,
+                        'p_ok': p_ok,
+                    }
 
                 if debug_dir is not None:
                     try:
@@ -544,3 +1014,49 @@ class EmbeddingClassifierService:
                 }
 
         return results  # type: ignore
+
+    def commit_bank_adds(
+        self,
+        results: List[Dict[str, Any]],
+        should_commit: bool,
+    ) -> int:
+        """Flush bank-add intents stashed in classify_batch results.
+
+        - Always strips the private '_bank_try_add' key from each result dict
+          (so it never leaks to FE/DB).
+        - If `should_commit` is True (typically frame-level verification PASSED),
+          calls bank.try_add() for each eligible entry. High BANK_ADD_THRESHOLD
+          + diversity/sanity checks gate which targets actually enter the bank.
+
+        Returns the number of templates actually added to banks.
+        """
+        n_added = 0
+        for r in results:
+            if not isinstance(r, dict):
+                continue
+            entry = r.pop('_bank_try_add', None)
+            if entry is None or not should_commit:
+                continue
+            try:
+                bank = self.bank_registry.get_existing(
+                    entry['recipe_id'], entry['serial'], entry['ann_idx']
+                )
+                if bank is None:
+                    continue
+                if bank.try_add(entry['target_bgr'], entry['p_ok']):
+                    n_added += 1
+            except Exception as e:
+                logger.warning(f"commit_bank_adds failed for entry: {e}")
+        if n_added:
+            logger.info(f"Bank: committed {n_added} new template(s)")
+        return n_added
+
+    def reset_template_bank(
+        self,
+        recipe_id: Optional[str] = None,
+        camera_serial: Optional[str] = None,
+        ann_idx: Optional[int] = None,
+    ) -> int:
+        """Public passthrough for external callers (e.g. recipe re-load).
+        Returns number of banks reset."""
+        return self.bank_registry.reset(recipe_id, camera_serial, ann_idx)

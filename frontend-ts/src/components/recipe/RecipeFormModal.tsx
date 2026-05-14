@@ -60,6 +60,8 @@ interface FormDataType {
   ml_model_id: string;
   defect_model: string;
   classifier_backend: string;
+  template_bank_enabled: boolean;
+  template_bank_size: number;
   wrinkle_conf: number;
   wrinkle_show_when_pass: boolean;
   matching_conf: number;
@@ -182,6 +184,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     ml_model_id: '',
     defect_model: 'arcface',
     classifier_backend: 'embedding',
+    template_bank_enabled: false,
+    template_bank_size: 10,
     wrinkle_conf: 0.25,
     wrinkle_show_when_pass: true,
     matching_conf: 0.20,
@@ -353,6 +357,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         ml_model_id: recipeAny.ml_model_id || '',
         defect_model: recipeAny.defect_model || 'arcface',
         classifier_backend: recipeAny.classifier_backend || 'embedding',
+        template_bank_enabled: recipeAny.template_bank_enabled ?? false,
+        template_bank_size: recipeAny.template_bank_size ?? 10,
         wrinkle_conf: recipeAny.wrinkle_conf ?? 0.25,
         wrinkle_show_when_pass: recipeAny.wrinkle_show_when_pass ?? true,
         matching_conf: recipeAny.matching_conf ?? 0.20,
@@ -416,6 +422,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         ml_model_id: '',
         defect_model: 'arcface',
         classifier_backend: 'embedding',
+        template_bank_enabled: false,
+        template_bank_size: 10,
         wrinkle_conf: 0.25,
         wrinkle_show_when_pass: true,
         matching_conf: 0.20,
@@ -754,6 +762,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         ml_model_id:   formData.ml_model_id   || null,
         defect_model:  formData.defect_model  || 'arcface',
         classifier_backend: formData.classifier_backend || 'embedding',
+        template_bank_enabled: formData.template_bank_enabled ?? false,
+        template_bank_size: formData.template_bank_size ?? 10,
         wrinkle_conf: formData.wrinkle_conf ?? 0.25,
         wrinkle_show_when_pass: formData.wrinkle_show_when_pass ?? true,
         matching_conf: formData.matching_conf ?? 0.20,
@@ -1925,6 +1935,50 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         <option value="supcon">SupCon (contrastive embedding)</option>
                       </select>
                       <small className="field-description">Template model used for per-character OK/NG classification</small>
+                    </div>
+
+                    {/* ── Template Bank — adaptive multi-template (embedding mode only) ── */}
+                    <div className={`template-bank-card ${formData.classifier_backend !== 'embedding' ? 'disabled' : ''}`}>
+                      <label className="template-bank-card__title">
+                        <input
+                          type="checkbox"
+                          checked={formData.template_bank_enabled}
+                          disabled={formData.classifier_backend !== 'embedding'}
+                          onChange={(e) => setFormData(prev => ({
+                            ...prev,
+                            template_bank_enabled: e.target.checked,
+                          }))}
+                        />
+                        Adaptive Template Bank
+                      </label>
+                      <small className="field-description template-bank-card__hint">
+                        Auto-collect verified-OK frames as additional templates over time.
+                        Seed template from recipe is always kept.
+                      </small>
+
+                      <div className="template-bank-card__row">
+                        <label>Bank size:</label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={50}
+                          step={1}
+                          value={formData.template_bank_size}
+                          disabled={
+                            !formData.template_bank_enabled ||
+                            formData.classifier_backend !== 'embedding'
+                          }
+                          onChange={(e) => setFormData(prev => ({
+                            ...prev,
+                            template_bank_size: Math.max(1, Math.min(50, parseInt(e.target.value) || 10)),
+                          }))}
+                        />
+                        <span className="unit">dynamic templates (1-50)</span>
+                      </div>
+                      <small className="field-description template-bank-card__hint--small">
+                        When bank fills up, the weakest template (lowest avg similarity vs rest) is replaced.
+                        Stored on AI service filesystem; auto-validated against seed on service restart.
+                      </small>
                     </div>
                   </div>
                   <div className="model-column">
