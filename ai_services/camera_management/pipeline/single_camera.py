@@ -280,8 +280,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
         # ── Phase 1: collect frames eligible for text/char verification ──
         text_verify_indices: List[int] = []
         text_verify_data: List[Dict[str, Any]] = []
-        if (camera.function_type in ('Check_Type_Product', 'Check_Color') and
-                context.text_verification_service):
+        if context.text_verification_service and camera.expected_texts:
             for idx, result in enumerate(transformed_results):
                 if not result.get('success'):
                     continue

@@ -193,8 +193,8 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             if not result.get('success') or not frames:
                 continue
 
-            if camera.function_type == 'Check_Type_Product':
-                frame_expected_texts = camera.expected_texts.get(0, {})
+            frame_expected_texts = camera.expected_texts.get(0, {})
+            if frame_expected_texts:
                 if frame_expected_texts:
                     # Get matcher for sim check (template_img + original_bboxes)
                     matcher = context.camera_matchers.get(serial_number)
