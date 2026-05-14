@@ -1152,6 +1152,9 @@ class Camera:
             self.template_bank_enabled = bool(tbe) if tbe is not None else False
             tbs = recipe_data.get("template_bank_size")
             self.template_bank_size = int(tbs) if tbs is not None else 10
+            # Char denoise — largest-CC filter before centroid alignment (robust IoU)
+            cde = recipe_data.get("char_denoise_enabled")
+            self.char_denoise_enabled = bool(cde) if cde is not None else False
             # Version key: changes when recipe is re-saved → bank dynamic gets wiped on next load.
             # Use recipe.updated_at if present; else fall back to recipe.id (stable, no wipe).
             self.template_version_key = str(

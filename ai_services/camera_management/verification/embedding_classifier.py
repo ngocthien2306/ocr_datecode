@@ -129,6 +129,26 @@ def _fit_to_square(img: np.ndarray, size: Tuple[int, int]) -> np.ndarray:
     return canvas
 
 
+def _largest_cc(mask: np.ndarray) -> np.ndarray:
+    """Keep only the largest connected component. Filters out noise blobs
+    (binarization specks, edge artifacts) before centroid alignment.
+
+    Bench (ann_idx with noise differing between template ↔ target):
+      centroid alone     IoU=0.556
+      largest_cc + cent. IoU=0.786
+    """
+    if mask.size == 0:
+        return mask
+    try:
+        n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        if n <= 1:
+            return mask
+        biggest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        return ((labels == biggest).astype(np.uint8)) * 255
+    except Exception:
+        return mask
+
+
 def _center_by_centroid(mask: np.ndarray, size: Tuple[int, int]) -> np.ndarray:
     """Đặt mask vào khung size×size với khối tâm foreground ở giữa."""
     H, W = size[1], size[0]
@@ -160,6 +180,7 @@ def _compute_char_quality(
     tmpl_gray: np.ndarray,
     tgt_gray: np.ndarray,
     size: Tuple[int, int] = (64, 64),
+    denoise: bool = False,
 ) -> Dict[str, float]:
     """So sánh 2 ký tự bằng 3 metric, robust với binary shapes:
       1. pixel_conf  — ratio px_tgt/px_tmpl
@@ -198,9 +219,12 @@ def _compute_char_quality(
         best_tm = max(best_tm, float(result.max()))
     blur_tm = float(np.clip(best_tm, 0.0, 1.0))
 
-    # (3) IoU sau centroid alignment — dilate(ellipse 5×5) tha thứ stroke width
-    a = _center_by_centroid(_tight_crop(t1),      size)
-    b = _center_by_centroid(_tight_crop(t2_base), size)
+    # (3) IoU sau centroid alignment — dilate(ellipse 5×5) tha thứ stroke width.
+    # When denoise=True, drop noise blobs (keep largest CC) before centering.
+    t1_for_iou = _largest_cc(t1)      if denoise else t1
+    t2_for_iou = _largest_cc(t2_base) if denoise else t2_base
+    a = _center_by_centroid(_tight_crop(t1_for_iou), size)
+    b = _center_by_centroid(_tight_crop(t2_for_iou), size)
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     a = cv2.dilate(a, k, iterations=1)
     b = cv2.dilate(b, k, iterations=1)
@@ -253,8 +277,9 @@ class TemplateRecord:
     hit_count: int = 0       # bumped each time this template is the best-match in compare()
 
     @classmethod
-    def from_bgr(cls, bgr: np.ndarray, is_seed: bool = False) -> Optional['TemplateRecord']:
-        """Pre-compute all features from a raw BGR crop. Returns None on failure."""
+    def from_bgr(cls, bgr: np.ndarray, is_seed: bool = False, denoise: bool = False) -> Optional['TemplateRecord']:
+        """Pre-compute all features from a raw BGR crop. Returns None on failure.
+        If denoise=True, applies largest-CC noise filter before centroid alignment."""
         try:
             gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY) if bgr.ndim == 3 else bgr
             tb = _to_thresh_norm(gray)
@@ -262,7 +287,8 @@ class TemplateRecord:
             if np.count_nonzero(t1) == 0:
                 return None
             t1_blur = cv2.GaussianBlur(t1.astype(np.float32), (0, 0), sigmaX=1.2)
-            a = _center_by_centroid(_tight_crop(t1), (64, 64))
+            t1_for_iou = _largest_cc(t1) if denoise else t1
+            a = _center_by_centroid(_tight_crop(t1_for_iou), (64, 64))
             k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
             a_dilated = cv2.dilate(a, k, iterations=1)
             return cls(
@@ -319,9 +345,10 @@ def _compare_target_vs_record(
     }
 
 
-def _preprocess_target_for_bank(target_bgr_or_gray: np.ndarray) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, int]]:
+def _preprocess_target_for_bank(target_bgr_or_gray: np.ndarray, denoise: bool = False) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, int]]:
     """Pre-compute target features once (shared across all template comparisons in bank).
-    Returns (t1, t1_blur, a_dilated, px_count) or None on failure."""
+    Returns (t1, t1_blur, a_dilated, px_count) or None on failure.
+    If denoise=True, applies largest-CC noise filter before centroid alignment."""
     try:
         gray = (cv2.cvtColor(target_bgr_or_gray, cv2.COLOR_BGR2GRAY)
                 if target_bgr_or_gray.ndim == 3 else target_bgr_or_gray)
@@ -330,7 +357,8 @@ def _preprocess_target_for_bank(target_bgr_or_gray: np.ndarray) -> Optional[Tupl
         if np.count_nonzero(t1) == 0:
             return None
         t1_blur = cv2.GaussianBlur(t1.astype(np.float32), (0, 0), sigmaX=1.2)
-        a = _center_by_centroid(_tight_crop(t1), (64, 64))
+        t1_for_iou = _largest_cc(t1) if denoise else t1
+        a = _center_by_centroid(_tight_crop(t1_for_iou), (64, 64))
         k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         a_dilated = cv2.dilate(a, k, iterations=1)
         return t1, t1_blur, a_dilated, int(np.count_nonzero(t1))
@@ -343,9 +371,10 @@ class TemplateBank:
     """One bank per (recipe_id, camera_serial, annotation_idx).
     Seed templates locked from recipe; dynamic templates auto-collected at runtime."""
 
-    def __init__(self, bank_dir: Path, size: int):
+    def __init__(self, bank_dir: Path, size: int, denoise: bool = False):
         self.bank_dir = bank_dir
         self.size = max(1, int(size))
+        self.denoise = bool(denoise)
         self.seed: List[TemplateRecord] = []
         self.dynamic: List[TemplateRecord] = []
         self._dynamic_filenames: List[str] = []  # parallel to self.dynamic
@@ -356,10 +385,11 @@ class TemplateBank:
         bank_dir: Path,
         size: int,
         seed_bgr: np.ndarray,
+        denoise: bool = False,
     ) -> 'TemplateBank':
         """Build bank: seed from recipe + load+validate dynamic from disk."""
-        bank = cls(bank_dir, size)
-        seed_rec = TemplateRecord.from_bgr(seed_bgr, is_seed=True)
+        bank = cls(bank_dir, size, denoise=denoise)
+        seed_rec = TemplateRecord.from_bgr(seed_bgr, is_seed=True, denoise=denoise)
         if seed_rec is not None:
             bank.seed.append(seed_rec)
         else:
@@ -378,7 +408,7 @@ class TemplateBank:
                     png.unlink()
                     continue
                 # Compute similarity against seed
-                target_pre = _preprocess_target_for_bank(img)
+                target_pre = _preprocess_target_for_bank(img, denoise=denoise)
                 if target_pre is None:
                     png.unlink()
                     continue
@@ -389,7 +419,7 @@ class TemplateBank:
                                 f"(sim vs seed={metrics['confidence']:.2f} < {BANK_VALIDATE_THRESHOLD})")
                     png.unlink()
                     continue
-                rec = TemplateRecord.from_bgr(img)
+                rec = TemplateRecord.from_bgr(img, denoise=denoise)
                 if rec is None:
                     png.unlink()
                     continue
@@ -413,7 +443,7 @@ class TemplateBank:
     def compare(self, target_gray: np.ndarray, threshold: float) -> Tuple[float, Optional[Dict[str, float]], Optional[TemplateRecord]]:
         """Find best template ↔ target match. Early-terminate when conf ≥ threshold.
         Returns (best_conf, best_metrics, best_template)."""
-        target_pre = _preprocess_target_for_bank(target_gray)
+        target_pre = _preprocess_target_for_bank(target_gray, denoise=self.denoise)
         if target_pre is None:
             return 0.0, None, None
         t1, t1b, ad, pxc = target_pre
@@ -452,7 +482,7 @@ class TemplateBank:
             return False
 
         # Diversity & sanity checks
-        target_pre = _preprocess_target_for_bank(target_bgr)
+        target_pre = _preprocess_target_for_bank(target_bgr, denoise=self.denoise)
         if target_pre is None:
             return False
         t1, t1b, ad, pxc = target_pre
@@ -473,7 +503,7 @@ class TemplateBank:
         if max(sims) < BANK_SANITY_THRESHOLD:
             return False  # too different from any existing → outlier suspicious
 
-        new_rec = TemplateRecord.from_bgr(target_bgr)
+        new_rec = TemplateRecord.from_bgr(target_bgr, denoise=self.denoise)
         if new_rec is None:
             return False
 
@@ -577,23 +607,29 @@ class TemplateBankRegistry:
         seed_bgr: np.ndarray,
         size: int,
         seed_version_key: Optional[str] = None,
+        denoise: bool = False,
     ) -> TemplateBank:
         """Get bank, lazy-loading from disk on first access.
 
         seed_version_key: if provided, stored in meta.json. On future loads, if
             current seed_version_key differs → dynamic templates are wiped (seed changed).
+        denoise: when toggled, treated as part of version key so a flip wipes
+            stale pre-computed features.
         """
         key = (str(recipe_id), str(camera_serial), int(ann_idx))
         bank = self._banks.get(key)
-        if bank is not None and bank.size == size:
+        if bank is not None and bank.size == size and bank.denoise == denoise:
             return bank
 
         bank_dir = self._bank_path(recipe_id, camera_serial, ann_idx)
-        # Seed-version invalidation: if seed in recipe changed, clear stale dynamic
-        if seed_version_key is not None:
-            self._invalidate_if_seed_changed(bank_dir, seed_version_key)
+        # Bake denoise flag into version_key so toggling forces a clean rebuild.
+        effective_version = seed_version_key
+        if effective_version is not None:
+            effective_version = f"{effective_version}|denoise={int(bool(denoise))}"
+        if effective_version is not None:
+            self._invalidate_if_seed_changed(bank_dir, effective_version)
 
-        bank = TemplateBank.load_or_create(bank_dir, size, seed_bgr)
+        bank = TemplateBank.load_or_create(bank_dir, size, seed_bgr, denoise=denoise)
         self._banks[key] = bank
         return bank
 
@@ -910,13 +946,12 @@ class EmbeddingClassifierService:
             conf_thr = float(item.get('conf_threshold', 0.5))
 
             # Optional bank context (backward-compat: if missing → single-template path)
-            bank_enabled = bool(item.get('template_bank_enabled', False))
-            bank_size    = int(item.get('template_bank_size', 10))
-            recipe_id    = item.get('recipe_id')
-            serial       = item.get('serial_number', '')
-            ann_idx      = item.get('annotation_idx', -1)
-            # seed_version_key: signal that recipe seed changed → invalidate dynamic
-            # Use hash of seed bytes (cheap + change-sensitive)
+            bank_enabled    = bool(item.get('template_bank_enabled', False))
+            bank_size       = int(item.get('template_bank_size', 10))
+            denoise_enabled = bool(item.get('char_denoise_enabled', False))
+            recipe_id       = item.get('recipe_id')
+            serial          = item.get('serial_number', '')
+            ann_idx         = item.get('annotation_idx', -1)
             seed_version_key = item.get('template_version_key')
 
             try:
@@ -932,6 +967,7 @@ class EmbeddingClassifierService:
                         seed_bgr=template,
                         size=bank_size,
                         seed_version_key=seed_version_key,
+                        denoise=denoise_enabled,
                     )
                     if bank.seed:
                         tgt_gray = (cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
@@ -944,7 +980,7 @@ class EmbeddingClassifierService:
                                  if template.ndim == 3 else template)
                     tgt_gray = (cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
                                 if region.ndim == 3 else region)
-                    metrics = _compute_char_quality(tmpl_gray, tgt_gray)
+                    metrics = _compute_char_quality(tmpl_gray, tgt_gray, denoise=denoise_enabled)
                     p_ok = float(metrics['confidence'])
 
                 label = "OK" if p_ok >= conf_thr else "NG"

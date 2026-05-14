@@ -62,6 +62,7 @@ interface FormDataType {
   classifier_backend: string;
   template_bank_enabled: boolean;
   template_bank_size: number;
+  char_denoise_enabled: boolean;
   wrinkle_conf: number;
   wrinkle_show_when_pass: boolean;
   matching_conf: number;
@@ -186,6 +187,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     classifier_backend: 'embedding',
     template_bank_enabled: false,
     template_bank_size: 10,
+    char_denoise_enabled: false,
     wrinkle_conf: 0.25,
     wrinkle_show_when_pass: true,
     matching_conf: 0.20,
@@ -359,6 +361,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         classifier_backend: recipeAny.classifier_backend || 'embedding',
         template_bank_enabled: recipeAny.template_bank_enabled ?? false,
         template_bank_size: recipeAny.template_bank_size ?? 10,
+        char_denoise_enabled: recipeAny.char_denoise_enabled ?? false,
         wrinkle_conf: recipeAny.wrinkle_conf ?? 0.25,
         wrinkle_show_when_pass: recipeAny.wrinkle_show_when_pass ?? true,
         matching_conf: recipeAny.matching_conf ?? 0.20,
@@ -424,6 +427,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         classifier_backend: 'embedding',
         template_bank_enabled: false,
         template_bank_size: 10,
+        char_denoise_enabled: false,
         wrinkle_conf: 0.25,
         wrinkle_show_when_pass: true,
         matching_conf: 0.20,
@@ -764,6 +768,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         classifier_backend: formData.classifier_backend || 'embedding',
         template_bank_enabled: formData.template_bank_enabled ?? false,
         template_bank_size: formData.template_bank_size ?? 10,
+        char_denoise_enabled: formData.char_denoise_enabled ?? false,
         wrinkle_conf: formData.wrinkle_conf ?? 0.25,
         wrinkle_show_when_pass: formData.wrinkle_show_when_pass ?? true,
         matching_conf: formData.matching_conf ?? 0.20,
@@ -1937,6 +1942,22 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       <small className="field-description">Template model used for per-character OK/NG classification</small>
                     </div>
 
+                    {/* ── Char Denoise — largest-CC filter (embedding mode only) ── */}
+                    <div className={`template-bank-card ${formData.classifier_backend !== 'embedding' ? 'disabled' : ''}`}>
+                      <label className="template-bank-card__title">
+                        <input
+                          type="checkbox"
+                          checked={formData.char_denoise_enabled}
+                          disabled={formData.classifier_backend !== 'embedding'}
+                          onChange={(e) => setFormData(prev => ({
+                            ...prev,
+                            char_denoise_enabled: e.target.checked,
+                          }))}
+                        />
+                        Char Denoise (largest-CC filter)
+                      </label>
+                    </div>
+
                     {/* ── Template Bank — adaptive multi-template (embedding mode only) ── */}
                     <div className={`template-bank-card ${formData.classifier_backend !== 'embedding' ? 'disabled' : ''}`}>
                       <label className="template-bank-card__title">
@@ -1951,10 +1972,6 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         />
                         Adaptive Template Bank
                       </label>
-                      <small className="field-description template-bank-card__hint">
-                        Auto-collect verified-OK frames as additional templates over time.
-                        Seed template from recipe is always kept.
-                      </small>
 
                       <div className="template-bank-card__row">
                         <label>Bank size:</label>
@@ -1975,10 +1992,6 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         />
                         <span className="unit">dynamic templates (1-50)</span>
                       </div>
-                      <small className="field-description template-bank-card__hint--small">
-                        When bank fills up, the weakest template (lowest avg similarity vs rest) is replaced.
-                        Stored on AI service filesystem; auto-validated against seed on service restart.
-                      </small>
                     </div>
                   </div>
                   <div className="model-column">

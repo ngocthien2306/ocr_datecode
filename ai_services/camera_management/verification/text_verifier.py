@@ -666,6 +666,7 @@ class TextVerificationService:
                     'template_bank_enabled':    bool(m.get('template_bank_enabled', False)),
                     'template_bank_size':       int(m.get('template_bank_size', 10)),
                     'template_version_key':     m.get('template_version_key'),
+                    'char_denoise_enabled':     bool(m.get('char_denoise_enabled', False)),
                 }
                 for m in char_items
             ]
@@ -784,6 +785,7 @@ class TextVerificationService:
                     'template_bank_enabled':    bool(m.get('template_bank_enabled', False)),
                     'template_bank_size':       int(m.get('template_bank_size', 10)),
                     'template_version_key':     m.get('template_version_key'),
+                    'char_denoise_enabled':     bool(m.get('char_denoise_enabled', False)),
                 }
                 for m in flat
             ]
@@ -1274,6 +1276,7 @@ class TextVerificationService:
                     'template_bank_enabled': bool(getattr(camera, 'template_bank_enabled', False)),
                     'template_bank_size':    int(getattr(camera, 'template_bank_size', 10) or 10),
                     'template_version_key':  getattr(camera, 'template_version_key', None),
+                    'char_denoise_enabled':  bool(getattr(camera, 'char_denoise_enabled', False)),
                 })
 
         # Log crop-time aggregates so caller can see if cropping is the slow part

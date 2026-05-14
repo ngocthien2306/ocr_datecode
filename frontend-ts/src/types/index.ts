@@ -183,6 +183,9 @@ export interface Recipe {
   ml_model_id?: string;
   defect_model?: string;
   classifier_backend?: string;
+  template_bank_enabled?: boolean;
+  template_bank_size?: number;
+  char_denoise_enabled?: boolean;
   wrinkle_conf?: number;
   wrinkle_show_when_pass?: boolean;
   matching_conf?: number;
@@ -272,6 +275,9 @@ export interface Receipt {
   ml_model_id?: string;
   defect_model?: string;
   classifier_backend?: string;
+  template_bank_enabled?: boolean;
+  template_bank_size?: number;
+  char_denoise_enabled?: boolean;
   wrinkle_conf?: number;
   wrinkle_show_when_pass?: boolean;
   matching_conf?: number;
