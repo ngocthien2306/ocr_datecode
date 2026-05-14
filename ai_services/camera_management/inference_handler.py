@@ -307,7 +307,7 @@ class InferenceHandler:
         """Initialize text and template verification services"""
         # Debug image writes are disk-I/O heavy (~50-150ms each) and hurt
         # realtime inference latency. Gate on env var for troubleshooting.
-        save_debug = False # os.environ.get('VERIFY_DEBUG_IMAGES', '0').lower() in ('1', 'true', 'yes')
+        save_debug = True # os.environ.get('VERIFY_DEBUG_IMAGES', '0').lower() in ('1', 'true', 'yes')
 
         # ML Classifier Service — loads sklearn models from shared filesystem.
         # BE saves models to {PROJECT_ROOT}/public/ml_projects/{project_id}/models/{model_id}.joblib
