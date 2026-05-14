@@ -151,6 +151,13 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 iters = getattr(camera, 'match_erosion_iterations', 1)
                 kernel = np.ones((kh, kw), np.uint8)
                 frame_for_inference = cv2.erode(frame_for_inference, kernel, iterations=iters)
+                # Debug: save eroded frame (overwrite → always latest)
+                try:
+                    from pathlib import Path as _Path
+                    _dbg = _Path("ocr_inference") / f"debug_frame_{camera.serial_number}_t{idx}_eroded.jpg"
+                    cv2.imwrite(str(_dbg), frame_for_inference)
+                except Exception:
+                    pass
 
             target_imgs.append(frame_for_inference)
             crop_areas.append(crop_area)
