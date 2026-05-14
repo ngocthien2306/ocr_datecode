@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -378,6 +379,10 @@ class TemplateBank:
         self.seed: List[TemplateRecord] = []
         self.dynamic: List[TemplateRecord] = []
         self._dynamic_filenames: List[str] = []  # parallel to self.dynamic
+        # Cached pairwise similarity matrix over (seed + dynamic) in flat order.
+        # Eliminates O(N²) recompute in _replace_weakest — incremental O(N) updates.
+        # Indices: 0..len(seed)-1 = seed rows, len(seed).. = dynamic rows.
+        self._pairwise: Optional[np.ndarray] = None  # (n, n) float32, symmetric, diag=1
 
     @classmethod
     def load_or_create(
@@ -433,8 +438,87 @@ class TemplateBank:
             bank.dynamic = bank.dynamic[:bank.size]
             bank._dynamic_filenames = bank._dynamic_filenames[:bank.size]
 
+        # Pre-compute pairwise similarity matrix once — eliminates O(N²) recompute
+        # inside each future _replace_weakest call.
+        bank._init_pairwise()
+
         logger.info(f"TemplateBank {bank_dir.name}: 1 seed + {len(bank.dynamic)}/{bank.size} dynamic loaded")
         return bank
+
+    # ── Pairwise similarity matrix (cached) ────────────────────────────────
+
+    def _flat_templates(self) -> List[TemplateRecord]:
+        """Seed + dynamic in stable insertion order (NOT sorted)."""
+        return self.seed + self.dynamic
+
+    def _compute_sim(self, a: TemplateRecord, b: TemplateRecord) -> float:
+        """Pairwise template ↔ template similarity using cached features."""
+        return _compare_target_vs_record(b.t1, b.t1_blur, b.a_centroid, b.px_count, a)['confidence']
+
+    def _init_pairwise(self) -> None:
+        """Build full N×N pairwise matrix from scratch. Called once after load."""
+        flat = self._flat_templates()
+        n = len(flat)
+        if n == 0:
+            self._pairwise = None
+            return
+        mat = np.eye(n, dtype=np.float32)
+        for i in range(n):
+            for j in range(i + 1, n):
+                conf = self._compute_sim(flat[i], flat[j])
+                mat[i, j] = mat[j, i] = conf
+        self._pairwise = mat
+
+    def _matrix_in_sync(self) -> bool:
+        n = len(self._flat_templates())
+        return self._pairwise is not None and self._pairwise.shape == (n, n)
+
+    def _append_row_to_matrix(self, sims_to_existing: List[float]) -> None:
+        """Grow matrix by 1 row+col using already-computed similarities of the
+        new template to each EXISTING template (flat order, BEFORE append)."""
+        if not self._matrix_in_sync():
+            # Out of sync — defer to full rebuild after caller appends
+            self._pairwise = None
+            return
+        n_old = self._pairwise.shape[0]
+        if len(sims_to_existing) != n_old:
+            self._pairwise = None
+            return
+        new_mat = np.eye(n_old + 1, dtype=np.float32)
+        new_mat[:n_old, :n_old] = self._pairwise
+        sims_arr = np.asarray(sims_to_existing, dtype=np.float32)
+        new_mat[:n_old, n_old] = sims_arr
+        new_mat[n_old, :n_old] = sims_arr
+        self._pairwise = new_mat
+
+    def _replace_row_in_matrix(self, flat_idx: int, sims_to_others: List[float]) -> None:
+        """Overwrite row/col at flat_idx using pre-computed similarities of new
+        template to each template in flat order (sims_to_others[flat_idx] ignored)."""
+        if not self._matrix_in_sync():
+            self._pairwise = None
+            return
+        n = self._pairwise.shape[0]
+        if flat_idx < 0 or flat_idx >= n or len(sims_to_others) != n:
+            self._pairwise = None
+            return
+        sims_arr = np.asarray(sims_to_others, dtype=np.float32)
+        self._pairwise[flat_idx, :] = sims_arr
+        self._pairwise[:, flat_idx] = sims_arr
+        self._pairwise[flat_idx, flat_idx] = 1.0
+
+    def _find_weakest_dynamic_idx(self) -> Optional[int]:
+        """Index INTO self.dynamic of slot with lowest avg pairwise sim to OTHERS.
+        Returns None if matrix unavailable or no dynamic slots."""
+        if not self._matrix_in_sync() or not self.dynamic:
+            return None
+        n_seed = len(self.seed)
+        n_total = n_seed + len(self.dynamic)
+        # Average of each dynamic row, excluding self (diag = 1.0)
+        rows = self._pairwise[n_seed:n_total]
+        sums = rows.sum(axis=1) - 1.0  # subtract diag
+        denom = max(1, n_total - 1)
+        avgs = sums / denom
+        return int(np.argmin(avgs))
 
     def all_templates(self) -> List[TemplateRecord]:
         """Seed + dynamic, ordered by hit_count desc (best-first for early termination)."""
@@ -477,18 +561,25 @@ class TemplateBank:
 
     def try_add(self, target_bgr: np.ndarray, p_ok: float) -> bool:
         """Add target as new dynamic template if conditions are met.
-        Returns True if added."""
+        Returns True if added.
+
+        Side effect: the pairwise similarities computed for diversity/sanity
+        checks are reused to update the cached pairwise matrix — avoiding any
+        extra compute when the template is actually appended/replaced.
+        """
         if p_ok < BANK_ADD_THRESHOLD:
             return False
 
-        # Diversity & sanity checks
         target_pre = _preprocess_target_for_bank(target_bgr, denoise=self.denoise)
         if target_pre is None:
             return False
         t1, t1b, ad, pxc = target_pre
 
-        sims = []
-        for tmpl in (self.seed + self.dynamic):
+        # Compute target ↔ each existing template similarity (flat order: seed + dynamic).
+        # These same numbers will be reused as the new row/col in the pairwise matrix.
+        flat = self._flat_templates()
+        sims: List[float] = []
+        for tmpl in flat:
             ratio = pxc / (tmpl.px_count + 1e-6)
             if abs(ratio - 1.0) > 0.4:
                 sims.append(0.0)
@@ -499,62 +590,90 @@ class TemplateBank:
         if not sims:
             return False
         if max(sims) > BANK_DIVERSITY_THRESHOLD:
-            return False  # too similar to existing — waste of slot
+            return False  # too similar — waste of slot
         if max(sims) < BANK_SANITY_THRESHOLD:
-            return False  # too different from any existing → outlier suspicious
+            return False  # outlier — suspicious
 
         new_rec = TemplateRecord.from_bgr(target_bgr, denoise=self.denoise)
         if new_rec is None:
             return False
 
         if len(self.dynamic) < self.size:
-            self._append(new_rec)
+            self._append(new_rec, sims_to_existing=sims)
         else:
-            self._replace_weakest(new_rec)
+            self._replace_weakest(new_rec, sims_to_existing=sims)
         return True
 
-    def _append(self, rec: TemplateRecord) -> None:
-        """Add a new dynamic slot and persist to disk."""
+    def _append(self, rec: TemplateRecord, sims_to_existing: Optional[List[float]] = None) -> None:
+        """Add a new dynamic slot and persist to disk.
+        sims_to_existing: pre-computed similarities of rec to each existing template
+        (flat order). When provided, the pairwise matrix is updated in O(N) — no
+        extra comparisons. When None, matrix is invalidated and lazily rebuilt."""
         try:
-            idx = len(self.dynamic)
-            # Find next available filename to avoid collisions
             filename = self._next_filename()
+
+            # Update matrix BEFORE adding rec to dynamic — uses pre-computed sims.
+            if sims_to_existing is not None and self._matrix_in_sync():
+                self._append_row_to_matrix(sims_to_existing)
+            else:
+                # Matrix out of sync → trigger lazy rebuild after append below
+                self._pairwise = None
+
             self.dynamic.append(rec)
             self._dynamic_filenames.append(filename)
+
+            if self._pairwise is None:
+                self._init_pairwise()  # full rebuild fallback
+
             self._save_record_to_disk(rec, filename)
             logger.info(f"Bank {self.bank_dir.name}: appended {filename} ({len(self.dynamic)}/{self.size})")
         except Exception as e:
             logger.warning(f"Bank {self.bank_dir.name}: failed to append: {e}")
 
-    def _replace_weakest(self, rec: TemplateRecord) -> None:
-        """Replace the dynamic slot with lowest avg pairwise similarity to rest."""
+    def _replace_weakest(self, rec: TemplateRecord, sims_to_existing: Optional[List[float]] = None) -> None:
+        """Replace the dynamic slot with lowest avg pairwise similarity to others.
+        sims_to_existing: same shape as _flat_templates() — used to update matrix
+        row/col without recomputing. When None, matrix is rebuilt full."""
         try:
-            n = len(self.dynamic)
-            if n == 0:
+            if not self.dynamic:
                 return
-            avg_sims = []
-            for i, t in enumerate(self.dynamic):
-                others = [o for j, o in enumerate(self.dynamic) if j != i] + self.seed
-                if not others:
-                    avg_sims.append(1.0)
-                    continue
-                t_t1, t_t1b, t_ad, t_pxc = t.t1, t.t1_blur, t.a_centroid, t.px_count
-                ss = [_compare_target_vs_record(t_t1, t_t1b, t_ad, t_pxc, o)['confidence']
-                      for o in others]
-                avg_sims.append(float(np.mean(ss)) if ss else 1.0)
-            weakest = int(np.argmin(avg_sims))
-            old_filename = self._dynamic_filenames[weakest]
-            # Remove old file
+
+            # Find weakest using O(N) lookup on cached matrix.
+            if not self._matrix_in_sync():
+                self._init_pairwise()
+            weakest_local = self._find_weakest_dynamic_idx()
+            if weakest_local is None:
+                logger.warning(f"Bank {self.bank_dir.name}: cannot find weakest (matrix missing)")
+                return
+            n_seed = len(self.seed)
+            flat_idx = n_seed + weakest_local
+
+            # Snapshot avg_sim of the slot being evicted (for log only)
+            row_sum = float(self._pairwise[flat_idx].sum() - 1.0)
+            denom = max(1, self._pairwise.shape[0] - 1)
+            evicted_avg_sim = row_sum / denom
+
+            old_filename = self._dynamic_filenames[weakest_local]
             try:
                 (self.bank_dir / old_filename).unlink(missing_ok=True)
             except Exception:
                 pass
+
             new_filename = self._next_filename()
-            self.dynamic[weakest] = rec
-            self._dynamic_filenames[weakest] = new_filename
+            self.dynamic[weakest_local] = rec
+            self._dynamic_filenames[weakest_local] = new_filename
+
+            # Update matrix row/col with already-known sims (no extra compute).
+            if sims_to_existing is not None and len(sims_to_existing) == self._pairwise.shape[0]:
+                self._replace_row_in_matrix(flat_idx, sims_to_existing)
+            else:
+                # Fallback — sims missing or shape changed
+                self._pairwise = None
+                self._init_pairwise()
+
             self._save_record_to_disk(rec, new_filename)
             logger.info(f"Bank {self.bank_dir.name}: replaced {old_filename} → {new_filename} "
-                        f"(slot {weakest}, avg_sim was {avg_sims[weakest]:.2f})")
+                        f"(slot {weakest_local}, avg_sim was {evicted_avg_sim:.2f})")
         except Exception as e:
             logger.warning(f"Bank {self.bank_dir.name}: failed to replace weakest: {e}")
 
@@ -744,10 +863,25 @@ class EmbeddingClassifierService:
         bank_base = os.path.join(os.path.dirname(self.debug_path), 'template_banks')
         self.bank_registry = TemplateBankRegistry(bank_base)
 
+        # Thread pool for parallel commit_bank_adds across N banks per frame.
+        # max_workers tuned for Jetson Orin Nano (6× Cortex-A78AE).
+        # cv2.matchTemplate releases the GIL so true parallelism is achievable.
+        self._commit_pool: Optional[ThreadPoolExecutor] = None
+        self._commit_pool_workers = int(os.environ.get('BANK_COMMIT_WORKERS', '6'))
+
         logger.info(
             f"EmbeddingClassifierService (CV-based mode): no model loaded, "
-            f"debug={self.debug_path}, bank_base={bank_base}"
+            f"debug={self.debug_path}, bank_base={bank_base}, "
+            f"commit_workers={self._commit_pool_workers}"
         )
+
+    def _get_commit_pool(self) -> ThreadPoolExecutor:
+        if self._commit_pool is None:
+            self._commit_pool = ThreadPoolExecutor(
+                max_workers=self._commit_pool_workers,
+                thread_name_prefix='bank-commit',
+            )
+        return self._commit_pool
 
     def classify_batch(
         self,
@@ -1060,31 +1194,47 @@ class EmbeddingClassifierService:
 
         - Always strips the private '_bank_try_add' key from each result dict
           (so it never leaks to FE/DB).
-        - If `should_commit` is True (typically frame-level verification PASSED),
-          calls bank.try_add() for each eligible entry. High BANK_ADD_THRESHOLD
-          + diversity/sanity checks gate which targets actually enter the bank.
+        - If `should_commit`, runs bank.try_add() for each eligible entry in
+          parallel across banks (each (recipe, serial, ann_idx) → independent bank).
+          cv2.matchTemplate releases the GIL → Python threads are truly parallel.
 
-        Returns the number of templates actually added to banks.
+        Returns count of templates actually added.
         """
-        n_added = 0
+        entries: List[Dict[str, Any]] = []
         for r in results:
             if not isinstance(r, dict):
                 continue
             entry = r.pop('_bank_try_add', None)
             if entry is None or not should_commit:
                 continue
+            entries.append(entry)
+
+        if not entries:
+            return 0
+
+        registry = self.bank_registry
+
+        def _do_one(entry: Dict[str, Any]) -> bool:
             try:
-                bank = self.bank_registry.get_existing(
+                bank = registry.get_existing(
                     entry['recipe_id'], entry['serial'], entry['ann_idx']
                 )
                 if bank is None:
-                    continue
-                if bank.try_add(entry['target_bgr'], entry['p_ok']):
-                    n_added += 1
+                    return False
+                return bank.try_add(entry['target_bgr'], entry['p_ok'])
             except Exception as e:
-                logger.warning(f"commit_bank_adds failed for entry: {e}")
+                logger.warning(f"commit_bank_add (parallel) failed: {e}")
+                return False
+
+        # Single-task fast path — avoid pool submit overhead
+        if len(entries) == 1:
+            n_added = int(_do_one(entries[0]))
+        else:
+            pool = self._get_commit_pool()
+            n_added = sum(1 for r in pool.map(_do_one, entries) if r)
+
         if n_added:
-            logger.info(f"Bank: committed {n_added} new template(s)")
+            logger.info(f"Bank: committed {n_added} new template(s) (parallel, n_tasks={len(entries)})")
         return n_added
 
     def reset_template_bank(
