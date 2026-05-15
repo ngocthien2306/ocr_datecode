@@ -276,12 +276,14 @@ def trigger_reject_pulse(do_number: int, pulse_ms: int = 100):
         if not _write_do_raw(do_number, 0):
             raise RuntimeError(f"Failed to set DO{do_number} LOW")
 
-        # Hold pulse - _gpio_lock is FREE during sleep, DI reads can proceed
-        time.sleep(pulse_ms / 1000.0)
-
-        # Set HIGH (inactive)
-        if not _write_do_raw(do_number, 1):
-            raise RuntimeError(f"Failed to set DO{do_number} HIGH")
+        try:
+            # Hold pulse - _gpio_lock is FREE during sleep, DI reads can proceed
+            time.sleep(pulse_ms / 1000.0)
+        finally:
+            # Always release pin to HIGH — even if sleep is interrupted or exception occurs.
+            # Without this, a hardware write failure leaves the relay energized (stuck ON).
+            if not _write_do_raw(do_number, 1):
+                logger.error(f"CRITICAL: Failed to release DO{do_number} to HIGH — pin may be stuck active!")
 
     print(f"DO{do_number} pulse complete ({pulse_ms}ms)")
     logger.info(f"DO{do_number} pulse complete ({pulse_ms}ms)")

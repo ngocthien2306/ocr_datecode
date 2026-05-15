@@ -564,18 +564,24 @@ class RejectScheduler:
                     import threading
 
                     def pulse_reject_dio():
-                        if self._do_control_callback:
-                            self._do_control_callback(reject_address, pulse_ms=self._reject_pulse_ms)
-                        else:
-                            from .utils import trigger_reject_pulse
-                            trigger_reject_pulse(reject_address, pulse_ms=self._reject_pulse_ms)
+                        try:
+                            if self._do_control_callback:
+                                self._do_control_callback(reject_address, pulse_ms=self._reject_pulse_ms)
+                            else:
+                                from .utils import trigger_reject_pulse
+                                trigger_reject_pulse(reject_address, pulse_ms=self._reject_pulse_ms)
+                        except Exception as exc:
+                            logger.error(f"[Group #{entry.group_id}] ❌ Reject pulse DO{reject_address} failed: {exc}")
 
                     def pulse_alarm_dio():
-                        if self._do_control_callback:
-                            self._do_control_callback(alarm_address, pulse_ms=self._reject_pulse_ms)
-                        else:
-                            from .utils import trigger_reject_pulse
-                            trigger_reject_pulse(alarm_address, pulse_ms=self._reject_pulse_ms)
+                        try:
+                            if self._do_control_callback:
+                                self._do_control_callback(alarm_address, pulse_ms=self._reject_pulse_ms)
+                            else:
+                                from .utils import trigger_reject_pulse
+                                trigger_reject_pulse(alarm_address, pulse_ms=self._reject_pulse_ms)
+                        except Exception as exc:
+                            logger.error(f"[Group #{entry.group_id}] ❌ Alarm pulse DO{alarm_address} failed: {exc}")
 
                     # Start both threads
                     t_reject = threading.Thread(target=pulse_reject_dio, daemon=True)
