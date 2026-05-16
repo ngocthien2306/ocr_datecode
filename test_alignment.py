@@ -56,47 +56,79 @@ def fill_label_black(img_bgr, label_pts):
     return out
 
 
-def points_to_box(pts):
-    arr = np.asarray(pts, dtype=np.float32)
-    return {
-        'x_min': int(arr[:, 0].min()), 'x_max': int(arr[:, 0].max()),
-        'y_min': int(arr[:, 1].min()), 'y_max': int(arr[:, 1].max()),
-    }
+def label_perp_width(label_pts):
+    """Khoảng cách perpendicular giữa mép trái và mép phải của label (qua midpoint)."""
+    p = np.asarray(label_pts, dtype=np.float32)
+    left_mid  = (p[0] + p[3]) / 2.0   # midpoint mép trái (TL→BL)
+    right_mid = (p[1] + p[2]) / 2.0   # midpoint mép phải (TR→BR)
+    return float(np.linalg.norm(right_mid - left_mid))
 
 
-def detect_inner_wall(gray, label_box, side, search_w=SEARCH_W):
+def detect_inner_wall(gray, label_pts, side, search_w=SEARCH_W):
     """
-    Scan từ mép label ra ngoài, lấy peak đầu tiên = cạnh TRONG chai.
+    Search dọc rotated strip song song với cạnh label (handle label xoay).
 
-    gray: full frame grayscale (đã fill label đen)
-    side: 'left' hoặc 'right'
-    Trả về dict với x_frame, peak_height, profile, peaks, picked, ROI.
-    Nếu không detect được → x_frame=None.
+    label_pts: 4 corner [TL, TR, BR, BL] trong frame
+    side:      'left' (cạnh TL→BL) | 'right' (cạnh TR→BR)
+    Trả về dict:
+      x_offset:   perpendicular distance từ mép label ra ngoài đến cạnh chai (px)
+      inner_line: [(x1,y1),(x2,y2)] toạ độ cạnh chai trong frame
+      src_quad:   4 corner của search ROI trong frame (để visualize)
+      profile, peaks, picked, peak_height: như cũ
+      reason:     chuỗi giải thích nếu không detect được
     """
-    H, W = gray.shape[:2]
-    y1 = max(0, label_box['y_min'])
-    y2 = min(H, label_box['y_max'])
-    out = {'x_frame': None, 'peak_height': 0.0, 'side': side,
+    pts = np.asarray(label_pts, dtype=np.float32)
+    out = {'x_offset': None, 'peak_height': 0.0, 'side': side,
            'profile': None, 'peaks': np.array([]), 'picked': -1,
-           'x_start': 0, 'x_end': 0, 'y1': y1, 'y2': y2,
+           'src_quad': None, 'inner_line': None,
+           'p_top': None, 'p_bot': None,
            'reason': ''}
-    if y2 <= y1:
-        out['reason'] = 'empty_y_band'
-        return out
 
     if side == 'left':
-        x_start = max(0, label_box['x_min'] - search_w)
-        x_end   = label_box['x_min'] - EDGE_MARGIN
+        p_top, p_bot = pts[0], pts[3]   # TL, BL
     else:
-        x_start = label_box['x_max'] + EDGE_MARGIN
-        x_end   = min(W, label_box['x_max'] + search_w)
-    out['x_start'], out['x_end'] = x_start, x_end
-    if x_end - x_start < MIN_SEARCH_PX:
+        p_top, p_bot = pts[1], pts[2]   # TR, BR
+    out['p_top'], out['p_bot'] = p_top.tolist(), p_bot.tolist()
+
+    edge_vec = p_bot - p_top
+    edge_len = float(np.linalg.norm(edge_vec))
+    if edge_len < 10:
+        out['reason'] = 'edge_too_short'
+        return out
+    edge_dir = edge_vec / edge_len
+
+    # Perpendicular outward (away from label) — image-coord rotation
+    # edge_dir đi từ TOP → BOTTOM. Trong toạ độ ảnh (Y xuống):
+    #   outward LEFT  = (-edge_y,  edge_x)
+    #   outward RIGHT = ( edge_y, -edge_x)
+    if side == 'left':
+        perp = np.array([-edge_dir[1], edge_dir[0]], dtype=np.float32)
+    else:
+        perp = np.array([ edge_dir[1], -edge_dir[0]], dtype=np.float32)
+
+    # 4 corner search ROI (rotated quad trong frame):
+    inner_top = p_top + EDGE_MARGIN * perp
+    inner_bot = p_bot + EDGE_MARGIN * perp
+    outer_top = p_top + float(search_w) * perp
+    outer_bot = p_bot + float(search_w) * perp
+    src_quad = np.array([inner_top, outer_top, outer_bot, inner_bot], dtype=np.float32)
+    out['src_quad'] = src_quad.tolist()
+
+    h = int(round(edge_len))
+    w = int(search_w - EDGE_MARGIN)
+    if w < MIN_SEARCH_PX or h < 10:
         out['reason'] = 'window_too_narrow'
         return out
 
-    region = gray[y1:y2, x_start:x_end]
-    sobel = cv2.Scharr(region.astype(np.float32), cv2.CV_32F, 1, 0)
+    # Warp rotated strip thành ảnh axis-aligned (X = outward distance, Y = along edge)
+    dst_quad = np.array([[0, 0], [w, 0], [w, h], [0, h]], dtype=np.float32)
+    M = cv2.getPerspectiveTransform(src_quad, dst_quad)
+    strip = cv2.warpPerspective(gray, M, (w, h),
+                                flags=cv2.INTER_LINEAR,
+                                borderMode=cv2.BORDER_REPLICATE)
+
+    # Sobel X (gradient theo outward direction)
+    sobel = cv2.Scharr(strip.astype(np.float32), cv2.CV_32F, 1, 0)
     profile = np.sum(np.abs(sobel), axis=0)
     profile = gaussian_filter1d(profile, sigma=1.5)
 
@@ -114,42 +146,45 @@ def detect_inner_wall(gray, label_box, side, search_w=SEARCH_W):
         out['reason'] = 'no_peaks'
         return out
 
-    if side == 'left':
-        idx = int(np.argmax(peaks))
-    else:
-        idx = 0
+    # Với rotated strip: x=0 luôn sát label, x=w xa nhất → peak gần label = smallest x
+    idx = 0
     inner_local = int(peaks[idx])
     out['picked'] = idx
-    out['x_frame'] = x_start + inner_local
     out['peak_height'] = float(props['peak_heights'][idx])
+
+    # Perpendicular distance từ mép label
+    out['x_offset'] = inner_local + EDGE_MARGIN
+
+    # Cạnh chai trong frame: line từ top → bot, dịch outward (inner_local + EDGE_MARGIN)
+    inner_pt_top = p_top + (inner_local + EDGE_MARGIN) * perp
+    inner_pt_bot = p_bot + (inner_local + EDGE_MARGIN) * perp
+    out['inner_line'] = [inner_pt_top.tolist(), inner_pt_bot.tolist()]
     return out
 
 
 # ─── Debug visualization helpers ─────────────────────────────────────────────
 def draw_search_rois(img_bgr, info_L, info_R):
-    """Draw search ROI rectangles for both sides on a copy of img_bgr."""
+    """Draw rotated search ROI quads cho cả 2 side."""
     out = img_bgr.copy()
     for info, color, lbl in [(info_L, (0, 255, 255), 'L search'),
                               (info_R, (0, 255, 255), 'R search')]:
-        if info['x_end'] > info['x_start']:
-            cv2.rectangle(out,
-                          (info['x_start'], info['y1']),
-                          (info['x_end'],   info['y2']),
-                          color, 2)
-            cv2.putText(out, lbl, (info['x_start'], max(20, info['y1'] - 8)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        if info.get('src_quad') is None:
+            continue
+        quad = np.array(info['src_quad'], dtype=np.int32)
+        cv2.polylines(out, [quad], True, color, 2)
+        cv2.putText(out, lbl, tuple(quad[0]),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
     return out
 
 
 def plot_profile(info, canvas_h=220, scale=2):
     """
-    Vẽ profile 1D thành ảnh: trục X = local x trong search ROI,
-    marker peaks (đỏ = picked, cam = các peak khác).
+    Vẽ profile 1D: trục X = outward distance từ label (px),
+    red dot = peak chosen, cam = peak khác.
     """
     profile = info['profile']
     if profile is None or len(profile) == 0:
-        canvas = np.full((canvas_h, max(200, info['x_end'] - info['x_start']) * scale, 3),
-                         40, dtype=np.uint8)
+        canvas = np.full((canvas_h, 400, 3), 40, dtype=np.uint8)
         cv2.putText(canvas, f"no profile ({info.get('reason','')})",
                     (10, canvas_h // 2),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
@@ -162,13 +197,11 @@ def plot_profile(info, canvas_h=220, scale=2):
     baseline_y = canvas_h - 15
     top_y      = 15
 
-    # Threshold line
     th_y = baseline_y - int(PEAK_HEIGHT * (baseline_y - top_y))
     cv2.line(canvas, (0, th_y), (canvas_w, th_y), (80, 80, 180), 1)
     cv2.putText(canvas, f"thresh={PEAK_HEIGHT}", (5, th_y - 4),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (120, 120, 220), 1)
 
-    # Profile polyline
     pts = []
     for i, v in enumerate(profile):
         x = i * scale
@@ -177,7 +210,6 @@ def plot_profile(info, canvas_h=220, scale=2):
     for i in range(len(pts) - 1):
         cv2.line(canvas, pts[i], pts[i + 1], (220, 220, 220), 1)
 
-    # Peaks
     for j, p in enumerate(info['peaks']):
         x = int(p) * scale
         y = baseline_y - int(profile[p] * (baseline_y - top_y))
@@ -186,13 +218,12 @@ def plot_profile(info, canvas_h=220, scale=2):
         cv2.circle(canvas, (x, y), 5, col, -1)
         cv2.line(canvas, (x, baseline_y), (x, y), col, 1)
         if is_picked:
-            x_frame = info['x_start'] + int(p)
-            cv2.putText(canvas, f"x={x_frame}", (x + 8, y + 5),
+            offset = int(p) + EDGE_MARGIN
+            cv2.putText(canvas, f"gap={offset}", (x + 8, y + 5),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1)
 
-    # Axis label
     side = info['side'].upper()
-    cv2.putText(canvas, f"{side} profile (x_start={info['x_start']})",
+    cv2.putText(canvas, f"{side} profile (perp from label edge)",
                 (5, top_y - 2),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
     cv2.line(canvas, (0, baseline_y), (canvas_w, baseline_y), (100, 100, 100), 1)
@@ -242,39 +273,33 @@ for serial in CAMERAS:
     tmpl_masked = fill_label_black(tmpl_bgr, tmpl_label['points'])
     tmpl_gray = cv2.cvtColor(tmpl_masked, cv2.COLOR_BGR2GRAY)
 
-    t_info_L = detect_inner_wall(tmpl_gray, tmpl_label, 'left')
-    t_info_R = detect_inner_wall(tmpl_gray, tmpl_label, 'right')
-    t_left, t_right = t_info_L['x_frame'], t_info_R['x_frame']
-
-    if t_left is None or t_right is None:
+    t_info_L = detect_inner_wall(tmpl_gray, tmpl_label['points'], 'left')
+    t_info_R = detect_inner_wall(tmpl_gray, tmpl_label['points'], 'right')
+    if t_info_L['x_offset'] is None or t_info_R['x_offset'] is None:
         print(f"[{serial}] template inner walls NOT detected "
-              f"(left={t_left}, right={t_right}) → skip")
+              f"(L={t_info_L['reason']} R={t_info_R['reason']}) → skip")
         continue
 
-    tmpl_inner_w = t_right - t_left
-    tmpl_gap_L = tmpl_label['x_min'] - t_left
-    tmpl_gap_R = t_right - tmpl_label['x_max']
+    tmpl_label_w = label_perp_width(tmpl_label['points'])
+    tmpl_gap_L = t_info_L['x_offset']
+    tmpl_gap_R = t_info_R['x_offset']
+    tmpl_inner_w = tmpl_gap_L + tmpl_label_w + tmpl_gap_R   # perp inner-to-inner
 
     print(f"\n=== {serial} ===")
-    print(f"  template: label_x=({tmpl_label['x_min']}..{tmpl_label['x_max']}) "
-          f"inner_x=({t_left}..{t_right}) width={tmpl_inner_w}")
-    print(f"            gap_L={tmpl_gap_L} gap_R={tmpl_gap_R}")
+    print(f"  template: label_perp_w={tmpl_label_w:.1f}  "
+          f"gap_L={tmpl_gap_L}  gap_R={tmpl_gap_R}  inner_w={tmpl_inner_w:.1f}")
 
-    # Template final vis + debug stack
+    # Template visualization: rotated walls + label polygon
     tvis = tmpl_bgr.copy()
-    cv2.rectangle(tvis,
-                  (tmpl_label['x_min'], max(0, tmpl_label['y_min'])),
-                  (tmpl_label['x_max'], min(tvis.shape[0], tmpl_label['y_max'])),
-                  (220, 220, 0), 2)
-    H = tvis.shape[0]
-    cv2.line(tvis, (t_left, 0),  (t_left, H),  (0, 255, 0), 2)
-    cv2.line(tvis, (t_right, 0), (t_right, H), (0, 255, 0), 2)
-    cv2.putText(tvis, f"gap_L={tmpl_gap_L}", (t_left + 5, 60),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 220, 0), 2)
-    cv2.putText(tvis, f"gap_R={tmpl_gap_R}", (t_right - 200, 60),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 220, 0), 2)
-    cv2.putText(tvis, f"inner_w={tmpl_inner_w}", (10, 35),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
+    cv2.polylines(tvis, [np.array(tmpl_label['points'], dtype=np.int32)],
+                  True, (220, 220, 0), 2)
+    for info, col in [(t_info_L, (0, 255, 0)), (t_info_R, (0, 255, 0))]:
+        if info['inner_line']:
+            p0, p1 = info['inner_line']
+            cv2.line(tvis, (int(p0[0]), int(p0[1])), (int(p1[0]), int(p1[1])), col, 2)
+    cv2.putText(tvis, f"gap_L={tmpl_gap_L}  gap_R={tmpl_gap_R}  "
+                f"label_w={tmpl_label_w:.0f}  inner_w={tmpl_inner_w:.0f}",
+                (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 220, 220), 2)
     cv2.imwrite(str(out_cam / "_template_check.jpg"), tvis)
     if SAVE_DEBUG:
         save_debug(out_cam / "_template_debug", tmpl_bgr, tmpl_masked,
@@ -300,37 +325,38 @@ for serial in CAMERAS:
         if label_pts is None:
             continue
 
-        label_box = points_to_box(label_pts)
         masked = fill_label_black(full, label_pts)
         gray = cv2.cvtColor(masked, cv2.COLOR_BGR2GRAY)
 
-        info_L = detect_inner_wall(gray, label_box, 'left')
-        info_R = detect_inner_wall(gray, label_box, 'right')
-        left_x,  left_h  = info_L['x_frame'],  info_L['peak_height']
-        right_x, right_h = info_R['x_frame'], info_R['peak_height']
+        info_L = detect_inner_wall(gray, label_pts, 'left')
+        info_R = detect_inner_wall(gray, label_pts, 'right')
+        gL_det, lh = info_L['x_offset'], info_L['peak_height']
+        gR_det, rh = info_R['x_offset'], info_R['peak_height']
+        target_label_w = label_perp_width(label_pts)
+        expected_total = tmpl_inner_w   # tmpl_gap_L + tmpl_label_w + tmpl_gap_R
 
-        # ── Sanity + extrapolate ──────────────────────────────────────────────
+        # ── Sanity + extrapolate (theo perpendicular gap) ─────────────────────
         source = 'both'
-        if left_x is not None and right_x is not None:
-            measured_w = right_x - left_x
-            rel_err = abs(measured_w - tmpl_inner_w) / max(tmpl_inner_w, 1)
+        if gL_det is not None and gR_det is not None:
+            total = gL_det + target_label_w + gR_det
+            rel_err = abs(total - expected_total) / max(expected_total, 1)
             if rel_err > WIDTH_TOL:
-                if left_h >= right_h:
-                    right_x = left_x + tmpl_inner_w
+                # 1 cạnh bắt sai → giữ peak cao hơn, extrapolate cạnh kia
+                if lh >= rh:
+                    gR_det = max(0, expected_total - target_label_w - gL_det)
                     source = 'extrap_R'
                 else:
-                    left_x = right_x - tmpl_inner_w
+                    gL_det = max(0, expected_total - target_label_w - gR_det)
                     source = 'extrap_L'
-        elif left_x is not None:
-            right_x = left_x + tmpl_inner_w
+        elif gL_det is not None:
+            gR_det = max(0, expected_total - target_label_w - gL_det)
             source = 'extrap_R'
-        elif right_x is not None:
-            left_x = right_x - tmpl_inner_w
+        elif gR_det is not None:
+            gL_det = max(0, expected_total - target_label_w - gR_det)
             source = 'extrap_L'
         else:
             n_skip += 1
             if SAVE_DEBUG:
-                # vẫn lưu debug để biết tại sao skip
                 fail_vis = full.copy()
                 cv2.putText(fail_vis,
                             f"SKIP: L={info_L['reason']} R={info_R['reason']}",
@@ -339,8 +365,8 @@ for serial in CAMERAS:
                            info_L, info_R, fail_vis)
             continue
 
-        gap_L = int(label_box['x_min'] - left_x)
-        gap_R = int(right_x - label_box['x_max'])
+        gap_L = int(round(gL_det))
+        gap_R = int(round(gR_det))
         gap_min = min(gap_L, gap_R)
         is_ok = gap_min >= TOUCH_MARGIN
 
@@ -351,28 +377,50 @@ for serial in CAMERAS:
         else:
             n_fail += 1
 
+        # ── Helper: build inner wall line cho cả case extrapolate ──────────────
+        def build_wall_line(info, side, gap_perp):
+            """Trả về (p_top, p_bot) trong frame của cạnh trong, dùng gap_perp px.
+            Perp formula PHẢI match detect_inner_wall — outward direction.
+            """
+            pts_arr = np.asarray(label_pts, dtype=np.float32)
+            if side == 'left':
+                p_top, p_bot = pts_arr[0], pts_arr[3]
+            else:
+                p_top, p_bot = pts_arr[1], pts_arr[2]
+            edge = p_bot - p_top
+            edge_len = float(np.linalg.norm(edge)) or 1.0
+            edge_dir = edge / edge_len
+            if side == 'left':
+                perp = np.array([-edge_dir[1], edge_dir[0]], dtype=np.float32)
+            else:
+                perp = np.array([ edge_dir[1], -edge_dir[0]], dtype=np.float32)
+            return (p_top + gap_perp * perp, p_bot + gap_perp * perp)
+
         # ── Visualize ─────────────────────────────────────────────────────────
         vis = full.copy()
-        Hv = vis.shape[0]
 
-        # Label bbox (cyan)
+        # Label polygon (cyan)
         cv2.polylines(vis, [np.array(label_pts, dtype=np.int32)],
                       True, (220, 220, 0), 2)
 
         # Inner walls (green if detected, orange if extrapolated)
         c_l = (0, 165, 255) if source == 'extrap_L' else (0, 255, 0)
         c_r = (0, 165, 255) if source == 'extrap_R' else (0, 255, 0)
-        cv2.line(vis, (int(left_x), 0),  (int(left_x), Hv),  c_l, 2)
-        cv2.line(vis, (int(right_x), 0), (int(right_x), Hv), c_r, 2)
+        wl_top, wl_bot = build_wall_line(info_L, 'left',  gap_L)
+        wr_top, wr_bot = build_wall_line(info_R, 'right', gap_R)
+        cv2.line(vis, (int(wl_top[0]), int(wl_top[1])),
+                      (int(wl_bot[0]), int(wl_bot[1])), c_l, 2)
+        cv2.line(vis, (int(wr_top[0]), int(wr_top[1])),
+                      (int(wr_bot[0]), int(wr_bot[1])), c_r, 2)
 
-        # Gap text inline với label band
-        y_text = (label_box['y_min'] + label_box['y_max']) // 2
-        y_text = max(40, min(Hv - 20, y_text))
+        # Gap text gần midpoint của wall
         col_L = (0, 220, 0) if gap_L >= TOUCH_MARGIN else (0, 0, 255)
         col_R = (0, 220, 0) if gap_R >= TOUCH_MARGIN else (0, 0, 255)
-        cv2.putText(vis, f"L={gap_L}", (int(left_x) + 8, y_text),
+        wl_mid = ((wl_top + wl_bot) / 2).astype(int)
+        wr_mid = ((wr_top + wr_bot) / 2).astype(int)
+        cv2.putText(vis, f"L={gap_L}", (int(wl_mid[0]) - 80, int(wl_mid[1])),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, col_L, 2)
-        cv2.putText(vis, f"R={gap_R}", (int(right_x) - 110, y_text),
+        cv2.putText(vis, f"R={gap_R}", (int(wr_mid[0]) + 10, int(wr_mid[1])),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, col_R, 2)
 
         tag = (f"gapL={gap_L}  gapR={gap_R}  "
