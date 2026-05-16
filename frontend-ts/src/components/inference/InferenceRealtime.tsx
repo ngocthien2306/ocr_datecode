@@ -785,20 +785,34 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
       // 4. Collect text/datecode/char annotations for user review.
       //    - text/datecode prefill from OCR `recognized` (what AI actually read)
       //    - char prefill from recipe text (ML classifier verifies OK/NG, doesn't recognize chars)
+      //    Sort by spatial position (top-to-bottom, left-to-right) so reading order is intuitive
+      //    even when annotation_index doesn't match — e.g. user added char "M" last → annIdx=40
+      //    but spatially belongs at the start of "MAY 15 2028".
       const textEditItems: TextEditItem[] = recipeAnnotations
         .map((ann: any, idx: number): TextEditItem | null => {
           if (ann.type !== 'text' && ann.type !== 'datecode' && ann.type !== 'char') return null;
           const tvResult = textVerification?.results?.find((r: any) => r.annotation_idx === idx);
           const recognized = ann.type === 'char' ? '' : (tvResult?.recognized ?? '');
+          // Centre of bbox in relative coords (fallback to 0 if missing)
+          const cx = (typeof ann.x === 'number' && typeof ann.width === 'number') ? ann.x + ann.width / 2 : 0;
+          const cy = (typeof ann.y === 'number' && typeof ann.height === 'number') ? ann.y + ann.height / 2 : 0;
           return {
             idx,
             type: ann.type,
             label: `Region ${idx + 1}`,
             oldText: ann.text ?? '',
             newText: recognized || (ann.text ?? ''),
-          };
+            _cy: cy,
+            _cx: cx,
+          } as TextEditItem & { _cy: number; _cx: number };
         })
-        .filter((item): item is TextEditItem => item !== null);
+        .filter((item): item is TextEditItem & { _cy: number; _cx: number } => item !== null)
+        // Group by row band (5% relative height tolerance) then sort left-to-right within row.
+        .sort((a, b) => {
+          const rowBand = 0.05;
+          if (Math.abs(a._cy - b._cy) > rowBand) return a._cy - b._cy;
+          return a._cx - b._cx;
+        });
 
       if (textEditItems.length > 0) {
         // Show review dialog — release button loading, dialog takes over

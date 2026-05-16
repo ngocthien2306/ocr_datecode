@@ -45,18 +45,11 @@ export default function TemplateTextEditDialog({ isOpen, templateName, items, is
         </div>
 
         <div className="tted-body">
-          <div className="tted-col-header">
-            <span>Region</span>
-            <span>Old text</span>
-            <span />
-            <span>New text</span>
-          </div>
-
           {editedItems.map(item => (
-            <div key={item.idx} className="tted-row">
+            <div key={item.idx} className={`tted-row tted-row-${item.type}`}>
               <div className="tted-label">
                 <span className={`tted-type-badge tted-type-${item.type}`}>{item.type}</span>
-                <span className="tted-label-text">{item.label}</span>
+                {item.type !== 'char' && <span className="tted-label-text">{item.label}</span>}
               </div>
 
               <div className="tted-old-text">
@@ -70,8 +63,9 @@ export default function TemplateTextEditDialog({ isOpen, templateName, items, is
                 value={item.newText}
                 onChange={e => handleTextChange(item.idx, e.target.value)}
                 disabled={isLoading}
-                placeholder="New text..."
+                placeholder={item.type === 'char' ? '' : 'New text...'}
                 spellCheck={false}
+                maxLength={item.type === 'char' ? 3 : undefined}
               />
             </div>
           ))}

@@ -80,28 +80,14 @@
   overflow-y: auto;
   padding: 16px 24px;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-content: flex-start;
 }
 
-.tted-col-header {
-  display: grid;
-  grid-template-columns: 140px 1fr 28px 1fr;
-  gap: 12px;
-  align-items: center;
-  padding: 6px 8px;
-  margin-bottom: 4px;
-}
-
-.tted-col-header span {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: #475569;
-}
-
+/* Default row (text / datecode) — full width */
 .tted-row {
+  flex: 1 1 100%;
   display: grid;
   grid-template-columns: 140px 1fr 28px 1fr;
   gap: 12px;
@@ -115,6 +101,27 @@
 
 .tted-row:hover {
   background: rgba(255, 255, 255, 0.06);
+}
+
+/* Char row — compact, 4 per row */
+.tted-row-char {
+  flex: 1 1 calc(25% - 4px);
+  min-width: 130px;
+  grid-template-columns: auto minmax(0, 1fr) 14px minmax(0, 1fr);
+  gap: 6px;
+  padding: 6px 8px;
+}
+
+.tted-row-char .tted-old-text,
+.tted-row-char .tted-input {
+  font-size: 13px;
+  padding: 3px 6px;
+  min-height: 26px;
+  text-align: center;
+}
+
+.tted-row-char .tted-arrow {
+  font-size: 13px;
 }
 
 .tted-label {
@@ -144,6 +151,14 @@
   background: rgba(168, 85, 247, 0.2);
   color: #c084fc;
   border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+.tted-type-char {
+  background: rgba(251, 191, 36, 0.18);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  font-size: 9px;
+  padding: 1px 4px;
 }
 
 .tted-label-text {
