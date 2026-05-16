@@ -103,9 +103,9 @@
   background: rgba(255, 255, 255, 0.06);
 }
 
-/* Char row — compact, 4 per row */
+/* Char row — compact, 4 per row, no stretching when alone */
 .tted-row-char {
-  flex: 1 1 calc(25% - 4px);
+  flex: 0 0 calc(25% - 3px);
   min-width: 130px;
   grid-template-columns: auto minmax(0, 1fr) 14px minmax(0, 1fr);
   gap: 6px;
