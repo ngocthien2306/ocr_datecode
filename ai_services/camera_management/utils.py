@@ -276,12 +276,14 @@ def trigger_reject_pulse(do_number: int, pulse_ms: int = 100):
         if not _write_do_raw(do_number, 0):
             raise RuntimeError(f"Failed to set DO{do_number} LOW")
 
-        # Hold pulse - _gpio_lock is FREE during sleep, DI reads can proceed
-        time.sleep(pulse_ms / 1000.0)
-
-        # Set HIGH (inactive)
-        if not _write_do_raw(do_number, 1):
-            raise RuntimeError(f"Failed to set DO{do_number} HIGH")
+        try:
+            # Hold pulse - _gpio_lock is FREE during sleep, DI reads can proceed
+            time.sleep(pulse_ms / 1000.0)
+        finally:
+            # Always release pin to HIGH — even if sleep is interrupted or exception occurs.
+            # Without this, a hardware write failure leaves the relay energized (stuck ON).
+            if not _write_do_raw(do_number, 1):
+                logger.error(f"CRITICAL: Failed to release DO{do_number} to HIGH — pin may be stuck active!")
 
     print(f"DO{do_number} pulse complete ({pulse_ms}ms)")
     logger.info(f"DO{do_number} pulse complete ({pulse_ms}ms)")
@@ -754,6 +756,8 @@ def draw_detected_obb_boxes(
             label_text = " ".join(label_parts)
 
             # Calculate label position (top-left corner of box)
+            if corners is None:
+                continue
             label_x = int(corners[0][0])
             label_y = int(corners[0][1]) - 8
 
@@ -822,11 +826,14 @@ def encode_frame_for_display(
         if product_verification and not product_verification.get('skipped', False):
             detected_boxes = product_verification.get('detected_boxes')
             if detected_boxes:
-                img_to_encode = draw_detected_obb_boxes(
-                    img_to_encode,
-                    detected_boxes,
-                    show_details=True
-                )
+                try:
+                    img_to_encode = draw_detected_obb_boxes(
+                        img_to_encode,
+                        detected_boxes,
+                        show_details=True
+                    )
+                except Exception as draw_err:
+                    logger.warning(f"draw_detected_obb_boxes failed, skipping overlay: {draw_err}", exc_info=True)
 
             # Draw center points (template center and product center)
             center_alignment_check = product_verification.get('center_alignment_check')
@@ -845,9 +852,7 @@ def encode_frame_for_display(
         return image_base64
 
     except Exception as e:
-        logger.error(f"Error encoding frame for display: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Error encoding frame for display: {e}", exc_info=True)
         return None
 
 

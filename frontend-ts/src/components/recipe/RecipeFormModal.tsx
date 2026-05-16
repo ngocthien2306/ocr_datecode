@@ -1943,7 +1943,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                     </div>
 
                     {/* ── Char Denoise — largest-CC filter (embedding mode only) ── */}
-                    <div className={`template-bank-card ${formData.classifier_backend !== 'embedding' ? 'disabled' : ''}`}>
+                    {/* <div className={`template-bank-card ${formData.classifier_backend !== 'embedding' ? 'disabled' : ''}`}>
                       <label className="template-bank-card__title">
                         <input
                           type="checkbox"
@@ -1956,10 +1956,10 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         />
                         Char Denoise (largest-CC filter)
                       </label>
-                    </div>
+                    </div> */}
 
                     {/* ── Template Bank — adaptive multi-template (embedding mode only) ── */}
-                    <div className={`template-bank-card ${formData.classifier_backend !== 'embedding' ? 'disabled' : ''}`}>
+                    {/* <div className={`template-bank-card ${formData.classifier_backend !== 'embedding' ? 'disabled' : ''}`}>
                       <label className="template-bank-card__title">
                         <input
                           type="checkbox"
@@ -1992,7 +1992,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         />
                         <span className="unit">dynamic templates (1-50)</span>
                       </div>
-                    </div>
+                    </div> */}
                   </div>
                   <div className="model-column">
                     <h3>ML Quality Inspection</h3>
