@@ -110,6 +110,22 @@
   grid-template-columns: auto minmax(0, 1fr) 14px minmax(0, 1fr);
   gap: 6px;
   padding: 6px 8px;
+  cursor: grab;
+  user-select: none;
+}
+
+.tted-row-char:active {
+  cursor: grabbing;
+}
+
+.tted-row.is-dragging {
+  opacity: 0.35;
+}
+
+.tted-row.is-drop-target {
+  outline: 2px dashed #3b82f6;
+  outline-offset: -2px;
+  background: rgba(59, 130, 246, 0.1);
 }
 
 .tted-row-char .tted-old-text,

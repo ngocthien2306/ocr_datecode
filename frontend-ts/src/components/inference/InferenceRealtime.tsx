@@ -692,11 +692,36 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
       recipeAnnotations, detectedRegions, textVerification, uploadWidth, uploadHeight
     );
 
+    // Apply text overrides from dialog (by original annotation_index)
     confirmedItems.forEach(item => {
       if (newAnnotations[item.idx]) {
         newAnnotations[item.idx] = { ...newAnnotations[item.idx], text: item.newText };
       }
     });
+
+    // Reorder display items (text/datecode/char) based on dialog's new order.
+    // Non-display items (template, crop_area, product, label, mask) keep their array slots.
+    // Display slots are filled in confirmedItems' new order — char drag-drop reorder feeds in here.
+    if (confirmedItems.length > 0) {
+      const displaySlots: number[] = [];
+      newAnnotations.forEach((ann: any, i: number) => {
+        if (ann.type === 'text' || ann.type === 'datecode' || ann.type === 'char') {
+          displaySlots.push(i);
+        }
+      });
+      if (displaySlots.length === confirmedItems.length) {
+        const annByOriginalIdx: Record<number, any> = {};
+        newAnnotations.forEach((ann: any, i: number) => { annByOriginalIdx[i] = ann; });
+        const reordered = [...newAnnotations];
+        displaySlots.forEach((slot, i) => {
+          const originalIdx = confirmedItems[i]?.idx;
+          if (originalIdx !== undefined && annByOriginalIdx[originalIdx]) {
+            reordered[slot] = annByOriginalIdx[originalIdx];
+          }
+        });
+        newAnnotations = reordered;
+      }
+    }
 
     const metadataSnapshot = runningRecipe?.metadata;
 
