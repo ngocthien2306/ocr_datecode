@@ -102,8 +102,11 @@ function _matchByOverlap(
   return { merged, inheritedCount: matches.size };
 }
 
-// Pad chars by +4px on width AND +4px on height (2px each side), in image pixel units.
-const CHAR_PAD_PX = 4;
+// Padding around each segmented char, in image pixel units.
+// Horizontal: small to avoid grabbing neighbor characters.
+// Vertical:   larger to recover ascenders/descenders (b, g, j, p, q, y, ...).
+const CHAR_PAD_X_PX = 6;   // total width  → 3 px each side
+const CHAR_PAD_Y_PX = 8;   // total height → 4 px each side
 
 function buildPaddedChar(
   seg: { x: number; y: number; w: number; h: number; expected_text?: string | null },
@@ -111,10 +114,10 @@ function buildPaddedChar(
   imageWidth: number,
   imageHeight: number,
 ): any {
-  const halfDxN = (CHAR_PAD_PX / 2) / imageWidth;
-  const halfDyN = (CHAR_PAD_PX / 2) / imageHeight;
-  const dxN = CHAR_PAD_PX / imageWidth;
-  const dyN = CHAR_PAD_PX / imageHeight;
+  const halfDxN = (CHAR_PAD_X_PX / 2) / imageWidth;
+  const halfDyN = (CHAR_PAD_Y_PX / 2) / imageHeight;
+  const dxN = CHAR_PAD_X_PX / imageWidth;
+  const dyN = CHAR_PAD_Y_PX / imageHeight;
 
   let newX = seg.x - halfDxN;
   let newY = seg.y - halfDyN;
