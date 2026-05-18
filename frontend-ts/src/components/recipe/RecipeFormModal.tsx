@@ -209,6 +209,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   // ── CV-method preview state ──
   type CvPair = {
     char_idx: number;
+    folder?: string;
     logged_label?: string;
     logged_p?: number;
     tmpl_b64: string;
@@ -219,10 +220,14 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     defect_type: string | null;
     extra?: Record<string, number>;
   };
+  type CvPairKey = { folder: string; char_idx: number };
   const [cvPreviewPairs, setCvPreviewPairs] = useState<CvPair[]>([]);
   const [cvPreviewLoading, setCvPreviewLoading] = useState(false);
   const [cvPreviewError, setCvPreviewError] = useState<string | null>(null);
   const [cvPreviewFolder, setCvPreviewFolder] = useState<string | null>(null);
+  // Locked pair selection — keeps the same 5 cards across method changes so
+  // user can compare scores fairly. Refresh button clears this to re-shuffle.
+  const [cvPreviewKeys, setCvPreviewKeys] = useState<CvPairKey[] | null>(null);
   
   // Camera management states
   const [availableCameras, setAvailableCameras] = useState<Camera[]>([]);
@@ -475,15 +480,19 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     }
   }, [isOpen]);
 
-  // CV-method preview: fetch 5 sample pair scores when method changes
-  const fetchCvPreview = async (method: string) => {
+  // CV-method preview: fetch 5 sample pair scores.
+  // When `keys` is provided → reuse same pairs (compare across methods).
+  // When `keys` is null → BE picks random pairs from latest folder.
+  const fetchCvPreview = async (method: string, keys: CvPairKey[] | null = null) => {
     setCvPreviewLoading(true);
     setCvPreviewError(null);
     try {
+      const body: Record<string, unknown> = { cv_method: method, count: 5, threshold: 0.80 };
+      if (keys && keys.length) body.pair_keys = keys;
       const resp = await fetch(`${API_BASE_URL}/api/recipes/cv-preview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cv_method: method, count: 5, threshold: 0.80 }),
+        body: JSON.stringify(body),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
@@ -491,8 +500,14 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         setCvPreviewError(data.error);
         setCvPreviewPairs([]);
       } else {
-        setCvPreviewPairs(data.pairs || []);
+        const pairs: CvPair[] = data.pairs || [];
+        setCvPreviewPairs(pairs);
         setCvPreviewFolder(data.folder || null);
+        // Cache keys so subsequent method changes reuse the same pairs
+        const nextKeys: CvPairKey[] = pairs
+          .filter((p) => p.folder)
+          .map((p) => ({ folder: p.folder as string, char_idx: p.char_idx }));
+        if (nextKeys.length) setCvPreviewKeys(nextKeys);
       }
     } catch (e) {
       setCvPreviewError((e as Error).message);
@@ -504,7 +519,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
   useEffect(() => {
     if (isOpen && activeTab === 'model' && formData.classifier_backend === 'embedding') {
-      fetchCvPreview(formData.cv_method || 'legacy');
+      // Method change → reuse cached pairs to enable fair score comparison
+      fetchCvPreview(formData.cv_method || 'legacy', cvPreviewKeys);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, activeTab, formData.cv_method, formData.classifier_backend]);
@@ -2036,10 +2052,14 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                             <button
                               type="button"
                               className="cv-preview__refresh"
-                              onClick={() => fetchCvPreview(formData.cv_method || 'legacy')}
+                              onClick={() => {
+                                setCvPreviewKeys(null);   // drop locked pairs → BE re-shuffles
+                                fetchCvPreview(formData.cv_method || 'legacy', null);
+                              }}
                               disabled={cvPreviewLoading}
+                              title="Pick a new random set of pairs"
                             >
-                              {cvPreviewLoading ? '...' : 'Refresh'}
+                              {cvPreviewLoading ? '...' : 'New pairs'}
                             </button>
                           </div>
                           {cvPreviewError && (

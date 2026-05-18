@@ -70,6 +70,10 @@ async def cv_method_preview(payload: Dict[str, Any]):
         cv_method = "legacy"
     count = max(1, min(20, int(payload.get("count") or 5)))
     threshold = float(payload.get("threshold") or 0.80)
+    # Optional: caller pins specific pairs (folder + char_idx). When provided,
+    # use these exact pairs instead of random — allows FE to keep the same
+    # cards across method changes for fair comparison.
+    pair_keys_in = payload.get("pair_keys") or []
 
     # Project root: backend/app/api/endpoints/recipes.py → up 4 dirs
     proj_root = Path(__file__).resolve().parents[4]
@@ -87,31 +91,57 @@ async def cv_method_preview(payload: Dict[str, Any]):
         return {"folder": None, "method": cv_method, "pairs": [],
                 "error": "no emb_* folders found"}
 
-    latest = max(emb_folders, key=lambda d: d.stat().st_mtime)
-
     pat = _re.compile(r"^char(\d+)_(OK|NG)_p([\d.]+)_target\.png$")
-    pairs_on_disk = []
-    for f in latest.iterdir():
-        m = pat.match(f.name)
-        if not m:
-            continue
-        tmpl_path = latest / f.name.replace("_target.png", "_template.png")
-        if not tmpl_path.exists():
-            continue
-        pairs_on_disk.append({
-            "char_idx": int(m.group(1)),
-            "logged_label": m.group(2),
-            "logged_p": float(m.group(3)),
-            "tmpl": tmpl_path,
-            "tgt": f,
-        })
 
-    if not pairs_on_disk:
-        return {"folder": latest.name, "method": cv_method, "pairs": [],
-                "error": "no template/target pairs in folder"}
+    def _scan_folder(folder_path: Path) -> List[Dict[str, Any]]:
+        items = []
+        for f in folder_path.iterdir():
+            m = pat.match(f.name)
+            if not m:
+                continue
+            tmpl_path = folder_path / f.name.replace("_target.png", "_template.png")
+            if not tmpl_path.exists():
+                continue
+            items.append({
+                "char_idx": int(m.group(1)),
+                "logged_label": m.group(2),
+                "logged_p": float(m.group(3)),
+                "folder": folder_path.name,
+                "tmpl": tmpl_path,
+                "tgt": f,
+            })
+        return items
 
-    _random.shuffle(pairs_on_disk)
-    sample = pairs_on_disk[:count]
+    # Path A: caller specified exact pairs (folder + char_idx) → use those
+    sample: List[Dict[str, Any]] = []
+    folder_for_response: Optional[str] = None
+    if pair_keys_in:
+        for k in pair_keys_in:
+            try:
+                folder_name = str(k.get("folder"))
+                char_idx = int(k.get("char_idx"))
+            except Exception:
+                continue
+            f_dir = test_result_dir / folder_name
+            if not f_dir.is_dir():
+                continue
+            for it in _scan_folder(f_dir):
+                if it["char_idx"] == char_idx:
+                    sample.append(it)
+                    break
+        if sample:
+            folder_for_response = sample[0]["folder"]
+
+    # Path B (default): latest folder, random shuffle
+    if not sample:
+        latest = max(emb_folders, key=lambda d: d.stat().st_mtime)
+        pairs_on_disk = _scan_folder(latest)
+        if not pairs_on_disk:
+            return {"folder": latest.name, "method": cv_method, "pairs": [],
+                    "error": "no template/target pairs in folder"}
+        _random.shuffle(pairs_on_disk)
+        sample = pairs_on_disk[:count]
+        folder_for_response = latest.name
 
     # Lazy-import algorithms (only what we need)
     from ai_services.camera_management.verification.embedding_classifier import _compute_char_quality
@@ -207,6 +237,7 @@ async def cv_method_preview(payload: Dict[str, Any]):
 
             out_pairs.append({
                 "char_idx": p["char_idx"],
+                "folder": p.get("folder"),
                 "logged_label": p["logged_label"],
                 "logged_p": p["logged_p"],
                 "tmpl_b64": tmpl_b64,
@@ -218,10 +249,10 @@ async def cv_method_preview(payload: Dict[str, Any]):
                 "extra": extra,
             })
         except Exception as e:
-            out_pairs.append({"char_idx": p["char_idx"], "error": str(e)})
+            out_pairs.append({"char_idx": p["char_idx"], "folder": p.get("folder"), "error": str(e)})
 
     return {
-        "folder": latest.name,
+        "folder": folder_for_response,
         "method": cv_method,
         "threshold": threshold,
         "pairs": out_pairs,
