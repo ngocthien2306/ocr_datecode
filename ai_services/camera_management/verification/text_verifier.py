@@ -661,9 +661,10 @@ class TextVerificationService:
                     'conf_threshold': m['conf_threshold'],
                     'serial_number':  m['serial_number'],
                     'annotation_idx': m['annotation_idx'],
-                    # Template bank context (camera carries per-recipe settings)
+                    'cv_method':                (m.get('cv_method') or 'legacy'),
+                    # Template bank HARDCODED disabled — single-template path always
                     'recipe_id':                m.get('recipe_id'),
-                    'template_bank_enabled':    bool(m.get('template_bank_enabled', False)),
+                    'template_bank_enabled':    False,
                     'template_bank_size':       int(m.get('template_bank_size', 10)),
                     'template_version_key':     m.get('template_version_key'),
                     'char_denoise_enabled':     bool(m.get('char_denoise_enabled', False)),
@@ -781,8 +782,9 @@ class TextVerificationService:
                     'conf_threshold': m['conf_threshold'],
                     'serial_number':  m['serial_number'],
                     'annotation_idx': m['annotation_idx'],
+                    'cv_method':                (m.get('cv_method') or 'legacy'),
                     'recipe_id':                m.get('recipe_id'),
-                    'template_bank_enabled':    bool(m.get('template_bank_enabled', False)),
+                    'template_bank_enabled':    False,  # HARDCODED disabled
                     'template_bank_size':       int(m.get('template_bank_size', 10)),
                     'template_version_key':     m.get('template_version_key'),
                     'char_denoise_enabled':     bool(m.get('char_denoise_enabled', False)),
@@ -1279,9 +1281,11 @@ class TextVerificationService:
                     'ml_model_id': ml_model_id,
                     'defect_model': getattr(camera, 'defect_model', None) or 'arcface',
                     'classifier_backend': camera_backend,
-                    # Template bank context (read from camera; falsy = bank disabled, single-template path)
+                    # CV pipeline variant when classifier_backend='embedding': 'legacy' | 'v4' | 'shape_v7'
+                    'cv_method':             (getattr(camera, 'cv_method', None) or 'legacy'),
+                    # Template bank HARDCODED disabled (per recipe-system refactor) — single-template path always
                     'recipe_id':             getattr(camera, 'recipe_id', None),
-                    'template_bank_enabled': bool(getattr(camera, 'template_bank_enabled', False)),
+                    'template_bank_enabled': False,  # was: getattr(camera, 'template_bank_enabled', False)
                     'template_bank_size':    int(getattr(camera, 'template_bank_size', 10) or 10),
                     'template_version_key':  getattr(camera, 'template_version_key', None),
                     'char_denoise_enabled':  bool(getattr(camera, 'char_denoise_enabled', False)),

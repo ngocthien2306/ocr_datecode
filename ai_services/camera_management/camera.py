@@ -1147,6 +1147,8 @@ class Camera:
             self.ml_model_id = recipe_data.get("ml_model_id")
             self.defect_model = recipe_data.get("defect_model") or "arcface"
             self.classifier_backend = recipe_data.get("classifier_backend") or "embedding"
+            # CV pipeline variant when classifier_backend='embedding': 'legacy' | 'v4' | 'shape_v7'
+            self.cv_method = (recipe_data.get("cv_method") or "legacy").lower()
             # Template bank — adaptive multi-template per (recipe, camera, ann_idx)
             tbe = recipe_data.get("template_bank_enabled")
             self.template_bank_enabled = bool(tbe) if tbe is not None else False

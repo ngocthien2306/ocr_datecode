@@ -60,6 +60,7 @@ interface FormDataType {
   ml_model_id: string;
   defect_model: string;
   classifier_backend: string;
+  cv_method: string;
   template_bank_enabled: boolean;
   template_bank_size: number;
   char_denoise_enabled: boolean;
@@ -185,6 +186,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     ml_model_id: '',
     defect_model: 'arcface',
     classifier_backend: 'embedding',
+    cv_method: 'legacy',
     template_bank_enabled: false,
     template_bank_size: 10,
     char_denoise_enabled: false,
@@ -359,6 +361,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         ml_model_id: recipeAny.ml_model_id || '',
         defect_model: recipeAny.defect_model || 'arcface',
         classifier_backend: recipeAny.classifier_backend || 'embedding',
+        cv_method: recipeAny.cv_method || 'legacy',
         template_bank_enabled: recipeAny.template_bank_enabled ?? false,
         template_bank_size: recipeAny.template_bank_size ?? 10,
         char_denoise_enabled: recipeAny.char_denoise_enabled ?? false,
@@ -425,6 +428,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         ml_model_id: '',
         defect_model: 'arcface',
         classifier_backend: 'embedding',
+        cv_method: 'legacy',
         template_bank_enabled: false,
         template_bank_size: 10,
         char_denoise_enabled: false,
@@ -766,6 +770,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         ml_model_id:   formData.ml_model_id   || null,
         defect_model:  formData.defect_model  || 'arcface',
         classifier_backend: formData.classifier_backend || 'embedding',
+        cv_method: formData.cv_method || 'legacy',
         template_bank_enabled: formData.template_bank_enabled ?? false,
         template_bank_size: formData.template_bank_size ?? 10,
         char_denoise_enabled: formData.char_denoise_enabled ?? false,
@@ -1940,6 +1945,27 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         <option value="supcon">SupCon (contrastive embedding)</option>
                       </select>
                       <small className="field-description">Template model used for per-character OK/NG classification</small>
+                    </div>
+
+                    {/* CV Method — chỉ áp dụng khi classifier_backend='embedding' */}
+                    <div
+                      className="form-group"
+                      style={{ opacity: formData.classifier_backend === 'embedding' ? 1 : 0.55 }}
+                    >
+                      <label>CV Method</label>
+                      <select
+                        name="cv_method"
+                        value={formData.cv_method}
+                        disabled={formData.classifier_backend !== 'embedding'}
+                        onChange={(e) => setFormData(prev => ({ ...prev, cv_method: e.target.value }))}
+                      >
+                        <option value="legacy">Legacy (blur_tm + iou + pixel) — cách 1</option>
+                        <option value="v4">v4 — scale-invariant directional</option>
+                        <option value="shape_v7">v7 — shape-based (gradient orientation)</option>
+                      </select>
+                      <small className="field-description">
+                        Cách 1 = pipeline hiện tại; v4 thêm AFFINE alignment + directional diff; v7 dùng gradient orientation (LineMOD/Halcon insight)
+                      </small>
                     </div>
 
                     {/* ── Char Denoise — largest-CC filter (embedding mode only) ── */}

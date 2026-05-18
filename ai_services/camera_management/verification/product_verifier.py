@@ -15,7 +15,6 @@ try:
     from yolo_obb_tensorrt import YOLOOBBTensorRT
     YOLO_OBB_AVAILABLE = True
 except ImportError as e:
-    logger.warning(f"YOLO OBB not available: {e}")
     YOLO_OBB_AVAILABLE = False
     YOLOOBBTensorRT = None
 

@@ -128,6 +128,7 @@ class RecipeBase(BaseModel):
     ml_model_id: Optional[str] = Field(default=None, description="Trained ML model ID within the ML project")
     defect_model: Optional[str] = Field(default="arcface", description="Embedding model used for defect detection: arcface | supcon")
     classifier_backend: Optional[str] = Field(default="embedding", description="Active classifier method: 'embedding' (defect_model cosine) | 'ml' (trained ML model)")
+    cv_method: Optional[str] = Field(default="legacy", description="CV pipeline variant when classifier_backend='embedding': 'legacy' (original blur_tm+iou+px) | 'v4' (scale-invariant directional) | 'shape_v7' (gradient orientation)")
     template_bank_enabled: Optional[bool] = Field(default=False, description="Enable adaptive template bank: auto-collect verified-OK frames as additional templates for embedding-mode char verify")
     template_bank_size: Optional[int] = Field(default=10, ge=1, le=50, description="Maximum number of auto-collected dynamic templates per (camera, annotation). Seed template from recipe is always kept.")
     char_denoise_enabled: Optional[bool] = Field(default=False, description="Apply largest-connected-component filter before centroid alignment in char verification (robust to binarization noise)")
@@ -174,6 +175,7 @@ class RecipeUpdate(BaseModel):
     ml_model_id: Optional[str] = None
     defect_model: Optional[str] = None
     classifier_backend: Optional[str] = None
+    cv_method: Optional[str] = None
     template_bank_enabled: Optional[bool] = None
     template_bank_size: Optional[int] = Field(None, ge=1, le=50)
     char_denoise_enabled: Optional[bool] = None

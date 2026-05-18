@@ -44,32 +44,6 @@ def _crop_std(bgr: np.ndarray) -> float:
     return float(np.std(gray))
 
 
-"""
-OLD: ImageNet preprocessing for ONNX inference (no longer used)
-
-MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-
-
-def _preprocess(bgr: np.ndarray, size: int) -> np.ndarray:
-    h, w = bgr.shape[:2]
-    if h == 0 or w == 0:
-        raise ValueError(f"degenerate crop {w}x{h}")
-    s = size / max(h, w)
-    nh, nw = max(1, int(round(h * s))), max(1, int(round(w * s)))
-    img = cv2.resize(bgr, (nw, nh), interpolation=cv2.INTER_LINEAR)
-    canvas = np.full((size, size, 3), 255, dtype=np.uint8)
-    canvas[(size - nh) // 2:(size - nh) // 2 + nh, (size - nw) // 2:(size - nw) // 2 + nw] = img
-    rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-    return ((rgb - MEAN) / STD).transpose(2, 0, 1).astype(np.float32)
-
-
-def _extract_embeddings(sess, head, input_name, tensors):
-    emb = sess.run(None, {input_name: tensors})[0]
-    norms = np.linalg.norm(emb, axis=1, keepdims=True) + 1e-8
-    return emb / norms
-"""
-
 
 # --------------------------------------------------------------------------- #
 # Character quality comparison — copied from tests/test_segment.py logic
@@ -905,89 +879,6 @@ class EmbeddingClassifierService:
         Returns list parallel to items:
             {'ml_pass', 'p_ok', 'label', 'threshold', 'time_ms', 'error'}
         """
-        """
-        OLD: ONNX EMBEDDING + COSINE-SIMILARITY IMPLEMENTATION (commented out)
-
-        n = len(items)
-        if n == 0:
-            return []
-
-        t0 = time.perf_counter()
-        results: List[Optional[Dict[str, Any]]] = [None] * n
-
-        tmpl_tensors: List[np.ndarray] = []
-        tgt_tensors: List[np.ndarray] = []
-        valid_idxs: List[int] = []
-
-        for i, item in enumerate(items):
-            region = item.get('region_img')
-            template = item.get('template_crop')
-            conf_thr = float(item.get('conf_threshold', 0.5))
-            serial = item.get('serial_number', '')
-            ann_idx = item.get('annotation_idx', -1)
-
-            if region is None or region.size == 0:
-                results[i] = {
-                    'ml_pass': False, 'p_ok': 0.0, 'label': 'NG',
-                    'threshold': conf_thr, 'time_ms': 0.0, 'error': 'empty_region',
-                }
-                continue
-
-            if template is None or template.size == 0:
-                results[i] = {
-                    'ml_pass': False, 'p_ok': 0.0, 'label': 'NG',
-                    'threshold': conf_thr, 'time_ms': 0.0, 'error': 'missing_template_crop',
-                }
-                continue
-
-            tgt_std = _crop_std(region)
-            if tgt_std < MIN_CROP_STD:
-                results[i] = {
-                    'ml_pass': False, 'p_ok': 0.0, 'label': 'NG',
-                    'threshold': conf_thr, 'time_ms': 0.0,
-                    'error': f'low_variance_target:{tgt_std:.1f}',
-                }
-                continue
-
-            tmpl_std = _crop_std(template)
-            if tmpl_std < MIN_CROP_STD:
-                results[i] = {
-                    'ml_pass': False, 'p_ok': 0.0, 'label': 'NG',
-                    'threshold': conf_thr, 'time_ms': 0.0,
-                    'error': f'low_variance_template:{tmpl_std:.1f}',
-                }
-                continue
-
-            try:
-                tgt_tensors.append(_preprocess(region, self.size))
-                tmpl_tensors.append(_preprocess(template, self.size))
-            except Exception as e:
-                results[i] = {
-                    'ml_pass': False, 'p_ok': 0.0, 'label': 'NG',
-                    'threshold': conf_thr, 'time_ms': 0.0,
-                    'error': f'preprocess_failed:{e}',
-                }
-                continue
-
-            valid_idxs.append(i)
-
-        if not valid_idxs:
-            ...
-
-        m = len(valid_idxs)
-        try:
-            combined = np.stack(tmpl_tensors + tgt_tensors)
-            all_embs = _extract_embeddings(self.sess, self.head, self.input_name, combined)
-            tmpl_embs = all_embs[:m]
-            tgt_embs  = all_embs[m:]
-        except Exception as e:
-            ...
-
-        for row, i in enumerate(valid_idxs):
-            sim = float(np.dot(tmpl_embs[row], tgt_embs[row]))
-            p_ok = (sim + 1.0) / 2.0
-            ...
-        """
 
         # ====================================================================
         # NEW: CV-based per-pair character quality (no model inference)
@@ -1079,14 +970,17 @@ class EmbeddingClassifierService:
             template = item['template_crop']
             conf_thr = float(item.get('conf_threshold', 0.5))
 
-            # Optional bank context (backward-compat: if missing → single-template path)
-            bank_enabled    = bool(item.get('template_bank_enabled', False))
+            # HARDCODED: template bank disabled (per recipe-system refactor).
+            # `template_bank_enabled` recipe field is ignored — always single-template path.
+            bank_enabled    = False
             bank_size       = int(item.get('template_bank_size', 10))
             denoise_enabled = bool(item.get('char_denoise_enabled', False))
             recipe_id       = item.get('recipe_id')
             serial          = item.get('serial_number', '')
             ann_idx         = item.get('annotation_idx', -1)
             seed_version_key = item.get('template_version_key')
+            # Per-recipe CV method routing: 'legacy' (default) | 'v4' | 'v7'
+            cv_method = str(item.get('cv_method', 'legacy')).lower()
 
             try:
                 metrics: Optional[Dict[str, Any]] = None
@@ -1108,19 +1002,44 @@ class EmbeddingClassifierService:
                                     if region.ndim == 3 else region)
                         p_ok, metrics, best_template = bank.compare(tgt_gray, conf_thr)
 
-                # Fallback to single-template if bank path returned nothing or disabled
+                # Fallback to single-template path. Branch by cv_method.
                 if metrics is None:
                     tmpl_gray = (cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
                                  if template.ndim == 3 else template)
                     tgt_gray = (cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
                                 if region.ndim == 3 else region)
-                    metrics = _compute_char_quality(tmpl_gray, tgt_gray, denoise=denoise_enabled)
-                    p_ok = float(metrics['confidence'])
+
+                    if cv_method == 'v4':
+                        from .char_quality_v4 import compute_char_quality_v4
+                        metrics = compute_char_quality_v4(tmpl_gray, tgt_gray)
+                        p_ok = float(metrics['confidence'])
+                        # v4 defect_type → cap p_ok so NG verdict triggers
+                        if metrics.get('defect_type'):
+                            p_ok = min(p_ok, max(0.0, conf_thr - 0.01))
+                    elif cv_method == 'v7':
+                        from .char_quality_v7_shape import compute_char_quality_v7
+                        metrics = compute_char_quality_v7(tmpl_gray, tgt_gray)
+                        p_ok = float(metrics['confidence'])
+                        if metrics.get('defect_type'):
+                            p_ok = min(p_ok, max(0.0, conf_thr - 0.01))
+                    else:  # 'legacy' or unknown → original CV pipeline
+                        metrics = _compute_char_quality(tmpl_gray, tgt_gray, denoise=denoise_enabled)
+                        p_ok = float(metrics['confidence'])
 
                 label = "OK" if p_ok >= conf_thr else "NG"
-                mask_b64 = _encode_diff_mask_b64(
-                    metrics['_mask_tmpl_aligned'], metrics['_mask_tgt_aligned']
-                )
+                # Compute diff mask base64 — schema differs per cv_method
+                if '_mask_tmpl_aligned' in metrics and '_mask_tgt_aligned' in metrics:
+                    mask_b64 = _encode_diff_mask_b64(
+                        metrics['_mask_tmpl_aligned'], metrics['_mask_tgt_aligned']
+                    )
+                elif '_t_bin' in metrics and '_g_bin' in metrics:
+                    mask_b64 = _encode_diff_mask_b64(metrics['_t_bin'], metrics['_g_bin'])
+                elif '_quant_t' in metrics and '_quant_g' in metrics:
+                    t_b = ((metrics['_quant_t'] > 0).astype(np.uint8)) * 255
+                    g_b = ((metrics['_quant_g'] > 0).astype(np.uint8)) * 255
+                    mask_b64 = _encode_diff_mask_b64(t_b, g_b)
+                else:
+                    mask_b64 = None
                 results[i] = {
                     'ml_pass': (label == "OK"),
                     'p_ok': round(p_ok, 4),
@@ -1151,13 +1070,32 @@ class EmbeddingClassifierService:
                     except Exception:
                         pass
 
-                logger.debug(
-                    f"[{item.get('serial_number', '')}] cv ann "
-                    f"{item.get('annotation_idx', -1)}: "
-                    f"conf={p_ok:.4f} tm={metrics['tm_conf']:.3f} "
-                    f"blur_tm={metrics['blur_tm']:.3f} iou={metrics['iou']:.3f} "
-                    f"px={metrics['pixel_conf']:.3f} {label} thr={conf_thr}"
-                )
+                # Debug log — metric keys differ per cv_method
+                if cv_method == 'legacy':
+                    logger.debug(
+                        f"[{item.get('serial_number', '')}] cv ann "
+                        f"{item.get('annotation_idx', -1)}: "
+                        f"conf={p_ok:.4f} tm={metrics.get('tm_conf', 0):.3f} "
+                        f"blur_tm={metrics.get('blur_tm', 0):.3f} iou={metrics.get('iou', 0):.3f} "
+                        f"px={metrics.get('pixel_conf', 0):.3f} {label} thr={conf_thr}"
+                    )
+                elif cv_method == 'v4':
+                    logger.debug(
+                        f"[{item.get('serial_number', '')}] cv ann "
+                        f"{item.get('annotation_idx', -1)}: v4 conf={p_ok:.4f} "
+                        f"ncc={metrics.get('ncc', 0):.3f} "
+                        f"over={metrics.get('over_ink_score', 0):.3f} "
+                        f"under={metrics.get('under_ink_score', 0):.3f} "
+                        f"defect={metrics.get('defect_type')} {label} thr={conf_thr}"
+                    )
+                elif cv_method == 'v7':
+                    logger.debug(
+                        f"[{item.get('serial_number', '')}] cv ann "
+                        f"{item.get('annotation_idx', -1)}: v7 conf={p_ok:.4f} "
+                        f"match={100*metrics.get('orientation_match_pct', 0):.0f}% "
+                        f"strong_px={metrics.get('n_strong_pixels', 0)} "
+                        f"defect={metrics.get('defect_type')} {label} thr={conf_thr}"
+                    )
             except Exception as e:
                 results[i] = {
                     'ml_pass': False, 'p_ok': 0.0, 'label': 'NG',

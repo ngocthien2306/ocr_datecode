@@ -183,6 +183,7 @@ export interface Recipe {
   ml_model_id?: string;
   defect_model?: string;
   classifier_backend?: string;
+  cv_method?: string;
   template_bank_enabled?: boolean;
   template_bank_size?: number;
   char_denoise_enabled?: boolean;
@@ -275,6 +276,7 @@ export interface Receipt {
   ml_model_id?: string;
   defect_model?: string;
   classifier_backend?: string;
+  cv_method?: string;
   template_bank_enabled?: boolean;
   template_bank_size?: number;
   char_denoise_enabled?: boolean;
