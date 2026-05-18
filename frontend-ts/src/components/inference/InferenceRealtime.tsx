@@ -7,6 +7,7 @@ import { camerasAPI } from '@/services/cameras';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import InferenceRealtimeSettingsModal from './InferenceRealtimeSettingsModal';
 import TemplateTextEditDialog, { type TextEditItem } from './TemplateTextEditDialog';
+import TemplateCanvasEditDialog from './TemplateCanvasEditDialog';
 import { API_BASE_URL } from '@/config/api';
 import { useToast } from '@/contexts/ToastContext';
 
@@ -291,6 +292,21 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
   }
   const [pendingTemplateData, setPendingTemplateData] = useState<PendingTemplateData | null>(null);
   const [isConfirmingTemplate, setIsConfirmingTemplate] = useState(false);
+
+  // Canvas-based edit dialog: used when the recipe already has any `char` annotation,
+  // so user can drag/resize regions and review auto-segmented chars on a real canvas.
+  interface PendingCanvasData {
+    sn: string;
+    frameIdx: number;
+    newImageUrl: string;
+    uploadWidth: number;
+    uploadHeight: number;
+    recipeCam: any;
+    templateName: string | undefined;
+    baseAnnotations: any[];   // non-char annotations with coords updated to the new frame
+  }
+  const [pendingCanvasData, setPendingCanvasData] = useState<PendingCanvasData | null>(null);
+  const [isSavingCanvas, setIsSavingCanvas] = useState(false);
 
   // Auto scroll to bottom
   const scrollToBottom = () => {
@@ -684,9 +700,62 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
     return uploadRes.json();
   };
 
-  // Steps 4-8: build annotations (with user-confirmed texts), apply realtime + save DB
+  // Persist a fully-built annotations array as the new template (camera_templates patch + DB save).
+  // Used by both the text-only dialog path (finishSetAsTemplate) and the canvas-edit dialog path.
+  const persistTemplate = async (
+    data: { frameIdx: number; newImageUrl: string; uploadWidth: number; uploadHeight: number; recipeCam: any; templateName: string | undefined },
+    finalAnnotations: any[],
+  ) => {
+    const { frameIdx, newImageUrl, uploadWidth, uploadHeight, recipeCam, templateName } = data;
+    const metadataSnapshot = runningRecipe?.metadata;
+
+    const cameras = (metadataSnapshot?.cameras ?? []).map((cam: any) => ({
+      camera_id: cam.camera_id,
+      exposure_time: cam.exposure_time,
+      delay_trigger: cam.delay_trigger,
+      delay_interval: cam.delay_interval,
+      gain: cam.gain,
+    }));
+
+    const cameraTemplates = (metadataSnapshot?.camera_templates ?? []).map((ct: any) => ({
+      camera_id: ct.camera_id,
+      templates: (ct.templates ?? []).map((t: any, tIdx: number) => {
+        const isTarget = ct.camera_id === recipeCam?.camera_id &&
+          (templateName ? t.name === templateName : tIdx === frameIdx);
+        return {
+          annotations: isTarget ? finalAnnotations : (t.annotations ?? []),
+          image_url: isTarget ? newImageUrl : t.image_url,
+          image_width: isTarget ? uploadWidth : t.image_width,
+          image_height: isTarget ? uploadHeight : t.image_height,
+          center_offset_threshold_left: t.center_offset_threshold_left,
+          center_offset_threshold_right: t.center_offset_threshold_right,
+        };
+      }),
+    }));
+
+    const patch = {
+      delay_reject: metadataSnapshot?.delay_reject,
+      reject_pulse: metadataSnapshot?.reject_pulse,
+      cameras,
+      camera_templates: cameraTemplates,
+    };
+
+    const merged = await applyRealtimeAndPersist(
+      runningRecipeId!,
+      metadataSnapshot,
+      patch,
+      `Template updated and saved: ${templateName ?? `Frame ${frameIdx + 1}`}`,
+      'Template applied to camera service only',
+    );
+
+    setRunningRecipe((prev: any) =>
+      prev ? { ...prev, metadata: { ...prev.metadata, ...merged } } : prev
+    );
+  };
+
+  // Text-dialog flow: rebuilds annotations from buildNewAnnotations + applies user's text/order overrides.
   const finishSetAsTemplate = async (data: PendingTemplateData, confirmedItems: TextEditItem[]) => {
-    const { frameIdx, newImageUrl, uploadWidth, uploadHeight, recipeCam, templateName, recipeAnnotations, detectedRegions, textVerification } = data;
+    const { uploadWidth, uploadHeight, recipeAnnotations, detectedRegions, textVerification } = data;
 
     let newAnnotations = buildNewAnnotations(
       recipeAnnotations, detectedRegions, textVerification, uploadWidth, uploadHeight
@@ -723,50 +792,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
       }
     }
 
-    const metadataSnapshot = runningRecipe?.metadata;
-
-    const cameras = (metadataSnapshot?.cameras ?? []).map((cam: any) => ({
-      camera_id: cam.camera_id,
-      exposure_time: cam.exposure_time,
-      delay_trigger: cam.delay_trigger,
-      delay_interval: cam.delay_interval,
-      gain: cam.gain,
-    }));
-
-    const cameraTemplates = (metadataSnapshot?.camera_templates ?? []).map((ct: any) => ({
-      camera_id: ct.camera_id,
-      templates: (ct.templates ?? []).map((t: any, tIdx: number) => {
-        const isTarget = ct.camera_id === recipeCam?.camera_id &&
-          (templateName ? t.name === templateName : tIdx === frameIdx);
-        return {
-          annotations: isTarget ? newAnnotations : (t.annotations ?? []),
-          image_url: isTarget ? newImageUrl : t.image_url,
-          image_width: isTarget ? uploadWidth : t.image_width,
-          image_height: isTarget ? uploadHeight : t.image_height,
-          center_offset_threshold_left: t.center_offset_threshold_left,
-          center_offset_threshold_right: t.center_offset_threshold_right,
-        };
-      }),
-    }));
-
-    const patch = {
-      delay_reject: metadataSnapshot?.delay_reject,
-      reject_pulse: metadataSnapshot?.reject_pulse,
-      cameras,
-      camera_templates: cameraTemplates,
-    };
-
-    const merged = await applyRealtimeAndPersist(
-      runningRecipeId!,
-      metadataSnapshot,
-      patch,
-      `Template updated and saved: ${templateName ?? `Frame ${frameIdx + 1}`}`,
-      'Template applied to camera service only',
-    );
-
-    setRunningRecipe((prev: any) =>
-      prev ? { ...prev, metadata: { ...prev.metadata, ...merged } } : prev
-    );
+    await persistTemplate(data, newAnnotations);
   };
 
   // Set live captured frame as new template.
@@ -806,6 +832,24 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
         recipeCam, templateName, recipeAnnotations, detectedRegions, textVerification,
         textEditItems: [],
       };
+
+      // If this template already has any `char` annotation, switch to the canvas-edit flow:
+      // chars from the old recipe are usually misaligned on the new frame (different date/char widths),
+      // so we drop them, auto-segment fresh from text/datecode regions, and let the user adjust on canvas.
+      const hasCharAnn = recipeAnnotations.some((a: any) => a.type === 'char');
+      if (hasCharAnn) {
+        // Rebuild non-char annotations with coords updated to the new frame.
+        const baseAnnotations = buildNewAnnotations(
+          recipeAnnotations, detectedRegions, textVerification, uploadWidth, uploadHeight,
+        ).filter((a: any) => a.type !== 'char');
+
+        setPendingCanvasData({
+          sn, frameIdx, newImageUrl, uploadWidth, uploadHeight,
+          recipeCam, templateName, baseAnnotations,
+        });
+        setSettingTemplateKey(null);
+        return;
+      }
 
       // 4. Collect text/datecode/char annotations for user review.
       //    - text/datecode prefill from OCR `recognized` (what AI actually read)
@@ -856,6 +900,25 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
 
   const handleDialogCancel = () => {
     setPendingTemplateData(null);
+    toast.info('Template update cancelled');
+  };
+
+  const handleCanvasConfirm = async (finalAnnotations: any[]) => {
+    if (!pendingCanvasData) return;
+    setIsSavingCanvas(true);
+    try {
+      await persistTemplate(pendingCanvasData, finalAnnotations);
+      setPendingCanvasData(null);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to set template');
+    } finally {
+      setIsSavingCanvas(false);
+    }
+  };
+
+  const handleCanvasCancel = () => {
+    if (isSavingCanvas) return;
+    setPendingCanvasData(null);
     toast.info('Template update cancelled');
   };
 
@@ -2380,6 +2443,21 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
         onConfirm={handleDialogConfirm}
         onCancel={handleDialogCancel}
       />
+
+      {/* Template Canvas Edit Dialog (only used when the recipe already has char annotations) */}
+      {pendingCanvasData && (
+        <TemplateCanvasEditDialog
+          isOpen={!!pendingCanvasData}
+          imageUrl={pendingCanvasData.newImageUrl}
+          imageWidth={pendingCanvasData.uploadWidth}
+          imageHeight={pendingCanvasData.uploadHeight}
+          templateName={pendingCanvasData.templateName}
+          baseAnnotations={pendingCanvasData.baseAnnotations}
+          isSaving={isSavingCanvas}
+          onConfirm={handleCanvasConfirm}
+          onCancel={handleCanvasCancel}
+        />
+      )}
 
       {/* Confirm Dialog */}
       <ConfirmDialog

@@ -1,0 +1,281 @@
+/* ============================================================
+   TemplateCanvasEditDialog — light defaults + dark-mode overrides
+   Convention: theme-aware via body.dark-mode selector (light-first)
+   ============================================================ */
+
+.tced-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+  backdrop-filter: blur(4px);
+  z-index: 16000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: tced-fade 0.2s ease-out;
+}
+
+@keyframes tced-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.tced-dialog {
+  background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+  border: 1px solid #e2e8f0;
+  color: #1e293b;
+  width: min(96vw, 1600px);
+  height: min(94vh, 980px);
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.18);
+  overflow: hidden;
+  animation: tced-slide 0.25s ease-out;
+  transition: background 0.3s ease, border 0.3s ease;
+}
+
+@keyframes tced-slide {
+  from { transform: translateY(16px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+/* ------------- Header ------------- */
+
+.tced-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 22px;
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+
+.tced-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.tced-subtitle {
+  display: block;
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.tced-close {
+  background: transparent;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+
+.tced-close:hover:not(:disabled) {
+  color: #1e293b;
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.tced-close:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ------------- Body (canvas + sidebar) ------------- */
+
+.tced-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.tced-canvas-pane {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  background: #f1f5f9;
+}
+
+.tced-sidebar-pane {
+  width: 360px;
+  min-width: 320px;
+  border-left: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+/* ------------- Loading overlay ------------- */
+
+.tced-overlay-loading {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  color: #1e293b;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.tced-overlay-loading .tced-spin {
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(15, 23, 42, 0.15);
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: tced-spin 0.8s linear infinite;
+  margin-right: 12px;
+}
+
+@keyframes tced-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ------------- Footer ------------- */
+
+.tced-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 22px;
+  border-top: 1px solid #e2e8f0;
+  flex-shrink: 0;
+  gap: 12px;
+}
+
+.tced-footer-info {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.tced-footer-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.tced-btn-cancel,
+.tced-btn-confirm {
+  padding: 9px 18px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s, box-shadow 0.15s;
+}
+
+.tced-btn-cancel {
+  background: #ffffff;
+  color: #475569;
+  border-color: #cbd5e1;
+}
+
+.tced-btn-cancel:hover:not(:disabled) {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+
+.tced-btn-confirm {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.tced-btn-confirm:hover:not(:disabled) {
+  background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+  box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+  transform: translateY(-1px);
+}
+
+.tced-btn-cancel:disabled,
+.tced-btn-confirm:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ============================================================
+   DARK MODE OVERRIDES
+   ============================================================ */
+
+body.dark-mode .tced-overlay {
+  background: rgba(0, 0, 0, 0.65);
+}
+
+body.dark-mode .tced-dialog {
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #e2e8f0;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+}
+
+body.dark-mode .tced-header {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+body.dark-mode .tced-header h3 {
+  color: #f1f5f9;
+}
+
+body.dark-mode .tced-subtitle {
+  color: #64748b;
+}
+
+body.dark-mode .tced-close {
+  color: #64748b;
+}
+
+body.dark-mode .tced-close:hover:not(:disabled) {
+  color: #f1f5f9;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+body.dark-mode .tced-canvas-pane {
+  background: #0f172a;
+}
+
+body.dark-mode .tced-sidebar-pane {
+  background: #111827;
+  border-left-color: rgba(255, 255, 255, 0.08);
+}
+
+body.dark-mode .tced-overlay-loading {
+  background: rgba(15, 23, 42, 0.7);
+  color: #e2e8f0;
+}
+
+body.dark-mode .tced-overlay-loading .tced-spin {
+  border-color: rgba(255, 255, 255, 0.18);
+  border-top-color: #60a5fa;
+}
+
+body.dark-mode .tced-footer {
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+body.dark-mode .tced-footer-info {
+  color: #94a3b8;
+}
+
+body.dark-mode .tced-btn-cancel {
+  background: rgba(255, 255, 255, 0.06);
+  color: #cbd5e1;
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+body.dark-mode .tced-btn-cancel:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.25);
+}
