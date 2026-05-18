@@ -318,6 +318,10 @@ export default function TemplateCanvasEditDialog({
               selectedAnnotation={selectedAnnotation}
               onSelectAnnotation={setSelectedAnnotation}
               fabricCanvasRef={fabricCanvasRef as any}
+              // Lock everything that isn't `char` on the canvas, and hide drawing
+              // tools so users can only adjust existing char boxes (not draw new).
+              lockedTypes={['text', 'datecode', 'template', 'crop_area']}
+              disableDrawing
             />
           </div>
 

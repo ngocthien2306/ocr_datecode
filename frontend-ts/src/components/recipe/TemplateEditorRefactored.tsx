@@ -42,16 +42,24 @@ interface TemplateEditorProps {
   selectedAnnotation: number | null;
   onSelectAnnotation: (index: number | null) => void;
   fabricCanvasRef?: React.MutableRefObject<FabricCanvas | null>;
+  /** Annotation types that should be Fabric-locked (no move/resize/select).
+   *  Other types remain fully editable on the canvas. */
+  lockedTypes?: string[];
+  /** Hide the rectangle/polygon draw-mode toolbar buttons (no new annotations). */
+  disableDrawing?: boolean;
 }
 
-export default function TemplateEditor({ 
-  templateImage, 
-  annotations, 
-  onAnnotationsChange, 
-  selectedAnnotation, 
+export default function TemplateEditor({
+  templateImage,
+  annotations,
+  onAnnotationsChange,
+  selectedAnnotation,
   onSelectAnnotation,
-  fabricCanvasRef: externalCanvasRef 
+  fabricCanvasRef: externalCanvasRef,
+  lockedTypes,
+  disableDrawing = false,
 }: TemplateEditorProps) {
+  const lockedTypesSet = useMemo(() => new Set(lockedTypes ?? []), [lockedTypes]);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const internalCanvasRef = useRef<CanvasWithImageBounds | null>(null);
   const fabricCanvasRef = (externalCanvasRef as React.MutableRefObject<CanvasWithImageBounds | null>) || internalCanvasRef;
@@ -257,6 +265,29 @@ export default function TemplateEditor({
       canvas.dispose();
     };
   }, [templateImage]);
+
+  // Re-apply Fabric lock for `lockedTypes` whenever annotations or lockedTypes change.
+  // Runs AFTER renderAnnotations so even if objects get re-created we re-lock them.
+  useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || lockedTypesSet.size === 0) return;
+    canvas.forEachObject((obj: any) => {
+      const idx = obj.annotationIndex;
+      if (idx === undefined) return;
+      const ann = annotations[idx] as any;
+      if (!ann || !lockedTypesSet.has(ann.type)) return;
+      obj.selectable     = false;
+      obj.evented        = false;
+      obj.lockMovementX  = true;
+      obj.lockMovementY  = true;
+      obj.lockScalingX   = true;
+      obj.lockScalingY   = true;
+      obj.lockRotation   = true;
+      obj.hasControls    = false;
+      obj.hoverCursor    = 'default';
+    });
+    canvas.requestRenderAll();
+  }, [annotations, lockedTypesSet]);
 
   // Update selection mode when drawMode changes
   useEffect(() => {
@@ -629,6 +660,18 @@ export default function TemplateEditor({
         setupPolygonControls(obj as any, color);
       }
       if (obj) {
+        // Lock Fabric interactions for types listed in `lockedTypes` (read-only view).
+        if (lockedTypesSet.has((ann as any).type)) {
+          (obj as any).selectable = false;
+          (obj as any).evented = false;
+          (obj as any).lockMovementX = true;
+          (obj as any).lockMovementY = true;
+          (obj as any).lockScalingX = true;
+          (obj as any).lockScalingY = true;
+          (obj as any).lockRotation = true;
+          (obj as any).hasControls = false;
+          (obj as any).hoverCursor = 'default';
+        }
         canvas.add(obj);
         const annAny = annForCanvas as any;
         const label = objectUtils.createLabel(annForCanvas, annAny.x || (annAny.points && annAny.points[0][0]), annAny.y || (annAny.points && annAny.points[0][1]), color, index);
@@ -1115,27 +1158,31 @@ export default function TemplateEditor({
               <path d="M9 11V6C9 4.89543 9.89543 4 11 4C12.1046 4 13 4.89543 13 6V11M13 11V6C13 4.89543 13.8954 4 15 4C16.1046 4 17 4.89543 17 6V11M17 11V7C17 5.89543 17.8954 5 19 5C20.1046 5 21 5.89543 21 7V12C21 12 21 20 12 20C3 20 3 12 3 12V11C3 9.89543 3.89543 9 5 9C6.10457 9 7 9.89543 7 11V12M13 11H9M13 11H17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </button>
-          <button
-            type="button"
-            className={`tool-btn ${drawMode === 'rectangle' ? 'active' : ''}`}
-            onClick={startDrawingRectangle}
-            title="Draw Rectangle (R)"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-              <rect x="3" y="3" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none"/>
-            </svg>
-          </button>
+          {!disableDrawing && (
+            <button
+              type="button"
+              className={`tool-btn ${drawMode === 'rectangle' ? 'active' : ''}`}
+              onClick={startDrawingRectangle}
+              title="Draw Rectangle (R)"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <rect x="3" y="3" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none"/>
+              </svg>
+            </button>
+          )}
 
-          <button
-            type="button"
-            className={`tool-btn ${drawMode === 'polygon' ? 'active' : ''}`}
-            onClick={startDrawingPolygon}
-            title="Draw Polygon (4 points)"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-              <path d="M12 2L22 8.5L18 20.5H6L2 8.5L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
-            </svg>
-          </button>
+          {!disableDrawing && (
+            <button
+              type="button"
+              className={`tool-btn ${drawMode === 'polygon' ? 'active' : ''}`}
+              onClick={startDrawingPolygon}
+              title="Draw Polygon (4 points)"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2L22 8.5L18 20.5H6L2 8.5L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+              </svg>
+            </button>
+          )}
           
           {(drawMode === 'polygon' || drawMode === 'rectangle') && (
             <button type="button" className="tool-btn cancel-btn" onClick={handleCancelDraw} title="Cancel Drawing">
