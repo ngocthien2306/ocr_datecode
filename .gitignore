@@ -209,3 +209,5 @@ training/onnx_results
 .gitnexus
 cache/
 tests/fragment_removal_demo
+shape_based_matching/
+crop_samples
