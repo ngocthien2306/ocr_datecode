@@ -2011,12 +2011,12 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         disabled={formData.classifier_backend !== 'embedding'}
                         onChange={(e) => setFormData(prev => ({ ...prev, cv_method: e.target.value }))}
                       >
-                        <option value="legacy">Legacy (blur_tm + iou + pixel) — cách 1</option>
+                        <option value="legacy">Legacy (blur_tm + iou + pixel)</option>
                         <option value="v4">v4 — scale-invariant directional</option>
                         <option value="shape_v7">v7 — shape-based (gradient orientation)</option>
                       </select>
                       <small className="field-description">
-                        Cách 1 = pipeline hiện tại; v4 thêm AFFINE alignment + directional diff; v7 dùng gradient orientation (LineMOD/Halcon insight)
+                        Legacy = current pipeline; v4 adds AFFINE alignment + directional diff; v7 uses gradient orientation (LineMOD/Halcon).
                       </small>
 
                       {/* Preview: 5 cặp char gần nhất với conf tính bằng method đang chọn */}
@@ -2024,7 +2024,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         <div className="cv-preview">
                           <div className="cv-preview__header">
                             <span className="cv-preview__title">
-                              Preview 5 cặp gần nhất
+                              Preview latest 5 pairs
                               {cvPreviewFolder && (
                                 <span className="cv-preview__folder">— {cvPreviewFolder}</span>
                               )}
@@ -2043,7 +2043,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                           )}
                           <div className="cv-preview__cards">
                             {cvPreviewPairs.length === 0 && !cvPreviewLoading && !cvPreviewError && (
-                              <div className="cv-preview__empty">(chưa có data)</div>
+                              <div className="cv-preview__empty">(no data)</div>
                             )}
                             {cvPreviewPairs.map((p) => {
                               const isOK = p.label === 'OK';
