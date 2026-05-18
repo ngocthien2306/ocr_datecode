@@ -66,7 +66,7 @@ async def cv_method_preview(payload: Dict[str, Any]):
     import cv2 as _cv2
 
     cv_method = (payload.get("cv_method") or "legacy").lower()
-    if cv_method not in ("legacy", "v4", "shape_v7"):
+    if cv_method not in ("legacy", "v3", "v4", "shape_v7"):
         cv_method = "legacy"
     count = max(1, min(20, int(payload.get("count") or 5)))
     threshold = float(payload.get("threshold") or 0.80)
@@ -115,7 +115,9 @@ async def cv_method_preview(payload: Dict[str, Any]):
 
     # Lazy-import algorithms (only what we need)
     from ai_services.camera_management.verification.embedding_classifier import _compute_char_quality
-    if cv_method == "v4":
+    if cv_method == "v3":
+        from ai_services.camera_management.verification.char_quality_v3 import compute_char_quality_v3
+    elif cv_method == "v4":
         from ai_services.camera_management.verification.char_quality_v4 import compute_char_quality_v4
     elif cv_method == "shape_v7":
         from ai_services.camera_management.verification.char_quality_v7_shape import (
@@ -145,13 +147,28 @@ async def cv_method_preview(payload: Dict[str, Any]):
 
             result_img = None  # method-specific diff visualization
 
-            if cv_method == "v4":
+            if cv_method == "v3":
+                m = compute_char_quality_v3(tmpl_g, tgt_g)
+                conf = float(m["confidence"]); defect = m.get("defect_type")
+                extra = {"ncc": round(float(m.get("ncc", 0)), 3),
+                         "over": round(float(m.get("over_ink_score", 0)), 3),
+                         "under": round(float(m.get("under_ink_score", 0)), 3)}
+                # Colored diff: gray=match, red=over, blue=under (same as v4)
+                t_bin = m.get("_t_bin")
+                if t_bin is not None:
+                    base = _cv2.cvtColor(t_bin, _cv2.COLOR_GRAY2BGR)
+                    base[t_bin > 0] = (180, 180, 180)
+                    if m.get("_extra_ink") is not None:
+                        base[m["_extra_ink"] > 0] = (60, 60, 255)
+                    if m.get("_missing_ink") is not None:
+                        base[m["_missing_ink"] > 0] = (255, 100, 60)
+                    result_img = base
+            elif cv_method == "v4":
                 m = compute_char_quality_v4(tmpl_g, tgt_g)
                 conf = float(m["confidence"]); defect = m.get("defect_type")
                 extra = {"ncc": round(float(m.get("ncc", 0)), 3),
                          "over": round(float(m.get("over_ink_score", 0)), 3),
                          "under": round(float(m.get("under_ink_score", 0)), 3)}
-                # Colored diff: gray=match, red=over, blue=under
                 t_bin = m.get("_t_bin")
                 if t_bin is not None:
                     base = _cv2.cvtColor(t_bin, _cv2.COLOR_GRAY2BGR)

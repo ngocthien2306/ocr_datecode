@@ -2011,12 +2011,16 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         disabled={formData.classifier_backend !== 'embedding'}
                         onChange={(e) => setFormData(prev => ({ ...prev, cv_method: e.target.value }))}
                       >
-                        <option value="legacy">Legacy (blur_tm + iou + pixel)</option>
-                        <option value="v4">v4 — scale-invariant directional</option>
-                        <option value="shape_v7">v7 — shape-based (gradient orientation)</option>
+                        <option value="legacy">Pattern Match (Classic)</option>
+                        <option value="v3">Ink Defect Detector</option>
+                        <option value="v4">Ink Defect Detector (Scale-Tolerant)</option>
+                        <option value="shape_v7">Shape Outline Match</option>
                       </select>
                       <small className="field-description">
-                        Legacy = current pipeline; v4 adds AFFINE alignment + directional diff; v7 uses gradient orientation (LineMOD/Halcon).
+                        <b>Pattern Match</b>: original template similarity (blur TM + IoU + pixel coverage).&nbsp;
+                        <b>Ink Defect Detector</b>: detects over-ink (smudge) and under-ink (broken stroke) via directional pixel diff.&nbsp;
+                        <b>Scale-Tolerant</b> variant: same but handles size variation via AFFINE alignment.&nbsp;
+                        <b>Shape Outline Match</b>: compares gradient orientation (LineMOD/Halcon style) — lighting-robust, shape-focused.
                       </small>
 
                       {/* Preview: 5 cặp char gần nhất với conf tính bằng method đang chọn */}

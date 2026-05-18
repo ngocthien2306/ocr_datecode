@@ -1009,14 +1009,20 @@ class EmbeddingClassifierService:
                     tgt_gray = (cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
                                 if region.ndim == 3 else region)
 
-                    if cv_method == 'v4':
+                    if cv_method == 'v3':
+                        from .char_quality_v3 import compute_char_quality_v3
+                        metrics = compute_char_quality_v3(tmpl_gray, tgt_gray)
+                        p_ok = float(metrics['confidence'])
+                        if metrics.get('defect_type'):
+                            p_ok = min(p_ok, max(0.0, conf_thr - 0.01))
+                    elif cv_method == 'v4':
                         from .char_quality_v4 import compute_char_quality_v4
                         metrics = compute_char_quality_v4(tmpl_gray, tgt_gray)
                         p_ok = float(metrics['confidence'])
                         # v4 defect_type → cap p_ok so NG verdict triggers
                         if metrics.get('defect_type'):
                             p_ok = min(p_ok, max(0.0, conf_thr - 0.01))
-                    elif cv_method == 'v7':
+                    elif cv_method in ('v7', 'shape_v7'):
                         from .char_quality_v7_shape import compute_char_quality_v7
                         metrics = compute_char_quality_v7(tmpl_gray, tgt_gray)
                         p_ok = float(metrics['confidence'])
@@ -1079,10 +1085,10 @@ class EmbeddingClassifierService:
                         f"blur_tm={metrics.get('blur_tm', 0):.3f} iou={metrics.get('iou', 0):.3f} "
                         f"px={metrics.get('pixel_conf', 0):.3f} {label} thr={conf_thr}"
                     )
-                elif cv_method == 'v4':
+                elif cv_method in ('v3', 'v4'):
                     logger.debug(
                         f"[{item.get('serial_number', '')}] cv ann "
-                        f"{item.get('annotation_idx', -1)}: v4 conf={p_ok:.4f} "
+                        f"{item.get('annotation_idx', -1)}: {cv_method} conf={p_ok:.4f} "
                         f"ncc={metrics.get('ncc', 0):.3f} "
                         f"over={metrics.get('over_ink_score', 0):.3f} "
                         f"under={metrics.get('under_ink_score', 0):.3f} "
