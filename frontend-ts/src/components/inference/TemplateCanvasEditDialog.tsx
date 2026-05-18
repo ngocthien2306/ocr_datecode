@@ -14,9 +14,42 @@ interface Props {
   imageHeight: number;
   templateName?: string;
   baseAnnotations: any[];      // non-char annotations with coords already updated from new frame
+  previousChars?: any[];       // old char annotations from recipe — used to inherit conf/text on re-segment
   isSaving: boolean;
   onConfirm: (finalAnnotations: any[]) => void;
   onCancel: () => void;
+}
+
+/** Centroid of a char annotation (normalized 0-1 coords). */
+function _centerXY(c: any): [number, number] {
+  return [(c.x ?? 0) + (c.width ?? 0) / 2, (c.y ?? 0) + (c.height ?? 0) / 2];
+}
+
+/** True if center of `c` falls inside the rectangle of `parent`. */
+function _isInsideRegion(c: any, parent: any): boolean {
+  const [cx, cy] = _centerXY(c);
+  return cx >= (parent.x ?? 0)
+      && cx <= (parent.x ?? 0) + (parent.width ?? 0)
+      && cy >= (parent.y ?? 0)
+      && cy <= (parent.y ?? 0) + (parent.height ?? 0);
+}
+
+/** Inherit text/conf from previous char into new char if a positional match exists.
+ *  - text: prefer OCR-recognized (new char's text). Fallback to previous if OCR empty.
+ *  - conf: prefer previous char's value (user-customized). Fallback to new (parent default). */
+function _inheritFromPrev(newChar: any, prevChar: any | undefined): any {
+  if (!prevChar) return newChar;
+  const out = { ...newChar };
+  if ((!out.text || out.text === '') && prevChar.text) out.text = prevChar.text;
+  if (typeof prevChar.conf === 'number') out.conf = prevChar.conf;
+  return out;
+}
+
+/** Pair new chars to previous chars within a region by sorted x-order. */
+function _matchByOrder(newChars: any[], prevInRegion: any[]): any[] {
+  const newSorted = [...newChars].sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
+  const prevSorted = [...prevInRegion].sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
+  return newSorted.map((nc, i) => _inheritFromPrev(nc, prevSorted[i]));
 }
 
 // Pad chars by +4px on width AND +4px on height (2px each side), in image pixel units.
@@ -64,6 +97,7 @@ export default function TemplateCanvasEditDialog({
   imageHeight,
   templateName,
   baseAnnotations,
+  previousChars,
   isSaving,
   onConfirm,
   onCancel,
@@ -96,6 +130,7 @@ export default function TemplateCanvasEditDialog({
       let totalSegs = 0;
       let failedRegions = 0;
 
+      let inheritedCount = 0;
       for (const ann of baseAnnotations) {
         if (ann.shape !== 'rectangle') continue;
         if (ann.type !== 'text' && ann.type !== 'datecode') continue;
@@ -106,8 +141,17 @@ export default function TemplateCanvasEditDialog({
             { withOcr: true },
           );
           if (res.count > 0) {
-            for (const seg of res.segments) {
-              newChars.push(buildPaddedChar(seg, ann.conf ?? 0.5, imageWidth, imageHeight));
+            // Build raw new chars from segmentation
+            const freshChars = res.segments.map((seg) =>
+              buildPaddedChar(seg, ann.conf ?? 0.5, imageWidth, imageHeight),
+            );
+            // Find previous chars whose center falls inside this parent region,
+            // then inherit text/conf by x-order matching.
+            const prevInRegion = (previousChars ?? []).filter((c: any) => _isInsideRegion(c, ann));
+            const merged = _matchByOrder(freshChars, prevInRegion);
+            inheritedCount += Math.min(freshChars.length, prevInRegion.length);
+            for (const c of merged) {
+              newChars.push(c);
               totalSegs += 1;
             }
           }
@@ -121,7 +165,8 @@ export default function TemplateCanvasEditDialog({
       setAutoSegmenting(false);
 
       if (totalSegs > 0) {
-        toast.success(`Auto segmented ${totalSegs} character(s) — review and adjust as needed`);
+        const inheritMsg = inheritedCount > 0 ? ` — kept text/conf for ${inheritedCount}` : '';
+        toast.success(`Auto segmented ${totalSegs} character(s)${inheritMsg} — review and adjust as needed`);
       } else if (failedRegions > 0) {
         toast.warning('Auto segmentation failed for all regions — draw chars manually');
       } else {
@@ -152,17 +197,38 @@ export default function TemplateCanvasEditDialog({
         toast.warning('No characters found in this region');
         return;
       }
-      const newChars = res.segments.map((seg) =>
+
+      const freshChars = res.segments.map((seg) =>
         buildPaddedChar(seg, ann.conf ?? 0.5, imageWidth, imageHeight),
       );
-      // Insert right after the region for nicer ordering.
+
+      // Inherit text/conf from chars CURRENTLY in this region (so users who
+      // re-segment can keep their customized values for unchanged chars).
+      // Also fall back to recipe's previousChars when the dialog has no chars yet
+      // (e.g. user manually deleted them all before re-segmenting).
+      const currentInRegion = annotations.filter(
+        (a: any) => a.type === 'char' && _isInsideRegion(a, ann),
+      );
+      const prevSource = currentInRegion.length > 0
+        ? currentInRegion
+        : (previousChars ?? []).filter((c: any) => _isInsideRegion(c, ann));
+      const newChars = _matchByOrder(freshChars, prevSource);
+      const inheritedCount = Math.min(freshChars.length, prevSource.length);
+
+      // Replace any old chars in this region with the new chars (insert right
+      // after the region annotation for nicer ordering).
       setAnnotations((prev) => {
-        const updated = [...prev];
-        updated.splice(index + 1, 0, ...newChars);
-        return updated;
+        const filtered = prev.filter(
+          (a: any) => !(a.type === 'char' && _isInsideRegion(a, ann)),
+        );
+        const regionIdx = filtered.findIndex((a: any) => a === ann);
+        const insertAt = regionIdx >= 0 ? regionIdx + 1 : filtered.length;
+        return [...filtered.slice(0, insertAt), ...newChars, ...filtered.slice(insertAt)];
       });
+
       const ocrPreview = res.full_text ? ` ("${res.full_text}")` : '';
-      toast.success(`Created ${res.count} char annotation(s)${ocrPreview}`);
+      const inheritMsg = inheritedCount > 0 ? ` — kept text/conf for ${inheritedCount}` : '';
+      toast.success(`Re-segmented ${res.count} char(s)${ocrPreview}${inheritMsg}`);
     } catch (e: any) {
       toast.error(e?.response?.data?.detail || 'Segmentation failed');
     } finally {
@@ -170,18 +236,51 @@ export default function TemplateCanvasEditDialog({
     }
   };
 
-  const handleAnnotationTypeChange = (index: number, type: string) => {
-    setAnnotations((prev) => prev.map((a, i) => (i === index ? { ...a, type } : a)));
+  // LOCKED in this dialog: type and conf are immutable for ALL annotations.
+  // Non-char regions are also fully locked (no move/resize/delete). Only char
+  // annotations can be moved/resized/deleted/redrawn; their text is editable.
+  const handleAnnotationTypeChange = (_index: number, _type: string) => {
+    toast.info('Type is locked in this dialog');
   };
   const handleAnnotationTextChange = (index: number, text: string) => {
     setAnnotations((prev) => prev.map((a, i) => (i === index ? { ...a, text } : a)));
   };
-  const handleAnnotationConfChange = (index: number, conf: number) => {
-    setAnnotations((prev) => prev.map((a, i) => (i === index ? { ...a, conf } : a)));
+  const handleAnnotationConfChange = (_index: number, _conf: number) => {
+    toast.info('Confidence is locked — inherited from previous template');
   };
   const handleDeleteAnnotation = (index: number) => {
+    const ann = annotations[index];
+    if (ann && ann.type !== 'char') {
+      toast.info('Only character annotations can be deleted here');
+      return;
+    }
     setAnnotations((prev) => prev.filter((_, i) => i !== index));
     setSelectedAnnotation(null);
+  };
+
+  /** Canvas drag/resize on a non-char region must be reverted to keep geometry locked.
+   *  Compare each incoming annotation against the current state by `id`; revert geometry
+   *  + type + conf for non-char items. For chars, only force type='char' and lock conf. */
+  const handleAnnotationsChange = (next: any[]) => {
+    const byId = new Map<string, any>();
+    for (const a of annotations) if (a?.id) byId.set(a.id, a);
+    const merged = next.map((newAnn) => {
+      const prev = newAnn?.id ? byId.get(newAnn.id) : undefined;
+      if (!prev) return newAnn; // newly drawn (always char in this flow)
+      if (prev.type !== 'char') {
+        // Lock geometry + type + conf for non-char
+        return {
+          ...newAnn,
+          x: prev.x, y: prev.y,
+          width: prev.width, height: prev.height,
+          type: prev.type,
+          conf: prev.conf,
+        };
+      }
+      // Char: lock only type and conf (geometry editable)
+      return { ...newAnn, type: 'char', conf: prev.conf };
+    });
+    setAnnotations(merged);
   };
 
   if (!isOpen) return null;
@@ -215,7 +314,7 @@ export default function TemplateCanvasEditDialog({
             <TemplateEditor
               templateImage={fullImageUrl}
               annotations={annotations as any}
-              onAnnotationsChange={(next: any[]) => setAnnotations(next)}
+              onAnnotationsChange={handleAnnotationsChange}
               selectedAnnotation={selectedAnnotation}
               onSelectAnnotation={setSelectedAnnotation}
               fabricCanvasRef={fabricCanvasRef as any}
@@ -236,6 +335,9 @@ export default function TemplateCanvasEditDialog({
               fabricCanvasRef={fabricCanvasRef as any}
               imageWidth={imageWidth}
               imageHeight={imageHeight}
+              readOnlyType                      // lock type select for all
+              readOnlyConf                      // lock conf input for all
+              canDelete={(a: any) => a.type === 'char'}  // only chars deletable
             />
           </div>
         </div>

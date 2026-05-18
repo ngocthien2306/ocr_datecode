@@ -276,6 +276,11 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
   const [liveRawFrames, setLiveRawFrames] = useState<{[sn: string]: string[]}>({});
   const [isGettingLiveTemplate, setIsGettingLiveTemplate] = useState(false);
   const [settingTemplateKey, setSettingTemplateKey] = useState<string | null>(null); // "sn_frameIdx"
+  // Snapshot of `latestResults` taken at the moment user clicked Get-Live-Templates.
+  // Used by Set-As-Template so that detected_regions/text_verification stay locked
+  // to the frame the user actually previewed, even if a new inference arrives in
+  // between Get-Live and Set-As-Template clicks.
+  const [liveInferenceSnapshot, setLiveInferenceSnapshot] = useState<any>(null);
 
   interface PendingTemplateData {
     sn: string;
@@ -304,6 +309,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
     recipeCam: any;
     templateName: string | undefined;
     baseAnnotations: any[];   // non-char annotations with coords updated to the new frame
+    previousChars: any[];     // old char annotations from recipe — used to inherit conf/text on re-segment
   }
   const [pendingCanvasData, setPendingCanvasData] = useState<PendingCanvasData | null>(null);
   const [isSavingCanvas, setIsSavingCanvas] = useState(false);
@@ -574,10 +580,14 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
   const handleGetLiveTemplates = async () => {
     if (!latestResults?.camera_results?.length) return;
     setIsGettingLiveTemplate(true);
+    // Snapshot the inference result NOW so Set-As-Template uses the same
+    // annotation context the user is previewing (incoming inferences won't shift it).
+    const inferenceSnapshot = latestResults;
+    setLiveInferenceSnapshot(inferenceSnapshot);
     try {
       const updates: {[sn: string]: string[]} = {};
       const rawUpdates: {[sn: string]: string[]} = {};
-      for (const cameraResult of latestResults.camera_results) {
+      for (const cameraResult of inferenceSnapshot.camera_results) {
         const sn = cameraResult.serial_number;
         const count = cameraResult.frames.length || 1;
         try {
@@ -623,6 +633,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
   const handleReturnOriginalTemplates = () => {
     setLiveTemplateFrames({});
     setLiveRawFrames({});
+    setLiveInferenceSnapshot(null);
   };
 
   // Build new annotations by merging recipe shape info + detected_regions coords + text_verification text
@@ -803,15 +814,18 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
 
     const rawSrc = liveRawFrames[sn]?.[frameIdx];
     if (!rawSrc) { toast.error('No raw frame captured'); return; }
-    if (!latestResults || !runningRecipeId) { toast.error('No inference result available'); return; }
+    // Use the snapshot captured at Get-Live-Templates time, NOT the live latestResults
+    // (which may have refreshed with newer inferences while user reviewed the preview).
+    const sourceResults = liveInferenceSnapshot ?? latestResults;
+    if (!sourceResults || !runningRecipeId) { toast.error('No inference result available'); return; }
 
     setSettingTemplateKey(key);
     try {
       // 1. Upload raw frame
       const { url: newImageUrl, width: uploadWidth, height: uploadHeight } = await uploadRawFrame(rawSrc);
 
-      // 2. Find camera and its result frame
-      const cameraResult = latestResults.camera_results.find((c) => c.serial_number === sn);
+      // 2. Find camera and its result frame (from frozen snapshot)
+      const cameraResult = sourceResults.camera_results.find((c: any) => c.serial_number === sn);
       const inferenceFrame = cameraResult?.frames[frameIdx];
       const detectedRegions: any[] = inferenceFrame?.detected_regions ?? [];
       const textVerification = inferenceFrame?.text_verification;
@@ -842,10 +856,13 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
         const baseAnnotations = buildNewAnnotations(
           recipeAnnotations, detectedRegions, textVerification, uploadWidth, uploadHeight,
         ).filter((a: any) => a.type !== 'char');
+        // Capture old chars from RECIPE so the dialog can inherit text/conf when
+        // re-segmenting (chars at the same x-position get the old char's metadata).
+        const previousChars = recipeAnnotations.filter((a: any) => a.type === 'char');
 
         setPendingCanvasData({
           sn, frameIdx, newImageUrl, uploadWidth, uploadHeight,
-          recipeCam, templateName, baseAnnotations,
+          recipeCam, templateName, baseAnnotations, previousChars,
         });
         setSettingTemplateKey(null);
         return;
@@ -2453,6 +2470,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
           imageHeight={pendingCanvasData.uploadHeight}
           templateName={pendingCanvasData.templateName}
           baseAnnotations={pendingCanvasData.baseAnnotations}
+          previousChars={pendingCanvasData.previousChars}
           isSaving={isSavingCanvas}
           onConfirm={handleCanvasConfirm}
           onCancel={handleCanvasCancel}

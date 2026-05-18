@@ -54,6 +54,8 @@ interface AnnotationsPanelProps {
   imageWidth?: number;
   imageHeight?: number;
   readOnlyType?: boolean;
+  readOnlyConf?: boolean;
+  canDelete?: (ann: Annotation) => boolean;
   hideMetadata?: boolean;
 }
 
@@ -71,6 +73,8 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
   imageWidth,
   imageHeight,
   readOnlyType = false,
+  readOnlyConf = false,
+  canDelete,
   hideMetadata = false
 }) => {
   const [showMetadata, setShowMetadata] = useState(false);
@@ -149,21 +153,23 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
                     </button>
                   )}
 
-                  {/* Delete button */}
-                  <button
-                    type="button"
-                    className="delete-annotation-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDeleteAnnotation?.(index);
-                    }}
-                    title="Delete"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                      <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                      <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                    </svg>
-                  </button>
+                  {/* Delete button — hidden when canDelete predicate disallows */}
+                  {(!canDelete || canDelete(ann)) && (
+                    <button
+                      type="button"
+                      className="delete-annotation-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteAnnotation?.(index);
+                      }}
+                      title="Delete"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                        <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                        <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                      </svg>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -225,6 +231,7 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
                       }}
                       className="annotation-conf-input"
                       onClick={(e) => e.stopPropagation()}
+                      disabled={readOnlyConf}
                     />
                   </div>
 
