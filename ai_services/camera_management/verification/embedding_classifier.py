@@ -155,17 +155,20 @@ def _compute_char_quality(
     tmpl_gray: np.ndarray,
     tgt_gray: np.ndarray,
     size: Tuple[int, int] = (64, 64),
-    denoise: bool = False,
+    denoise: bool = False,   # deprecated — old centroid IoU is replaced by ECC IoU
 ) -> Dict[str, float]:
-    """So sánh 2 ký tự bằng 3 metric, robust với binary shapes:
+    """So sánh 2 ký tự bằng 3 metric, sau khi BỎ centroid alignment:
       1. pixel_conf  — ratio px_tgt/px_tmpl
       2. blur_tm     — multi-scale blurred TM_CCOEFF_NORMED
-      3. iou         — IoU sau centroid alignment + dilation
+      3. iou         — IoU sau ECC TRANSLATION alignment (sub-pixel, principled)
 
     tm_conf    = max(blur_tm, iou)
     confidence = min(tm_conf, pixel_conf)
 
-    Inputs MUST be single-channel (grayscale). Returns dict with confidence ∈ [0,1].
+    Khác bản gốc: alignment trước IoU dùng ECC thay centroid. Centroid của
+    asymmetric chars (T, L, F, P, b, p, q) lệch về thanh dày → 2 char tương tự
+    bị align ở vị trí khác nhau → IoU drop oan. ECC tối ưu correlation
+    pixel-level → defect cục bộ không kéo lệch alignment toàn cục.
     """
     tmpl_b = _to_thresh_norm(tmpl_gray)
     tgt_b  = _to_thresh_norm(tgt_gray)
@@ -182,7 +185,7 @@ def _compute_char_quality(
     pixel_conf = float(np.clip(1.0 - deviation * (1.0 / 1.4), 0.0, 1.0))
 
     # (2) Blurred multi-scale template matching — blur biến binary thành soft mask,
-    # giúp TM chịu được lệch 1–2 px và stroke khác nhau.
+    # giúp TM chịu được lệch 1–2 px và stroke khác nhau. matchTemplate tự align.
     t1_blur = cv2.GaussianBlur(t1.astype(np.float32), (0, 0), sigmaX=1.2)
     best_tm = 0.0
     for scale in (0.85, 0.92, 1.0, 1.08, 1.15):
@@ -194,15 +197,28 @@ def _compute_char_quality(
         best_tm = max(best_tm, float(result.max()))
     blur_tm = float(np.clip(best_tm, 0.0, 1.0))
 
-    # (3) IoU sau centroid alignment — dilate(ellipse 5×5) tha thứ stroke width.
-    # When denoise=True, drop noise blobs (keep largest CC) before centering.
-    t1_for_iou = _largest_cc(t1)      if denoise else t1
-    t2_for_iou = _largest_cc(t2_base) if denoise else t2_base
-    a = _center_by_centroid(_tight_crop(t1_for_iou), size)
-    b = _center_by_centroid(_tight_crop(t2_for_iou), size)
+    # (3) IoU sau ECC TRANSLATION alignment + dilate(ellipse 5×5)
+    b_aligned = t2_base
+    try:
+        warp = np.eye(2, 3, dtype=np.float32)
+        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 1e-3)
+        t1f = t1.astype(np.float32)
+        t2f = t2_base.astype(np.float32)
+        _, warp = cv2.findTransformECC(t1f, t2f, warp, cv2.MOTION_TRANSLATION,
+                                        criteria, None, 3)
+        if np.isfinite(warp).all() and abs(warp[0, 2]) <= size[0] / 4 \
+                                    and abs(warp[1, 2]) <= size[1] / 4:
+            b_aligned = cv2.warpAffine(
+                t2_base, warp, size,
+                flags=cv2.INTER_NEAREST + cv2.WARP_INVERSE_MAP,
+                borderMode=cv2.BORDER_CONSTANT, borderValue=0,
+            )
+    except cv2.error:
+        pass  # ECC diverged → IoU on un-aligned masks (fallback)
+
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    a = cv2.dilate(a, k, iterations=1)
-    b = cv2.dilate(b, k, iterations=1)
+    a = cv2.dilate(t1, k, iterations=1)
+    b = cv2.dilate(b_aligned, k, iterations=1)
     iou = _iou(a, b)
 
     tm_conf = max(blur_tm, iou)
@@ -216,10 +232,9 @@ def _compute_char_quality(
         "pixel_conf": float(pixel_conf),
         "px_tmpl":    px1,
         "px_tgt":     px2,
-        # Centroid-aligned masks (pre-dilate) — used by classify_batch to build a
-        # diff-XOR debug image showing only the differing pixels.
-        "_mask_tmpl_aligned": _center_by_centroid(_tight_crop(t1),      size),
-        "_mask_tgt_aligned":  _center_by_centroid(_tight_crop(t2_base), size),
+        # Diff-XOR masks for debug — template bbox-centered, target ECC-aligned
+        "_mask_tmpl_aligned": t1,
+        "_mask_tgt_aligned":  b_aligned,
     }
 
 
