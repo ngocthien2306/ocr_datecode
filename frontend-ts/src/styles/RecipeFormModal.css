@@ -458,6 +458,9 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* Allow grid column to shrink below content min-width so children with
+     overflow-x: auto can actually scroll instead of pushing the layout */
+  min-width: 0;
 }
 
 .model-column h3 {
@@ -2593,6 +2596,12 @@ body.dark-mode .template-bank-card__title {
   border: 1px solid #d1d5db;
   border-radius: 6px;
   background: #f8fafc;
+  /* Constrain to parent so wide card row scrolls horizontally inside
+     __cards instead of stretching the grid column */
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 .cv-preview__header {
   display: flex;
@@ -2639,8 +2648,12 @@ body.dark-mode .template-bank-card__title {
   display: flex;
   gap: 8px;
   overflow-x: auto;
+  /* Required so the scroll container reports correct width when cards exceed it */
+  min-width: 0;
+  max-width: 100%;
 }
 .cv-preview__card {
+  flex: 0 0 auto;          /* keep card at min-width, no shrink → row scrolls */
   min-width: 160px;
   padding: 4px;
   border-radius: 4px;
