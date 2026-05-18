@@ -174,14 +174,20 @@ export default function TemplateCanvasEditDialog({
     hasRunInitialRef.current = true;
 
     const run = async () => {
-      setAnnotations(baseAnnotations);
+      // Ensure every base annotation has a stable id — otherwise the canvas
+      // change handler can't tell "existing" from "newly drawn" and would force
+      // them all to type='char'.
+      const baseWithIds = baseAnnotations.map((a: any, i: number) =>
+        a?.id ? a : { ...a, id: `base-${i}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}` }
+      );
+      setAnnotations(baseWithIds);
       setAutoSegmenting(true);
       const newChars: any[] = [];
       let totalSegs = 0;
       let failedRegions = 0;
 
       let inheritedCount = 0;
-      for (const ann of baseAnnotations) {
+      for (const ann of baseWithIds) {
         if (ann.shape !== 'rectangle') continue;
         if (ann.type !== 'text' && ann.type !== 'datecode') continue;
         try {
@@ -211,7 +217,7 @@ export default function TemplateCanvasEditDialog({
         }
       }
 
-      setAnnotations([...baseAnnotations, ...newChars]);
+      setAnnotations([...baseWithIds, ...newChars]);
       setAutoSegmenting(false);
 
       if (totalSegs > 0) {
@@ -313,14 +319,21 @@ export default function TemplateCanvasEditDialog({
   const handleAnnotationsChange = (next: any[]) => {
     const byId = new Map<string, any>();
     for (const a of annotations) if (a?.id) byId.set(a.id, a);
-    const merged = next.map((newAnn) => {
-      const prev = newAnn?.id ? byId.get(newAnn.id) : undefined;
+    // The previous-state size: anything beyond this index in `next` was added
+    // by the canvas (Rectangle tool). We rely on TemplateEditor preserving order.
+    const prevLen = annotations.length;
+    const merged = next.map((newAnn, idx) => {
+      // Primary lookup: by id
+      let prev = newAnn?.id ? byId.get(newAnn.id) : undefined;
+      // Fallback: positional lookup (same index in old list) — handles the case
+      // where an existing annotation lost its id somewhere in the pipeline.
+      if (!prev && idx < prevLen) prev = annotations[idx];
+
       if (!prev) {
-        // Newly drawn annotation — force type 'char' (Rectangle tool default in this flow).
+        // Truly new annotation (index >= prevLen AND no id match) — force char.
         return { ...newAnn, type: 'char' };
       }
       if (prev.type !== 'char') {
-        // Lock geometry + type + conf for non-char existing regions
         return {
           ...newAnn,
           x: prev.x, y: prev.y,
@@ -329,7 +342,6 @@ export default function TemplateCanvasEditDialog({
           conf: prev.conf,
         };
       }
-      // Char: lock only type and conf (geometry editable)
       return { ...newAnn, type: 'char', conf: prev.conf };
     });
     setAnnotations(merged);
