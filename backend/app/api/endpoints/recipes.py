@@ -66,7 +66,7 @@ async def cv_method_preview(payload: Dict[str, Any]):
     import cv2 as _cv2
 
     cv_method = (payload.get("cv_method") or "legacy").lower()
-    if cv_method not in ("legacy", "v3", "v4", "shape_v7"):
+    if cv_method not in ("legacy", "v3", "v4", "v5", "shape_v7"):
         cv_method = "legacy"
     count = max(1, min(20, int(payload.get("count") or 5)))
     threshold = float(payload.get("threshold") or 0.80)
@@ -149,6 +149,8 @@ async def cv_method_preview(payload: Dict[str, Any]):
         from ai_services.camera_management.verification.char_quality_v3 import compute_char_quality_v3
     elif cv_method == "v4":
         from ai_services.camera_management.verification.char_quality_v4 import compute_char_quality_v4
+    elif cv_method == "v5":
+        from ai_services.camera_management.verification.char_quality_v5 import compute_char_quality_v5
     elif cv_method == "shape_v7":
         from ai_services.camera_management.verification.char_quality_v7_shape import (
             compute_char_quality_v7,
@@ -208,6 +210,19 @@ async def cv_method_preview(payload: Dict[str, Any]):
                     if m.get("_missing_ink") is not None:
                         base[m["_missing_ink"] > 0] = (255, 100, 60)
                     result_img = base
+            elif cv_method == "v5":
+                m = compute_char_quality_v5(tmpl_g, tgt_g)
+                conf = float(m["confidence"]); defect = m.get("defect_type")
+                loc = m.get("defect_location")
+                extra = {"ncc": round(float(m.get("ncc", 0)), 3),
+                         "over_g": round(float(m.get("over_ink_score", 0)), 3),
+                         "under_g": round(float(m.get("under_ink_score", 0)), 3),
+                         "tile_over_max":  round(float(m.get("tile_over_max", 0)), 3),
+                         "tile_under_max": round(float(m.get("tile_under_max", 0)), 3),
+                         "n_bad_tiles":    int(m.get("n_bad_tiles", 0))}
+                # Use tile heatmap as result visualization
+                if m.get("_tile_heatmap") is not None:
+                    result_img = m["_tile_heatmap"]
             elif cv_method == "shape_v7":
                 m = compute_char_quality_v7(tmpl_g, tgt_g)
                 conf = float(m["confidence"]); defect = m.get("defect_type")

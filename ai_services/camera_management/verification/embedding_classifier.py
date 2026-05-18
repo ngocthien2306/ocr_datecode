@@ -1037,6 +1037,12 @@ class EmbeddingClassifierService:
                         # v4 defect_type → cap p_ok so NG verdict triggers
                         if metrics.get('defect_type'):
                             p_ok = min(p_ok, max(0.0, conf_thr - 0.01))
+                    elif cv_method == 'v5':
+                        from .char_quality_v5 import compute_char_quality_v5
+                        metrics = compute_char_quality_v5(tmpl_gray, tgt_gray)
+                        p_ok = float(metrics['confidence'])
+                        if metrics.get('defect_type'):
+                            p_ok = min(p_ok, max(0.0, conf_thr - 0.01))
                     elif cv_method in ('v7', 'shape_v7'):
                         from .char_quality_v7_shape import compute_char_quality_v7
                         metrics = compute_char_quality_v7(tmpl_gray, tgt_gray)
@@ -1100,7 +1106,7 @@ class EmbeddingClassifierService:
                         f"blur_tm={metrics.get('blur_tm', 0):.3f} iou={metrics.get('iou', 0):.3f} "
                         f"px={metrics.get('pixel_conf', 0):.3f} {label} thr={conf_thr}"
                     )
-                elif cv_method in ('v3', 'v4'):
+                elif cv_method in ('v3', 'v4', 'v5'):
                     logger.debug(
                         f"[{item.get('serial_number', '')}] cv ann "
                         f"{item.get('annotation_idx', -1)}: {cv_method} conf={p_ok:.4f} "

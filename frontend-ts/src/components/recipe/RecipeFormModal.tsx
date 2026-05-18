@@ -2030,12 +2030,14 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         <option value="legacy">Pattern Match (Classic)</option>
                         <option value="v3">Ink Defect Detector</option>
                         <option value="v4">Ink Defect Detector (Scale-Tolerant)</option>
+                        <option value="v5">Local Defect Detector (Tile-wise + Scale)</option>
                         <option value="shape_v7">Shape Outline Match</option>
                       </select>
                       <small className="field-description">
                         <b>Pattern Match</b>: template similarity (blur TM + ECC-aligned IoU + pixel coverage).&nbsp;
                         <b>Ink Defect Detector</b>: detects over-ink (smudge) and under-ink (broken stroke) via directional pixel diff.&nbsp;
                         <b>Scale-Tolerant</b> variant: same but handles size variation via AFFINE alignment.&nbsp;
+                        <b>Local Defect Detector</b>: splits char into 3×3 tiles + Scale-Tolerant — surfaces localized defects (small ink smudge, broken stroke piece) that get diluted in global metric.&nbsp;
                         <b>Shape Outline Match</b>: compares gradient orientation (LineMOD/Halcon style) — lighting-robust, shape-focused.
                       </small>
 
