@@ -205,6 +205,24 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [segmenting, setSegmenting] = useState(false);
+
+  // ── CV-method preview state ──
+  type CvPair = {
+    char_idx: number;
+    logged_label?: string;
+    logged_p?: number;
+    tmpl_b64: string;
+    tgt_b64: string;
+    result_b64?: string | null;
+    conf: number;
+    label: 'OK' | 'NG';
+    defect_type: string | null;
+    extra?: Record<string, number>;
+  };
+  const [cvPreviewPairs, setCvPreviewPairs] = useState<CvPair[]>([]);
+  const [cvPreviewLoading, setCvPreviewLoading] = useState(false);
+  const [cvPreviewError, setCvPreviewError] = useState<string | null>(null);
+  const [cvPreviewFolder, setCvPreviewFolder] = useState<string | null>(null);
   
   // Camera management states
   const [availableCameras, setAvailableCameras] = useState<Camera[]>([]);
@@ -456,6 +474,40 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       loadMlProjects();
     }
   }, [isOpen]);
+
+  // CV-method preview: fetch 5 sample pair scores when method changes
+  const fetchCvPreview = async (method: string) => {
+    setCvPreviewLoading(true);
+    setCvPreviewError(null);
+    try {
+      const resp = await fetch(`${API_BASE_URL}/api/recipes/cv-preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cv_method: method, count: 5, threshold: 0.80 }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      if (data.error) {
+        setCvPreviewError(data.error);
+        setCvPreviewPairs([]);
+      } else {
+        setCvPreviewPairs(data.pairs || []);
+        setCvPreviewFolder(data.folder || null);
+      }
+    } catch (e) {
+      setCvPreviewError((e as Error).message);
+      setCvPreviewPairs([]);
+    } finally {
+      setCvPreviewLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen && activeTab === 'model' && formData.classifier_backend === 'embedding') {
+      fetchCvPreview(formData.cv_method || 'legacy');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, activeTab, formData.cv_method, formData.classifier_backend]);
 
   // Load ML models whenever ml_project_id changes
   useEffect(() => {
@@ -1966,6 +2018,81 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       <small className="field-description">
                         Cách 1 = pipeline hiện tại; v4 thêm AFFINE alignment + directional diff; v7 dùng gradient orientation (LineMOD/Halcon insight)
                       </small>
+
+                      {/* Preview: 5 cặp char gần nhất với conf tính bằng method đang chọn */}
+                      {formData.classifier_backend === 'embedding' && (
+                        <div className="cv-preview">
+                          <div className="cv-preview__header">
+                            <span className="cv-preview__title">
+                              Preview 5 cặp gần nhất
+                              {cvPreviewFolder && (
+                                <span className="cv-preview__folder">— {cvPreviewFolder}</span>
+                              )}
+                            </span>
+                            <button
+                              type="button"
+                              className="cv-preview__refresh"
+                              onClick={() => fetchCvPreview(formData.cv_method || 'legacy')}
+                              disabled={cvPreviewLoading}
+                            >
+                              {cvPreviewLoading ? '...' : 'Refresh'}
+                            </button>
+                          </div>
+                          {cvPreviewError && (
+                            <div className="cv-preview__error">{cvPreviewError}</div>
+                          )}
+                          <div className="cv-preview__cards">
+                            {cvPreviewPairs.length === 0 && !cvPreviewLoading && !cvPreviewError && (
+                              <div className="cv-preview__empty">(chưa có data)</div>
+                            )}
+                            {cvPreviewPairs.map((p) => {
+                              const isOK = p.label === 'OK';
+                              const extraStr = p.extra
+                                ? Object.entries(p.extra).map(([k, v]) => `${k}=${v}`).join(' ')
+                                : '';
+                              return (
+                                <div
+                                  key={p.char_idx}
+                                  className={`cv-preview__card ${isOK ? 'is-ok' : 'is-ng'}`}
+                                  title={extraStr}
+                                >
+                                  <div className="cv-preview__thumbs">
+                                    <img
+                                      className="cv-preview__thumb"
+                                      src={`data:image/png;base64,${p.tmpl_b64}`}
+                                      alt="tmpl"
+                                      title="Template"
+                                    />
+                                    <img
+                                      className="cv-preview__thumb"
+                                      src={`data:image/png;base64,${p.tgt_b64}`}
+                                      alt="tgt"
+                                      title="Target"
+                                    />
+                                    {p.result_b64 && (
+                                      <img
+                                        className="cv-preview__thumb"
+                                        src={`data:image/png;base64,${p.result_b64}`}
+                                        alt="diff"
+                                        title="Diff / Result"
+                                      />
+                                    )}
+                                  </div>
+                                  <div className="cv-preview__meta">
+                                    char{p.char_idx.toString().padStart(2, '0')}
+                                  </div>
+                                  <div className={`cv-preview__score ${isOK ? 'is-ok' : 'is-ng'}`}>
+                                    {p.label} {p.conf.toFixed(2)}
+                                  </div>
+                                  {p.defect_type && (
+                                    <div className="cv-preview__defect">{p.defect_type}</div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* ── Char Denoise — largest-CC filter (embedding mode only) ── */}

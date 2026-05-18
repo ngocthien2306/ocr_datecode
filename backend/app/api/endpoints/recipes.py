@@ -46,6 +46,170 @@ router = APIRouter()
 TEMPLATE_UPLOAD_DIR = Path("uploads/templates")
 TEMPLATE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+
+# ────────────────────────────────────────────────────────────────────────────
+# CV-method preview endpoint
+# Compute char-quality score on N random pairs from latest test_result/emb_*/
+# folder for the selected cv_method. Used by recipe form to preview before save.
+# MUST stay BEFORE any `/{recipe_id}` route (FastAPI static-first rule).
+# ────────────────────────────────────────────────────────────────────────────
+@router.post("/cv-preview")
+async def cv_method_preview(payload: Dict[str, Any]):
+    """Run a given cv_method against N random char pairs from the latest
+    inference debug folder and return base64 thumbnails + per-pair scores.
+
+    Body: {"cv_method": "legacy"|"v4"|"shape_v7", "count": 5, "threshold": 0.80}
+    """
+    import sys as _sys
+    import random as _random
+    import re as _re
+    import cv2 as _cv2
+
+    cv_method = (payload.get("cv_method") or "legacy").lower()
+    if cv_method not in ("legacy", "v4", "shape_v7"):
+        cv_method = "legacy"
+    count = max(1, min(20, int(payload.get("count") or 5)))
+    threshold = float(payload.get("threshold") or 0.80)
+
+    # Project root: backend/app/api/endpoints/recipes.py → up 4 dirs
+    proj_root = Path(__file__).resolve().parents[4]
+    if str(proj_root) not in _sys.path:
+        _sys.path.insert(0, str(proj_root))
+
+    test_result_dir = proj_root / "ai_services" / "test_result"
+    if not test_result_dir.is_dir():
+        return {"folder": None, "method": cv_method, "pairs": [],
+                "error": f"test_result dir missing: {test_result_dir}"}
+
+    emb_folders = [d for d in test_result_dir.iterdir()
+                   if d.is_dir() and d.name.startswith("emb_")]
+    if not emb_folders:
+        return {"folder": None, "method": cv_method, "pairs": [],
+                "error": "no emb_* folders found"}
+
+    latest = max(emb_folders, key=lambda d: d.stat().st_mtime)
+
+    pat = _re.compile(r"^char(\d+)_(OK|NG)_p([\d.]+)_target\.png$")
+    pairs_on_disk = []
+    for f in latest.iterdir():
+        m = pat.match(f.name)
+        if not m:
+            continue
+        tmpl_path = latest / f.name.replace("_target.png", "_template.png")
+        if not tmpl_path.exists():
+            continue
+        pairs_on_disk.append({
+            "char_idx": int(m.group(1)),
+            "logged_label": m.group(2),
+            "logged_p": float(m.group(3)),
+            "tmpl": tmpl_path,
+            "tgt": f,
+        })
+
+    if not pairs_on_disk:
+        return {"folder": latest.name, "method": cv_method, "pairs": [],
+                "error": "no template/target pairs in folder"}
+
+    _random.shuffle(pairs_on_disk)
+    sample = pairs_on_disk[:count]
+
+    # Lazy-import algorithms (only what we need)
+    from ai_services.camera_management.verification.embedding_classifier import _compute_char_quality
+    if cv_method == "v4":
+        from ai_services.camera_management.verification.char_quality_v4 import compute_char_quality_v4
+    elif cv_method == "shape_v7":
+        from ai_services.camera_management.verification.char_quality_v7_shape import (
+            compute_char_quality_v7,
+            render_orientation_overlay,
+        )
+
+    import numpy as _np
+
+    def _encode_png_b64(img) -> Optional[str]:
+        if img is None or getattr(img, "size", 0) == 0:
+            return None
+        ok, buf = _cv2.imencode(".png", img)
+        if not ok:
+            return None
+        return base64.b64encode(buf.tobytes()).decode()
+
+    out_pairs: List[Dict[str, Any]] = []
+    for p in sample:
+        try:
+            tmpl_bgr = _cv2.imread(str(p["tmpl"]))
+            tgt_bgr  = _cv2.imread(str(p["tgt"]))
+            if tmpl_bgr is None or tgt_bgr is None:
+                continue
+            tmpl_g = _cv2.cvtColor(tmpl_bgr, _cv2.COLOR_BGR2GRAY)
+            tgt_g  = _cv2.cvtColor(tgt_bgr,  _cv2.COLOR_BGR2GRAY)
+
+            result_img = None  # method-specific diff visualization
+
+            if cv_method == "v4":
+                m = compute_char_quality_v4(tmpl_g, tgt_g)
+                conf = float(m["confidence"]); defect = m.get("defect_type")
+                extra = {"ncc": round(float(m.get("ncc", 0)), 3),
+                         "over": round(float(m.get("over_ink_score", 0)), 3),
+                         "under": round(float(m.get("under_ink_score", 0)), 3)}
+                # Colored diff: gray=match, red=over, blue=under
+                t_bin = m.get("_t_bin")
+                if t_bin is not None:
+                    base = _cv2.cvtColor(t_bin, _cv2.COLOR_GRAY2BGR)
+                    base[t_bin > 0] = (180, 180, 180)
+                    if m.get("_extra_ink") is not None:
+                        base[m["_extra_ink"] > 0] = (60, 60, 255)
+                    if m.get("_missing_ink") is not None:
+                        base[m["_missing_ink"] > 0] = (255, 100, 60)
+                    result_img = base
+            elif cv_method == "shape_v7":
+                m = compute_char_quality_v7(tmpl_g, tgt_g)
+                conf = float(m["confidence"]); defect = m.get("defect_type")
+                extra = {"match_pct": round(100 * float(m.get("orientation_match_pct", 0)), 1),
+                         "partial_pct": round(100 * float(m.get("partial_match_pct", 0)), 1),
+                         "coverage": round(float(m.get("coverage_ratio", 0)), 2)}
+                # Orientation overlay (green=match, yellow=partial, red=mismatch, blue=missing)
+                if m.get("_t_prep") is not None and m.get("_quant_t") is not None and m.get("_quant_g") is not None:
+                    result_img = render_orientation_overlay(m["_t_prep"], m["_quant_t"], m["_quant_g"])
+            else:
+                m = _compute_char_quality(tmpl_g, tgt_g, denoise=False)
+                conf = float(m["confidence"]); defect = None
+                extra = {"blur_tm": round(float(m.get("blur_tm", 0)), 3),
+                         "iou": round(float(m.get("iou", 0)), 3),
+                         "pixel_conf": round(float(m.get("pixel_conf", 0)), 3)}
+                # XOR of centroid-aligned masks
+                if m.get("_mask_tmpl_aligned") is not None and m.get("_mask_tgt_aligned") is not None:
+                    result_img = _cv2.bitwise_xor(m["_mask_tmpl_aligned"], m["_mask_tgt_aligned"])
+
+            label = "OK" if (conf >= threshold and not defect) else "NG"
+
+            with open(p["tmpl"], "rb") as fh:
+                tmpl_b64 = base64.b64encode(fh.read()).decode()
+            with open(p["tgt"], "rb") as fh:
+                tgt_b64 = base64.b64encode(fh.read()).decode()
+            result_b64 = _encode_png_b64(result_img)
+
+            out_pairs.append({
+                "char_idx": p["char_idx"],
+                "logged_label": p["logged_label"],
+                "logged_p": p["logged_p"],
+                "tmpl_b64": tmpl_b64,
+                "tgt_b64": tgt_b64,
+                "result_b64": result_b64,
+                "conf": round(conf, 4),
+                "label": label,
+                "defect_type": defect,
+                "extra": extra,
+            })
+        except Exception as e:
+            out_pairs.append({"char_idx": p["char_idx"], "error": str(e)})
+
+    return {
+        "folder": latest.name,
+        "method": cv_method,
+        "threshold": threshold,
+        "pairs": out_pairs,
+    }
+
 TEMPLATE_VISUALIZE_DIR = Path("uploads/visualizations")
 TEMPLATE_VISUALIZE_DIR.mkdir(parents=True, exist_ok=True)
 
