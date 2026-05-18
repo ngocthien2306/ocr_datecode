@@ -15,6 +15,7 @@ try:
     from yolo_obb_tensorrt import YOLOOBBTensorRT
     YOLO_OBB_AVAILABLE = True
 except ImportError as e:
+    logger.warning(f"YOLO OBB not available: {e}")
     YOLO_OBB_AVAILABLE = False
     YOLOOBBTensorRT = None
 
@@ -74,6 +75,13 @@ class ProductVerificationService:
         self.wrinkle_min_area = 2000
         self.center_offset_threshold = center_offset_threshold
 
+        # Crop sample collection (set True to collect samples)
+        self.save_crop_samples = True
+        self.crop_sample_dir = f"{home}/Source/ocr_datecode/crop_samples"
+        self.crop_sample_margin = 0   # px mở rộng ra ngoài product bbox
+        self.crop_sample_max = 100     # tối đa 100 ảnh / camera
+        self._crop_sample_counts: dict = {}  # {serial_number: count}
+
         # Validate save_debug_images option
         if self.save_debug_images not in ["never", "on_fail", "always"]:
             logger.warning(
@@ -111,7 +119,7 @@ class ProductVerificationService:
                 from .wrinkle_segmenter import WrinkledSegmenterTRT
                 wrinkle_engine = (
                     f"{home}/Source/ocr_datecode/weights/"
-                    "best_wrinkled_instance_segmentation_crop_bottle_m_640.engine"
+                    "best_wrinkled_instance_segmentation_crop_bottle_n.engine"
                 )
                 self.wrinkle_seg = WrinkledSegmenterTRT(
                     engine_path=wrinkle_engine,
@@ -381,6 +389,9 @@ class ProductVerificationService:
             label_region_check = {'ok': True, 'skipped': True, 'reason': 'Check disabled'}
         else:
             label_region_check = {'ok': True, 'skipped': True, 'reason': 'No product box detected'}
+
+        # Save crop sample for analysis (controlled by self.save_crop_samples)
+        self._save_crop_sample(frame_img, transformed_bboxes, serial_number)
 
         # Check center alignment - requires product_box
         if self.check_center_alignment and has_product:
@@ -880,6 +891,95 @@ class ProductVerificationService:
         }
 
     # ========== Helper Methods ==========
+
+    def _save_crop_sample(
+        self,
+        frame_img: np.ndarray,
+        transformed_bboxes: List[Dict[str, Any]],
+        serial_number: str,
+    ):
+        if not self.save_crop_samples:
+            return
+        count = self._crop_sample_counts.get(serial_number, 0)
+        if count >= self.crop_sample_max:
+            return
+
+        product_region = next(
+            (b for b in transformed_bboxes if b.get('type') == 'product'), None
+        )
+        if product_region is None:
+            return
+
+        pts = np.array(product_region['points'], dtype=np.int32)
+        h, w = frame_img.shape[:2]
+        m = self.crop_sample_margin
+        x1 = max(0, int(pts[:, 0].min()) - m)
+        y1 = max(0, int(pts[:, 1].min()) - m)
+        x2 = min(w, int(pts[:, 0].max()) + m)
+        y2 = min(h, int(pts[:, 1].max()) + m)
+
+        crop = frame_img[y1:y2, x1:x2]
+        if crop.size == 0:
+            return
+
+        try:
+            import time, json
+            cam_dir = os.path.join(self.crop_sample_dir, serial_number)
+            os.makedirs(cam_dir, exist_ok=True)
+            ts = int(time.time() * 1000)
+            stem = f"crop_{count:04d}_{ts}"
+            cv2.imwrite(os.path.join(cam_dir, f"{stem}.jpg"), crop)
+            cv2.imwrite(os.path.join(cam_dir, f"{stem}_full.jpg"), frame_img)
+
+            # Lưu label bbox (toạ độ tương đối so với crop offset x1, y1)
+            label_region = next(
+                (b for b in transformed_bboxes if b.get('type') == 'label'), None
+            )
+            meta = {'crop_offset': [x1, y1], 'product_points': pts.tolist()}
+            if label_region is not None:
+                label_pts = np.array(label_region['points'], dtype=np.int32)
+                # Toạ độ trong crop space (trừ offset)
+                label_pts_crop = label_pts - np.array([x1, y1], dtype=np.int32)
+                meta['label_points'] = label_pts_crop.tolist()
+                meta['label_points_frame'] = label_region['points']
+            json_path = os.path.join(cam_dir, f"{stem}.json")
+            with open(json_path, 'w') as f:
+                json.dump(meta, f)
+
+            self._crop_sample_counts[serial_number] = count + 1
+            logger.debug(f"[{serial_number}] Saved crop sample {count+1}/{self.crop_sample_max}")
+        except Exception as e:
+            logger.warning(f"[{serial_number}] Failed to save crop sample: {e}")
+
+    def save_template_crop(
+        self,
+        template_img: np.ndarray,
+        bboxes: List[Dict[str, Any]],
+        serial_number: str,
+    ):
+        """Gọi 1 lần khi load template để lưu crop mẫu của template."""
+        product_region = next(
+            (b for b in bboxes if b.get('type') == 'product'), None
+        )
+        if product_region is None:
+            return
+        pts = np.array(product_region['points'], dtype=np.int32)
+        h, w = template_img.shape[:2]
+        m = self.crop_sample_margin
+        x1 = max(0, int(pts[:, 0].min()) - m)
+        y1 = max(0, int(pts[:, 1].min()) - m)
+        x2 = min(w, int(pts[:, 0].max()) + m)
+        y2 = min(h, int(pts[:, 1].max()) + m)
+        crop = template_img[y1:y2, x1:x2]
+        if crop.size == 0:
+            return
+        try:
+            cam_dir = os.path.join(self.crop_sample_dir, serial_number)
+            os.makedirs(cam_dir, exist_ok=True)
+            cv2.imwrite(os.path.join(cam_dir, "template.jpg"), crop)
+            logger.info(f"[{serial_number}] Saved template crop to {cam_dir}/template.jpg")
+        except Exception as e:
+            logger.warning(f"[{serial_number}] Failed to save template crop: {e}")
 
     def _should_save_debug_image(self, overall_match: bool) -> bool:
         if self.save_debug_images == "never":

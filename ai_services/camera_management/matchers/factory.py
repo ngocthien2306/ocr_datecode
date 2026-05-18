@@ -191,6 +191,11 @@ class MatcherFactory:
             else:
                 matcher.crop_area = None
 
+            # Save template crop + product bbox for analysis
+            self._save_template_sample(
+                final_template_path, other_bboxes, serial_number, template_idx
+            )
+
             logger.info(f"[{serial_number}] Matcher {template_idx} created successfully")
             return matcher
 
@@ -354,3 +359,60 @@ class MatcherFactory:
             json.dump(ann_data, f, indent=2)
 
         return ann_json_path
+
+    def _save_template_sample(
+        self,
+        template_path: Path,
+        other_bboxes: List,
+        serial_number: str,
+        template_idx: int,
+    ):
+        """Save template crop + product bbox coordinates to crop_samples dir for analysis."""
+        import os
+        home = os.environ.get('HOME', '')
+        sample_dir = Path(home) / 'Source' / 'ocr_datecode' / 'crop_samples' / serial_number
+        sample_dir.mkdir(parents=True, exist_ok=True)
+
+        suffix = f"_t{template_idx}" if template_idx > 0 else ""
+
+        # Save template image crop (copy as-is — already cropped by _apply_crop)
+        img = cv2.imread(str(template_path))
+        if img is not None:
+            out_img = sample_dir / f"template{suffix}.jpg"
+            cv2.imwrite(str(out_img), img)
+
+        def _bbox_to_dict(bbox_type: str, pts):
+            return {
+                'type': bbox_type,
+                'points': [list(p) for p in pts],
+                'x_min': int(min(p[0] for p in pts)),
+                'y_min': int(min(p[1] for p in pts)),
+                'x_max': int(max(p[0] for p in pts)),
+                'y_max': int(max(p[1] for p in pts)),
+                'width': int(max(p[0] for p in pts) - min(p[0] for p in pts)),
+                'height': int(max(p[1] for p in pts) - min(p[1] for p in pts)),
+            }
+
+        # Save product bbox coordinates as JSON
+        product_bboxes = [b for b in other_bboxes if b.type == 'product']
+        if product_bboxes:
+            bbox_data = _bbox_to_dict('product', product_bboxes[0].points)
+            out_json = sample_dir / f"template{suffix}_product_bbox.json"
+            with open(str(out_json), 'w') as f:
+                json.dump(bbox_data, f, indent=2)
+            logger.info(
+                f"[{serial_number}] Template sample saved: {out_img.name}, "
+                f"product bbox {bbox_data['width']}x{bbox_data['height']}px"
+            )
+
+        # Save label bbox coordinates as JSON (used for alignment reference)
+        label_bboxes = [b for b in other_bboxes if b.type == 'label']
+        if label_bboxes:
+            bbox_data = _bbox_to_dict('label', label_bboxes[0].points)
+            out_json = sample_dir / f"template{suffix}_label_bbox.json"
+            with open(str(out_json), 'w') as f:
+                json.dump(bbox_data, f, indent=2)
+            logger.info(
+                f"[{serial_number}] Template label bbox saved: "
+                f"{bbox_data['width']}x{bbox_data['height']}px"
+            )
