@@ -190,9 +190,14 @@ export default function TemplateCanvasEditDialog({
       let failedRegions = 0;
 
       let inheritedCount = 0;
+      let fallbackRegions = 0;
+      let fallbackChars = 0;
       for (const ann of baseWithIds) {
         if (ann.shape !== 'rectangle') continue;
         if (ann.type !== 'text' && ann.type !== 'datecode') continue;
+
+        const prevInRegion = (previousChars ?? []).filter((c: any) => _isInsideRegion(c, ann));
+        let segmented: any[] | null = null;
         try {
           const res = await recipesAPI.segmentTemplateRegion(
             imageUrl,
@@ -200,32 +205,52 @@ export default function TemplateCanvasEditDialog({
             { withOcr: true },
           );
           if (res.count > 0) {
-            // Build raw new chars from segmentation
-            const freshChars = res.segments.map((seg) =>
+            segmented = res.segments.map((seg) =>
               buildPaddedChar(seg, ann.conf ?? 0.5, imageWidth, imageHeight),
             );
-            // Inherit conf/text from previous chars by IoU overlap (greedy match).
-            // Unmatched new chars keep default conf and OCR-recognized text.
-            const prevInRegion = (previousChars ?? []).filter((c: any) => _isInsideRegion(c, ann));
-            const { merged, inheritedCount: matched } = _matchByOverlap(freshChars, prevInRegion);
-            inheritedCount += matched;
-            for (const c of merged) {
-              newChars.push(c);
-              totalSegs += 1;
-            }
           }
         } catch (e) {
           failedRegions += 1;
           console.error('[TemplateCanvasEditDialog] segment failed for region', ann, e);
+        }
+
+        // Decide what chars to use for this region:
+        //   - If segmentation gave AT LEAST as many chars as previous → use segmented + IoU inherit
+        //   - Otherwise (failed, 0 segments, or fewer than prev) → fall back to previousChars
+        //     so we don't silently lose chars that the model can't detect (e.g. letters).
+        if (segmented && segmented.length >= Math.max(1, prevInRegion.length * 0.7)) {
+          const { merged, inheritedCount: matched } = _matchByOverlap(segmented, prevInRegion);
+          inheritedCount += matched;
+          for (const c of merged) {
+            newChars.push(c);
+            totalSegs += 1;
+          }
+        } else if (prevInRegion.length > 0) {
+          // Fallback: clone previousChars (keep their old coords — user can adjust on canvas)
+          for (const old of prevInRegion) {
+            newChars.push({
+              ...old,
+              id: `annotation-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              type: 'char',
+              shape: 'rectangle',
+            });
+            fallbackChars += 1;
+          }
+          fallbackRegions += 1;
         }
       }
 
       setAnnotations([...baseWithIds, ...newChars]);
       setAutoSegmenting(false);
 
-      if (totalSegs > 0) {
-        const inheritMsg = inheritedCount > 0 ? ` — kept text/conf for ${inheritedCount}` : '';
-        toast.success(`Auto segmented ${totalSegs} character(s)${inheritMsg} — review and adjust as needed`);
+      const inheritMsg = inheritedCount > 0 ? ` — kept text/conf for ${inheritedCount}` : '';
+      const fallbackMsg = fallbackRegions > 0
+        ? ` — kept ${fallbackChars} char(s) from previous template across ${fallbackRegions} region(s) where segmentation was sparse`
+        : '';
+      if (totalSegs > 0 || fallbackChars > 0) {
+        toast.success(
+          `Auto segmented ${totalSegs} character(s)${inheritMsg}${fallbackMsg} — review and adjust as needed`,
+        );
       } else if (failedRegions > 0) {
         toast.warning('Auto segmentation failed for all regions — draw chars manually');
       } else {
