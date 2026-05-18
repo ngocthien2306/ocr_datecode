@@ -45,8 +45,10 @@ interface TemplateEditorProps {
   /** Annotation types that should be Fabric-locked (no move/resize/select).
    *  Other types remain fully editable on the canvas. */
   lockedTypes?: string[];
-  /** Hide the rectangle/polygon draw-mode toolbar buttons (no new annotations). */
+  /** Hide the polygon draw-mode toolbar button. Rectangle is always available. */
   disableDrawing?: boolean;
+  /** Default `type` assigned to newly drawn annotations (default 'text'). */
+  defaultDrawType?: string;
 }
 
 export default function TemplateEditor({
@@ -58,6 +60,7 @@ export default function TemplateEditor({
   fabricCanvasRef: externalCanvasRef,
   lockedTypes,
   disableDrawing = false,
+  defaultDrawType = 'text',
 }: TemplateEditorProps) {
   const lockedTypesSet = useMemo(() => new Set(lockedTypes ?? []), [lockedTypes]);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -820,9 +823,10 @@ export default function TemplateEditor({
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    let typeConfig = TYPE_CONFIGS.find(t => t.value === 'text');
+    let typeConfig = TYPE_CONFIGS.find(t => t.value === defaultDrawType);
+    if (!typeConfig) typeConfig = TYPE_CONFIGS.find(t => t.value === 'text');
     if (!typeConfig && TYPE_CONFIGS.length > 0) typeConfig = TYPE_CONFIGS[0];
-    
+
     // Wait for next mouse down to start drawing
     const handleMouseDown = (e: any) => {
       if (!e.target || e.target === canvas.backgroundImage) {
@@ -831,7 +835,7 @@ export default function TemplateEditor({
           e.e,
           (typeConfig && typeConfig.color) || '#fff',
           (rectData: any) => {
-            addAnnotation(rectData);
+            addAnnotation(rectData, defaultDrawType);
             setDrawMode('select');
             rectangleCleanupRef.current = null;
           }
@@ -839,7 +843,7 @@ export default function TemplateEditor({
         canvas.off('mouse:down', handleMouseDown);
       }
     };
-    
+
     canvas.on('mouse:down', handleMouseDown);
   };
 
@@ -1158,18 +1162,16 @@ export default function TemplateEditor({
               <path d="M9 11V6C9 4.89543 9.89543 4 11 4C12.1046 4 13 4.89543 13 6V11M13 11V6C13 4.89543 13.8954 4 15 4C16.1046 4 17 4.89543 17 6V11M17 11V7C17 5.89543 17.8954 5 19 5C20.1046 5 21 5.89543 21 7V12C21 12 21 20 12 20C3 20 3 12 3 12V11C3 9.89543 3.89543 9 5 9C6.10457 9 7 9.89543 7 11V12M13 11H9M13 11H17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </button>
-          {!disableDrawing && (
-            <button
-              type="button"
-              className={`tool-btn ${drawMode === 'rectangle' ? 'active' : ''}`}
-              onClick={startDrawingRectangle}
-              title="Draw Rectangle (R)"
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                <rect x="3" y="3" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none"/>
-              </svg>
-            </button>
-          )}
+          <button
+            type="button"
+            className={`tool-btn ${drawMode === 'rectangle' ? 'active' : ''}`}
+            onClick={startDrawingRectangle}
+            title={`Draw Rectangle (R)${defaultDrawType !== 'text' ? ` — defaults to ${defaultDrawType}` : ''}`}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <rect x="3" y="3" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none"/>
+            </svg>
+          </button>
 
           {!disableDrawing && (
             <button

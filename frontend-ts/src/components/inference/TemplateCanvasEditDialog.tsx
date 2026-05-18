@@ -45,15 +45,68 @@ function _inheritFromPrev(newChar: any, prevChar: any | undefined): any {
   return out;
 }
 
-/** Pair new chars to previous chars within a region by sorted x-order. */
-function _matchByOrder(newChars: any[], prevInRegion: any[]): any[] {
-  const newSorted = [...newChars].sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
-  const prevSorted = [...prevInRegion].sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
-  return newSorted.map((nc, i) => _inheritFromPrev(nc, prevSorted[i]));
+/** Axis-aligned IoU between two normalized-rect annotations. */
+function _iouRect(a: any, b: any): number {
+  const ax = a.x ?? 0, ay = a.y ?? 0, aw = a.width ?? 0, ah = a.height ?? 0;
+  const bx = b.x ?? 0, by = b.y ?? 0, bw = b.width ?? 0, bh = b.height ?? 0;
+  const x1 = Math.max(ax, bx);
+  const y1 = Math.max(ay, by);
+  const x2 = Math.min(ax + aw, bx + bw);
+  const y2 = Math.min(ay + ah, by + bh);
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  const union = aw * ah + bw * bh - inter;
+  return union > 0 ? inter / union : 0;
 }
 
-// Pad chars by +4px on width AND +4px on height (2px each side), in image pixel units.
-const CHAR_PAD_PX = 4;
+/** Greedy IoU-based matching of new chars to previous chars.
+ *  Returns: new chars (in original order) with conf/text inherited from matched prev.
+ *  Unmatched new chars keep their default values (parent conf + OCR text).
+ *  Threshold avoids accidental inheritance when boxes barely touch.
+ *
+ *  Trade-off vs sorted-index match:
+ *    - Robust when segmentation drifts, inserts, or deletes chars
+ *    - Each prev can match at most one new (no double-inherit)
+ *    - O(n*m) pairs, fine for typical char counts (< 50)
+ */
+function _matchByOverlap(
+  newChars: any[],
+  prevInRegion: any[],
+  iouThreshold: number = 0.3,
+): { merged: any[]; inheritedCount: number } {
+  if (prevInRegion.length === 0) return { merged: newChars, inheritedCount: 0 };
+
+  type Pair = { newIdx: number; prevIdx: number; iou: number };
+  const pairs: Pair[] = [];
+  for (let i = 0; i < newChars.length; i++) {
+    for (let j = 0; j < prevInRegion.length; j++) {
+      const iou = _iouRect(newChars[i], prevInRegion[j]);
+      if (iou >= iouThreshold) pairs.push({ newIdx: i, prevIdx: j, iou });
+    }
+  }
+  pairs.sort((a, b) => b.iou - a.iou);
+
+  const newUsed = new Set<number>();
+  const prevUsed = new Set<number>();
+  const matches = new Map<number, number>(); // newIdx → prevIdx
+  for (const p of pairs) {
+    if (newUsed.has(p.newIdx) || prevUsed.has(p.prevIdx)) continue;
+    matches.set(p.newIdx, p.prevIdx);
+    newUsed.add(p.newIdx);
+    prevUsed.add(p.prevIdx);
+  }
+
+  const merged = newChars.map((nc, i) => {
+    const pj = matches.get(i);
+    return pj !== undefined ? _inheritFromPrev(nc, prevInRegion[pj]) : nc;
+  });
+  return { merged, inheritedCount: matches.size };
+}
+
+// Padding around each segmented char, in image pixel units.
+// Horizontal: small to avoid grabbing neighbor characters.
+// Vertical:   larger to recover ascenders/descenders (b, g, j, p, q, y, ...).
+const CHAR_PAD_X_PX = 6;   // total width  → 3 px each side
+const CHAR_PAD_Y_PX = 8;   // total height → 4 px each side
 
 function buildPaddedChar(
   seg: { x: number; y: number; w: number; h: number; expected_text?: string | null },
@@ -61,10 +114,10 @@ function buildPaddedChar(
   imageWidth: number,
   imageHeight: number,
 ): any {
-  const halfDxN = (CHAR_PAD_PX / 2) / imageWidth;
-  const halfDyN = (CHAR_PAD_PX / 2) / imageHeight;
-  const dxN = CHAR_PAD_PX / imageWidth;
-  const dyN = CHAR_PAD_PX / imageHeight;
+  const halfDxN = (CHAR_PAD_X_PX / 2) / imageWidth;
+  const halfDyN = (CHAR_PAD_Y_PX / 2) / imageHeight;
+  const dxN = CHAR_PAD_X_PX / imageWidth;
+  const dyN = CHAR_PAD_Y_PX / imageHeight;
 
   let newX = seg.x - halfDxN;
   let newY = seg.y - halfDyN;
@@ -124,16 +177,27 @@ export default function TemplateCanvasEditDialog({
     hasRunInitialRef.current = true;
 
     const run = async () => {
-      setAnnotations(baseAnnotations);
+      // Ensure every base annotation has a stable id — otherwise the canvas
+      // change handler can't tell "existing" from "newly drawn" and would force
+      // them all to type='char'.
+      const baseWithIds = baseAnnotations.map((a: any, i: number) =>
+        a?.id ? a : { ...a, id: `base-${i}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}` }
+      );
+      setAnnotations(baseWithIds);
       setAutoSegmenting(true);
       const newChars: any[] = [];
       let totalSegs = 0;
       let failedRegions = 0;
 
       let inheritedCount = 0;
-      for (const ann of baseAnnotations) {
+      let fallbackRegions = 0;
+      let fallbackChars = 0;
+      for (const ann of baseWithIds) {
         if (ann.shape !== 'rectangle') continue;
         if (ann.type !== 'text' && ann.type !== 'datecode') continue;
+
+        const prevInRegion = (previousChars ?? []).filter((c: any) => _isInsideRegion(c, ann));
+        let segmented: any[] | null = null;
         try {
           const res = await recipesAPI.segmentTemplateRegion(
             imageUrl,
@@ -141,32 +205,52 @@ export default function TemplateCanvasEditDialog({
             { withOcr: true },
           );
           if (res.count > 0) {
-            // Build raw new chars from segmentation
-            const freshChars = res.segments.map((seg) =>
+            segmented = res.segments.map((seg) =>
               buildPaddedChar(seg, ann.conf ?? 0.5, imageWidth, imageHeight),
             );
-            // Find previous chars whose center falls inside this parent region,
-            // then inherit text/conf by x-order matching.
-            const prevInRegion = (previousChars ?? []).filter((c: any) => _isInsideRegion(c, ann));
-            const merged = _matchByOrder(freshChars, prevInRegion);
-            inheritedCount += Math.min(freshChars.length, prevInRegion.length);
-            for (const c of merged) {
-              newChars.push(c);
-              totalSegs += 1;
-            }
           }
         } catch (e) {
           failedRegions += 1;
           console.error('[TemplateCanvasEditDialog] segment failed for region', ann, e);
         }
+
+        // Decide what chars to use for this region:
+        //   - If segmentation gave AT LEAST as many chars as previous → use segmented + IoU inherit
+        //   - Otherwise (failed, 0 segments, or fewer than prev) → fall back to previousChars
+        //     so we don't silently lose chars that the model can't detect (e.g. letters).
+        if (segmented && segmented.length >= Math.max(1, prevInRegion.length * 0.7)) {
+          const { merged, inheritedCount: matched } = _matchByOverlap(segmented, prevInRegion);
+          inheritedCount += matched;
+          for (const c of merged) {
+            newChars.push(c);
+            totalSegs += 1;
+          }
+        } else if (prevInRegion.length > 0) {
+          // Fallback: clone previousChars (keep their old coords — user can adjust on canvas)
+          for (const old of prevInRegion) {
+            newChars.push({
+              ...old,
+              id: `annotation-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              type: 'char',
+              shape: 'rectangle',
+            });
+            fallbackChars += 1;
+          }
+          fallbackRegions += 1;
+        }
       }
 
-      setAnnotations([...baseAnnotations, ...newChars]);
+      setAnnotations([...baseWithIds, ...newChars]);
       setAutoSegmenting(false);
 
-      if (totalSegs > 0) {
-        const inheritMsg = inheritedCount > 0 ? ` — kept text/conf for ${inheritedCount}` : '';
-        toast.success(`Auto segmented ${totalSegs} character(s)${inheritMsg} — review and adjust as needed`);
+      const inheritMsg = inheritedCount > 0 ? ` — kept text/conf for ${inheritedCount}` : '';
+      const fallbackMsg = fallbackRegions > 0
+        ? ` — kept ${fallbackChars} char(s) from previous template across ${fallbackRegions} region(s) where segmentation was sparse`
+        : '';
+      if (totalSegs > 0 || fallbackChars > 0) {
+        toast.success(
+          `Auto segmented ${totalSegs} character(s)${inheritMsg}${fallbackMsg} — review and adjust as needed`,
+        );
       } else if (failedRegions > 0) {
         toast.warning('Auto segmentation failed for all regions — draw chars manually');
       } else {
@@ -212,8 +296,7 @@ export default function TemplateCanvasEditDialog({
       const prevSource = currentInRegion.length > 0
         ? currentInRegion
         : (previousChars ?? []).filter((c: any) => _isInsideRegion(c, ann));
-      const newChars = _matchByOrder(freshChars, prevSource);
-      const inheritedCount = Math.min(freshChars.length, prevSource.length);
+      const { merged: newChars, inheritedCount } = _matchByOverlap(freshChars, prevSource);
 
       // Replace any old chars in this region with the new chars (insert right
       // after the region annotation for nicer ordering).
@@ -264,11 +347,21 @@ export default function TemplateCanvasEditDialog({
   const handleAnnotationsChange = (next: any[]) => {
     const byId = new Map<string, any>();
     for (const a of annotations) if (a?.id) byId.set(a.id, a);
-    const merged = next.map((newAnn) => {
-      const prev = newAnn?.id ? byId.get(newAnn.id) : undefined;
-      if (!prev) return newAnn; // newly drawn (always char in this flow)
+    // The previous-state size: anything beyond this index in `next` was added
+    // by the canvas (Rectangle tool). We rely on TemplateEditor preserving order.
+    const prevLen = annotations.length;
+    const merged = next.map((newAnn, idx) => {
+      // Primary lookup: by id
+      let prev = newAnn?.id ? byId.get(newAnn.id) : undefined;
+      // Fallback: positional lookup (same index in old list) — handles the case
+      // where an existing annotation lost its id somewhere in the pipeline.
+      if (!prev && idx < prevLen) prev = annotations[idx];
+
+      if (!prev) {
+        // Truly new annotation (index >= prevLen AND no id match) — force char.
+        return { ...newAnn, type: 'char' };
+      }
       if (prev.type !== 'char') {
-        // Lock geometry + type + conf for non-char
         return {
           ...newAnn,
           x: prev.x, y: prev.y,
@@ -277,7 +370,6 @@ export default function TemplateCanvasEditDialog({
           conf: prev.conf,
         };
       }
-      // Char: lock only type and conf (geometry editable)
       return { ...newAnn, type: 'char', conf: prev.conf };
     });
     setAnnotations(merged);
@@ -318,10 +410,10 @@ export default function TemplateCanvasEditDialog({
               selectedAnnotation={selectedAnnotation}
               onSelectAnnotation={setSelectedAnnotation}
               fabricCanvasRef={fabricCanvasRef as any}
-              // Lock everything that isn't `char` on the canvas, and hide drawing
-              // tools so users can only adjust existing char boxes (not draw new).
+              // Lock non-char regions, hide polygon tool, and force Rectangle to draw chars.
               lockedTypes={['text', 'datecode', 'template', 'crop_area']}
-              disableDrawing
+              disableDrawing                // hides Polygon button only
+              defaultDrawType="char"       // Rectangle draws char annotations
             />
           </div>
 
