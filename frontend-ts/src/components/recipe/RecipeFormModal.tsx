@@ -61,6 +61,7 @@ interface FormDataType {
   defect_model: string;
   classifier_backend: string;
   cv_method: string;
+  product_detection_method: string;
   template_bank_enabled: boolean;
   template_bank_size: number;
   char_denoise_enabled: boolean;
@@ -187,6 +188,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     defect_model: 'arcface',
     classifier_backend: 'embedding',
     cv_method: 'legacy',
+    product_detection_method: 'yolo_obb',
     template_bank_enabled: false,
     template_bank_size: 10,
     char_denoise_enabled: false,
@@ -385,6 +387,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         defect_model: recipeAny.defect_model || 'arcface',
         classifier_backend: recipeAny.classifier_backend || 'embedding',
         cv_method: recipeAny.cv_method || 'legacy',
+        product_detection_method: recipeAny.product_detection_method || 'yolo_obb',
         template_bank_enabled: recipeAny.template_bank_enabled ?? false,
         template_bank_size: recipeAny.template_bank_size ?? 10,
         char_denoise_enabled: recipeAny.char_denoise_enabled ?? false,
@@ -839,6 +842,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         defect_model:  formData.defect_model  || 'arcface',
         classifier_backend: formData.classifier_backend || 'embedding',
         cv_method: formData.cv_method || 'legacy',
+        product_detection_method: formData.product_detection_method || 'yolo_obb',
         template_bank_enabled: formData.template_bank_enabled ?? false,
         template_bank_size: formData.template_bank_size ?? 10,
         char_denoise_enabled: formData.char_denoise_enabled ?? false,
@@ -2015,6 +2019,19 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       <small className="field-description">Template model used for per-character OK/NG classification</small>
                     </div>
 
+                    <div className="form-group">
+                      <label>Product Detection Method</label>
+                      <select
+                        name="product_detection_method"
+                        value={formData.product_detection_method}
+                        onChange={(e) => setFormData(prev => ({ ...prev, product_detection_method: e.target.value }))}
+                      >
+                        <option value="yolo_obb">YOLO OBB (default)</option>
+                        <option value="yolo_segment">YOLO Segment</option>
+                      </select>
+                      <small className="field-description">Method to detect bottle (product) edges for center alignment check</small>
+                    </div>
+
                     {/* CV Method — chỉ áp dụng khi classifier_backend='embedding' */}
                     <div
                       className="form-group"
@@ -2033,13 +2050,13 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         <option value="v5">Local Defect Detector (Tile-wise + Scale)</option>
                         <option value="shape_v7">Shape Outline Match</option>
                       </select>
-                      <small className="field-description">
+                      {/* <small className="field-description">
                         <b>Pattern Match</b>: template similarity (blur TM + ECC-aligned IoU + pixel coverage).&nbsp;
                         <b>Ink Defect Detector</b>: detects over-ink (smudge) and under-ink (broken stroke) via directional pixel diff.&nbsp;
                         <b>Scale-Tolerant</b> variant: same but handles size variation via AFFINE alignment.&nbsp;
                         <b>Local Defect Detector</b>: splits char into 3×3 tiles + Scale-Tolerant — surfaces localized defects (small ink smudge, broken stroke piece) that get diluted in global metric.&nbsp;
                         <b>Shape Outline Match</b>: compares gradient orientation (LineMOD/Halcon style) — lighting-robust, shape-focused.
-                      </small>
+                      </small> */}
 
                       {/* Preview: 5 cặp char gần nhất với conf tính bằng method đang chọn */}
                       {formData.classifier_backend === 'embedding' && (

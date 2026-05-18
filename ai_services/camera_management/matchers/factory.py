@@ -416,3 +416,25 @@ class MatcherFactory:
                 f"[{serial_number}] Template label bbox saved: "
                 f"{bbox_data['width']}x{bbox_data['height']}px"
             )
+
+            # Detect template walls (inner + outer) bằng image processing
+            # → used when product_detection_method='yolo_segment'
+            try:
+                from ..verification.image_proc_detector import detect_template_walls
+                tmpl_img = cv2.imread(str(template_path))
+                if tmpl_img is not None:
+                    walls = detect_template_walls(tmpl_img, label_bboxes[0].points)
+                    if walls is not None:
+                        walls_path = sample_dir / f"template{suffix}_walls.json"
+                        with open(str(walls_path), 'w') as f:
+                            json.dump(walls, f, indent=2)
+                        logger.info(
+                            f"[{serial_number}] Template walls saved: "
+                            f"inner_L={walls['inner_L']} inner_R={walls['inner_R']} "
+                            f"outer_L={walls['outer_L']} outer_R={walls['outer_R']}"
+                        )
+            except Exception as e:
+                logger.warning(
+                    f"[{serial_number}] Template walls detection failed (yolo_segment "
+                    f"mode may not work): {e}"
+                )

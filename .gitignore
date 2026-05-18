@@ -210,4 +210,6 @@ training/onnx_results
 cache/
 tests/fragment_removal_demo
 shape_based_matching/
-crop_samples
+crop_samples/
+crop_samples_1/
+tools/annotator/

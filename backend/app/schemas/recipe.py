@@ -125,6 +125,7 @@ class RecipeBase(BaseModel):
     template_bank_enabled: Optional[bool] = Field(default=False, description="Enable adaptive template bank for embedding-mode char verification")
     template_bank_size: Optional[int] = Field(default=10, ge=1, le=50, description="Max dynamic templates per (camera, annotation)")
     char_denoise_enabled: Optional[bool] = Field(default=False, description="Largest-CC noise filter before centroid alignment in char verification")
+    product_detection_method: Optional[str] = Field(default="yolo_obb", description="Method to detect bottle edges: 'yolo_obb' (YOLO OBB model) | 'yolo_segment' (image processing — Sobel/edge detection)")
 
     # Wrinkle segmentation model confidence threshold (recipe-level, applies to all cameras)
     wrinkle_conf: Optional[float] = Field(default=0.25, ge=0.0, le=1.0, description="Confidence threshold for wrinkle segmentation model (0.0 - 1.0)")
@@ -174,6 +175,7 @@ class RecipeUpdate(BaseModel):
     template_bank_enabled: Optional[bool] = None
     template_bank_size: Optional[int] = Field(None, ge=1, le=50)
     char_denoise_enabled: Optional[bool] = None
+    product_detection_method: Optional[str] = None
     wrinkle_conf: Optional[float] = Field(None, ge=0.0, le=1.0)
     wrinkle_show_when_pass: Optional[bool] = None
     matching_conf: Optional[float] = Field(None, ge=0.0, le=1.0)

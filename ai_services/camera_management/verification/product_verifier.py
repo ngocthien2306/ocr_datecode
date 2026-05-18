@@ -180,6 +180,40 @@ class ProductVerificationService:
 
         t_start = time.perf_counter()
 
+        # ── Branch by product_detection_method ──────────────────────────────
+        # Per-camera setting. Frames from cameras using "yolo_segment" mode
+        # skip YOLO OBB entirely (image processing).
+        def _cam_method(d):
+            cam = d.get('camera')
+            return getattr(cam, 'product_detection_method', 'yolo_obb') if cam else 'yolo_obb'
+
+        methods = [_cam_method(d) for d in frames_data]
+        if methods and all(m == 'yolo_segment' for m in methods):
+            return self._verify_batch_image_proc(frames_data)
+        # Mixed batch (rare): split, process separately, merge.
+        if 'yolo_segment' in methods:
+            yolo_indices = [i for i, m in enumerate(methods) if m == 'yolo_obb']
+            img_indices  = [i for i, m in enumerate(methods) if m == 'yolo_segment']
+            yolo_results = (self._verify_batch_yolo([frames_data[i] for i in yolo_indices])
+                            if yolo_indices else [])
+            img_results  = (self._verify_batch_image_proc([frames_data[i] for i in img_indices])
+                            if img_indices else [])
+            merged = [None] * len(frames_data)
+            for k, i in enumerate(yolo_indices): merged[i] = yolo_results[k]
+            for k, i in enumerate(img_indices):  merged[i] = img_results[k]
+            return merged
+        # All yolo_obb (default path)
+        return self._verify_batch_yolo(frames_data)
+
+    def _verify_batch_yolo(
+        self,
+        frames_data: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Original YOLO OBB batch path (was verify_batch)."""
+        import time
+
+        t_start = time.perf_counter()
+
         if self.obb_model is None:
             return [{
                 'match': True,
@@ -305,6 +339,252 @@ class ProductVerificationService:
         )
 
         return results
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Image-processing path (recipe option product_detection_method='yolo_segment').
+    # Tên 'yolo_segment' giữ cho UI consistency nhưng KHÔNG dùng YOLO model.
+    # ──────────────────────────────────────────────────────────────────────────
+    def _load_template_walls(self, serial_number: str) -> Optional[Dict[str, Any]]:
+        """Load template_walls.json (saved by MatcherFactory) — cached per serial."""
+        if not hasattr(self, '_template_walls_cache'):
+            self._template_walls_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+        if serial_number in self._template_walls_cache:
+            return self._template_walls_cache[serial_number]
+        try:
+            import json
+            home = os.environ.get('HOME', '')
+            walls_path = Path(home) / 'Source' / 'ocr_datecode' / 'crop_samples' / serial_number / 'template_walls.json'
+            if walls_path.exists():
+                walls = json.loads(walls_path.read_text())
+                self._template_walls_cache[serial_number] = walls
+                return walls
+        except Exception as e:
+            logger.error(f"[{serial_number}] Failed to load template_walls: {e}")
+        self._template_walls_cache[serial_number] = None
+        return None
+
+    def _verify_batch_image_proc(
+        self,
+        frames_data: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Image processing batch path. Skip YOLO OBB hoàn toàn.
+        Wrinkle vẫn chạy qua WrinkledSegmenter (separate model, không phụ thuộc YOLO).
+        """
+        import time
+        from .image_proc_detector import detect_product_box, label_box_from_pts
+        t_start = time.perf_counter()
+
+        # Filter frames that need verification (cùng logic như YOLO path)
+        t_filter_start = time.perf_counter()
+        frames_to_check = []
+        frame_indices = []
+        for idx, data in enumerate(frames_data):
+            if self.should_verify_frame(data['transformed_bboxes']):
+                frames_to_check.append(data)
+                frame_indices.append(idx)
+        t_filter = (time.perf_counter() - t_filter_start) * 1000
+
+        if not frames_to_check:
+            return [{
+                'match': True, 'skipped': True,
+                'reason': 'No product or label region in template',
+                'timing': {'total': t_filter, 'filter': t_filter}
+            } for _ in frames_data]
+
+        # Run image-proc detection per frame
+        t_detect_start = time.perf_counter()
+        per_frame_product_boxes: List[Optional[Dict[str, Any]]] = []
+        for data in frames_to_check:
+            serial = data['camera'].serial_number
+            walls = self._load_template_walls(serial)
+            label_region = next(
+                (b for b in data['transformed_bboxes'] if b.get('type') == 'label'), None
+            )
+            if walls is None or label_region is None:
+                per_frame_product_boxes.append(None)
+                continue
+            pb = detect_product_box(
+                data['frame_img'], label_region['points'], walls, serial_number=serial
+            )
+            per_frame_product_boxes.append(pb)
+        t_detect = (time.perf_counter() - t_detect_start) * 1000
+
+        # Wrinkle batch — uses WrinkledSegmenter (separate model). Pass empty
+        # YOLO outputs because _get_product_box() falls back to template polygon.
+        t_wrinkle_start = time.perf_counter()
+        wrinkled_checks: Dict[int, Dict[str, Any]] = {}
+        if self.check_wrinkled and self.wrinkle_seg is not None:
+            empty_batch = [(np.empty((0, 5)), np.empty(0), np.empty(0, dtype=int))
+                            for _ in frames_to_check]
+            wrinkled_checks = self._batch_wrinkle_check(
+                frames_to_check, frame_indices, empty_batch
+            )
+        t_wrinkle = (time.perf_counter() - t_wrinkle_start) * 1000
+
+        # Process each frame
+        t_process_start = time.perf_counter()
+        results = [{
+            'match': True, 'skipped': True,
+            'reason': 'No product or label region in template',
+            'timing': {'total': 0.0}
+        } for _ in frames_data]
+
+        for i, orig_idx in enumerate(frame_indices):
+            data = frames_to_check[i]
+            product_box = per_frame_product_boxes[i]
+            label_region = next(
+                (b for b in data['transformed_bboxes'] if b.get('type') == 'label'), None
+            )
+            label_box = label_box_from_pts(label_region['points']) if label_region else None
+
+            result = self._process_single_frame_image_proc(
+                product_box=product_box,
+                label_box=label_box,
+                transformed_bboxes=data['transformed_bboxes'],
+                frame_img=data['frame_img'],
+                camera=data['camera'],
+                center_offset_threshold=data.get('center_offset_threshold'),
+                center_offset_threshold_left=data.get('center_offset_threshold_left'),
+                center_offset_threshold_right=data.get('center_offset_threshold_right'),
+                center_offset_unit=data.get('center_offset_unit', 'px'),
+                wrinkle_show_when_pass=data.get('wrinkle_show_when_pass', True),
+                pre_computed_wrinkled_check=wrinkled_checks.get(orig_idx),
+            )
+            results[orig_idx] = result
+
+        t_process = (time.perf_counter() - t_process_start) * 1000
+        t_total = (time.perf_counter() - t_start) * 1000
+
+        timing_info = {
+            'total': t_total, 'filter': t_filter,
+            'image_proc_detect': t_detect,
+            'wrinkle_seg': t_wrinkle, 'processing': t_process,
+            'frames_checked': len(frames_to_check), 'frames_total': len(frames_data),
+            'method': 'image_proc',
+        }
+        for idx in frame_indices:
+            if results[idx]:
+                results[idx]['timing'] = timing_info.copy()
+
+        logger.info(
+            f"Product verification (image_proc): {len(frames_to_check)}/{len(frames_data)} frames, "
+            f"total={t_total:.1f}ms (filter={t_filter:.1f}ms, detect={t_detect:.1f}ms, "
+            f"wrinkle={t_wrinkle:.1f}ms, process={t_process:.1f}ms)"
+        )
+        return results
+
+    def _process_single_frame_image_proc(
+        self,
+        product_box: Optional[Dict[str, Any]],
+        label_box: Optional[Dict[str, Any]],
+        transformed_bboxes: List[Dict[str, Any]],
+        frame_img: np.ndarray,
+        camera: 'Camera',
+        center_offset_threshold: Optional[float] = None,
+        center_offset_threshold_left: Optional[float] = None,
+        center_offset_threshold_right: Optional[float] = None,
+        center_offset_unit: str = 'px',
+        wrinkle_show_when_pass: bool = True,
+        pre_computed_wrinkled_check: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Same as _process_single_frame but accept pre-built product/label boxes
+        (skip YOLO filter+validate). Other checks (rotation/boundary/misalignment/wrinkle)
+        share logic with YOLO path.
+        """
+        serial_number = camera.serial_number
+
+        # Wrinkle check (use pre-computed batch result if available)
+        if pre_computed_wrinkled_check is not None:
+            wrinkled_check = pre_computed_wrinkled_check
+        else:
+            wrinkled_check = {
+                'ok': True, 'skipped': True, 'reason': 'Check disabled',
+                'has_wrinkled': False, 'wrinkled_count': 0, 'wrinkled_boxes': []
+            }
+
+        if product_box is None:
+            logger.debug(f"[{serial_number}] image_proc: no product_box detected")
+            return {
+                'match': False,
+                'skipped': False,
+                'reason': 'Image processing failed to detect bottle walls',
+                'wrinkled_check': wrinkled_check,
+            }
+
+        has_product = True
+        has_label = label_box is not None
+
+        # Rotation check — disabled by default
+        if self.check_rotation and has_product and has_label:
+            rotation_check = self._check_rotation(product_box, label_box, serial_number)
+        elif not self.check_rotation:
+            rotation_check = {'ok': True, 'skipped': True, 'reason': 'Check disabled'}
+        else:
+            rotation_check = {'ok': True, 'skipped': True, 'reason': 'Missing boxes'}
+
+        # Label boundary — disabled by default
+        if self.check_label_boundary and has_product:
+            label_boundary_check = self._check_edge_touch(
+                product_box, transformed_bboxes, serial_number
+            )
+        else:
+            label_boundary_check = {'ok': True, 'skipped': True, 'reason': 'Check disabled'}
+
+        # Center alignment — chính cái user muốn dùng image_proc cho cái này
+        if self.check_center_alignment and has_product:
+            center_alignment_check = self._check_center_alignment(
+                product_box, transformed_bboxes, serial_number,
+                center_offset_threshold=center_offset_threshold,
+                center_offset_threshold_left=center_offset_threshold_left,
+                center_offset_threshold_right=center_offset_threshold_right,
+                center_offset_unit=center_offset_unit,
+                label_box=label_box,
+            )
+        else:
+            center_alignment_check = {'ok': True, 'skipped': True, 'reason': 'Check disabled'}
+
+        # Aggregate
+        def _check_status(check_result):
+            if not check_result or check_result.get('skipped'):
+                return True
+            return check_result.get('ok', True)
+
+        all_ok = (
+            _check_status(rotation_check)
+            and _check_status(label_boundary_check)
+            and _check_status(center_alignment_check)
+            and _check_status(wrinkled_check)
+        )
+
+        # Save debug image if needed
+        if self._should_save_debug_image(all_ok):
+            try:
+                result_img = self._visualize_result(
+                    frame_img, product_box, label_box, wrinkled_check,
+                    rotation_check, label_boundary_check, center_alignment_check,
+                    serial_number, wrinkle_show_when_pass,
+                )
+                self._save_debug_image_async(result_img, serial_number)
+            except Exception as e:
+                logger.warning(f"[{serial_number}] debug image save failed: {e}")
+
+        # Serialize for response (same format as YOLO path)
+        return {
+            'match': bool(all_ok),
+            'skipped': False,
+            'rotation_check': rotation_check,
+            'misalignment_check': None,
+            'label_boundary_check': label_boundary_check,
+            'center_alignment_check': center_alignment_check,
+            'wrinkled_check': wrinkled_check,
+            'detected_boxes': [{
+                'box': product_box['box'].tolist() if isinstance(product_box['box'], np.ndarray) else product_box['box'],
+                'score': float(product_box['score']),
+                'class': str(product_box['class']),
+                'corners': product_box['corners'].tolist() if isinstance(product_box['corners'], np.ndarray) else product_box['corners'],
+                'source': product_box.get('source', 'image_proc'),
+            }],
+        }
 
     def _process_single_frame(
         self,

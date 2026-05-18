@@ -282,6 +282,14 @@ class Camera:
         self.match_erosion_kernel_h: int = 1   # Erosion kernel height in pixels (1=pure horizontal, 15=fills letter gaps)
         self.match_erosion_iterations: int = 1  # Number of erosion iterations
 
+        # Product (bottle) edge detection method
+        # "yolo_obb"     = YOLO OBB model (default, current)
+        # "yolo_segment" = Image processing (Sobel + outer-anchored detection).
+        #                  NOTE: tên giữ là "yolo_segment" cho consistency với UI,
+        #                  KHÔNG dùng YOLO model thực sự. Có thể tắt OBB model
+        #                  khi tất cả camera đều dùng yolo_segment.
+        self.product_detection_method: str = "yolo_obb"
+
         # Frame tracking
         self.frame_idx = 0
         self.captured_frames = []  # Store frames after software trigger
@@ -1181,6 +1189,9 @@ class Camera:
             self.match_erosion_kernel_h = int(meh) if meh is not None else 1
             mei = recipe_data.get("match_erosion_iterations")
             self.match_erosion_iterations = int(mei) if mei is not None else 1
+            # Product detection method: "yolo_obb" (default) | "yolo_segment" (image-proc)
+            pdm = recipe_data.get("product_detection_method")
+            self.product_detection_method = pdm if pdm in ("yolo_obb", "yolo_segment") else "yolo_obb"
             logger.info(
                 f"[{self.serial_number}] Loaded thresholds: "
                 f"matching={self.matching_threshold}, recognition={self.recognition_threshold}"
