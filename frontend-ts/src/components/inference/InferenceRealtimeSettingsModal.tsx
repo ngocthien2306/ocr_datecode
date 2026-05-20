@@ -233,12 +233,18 @@ export default function InferenceRealtimeSettingsModal({
           delay_interval: cam.delay_interval,
           gain: cam.gain
         })),
-        camera_templates: formData.camera_templates.map(ct => ({
+        camera_templates: formData.camera_templates.map((ct: any) => ({
           camera_id: ct.camera_id,
+          // Preserve function_type so the downstream DB save (PUT /recipes/{id})
+          // doesn't fall back to the Pydantic default 'OCR'.
+          function_type: ct.function_type ?? 'OCR',
           templates: ct.templates.map((tmpl: any) => ({
             annotations: tmpl.annotations,
             center_offset_threshold_left: tmpl.center_offset_threshold_left,
-            center_offset_threshold_right: tmpl.center_offset_threshold_right
+            center_offset_threshold_right: tmpl.center_offset_threshold_right,
+            // Preserve color_config so Check_Color templates keep their HSV setup
+            // when realtime settings get saved back to DB.
+            color_config: tmpl.color_config ?? null,
           }))
         }))
       };

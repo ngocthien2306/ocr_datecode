@@ -803,7 +803,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       setConfirmDialog({
         isOpen: true,
         title: 'Template Validation Failed',
-        message: `${templateErrors.join('\n')}\n\nRequirements:\n• Check_Color + 'product' annotation: only the product polygon is required (no template region, no text/datecode).\n• Otherwise: 1 "template" region + at least 1 of text/barcode/datecode is required.\n• crop_area is always optional.`,
+        message: `${templateErrors.join('\n')}\n\nRequirements:\n• Check_Color: no "template" region needed. Must have a 'product' annotation (color check) OR 'text/datecode' (OCR sub-mode).\n• Otherwise: 1 "template" region + at least 1 of text/barcode/datecode is required.\n• crop_area is always optional.`,
         type: 'warning',
         onConfirm: null
       });
@@ -1442,12 +1442,18 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           ['text', 'barcode', 'datecode'].includes(ann.type)
         );
 
-        // Color-check templates (function_type=Check_Color + 'product' annotation)
-        // need ONLY the product polygon — no SuperPoint template region and no
-        // text/barcode/datecode are required because bottle detection is image-proc.
-        const isColorTemplate = functionType === 'Check_Color' && hasProduct;
-
-        if (!isColorTemplate) {
+        // Check_Color templates NEVER require the SuperPoint "template" region —
+        // color-check uses image-proc (no SuperPoint), OCR-on-cap sub-mode within
+        // Check_Color still relies on transformed_bboxes from the matcher but the
+        // anchor template region isn't strictly required at the validation layer.
+        if (functionType === 'Check_Color') {
+          // Need at least one of: product (color check) or text/datecode (OCR sub-mode).
+          if (!hasProduct && !hasRequiredAnnotation) {
+            errors.push(
+              `Camera ${cameraId} - ${template.name}: Check_Color template must have either a 'product' annotation (color check) or 'text/datecode' (OCR sub-mode)`
+            );
+          }
+        } else {
           if (!hasTemplateRegion) {
             errors.push(`Camera ${cameraId} - ${template.name}: Missing required "template" region`);
           }
@@ -2801,10 +2807,13 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                               );
                               const hasProductAnn = template.annotations.some((ann: any) => ann.type === 'product');
                               const hasCropArea = template.annotations.some((ann: any) => ann.type === 'crop_area');
-                              // Color-check templates only need a 'product' polygon — no template
-                              // region and no text/barcode/datecode required.
-                              const isColorTemplate = (cameraFunctionTypes[selectedCameraForTemplate] === 'Check_Color') && hasProductAnn;
-                              const isValid = isColorTemplate || (hasTemplateRegion && hasRequiredAnnotation);
+                              // Check_Color templates: skip the "template" region requirement
+                              // entirely. Need either a 'product' (color check) or text/datecode
+                              // (rotate-OCR sub-mode) to be considered valid.
+                              const isCheckColorCam = cameraFunctionTypes[selectedCameraForTemplate] === 'Check_Color';
+                              const isValid = isCheckColorCam
+                                ? (hasProductAnn || hasRequiredAnnotation)
+                                : (hasTemplateRegion && hasRequiredAnnotation);
 
                               return (
                                 <div

@@ -1870,6 +1870,9 @@ async def update_recipe_realtime(
                             if 'wrinkle_max_area' in tmpl:
                                 existing_tmpl['wrinkle_max_area'] = tmpl['wrinkle_max_area']
                                 logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id} Template {tmpl_idx}: wrinkle_max_area → {tmpl['wrinkle_max_area']}")
+                            if 'color_config' in tmpl:
+                                existing_tmpl['color_config'] = tmpl['color_config']
+                                logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id} Template {tmpl_idx}: color_config updated")
                             # Support online template image replacement
                             if 'image_url' in tmpl:
                                 existing_tmpl['image_url'] = tmpl['image_url']
@@ -1879,6 +1882,15 @@ async def update_recipe_realtime(
                             if 'image_height' in tmpl:
                                 existing_tmpl['image_height'] = tmpl['image_height']
                             logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id} Template {tmpl_idx}: Updated annotations")
+                    # Propagate function_type updates (per-camera, not per-template)
+                    if 'function_type' in updated_ct:
+                        recipe_dict['camera_templates'][idx]['function_type'] = updated_ct['function_type']
+                        # Mirror onto enriched cameras so AI service picks it up
+                        for cam_i, cam in enumerate(recipe_dict['cameras']):
+                            if cam.get('camera_id') == cam_id:
+                                recipe_dict['cameras'][cam_i]['function_type'] = updated_ct['function_type']
+                                break
+                        logger.info(f"📝 [REALTIME UPDATE] Camera {cam_id}: function_type → {updated_ct['function_type']}")
                     break
 
     # 5. Stop current recipe

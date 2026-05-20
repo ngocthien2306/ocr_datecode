@@ -540,6 +540,10 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
       const patchCT = (updatedData.camera_templates ?? []).find((c: any) => c.camera_id === ct.camera_id);
       return {
         camera_id: ct.camera_id,
+        // PRESERVE function_type — BE Pydantic CameraTemplates has default
+        // 'OCR' so omitting this field silently overwrites Check_Color/Check_Type_Product
+        // on the next DB save, causing the recipe to revert to wrinkle/OCR mode.
+        function_type: ct.function_type ?? 'OCR',
         templates: (ct.templates ?? []).map((tmpl: any, idx: number) => {
           const patchTmpl = patchCT?.templates?.[idx];
           if (!patchTmpl) return tmpl;
@@ -550,6 +554,9 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
             image_url: patchTmpl.image_url ?? tmpl.image_url,
             image_width: patchTmpl.image_width ?? tmpl.image_width,
             image_height: patchTmpl.image_height ?? tmpl.image_height,
+            // Same trap: color_config has no Pydantic default but spread already
+            // preserves it via `...tmpl`. Listed explicitly for clarity.
+            color_config: patchTmpl.color_config ?? tmpl.color_config ?? null,
           };
         }),
       };

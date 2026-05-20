@@ -128,17 +128,20 @@ PASS criterion (UI side): `matching_pixels >= pixel_threshold`. Match % shown to
 
 ## Template validation rules
 
-Validation in `RecipeFormModal.validateTemplates()` (and the filmstrip "!" badge in the same file) branches on `(cameraFunctionTypes[cameraId], hasProduct)`:
+Validation in `RecipeFormModal.validateTemplates()` (and the filmstrip "!" badge in the same file) branches on `cameraFunctionTypes[cameraId]`:
 
-- **Color-check template** (`function_type=Check_Color` AND template has `product` annotation): only the `product` polygon is required. NO `template` region, NO `text`/`barcode`/`datecode` required. SuperPoint isn't used so the SuperPoint-template anchor isn't needed; OCR isn't used so text labels aren't needed.
-- **Other templates** (default): must have 1 `template` region + at least 1 of `text`/`barcode`/`datecode`. Existing behavior.
+- **Check_Color cameras**: `"template"` region is NEVER required (image-proc skips SuperPoint entirely). Validation only asks for at least one of `product` (color check sub-mode) OR `text`/`barcode`/`datecode` (rotate-OCR sub-mode). The branch is on `function_type=='Check_Color'` alone — it doesn't wait for product to be drawn before relaxing the template requirement.
+- **Other cameras** (Check_Type_Product, default): must have 1 `template` region + at least 1 of `text`/`barcode`/`datecode`. Existing behavior.
 
-When adding more annotation requirements in the future, branch on `isColorTemplate` so color-check templates aren't blocked by OCR-oriented rules.
+Filmstrip "!" badge follows the same rule: `isCheckColorCam ? (hasProduct || hasRequired) : (hasTemplate && hasRequired)`.
+
+When adding more annotation requirements in the future, branch on `function_type=='Check_Color'` so Check_Color cameras aren't blocked by OCR-oriented rules.
 
 ## Non-obvious behaviors / gotchas
 
 - **OBB rotation is gated per-camera-mode**, not per-template (ship-simple decision). Rule: rotate iff `function_type=Check_Color AND first template has NO product`. Check_Color cameras with product → rotation OFF. See `single_camera.py:101`.
-- **SuperPoint match still runs** for color cameras (ship-simple). Result ignored; image-proc handles bottle detection. Future optimization: short-circuit match to save ~80ms.
+- **SuperPoint match SKIPPED for color cameras** (multi_camera.run_inference): the match batch is split by `_is_color_cam`, color cams get a synthetic `success=True` result with raw template annotations denormalized to frame pixel coords as `transformed_bboxes`. Saves ~200ms per color camera. Single-camera pipeline still runs match (color templates are rare in single-camera setups).
+- **template_verifier SKIPPED for color cameras** (both pipelines): pixel-similarity check between template image and frame crop is meaningless without the SuperPoint alignment. Saves ~80ms per color camera.
 - **Frame ≈ template image assumption**: color_verifier denormalizes annotation coords using `frame.shape[:2]`, NOT `template.image_width/image_height`. This assumes the camera that captured the template is the same one running inference (true for fixed-camera setups). If the user uploads a template from a different camera/resolution, polygon hint may be in the wrong place.
 - **product_verification dict reuses existing field**: color check result goes into `frame_result['product_verification']` with a `color_check` sub-dict. Visualizers/DB/FE that read `match` field for PASS/FAIL keep working. New consumers can read `product_verification.color_check.matching_pixels` etc.
 - **OR aggregation only in multi_camera**: single-camera recipes trivially have 1 camera so OR/AND are the same. If user has only 1 color camera and it fails → overall fails (no group to compensate).
@@ -152,6 +155,34 @@ When adding more annotation requirements in the future, branch on `isColorTempla
 4. Swap one product to a wrong color → 1 color cam fails, 1 passes → overall PASS (OR).
 5. Both wrong-color → both color cams fail → overall FAIL.
 6. Legacy Check_Color recipe (no product) → still rotates + OCRs as before.
+
+## MatcherFactory fast path — ColorCheckStubMatcher
+
+`MatcherFactory.create_matcher` requires a `type='template'` annotation to build the SuperPoint matcher. Check_Color cameras with a `product` annotation don't need SuperPoint (image-proc handles bottle detection), but the inference pipeline still gates on `serial in self.camera_matchers` — so a missing matcher means the camera is silently dropped (`No cameras with matchers to process` warning) and frames pile up with no inference running.
+
+Fast path in `matchers/factory.py`:
+- Detect `function_type == 'Check_Color'` AND template has `product` annotation.
+- Skip TRT engine load + template-bbox requirement.
+- Return a `ColorCheckStubMatcher` that carries only `crop_area` (parsed via `AnnotationParser._parse_crop_area`).
+- Stub has `match_batch()` returning empty success in case of mis-routing.
+
+`single_camera.run_inference` and `multi_camera.run_inference` both detect `matcher.is_color_check_stub` (or `_is_color_cam`) and skip `match_batch` entirely, synthesizing `transformed_bboxes` from denormalized raw template annotations.
+
+User-visible effect: deleting the `'template'` annotation from a Check_Color template no longer breaks the recipe. As long as `product` is drawn, the camera continues to run color check.
+
+## Realtime update gotcha — function_type / color_config silent drop
+
+`InferenceRealtime.applyRealtimeAndPersist` runs TWO calls in a row:
+1. `updateRecipeRealtime(recipeId, patch)` → BE `update-realtime` (in-memory, BE preserves DB values for omitted fields).
+2. `updateReceipt(recipeId, dbPayload)` → BE `PUT /recipes/{id}` (persists to DB via Pydantic `RecipeUpdate`).
+
+**Trap**: if `dbPayload.camera_templates[i]` omits `function_type`, Pydantic `CameraTemplates.function_type` defaults to `"OCR"` → DB silently overwrites the recipe's `Check_Color` (or other) value. Same for nested `templates[].color_config` if the build helper strips it.
+
+`InferenceRealtime.buildFullRecipePayloadForDB` and `InferenceRealtimeSettingsModal` submit payload MUST include:
+- `camera_templates[i].function_type`
+- `camera_templates[i].templates[j].color_config`
+
+Both fields preserved via `?? ct.function_type ?? 'OCR'` / `?? tmpl.color_config ?? null`. BE `update-realtime` also merges these now (per-camera function_type, per-template color_config) so realtime patches don't quietly diverge from DB.
 
 ## Related memory
 - [[recipe-system]] — recipe data flow, the 19-step plumb checklist (color_config skips most of it because it's nested per-template)
