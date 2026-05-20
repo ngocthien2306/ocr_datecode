@@ -8,6 +8,7 @@
 ## Key Files
 - See [recipe-system.md](recipe-system.md) for recipe data flow & common pitfalls
 - See [ml-training.md](ml-training.md) for ML Training Studio details
+- See [color-check-feature.md](color-check-feature.md) — Check_Color (HSV color verification): FE Setup Color modal, AI service color_verifier, OR-aggregation across color cameras, normalized annotation coords gotcha
 - See [python_env.md](python_env.md) — Python venv path `/Users/ngocthien.ai/envs/event/`
 
 ## Common Pitfalls (IMPORTANT)
@@ -17,6 +18,7 @@
 4. **BE recipe models are duplicated**: `backend/app/models/recipe.py` AND `backend/app/schemas/recipe.py` — both need updating for new fields
 5. **`recipe_to_response` uses explicit field mapping**: not auto-serialization. Forgot field → silently missing in API response.
 6. **Per-recipe classifier routing**: `classifier_backend` ('embedding' | 'ml') replaces old global `CHAR_CLASSIFIER_BACKEND`. AI service routes per-recipe via `camera.classifier_backend`.
+7. **Annotation coords are NORMALIZED [0,1]**: `TemplateEditorRefactored.normalize` divides by image bounds. Anything that bypasses SuperPoint (e.g. `color_verifier`) MUST multiply by `image_width`/`image_height` (or `frame.shape[:2]`) before using as pixel coords. See [color-check-feature.md](color-check-feature.md).
 
 ## User Preferences
 - Vietnamese communication preferred
