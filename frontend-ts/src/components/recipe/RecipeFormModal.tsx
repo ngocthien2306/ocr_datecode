@@ -4,6 +4,7 @@ import erosionAfterImg from '@/assets/demo/erosion_after.jpg';
 import TemplateEditor from './TemplateEditorRefactored';
 import AnnotationsPanel from '@/components/shared/AnnotationsPanel';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import ColorSetupModal, { ColorConfig } from './ColorSetupModal';
 import { camerasAPI } from '@/services/api';
 import recipesAPI from '@/services/recipes';
 import { mlTrainingAPI, MLProject, MLModel } from '@/services/mlTraining';
@@ -90,6 +91,7 @@ interface Template {
   wrinkle_area?: number;                   // Total wrinkle area threshold (sum of valid regions ≥ → FAIL)
   wrinkle_min_area?: number;               // Per-region: ignore regions smaller than this (0 = no filter)
   wrinkle_max_area?: number;               // Per-region: any region ≥ this triggers FAIL immediately (0 = disabled)
+  color_config?: ColorConfig | null;       // HSV color check config (only used when function_type='Check_Color' + template has 'product')
 }
 
 interface CameraTemplates {
@@ -261,6 +263,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   const [filmstripExpanded, setFilmstripExpanded] = useState(true);
   const fabricCanvasRef = useRef<any>(null);
 
+  // Color setup modal state — open for a specific (cameraId, templateIdx) pair.
+  const [colorSetupTarget, setColorSetupTarget] = useState<{ cameraId: string; templateIdx: number } | null>(null);
+
   // Confirm dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
@@ -329,7 +334,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               center_offset_unit: (template.center_offset_unit as 'px' | 'pct') ?? 'px',
               wrinkle_area: template.wrinkle_area ?? 2000.0,
               wrinkle_min_area: template.wrinkle_min_area ?? 0.0,
-              wrinkle_max_area: template.wrinkle_max_area ?? 0.0
+              wrinkle_max_area: template.wrinkle_max_area ?? 0.0,
+              color_config: template.color_config ?? null
             }));
 
             // Load function_type for this camera (default to 'OCR' if not set)
@@ -824,7 +830,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               center_offset_unit: template.center_offset_unit ?? 'px',
               wrinkle_area: template.wrinkle_area ?? 2000.0,
               wrinkle_min_area: template.wrinkle_min_area ?? 0.0,
-              wrinkle_max_area: template.wrinkle_max_area ?? 0.0
+              wrinkle_max_area: template.wrinkle_max_area ?? 0.0,
+              color_config: template.color_config ?? null
             }))
           });
         }
@@ -1067,7 +1074,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           center_offset_unit: sourceTemplate?.center_offset_unit ?? 'px',
           wrinkle_area: sourceTemplate?.wrinkle_area ?? 2000.0,
           wrinkle_min_area: sourceTemplate?.wrinkle_min_area ?? 0.0,
-          wrinkle_max_area: sourceTemplate?.wrinkle_max_area ?? 0.0
+          wrinkle_max_area: sourceTemplate?.wrinkle_max_area ?? 0.0,
+          color_config: sourceTemplate?.color_config ?? null
         };
 
         newTemplates.push(newTemplate);
@@ -1159,7 +1167,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               center_offset_unit: 'px' as const,    // Default unit (BC with old recipes)
               wrinkle_area: 2000.0,
               wrinkle_min_area: 0.0,
-              wrinkle_max_area: 0.0
+              wrinkle_max_area: 0.0,
+              color_config: null as ColorConfig | null
             };
 
             setCameraTemplates(prev => ({
@@ -2642,8 +2651,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         }}
                       >
                         {/* <option value="OCR">OCR (Text Recognition)</option> */}
-                        <option value="Check_Type_Product">Check Type Product</option>
-                        <option value="Check_Color">Rotate Bottle</option>
+                        <option value="Check_Type_Product">Check Wrinkle/OCR</option>
+                        <option value="Check_Color">Check Color/OCR</option>
                         {/* <option value="Check_Defect">Check Defect</option>
                         <option value="Check_Position">Check Position</option>
                         <option value="Barcode_Detection">Barcode Detection</option>
@@ -2810,6 +2819,49 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                         {(() => {
                                           const hasLabel = template.annotations?.some(a => a.type === 'label');
                                           const hasProduct = template.annotations?.some(a => a.type === 'product');
+                                          const ft = cameraFunctionTypes[selectedCameraForTemplate] || 'Check_Type_Product';
+
+                                          // Check_Color: only "Setup Color" matters, and only when product polygon is drawn.
+                                          if (ft === 'Check_Color') {
+                                            if (!hasProduct) {
+                                              return (
+                                                <div className="filmstrip-setting-hint" style={{ fontSize: 11, opacity: 0.7, padding: '4px 6px', fontStyle: 'italic' }}>
+                                                  ⓘ Add a 'product' annotation to set up HSV color check.
+                                                </div>
+                                              );
+                                            }
+                                            const configured = !!template.color_config;
+                                            return (
+                                              <div className="filmstrip-setting-row" style={{ gap: 6 }}>
+                                                <button
+                                                  type="button"
+                                                  className="filmstrip-action-btn"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setColorSetupTarget({ cameraId: selectedCameraForTemplate, templateIdx: idx });
+                                                  }}
+                                                  title="Setup HSV color check"
+                                                  style={{ flex: 1, padding: '4px 8px', fontSize: 11, fontWeight: 500, justifyContent: 'center' }}
+                                                >
+                                                  Setup Color
+                                                </button>
+                                                <span
+                                                  style={{
+                                                    fontSize: 10,
+                                                    fontWeight: 600,
+                                                    padding: '2px 6px',
+                                                    borderRadius: 4,
+                                                    background: configured ? '#dcfce7' : '#fef3c7',
+                                                    color: configured ? '#166534' : '#92400e',
+                                                  }}
+                                                >
+                                                  {configured ? 'Configured' : 'Not set'}
+                                                </span>
+                                              </div>
+                                            );
+                                          }
+
+                                          // Check_Type_Product (and others): existing offset/wrinkle UI requires both product+label.
                                           if (!hasLabel || !hasProduct) {
                                             return (
                                               <div className="filmstrip-setting-hint" style={{ fontSize: 11, opacity: 0.7, padding: '4px 6px', fontStyle: 'italic' }}>
@@ -2999,6 +3051,72 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         confirmText={confirmDialog.onConfirm ? 'Confirm' : 'OK'}
         cancelText={confirmDialog.onConfirm ? 'Cancel' : ''}
       />
+
+      {/* Color Setup Modal — opened from filmstrip "Setup Color" button */}
+      {colorSetupTarget && (() => {
+        const tmpl = cameraTemplates[colorSetupTarget.cameraId]?.[colorSetupTarget.templateIdx];
+        if (!tmpl) {
+          // Stale target — close.
+          setColorSetupTarget(null);
+          return null;
+        }
+        // Each 'product' annotation → [x,y][] polygon in TEMPLATE PIXEL coords.
+        //
+        // Annotations are persisted in NORMALIZED [0, 1] coords (relative to
+        // imageBounds — see TemplateEditorRefactored.normalize). To overlay
+        // them on the actual template image inside ColorSetupModal we must
+        // denormalize by the template's image_width / image_height.
+        const imgW = tmpl.image_width ?? 0;
+        const imgH = tmpl.image_height ?? 0;
+        const productPolys: Array<Array<[number, number]>> = (tmpl.annotations || [])
+          .filter((a: any) => a.type === 'product')
+          .map((a: any): Array<[number, number]> | null => {
+            if (a.points && Array.isArray(a.points) && a.points.length >= 3) {
+              return a.points.map((p: any) => {
+                const px = p.x ?? p[0];
+                const py = p.y ?? p[1];
+                return [px * imgW, py * imgH] as [number, number];
+              });
+            }
+            const w = a.width;
+            const h = a.height;
+            if (a.x != null && a.y != null && w && h) {
+              const x1 = a.x * imgW;
+              const y1 = a.y * imgH;
+              const x2 = (a.x + w) * imgW;
+              const y2 = (a.y + h) * imgH;
+              return [
+                [x1, y1],
+                [x2, y1],
+                [x2, y2],
+                [x1, y2],
+              ];
+            }
+            return null;
+          })
+          .filter((p): p is Array<[number, number]> => p !== null);
+        return (
+          <ColorSetupModal
+            isOpen={true}
+            templateImage={tmpl.image}
+            imageWidth={tmpl.image_width ?? 0}
+            imageHeight={tmpl.image_height ?? 0}
+            productPolygons={productPolys}
+            initialConfig={tmpl.color_config ?? null}
+            templateName={tmpl.name}
+            onClose={() => setColorSetupTarget(null)}
+            onSave={(cfg) => {
+              setCameraTemplates(prev => ({
+                ...prev,
+                [colorSetupTarget.cameraId]: (prev[colorSetupTarget.cameraId] || []).map((t, i) =>
+                  i === colorSetupTarget.templateIdx ? { ...t, color_config: cfg } : t
+                ),
+              }));
+              setColorSetupTarget(null);
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }

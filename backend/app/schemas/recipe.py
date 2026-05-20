@@ -18,6 +18,24 @@ class TemplateAnnotation(BaseModel):
     points: Optional[List[List[float]]] = None
 
 
+class ColorRoiCircle(BaseModel):
+    """Circular ROI used to seed HSV range in ColorSetupModal."""
+    center: List[float] = Field(default_factory=lambda: [0.0, 0.0], description="[x, y] in template image coords")
+    radius: float = Field(default=50.0, ge=1.0, description="Radius in pixels")
+
+
+class ColorConfig(BaseModel):
+    """HSV color check config for Check_Color templates with a 'product' annotation."""
+    h_min: int = Field(default=0, ge=0, le=180)
+    h_max: int = Field(default=180, ge=0, le=180)
+    s_min: int = Field(default=0, ge=0, le=255)
+    s_max: int = Field(default=255, ge=0, le=255)
+    v_min: int = Field(default=0, ge=0, le=255)
+    v_max: int = Field(default=255, ge=0, le=255)
+    pixel_threshold: int = Field(default=1000, ge=0, description="Minimum matching HSV pixels (summed across product polygons) required to pass")
+    roi_circle: Optional[ColorRoiCircle] = Field(default=None, description="Persisted ROI used by ColorSetupModal so user can re-edit")
+
+
 class TemplateImage(BaseModel):
     """Template image with annotations"""
     name: str = Field(..., description="Template name")
@@ -32,6 +50,7 @@ class TemplateImage(BaseModel):
     wrinkle_area: Optional[float] = Field(default=2000.0, ge=0.0, description="Total wrinkle area threshold in pixels — sum of valid regions ≥ this value → FAIL")
     wrinkle_min_area: Optional[float] = Field(default=0.0, ge=0.0, description="Per-region min area filter — regions smaller than this are ignored (0 = no filter)")
     wrinkle_max_area: Optional[float] = Field(default=0.0, ge=0.0, description="Per-region critical area — any region ≥ this value triggers FAIL immediately (0 = disabled)")
+    color_config: Optional[ColorConfig] = Field(default=None, description="HSV color check config (only used when function_type=Check_Color and template has 'product' annotation)")
 
 class CameraTemplates(BaseModel):
     """Templates configuration for a camera"""

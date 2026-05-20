@@ -1,0 +1,259 @@
+/* ColorSetupModal — light theme matching RecipeFormModal */
+
+.color-setup-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 11000;
+}
+
+.color-setup-modal {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.25);
+  width: min(1400px, 95vw);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: #111827;
+}
+
+.color-setup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 20px;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.color-setup-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.color-setup-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.color-setup-header-actions .btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+}
+
+.color-setup-header-actions .btn-secondary {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.color-setup-header-actions .btn-secondary:hover {
+  background: #d1d5db;
+}
+
+.color-setup-header-actions .btn-primary {
+  background: #3b82f6;
+  color: white;
+}
+
+.color-setup-header-actions .btn-primary:hover {
+  background: #2563eb;
+}
+
+.color-setup-header-actions .btn-primary:disabled {
+  background: #93c5fd;
+  cursor: not-allowed;
+}
+
+.color-setup-body {
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.color-setup-canvas-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.color-setup-canvas-wrap canvas {
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #f3f4f6;
+  max-width: 100%;
+  user-select: none;
+}
+
+.color-setup-hint {
+  font-size: 12px;
+  color: #6b7280;
+  text-align: center;
+  max-width: 700px;
+  line-height: 1.4;
+}
+
+.color-setup-loading {
+  padding: 40px;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.color-setup-controls {
+  width: 380px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.cs-section {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cs-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #6b7280;
+  margin-bottom: 2px;
+}
+
+.cs-slider-row {
+  display: grid;
+  grid-template-columns: 38px 1fr 56px;
+  align-items: center;
+  gap: 8px;
+}
+
+.cs-slider-label {
+  font-size: 12px;
+  color: #374151;
+  font-weight: 500;
+}
+
+.cs-slider {
+  width: 100%;
+  accent-color: #3b82f6;
+}
+
+.cs-slider-num {
+  width: 56px;
+  padding: 4px 6px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 12px;
+  text-align: right;
+  background: white;
+  color: #111827;
+}
+
+.cs-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #374151;
+}
+
+.cs-row label {
+  font-weight: 500;
+  color: #374151;
+}
+
+.cs-num-input {
+  flex: 1;
+  padding: 5px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 13px;
+  background: white;
+  color: #111827;
+}
+
+.cs-stats {
+  font-size: 12px;
+  color: #4b5563;
+}
+
+.cs-stats b {
+  color: #111827;
+}
+
+.cs-pass-badge {
+  margin-top: 4px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+
+.cs-pass-badge.pass {
+  background: #dcfce7;
+  color: #166534;
+  border: 1px solid #86efac;
+}
+
+.cs-pass-badge.fail {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+}
+
+.cs-auto-btn {
+  padding: 7px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: white;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.cs-auto-btn:hover {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+}
+
+.cs-auto-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cs-histogram {
+  width: 100%;
+  height: 120px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #f3f4f6;
+}
