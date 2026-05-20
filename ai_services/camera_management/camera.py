@@ -289,6 +289,10 @@ class Camera:
         #                  KHÔNG dùng YOLO model thực sự. Có thể tắt OBB model
         #                  khi tất cả camera đều dùng yolo_segment.
         self.product_detection_method: str = "yolo_obb"
+        # Only used when product_detection_method='yolo_segment':
+        # "outer" = product box = bottle silhouette (default, matches YOLO convention)
+        # "inner" = product box = sát label (tighter)
+        self.product_box_wall_type: str = "outer"
 
         # Frame tracking
         self.frame_idx = 0
@@ -1192,6 +1196,9 @@ class Camera:
             # Product detection method: "yolo_obb" (default) | "yolo_segment" (image-proc)
             pdm = recipe_data.get("product_detection_method")
             self.product_detection_method = pdm if pdm in ("yolo_obb", "yolo_segment") else "yolo_obb"
+            # Product box wall type (chỉ áp dụng cho yolo_segment): "outer" | "inner"
+            pwt = recipe_data.get("product_box_wall_type")
+            self.product_box_wall_type = pwt if pwt in ("outer", "inner") else "outer"
             logger.info(
                 f"[{self.serial_number}] Loaded thresholds: "
                 f"matching={self.matching_threshold}, recognition={self.recognition_threshold}"

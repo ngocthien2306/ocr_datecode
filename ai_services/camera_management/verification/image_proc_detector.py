@@ -237,6 +237,7 @@ def detect_product_box(
     label_pts: List[List[float]],
     template_walls: Dict[str, Any],
     serial_number: str = "",
+    wall_type: str = "outer",
 ) -> Optional[Dict[str, Any]]:
     """Detect product (bottle) box từ frame bằng image processing.
 
@@ -245,17 +246,21 @@ def detect_product_box(
         label_pts: [TL, TR, BR, BL] of label polygon trong frame coords (from SuperPoint)
         template_walls: dict từ detect_template_walls()
         serial_number: chỉ cho logging
+        wall_type: 'outer' (bottle silhouette, default) | 'inner' (sát label)
+                   → quyết định corners được build từ wall nào
 
     Returns: dict YOLO OBB-compatible:
         {
             'box': np.array([cx, cy, w, h, angle]),
             'score': float,
             'class': 'product',
-            'corners': np.array([[x,y]×4]),  # ← _check_center_alignment dùng cái này
+            'corners': np.array([[x,y]×4]),  # ← OUTER hoặc INNER tùy wall_type
+            'inner_corners': ...   # always provided for debug
+            'outer_corners': ...   # always provided for debug
             'source': 'image_proc',
-            'detection_info': {...}   # debug
+            'detection_info': {...}
         }
-    None nếu detect fail (caller nên skip frame hoặc fallback).
+    None nếu detect fail.
     """
     if frame_img is None or label_pts is None or template_walls is None:
         return None
@@ -304,31 +309,48 @@ def detect_product_box(
         logger.warning(f"[{serial_number}] image_proc: both walls hidden")
         return None
 
-    # 6) Build product box corners từ OUTER wall positions
-    #    Nếu outer_L/R None thì dùng inner + plastic ngược lại
-    out_L_gap = outer_L if outer_L is not None else (eff_L + template_walls['plastic_L'])
-    out_R_gap = outer_R if outer_R is not None else (eff_R + template_walls['plastic_R'])
+    # 6) Compute BOTH inner & outer corners
+    in_L_gap = max(0.0, float(eff_L)) if eff_L != -1 else 0.0
+    in_R_gap = max(0.0, float(eff_R)) if eff_R != -1 else 0.0
+    out_L_gap = float(outer_L) if outer_L is not None else (in_L_gap + template_walls['plastic_L'])
+    out_R_gap = float(outer_R) if outer_R is not None else (in_R_gap + template_walls['plastic_R'])
 
-    # Get 4 corners trong frame: TL/TR/BR/BL của bottle
-    L_top, L_bot = _wall_point_in_frame(label_pts, 'left',  out_L_gap)
-    R_top, R_bot = _wall_point_in_frame(label_pts, 'right', out_R_gap)
-    corners = np.array([L_top, R_top, R_bot, L_bot], dtype=np.float32)  # TL, TR, BR, BL
+    # Inner corners
+    L_top_in, L_bot_in = _wall_point_in_frame(label_pts, 'left',  in_L_gap)
+    R_top_in, R_bot_in = _wall_point_in_frame(label_pts, 'right', in_R_gap)
+    inner_corners = np.array([L_top_in, R_top_in, R_bot_in, L_bot_in], dtype=np.float32)
 
-    # 7) Box [cx, cy, w, h, angle] cho compatibility với YOLO OBB format
+    # Outer corners
+    L_top_out, L_bot_out = _wall_point_in_frame(label_pts, 'left',  out_L_gap)
+    R_top_out, R_bot_out = _wall_point_in_frame(label_pts, 'right', out_R_gap)
+    outer_corners = np.array([L_top_out, R_top_out, R_bot_out, L_bot_out], dtype=np.float32)
+
+    # 7) Choose corners based on wall_type
+    wt = (wall_type or "outer").lower()
+    if wt == "inner":
+        corners = inner_corners
+        L_top, L_bot, R_top, R_bot = L_top_in, L_bot_in, R_top_in, R_bot_in
+    else:
+        corners = outer_corners
+        L_top, L_bot, R_top, R_bot = L_top_out, L_bot_out, R_top_out, R_bot_out
+
+    # 8) Box [cx, cy, w, h, angle] for YOLO OBB compatibility
     cx = float(corners[:, 0].mean())
     cy = float(corners[:, 1].mean())
-    w  = float(np.linalg.norm((R_top + R_bot)/2 - (L_top + L_bot)/2))   # perp width
-    h  = float(np.linalg.norm(L_bot - L_top))                           # along-edge height
-    # Angle: angle of label vertical edge (top→bot) so với trục Y
+    w  = float(np.linalg.norm((R_top + R_bot)/2 - (L_top + L_bot)/2))
+    h  = float(np.linalg.norm(L_bot - L_top))
     edge = L_bot - L_top
-    angle = float(np.arctan2(edge[0], edge[1]))  # 0 = vertical, +rad = nghiêng phải
+    angle = float(np.arctan2(edge[0], edge[1]))
     box = np.array([cx, cy, w, h, angle], dtype=np.float32)
 
     return {
         'box': box,
         'score': 1.0,
         'class': 'product',
-        'corners': corners,
+        'corners': corners,                  # ← chosen wall (outer hoặc inner) — vẽ yellow OBB
+        'inner_corners': inner_corners,      # debug / secondary draw
+        'outer_corners': outer_corners,      # debug / secondary draw
+        'wall_type_used': wt,
         'source': 'image_proc',
         'detection_info': {
             'inner_L': inner_L, 'inner_R': inner_R,
@@ -336,6 +358,8 @@ def detect_product_box(
             'eff_L': eff_L, 'eff_R': eff_R,
             'pred_inner_L': pred_L, 'pred_inner_R': pred_R,
             'hidden_L': hidden_L, 'hidden_R': hidden_R,
+            'inner_L_gap': in_L_gap, 'inner_R_gap': in_R_gap,
+            'outer_L_gap': out_L_gap, 'outer_R_gap': out_R_gap,
         }
     }
 

@@ -391,35 +391,57 @@ class ProductVerificationService:
                 'timing': {'total': t_filter, 'filter': t_filter}
             } for _ in frames_data]
 
-        # Run image-proc detection per frame
-        t_detect_start = time.perf_counter()
-        per_frame_product_boxes: List[Optional[Dict[str, Any]]] = []
-        for data in frames_to_check:
-            serial = data['camera'].serial_number
+        # ── Run image_proc detection + wrinkle segmentation IN PARALLEL ─────
+        # image_proc: CPU-bound (cv2/numpy release GIL)
+        # wrinkle:    GPU-bound (TRT inference)
+        # → Different resources → true parallelism. Save 20-30ms/batch.
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _detect_one(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            cam = data['camera']
+            serial = cam.serial_number
             walls = self._load_template_walls(serial)
             label_region = next(
                 (b for b in data['transformed_bboxes'] if b.get('type') == 'label'), None
             )
             if walls is None or label_region is None:
-                per_frame_product_boxes.append(None)
-                continue
-            pb = detect_product_box(
-                data['frame_img'], label_region['points'], walls, serial_number=serial
-            )
-            per_frame_product_boxes.append(pb)
-        t_detect = (time.perf_counter() - t_detect_start) * 1000
+                return None
+            wall_type = getattr(cam, 'product_box_wall_type', 'outer') or 'outer'
+            try:
+                return detect_product_box(
+                    data['frame_img'], label_region['points'], walls,
+                    serial_number=serial, wall_type=wall_type,
+                )
+            except Exception as e:
+                logger.warning(f"[{serial}] image_proc detect failed: {e}")
+                return None
 
-        # Wrinkle batch — uses WrinkledSegmenter (separate model). Pass empty
-        # YOLO outputs because _get_product_box() falls back to template polygon.
-        t_wrinkle_start = time.perf_counter()
-        wrinkled_checks: Dict[int, Dict[str, Any]] = {}
-        if self.check_wrinkled and self.wrinkle_seg is not None:
-            empty_batch = [(np.empty((0, 5)), np.empty(0), np.empty(0, dtype=int))
-                            for _ in frames_to_check]
-            wrinkled_checks = self._batch_wrinkle_check(
-                frames_to_check, frame_indices, empty_batch
-            )
-        t_wrinkle = (time.perf_counter() - t_wrinkle_start) * 1000
+        def _run_detect_all():
+            """Detect product box cho tất cả frames (CPU parallel)."""
+            n = len(frames_to_check)
+            if n > 1:
+                with ThreadPoolExecutor(max_workers=min(n, 4)) as p:
+                    return list(p.map(_detect_one, frames_to_check))
+            return [_detect_one(frames_to_check[0])]
+
+        def _run_wrinkle_all():
+            """Wrinkle segmentation cho tất cả frames (GPU TRT)."""
+            if self.check_wrinkled and self.wrinkle_seg is not None:
+                empty_batch = [(np.empty((0, 5)), np.empty(0), np.empty(0, dtype=int))
+                                for _ in frames_to_check]
+                return self._batch_wrinkle_check(frames_to_check, frame_indices, empty_batch)
+            return {}
+
+        t_par_start = time.perf_counter()
+        with ThreadPoolExecutor(max_workers=2) as outer:
+            detect_future  = outer.submit(_run_detect_all)
+            wrinkle_future = outer.submit(_run_wrinkle_all)
+            per_frame_product_boxes = detect_future.result()
+            wrinkled_checks: Dict[int, Dict[str, Any]] = wrinkle_future.result()
+        t_par = (time.perf_counter() - t_par_start) * 1000
+        # Approximate individual phases for logging (actual was concurrent)
+        t_detect = t_par
+        t_wrinkle = t_par
 
         # Process each frame
         t_process_start = time.perf_counter()
@@ -457,8 +479,8 @@ class ProductVerificationService:
 
         timing_info = {
             'total': t_total, 'filter': t_filter,
-            'image_proc_detect': t_detect,
-            'wrinkle_seg': t_wrinkle, 'processing': t_process,
+            'detect_plus_wrinkle_parallel': t_par,
+            'processing': t_process,
             'frames_checked': len(frames_to_check), 'frames_total': len(frames_data),
             'method': 'image_proc',
         }
@@ -468,8 +490,8 @@ class ProductVerificationService:
 
         logger.info(
             f"Product verification (image_proc): {len(frames_to_check)}/{len(frames_data)} frames, "
-            f"total={t_total:.1f}ms (filter={t_filter:.1f}ms, detect={t_detect:.1f}ms, "
-            f"wrinkle={t_wrinkle:.1f}ms, process={t_process:.1f}ms)"
+            f"total={t_total:.1f}ms (filter={t_filter:.1f}ms, "
+            f"detect+wrinkle_parallel={t_par:.1f}ms, process={t_process:.1f}ms)"
         )
         return results
 
@@ -522,13 +544,16 @@ class ProductVerificationService:
         else:
             rotation_check = {'ok': True, 'skipped': True, 'reason': 'Missing boxes'}
 
-        # Label boundary — disabled by default
+        # Label region/boundary check — disabled by default
         if self.check_label_boundary and has_product:
-            label_boundary_check = self._check_edge_touch(
+            label_region_check = self._check_edge_touch(
                 product_box, transformed_bboxes, serial_number
             )
         else:
-            label_boundary_check = {'ok': True, 'skipped': True, 'reason': 'Check disabled'}
+            label_region_check = {'ok': True, 'skipped': True, 'reason': 'Check disabled'}
+
+        # Misalignment — disabled by default (not implemented for image_proc path)
+        misalignment_check = {'ok': True, 'skipped': True, 'reason': 'Check disabled'}
 
         # Center alignment — chính cái user muốn dùng image_proc cho cái này
         if self.check_center_alignment and has_product:
@@ -549,41 +574,57 @@ class ProductVerificationService:
                 return True
             return check_result.get('ok', True)
 
-        all_ok = (
+        overall_match = (
             _check_status(rotation_check)
-            and _check_status(label_boundary_check)
+            and _check_status(label_region_check)
+            and _check_status(misalignment_check)
             and _check_status(center_alignment_check)
             and _check_status(wrinkled_check)
         )
 
-        # Save debug image if needed
-        if self._should_save_debug_image(all_ok):
+        # Save debug image if needed (re-use YOLO path's visualization signature)
+        if self._should_save_debug_image(overall_match):
             try:
-                result_img = self._visualize_result(
+                self._visualize_result(
                     frame_img, product_box, label_box, wrinkled_check,
-                    rotation_check, label_boundary_check, center_alignment_check,
-                    serial_number, wrinkle_show_when_pass,
+                    rotation_check, misalignment_check, label_region_check,
+                    center_alignment_check, overall_match, serial_number,
+                    transformed_bboxes,
                 )
-                self._save_debug_image_async(result_img, serial_number)
             except Exception as e:
                 logger.warning(f"[{serial_number}] debug image save failed: {e}")
 
-        # Serialize for response (same format as YOLO path)
+        # Build detected_boxes dict (SAME FORMAT as YOLO path → visualizer works)
+        # Yellow product OBB drawn from corners. Label hidden (template polygon shown
+        # via transformed_bboxes path). Wrinkled added if any candidates to draw.
+        detected_boxes: Dict[str, Any] = {}
+        detected_boxes['product'] = {
+            'box': product_box['box'].tolist() if isinstance(product_box['box'], np.ndarray) else product_box['box'],
+            'score': float(product_box['score']),
+            'class': str(product_box['class']),
+            'corners': product_box['corners'].tolist() if isinstance(product_box['corners'], np.ndarray) else product_box['corners'],
+        }
+        if label_box is not None:
+            detected_boxes['label'] = {
+                'box': label_box['box'].tolist() if isinstance(label_box['box'], np.ndarray) else label_box['box'],
+                'score': float(label_box['score']),
+                'class': str(label_box['class']),
+                'corners': label_box['corners'].tolist() if isinstance(label_box['corners'], np.ndarray) else label_box['corners'],
+            }
+        wrinkled_boxes_to_draw = wrinkled_check.get('wrinkled_boxes', [])
+        if wrinkled_boxes_to_draw and (wrinkled_check.get('has_wrinkled', False) or wrinkle_show_when_pass):
+            detected_boxes['wrinkled'] = wrinkled_boxes_to_draw
+
+        # Return EXACTLY same shape as YOLO path's _process_single_frame
         return {
-            'match': bool(all_ok),
+            'match': bool(overall_match),
             'skipped': False,
-            'rotation_check': rotation_check,
-            'misalignment_check': None,
-            'label_boundary_check': label_boundary_check,
-            'center_alignment_check': center_alignment_check,
             'wrinkled_check': wrinkled_check,
-            'detected_boxes': [{
-                'box': product_box['box'].tolist() if isinstance(product_box['box'], np.ndarray) else product_box['box'],
-                'score': float(product_box['score']),
-                'class': str(product_box['class']),
-                'corners': product_box['corners'].tolist() if isinstance(product_box['corners'], np.ndarray) else product_box['corners'],
-                'source': product_box.get('source', 'image_proc'),
-            }],
+            'rotation_check': rotation_check,
+            'misalignment_check': misalignment_check,
+            'label_region_check': label_region_check,
+            'center_alignment_check': center_alignment_check,
+            'detected_boxes': detected_boxes,
         }
 
     def _process_single_frame(

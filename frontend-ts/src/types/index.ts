@@ -188,6 +188,7 @@ export interface Recipe {
   template_bank_size?: number;
   char_denoise_enabled?: boolean;
   product_detection_method?: string;
+  product_box_wall_type?: string;
   wrinkle_conf?: number;
   wrinkle_show_when_pass?: boolean;
   matching_conf?: number;
@@ -282,6 +283,7 @@ export interface Receipt {
   template_bank_size?: number;
   char_denoise_enabled?: boolean;
   product_detection_method?: string;
+  product_box_wall_type?: string;
   wrinkle_conf?: number;
   wrinkle_show_when_pass?: boolean;
   matching_conf?: number;

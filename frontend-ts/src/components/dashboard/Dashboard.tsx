@@ -1488,7 +1488,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
           <h3>Action</h3>
           <nav className="action-menu">
-            {/* <a
+            <a
               href="#ml-training"
               className={`nav-item ${currentSection === 'ml-training' ? 'active' : ''}`}
               onClick={(e) => { e.preventDefault(); handleSectionChange('ml-training'); }}
@@ -1499,7 +1499,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                 <path d="M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
               </svg>
               AI Training
-            </a> */}
+            </a>
             {canAccessPage('logs') && (
               <a
                 href="#logs"

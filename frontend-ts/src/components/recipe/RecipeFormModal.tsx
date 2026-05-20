@@ -62,6 +62,7 @@ interface FormDataType {
   classifier_backend: string;
   cv_method: string;
   product_detection_method: string;
+  product_box_wall_type: string;
   template_bank_enabled: boolean;
   template_bank_size: number;
   char_denoise_enabled: boolean;
@@ -189,6 +190,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     classifier_backend: 'embedding',
     cv_method: 'legacy',
     product_detection_method: 'yolo_obb',
+    product_box_wall_type: 'outer',
     template_bank_enabled: false,
     template_bank_size: 10,
     char_denoise_enabled: false,
@@ -388,6 +390,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         classifier_backend: recipeAny.classifier_backend || 'embedding',
         cv_method: recipeAny.cv_method || 'legacy',
         product_detection_method: recipeAny.product_detection_method || 'yolo_obb',
+        product_box_wall_type: recipeAny.product_box_wall_type || 'outer',
         template_bank_enabled: recipeAny.template_bank_enabled ?? false,
         template_bank_size: recipeAny.template_bank_size ?? 10,
         char_denoise_enabled: recipeAny.char_denoise_enabled ?? false,
@@ -843,6 +846,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         classifier_backend: formData.classifier_backend || 'embedding',
         cv_method: formData.cv_method || 'legacy',
         product_detection_method: formData.product_detection_method || 'yolo_obb',
+        product_box_wall_type: formData.product_box_wall_type || 'outer',
         template_bank_enabled: formData.template_bank_enabled ?? false,
         template_bank_size: formData.template_bank_size ?? 10,
         char_denoise_enabled: formData.char_denoise_enabled ?? false,
@@ -2019,17 +2023,68 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       <small className="field-description">Template model used for per-character OK/NG classification</small>
                     </div>
 
-                    <div className="form-group">
-                      <label>Product Detection Method</label>
-                      <select
-                        name="product_detection_method"
-                        value={formData.product_detection_method}
-                        onChange={(e) => setFormData(prev => ({ ...prev, product_detection_method: e.target.value }))}
+                    {/* ─── Bottle Edge Detection group ────────────────────── */}
+                    <div
+                      style={{
+                        background: '#f8f9fa',
+                        padding: '12px',
+                        borderRadius: '6px',
+                        border: '1px solid #dee2e6',
+                        marginBottom: '15px',
+                      }}
+                    >
+                      <div style={{ fontWeight: 600, marginBottom: '10px', color: '#495057' }}>
+                        🍶 Bottle Edge Detection
+                      </div>
+
+                      {/* Method */}
+                      <div className="form-group" style={{ marginBottom: '10px' }}>
+                        <label>Method</label>
+                        <select
+                          name="product_detection_method"
+                          value={formData.product_detection_method}
+                          onChange={(e) =>
+                            setFormData(prev => ({ ...prev, product_detection_method: e.target.value }))
+                          }
+                        >
+                          <option value="yolo_obb">YOLO OBB (trained model)</option>
+                          <option value="yolo_segment">YOLO Segment (trained model)</option>
+                        </select>
+                        {/* <small className="field-description">
+                          {formData.product_detection_method === 'yolo_obb'
+                            ? 'Uses trained YOLO OBB model. Recommended for production with diverse bottles.'
+                            : 'Uses Sobel edge detection + outer-anchored algorithm. No GPU model required.'}
+                        </small> */}
+                      </div>
+
+                      {/* Wall type — only active when yolo_segment */}
+                      <div
+                        className="form-group"
+                        style={{
+                          marginBottom: 0,
+                          opacity: formData.product_detection_method === 'yolo_segment' ? 1 : 0.45,
+                          pointerEvents: formData.product_detection_method === 'yolo_segment' ? 'auto' : 'none',
+                        }}
                       >
-                        <option value="yolo_obb">YOLO OBB (default)</option>
-                        <option value="yolo_segment">YOLO Segment</option>
-                      </select>
-                      <small className="field-description">Method to detect bottle (product) edges for center alignment check</small>
+                        <label>Product Box Wall Type</label>
+                        <select
+                          name="product_box_wall_type"
+                          value={formData.product_box_wall_type}
+                          onChange={(e) =>
+                            setFormData(prev => ({ ...prev, product_box_wall_type: e.target.value }))
+                          }
+                        >
+                          <option value="outer">Outer wall (bottle silhouette - wider OBB)</option>
+                          <option value="inner">Inner wall (closer to label — tighter OBB)</option>
+                        </select>
+                        {/* <small className="field-description">
+                          {formData.product_detection_method !== 'yolo_segment'
+                            ? '⚙️ Only applies when Method = "YOLO Segment"'
+                            : formData.product_box_wall_type === 'outer'
+                              ? 'Yellow OBB matches full bottle silhouette (matches YOLO OBB convention)'
+                              : 'Yellow OBB hugs label edges — visually easier to spot misalignment'}
+                        </small> */}
+                      </div>
                     </div>
 
                     {/* CV Method — chỉ áp dụng khi classifier_backend='embedding' */}

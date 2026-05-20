@@ -1,22 +1,24 @@
 """
-Alignment detection v2 — fill-black + outward scan + gap metric.
+Alignment detection v3 — Outer-anchored inner wall detection.
 
 Pipeline:
 1. Pre-compute template:
-   - Fill label region với pixel đen
-   - Scan từ mép label ra ngoài → peak đầu tiên = cạnh trong chai
-   - Lưu template_inner_width (sanity check sau)
+   - Detect OUTER wall (height_ratio >= 0.55) and INNER wall (closest peak) per side
+   - Compute plastic thickness = outer - inner
 
 2. Mỗi target frame:
-   - Lấy label_points_frame từ JSON (reliable, SuperPoint bám nhãn chuẩn)
-   - Fill label đen trên full frame
-   - Scan outward → 2 cạnh trong chai
-   - gap_L = label_left  - bottle_inner_left
-   - gap_R = bottle_inner_right - label_right
-   - Reject khi min(gap_L, gap_R) < TOUCH_MARGIN
+   - Fill label đen (middle 60%, top/bot 20% giữ)
+   - Build rotated search strip (extended Y-band 20%)
+   - Compute Sobel X + height_ratio per column
+   - Find OUTER wall (peak xa nhất với height >= 0.55)
+   - Predict INNER = outer_target - plastic_template
+   - Find INNER peak gần predicted (tol ±12)
+   - Nếu predicted < 0 hoặc không có peak → wall hidden → defect
 
-3. Sanity check: |detected_width - template_inner_width| / template_inner_width > 15%
-   → 1 trong 2 cạnh sai → extrapolate từ cạnh tin cậy hơn
+3. Defect: min(inner_L, inner_R) < TOUCH_MARGIN
+
+Visualize 5 ảnh/frame trong align_vis/{serial}/{stem}/
++ Save FAIL frames riêng align_fails/{serial}/
 
 Run: python3 test_alignment.py
 """
@@ -29,672 +31,597 @@ from scipy.ndimage import gaussian_filter1d
 from pathlib import Path
 
 # ─── Config ──────────────────────────────────────────────────────────────────
-CROP_DIR  = Path("/home/demo/Source/ocr_datecode/crop_samples")
+CROP_DIR  = Path("/home/demo/Source/ocr_datecode/crop_samples_1")
 OUT_DIR   = CROP_DIR / "align_vis"
 FAIL_DIR  = CROP_DIR / "align_fails"
+ANN_DIR   = CROP_DIR / "annotations"     # ground truth (optional, for overlay)
 OUT_DIR.mkdir(exist_ok=True)
 FAIL_DIR.mkdir(exist_ok=True)
 
 CAMERAS  = ['40767171', '40733814']
 MAX_IMGS = 100
 
-SEARCH_W      = 80     # px tìm ra ngoài 2 bên label (upper hard limit)
-EDGE_MARGIN   = 4      # skip vùng sát mép label để tránh fake peak từ fill artifact
-MIN_SEARCH_PX = 25     # search window < ngưỡng này → undetectable, fallback extrapolate
-PEAK_HEIGHT   = 0.08   # normalized (đã hạ để bắt cạnh trong yếu khi lighting đè cạnh ngoài)
-PEAK_PROM     = 0.02   # đã hạ vì cạnh trong có thể nằm trên slope dốc của cạnh ngoài
-PEAK_DIST     = 5
-TOUCH_MARGIN  = 5      # min(gap_L, gap_R) < margin → reject
-DRIFT_MAX_LEFT  = 15   # drift < -DRIFT_MAX_LEFT  → reject (lệch trái thêm so với setup)
-DRIFT_MAX_RIGHT = 15   # drift > +DRIFT_MAX_RIGHT → reject (lệch phải thêm so với setup)
-                       # drift = delta_target - delta_template (= bao nhiêu label DỊCH thêm so với setup)
-                       # Asymmetric vì setup có thể đã lệch sẵn → không tính là defect
-                       # Có thể đặt L/R khác nhau nếu muốn dung sai khác cho 2 phía
-ABS_WIDTH_TOL = 12     # absolute px: |total - tmpl_inner_w| > tol → 1 cạnh bị che (defect)
-                       # chặt hơn relative tol vì bottle width là hằng số vật lý
-                       # cần > std noise của measurement (typically 3-7px)
-EXPAND_PX     = 50     # bound search to [EDGE_MARGIN, template_gap + EXPAND_PX]
-                       # → ngăn pick peak ở cạnh ngoài chai
-                       # cần >= MIN_SEARCH_PX + EDGE_MARGIN - min(template_gap) để window đủ rộng
-Y_EXTENSION     = 0.2  # extend Y-band thêm 20% above/below label
-                       # → khi label che cạnh chai (middle), cạnh vẫn visible ở top/bottom
-                       # → Sobel sum vẫn pick được peak partial-coverage
-FILL_KEEP_RATIO = 0.6  # chỉ fill black middle 60% theo Y (top 20% + bottom 20% giữ pixel gốc)
-                       # → user request: "label y=1000 chỉ bôi đen 200-800"
-SHRINK_PX       = 0    # shrink label polygon inward (perp X) trước fill+search
-                       # Set > 0 nếu polygon SuperPoint rộng hơn label visible thực
-                       # CAUTION: với label content fill kín polygon, shrinkage làm
-                       # algorithm pick label-content-edge thay vì bottle wall
-                       # Gap displayed = detected - SHRINK_PX (negative = label che cạnh chai)
-SAVE_DEBUG    = True   # save 5 ảnh debug/frame (original, a/b/c, final)
+# Search ROI
+OUTER_SEARCH_MAX = 150     # px outward — đủ xa để bắt outer wall
+EDGE_MARGIN      = 2       # skip vùng sát fill (smaller, để bắt defect sát label)
+Y_EXTENSION      = 0.2     # extend search Y-band 20% above/below label
+FILL_KEEP_RATIO  = 0.6     # fill black middle 60%, top/bot 20% giữ
+SHRINK_PX        = 0       # shrink label polygon inward (0 = no shrink)
+
+# Peak detection
+PEAK_HEIGHT      = 0.05    # normalized profile threshold
+PEAK_PROM        = 0.02
+PEAK_DIST        = 4
+STRONG_THR       = 0.15    # pixel > 15% global max = "strong edge"
+
+# Wall classification
+OUTER_MIN_HRATIO = 0.55    # outer wall: cạnh full chiều cao chai (silhouette)
+INNER_MIN_HRATIO = 0.20    # inner wall: có thể bị label che 60-70%
+INNER_TOL_PX     = 12      # inner phải nằm gần predicted ± TOL
+
+# Defect criteria
+TOUCH_MARGIN     = 5       # min(inner_L, inner_R) < margin → defect
+SAVE_DEBUG       = True
 
 
-# ─── Helpers ─────────────────────────────────────────────────────────────────
-def fill_label_black(img_bgr, label_pts, keep_ratio=FILL_KEEP_RATIO):
-    """Fill MIDDLE keep_ratio (theo Y label) với màu đen.
-    Top (1-keep)/2 và bottom (1-keep)/2 của label giữ pixel gốc.
+# ─── Geometric helpers ───────────────────────────────────────────────────────
+def label_perp_width(label_pts):
+    p = np.asarray(label_pts, dtype=np.float32)
+    return float(np.linalg.norm(((p[1]+p[2])/2 - (p[0]+p[3])/2)))
 
-    Ví dụ label Y=0..1000, keep_ratio=0.6 → chỉ fill Y=200..800.
-    """
+
+def shrink_label_polygon(label_pts, shrink_px=SHRINK_PX):
+    if shrink_px == 0:
+        return list(label_pts)
     pts = np.asarray(label_pts, dtype=np.float32)
     TL, TR, BR, BL = pts[0], pts[1], pts[2], pts[3]
+    L_edge = BL - TL; L_len = float(np.linalg.norm(L_edge)) or 1.0
+    L_inward = np.array([L_edge[1], -L_edge[0]], dtype=np.float32) / L_len
+    R_edge = BR - TR; R_len = float(np.linalg.norm(R_edge)) or 1.0
+    R_inward = np.array([-R_edge[1], R_edge[0]], dtype=np.float32) / R_len
+    return [(TL + shrink_px*L_inward).tolist(),
+            (TR + shrink_px*R_inward).tolist(),
+            (BR + shrink_px*R_inward).tolist(),
+            (BL + shrink_px*L_inward).tolist()]
 
-    y_skip = (1.0 - keep_ratio) / 2   # 0.2
 
-    # Shrink dọc edge_dir (TL→BL trái, TR→BR phải) để giữ top/bot
+def fill_label_black(img_bgr, label_pts, keep_ratio=FILL_KEEP_RATIO):
+    """Fill MIDDLE keep_ratio% của label với màu đen (top + bot 20% giữ pixel gốc)."""
+    pts = np.asarray(label_pts, dtype=np.float32)
+    TL, TR, BR, BL = pts[0], pts[1], pts[2], pts[3]
+    y_skip = (1.0 - keep_ratio) / 2
     new_TL = TL + y_skip * (BL - TL)
     new_BL = BL - y_skip * (BL - TL)
     new_TR = TR + y_skip * (BR - TR)
     new_BR = BR - y_skip * (BR - TR)
-
     inner_quad = np.array([new_TL, new_TR, new_BR, new_BL], dtype=np.int32)
     out = img_bgr.copy()
     cv2.fillPoly(out, [inner_quad.reshape(-1, 1, 2)], (0, 0, 0))
     return out
 
 
-def shrink_label_polygon(label_pts, shrink_px=SHRINK_PX):
-    """Co polygon label vào trong theo perp X (cạnh trái lùi phải, cạnh phải lùi trái).
-    Giữ Y nguyên. Để fill black + search ROI bắt được vùng biên gốc của label.
+# ─── Detection core ──────────────────────────────────────────────────────────
+def compute_strip_profile(gray, label_pts, side, search_w=OUTER_SEARCH_MAX):
+    """Build rotated search strip → Sobel X → 1D profile + per-column height_ratio.
+
+    Sử dụng PER-ROW ADAPTIVE THRESHOLD để tính height_ratio:
+    - Window light/specular dominate global max → global threshold ăn cạnh chai yếu
+    - Per-row threshold (mỗi row có max riêng) giữ được cạnh chai dù lighting cục bộ mạnh
+    - Apply vertical morphology để loại spurious noise + connect bottle wall column
     """
     pts = np.asarray(label_pts, dtype=np.float32)
-    TL, TR, BR, BL = pts[0], pts[1], pts[2], pts[3]
-
-    # LEFT edge (TL→BL): inward = (edge_y, -edge_x) (vào trong label, sang phải)
-    L_edge = BL - TL
-    L_len = float(np.linalg.norm(L_edge)) or 1.0
-    L_inward = np.array([L_edge[1], -L_edge[0]], dtype=np.float32) / L_len
-
-    # RIGHT edge (TR→BR): inward = (-edge_y, edge_x) (vào trong, sang trái)
-    R_edge = BR - TR
-    R_len = float(np.linalg.norm(R_edge)) or 1.0
-    R_inward = np.array([-R_edge[1], R_edge[0]], dtype=np.float32) / R_len
-
-    return [
-        (TL + shrink_px * L_inward).tolist(),
-        (TR + shrink_px * R_inward).tolist(),
-        (BR + shrink_px * R_inward).tolist(),
-        (BL + shrink_px * L_inward).tolist(),
-    ]
-
-
-def count_edges_product_crop(crop_img, band_ratio=0.35,
-                              peak_height=0.15, peak_prom=0.05, peak_dist=5):
-    """Đếm strong vertical edges trong LEFT & RIGHT band của product crop.
-    Returns (n_L, n_R) — số peak detected mỗi bên.
-    Crop bị shift sang phải (label drift phải) → cạnh phải chai bị cắt → n_R giảm.
-    """
-    if crop_img is None:
-        return 0, 0
-    gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY) if crop_img.ndim == 3 else crop_img
-    h, w = gray.shape
-    band_w = max(20, int(w * band_ratio))
-
-    def _count(region):
-        if region.shape[1] < 10:
-            return 0
-        sobel = cv2.Scharr(region.astype(np.float32), cv2.CV_32F, 1, 0)
-        profile = np.sum(np.abs(sobel), axis=0)
-        profile = gaussian_filter1d(profile, sigma=1.5)
-        pmax = profile.max()
-        if pmax == 0:
-            return 0
-        profile /= pmax
-        peaks, _ = find_peaks(profile, height=peak_height,
-                              distance=peak_dist, prominence=peak_prom)
-        return int(len(peaks))
-
-    n_L = _count(gray[:, :band_w])
-    n_R = _count(gray[:, -band_w:])
-    return n_L, n_R
-
-
-def label_perp_width(label_pts):
-    """Khoảng cách perpendicular giữa mép trái và mép phải của label (qua midpoint)."""
-    p = np.asarray(label_pts, dtype=np.float32)
-    left_mid  = (p[0] + p[3]) / 2.0   # midpoint mép trái (TL→BL)
-    right_mid = (p[1] + p[2]) / 2.0   # midpoint mép phải (TR→BR)
-    return float(np.linalg.norm(right_mid - left_mid))
-
-
-def detect_inner_wall(gray, label_pts, side, search_w=SEARCH_W, expected_gap=None):
-    """
-    Search dọc rotated strip song song với cạnh label (handle label xoay).
-
-    label_pts:    4 corner [TL, TR, BR, BL] trong frame
-    side:         'left' (cạnh TL→BL) | 'right' (cạnh TR→BR)
-    expected_gap: template_gap_L/R, dùng làm upper bound (=expected_gap+EXPAND_PX)
-                  → ngăn pick peak cạnh ngoài chai. None = search full search_w.
-    Trả về dict:
-      x_offset:   perpendicular distance từ mép label ra ngoài đến cạnh chai (px)
-      inner_line: [(x1,y1),(x2,y2)] toạ độ cạnh chai trong frame
-      src_quad:   4 corner của search ROI trong frame (để visualize)
-      profile, peaks, picked, peak_height: như cũ
-      reason:     chuỗi giải thích nếu không detect được
-    """
-    pts = np.asarray(label_pts, dtype=np.float32)
-    out = {'x_offset': None, 'peak_height': 0.0, 'side': side,
-           'profile': None, 'peaks': np.array([]), 'picked': -1,
-           'src_quad': None, 'inner_line': None,
-           'p_top': None, 'p_bot': None,
-           'reason': ''}
-
     if side == 'left':
-        p_top, p_bot = pts[0], pts[3]   # TL, BL
+        p_top, p_bot = pts[0], pts[3]
     else:
-        p_top, p_bot = pts[1], pts[2]   # TR, BR
-    out['p_top'], out['p_bot'] = p_top.tolist(), p_bot.tolist()
+        p_top, p_bot = pts[1], pts[2]
 
-    edge_vec = p_bot - p_top
-    edge_len = float(np.linalg.norm(edge_vec))
-    if edge_len < 10:
-        out['reason'] = 'edge_too_short'
-        return out
-    edge_dir = edge_vec / edge_len
-
-    # Perpendicular outward (away from label) — image-coord rotation
+    edge = p_bot - p_top
+    elen = float(np.linalg.norm(edge)) or 1.0
+    edge_dir = edge / elen
     if side == 'left':
         perp = np.array([-edge_dir[1], edge_dir[0]], dtype=np.float32)
     else:
         perp = np.array([ edge_dir[1], -edge_dir[0]], dtype=np.float32)
 
-    # Bound search_w bằng template gap để tránh ăn vào cạnh ngoài
-    effective_search_w = float(search_w)
-    if expected_gap is not None:
-        effective_search_w = min(float(search_w), float(expected_gap) + EXPAND_PX)
+    y_ext = Y_EXTENSION * elen
+    p_top_ext = p_top - y_ext * edge_dir
+    p_bot_ext = p_bot + y_ext * edge_dir
+    h = int(round(elen * (1.0 + 2 * Y_EXTENSION)))
+    w = int(search_w - EDGE_MARGIN)
+    if h < 50 or w < 30:
+        return None
 
-    # Extend Y-band: thêm Y_EXTENSION trên top, dưới bot → bao vùng bottle wall
-    # NGOÀI label (nơi label không che) để bắt cạnh khi defect partial-cover
-    y_ext = Y_EXTENSION * edge_len
-    p_top_ext = p_top - y_ext * edge_dir   # 20% ABOVE label
-    p_bot_ext = p_bot + y_ext * edge_dir   # 20% BELOW label
-
-    # 4 corner search ROI (rotated quad trong frame, Y extended):
     inner_top = p_top_ext + EDGE_MARGIN * perp
+    outer_top = p_top_ext + search_w   * perp
+    outer_bot = p_bot_ext + search_w   * perp
     inner_bot = p_bot_ext + EDGE_MARGIN * perp
-    outer_top = p_top_ext + effective_search_w * perp
-    outer_bot = p_bot_ext + effective_search_w * perp
     src_quad = np.array([inner_top, outer_top, outer_bot, inner_bot], dtype=np.float32)
-    out['src_quad'] = src_quad.tolist()
-
-    h = int(round(edge_len * (1.0 + 2 * Y_EXTENSION)))
-    w = int(effective_search_w - EDGE_MARGIN)
-    if w < MIN_SEARCH_PX or h < 10:
-        out['reason'] = 'window_too_narrow'
-        return out
-
-    # Warp rotated strip thành ảnh axis-aligned (X = outward distance, Y = along edge)
-    dst_quad = np.array([[0, 0], [w, 0], [w, h], [0, h]], dtype=np.float32)
+    dst_quad = np.array([[0,0],[w,0],[w,h],[0,h]], dtype=np.float32)
     M = cv2.getPerspectiveTransform(src_quad, dst_quad)
     strip = cv2.warpPerspective(gray, M, (w, h),
-                                flags=cv2.INTER_LINEAR,
-                                borderMode=cv2.BORDER_REPLICATE)
+                                 flags=cv2.INTER_LINEAR,
+                                 borderMode=cv2.BORDER_REPLICATE)
 
-    # Sobel X (gradient theo outward direction)
     sobel = cv2.Scharr(strip.astype(np.float32), cv2.CV_32F, 1, 0)
-    profile = np.sum(np.abs(sobel), axis=0)
+    abs_sobel = np.abs(sobel)
+
+    # ── Specular suppression ─────────────────────────────────────────────────
+    # Pixel quá sáng (>230) = specular/window light. Chỉ mask BLOB LỚN
+    # (window reflection rectangular), KHÔNG mask thin lines (cạnh plastic
+    # phản chiếu sáng — đó là cạnh chai thật).
+    SPECULAR_THR = 230
+    bright_mask = (strip > SPECULAR_THR).astype(np.uint8)
+    if bright_mask.sum() > 100:
+        # Erode để loại thin lines (< 4px wide), giữ blobs lớn
+        kernel_erode = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        bright_blobs = cv2.erode(bright_mask, kernel_erode)
+        if bright_blobs.sum() > 50:
+            # Dilate ngược lại để mask cover edges của blob
+            bright_dilated = cv2.dilate(
+                bright_blobs,
+                cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9)))
+            abs_sobel = abs_sobel * (1 - bright_dilated)
+
+    # ── Height_ratio: dùng global max như bình thường ─────────────────────────
+    gmax = float(abs_sobel.max()) + 1e-6
+    strong = (abs_sobel > STRONG_THR * gmax).sum(axis=0)
+    height_ratio = strong / float(h)
+    # Backup: với specular vẫn rớt qua (vd reflection rộng), thêm P95 robust
+    robust_max = float(np.percentile(abs_sobel, 95)) + 1e-6
+    strong_robust = (abs_sobel > STRONG_THR * robust_max).sum(axis=0)
+    height_ratio_robust = np.minimum(strong_robust / float(h), 1.0)
+
+    # ── Profile for peak detection (unweighted Sobel sum) ────────────────────
+    profile = abs_sobel.sum(axis=0)
     profile = gaussian_filter1d(profile, sigma=1.5)
-
-    pmax = profile.max()
-    if pmax == 0:
-        out['reason'] = 'flat_profile'
-        return out
+    pmax = profile.max() + 1e-6
     profile_n = profile / pmax
-    out['profile'] = profile_n
 
-    peaks, props = find_peaks(profile_n, height=PEAK_HEIGHT,
-                              distance=PEAK_DIST, prominence=PEAK_PROM)
-    out['peaks'] = peaks
-    if len(peaks) == 0:
-        out['reason'] = 'no_peaks'
-        return out
+    peaks, _ = find_peaks(profile_n, height=PEAK_HEIGHT,
+                          distance=PEAK_DIST, prominence=PEAK_PROM)
 
-    # Với rotated strip: x=0 luôn sát label, x=w xa nhất → peak gần label = smallest x
-    idx = 0
-    inner_local = int(peaks[idx])
-    out['picked'] = idx
-    out['peak_height'] = float(props['peak_heights'][idx])
-
-    # Perpendicular distance từ mép label
-    out['x_offset'] = inner_local + EDGE_MARGIN
-
-    # All detected peaks: offset từ mép label + heights → để post-process
-    # nhận diện outer wall khi inner bị che (defect)
-    out['all_offsets'] = [int(p) + EDGE_MARGIN for p in peaks]
-    out['all_heights'] = [float(h) for h in props['peak_heights']]
-
-    # Cạnh chai trong frame: line từ top → bot, dịch outward
-    inner_pt_top = p_top + (inner_local + EDGE_MARGIN) * perp
-    inner_pt_bot = p_bot + (inner_local + EDGE_MARGIN) * perp
-    out['inner_line'] = [inner_pt_top.tolist(), inner_pt_bot.tolist()]
-    return out
+    return {
+        'side': side,
+        'profile': profile_n,
+        'peaks': peaks,
+        'height_ratio': height_ratio,
+        'height_ratio_robust': height_ratio_robust,
+        'src_quad': src_quad.tolist(),
+        'p_top': p_top, 'p_bot': p_bot,
+        'perp': perp,
+        'edge_dir': edge_dir,
+        'edge_len': elen,
+        'w': w, 'h': h,
+    }
 
 
-# ─── Debug visualization helpers ─────────────────────────────────────────────
-def draw_search_rois(img_bgr, info_L, info_R):
-    """Draw rotated search ROI quads cho cả 2 side."""
+def find_outer_inner(pd):
+    """Từ profile data → trả về (inner_gap, outer_gap) bằng px từ mép label.
+    2-pass: thử global height_ratio trước; nếu outer fail thì fallback robust (P95)."""
+    if pd is None:
+        return None, None
+    peaks = pd['peaks']
+    hr_global = pd['height_ratio']
+    hr_robust = pd.get('height_ratio_robust', hr_global)
+
+    # Pass 1: dùng global threshold (chặt, chính xác cho frame clean)
+    outer_q = [int(p) for p in peaks if hr_global[p] >= OUTER_MIN_HRATIO]
+    if not outer_q:
+        # Pass 2: fallback robust (P95) — frame có specular/window light mạnh
+        outer_q = [int(p) for p in peaks if hr_robust[p] >= OUTER_MIN_HRATIO]
+    outer = (max(outer_q) + EDGE_MARGIN) if outer_q else None
+
+    # INNER = peak GẦN LABEL NHẤT, trước outer ít nhất 4px, height >= INNER_MIN_HRATIO
+    # Dùng max của 2 hr để inner detection lenient hơn
+    hr_max = np.maximum(hr_global, hr_robust)
+    inner_q = [int(p) for p in peaks if hr_max[p] >= INNER_MIN_HRATIO]
+    inner = None
+    if outer is not None:
+        cands = [p for p in inner_q if (p + EDGE_MARGIN) < (outer - 4)]
+        inner = (min(cands) + EDGE_MARGIN) if cands else None
+    elif inner_q:
+        inner = min(inner_q) + EDGE_MARGIN
+    return inner, outer
+
+
+def find_inner_near(pd, predicted_gap, tol=INNER_TOL_PX):
+    """Find inner peak gần predicted_gap nhất, trong ±tol."""
+    if pd is None: return None
+    peaks = pd['peaks']; hr = pd['height_ratio']
+    candidates = []
+    for p in peaks:
+        gap = int(p) + EDGE_MARGIN
+        if hr[p] >= INNER_MIN_HRATIO and abs(gap - predicted_gap) <= tol:
+            candidates.append((gap, abs(gap - predicted_gap)))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[1])
+    return candidates[0][0]
+
+
+def detect_walls_outer_anchored(gray, label_pts, tmpl):
+    """Full v3 detection với fallback: nếu outer không detect được,
+    vẫn tìm inner near template gap (BG nhiễu, scale thay đổi không hẳn là defect).
+    """
+    pd_L = compute_strip_profile(gray, label_pts, 'left')
+    pd_R = compute_strip_profile(gray, label_pts, 'right')
+
+    outer_L = find_outer_inner(pd_L)[1]
+    outer_R = find_outer_inner(pd_R)[1]
+
+    plastic_L = tmpl['outer_L'] - tmpl['inner_L']
+    plastic_R = tmpl['outer_R'] - tmpl['inner_R']
+
+    def resolve_side(pd, outer, tmpl_inner, plastic):
+        """Trả (inner, pred_inner, hidden, fallback_used)."""
+        if outer is not None:
+            pred_inner = outer - plastic
+            if pred_inner < 0:
+                return None, pred_inner, True, False
+            inner = find_inner_near(pd, max(pred_inner, EDGE_MARGIN))
+            return inner, pred_inner, False, False
+        # Outer not found — FALLBACK: search inner near template gap with wider tol
+        pred_inner = tmpl_inner
+        inner = find_inner_near(pd, max(pred_inner, EDGE_MARGIN), tol=INNER_TOL_PX + 8)
+        if inner is None:
+            # Truly hidden: no outer AND no inner near template
+            return None, pred_inner, True, True
+        return inner, pred_inner, False, True
+
+    inner_L, pred_L, hidden_L, fb_L = resolve_side(pd_L, outer_L, tmpl['inner_L'], plastic_L)
+    inner_R, pred_R, hidden_R, fb_R = resolve_side(pd_R, outer_R, tmpl['inner_R'], plastic_R)
+
+    eff_L = inner_L if inner_L is not None else (pred_L if not hidden_L else -1)
+    eff_R = inner_R if inner_R is not None else (pred_R if not hidden_R else -1)
+
+    return {
+        'inner_L': inner_L, 'inner_R': inner_R,
+        'outer_L': outer_L, 'outer_R': outer_R,
+        'pred_inner_L': pred_L, 'pred_inner_R': pred_R,
+        'hidden_L': hidden_L, 'hidden_R': hidden_R,
+        'fallback_L': fb_L, 'fallback_R': fb_R,
+        'eff_L': eff_L, 'eff_R': eff_R,
+        'profile_L': pd_L, 'profile_R': pd_R,
+        'plastic_L': plastic_L, 'plastic_R': plastic_R,
+    }
+
+
+# ─── Geometric: gap → frame coords for visualization ─────────────────────────
+def wall_line_in_frame(label_pts, side, gap_perp):
+    """Return ((x_top, y_top), (x_bot, y_bot)) of wall line in frame."""
+    pts = np.asarray(label_pts, dtype=np.float32)
+    if side == 'left':
+        p_top, p_bot = pts[0], pts[3]
+    else:
+        p_top, p_bot = pts[1], pts[2]
+    edge = p_bot - p_top
+    elen = float(np.linalg.norm(edge)) or 1.0
+    edge_dir = edge / elen
+    if side == 'left':
+        perp = np.array([-edge_dir[1], edge_dir[0]], dtype=np.float32)
+    else:
+        perp = np.array([ edge_dir[1], -edge_dir[0]], dtype=np.float32)
+    return p_top + gap_perp * perp, p_bot + gap_perp * perp
+
+
+# ─── Visualization helpers ───────────────────────────────────────────────────
+def draw_search_rois(img_bgr, pd_L, pd_R):
     out = img_bgr.copy()
-    for info, color, lbl in [(info_L, (0, 255, 255), 'L search'),
-                              (info_R, (0, 255, 255), 'R search')]:
-        if info.get('src_quad') is None:
-            continue
-        quad = np.array(info['src_quad'], dtype=np.int32)
+    for pd, color, lbl in [(pd_L, (0, 255, 255), 'L search'),
+                            (pd_R, (0, 255, 255), 'R search')]:
+        if pd is None: continue
+        quad = np.array(pd['src_quad'], dtype=np.int32)
         cv2.polylines(out, [quad], True, color, 2)
         cv2.putText(out, lbl, tuple(quad[0]),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
     return out
 
 
-def plot_profile(info, canvas_h=220, scale=2):
+def plot_profile_with_walls(pd, picked_inner_gap, picked_outer_gap, pred_inner_gap,
+                              canvas_h=240, scale=2):
+    """1D profile + height_ratio overlay + peaks marked.
+    Picked inner (lime), outer (orange), predicted inner (yellow dashed).
     """
-    Vẽ profile 1D: trục X = outward distance từ label (px),
-    red dot = peak chosen, cam = peak khác.
-    """
-    profile = info['profile']
-    if profile is None or len(profile) == 0:
-        canvas = np.full((canvas_h, 400, 3), 40, dtype=np.uint8)
-        cv2.putText(canvas, f"no profile ({info.get('reason','')})",
-                    (10, canvas_h // 2),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
-        return canvas
+    if pd is None or pd['profile'] is None or len(pd['profile']) == 0:
+        c = np.full((canvas_h, 400, 3), 40, dtype=np.uint8)
+        cv2.putText(c, "no profile", (10, canvas_h//2),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,200,200), 2)
+        return c
 
+    profile = pd['profile']
+    hr = pd['height_ratio']
+    peaks = pd['peaks']
     n = len(profile)
-    canvas_w = max(200, n * scale)
+    canvas_w = max(300, n * scale)
     canvas = np.full((canvas_h, canvas_w, 3), 40, dtype=np.uint8)
 
-    baseline_y = canvas_h - 15
-    top_y      = 15
+    baseline_y = canvas_h - 25
+    top_y      = 20
+    plot_h     = baseline_y - top_y
 
-    th_y = baseline_y - int(PEAK_HEIGHT * (baseline_y - top_y))
-    cv2.line(canvas, (0, th_y), (canvas_w, th_y), (80, 80, 180), 1)
-    cv2.putText(canvas, f"thresh={PEAK_HEIGHT}", (5, th_y - 4),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (120, 120, 220), 1)
-
-    pts = []
-    for i, v in enumerate(profile):
+    # Height ratio band (blue background where >= INNER_MIN_HRATIO, green where >= OUTER_MIN_HRATIO)
+    for i in range(n):
         x = i * scale
-        y = baseline_y - int(v * (baseline_y - top_y))
-        pts.append((x, y))
-    for i in range(len(pts) - 1):
-        cv2.line(canvas, pts[i], pts[i + 1], (220, 220, 220), 1)
+        if hr[i] >= OUTER_MIN_HRATIO:
+            col = (60, 90, 30)   # dark green
+        elif hr[i] >= INNER_MIN_HRATIO:
+            col = (60, 60, 30)   # dark teal
+        else:
+            continue
+        cv2.line(canvas, (x, top_y), (x+scale, top_y),
+                 col, 6)  # top stripe shows height_ratio category
 
-    for j, p in enumerate(info['peaks']):
+    # Threshold lines
+    th_y = baseline_y - int(PEAK_HEIGHT * plot_h)
+    cv2.line(canvas, (0, th_y), (canvas_w, th_y), (80, 80, 180), 1)
+
+    # Profile polyline
+    for i in range(n - 1):
+        x1, x2 = i * scale, (i+1) * scale
+        y1 = baseline_y - int(profile[i] * plot_h)
+        y2 = baseline_y - int(profile[i+1] * plot_h)
+        cv2.line(canvas, (x1, y1), (x2, y2), (220, 220, 220), 1)
+
+    # Mark all peaks (small orange dots)
+    for p in peaks:
         x = int(p) * scale
-        y = baseline_y - int(profile[p] * (baseline_y - top_y))
-        is_picked = (j == info['picked'])
-        col = (0, 0, 255) if is_picked else (0, 165, 255)
-        cv2.circle(canvas, (x, y), 5, col, -1)
-        cv2.line(canvas, (x, baseline_y), (x, y), col, 1)
-        if is_picked:
-            offset = int(p) + EDGE_MARGIN
-            cv2.putText(canvas, f"gap={offset}", (x + 8, y + 5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1)
+        y = baseline_y - int(profile[p] * plot_h)
+        cv2.circle(canvas, (x, y), 3, (100, 100, 200), -1)
 
-    side = info['side'].upper()
-    cv2.putText(canvas, f"{side} profile (perp from label edge)",
-                (5, top_y - 2),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
-    cv2.line(canvas, (0, baseline_y), (canvas_w, baseline_y), (100, 100, 100), 1)
+    # Mark PICKED OUTER (orange large)
+    if picked_outer_gap is not None:
+        p = picked_outer_gap - EDGE_MARGIN
+        if 0 <= p < n:
+            x = int(p) * scale
+            y = baseline_y - int(profile[p] * plot_h)
+            cv2.circle(canvas, (x, y), 7, (0, 165, 255), -1)
+            cv2.putText(canvas, f"OUT={picked_outer_gap}", (x+8, y-5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1)
+
+    # Mark PICKED INNER (lime large)
+    if picked_inner_gap is not None:
+        p = picked_inner_gap - EDGE_MARGIN
+        if 0 <= p < n:
+            x = int(p) * scale
+            y = baseline_y - int(profile[p] * plot_h)
+            cv2.circle(canvas, (x, y), 7, (0, 255, 0), -1)
+            cv2.putText(canvas, f"IN={picked_inner_gap}", (x+8, y+12),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+    # Mark PREDICTED INNER (yellow vertical line)
+    if pred_inner_gap is not None:
+        p_pred = pred_inner_gap - EDGE_MARGIN
+        if 0 <= p_pred < n:
+            x = int(p_pred) * scale
+            cv2.line(canvas, (x, top_y), (x, baseline_y), (0, 220, 220), 1, cv2.LINE_AA)
+            cv2.putText(canvas, f"pred={pred_inner_gap:.0f}", (x+2, baseline_y-5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 220, 220), 1)
+
+    side = pd['side'].upper()
+    cv2.putText(canvas, f"{side} profile  (outer thresh={OUTER_MIN_HRATIO}, inner={INNER_MIN_HRATIO})",
+                (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180,180,180), 1)
+    cv2.line(canvas, (0, baseline_y), (canvas_w, baseline_y), (100,100,100), 1)
     return canvas
 
 
-def stack_profiles(info_L, info_R):
-    """Ghép profile L + R thành 1 ảnh."""
-    p_L = plot_profile(info_L)
-    p_R = plot_profile(info_R)
+def stack_profiles(det, pred_in_L, pred_in_R):
+    p_L = plot_profile_with_walls(det['profile_L'],
+                                    det['inner_L'], det['outer_L'], pred_in_L)
+    p_R = plot_profile_with_walls(det['profile_R'],
+                                    det['inner_R'], det['outer_R'], pred_in_R)
     h = max(p_L.shape[0], p_R.shape[0])
-    if p_L.shape[0] != h:
-        p_L = cv2.copyMakeBorder(p_L, 0, h - p_L.shape[0], 0, 0, cv2.BORDER_CONSTANT, value=40)
-    if p_R.shape[0] != h:
-        p_R = cv2.copyMakeBorder(p_R, 0, h - p_R.shape[0], 0, 0, cv2.BORDER_CONSTANT, value=40)
-    sep = np.full((h, 4, 3), (60, 60, 60), dtype=np.uint8)
+    sep = np.full((h, 4, 3), (60,60,60), dtype=np.uint8)
     return np.hstack([p_L, sep, p_R])
 
 
-def save_debug(frame_dir, full, masked, info_L, info_R, final_vis):
-    """5 ảnh: original, a=label_filled, b=search_rois, c=profiles, final."""
-    frame_dir.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(frame_dir / "00_original.jpg"),     full)
-    cv2.imwrite(str(frame_dir / "01_a_label_filled.jpg"), masked)
-    cv2.imwrite(str(frame_dir / "02_b_search_rois.jpg"),  draw_search_rois(masked, info_L, info_R))
-    cv2.imwrite(str(frame_dir / "03_c_profiles.jpg"),     stack_profiles(info_L, info_R))
-    cv2.imwrite(str(frame_dir / "04_final.jpg"),          final_vis)
+def draw_final(full, label_pts, det, tmpl, gt_bottle_pts=None):
+    """Final visualization: label + outer (orange) + inner detected (green) + predicted (yellow dashed)."""
+    vis = full.copy()
 
-
-# ─── Main ────────────────────────────────────────────────────────────────────
-for serial in CAMERAS:
-    cam_dir = CROP_DIR / serial
-    out_cam = OUT_DIR / serial
-    fail_cam = FAIL_DIR / serial
-    out_cam.mkdir(exist_ok=True)
-    fail_cam.mkdir(exist_ok=True)
-    # Clear previous fails for this camera
-    for f in fail_cam.glob('*.jpg'):
-        f.unlink()
-
-    tmpl_path = cam_dir / "template.jpg"
-    tmpl_label_path = cam_dir / "template_label_bbox.json"
-    if not tmpl_path.exists() or not tmpl_label_path.exists():
-        print(f"[{serial}] missing template.jpg or template_label_bbox.json → skip")
-        continue
-
-    # ── Template: detect inner walls ──────────────────────────────────────────
-    tmpl_bgr = cv2.imread(str(tmpl_path))
-    with open(tmpl_label_path) as f:
-        tmpl_label = json.load(f)
-
-    # Shrink polygon inward → fill + search overlap with original border band
-    tmpl_pts_shrunk = shrink_label_polygon(tmpl_label['points'])
-    tmpl_masked = fill_label_black(tmpl_bgr, tmpl_pts_shrunk)
-    tmpl_gray = cv2.cvtColor(tmpl_masked, cv2.COLOR_BGR2GRAY)
-
-    t_info_L = detect_inner_wall(tmpl_gray, tmpl_pts_shrunk, 'left')
-    t_info_R = detect_inner_wall(tmpl_gray, tmpl_pts_shrunk, 'right')
-    if t_info_L['x_offset'] is None or t_info_R['x_offset'] is None:
-        print(f"[{serial}] template inner walls NOT detected "
-              f"(L={t_info_L['reason']} R={t_info_R['reason']}) → skip")
-        continue
-
-    tmpl_label_w_shrunk = label_perp_width(tmpl_pts_shrunk)
-    tmpl_gap_L = t_info_L['x_offset']   # đo từ shrunken edge
-    tmpl_gap_R = t_info_R['x_offset']
-    tmpl_inner_w = tmpl_gap_L + tmpl_label_w_shrunk + tmpl_gap_R   # perp inner-to-inner
-    tmpl_delta = (tmpl_gap_L - tmpl_gap_R) / 2.0
-    # Gap hiển thị (từ mép gốc): trừ SHRINK_PX
-    tmpl_gap_L_disp = tmpl_gap_L - SHRINK_PX
-    tmpl_gap_R_disp = tmpl_gap_R - SHRINK_PX
-
-    # Outer wall position trong template (peak thứ 2 nếu có) → để phát hiện
-    # khi target chỉ thấy outer wall (inner bị che)
-    tmpl_outer_L = (t_info_L['all_offsets'][1]
-                    if len(t_info_L.get('all_offsets', [])) >= 2 else None)
-    tmpl_outer_R = (t_info_R['all_offsets'][1]
-                    if len(t_info_R.get('all_offsets', [])) >= 2 else None)
-
-    print(f"\n=== {serial} ===")
-    print(f"  template: label_w_shrunk={tmpl_label_w_shrunk:.1f}  "
-          f"gap_L={tmpl_gap_L}(disp={tmpl_gap_L_disp}) "
-          f"gap_R={tmpl_gap_R}(disp={tmpl_gap_R_disp})  inner_w={tmpl_inner_w:.1f}")
-    print(f"  template: outer gap_L={tmpl_outer_L}  outer gap_R={tmpl_outer_R}")
-
-    # Template visualization: rotated walls + label polygon
-    tvis = tmpl_bgr.copy()
-    cv2.polylines(tvis, [np.array(tmpl_label['points'], dtype=np.int32)],
+    # Label polygon (cyan)
+    cv2.polylines(vis, [np.array(label_pts, dtype=np.int32)],
                   True, (220, 220, 0), 2)
-    for info, col in [(t_info_L, (0, 255, 0)), (t_info_R, (0, 255, 0))]:
-        if info['inner_line']:
-            p0, p1 = info['inner_line']
-            cv2.line(tvis, (int(p0[0]), int(p0[1])), (int(p1[0]), int(p1[1])), col, 2)
-    cv2.putText(tvis, f"gap_L={tmpl_gap_L}  gap_R={tmpl_gap_R}  "
-                f"label_w={tmpl_label_w_shrunk:.0f}  inner_w={tmpl_inner_w:.0f}",
-                (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 220, 220), 2)
-    cv2.imwrite(str(out_cam / "_template_check.jpg"), tvis)
-    if SAVE_DEBUG:
-        save_debug(out_cam / "_template_debug", tmpl_bgr, tmpl_masked,
-                   t_info_L, t_info_R, tvis)
 
-    # ── Targets ───────────────────────────────────────────────────────────────
-    imgs = sorted(cam_dir.glob("crop_*[0-9]_full.jpg"))[:MAX_IMGS]
-    n_pass = n_fail = n_skip = 0
-    gap_L_list, gap_R_list = [], []
+    # GT bottle (red dashed, if provided)
+    if gt_bottle_pts is not None:
+        cv2.polylines(vis, [np.array(gt_bottle_pts, dtype=np.int32)],
+                      True, (0, 0, 200), 1)
 
-    for full_path in imgs:
-        stem_no_full = full_path.stem.replace('_full', '')
-        json_path = cam_dir / (stem_no_full + '.json')
-        if not json_path.exists():
+    # OUTER wall (orange)
+    for side, gap in [('left', det['outer_L']), ('right', det['outer_R'])]:
+        if gap is not None:
+            t, b = wall_line_in_frame(label_pts, side, gap)
+            cv2.line(vis, (int(t[0]), int(t[1])),
+                          (int(b[0]), int(b[1])), (0, 165, 255), 2)
+
+    # PREDICTED inner (yellow dashed-ish)
+    for side, gap in [('left', det['pred_inner_L']), ('right', det['pred_inner_R'])]:
+        if gap is not None and gap > 0:
+            t, b = wall_line_in_frame(label_pts, side, gap)
+            # Draw dashed line
+            pts = np.linspace([t[0], t[1]], [b[0], b[1]], 30)
+            for i in range(0, len(pts) - 1, 2):
+                p1 = pts[i]; p2 = pts[i+1]
+                cv2.line(vis, (int(p1[0]), int(p1[1])),
+                              (int(p2[0]), int(p2[1])), (0, 220, 220), 1)
+
+    # INNER wall detected (green thick)
+    for side, gap in [('left', det['inner_L']), ('right', det['inner_R'])]:
+        if gap is not None:
+            t, b = wall_line_in_frame(label_pts, side, gap)
+            cv2.line(vis, (int(t[0]), int(t[1])),
+                          (int(b[0]), int(b[1])), (0, 255, 0), 3)
+
+    # Eff (used for decision) - if no inner detected but predicted available
+    for side, eff, inner in [('left', det['eff_L'], det['inner_L']),
+                              ('right', det['eff_R'], det['inner_R'])]:
+        if inner is None and eff is not None and eff != -1 and eff > 0:
+            t, b = wall_line_in_frame(label_pts, side, eff)
+            cv2.line(vis, (int(t[0]), int(t[1])),
+                          (int(b[0]), int(b[1])), (0, 255, 0), 1, cv2.LINE_AA)
+
+    # Status tag
+    is_def = det['eff_L'] < TOUCH_MARGIN or det['eff_R'] < TOUCH_MARGIN
+    col = (0, 0, 255) if is_def else (0, 220, 0)
+    cv2.putText(vis,
+                f"inner(L={det['inner_L']}, R={det['inner_R']})  "
+                f"outer(L={det['outer_L']}, R={det['outer_R']})  "
+                f"eff(L={det['eff_L']:.0f}, R={det['eff_R']:.0f})  "
+                f"{'FAIL' if is_def else 'OK'}",
+                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, col, 2)
+    cv2.putText(vis,
+                f"plastic_L={det['plastic_L']}  plastic_R={det['plastic_R']}  "
+                f"hidden(L={det['hidden_L']}, R={det['hidden_R']})",
+                (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200,200,200), 1)
+    cv2.putText(vis,
+                "Cyan=label  Orange=outer  GreenSolid=inner detected  "
+                "YellowDash=predicted inner  Red=GT bottle",
+                (10, vis.shape[0]-12), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200,200,200), 1)
+    return vis
+
+
+def save_debug(frame_dir, full, masked, pd_L, pd_R, det, vis):
+    frame_dir.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(frame_dir / "00_original.jpg"),      full)
+    cv2.imwrite(str(frame_dir / "01_a_label_filled.jpg"), masked)
+    cv2.imwrite(str(frame_dir / "02_b_search_rois.jpg"),  draw_search_rois(masked, pd_L, pd_R))
+    cv2.imwrite(str(frame_dir / "03_c_profiles.jpg"),
+                stack_profiles(det, det['pred_inner_L'], det['pred_inner_R']))
+    cv2.imwrite(str(frame_dir / "04_final.jpg"),         vis)
+
+
+# ─── Template setup ──────────────────────────────────────────────────────────
+def get_template(serial):
+    cam_dir = CROP_DIR / serial
+    tmpl_label = json.loads((cam_dir / 'template_label_bbox.json').read_text())
+    tmpl_bgr = cv2.imread(str(cam_dir / 'template.jpg'))
+    pts_t = shrink_label_polygon(tmpl_label['points'])
+    masked = fill_label_black(tmpl_bgr, pts_t)
+    gray = cv2.cvtColor(masked, cv2.COLOR_BGR2GRAY)
+    pd_L = compute_strip_profile(gray, pts_t, 'left')
+    pd_R = compute_strip_profile(gray, pts_t, 'right')
+    inner_L, outer_L = find_outer_inner(pd_L)
+    inner_R, outer_R = find_outer_inner(pd_R)
+    return {
+        'label_pts': pts_t,
+        'label_pts_orig': tmpl_label['points'],
+        'inner_L': inner_L, 'inner_R': inner_R,
+        'outer_L': outer_L, 'outer_R': outer_R,
+        'tmpl_bgr': tmpl_bgr,
+        'masked': masked,
+        'pd_L': pd_L, 'pd_R': pd_R,
+    }
+
+
+# ─── Main loop ───────────────────────────────────────────────────────────────
+def run():
+    for serial in CAMERAS:
+        cam_dir  = CROP_DIR / serial
+        out_cam  = OUT_DIR / serial
+        fail_cam = FAIL_DIR / serial
+        ann_cam  = ANN_DIR / serial
+        if not cam_dir.exists():
+            print(f"[{serial}] data not found → skip")
+            continue
+        out_cam.mkdir(exist_ok=True)
+        fail_cam.mkdir(exist_ok=True)
+        for f in fail_cam.glob('*.jpg'): f.unlink()
+
+        # ── Template ──────────────────────────────────────────────────────────
+        try:
+            tmpl = get_template(serial)
+        except Exception as e:
+            print(f"[{serial}] template error: {e}")
             continue
 
-        full = cv2.imread(str(full_path))
-        if full is None:
-            continue
-        with open(json_path) as f:
-            meta = json.load(f)
-        label_pts = meta.get('label_points_frame')
-        if label_pts is None:
+        if any(v is None for v in [tmpl['inner_L'], tmpl['inner_R'],
+                                    tmpl['outer_L'], tmpl['outer_R']]):
+            print(f"[{serial}] template walls incomplete: "
+                  f"inner=({tmpl['inner_L']},{tmpl['inner_R']}) "
+                  f"outer=({tmpl['outer_L']},{tmpl['outer_R']}) → skip")
             continue
 
-        # Shrink polygon → fill + search overlap with original border
-        label_pts_shrunk = shrink_label_polygon(label_pts)
-        masked = fill_label_black(full, label_pts_shrunk)
-        gray = cv2.cvtColor(masked, cv2.COLOR_BGR2GRAY)
+        print(f"\n=== {serial} ===")
+        print(f"  template inner: L={tmpl['inner_L']} R={tmpl['inner_R']}")
+        print(f"  template outer: L={tmpl['outer_L']} R={tmpl['outer_R']}")
+        print(f"  plastic thickness: L={tmpl['outer_L']-tmpl['inner_L']} "
+              f"R={tmpl['outer_R']-tmpl['inner_R']}")
 
-        info_L = detect_inner_wall(gray, label_pts_shrunk, 'left',  expected_gap=tmpl_gap_L)
-        info_R = detect_inner_wall(gray, label_pts_shrunk, 'right', expected_gap=tmpl_gap_R)
-        gL_det, lh = info_L['x_offset'], info_L['peak_height']
-        gR_det, rh = info_R['x_offset'], info_R['peak_height']
-        target_label_w = label_perp_width(label_pts_shrunk)
-        expected_total = tmpl_inner_w
-
-        # ── Sanity + extrapolate (theo perpendicular gap) ─────────────────────
-        source = 'both'
-        constraint_violated = False
-        if gL_det is not None and gR_det is not None:
-            total = gL_det + target_label_w + gR_det
-            signed_err = total - expected_total       # >0 = thừa, <0 = thiếu
-            abs_err = abs(signed_err)
-            if abs_err > ABS_WIDTH_TOL:
-                # Constraint violated → 1 cạnh detect sai
-                # Dùng product crop để xác định bên nào reliable, extrapolate bên kia
-                product_crop = cv2.imread(str(cam_dir / (stem_no_full + '.jpg')))
-                n_L, n_R = count_edges_product_crop(product_crop)
-
-                fixed = False
-                if n_L >= 2 and n_R < 2:
-                    # Crop bị cắt phải → label dịch phải → LEFT đáng tin
-                    gR_det = max(0, expected_total - target_label_w - gL_det)
-                    source = f'crop_fix_R(nL={n_L},nR={n_R},err={signed_err:+.0f})'
-                    fixed = True
-                elif n_R >= 2 and n_L < 2:
-                    gL_det = max(0, expected_total - target_label_w - gR_det)
-                    source = f'crop_fix_L(nL={n_L},nR={n_R},err={signed_err:+.0f})'
-                    fixed = True
-                elif n_L >= 2 and n_R >= 2:
-                    # Cả 2 đều OK trong crop → label gần setup → trust side
-                    # khớp template_gap hơn, extrapolate side kia
-                    err_L = abs(gL_det - tmpl_gap_L)
-                    err_R = abs(gR_det - tmpl_gap_R)
-                    if err_L <= err_R:
-                        gR_det = max(0, expected_total - target_label_w - gL_det)
-                        source = f'tmpl_fix_R(eL={err_L},eR={err_R},err={signed_err:+.0f})'
-                    else:
-                        gL_det = max(0, expected_total - target_label_w - gR_det)
-                        source = f'tmpl_fix_L(eL={err_L},eR={err_R},err={signed_err:+.0f})'
-                    fixed = True
-
-                if not fixed:
-                    # Cả 2 side trong crop đều thiếu cạnh → unreliable
-                    constraint_violated = True
-                    source = f'constraint_fail(nL={n_L},nR={n_R},err={abs_err:.0f})'
-        elif gL_det is not None:
-            gR_det = max(0, expected_total - target_label_w - gL_det)
-            source = 'extrap_R'
-        elif gR_det is not None:
-            gL_det = max(0, expected_total - target_label_w - gR_det)
-            source = 'extrap_L'
-        else:
-            n_skip += 1
-            if SAVE_DEBUG:
-                fail_vis = full.copy()
-                cv2.putText(fail_vis,
-                            f"SKIP: L={info_L['reason']} R={info_R['reason']}",
-                            (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
-                save_debug(out_cam / stem_no_full, full, masked,
-                           info_L, info_R, fail_vis)
-            continue
-
-        # Gaps trong shrunken coords (= từ shrunken edge ra ngoài)
-        gap_L_shrunk = int(round(gL_det))
-        gap_R_shrunk = int(round(gR_det))
-        # Gaps displayed (= từ mép label gốc): có thể âm nếu label CHE cạnh chai
-        gap_L = gap_L_shrunk - SHRINK_PX
-        gap_R = gap_R_shrunk - SHRINK_PX
-        gap_min = min(gap_L, gap_R)
-        delta_perp = (gap_L - gap_R) / 2.0           # delta không đổi vì SHRINK trừ đều
-        drift = delta_perp - (tmpl_gap_L_disp - tmpl_gap_R_disp) / 2.0
-
-        # Failure conditions
-        fail_touch   = gap_min < TOUCH_MARGIN
-        fail_drift_L = drift < -DRIFT_MAX_LEFT
-        fail_drift_R = drift > +DRIFT_MAX_RIGHT
-        is_ok = not (fail_touch or fail_drift_L or fail_drift_R or constraint_violated)
-        fail_reasons = []
-        if fail_touch:   fail_reasons.append(f'touch(min={gap_min})')
-        if fail_drift_L: fail_reasons.append(f'drift_L({drift:+.0f})')
-        if fail_drift_R: fail_reasons.append(f'drift_R({drift:+.0f})')
-        if constraint_violated: fail_reasons.append(source)
-
-        gap_L_list.append(gap_L)
-        gap_R_list.append(gap_R)
-        if is_ok:
-            n_pass += 1
-        else:
-            n_fail += 1
-
-        # ── Helper: build inner wall line cho cả case extrapolate ──────────────
-        def build_wall_line(info, side, gap_perp):
-            """Trả về (p_top, p_bot) trong frame của cạnh trong, dùng gap_perp px.
-            Perp formula PHẢI match detect_inner_wall — outward direction.
-            """
-            pts_arr = np.asarray(label_pts, dtype=np.float32)
-            if side == 'left':
-                p_top, p_bot = pts_arr[0], pts_arr[3]
-            else:
-                p_top, p_bot = pts_arr[1], pts_arr[2]
-            edge = p_bot - p_top
-            edge_len = float(np.linalg.norm(edge)) or 1.0
-            edge_dir = edge / edge_len
-            if side == 'left':
-                perp = np.array([-edge_dir[1], edge_dir[0]], dtype=np.float32)
-            else:
-                perp = np.array([ edge_dir[1], -edge_dir[0]], dtype=np.float32)
-            return (p_top + gap_perp * perp, p_bot + gap_perp * perp)
-
-        # ── Visualize ─────────────────────────────────────────────────────────
-        vis = full.copy()
-
-        # Label polygon (cyan)
-        cv2.polylines(vis, [np.array(label_pts, dtype=np.int32)],
-                      True, (220, 220, 0), 2)
-
-        # Inner walls (green if detected, orange if extrapolated)
-        c_l = (0, 165, 255) if source == 'extrap_L' else (0, 255, 0)
-        c_r = (0, 165, 255) if source == 'extrap_R' else (0, 255, 0)
-        wl_top, wl_bot = build_wall_line(info_L, 'left',  gap_L)
-        wr_top, wr_bot = build_wall_line(info_R, 'right', gap_R)
-        cv2.line(vis, (int(wl_top[0]), int(wl_top[1])),
-                      (int(wl_bot[0]), int(wl_bot[1])), c_l, 2)
-        cv2.line(vis, (int(wr_top[0]), int(wr_top[1])),
-                      (int(wr_bot[0]), int(wr_bot[1])), c_r, 2)
-
-        # Gap text gần midpoint của wall
-        col_L = (0, 220, 0) if gap_L >= TOUCH_MARGIN else (0, 0, 255)
-        col_R = (0, 220, 0) if gap_R >= TOUCH_MARGIN else (0, 0, 255)
-        wl_mid = ((wl_top + wl_bot) / 2).astype(int)
-        wr_mid = ((wr_top + wr_bot) / 2).astype(int)
-        cv2.putText(vis, f"L={gap_L}", (int(wl_mid[0]) - 80, int(wl_mid[1])),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, col_L, 2)
-        cv2.putText(vis, f"R={gap_R}", (int(wr_mid[0]) + 10, int(wr_mid[1])),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, col_R, 2)
-
-        # ── Tâm label vs tâm chai (perp deviation) ────────────────────────────
-        label_center = np.mean(np.asarray(label_pts, dtype=np.float32), axis=0)
-        bottle_left_mid  = (np.asarray(wl_top)  + np.asarray(wl_bot))  / 2.0
-        bottle_right_mid = (np.asarray(wr_top)  + np.asarray(wr_bot))  / 2.0
-        bottle_center = (bottle_left_mid + bottle_right_mid) / 2.0
-
-        # Trục giữa chai (line từ bottle_center, song song cạnh label)
-        pts_arr = np.asarray(label_pts, dtype=np.float32)
-        edge = pts_arr[3] - pts_arr[0]
-        edge_len = float(np.linalg.norm(edge)) or 1.0
-        edge_dir = edge / edge_len
-        # perp outward right (X-axis chai, dương = sang phải)
-        perp_x = np.array([edge_dir[1], -edge_dir[0]], dtype=np.float32)
-
-        axis_half = edge_len / 2.0 * 1.1
-        bc_top = bottle_center - axis_half * edge_dir
-        bc_bot = bottle_center + axis_half * edge_dir
-        lc_top = label_center  - axis_half * edge_dir
-        lc_bot = label_center  + axis_half * edge_dir
-
-        # Setup baseline center (= bottle_center + tmpl_delta * perp_x)
-        # đây là vị trí label LÝ TƯỞNG theo template setup
-        setup_center = bottle_center + tmpl_delta * perp_x
-        # Threshold range bound: setup_center - DRIFT_MAX_LEFT .. + DRIFT_MAX_RIGHT (theo perp)
-        thr_L_top = setup_center - DRIFT_MAX_LEFT  * perp_x - axis_half * edge_dir
-        thr_L_bot = setup_center - DRIFT_MAX_LEFT  * perp_x + axis_half * edge_dir
-        thr_R_top = setup_center + DRIFT_MAX_RIGHT * perp_x - axis_half * edge_dir
-        thr_R_bot = setup_center + DRIFT_MAX_RIGHT * perp_x + axis_half * edge_dir
-
-        # Vẽ vùng cho phép (2 line magenta)
-        for p0, p1 in [(thr_L_top, thr_L_bot), (thr_R_top, thr_R_bot)]:
-            cv2.line(vis, (int(p0[0]), int(p0[1])),
-                          (int(p1[0]), int(p1[1])),
-                          (180, 0, 180), 1, cv2.LINE_AA)
-
-        # Trục giữa chai (xanh dương) + setup_center (xanh lá) + trục giữa label (vàng)
-        cv2.line(vis, (int(bc_top[0]), int(bc_top[1])),
-                      (int(bc_bot[0]), int(bc_bot[1])), (255, 100, 0), 2)
-        sc_top = setup_center - axis_half * edge_dir
-        sc_bot = setup_center + axis_half * edge_dir
-        cv2.line(vis, (int(sc_top[0]), int(sc_top[1])),
-                      (int(sc_bot[0]), int(sc_bot[1])), (0, 255, 0), 1)
-        cv2.line(vis, (int(lc_top[0]), int(lc_top[1])),
-                      (int(lc_bot[0]), int(lc_bot[1])), (0, 220, 220), 2)
-        cv2.circle(vis, (int(bottle_center[0]), int(bottle_center[1])),
-                   8, (255, 100, 0), -1)
-        cv2.circle(vis, (int(setup_center[0]),  int(setup_center[1])),
-                   6, (0, 255, 0), -1)
-        cv2.circle(vis, (int(label_center[0]), int(label_center[1])),
-                   8, (0, 220, 220), -1)
-        # Arrow từ setup_center → label_center (đo drift)
-        cv2.arrowedLine(vis,
-                        (int(setup_center[0]), int(setup_center[1])),
-                        (int(label_center[0]), int(label_center[1])),
-                        (0, 0, 255) if (fail_drift_L or fail_drift_R) else (0, 220, 0),
-                        2, tipLength=0.3)
-
-        reason_str = ','.join(fail_reasons) if fail_reasons else source
-        tag = (f"gapL={gap_L} gapR={gap_R}  "
-               f"delta={delta_perp:+.1f}  drift={drift:+.1f}  "
-               f"({-DRIFT_MAX_LEFT}..+{DRIFT_MAX_RIGHT})  "
-               f"[{reason_str}]  {'OK' if is_ok else 'FAIL'}")
-        col = (0, 220, 0) if is_ok else (0, 0, 255)
-        cv2.putText(vis, tag, (10, 35),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.75, col, 2)
-        cv2.putText(vis, "bottle_cx", (int(bottle_center[0]) + 10, int(bottle_center[1]) - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 100, 0), 2)
-        cv2.putText(vis, "setup",     (int(setup_center[0])  + 10, int(setup_center[1])  + 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
-        cv2.putText(vis, "label_cx",  (int(label_center[0])  + 10, int(label_center[1])  + 25),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 220), 2)
-
+        # Template debug visualization
         if SAVE_DEBUG:
-            save_debug(out_cam / stem_no_full, full, masked, info_L, info_R, vis)
-        else:
-            cv2.imwrite(str(out_cam / f"{stem_no_full}.jpg"), vis)
+            tdet = {
+                'inner_L': tmpl['inner_L'], 'inner_R': tmpl['inner_R'],
+                'outer_L': tmpl['outer_L'], 'outer_R': tmpl['outer_R'],
+                'pred_inner_L': tmpl['inner_L'], 'pred_inner_R': tmpl['inner_R'],
+                'eff_L': tmpl['inner_L'], 'eff_R': tmpl['inner_R'],
+                'hidden_L': False, 'hidden_R': False,
+                'profile_L': tmpl['pd_L'], 'profile_R': tmpl['pd_R'],
+                'plastic_L': tmpl['outer_L']-tmpl['inner_L'],
+                'plastic_R': tmpl['outer_R']-tmpl['inner_R'],
+            }
+            tvis = draw_final(tmpl['tmpl_bgr'], tmpl['label_pts'], tdet, tmpl)
+            save_debug(out_cam / "_template_debug",
+                        tmpl['tmpl_bgr'], tmpl['masked'],
+                        tmpl['pd_L'], tmpl['pd_R'], tdet, tvis)
 
-        # Lưu FAIL frames riêng để duyệt nhanh
-        if not is_ok:
-            reason_tag = '_'.join(fail_reasons)[:40] if fail_reasons else 'fail'
-            cv2.imwrite(str(fail_cam / f"{stem_no_full}__{reason_tag}.jpg"), vis)
+        # ── Targets ───────────────────────────────────────────────────────────
+        n_pass = n_fail = n_skip = 0
+        for full_path in sorted(cam_dir.glob('crop_*[0-9]_full.jpg'))[:MAX_IMGS]:
+            stem = full_path.stem.replace('_full', '')
+            jp = cam_dir / f"{stem}.json"
+            if not jp.exists(): continue
+            try:
+                meta = json.loads(jp.read_text())
+                label_pts = meta.get('label_points_frame')
+                if label_pts is None: continue
+                full = cv2.imread(str(full_path))
+                if full is None: continue
 
-    # ── Stats ─────────────────────────────────────────────────────────────────
-    total = n_pass + n_fail + n_skip
-    print(f"  total={total}  pass={n_pass}  fail={n_fail}  skip={n_skip}")
-    if gap_L_list:
-        gl = np.array(gap_L_list); gr = np.array(gap_R_list)
-        print(f"  gap_L: mean={gl.mean():+.1f}  std={gl.std():.1f}  "
-              f"min={gl.min():+d}  max={gl.max():+d}")
-        print(f"  gap_R: mean={gr.mean():+.1f}  std={gr.std():.1f}  "
-              f"min={gr.min():+d}  max={gr.max():+d}")
-    print(f"  output: {out_cam}/")
+                pts_s = shrink_label_polygon(label_pts)
+                masked = fill_label_black(full, pts_s)
+                gray = cv2.cvtColor(masked, cv2.COLOR_BGR2GRAY)
+                det = detect_walls_outer_anchored(gray, pts_s, tmpl)
 
-print("\nLegend:")
-print("  Green   = bottle inner wall (detected)")
-print("  Orange  = bottle inner wall (extrapolated)")
-print("  Cyan    = label polygon")
-print("  Blue    = bottle center axis + dot")
-print("  Yellow  = label center axis + dot")
-print("  Arrow   = bottle_center → label_center (delta perp X)")
-print(f"  PASS = min(gap_L, gap_R) >= {TOUCH_MARGIN}px (label chưa chạm chai)")
-print(f"  FAIL = min(gap_L, gap_R) <  {TOUCH_MARGIN}px (label chạm/vượt cạnh chai)")
+                # Defect check
+                is_def = det['eff_L'] < TOUCH_MARGIN or det['eff_R'] < TOUCH_MARGIN
+
+                # GT overlay if annotation exists
+                gt_pts = None
+                ann_p = ann_cam / f"{stem}.json"
+                if ann_p.exists():
+                    try:
+                        gt_pts = json.loads(ann_p.read_text()).get('bottle_points')
+                    except Exception: pass
+
+                vis = draw_final(full, pts_s, det, tmpl, gt_bottle_pts=gt_pts)
+                if SAVE_DEBUG:
+                    save_debug(out_cam / stem, full, masked,
+                                det['profile_L'], det['profile_R'], det, vis)
+                else:
+                    cv2.imwrite(str(out_cam / f"{stem}.jpg"), vis)
+
+                if is_def:
+                    n_fail += 1
+                    cv2.imwrite(str(fail_cam / f"{stem}.jpg"), vis)
+                else:
+                    n_pass += 1
+            except Exception as e:
+                n_skip += 1
+                print(f"  err {stem}: {e}")
+
+        total = n_pass + n_fail + n_skip
+        print(f"  results: pass={n_pass}  fail={n_fail}  skip={n_skip}  total={total}")
+        print(f"  output: {out_cam}/")
+
+    print("\nLegend:")
+    print("  Cyan         = label polygon (SuperPoint)")
+    print("  Orange       = OUTER wall detected (silhouette chai)")
+    print("  Green solid  = INNER wall detected (cạnh trong gần label)")
+    print("  Yellow dash  = PREDICTED inner (outer - plastic_template)")
+    print("  Red          = GT bottle (if user annotated)")
+    print(f"  PASS = min(inner_L, inner_R) >= {TOUCH_MARGIN}px")
+    print(f"  FAIL = min(inner_L, inner_R) <  {TOUCH_MARGIN}px")
+
+
+if __name__ == '__main__':
+    run()

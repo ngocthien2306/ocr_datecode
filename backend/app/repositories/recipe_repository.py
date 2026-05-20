@@ -40,7 +40,7 @@ class RecipeRepository:
         recipe_dict = recipe.model_dump(mode='json', exclude_defaults=False)
 
         # Normalize empty strings to None for nullable string fields
-        for f in ('ml_project_id', 'ml_model_id', 'ocr_model_type', 'defect_model', 'classifier_backend', 'cv_method', 'product_detection_method'):
+        for f in ('ml_project_id', 'ml_model_id', 'ocr_model_type', 'defect_model', 'classifier_backend', 'cv_method', 'product_detection_method', 'product_box_wall_type'):
             if recipe_dict.get(f) == "":
                 recipe_dict[f] = None
 
@@ -154,7 +154,7 @@ class RecipeRepository:
         # Normalize: treat empty string as "clear" for nullable string fields
         # so older clients sending "" still work. Apply only to fields that
         # are semantically nullable strings.
-        NULLABLE_STR_FIELDS = ('ml_project_id', 'ml_model_id', 'ocr_model_type', 'defect_model', 'classifier_backend', 'cv_method', 'product_detection_method')
+        NULLABLE_STR_FIELDS = ('ml_project_id', 'ml_model_id', 'ocr_model_type', 'defect_model', 'classifier_backend', 'cv_method', 'product_detection_method', 'product_box_wall_type')
         for f in NULLABLE_STR_FIELDS:
             if f in update_data and update_data[f] == "":
                 update_data[f] = None
