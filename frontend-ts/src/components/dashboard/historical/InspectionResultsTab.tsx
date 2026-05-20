@@ -463,6 +463,7 @@ const InspectionResultsTab: React.FC<InspectionResultsTabProps> = ({ dateRange }
               { key: 'template', label: 'Template' },
               { key: 'wrinkled', label: 'Wrinkled' },
               { key: 'center',   label: 'Center Align' },
+              { key: 'color',    label: 'Color Check' },
             ] as { key: FailReason; label: string }[]).map(({ key, label }) => (
               <button
                 key={key}

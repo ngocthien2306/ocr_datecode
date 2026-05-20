@@ -52,6 +52,16 @@ export interface CenterAlignmentCheck {
   product_center?: any[];
 }
 
+export interface ColorCheck {
+  matching_pixels: number;
+  bottle_pixels: number;
+  pixel_threshold: number;
+  detected: boolean;
+  h_range?: [number, number];
+  s_range?: [number, number];
+  v_range?: [number, number];
+}
+
 export interface ProductVerification {
   match: boolean;
   skipped: boolean;
@@ -61,6 +71,7 @@ export interface ProductVerification {
   rotation_check?: any;
   misalignment_check?: any;
   label_region_check?: any;
+  color_check?: ColorCheck;
   detected_boxes?: any;
   timing?: any;
 }
@@ -121,7 +132,7 @@ export interface InferenceResultResponse {
   created_at: string;
 }
 
-export type FailReason = 'text' | 'char' | 'template' | 'wrinkled' | 'center';
+export type FailReason = 'text' | 'char' | 'template' | 'wrinkled' | 'center' | 'color';
 export type CenterDirection = 'left' | 'right' | 'any';
 
 export interface InferenceResultFilters {

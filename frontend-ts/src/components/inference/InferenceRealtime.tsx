@@ -102,10 +102,21 @@ interface WrinkledCheck {
   wrinkled_boxes?: WrinkleBox[];
 }
 
+interface ColorCheck {
+  matching_pixels: number;
+  bottle_pixels: number;
+  pixel_threshold: number;
+  detected: boolean;
+  h_range?: [number, number];
+  s_range?: [number, number];
+  v_range?: [number, number];
+}
+
 interface ProductVerification {
   match: boolean;
   skipped: boolean;
   error?: string;
+  reason?: string;
   center_alignment_check?: {
     ok: boolean;
     offset_x: number;
@@ -118,11 +129,13 @@ interface ProductVerification {
     product_center: [number, number];
   };
   wrinkled_check?: WrinkledCheck;
+  color_check?: ColorCheck;
   timing?: {
     total: number;
     yolo_inference?: number;
     frames_checked?: number;
     frames_total?: number;
+    method?: string;
   };
 }
 
@@ -2191,6 +2204,23 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                                       (L:{frame.product_verification.center_alignment_check.threshold_left?.toFixed(0) ?? '-'} / R:{frame.product_verification.center_alignment_check.threshold_right?.toFixed(0) ?? '-'})
                                     </span>
                                   )}
+                                  {frame.product_verification?.color_check && (() => {
+                                    const cc = frame.product_verification.color_check;
+                                    const ok = cc.matching_pixels >= cc.pixel_threshold;
+                                    const pct = cc.bottle_pixels > 0 ? (cc.matching_pixels / cc.bottle_pixels) * 100 : 0;
+                                    return (
+                                      <span
+                                        className={`frame-offset-x ${ok ? 'color-pass' : 'color-fail'}`}
+                                        title={`HSV match: ${cc.matching_pixels}/${cc.bottle_pixels} px (${pct.toFixed(1)}%)\nThreshold: ${cc.pixel_threshold}\nH: ${cc.h_range?.[0]}-${cc.h_range?.[1]}, S: ${cc.s_range?.[0]}-${cc.s_range?.[1]}, V: ${cc.v_range?.[0]}-${cc.v_range?.[1]}`}
+                                        style={{
+                                          background: ok ? 'rgba(34, 197, 94, 0.85)' : 'rgba(239, 68, 68, 0.85)',
+                                          color: 'white',
+                                        }}
+                                      >
+                                        Color: {cc.matching_pixels.toLocaleString()}/{cc.pixel_threshold.toLocaleString()} ({pct.toFixed(0)}%) {ok ? '✓' : '✗'}
+                                      </span>
+                                    );
+                                  })()}
                                   <span className={`frame-badge ${frame.pass_fail.toLowerCase()}`}>
                                     {frame.pass_fail}
                                   </span>

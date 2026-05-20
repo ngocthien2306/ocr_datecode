@@ -803,7 +803,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       setConfirmDialog({
         isOpen: true,
         title: 'Template Validation Failed',
-        message: `${templateErrors.join('\n')}\n\nEach template must have:\n• 1 "template" region (required)\n• At least 1 annotation: text, barcode, or datecode (required)\n• crop_area (optional)`,
+        message: `${templateErrors.join('\n')}\n\nRequirements:\n• Check_Color + 'product' annotation: only the product polygon is required (no template region, no text/datecode).\n• Otherwise: 1 "template" region + at least 1 of text/barcode/datecode is required.\n• crop_area is always optional.`,
         type: 'warning',
         onConfirm: null
       });
@@ -1432,22 +1432,30 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   
   const validateTemplates = () => {
     const errors: string[] = [];
-    
+
     Object.entries(cameraTemplates).forEach(([cameraId, templates]) => {
+      const functionType = cameraFunctionTypes[cameraId] || 'Check_Type_Product';
       templates.forEach((template) => {
         const hasTemplateRegion = template.annotations.some((ann: any) => ann.type === 'template');
-        const hasRequiredAnnotation = template.annotations.some((ann: any) => 
+        const hasProduct = template.annotations.some((ann: any) => ann.type === 'product');
+        const hasRequiredAnnotation = template.annotations.some((ann: any) =>
           ['text', 'barcode', 'datecode'].includes(ann.type)
         );
-        
-        if (!hasTemplateRegion) {
-          errors.push(`Camera ${cameraId} - ${template.name}: Missing required "template" region`);
+
+        // Color-check templates (function_type=Check_Color + 'product' annotation)
+        // need ONLY the product polygon — no SuperPoint template region and no
+        // text/barcode/datecode are required because bottle detection is image-proc.
+        const isColorTemplate = functionType === 'Check_Color' && hasProduct;
+
+        if (!isColorTemplate) {
+          if (!hasTemplateRegion) {
+            errors.push(`Camera ${cameraId} - ${template.name}: Missing required "template" region`);
+          }
+          if (!hasRequiredAnnotation) {
+            errors.push(`Camera ${cameraId} - ${template.name}: Must have at least one annotation (text, barcode, or datecode)`);
+          }
         }
-        
-        if (!hasRequiredAnnotation) {
-          errors.push(`Camera ${cameraId} - ${template.name}: Must have at least one annotation (text, barcode, or datecode)`);
-        }
-        
+
         // Validate text field per annotation type
         template.annotations.forEach((ann: any, annIdx: number) => {
           const txt = (ann.text || '').trim();
@@ -2791,8 +2799,12 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                               const hasRequiredAnnotation = template.annotations.some((ann: any) =>
                                 ['text', 'barcode', 'datecode'].includes(ann.type)
                               );
+                              const hasProductAnn = template.annotations.some((ann: any) => ann.type === 'product');
                               const hasCropArea = template.annotations.some((ann: any) => ann.type === 'crop_area');
-                              const isValid = hasTemplateRegion && hasRequiredAnnotation;
+                              // Color-check templates only need a 'product' polygon — no template
+                              // region and no text/barcode/datecode required.
+                              const isColorTemplate = (cameraFunctionTypes[selectedCameraForTemplate] === 'Check_Color') && hasProductAnn;
+                              const isValid = isColorTemplate || (hasTemplateRegion && hasRequiredAnnotation);
 
                               return (
                                 <div

@@ -678,6 +678,65 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
                                   </>
                                 );
                               })()}
+                              {(() => {
+                                const cc: any = (frame.product_verification as any)?.color_check;
+                                if (!cc) return null;
+                                const ok = (cc.matching_pixels ?? 0) >= (cc.pixel_threshold ?? 0);
+                                const pct = cc.bottle_pixels > 0 ? (cc.matching_pixels / cc.bottle_pixels) * 100 : 0;
+                                return (
+                                  <>
+                                    <div className="center-alignment-label" style={{ marginTop: 8 }}>Color Check:</div>
+                                    <div className="center-alignment-grid">
+                                      <div className="alignment-item">
+                                        <span className="alignment-label">Status</span>
+                                        <span className={`alignment-value ${ok ? 'success' : 'error'}`}>
+                                          {ok ? '✓ PASS' : '✗ FAIL'}
+                                        </span>
+                                      </div>
+                                      <div className="alignment-item">
+                                        <span className="alignment-label">Matching</span>
+                                        <span className="alignment-value">{(cc.matching_pixels ?? 0).toLocaleString()} px</span>
+                                      </div>
+                                      <div className="alignment-item">
+                                        <span className="alignment-label">Threshold</span>
+                                        <span className="alignment-value">{(cc.pixel_threshold ?? 0).toLocaleString()} px</span>
+                                      </div>
+                                      <div className="alignment-item">
+                                        <span className="alignment-label">Bottle Area</span>
+                                        <span className="alignment-value">{(cc.bottle_pixels ?? 0).toLocaleString()} px</span>
+                                      </div>
+                                      <div className="alignment-item">
+                                        <span className="alignment-label">Match %</span>
+                                        <span className="alignment-value">{pct.toFixed(1)}%</span>
+                                      </div>
+                                      <div className="alignment-item">
+                                        <span className="alignment-label">Detected</span>
+                                        <span className={`alignment-value ${cc.detected ? 'success' : 'error'}`}>
+                                          {cc.detected ? 'Yes' : 'No'}
+                                        </span>
+                                      </div>
+                                      {cc.h_range && (
+                                        <div className="alignment-item">
+                                          <span className="alignment-label">H Range</span>
+                                          <span className="alignment-value">{cc.h_range[0]} – {cc.h_range[1]}</span>
+                                        </div>
+                                      )}
+                                      {cc.s_range && (
+                                        <div className="alignment-item">
+                                          <span className="alignment-label">S Range</span>
+                                          <span className="alignment-value">{cc.s_range[0]} – {cc.s_range[1]}</span>
+                                        </div>
+                                      )}
+                                      {cc.v_range && (
+                                        <div className="alignment-item">
+                                          <span className="alignment-label">V Range</span>
+                                          <span className="alignment-value">{cc.v_range[0]} – {cc.v_range[1]}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </>
+                                );
+                              })()}
                               {frame.product_verification.skipped && frame.product_verification.reason && (
                                 <div className="skip-reason">{frame.product_verification.reason}</div>
                               )}
