@@ -95,11 +95,19 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             matchers = [matcher_or_list]
             num_templates = 1
 
-        # For Check_Color: rotate FULL frames BEFORE crop (single YOLO pass per frame)
-        # Rotated frames replace context.results so verify_results + result_builder
-        # automatically use them for OCR crop and display output.
+        # OBB rotation rotates the FULL frame so SuperPoint sees an upright bottle.
+        # This applies to Check_Color cameras whose templates DON'T have a 'product'
+        # annotation (i.e. OCR-on-cap mode). Check_Color + product is the new color
+        # check path → no rotation (image-proc bottle detector handles arbitrary
+        # orientation, and rotating could hide the bottle from the image-proc
+        # sharpness map if the model's rotation hint is wrong for side-view bottles).
+        _first_template_has_product = bool(
+            camera.templates
+            and any(a.get('type') == 'product' for a in (camera.templates[0].get('annotations') or []))
+        )
         use_obb_rotation = (
             camera.function_type == 'Check_Color'
+            and not _first_template_has_product
             and context.obb_rotation_service
             and context.obb_rotation_service.available
         )
@@ -372,10 +380,9 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                         if bbox.get('type') == 'template':
                             bbox['verification_status'] = 'fail'
 
-            # Product verification — skip for Check_Color
-            if (result.get('success') and
-                context.product_verification_service and
-                camera.function_type != 'Check_Color' and
+            # Product verification — also receives Check_Color color_check results
+            # (routed inside ProductVerificationService.verify_batch).
+            if (context.product_verification_service and
                 idx < len(product_verification_results)):
 
                 product_verification = product_verification_results[idx]
@@ -417,7 +424,19 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                           frame_result['product_verification'].get('skipped', True) or
                           frame_result['product_verification'].get('match', True))
 
-            if not (text_ok and char_ok and template_ok and product_ok):
+            # Color cameras: pass/fail decided ONLY by color check (product_ok),
+            # not SuperPoint match success. Override the initial FAIL from match.
+            template_annotations = (
+                camera.templates[idx].get('annotations') or []
+                if camera.templates and idx < len(camera.templates) else []
+            )
+            is_color_frame = (
+                getattr(camera, 'function_type', '') == 'Check_Color'
+                and any(a.get('type') == 'product' for a in template_annotations)
+            )
+            if is_color_frame:
+                frame_result['result'] = 'PASS' if product_ok else 'FAIL'
+            elif not (text_ok and char_ok and template_ok and product_ok):
                 frame_result['result'] = 'FAIL'
 
         # Determine overall result
@@ -480,12 +499,27 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             wrinkle_conf = getattr(camera, 'wrinkle_conf', 0.25)
             wrinkle_show_when_pass = getattr(camera, 'wrinkle_show_when_pass', True)
             mask_overlap_threshold = getattr(camera, 'mask_overlap_threshold', 0.6)
+            # Per-template color_config (Check_Color path). Pulled from the same
+            # template dict so color verifier doesn't need to look it up again.
+            color_config = (
+                template.get('color_config')
+                if camera.templates and idx < len(camera.templates)
+                else None
+            )
+            # Color-check frames must run even if SuperPoint match failed —
+            # color_verifier reads the raw template, not transformed_bboxes.
+            is_color_check_frame = (
+                getattr(camera, 'function_type', '') == 'Check_Color'
+                and color_config is not None
+            )
 
-            if result.get('success') and idx < len(frames):
+            if (result.get('success') or is_color_check_frame) and idx < len(frames):
                 frames_data.append({
                     'frame_img': frames[idx],
                     'transformed_bboxes': result.get('transformed_bboxes', []),
                     'camera': camera,
+                    'template_idx': idx,
+                    'color_config': color_config,
                     'center_offset_threshold': center_offset_threshold,
                     'center_offset_threshold_left': center_offset_threshold_left,
                     'center_offset_threshold_right': center_offset_threshold_right,
@@ -502,6 +536,8 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     'frame_img': None,
                     'transformed_bboxes': [],
                     'camera': camera,
+                    'template_idx': idx,
+                    'color_config': color_config,
                     'center_offset_threshold': center_offset_threshold,
                     'center_offset_unit': center_offset_unit,
                     'wrinkle_area': wrinkle_area,

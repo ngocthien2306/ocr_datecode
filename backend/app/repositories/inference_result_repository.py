@@ -169,6 +169,14 @@ class InferenceResultRepository:
                             "camera_results.frames.product_verification.center_alignment_check.direction"
                         ] = center_direction
                     conditions.append(center_cond)
+                elif reason == "color":
+                    # Color check failed = matching_pixels < pixel_threshold.
+                    # color_verifier populates these atomically; frame fails when
+                    # product_verification.match is False AND a color_check sub-dict exists.
+                    conditions.append({
+                        "camera_results.frames.product_verification.color_check": {"$exists": True},
+                        "camera_results.frames.product_verification.match": False,
+                    })
 
             if conditions:
                 query["$and"] = conditions

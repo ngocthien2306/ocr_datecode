@@ -798,6 +798,71 @@ def draw_detected_obb_boxes(
     return result_img
 
 
+def draw_color_match_overlay(
+    img: np.ndarray,
+    color_check: Dict[str, Any],
+    detected_boxes: Optional[Dict[str, Any]],
+) -> np.ndarray:
+    """
+    Paint a semi-transparent yellow overlay on pixels matching the color_check
+    HSV range, restricted to the detected bottle bbox. Recomputes the HSV mask
+    from the frame (the mask itself isn't persisted in product_verification).
+
+    Args:
+        img: Input frame (BGR)
+        color_check: {h_range, s_range, v_range, ...} from product_verification.color_check
+        detected_boxes: {product: {corners, ...}} — the bottle bbox to restrict overlay to
+
+    Returns:
+        Image with yellow overlay drawn on matching pixels.
+    """
+    if not color_check or not detected_boxes:
+        return img
+    product_box = (detected_boxes or {}).get('product')
+    if not product_box or not isinstance(product_box, dict):
+        return img
+    corners = product_box.get('corners')
+    if corners is None:
+        return img
+    try:
+        corners_arr = np.array(corners, dtype=np.int32).reshape(-1, 2)
+        H, W = img.shape[:2]
+        x1 = max(0, int(corners_arr[:, 0].min()))
+        y1 = max(0, int(corners_arr[:, 1].min()))
+        x2 = min(W, int(corners_arr[:, 0].max()))
+        y2 = min(H, int(corners_arr[:, 1].max()))
+        if x2 <= x1 or y2 <= y1:
+            return img
+
+        h_lo, h_hi = color_check.get('h_range', [0, 180])
+        s_lo, s_hi = color_check.get('s_range', [0, 255])
+        v_lo, v_hi = color_check.get('v_range', [0, 255])
+
+        roi = img[y1:y2, x1:x2]
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, (int(h_lo), int(s_lo), int(v_lo)),
+                                (int(h_hi), int(s_hi), int(v_hi)))
+        if not np.any(mask):
+            return img
+
+        # Build a yellow overlay only where mask is set, then alpha-blend.
+        overlay = roi.copy()
+        overlay[mask > 0] = (0, 255, 255)  # BGR yellow
+        alpha = 0.45
+        blended = cv2.addWeighted(overlay, alpha, roi, 1.0 - alpha, 0)
+        # Only replace the masked pixels in the result — leave unmatched bottle
+        # area as the original image.
+        result = img.copy()
+        roi_out = result[y1:y2, x1:x2]
+        mask_bool = mask > 0
+        roi_out[mask_bool] = blended[mask_bool]
+        result[y1:y2, x1:x2] = roi_out
+        return result
+    except Exception as e:
+        logger.warning(f"draw_color_match_overlay failed: {e}", exc_info=True)
+        return img
+
+
 def encode_frame_for_display(
     frame_img: np.ndarray,
     transformed_bboxes: Optional[List[Dict[str, Any]]] = None,
@@ -825,6 +890,16 @@ def encode_frame_for_display(
         # Draw detected OBB boxes from YOLO (if product verification was performed)
         if product_verification and not product_verification.get('skipped', False):
             detected_boxes = product_verification.get('detected_boxes')
+
+            # Color match overlay (Check_Color path): paint yellow on matching
+            # HSV pixels inside the bottle bbox BEFORE drawing OBB outlines so
+            # the bbox edges remain crisp on top.
+            color_check = product_verification.get('color_check')
+            if color_check and detected_boxes:
+                img_to_encode = draw_color_match_overlay(
+                    img_to_encode, color_check, detected_boxes
+                )
+
             if detected_boxes:
                 try:
                     img_to_encode = draw_detected_obb_boxes(
@@ -1300,6 +1375,20 @@ def save_and_encode_frame(
         # Draw detected OBB boxes from YOLO (if product verification was performed)
         if product_verification and not product_verification.get('skipped', False):
             detected_boxes = product_verification.get('detected_boxes')
+
+            # Color match overlay (Check_Color path): paint yellow on matching
+            # HSV pixels inside the bottle bbox BEFORE drawing OBB outlines so
+            # the bbox stays crisp on top of the overlay.
+            color_check = product_verification.get('color_check')
+            if color_check and detected_boxes:
+                img_to_save = draw_color_match_overlay(
+                    img_to_save, color_check, detected_boxes
+                )
+                logger.info(
+                    f"Drew color-match overlay (matching={color_check.get('matching_pixels')}/"
+                    f"{color_check.get('pixel_threshold')}) on frame"
+                )
+
             if detected_boxes:
                 img_to_save = draw_detected_obb_boxes(
                     img_to_save,

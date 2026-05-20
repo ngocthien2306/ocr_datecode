@@ -112,6 +112,19 @@ class ProductVerificationService:
         else:
             logger.warning("YOLO OBB not available, product verification will be skipped")
 
+        # Color verification service for Check_Color templates with a 'product'
+        # annotation. Decoupled image-proc bottle detection + HSV pixel count.
+        try:
+            from .color_verifier import ColorVerificationService
+            self.color_verifier = ColorVerificationService(
+                save_debug_images=self.save_debug_images,
+                debug_path=self.debug_path,
+            )
+            logger.info("ColorVerificationService initialized")
+        except Exception as e:
+            logger.error(f"Failed to load ColorVerificationService: {e}")
+            self.color_verifier = None
+
         # Initialize Wrinkled Segmenter (TRT instance segmentation)
         self.wrinkle_seg = None
         if self.check_wrinkled:
@@ -179,6 +192,45 @@ class ProductVerificationService:
         import time
 
         t_start = time.perf_counter()
+
+        # ── Step 0: route Check_Color + product frames to color_verifier ─────
+        # A frame is considered "color_check" when its camera has function_type
+        # == 'Check_Color' AND the template has a 'product' annotation. Other
+        # Check_Color cases (e.g. rotate-cap-and-OCR) keep flowing through the
+        # YOLO/image-proc paths below — they simply won't pass should_verify_frame.
+        def _is_color_check(d):
+            cam = d.get('camera')
+            if not cam or getattr(cam, 'function_type', '') != 'Check_Color':
+                return False
+            if not self.color_verifier:
+                return False
+            # Prefer the camera's raw template (decoupled from SuperPoint) so we
+            # can route even when matching failed.
+            template_idx = int(d.get('template_idx', 0) or 0)
+            templates = getattr(cam, 'templates', None) or []
+            if template_idx < len(templates):
+                anns = templates[template_idx].get('annotations') or []
+                if any(a.get('type') == 'product' for a in anns):
+                    return True
+            # Fallback: check transformed_bboxes (post-match path)
+            return any(b.get('type') == 'product' for b in d.get('transformed_bboxes', []))
+
+        color_flags = [_is_color_check(d) for d in frames_data]
+        if color_flags and all(color_flags):
+            return self.color_verifier.verify_batch(frames_data)
+        if any(color_flags):
+            color_indices = [i for i, c in enumerate(color_flags) if c]
+            other_indices = [i for i, c in enumerate(color_flags) if not c]
+            color_results = (self.color_verifier.verify_batch([frames_data[i] for i in color_indices])
+                             if color_indices else [])
+            other_results = (self.verify_batch([frames_data[i] for i in other_indices])
+                             if other_indices else [])
+            merged: List[Optional[Dict[str, Any]]] = [None] * len(frames_data)
+            for k, i in enumerate(color_indices):
+                merged[i] = color_results[k]
+            for k, i in enumerate(other_indices):
+                merged[i] = other_results[k]
+            return merged  # type: ignore[return-value]
 
         # ── Branch by product_detection_method ──────────────────────────────
         # Per-camera setting. Frames from cameras using "yolo_segment" mode

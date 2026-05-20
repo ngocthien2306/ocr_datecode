@@ -352,7 +352,20 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             )
             camera_result['timings'] = timings
 
-            # Determine pass/fail (text AND char both must pass)
+            # Tag this camera as a "color check" camera (Check_Color + product
+            # annotation) so the cross-camera aggregator can apply OR semantics
+            # to the color group (only 1 of N color cameras needs to pass).
+            is_color_camera = (
+                getattr(camera, 'function_type', '') == 'Check_Color'
+                and bool(getattr(camera, 'templates', None))
+                and any(
+                    a.get('type') == 'product'
+                    for a in (camera.templates[0].get('annotations') or [])
+                )
+            )
+            camera_result['_is_color_camera'] = is_color_camera
+
+            # Determine pass/fail
             text_ok = (camera_result['text_verification'] is None or
                       camera_result['text_verification'].get('all_match', True))
             char_ok = (camera_result.get('char_verification') is None or
@@ -363,11 +376,71 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                          camera_result['product_verification'].get('skipped', True) or
                          camera_result['product_verification'].get('match', True))
 
-            if not (text_ok and char_ok and template_ok and product_ok) or not result.get('success'):
+            if is_color_camera:
+                # Color cameras don't rely on SuperPoint match — image-proc bottle
+                # detection handles localization. Only product_ok (the color check
+                # result) determines this camera's pass/fail.
+                individual_ok = product_ok
+            else:
+                individual_ok = (
+                    text_ok and char_ok and template_ok and product_ok
+                    and bool(result.get('success'))
+                )
+
+            if not individual_ok:
                 camera_result['result'] = 'FAIL'
-                overall = 'FAIL'
+            else:
+                camera_result['result'] = 'PASS'
 
             verified_results[serial_number] = camera_result
+
+        # ── Cross-camera aggregation ─────────────────────────────────────────
+        # Color cameras: OR — at least 1 PASS → color group OK
+        # Other cameras: AND — every camera must PASS
+        color_results = [r for r in verified_results.values() if r.get('_is_color_camera')]
+        non_color_results = [r for r in verified_results.values() if not r.get('_is_color_camera')]
+
+        color_group_ok = (
+            not color_results  # no color cameras → vacuous PASS
+            or any(r['result'] == 'PASS' for r in color_results)
+        )
+        non_color_group_ok = all(r['result'] == 'PASS' for r in non_color_results)
+
+        overall = 'PASS' if (color_group_ok and non_color_group_ok) else 'FAIL'
+
+        if color_results:
+            n_pass = sum(1 for r in color_results if r['result'] == 'PASS')
+            logger.info(
+                f"Color camera group: {n_pass}/{len(color_results)} PASS (OR-logic) → "
+                f"group={'PASS' if color_group_ok else 'FAIL'}"
+            )
+
+            # If the color group passed via OR, retroactively promote any
+            # individually-failing color cameras to PASS. The per-camera UI
+            # badge/stats then reflect the group result (since the recipe as a
+            # whole accepts this product), while the color_check sub-dict still
+            # carries the original matching_pixels for debugging.
+            if color_group_ok:
+                promoted = 0
+                for r in color_results:
+                    if r.get('result') == 'FAIL':
+                        r['result'] = 'PASS'
+                        # Clear the red 'fail' tag on the product polygon so
+                        # the on-frame overlay isn't drawn red.
+                        for bbox in r.get('transformed_bboxes', []):
+                            if (bbox.get('type') == 'product'
+                                    and bbox.get('verification_status') == 'fail'):
+                                bbox.pop('verification_status', None)
+                        promoted += 1
+                if promoted:
+                    logger.info(
+                        f"Color group OR-PASS: promoted {promoted} individually-failing "
+                        f"color camera(s) to PASS (color_check sub-dict preserves original ratio)"
+                    )
+
+        # Drop the internal tag — we don't want it on the wire.
+        for r in verified_results.values():
+            r.pop('_is_color_camera', None)
 
         return {
             'camera_results': verified_results,
@@ -422,12 +495,23 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             wrinkle_conf = getattr(camera, 'wrinkle_conf', 0.25)
             wrinkle_show_when_pass = getattr(camera, 'wrinkle_show_when_pass', True)
             mask_overlap_threshold = getattr(camera, 'mask_overlap_threshold', 0.6)
+            # Per-template color_config (only first template used in multi-camera)
+            color_config = (
+                camera.templates[0].get('color_config') if camera.templates else None
+            )
+            # Color-check frames must run even if SuperPoint match failed.
+            is_color_check_frame = (
+                getattr(camera, 'function_type', '') == 'Check_Color'
+                and color_config is not None
+            )
 
-            if result.get('success') and frames:
+            if (result.get('success') or is_color_check_frame) and frames:
                 frames_data.append({
                     'frame_img': frames[0],
                     'transformed_bboxes': result.get('transformed_bboxes', []),
                     'camera': camera,
+                    'template_idx': 0,
+                    'color_config': color_config,
                     'center_offset_threshold': center_offset_threshold,
                     'center_offset_threshold_left': center_offset_threshold_left,
                     'center_offset_threshold_right': center_offset_threshold_right,
