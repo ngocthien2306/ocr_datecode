@@ -34,14 +34,14 @@ function _isInsideRegion(c: any, parent: any): boolean {
       && cy <= (parent.y ?? 0) + (parent.height ?? 0);
 }
 
-/** Inherit text/conf from previous char into new char if a positional match exists.
- *  - text: prefer OCR-recognized (new char's text). Fallback to previous if OCR empty.
- *  - conf: prefer previous char's value (user-customized). Fallback to new (parent default). */
+/** Inherit text + conf from previous char into new char when a positional match exists.
+ *  When the user has matched a previous char (IoU > threshold) we trust the recipe's
+ *  hand-labeled text/conf over fresh OCR — they spent effort getting these right. */
 function _inheritFromPrev(newChar: any, prevChar: any | undefined): any {
   if (!prevChar) return newChar;
   const out = { ...newChar };
-  if ((!out.text || out.text === '') && prevChar.text) out.text = prevChar.text;
-  if (typeof prevChar.conf === 'number') out.conf = prevChar.conf;
+  if (typeof prevChar.text === 'string' && prevChar.text !== '') out.text = prevChar.text;
+  if (typeof prevChar.conf === 'number')                          out.conf = prevChar.conf;
   return out;
 }
 
@@ -185,14 +185,20 @@ export default function TemplateCanvasEditDialog({
       );
       setAnnotations(baseWithIds);
       setAutoSegmenting(true);
-      const newChars: any[] = [];
+
+      // Build the final array by walking baseWithIds in order. Each parent
+      // text/datecode region is followed immediately by its segmented chars,
+      // so indices land in a predictable order:
+      //   [..., parent_text_1, char_1, char_2, ..., parent_text_2, char_3, ...]
+      const result: any[] = [];
       let totalSegs = 0;
       let failedRegions = 0;
-
       let inheritedCount = 0;
       let fallbackRegions = 0;
       let fallbackChars = 0;
+
       for (const ann of baseWithIds) {
+        result.push(ann);
         if (ann.shape !== 'rectangle') continue;
         if (ann.type !== 'text' && ann.type !== 'datecode') continue;
 
@@ -214,33 +220,41 @@ export default function TemplateCanvasEditDialog({
           console.error('[TemplateCanvasEditDialog] segment failed for region', ann, e);
         }
 
-        // Decide what chars to use for this region:
-        //   - If segmentation gave AT LEAST as many chars as previous → use segmented + IoU inherit
-        //   - Otherwise (failed, 0 segments, or fewer than prev) → fall back to previousChars
-        //     so we don't silently lose chars that the model can't detect (e.g. letters).
+        // Decide what chars to push for THIS region:
+        //   - Segmentation usable (count ≥ 70% of prev) → freshChars + IoU inherit
+        //   - Otherwise → fallback to previousChars (keeps user labels intact)
         if (segmented && segmented.length >= Math.max(1, prevInRegion.length * 0.7)) {
           const { merged, inheritedCount: matched } = _matchByOverlap(segmented, prevInRegion);
           inheritedCount += matched;
-          for (const c of merged) {
-            newChars.push(c);
-            totalSegs += 1;
-          }
+          result.push(...merged);
+          totalSegs += merged.length;
         } else if (prevInRegion.length > 0) {
-          // Fallback: clone previousChars (keep their old coords — user can adjust on canvas)
+          let pushedThisRegion = 0;
           for (const old of prevInRegion) {
-            newChars.push({
-              ...old,
+            if (old?.shape && old.shape !== 'rectangle') continue;
+            const x = Number(old.x ?? 0);
+            const y = Number(old.y ?? 0);
+            const w = Number(old.width ?? 0);
+            const h = Number(old.height ?? 0);
+            if (!isFinite(x) || !isFinite(y) || w <= 0 || h <= 0) continue;
+            result.push({
               id: `annotation-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
               type: 'char',
               shape: 'rectangle',
+              x, y, width: w, height: h,
+              text: typeof old.text === 'string' ? old.text : '',
+              conf: typeof old.conf === 'number' ? old.conf : (ann.conf ?? 0.5),
             });
-            fallbackChars += 1;
+            pushedThisRegion += 1;
           }
-          fallbackRegions += 1;
+          if (pushedThisRegion > 0) {
+            fallbackRegions += 1;
+            fallbackChars += pushedThisRegion;
+          }
         }
       }
 
-      setAnnotations([...baseWithIds, ...newChars]);
+      setAnnotations(result);
       setAutoSegmenting(false);
 
       const inheritMsg = inheritedCount > 0 ? ` — kept text/conf for ${inheritedCount}` : '';
