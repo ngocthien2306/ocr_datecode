@@ -64,6 +64,7 @@ interface FormDataType {
   cv_method: string;
   product_detection_method: string;
   product_box_wall_type: string;
+  cap_rotation_method: string;
   template_bank_enabled: boolean;
   template_bank_size: number;
   char_denoise_enabled: boolean;
@@ -192,6 +193,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     classifier_backend: 'embedding',
     cv_method: 'legacy',
     product_detection_method: 'yolo_obb',
+    cap_rotation_method: 'yolo_obb',
     product_box_wall_type: 'outer',
     template_bank_enabled: false,
     template_bank_size: 10,
@@ -396,6 +398,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         classifier_backend: recipeAny.classifier_backend || 'embedding',
         cv_method: recipeAny.cv_method || 'legacy',
         product_detection_method: recipeAny.product_detection_method || 'yolo_obb',
+        cap_rotation_method: recipeAny.cap_rotation_method || 'yolo_obb',
         product_box_wall_type: recipeAny.product_box_wall_type || 'outer',
         template_bank_enabled: recipeAny.template_bank_enabled ?? false,
         template_bank_size: recipeAny.template_bank_size ?? 10,
@@ -467,6 +470,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         template_bank_enabled: false,
         template_bank_size: 10,
         char_denoise_enabled: false,
+        product_detection_method: 'yolo_obb',
+        product_box_wall_type: 'outer',
+        cap_rotation_method: 'yolo_obb',
         wrinkle_conf: 0.25,
         wrinkle_show_when_pass: true,
         matching_conf: 0.20,
@@ -853,6 +859,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         classifier_backend: formData.classifier_backend || 'embedding',
         cv_method: formData.cv_method || 'legacy',
         product_detection_method: formData.product_detection_method || 'yolo_obb',
+        cap_rotation_method: formData.cap_rotation_method || 'yolo_obb',
         product_box_wall_type: formData.product_box_wall_type || 'outer',
         template_bank_enabled: formData.template_bank_enabled ?? false,
         template_bank_size: formData.template_bank_size ?? 10,
@@ -2077,6 +2084,29 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                           {formData.product_detection_method === 'yolo_obb'
                             ? 'Uses trained YOLO OBB model. Recommended for production with diverse bottles.'
                             : 'Uses Sobel edge detection + outer-anchored algorithm. No GPU model required.'}
+                        </small> */}
+                      </div>
+
+                      {/* Cap Rotation Method — applies to ALL cameras in the recipe.
+                          'yolo_obb'    : trained best_bottle_m engine
+                          'yolo_segment': pure CV (HoughCircles + projection profile +
+                                          shape-match flip) — no GPU/TRT required */}
+                      <div className="form-group" style={{ marginTop: 12, marginBottom: 10 }}>
+                        <label>Cap Rotation Method</label>
+                        <select
+                          name="cap_rotation_method"
+                          value={formData.cap_rotation_method}
+                          onChange={(e) =>
+                            setFormData(prev => ({ ...prev, cap_rotation_method: e.target.value }))
+                          }
+                        >
+                          <option value="yolo_obb">YOLO OBB</option>
+                          <option value="yolo_segment">YOLO Segment</option>
+                        </select>
+                        {/* <small className="field-description">
+                          {formData.cap_rotation_method === 'yolo_obb'
+                            ? 'Uses trained YOLO OBB model (best_bottle_m). Needs GPU/TRT.'
+                            : 'HoughCircles + projection profile + shape match. No GPU model required.'}
                         </small> */}
                       </div>
 

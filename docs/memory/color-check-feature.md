@@ -170,6 +170,37 @@ Fast path in `matchers/factory.py`:
 
 User-visible effect: deleting the `'template'` annotation from a Check_Color template no longer breaks the recipe. As long as `product` is drawn, the camera continues to run color check.
 
+## Cap rotation in multi_camera pipeline (GOTCHA)
+
+Until 2026-05-21, `OBBRotationService` was only invoked from `single_camera.preprocess`. The `multi_camera.preprocess` had **no rotation gate** — meaning a 3-camera recipe (e.g. 2 color + 1 datecode-on-cap) had its cap camera processed without rotation regardless of recipe's `cap_rotation_method`. Symptom: OCR on cap consistently failed because text wasn't aligned upright.
+
+Fix (`multi_camera.preprocess`): per-camera rotation gate, mirrors `single_camera`:
+
+```python
+_need_rotation = (
+    camera.function_type == 'Check_Color'
+    and not first_template_has_product
+)
+if _need_rotation:
+    _rot_svc = (context.cv_rotation_service
+                if camera.cap_rotation_method == 'yolo_segment'
+                else context.obb_rotation_service)
+    if _rot_svc.available:
+        rotated, _ = _rot_svc.rotate_frame(frame, ...)
+        context.results[sn]['frames'][0] = rotated  # propagate to save/viz
+        frame = rotated
+```
+
+Rotation is cap-only (circular mask) so it happens **before** crop without affecting `crop_area` coordinates.
+
+## OBBRotationService 180° flip via shape-match
+
+Legacy `compute_need_flip` in `obb_rotator.py` used `M @ text_center → check new_y < cap_cy`. This is fragile when `text_box.cy ≈ cap.cy` (text centered on cap) — small floating-point differences flip the wrong way. Symptom: caps with text centered on the disc get rotated upside-down ~50% of the time.
+
+Fixed: `OBBRotationService.rotate_frame` now imports `cv_rotator._need_flip` (rendered-"BEST" template-match at 0° vs 180°). Falls back to legacy `compute_need_flip` if shape-match throws. Log line includes `flip_via=shape-match (s0=... s180=...)` or `flip_via=legacy heuristic`.
+
+Both `OBBRotationService` and `CVRotationService` now use the **same** shape-match flip resolution — the only difference between methods is whether the cap+angle detection uses TRT engine or HoughCircles+projection-profile.
+
 ## Realtime update gotcha — function_type / color_config silent drop
 
 `InferenceRealtime.applyRealtimeAndPersist` runs TWO calls in a row:
@@ -183,6 +214,38 @@ User-visible effect: deleting the `'template'` annotation from a Check_Color tem
 - `camera_templates[i].templates[j].color_config`
 
 Both fields preserved via `?? ct.function_type ?? 'OCR'` / `?? tmpl.color_config ?? null`. BE `update-realtime` also merges these now (per-camera function_type, per-template color_config) so realtime patches don't quietly diverge from DB.
+
+## Cap rotation method — recipe-level `cap_rotation_method`
+
+Pattern mirrors `product_detection_method`: recipe-level setting, applies to **all cameras** in the recipe. Two options:
+
+| Value | Path |
+|---|---|
+| `yolo_obb` (default) | `OBBRotationService` → `best_bottle_m.engine` TRT model. Needs GPU. Detects `bottle_cap` + `text_box` OBBs, rotates by `text_box` angle, flips 180° if text is above cap center. |
+| `yolo_segment` | `CVRotationService` (pure CV). HoughCircles → cap. Otsu inverse threshold inside cap → text mask. Projection-profile search over [-90°, 90°) → reading-direction angle. Render "BEST" via cv2.putText, template-match (TM_CCOEFF_NORMED) at 0° vs 180° → 180° flip resolution. Rotates cap region only (circular mask). |
+
+UI: Recipe Form → **Model tab** → "🧢 Cap Rotation Method" dropdown directly under "🍶 Bottle Edge Detection".
+
+Field plumbing (19-step):
+- `backend/app/models/recipe.py` + `schemas/recipe.py`: `cap_rotation_method: Optional[str] = "yolo_obb"`.
+- `recipes.py`: `recipe_to_response`, `clone_recipe`, `load_recipe` (metadata + recipe_dict), `update_realtime` (recipe_dict).
+- `frontend-ts/src/types/index.ts` Recipe + Receipt.
+- `RecipeFormModal.tsx`: FormDataType + initial state + edit-load + create-reset + handleSubmit + dropdown UI.
+- `Receipts.tsx`: 2 transformedReceipts (load + clone) — search path inherits from load.
+- AI service `camera.py`: `Camera.cap_rotation_method` field (default `"yolo_obb"`) + parse in `load_recipe`.
+- AI service `inference_handler.py`: instantiate both `OBBRotationService` and `CVRotationService`, inject both into `PipelineContext`.
+- AI service `pipeline/base.py`: `cv_rotation_service: Any = None` on `PipelineContext`.
+- AI service `pipeline/single_camera.py:101`: `_rotation_service = context.cv_rotation_service if camera.cap_rotation_method == 'yolo_segment' else context.obb_rotation_service`.
+- BE `services/rotate_cv_service.py`: standalone module exposing `rotate_frame_cv(image)` for the `/api/cameras/frames/rotate` endpoint (parallel to `rotate_obb_service.rotate_frame`).
+- BE `api/endpoints/cameras.py`: `/frames/rotate` body accepts `method: str = "yolo_obb"`.
+
+Pure-CV algorithm summary (`backend/app/services/rotate_cv_service.py` + `ai_services/.../preprocessing/cv_rotator.py` — same algorithm, two homes because BE and AI service are separate Python apps):
+
+1. **Cap detection**: `cv2.HoughCircles` with radius 12-35% of `min(H, W)`, `param2=50`, validate interior brightness ≥ 140.
+2. **Text mask**: Otsu inverse threshold inside cap (shrunk 0.88×) → `MORPH_OPEN` clean.
+3. **Reading angle**: rotate text mask by candidate θ ∈ [-90°, 90°) in 2° steps, pick θ maximizing `var(horizontal_projection)`. Refine ±2° at 0.5°.
+4. **180° flip**: render `"BEST"` via cv2.putText at multiple scales, `cv2.matchTemplate(rotated_roi, tpl, TM_CCOEFF_NORMED)` at 0° and 180°, flip if score_180 > score_0.
+5. **Output**: rotate cap region only (`warpAffine` + circular mask), background untouched. Returns `(rotated_frame, None)` — `None` matches OBB service's convention (no inverse-transform needed because rotation is local to cap region).
 
 ## Related memory
 - [[recipe-system]] — recipe data flow, the 19-step plumb checklist (color_config skips most of it because it's nested per-template)

@@ -189,6 +189,7 @@ export interface Recipe {
   char_denoise_enabled?: boolean;
   product_detection_method?: string;
   product_box_wall_type?: string;
+  cap_rotation_method?: string;
   wrinkle_conf?: number;
   wrinkle_show_when_pass?: boolean;
   matching_conf?: number;
@@ -284,6 +285,7 @@ export interface Receipt {
   char_denoise_enabled?: boolean;
   product_detection_method?: string;
   product_box_wall_type?: string;
+  cap_rotation_method?: string;
   wrinkle_conf?: number;
   wrinkle_show_when_pass?: boolean;
   matching_conf?: number;
