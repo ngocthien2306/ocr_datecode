@@ -304,6 +304,10 @@ class Camera:
         # TRT model) | 'shape_outline' (ECC on Sobel gradient — ~30ms, ideal
         # for cap-OCR after cap_rotation + cap_crop)
         self.crop_match_method: str = "superpoint"
+        # When True (and function_type=Check_Color), pipeline tries BOTH
+        # rotation candidates (angle, angle+180) and picks higher match
+        # confidence. Fixes ambiguous flip detection in cap-OCR mode.
+        self.dual_rotation_check: bool = False
 
         # Frame tracking
         self.frame_idx = 0
@@ -1218,6 +1222,8 @@ class Camera:
             # Crop match method: 'superpoint' (default, TRT) | 'shape_outline' (ECC)
             cmm = recipe_data.get("crop_match_method")
             self.crop_match_method = cmm if cmm in ("superpoint", "shape_outline") else "superpoint"
+            # Dual rotation check (only Check_Color)
+            self.dual_rotation_check = bool(recipe_data.get("dual_rotation_check", False))
             logger.info(
                 f"[{self.serial_number}] Loaded thresholds: "
                 f"matching={self.matching_threshold}, recognition={self.recognition_threshold}"

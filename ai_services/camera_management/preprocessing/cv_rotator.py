@@ -235,6 +235,16 @@ def detect_cap_and_crop(
     cap = _detect_cap(gray)
     if cap is None:
         return None
+    return _compose_cap_result(image, cap, margin_ratio, fill_value)
+
+
+def _compose_cap_result(
+    image: np.ndarray,
+    cap: Tuple[float, float, float],
+    margin_ratio: float,
+    fill_value: int,
+) -> Optional[Tuple[np.ndarray, Tuple[int, int, int, int]]]:
+    """Inner helper: given a detected cap, crop+mask + return bbox."""
     cx, cy, r = cap
     H, W = image.shape[:2]
     margin = int(r * margin_ratio)
@@ -247,10 +257,8 @@ def detect_cap_and_crop(
         return None
     crop = image[y1:y2, x1:x2].copy()
     ch, cw = crop.shape[:2]
-    # Local cap center inside crop
     lcx = int(cx) - x1
     lcy = int(cy) - y1
-    # Build circular mask, fill outside with neutral gray
     mask = np.zeros((ch, cw), dtype=np.uint8)
     cv2.circle(mask, (lcx, lcy), int(r), 255, -1)
     if image.ndim == 3:
@@ -259,6 +267,34 @@ def detect_cap_and_crop(
     else:
         crop[mask == 0] = fill_value
     return crop, (x1, y1, x2, y2)
+
+
+def detect_cap_circle(image: np.ndarray) -> Optional[Tuple[float, float, float]]:
+    """
+    Run HoughCircles ONLY (no crop/mask) and return the cap (cx, cy, r).
+    Use this when you already plan to apply the cap crop to multiple frames
+    that share the same cap position (e.g. dual_rotation_check candidates).
+    """
+    if image is None or image.size == 0:
+        return None
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+    return _detect_cap(gray)
+
+
+def apply_cap_crop(
+    image: np.ndarray,
+    cap: Tuple[float, float, float],
+    margin_ratio: float = 0.10,
+    fill_value: int = 114,
+) -> Optional[Tuple[np.ndarray, Tuple[int, int, int, int]]]:
+    """
+    Apply the cap crop+mask to `image` using a PRE-DETECTED cap circle. Skips
+    HoughCircles entirely — useful when the caller already detected the cap on
+    a different (but spatially-aligned) frame.
+    """
+    if image is None or image.size == 0 or cap is None:
+        return None
+    return _compose_cap_result(image, cap, margin_ratio, fill_value)
 
 
 class CVRotationService:
@@ -324,3 +360,37 @@ class CVRotationService:
         except Exception as e:
             logger.error(f"{tag}[RotateCV] ERROR — {e}", exc_info=True)
             return frame, None
+
+    def rotate_frame_dual(
+        self,
+        frame: np.ndarray,
+        frame_tag: str = ""
+    ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        """
+        Produce BOTH rotation candidates (no-flip + flip180) without running
+        the shape-match `_need_flip` step. Caller picks via match confidence.
+        Returns (candidate_no_flip, candidate_flipped180); either may be None.
+        """
+        tag = f"[{frame_tag}] " if frame_tag else ""
+        if frame is None or frame.size == 0:
+            return None, None
+        try:
+            import time as _time
+            _t0 = _time.perf_counter()
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+            cap = _detect_cap(gray)
+            if cap is None:
+                logger.info(f"{tag}[RotateCV-Dual] FAIL — no cap detected")
+                return None, None
+            angle_deg, _n_dark = _text_angle(gray, cap)
+            cand_a = _rotate_cap_region(frame, cap, angle_deg, False)
+            cand_b = _rotate_cap_region(frame, cap, angle_deg, True)
+            _t_total = (_time.perf_counter() - _t0) * 1000
+            logger.info(
+                f"{tag}[RotateCV-Dual] OK in {_t_total:.1f}ms — angle={angle_deg:.1f}° "
+                f"both candidates emitted"
+            )
+            return cand_a, cand_b
+        except Exception as e:
+            logger.error(f"{tag}[RotateCV-Dual] ERROR — {e}", exc_info=True)
+            return None, None

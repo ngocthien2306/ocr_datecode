@@ -151,6 +151,7 @@ class RecipeBase(BaseModel):
     cap_rotation_method: Optional[str] = Field(default="yolo_obb", description="Method to rotate caps so date-code text faces upright: 'yolo_obb' (trained YOLO OBB model) | 'yolo_segment' (pure CV — HoughCircles + projection profile + shape match)")
     cap_crop_method: Optional[str] = Field(default="none", description="Detect+crop bottle cap for matching: 'none' (use user-drawn crop_area) | 'yolo_obb' (trained YOLO OBB model) | 'yolo_segment' (HoughCircles)")
     crop_match_method: Optional[str] = Field(default="superpoint", description="Method for matching template ↔ target crop: 'superpoint' (TRT deep model, ~95ms) | 'shape_outline' (ECC on Sobel gradient magnitude, ~30ms — best for cap-OCR with cap_rotation+cap_crop active)")
+    dual_rotation_check: Optional[bool] = Field(default=False, description="Try BOTH cap rotation candidates (angle + flipped180) and pick the one with higher match confidence. Only applies to Check_Color cap-OCR cameras. Doubles match cost but fixes ambiguous flip detection.")
     product_box_wall_type: Optional[str] = Field(default="outer", description="When product_detection_method='yolo_segment', which wall to use for product box corners: 'outer' (bottle silhouette) | 'inner' (closer to label)")
 
     # Wrinkle segmentation model confidence threshold (recipe-level, applies to all cameras)
@@ -206,6 +207,7 @@ class RecipeUpdate(BaseModel):
     cap_rotation_method: Optional[str] = None
     cap_crop_method: Optional[str] = None
     crop_match_method: Optional[str] = None
+    dual_rotation_check: Optional[bool] = None
     wrinkle_conf: Optional[float] = Field(None, ge=0.0, le=1.0)
     wrinkle_show_when_pass: Optional[bool] = None
     matching_conf: Optional[float] = Field(None, ge=0.0, le=1.0)

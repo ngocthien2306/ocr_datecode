@@ -67,6 +67,7 @@ interface FormDataType {
   cap_rotation_method: string;
   cap_crop_method: string;
   crop_match_method: string;
+  dual_rotation_check: boolean;
   template_bank_enabled: boolean;
   template_bank_size: number;
   char_denoise_enabled: boolean;
@@ -198,6 +199,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     cap_rotation_method: 'yolo_obb',
     cap_crop_method: 'none',
     crop_match_method: 'superpoint',
+    dual_rotation_check: false,
     product_box_wall_type: 'outer',
     template_bank_enabled: false,
     template_bank_size: 10,
@@ -405,6 +407,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         cap_rotation_method: recipeAny.cap_rotation_method || 'yolo_obb',
         cap_crop_method: recipeAny.cap_crop_method || 'none',
         crop_match_method: recipeAny.crop_match_method || 'superpoint',
+        dual_rotation_check: !!recipeAny.dual_rotation_check,
         product_box_wall_type: recipeAny.product_box_wall_type || 'outer',
         template_bank_enabled: recipeAny.template_bank_enabled ?? false,
         template_bank_size: recipeAny.template_bank_size ?? 10,
@@ -481,6 +484,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         cap_rotation_method: 'yolo_obb',
         cap_crop_method: 'none',
         crop_match_method: 'superpoint',
+        dual_rotation_check: false,
         wrinkle_conf: 0.25,
         wrinkle_show_when_pass: true,
         matching_conf: 0.20,
@@ -870,6 +874,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         cap_rotation_method: formData.cap_rotation_method || 'yolo_obb',
         cap_crop_method: formData.cap_crop_method || 'none',
         crop_match_method: formData.crop_match_method || 'superpoint',
+        dual_rotation_check: !!formData.dual_rotation_check,
         product_box_wall_type: formData.product_box_wall_type || 'outer',
         template_bank_enabled: formData.template_bank_enabled ?? false,
         template_bank_size: formData.template_bank_size ?? 10,
@@ -2326,23 +2331,14 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                     </div>
 
                     {/* ─── Bottle Edge Detection group ────────────────────── */}
-                    <div
-                      style={{
-                        background: '#f8f9fa',
-                        padding: '12px',
-                        borderRadius: '6px',
-                        border: '1px solid #dee2e6',
-                        marginTop: '15px',
-                        marginBottom: '15px',
-                      }}
-                    >
-                      <div style={{ fontWeight: 600, marginBottom: '10px', color: '#495057' }}>
+                    <div className="bottle-edge-card">
+                      <div className="bottle-edge-card__title">
                         Bottle Edge Detection
                       </div>
 
                       {/* Row 1: Method + Product Box Wall Type */}
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 10 }}>
-                        <div className="form-group" style={{ marginBottom: 0 }}>
+                      <div className="bottle-edge-row bottle-edge-row--2col">
+                        <div className="form-group">
                           <label>Method</label>
                           <select
                             name="product_detection_method"
@@ -2357,12 +2353,12 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         </div>
 
                         <div
-                          className="form-group"
-                          style={{
-                            marginBottom: 0,
-                            opacity: formData.product_detection_method === 'yolo_segment' ? 1 : 0.45,
-                            pointerEvents: formData.product_detection_method === 'yolo_segment' ? 'auto' : 'none',
-                          }}
+                          className={
+                            'form-group' +
+                            (formData.product_detection_method === 'yolo_segment'
+                              ? ''
+                              : ' bottle-edge-disabled')
+                          }
                         >
                           <label>Product Box Wall Type</label>
                           <select
@@ -2372,15 +2368,15 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                               setFormData(prev => ({ ...prev, product_box_wall_type: e.target.value }))
                             }
                           >
-                            <option value="outer">Outer wall (bottle silhouette - wider OBB)</option>
-                            <option value="inner">Inner wall (closer to label — tighter OBB)</option>
+                            <option value="outer">Outer wall</option>
+                            <option value="inner">Inner wall</option>
                           </select>
                         </div>
                       </div>
 
                       {/* Row 2: Cap Rotation Method + Cap Crop Method */}
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 0 }}>
-                        <div className="form-group" style={{ marginBottom: 0 }}>
+                      <div className="bottle-edge-row bottle-edge-row--2col">
+                        <div className="form-group">
                           <label>Cap Rotation Method</label>
                           <select
                             name="cap_rotation_method"
@@ -2394,7 +2390,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                           </select>
                         </div>
 
-                        <div className="form-group" style={{ marginBottom: 0 }}>
+                        <div className="form-group">
                           <label>Cap Crop Method</label>
                           <select
                             name="cap_crop_method"
@@ -2411,8 +2407,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       </div>
 
                       {/* Row 3: Crop Match Method (full row) */}
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12, marginTop: 10, marginBottom: 0 }}>
-                        <div className="form-group" style={{ marginBottom: 0 }}>
+                      <div className="bottle-edge-row bottle-edge-row--1col">
+                        <div className="form-group">
                           <label>Crop Match Method</label>
                           <select
                             name="crop_match_method"
@@ -2421,10 +2417,24 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                               setFormData(prev => ({ ...prev, crop_match_method: e.target.value }))
                             }
                           >
-                            <option value="superpoint">SuperPoint (TRT deep model, ~95ms)</option>
-                            <option value="shape_outline">Shape Outline (ECC gradient, ~30ms)</option>
+                            <option value="superpoint">SuperPoint</option>
+                            <option value="shape_outline">Shape Outline</option>
                           </select>
                         </div>
+                      </div>
+
+                      {/* Row 4: Dual Rotation Check (checkbox, full row) */}
+                      <div className="bottle-edge-checkbox">
+                        <label className="bottle-edge-checkbox__label">
+                          <input
+                            type="checkbox"
+                            checked={formData.dual_rotation_check}
+                            onChange={(e) =>
+                              setFormData(prev => ({ ...prev, dual_rotation_check: e.target.checked }))
+                            }
+                          />
+                          <span>Dual Rotation Check (Check_Color only — try both rotations, pick higher match)</span>
+                        </label>
                       </div>
                     </div>
                   </div>

@@ -2717,3 +2717,57 @@ body.dark-mode .cv-preview__score.is-ok { color: #22c55e; }
 body.dark-mode .cv-preview__score.is-ng { color: #ef4444; }
 body.dark-mode .cv-preview__defect { color: #d1d5db; }
 body.dark-mode .cv-preview__error { color: #f87171; }
+
+/* ── Bottle Edge Detection card (Model tab) ──────────────────────────── */
+.bottle-edge-card {
+  background: #f8f9fa;
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid #dee2e6;
+  margin-top: 15px;
+  margin-bottom: 15px;
+}
+.bottle-edge-card__title {
+  font-weight: 600;
+  margin-bottom: 10px;
+  color: #495057;
+}
+.bottle-edge-card .form-group {
+  margin-bottom: 0;
+}
+.bottle-edge-row {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.bottle-edge-row:last-child {
+  margin-bottom: 0;
+}
+.bottle-edge-row--2col {
+  grid-template-columns: 1fr 1fr;
+}
+.bottle-edge-row--1col {
+  grid-template-columns: 1fr;
+  margin-top: 10px;
+}
+.bottle-edge-checkbox {
+  margin-top: 10px;
+}
+.bottle-edge-checkbox__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-weight: normal;
+}
+.bottle-edge-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+body.dark-mode .bottle-edge-card {
+  background: #1f2937;
+  border-color: #4b5563;
+}
+body.dark-mode .bottle-edge-card__title {
+  color: #d1d5db;
+}

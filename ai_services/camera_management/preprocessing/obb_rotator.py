@@ -366,6 +366,68 @@ class OBBRotationService:
             self._rot_logger.error(f"{tag}ERROR — {e}")
             return frame, None
 
+    def rotate_frame_dual(
+        self,
+        frame: np.ndarray,
+        frame_tag: str = ""
+    ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        """
+        Produce BOTH rotation candidates (no-flip + flip180) without using the
+        shape-match `_need_flip` heuristic. The caller picks the higher-scoring
+        candidate via match confidence.
+
+        Returns (candidate_no_flip, candidate_flipped180). Either may be None
+        on failure (no cap detected, no text_box, etc.).
+        """
+        tag = f"[{frame_tag}] " if frame_tag else ""
+        if self._model is None or frame is None or frame.size == 0:
+            return None, None
+        try:
+            import time as _time
+            _t0 = _time.perf_counter()
+            results, timing = self._model.predict(
+                [frame], conf_threshold=self.conf_threshold, return_timing=True
+            )
+            boxes, scores, class_ids = results[0]
+            infer_ms = timing.get('total', 0)
+
+            if len(boxes) == 0:
+                self._rot_logger.info(f"{tag}DUAL FAIL — no boxes (infer={infer_ms:.1f}ms)")
+                return None, None
+            text_box_idx = next(
+                (i for i, c in enumerate(class_ids)
+                 if self.CLASS_NAMES[int(c)] == 'text_box'), None
+            )
+            bottle_cap_idx = next(
+                (i for i, c in enumerate(class_ids)
+                 if self.CLASS_NAMES[int(c)] == 'bottle_cap'), None
+            )
+            if text_box_idx is None or bottle_cap_idx is None:
+                self._rot_logger.info(
+                    f"{tag}DUAL FAIL — missing text_box/bottle_cap "
+                    f"(infer={infer_ms:.1f}ms)"
+                )
+                return None, None
+            text_box = boxes[text_box_idx]
+            cap_box  = boxes[bottle_cap_idx]
+            _, _, tw, th, text_angle = text_box
+            angle_deg = text_angle * 180 / np.pi
+            if th > tw:
+                angle_deg += 90
+            # Apply rotation WITHOUT flip and WITH flip — let downstream choose
+            candidate_a = rotate_cap_region_only(frame, cap_box, angle_deg, False)
+            candidate_b = rotate_cap_region_only(frame, cap_box, angle_deg, True)
+            _t_total = (_time.perf_counter() - _t0) * 1000
+            self._rot_logger.info(
+                f"{tag}DUAL OK in {_t_total:.1f}ms — angle={angle_deg:.1f}° "
+                f"both candidates emitted (infer={infer_ms:.1f}ms)"
+            )
+            return candidate_a, candidate_b
+        except Exception as e:
+            logger.error(f"OBBRotationService.rotate_frame_dual error: {e}")
+            self._rot_logger.error(f"{tag}DUAL ERROR — {e}")
+            return None, None
+
 
 def inverse_transform_bboxes(match_result: dict, M: np.ndarray) -> dict:
     """

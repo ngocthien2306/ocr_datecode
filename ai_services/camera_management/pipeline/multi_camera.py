@@ -76,6 +76,15 @@ class MultiCameraPipeline(InferencePipelineTemplate):
         matchers = []
         serial_numbers = []
         crop_areas = []
+        # Parallel list — True for entries that are the ALT rotation candidate
+        # of a dual_rotation_check camera; False (default) for normal entries.
+        # run_inference pairs (primary, alt) by serial_number and picks higher
+        # match confidence.
+        is_alt_candidate: List[bool] = []
+        # Stash full frames for both candidates so run_inference can replace
+        # context.results[sn]['frames'] with the winning rotation. Keyed by
+        # serial_number → (frame_primary, frame_alt).
+        dual_frames_by_serial: Dict[str, Any] = {}
 
         # Per-stage timing aggregates (ms)
         _ms_cap_rotation = 0.0
@@ -113,6 +122,8 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                 getattr(camera, 'function_type', '') == 'Check_Color'
                 and not _first_template_has_product
             )
+            # Alt frame (full-frame) for dual_rotation_check; None for normal cams
+            frame_alt: Optional[np.ndarray] = None
             if _need_rotation:
                 _method = getattr(camera, 'cap_rotation_method', 'yolo_obb')
                 _rot_svc = (
@@ -120,30 +131,65 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     if _method == 'yolo_segment'
                     else context.obb_rotation_service
                 )
+                _dual = bool(getattr(camera, 'dual_rotation_check', False))
                 if _rot_svc is not None and getattr(_rot_svc, 'available', False):
                     _t0 = _time.perf_counter()
-                    rotated, _M = _rot_svc.rotate_frame(
-                        frame, frame_tag=f"{serial_number}/multi"
-                    )
-                    _dt_rot = (_time.perf_counter() - _t0) * 1000
+                    if _dual and hasattr(_rot_svc, 'rotate_frame_dual'):
+                        cand_a, cand_b = _rot_svc.rotate_frame_dual(
+                            frame, frame_tag=f"{serial_number}/multi-dual"
+                        )
+                        _dt_rot = (_time.perf_counter() - _t0) * 1000
+                        if cand_a is not None and cand_b is not None:
+                            rotated = cand_a
+                            frame_alt = cand_b
+                            logger.info(
+                                f"[{serial_number}] cap_rotation DUAL ({_method}) "
+                                f"in {_dt_rot:.1f}ms — both candidates emitted"
+                            )
+                        else:
+                            # Dual failed → fall back to single rotate_frame
+                            rotated, _M = _rot_svc.rotate_frame(
+                                frame, frame_tag=f"{serial_number}/multi-fallback"
+                            )
+                            logger.info(
+                                f"[{serial_number}] cap_rotation DUAL fallback "
+                                f"({_method}) in {_dt_rot:.1f}ms"
+                            )
+                    else:
+                        rotated, _M = _rot_svc.rotate_frame(
+                            frame, frame_tag=f"{serial_number}/multi"
+                        )
+                        _dt_rot = (_time.perf_counter() - _t0) * 1000
+                        logger.info(
+                            f"[{serial_number}] cap_rotation ({_method}) "
+                            f"in {_dt_rot:.1f}ms"
+                        )
                     _ms_cap_rotation += _dt_rot
                     _n_cap_rotation += 1
-                    logger.info(
-                        f"[{serial_number}] cap_rotation ({_method}) "
-                        f"in {_dt_rot:.1f}ms"
-                    )
                     # Replace the frame so downstream verify + save use the
                     # rotated image (cap-only rotation, so crop_area is fine).
+                    # For dual mode, replace with PRIMARY candidate initially;
+                    # run_inference will swap to alt if it wins.
                     context.results[serial_number]['frames'][0] = rotated
                     frame = rotated
 
             # ── cap_crop_method active: detect cap per-frame, override crop_area ──
             _cap_crop_method = getattr(matcher, 'cap_crop_method', 'none')
+            # Cache the detected cap circle (cx, cy, r) from primary so we can
+            # reuse it on the ALT candidate (cap_rotation is cap-only → cap
+            # position identical in both candidates → no need to re-run HoughCircles).
+            _cached_cap_circle = None
             if _cap_crop_method and _cap_crop_method != 'none':
                 _t0 = _time.perf_counter()
                 try:
-                    from ..preprocessing.cv_rotator import detect_cap_and_crop
-                    cap_result = detect_cap_and_crop(frame, margin_ratio=0.10)
+                    from ..preprocessing.cv_rotator import (
+                        detect_cap_circle, apply_cap_crop,
+                    )
+                    _cached_cap_circle = detect_cap_circle(frame)
+                    cap_result = (
+                        apply_cap_crop(frame, _cached_cap_circle, margin_ratio=0.10)
+                        if _cached_cap_circle is not None else None
+                    )
                     _dt_cap = (_time.perf_counter() - _t0) * 1000
                     _ms_cap_crop += _dt_cap
                     _n_cap_crop += 1
@@ -196,6 +242,58 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             matchers.append(matcher)
             serial_numbers.append(serial_number)
             crop_areas.append(crop_area)
+            is_alt_candidate.append(False)
+
+            # ── Dual rotation: emit ALT candidate as a separate batch entry ──
+            # Re-apply cap_crop on the alt full-frame (cap position is the same
+            # since rotation is cap-only; we just need the alt rotation pixels).
+            if frame_alt is not None:
+                alt_frame_for_inference: Optional[Any] = None
+                alt_crop_area = None
+                if _cap_crop_method and _cap_crop_method != 'none':
+                    # REUSE the cap circle detected on the primary frame —
+                    # cap_rotation is cap-only so cap position is identical
+                    # in primary and alt. Skips HoughCircles → saves ~50ms.
+                    _t_alt = _time.perf_counter()
+                    try:
+                        from ..preprocessing.cv_rotator import apply_cap_crop
+                        alt_cap = (
+                            apply_cap_crop(frame_alt, _cached_cap_circle, margin_ratio=0.10)
+                            if _cached_cap_circle is not None else None
+                        )
+                        _dt_alt = (_time.perf_counter() - _t_alt) * 1000
+                        if alt_cap is not None:
+                            alt_frame_for_inference = alt_cap[0]
+                            _ax1, _ay1, _ax2, _ay2 = alt_cap[1]
+                            alt_crop_area = {
+                                'x1': int(_ax1), 'y1': int(_ay1),
+                                'x2': int(_ax2), 'y2': int(_ay2),
+                            }
+                            logger.info(
+                                f"[{serial_number}] alt cap_crop (cached cap) in "
+                                f"{_dt_alt:.1f}ms — reused HoughCircles result"
+                            )
+                        else:
+                            logger.warning(
+                                f"[{serial_number}] dual alt cap_crop FAIL — "
+                                f"primary cap not detected, skipping alt"
+                            )
+                    except Exception as e:
+                        logger.warning(f"[{serial_number}] dual alt cap_crop error: {e}")
+                elif self._crop_func and crop_area:
+                    alt_frame_for_inference = self._crop_func(frame_alt, crop_area)
+                    alt_crop_area = crop_area
+                else:
+                    alt_frame_for_inference = frame_alt
+                    alt_crop_area = crop_area
+
+                if alt_frame_for_inference is not None:
+                    target_imgs.append(alt_frame_for_inference)
+                    matchers.append(matcher)
+                    serial_numbers.append(serial_number)
+                    crop_areas.append(alt_crop_area)
+                    is_alt_candidate.append(True)
+                    dual_frames_by_serial[serial_number] = (frame, frame_alt)
 
         if not target_imgs:
             logger.error(f"[Job #{context.job_id}] No valid frames to process")
@@ -214,7 +312,9 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             'target_imgs': target_imgs,
             'matchers': matchers,
             'serial_numbers': serial_numbers,
-            'crop_areas': crop_areas
+            'crop_areas': crop_areas,
+            'is_alt_candidate': is_alt_candidate,
+            'dual_frames_by_serial': dual_frames_by_serial,
         }
 
     def run_inference(
@@ -227,6 +327,8 @@ class MultiCameraPipeline(InferencePipelineTemplate):
         matchers = preprocessed['matchers']
         serial_numbers = preprocessed['serial_numbers']
         crop_areas = preprocessed['crop_areas']
+        is_alt_candidate = preprocessed.get('is_alt_candidate', [False] * len(serial_numbers))
+        dual_frames_by_serial = preprocessed.get('dual_frames_by_serial', {})
 
         # Color-check cameras (function_type=Check_Color + template has 'product')
         # don't need SuperPoint matching — image-proc in color_verifier handles
@@ -277,6 +379,7 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                 sub_matchers = [matchers[i] for i in sp_idx]
                 sub_crops    = [crop_areas[i] for i in sp_idx]
                 sub_serials  = [serial_numbers[i] for i in sp_idx]
+                sub_is_alt   = [is_alt_candidate[i] for i in sp_idx]
 
                 batch_result = sub_matchers[0].match_batch(
                     target_imgs=sub_targets,
@@ -299,12 +402,50 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     f"{len(shape_idx)} shape_outline)"
                 )
 
+                # Stash transformed results by (serial, is_alt) for dual pairing
+                _stash: Dict[tuple, Any] = {}
                 for k, sn in enumerate(sub_serials):
                     result = batch_result['results'][k]
                     crop_area = sub_crops[k]
                     if self._transform_func:
                         result = self._transform_func(result, crop_area)
-                    transformed_results[sn] = result
+                    _stash[(sn, sub_is_alt[k])] = result
+
+                # Resolve: for each serial, if both (primary + alt) present,
+                # pick higher match confidence; else use whichever is present.
+                seen_serials = set()
+                for k, sn in enumerate(sub_serials):
+                    if sn in seen_serials:
+                        continue
+                    seen_serials.add(sn)
+                    r_primary = _stash.get((sn, False))
+                    r_alt     = _stash.get((sn, True))
+                    if r_alt is None:
+                        transformed_results[sn] = r_primary
+                    elif r_primary is None:
+                        transformed_results[sn] = r_alt
+                    else:
+                        # Compare confidence (RANSAC inlier ratio for SuperPoint)
+                        c_p = float(r_primary.get('confidence', 0.0) or 0.0)
+                        c_a = float(r_alt.get('confidence', 0.0) or 0.0)
+                        if c_a > c_p:
+                            transformed_results[sn] = r_alt
+                            logger.info(
+                                f"[{sn}] dual_rotation: ALT wins "
+                                f"(alt_conf={c_a:.3f} > primary_conf={c_p:.3f}) "
+                                f"— swapping frame[0] to alt rotation"
+                            )
+                            # Swap the stored frame so verify + viz use alt
+                            pair = dual_frames_by_serial.get(sn)
+                            if pair is not None:
+                                _frame_primary, _frame_alt = pair
+                                context.results[sn]['frames'][0] = _frame_alt
+                        else:
+                            transformed_results[sn] = r_primary
+                            logger.info(
+                                f"[{sn}] dual_rotation: primary wins "
+                                f"(primary_conf={c_p:.3f} >= alt_conf={c_a:.3f})"
+                            )
             else:
                 logger.info(
                     f"Skipping SuperPoint match: 0 SP cameras of "
@@ -360,7 +501,41 @@ class MultiCameraPipeline(InferencePipelineTemplate):
 
                     if self._transform_func:
                         result = self._transform_func(result, crop_area)
-                    transformed_results[sn] = result
+
+                    # Dual-rotation pairing for shape_outline cameras
+                    if is_alt_candidate[i]:
+                        existing = transformed_results.get(sn)
+                        if existing is None:
+                            transformed_results[sn] = result
+                        else:
+                            c_p = float(existing.get('confidence', 0.0) or 0.0)
+                            c_a = float(result.get('confidence', 0.0) or 0.0)
+                            if c_a > c_p:
+                                transformed_results[sn] = result
+                                logger.info(
+                                    f"[{sn}] dual_rotation shape_outline: ALT wins "
+                                    f"(alt_cc={c_a:.3f} > primary_cc={c_p:.3f})"
+                                )
+                                pair = dual_frames_by_serial.get(sn)
+                                if pair is not None:
+                                    _, _frame_alt = pair
+                                    context.results[sn]['frames'][0] = _frame_alt
+                            else:
+                                logger.info(
+                                    f"[{sn}] dual_rotation shape_outline: primary wins "
+                                    f"(primary_cc={c_p:.3f} >= alt_cc={c_a:.3f})"
+                                )
+                    else:
+                        existing = transformed_results.get(sn)
+                        if existing is None:
+                            transformed_results[sn] = result
+                        else:
+                            # Primary processed after alt — compare same way
+                            c_p = float(result.get('confidence', 0.0) or 0.0)
+                            c_a = float(existing.get('confidence', 0.0) or 0.0)
+                            if c_p >= c_a:
+                                transformed_results[sn] = result
+                            # else keep existing alt
 
             # ── Build synthetic success results for color cameras ────────────
             for i in color_idx:

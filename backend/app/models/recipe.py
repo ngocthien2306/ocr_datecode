@@ -180,6 +180,10 @@ class RecipeBase(BaseModel):
     # and target are similar size and orientation (cap-OCR mode after cap
     # rotation + cap-crop). Falls back to legacy SuperPoint when 'superpoint'.
     crop_match_method: Optional[str] = Field(default="superpoint", description="Method for matching template ↔ target crop: 'superpoint' (TRT deep model, ~95ms) | 'shape_outline' (ECC on Sobel gradient magnitude, ~30ms — best for cap-OCR with cap_rotation+cap_crop active)")
+    # When True, AI service generates BOTH rotation candidates (angle, angle+180)
+    # for Check_Color cap-OCR cameras and picks the one with higher match
+    # confidence. Only applies to Check_Color function_type.
+    dual_rotation_check: Optional[bool] = Field(default=False, description="Try BOTH cap rotation candidates and pick higher match confidence. Only Check_Color cap-OCR cameras. SuperPoint batches them together so cost overhead is minimal.")
 
     # Wrinkle segmentation model confidence threshold (recipe-level, applies to all cameras)
     wrinkle_conf: Optional[float] = Field(default=0.25, ge=0.0, le=1.0, description="Confidence threshold for wrinkle segmentation model (0.0 - 1.0)")
@@ -232,6 +236,7 @@ class RecipeUpdate(BaseModel):
     cap_rotation_method: Optional[str] = None
     cap_crop_method: Optional[str] = None
     crop_match_method: Optional[str] = None
+    dual_rotation_check: Optional[bool] = None
     wrinkle_conf: Optional[float] = Field(None, ge=0.0, le=1.0)
     wrinkle_show_when_pass: Optional[bool] = None
     matching_conf: Optional[float] = Field(None, ge=0.0, le=1.0)
