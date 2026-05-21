@@ -226,3 +226,6 @@ weights/best_wrinkled_instance_segmentation_crop_bottle_n.onnx
 weights/best_wrinkled_instance_segmentation_crop_bottle.engine
 weights/best_bottle_m.onnx
 weights/best_bottle_obb_m_320.engine
+weights/best_bottle_m_320_new_1.engine
+weights/best_bottle_m_320_new.engine
+weights/yolo26_bottle_obb.engine

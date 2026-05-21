@@ -683,6 +683,13 @@ input:disabled + .toggle-slider {
   cursor: pointer;
   font-size: 14px;
   font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.storage-manager .refresh-btn svg {
+  display: block;
 }
 
 .storage-manager .refresh-btn:hover {
@@ -879,10 +886,392 @@ input:disabled + .toggle-slider {
 
 .storage-info-card ul {
   margin: 0;
-  padding-left: 20px;
+  padding: 0;
+  list-style: none;
   color: #6b7280;
-  line-height: 1.8;
+  line-height: 1.6;
   font-size: 14px;
+}
+
+.storage-info-card li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.storage-info-card .info-icon {
+  color: #3b82f6;
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+/* ── Storage Disk Usage Card ──────────────────────────────────────────── */
+.storage-disk-card {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.disk-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 12px;
+}
+
+.disk-header h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  color: #1f2937;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.disk-header h3 svg {
+  color: #3b82f6;
+  flex-shrink: 0;
+}
+
+.disk-mount {
+  font-size: 12px;
+  color: #6b7280;
+  font-family: 'Monaco', 'Courier New', monospace;
+}
+
+.disk-bar-wrapper {
+  width: 100%;
+  height: 14px;
+  background: #f3f4f6;
+  border-radius: 7px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.disk-bar-fill {
+  height: 100%;
+  border-radius: 7px;
+  transition: width 0.4s ease, background 0.4s ease;
+}
+
+.disk-level-low .disk-bar-fill {
+  background: #16a34a;
+}
+
+.disk-level-mid .disk-bar-fill {
+  background: #f59e0b;
+}
+
+.disk-level-high .disk-bar-fill {
+  background: #dc2626;
+}
+
+.disk-stats {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: #4b5563;
+}
+
+.disk-stats-percent {
+  font-weight: 600;
+}
+
+.disk-level-low .disk-stats-percent {
+  color: #16a34a;
+}
+
+.disk-level-mid .disk-stats-percent {
+  color: #f59e0b;
+}
+
+.disk-level-high .disk-stats-percent {
+  color: #dc2626;
+}
+
+/* ── Storage Auto Cleanup Card ────────────────────────────────────────── */
+.storage-cleanup-card {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.cleanup-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.cleanup-header h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  color: #1f2937;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cleanup-header h3 svg {
+  color: #3b82f6;
+  flex-shrink: 0;
+}
+
+.cleanup-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #1f2937;
+  cursor: pointer;
+}
+
+.cleanup-toggle input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  accent-color: #3b82f6;
+  cursor: pointer;
+}
+
+.cleanup-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.cleanup-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background-color: #f9fafb;
+  border-radius: 6px;
+}
+
+.cleanup-field label {
+  font-size: 13px;
+  color: #4b5563;
+  font-weight: 500;
+}
+
+.cleanup-field label strong {
+  color: #1f2937;
+}
+
+.cleanup-field input[type='range'] {
+  accent-color: #3b82f6;
+  width: 100%;
+}
+
+.cleanup-radio-row {
+  display: flex;
+  gap: 16px;
+  font-size: 13px;
+  color: #1f2937;
+}
+
+.cleanup-radio-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-weight: 400;
+}
+
+.cleanup-input {
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #1f2937;
+  background: white;
+}
+
+.cleanup-input-narrow {
+  width: 72px;
+}
+
+.cleanup-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #4b5563;
+}
+
+.cleanup-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-weight: 400 !important;
+}
+
+.cleanup-checkbox input {
+  width: 16px;
+  height: 16px;
+  accent-color: #3b82f6;
+}
+
+.cleanup-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.cleanup-save-btn,
+.cleanup-run-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cleanup-save-btn svg,
+.cleanup-run-btn svg {
+  display: block;
+}
+
+.cleanup-save-btn {
+  background-color: #3b82f6;
+  color: white;
+}
+
+.cleanup-save-btn:hover:not(:disabled) {
+  background-color: #2563eb;
+}
+
+.cleanup-run-btn {
+  background-color: #fee2e2;
+  color: #dc2626;
+}
+
+.cleanup-run-btn:hover:not(:disabled) {
+  background-color: #fecaca;
+}
+
+.cleanup-save-btn:disabled,
+.cleanup-run-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ── Storage Last Run Card ────────────────────────────────────────────── */
+.storage-lastrun-card {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.lastrun-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.lastrun-header h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  color: #1f2937;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lastrun-header h3 svg {
+  color: #3b82f6;
+  flex-shrink: 0;
+}
+
+.lastrun-badges {
+  display: flex;
+  gap: 6px;
+}
+
+.lastrun-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.lastrun-trigger-scheduled {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.lastrun-trigger-manual {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+.lastrun-trigger-threshold-skip {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.lastrun-dry {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.lastrun-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.lastrun-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: #f9fafb;
+  border-radius: 6px;
+}
+
+.lastrun-label {
+  font-size: 11px;
+  color: #6b7280;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.lastrun-value {
+  font-size: 14px;
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.lastrun-msg {
+  margin: 0;
+  font-size: 13px;
+  color: #4b5563;
+  font-style: italic;
 }
 
 .io-header {
@@ -1094,9 +1483,124 @@ body.dark-mode .storage-manager .refresh-btn:hover {
 
 body.dark-mode .storage-stats-card,
 body.dark-mode .storage-tree-card,
-body.dark-mode .storage-info-card {
+body.dark-mode .storage-info-card,
+body.dark-mode .storage-disk-card,
+body.dark-mode .storage-cleanup-card,
+body.dark-mode .storage-lastrun-card {
   background-color: #1f2937;
   border-color: #374151;
+}
+
+/* Disk Usage card — dark */
+body.dark-mode .disk-header h3,
+body.dark-mode .cleanup-header h3,
+body.dark-mode .lastrun-header h3 {
+  color: #f9fafb;
+}
+
+body.dark-mode .disk-header h3 svg,
+body.dark-mode .cleanup-header h3 svg,
+body.dark-mode .lastrun-header h3 svg {
+  color: #60a5fa;
+}
+
+body.dark-mode .disk-mount {
+  color: #9ca3af;
+}
+
+body.dark-mode .disk-bar-wrapper {
+  background: #111827;
+}
+
+body.dark-mode .disk-stats {
+  color: #9ca3af;
+}
+
+/* Cleanup card — dark */
+body.dark-mode .cleanup-toggle {
+  color: #f9fafb;
+}
+
+body.dark-mode .cleanup-field {
+  background-color: #111827;
+}
+
+body.dark-mode .cleanup-field label {
+  color: #9ca3af;
+}
+
+body.dark-mode .cleanup-field label strong {
+  color: #f9fafb;
+}
+
+body.dark-mode .cleanup-radio-row,
+body.dark-mode .cleanup-input-row {
+  color: #d1d5db;
+}
+
+body.dark-mode .cleanup-input {
+  background: #1f2937;
+  border-color: #374151;
+  color: #f9fafb;
+}
+
+body.dark-mode .cleanup-save-btn {
+  background-color: #2563eb;
+}
+
+body.dark-mode .cleanup-save-btn:hover:not(:disabled) {
+  background-color: #1d4ed8;
+}
+
+body.dark-mode .cleanup-run-btn {
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+}
+
+body.dark-mode .cleanup-run-btn:hover:not(:disabled) {
+  background-color: rgba(239, 68, 68, 0.3);
+}
+
+/* Last-run card — dark */
+body.dark-mode .lastrun-stats > div {
+  background: #111827;
+}
+
+body.dark-mode .lastrun-label {
+  color: #9ca3af;
+}
+
+body.dark-mode .lastrun-value {
+  color: #f9fafb;
+}
+
+body.dark-mode .lastrun-msg {
+  color: #9ca3af;
+}
+
+body.dark-mode .lastrun-trigger-scheduled {
+  background: rgba(59, 130, 246, 0.18);
+  color: #93c5fd;
+}
+
+body.dark-mode .lastrun-trigger-manual {
+  background: rgba(139, 92, 246, 0.18);
+  color: #c4b5fd;
+}
+
+body.dark-mode .lastrun-trigger-threshold-skip {
+  background: rgba(156, 163, 175, 0.18);
+  color: #d1d5db;
+}
+
+body.dark-mode .lastrun-dry {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fcd34d;
+}
+
+/* Info card — dark icon */
+body.dark-mode .storage-info-card .info-icon {
+  color: #60a5fa;
 }
 
 body.dark-mode .storage-stats-card .stat-item {

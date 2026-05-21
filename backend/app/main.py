@@ -71,6 +71,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Warning: Log cleanup scheduler failed to start: {e}")
 
+    # Start storage auto-cleanup scheduler
+    try:
+        from app.services import storage_cleanup_scheduler
+        from app.api.endpoints.storage import (
+            storage_service,
+            CLEANUP_CONFIG_FILE,
+            CLEANUP_LAST_RUN_FILE,
+        )
+        storage_cleanup_scheduler.start(
+            storage_service,
+            CLEANUP_CONFIG_FILE,
+            CLEANUP_LAST_RUN_FILE,
+        )
+        print("✅ Storage cleanup scheduler started")
+    except Exception as e:
+        print(f"⚠️ Warning: Storage cleanup scheduler failed to start: {e}")
+
     # Mark orphan ML training records as failed — if the previous process was
     # OOM-killed mid-training, the model record stays at status='training' and
     # poisons the project state. This sweep flips them back to 'failed' so the
@@ -124,6 +141,14 @@ async def lifespan(app: FastAPI):
         from app.services import log_cleanup_scheduler
         await log_cleanup_scheduler.stop()
         print("🛑 Log cleanup scheduler stopped")
+    except Exception:
+        pass
+
+    # Stop storage cleanup scheduler
+    try:
+        from app.services import storage_cleanup_scheduler
+        await storage_cleanup_scheduler.stop()
+        print("🛑 Storage cleanup scheduler stopped")
     except Exception:
         pass
 
