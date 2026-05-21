@@ -41,6 +41,7 @@ class PipelineContext:
     template_verification_service: Any = None
     product_verification_service: Any = None
     obb_rotation_service: Any = None
+    cv_rotation_service: Any = None
 
     # Callbacks
     emit_callback: Optional[Callable] = None

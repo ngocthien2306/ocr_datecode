@@ -160,6 +160,12 @@ class RecipeBase(BaseModel):
     # "outer" = bottle silhouette (wider, matches YOLO OBB convention) | "inner" = sát label (tighter)
     product_box_wall_type: Optional[str] = Field(default="outer", description="When product_detection_method='yolo_segment', which wall to use for product box corners: 'outer' (bottle silhouette) | 'inner' (closer to label)")
 
+    # Cap rotation method used for OCR-on-cap (Check_Color without product, or any
+    # manual /frames/rotate call). "yolo_obb" uses the trained best_bottle_m engine;
+    # "yolo_segment" name kept for UI consistency but internally uses pure CV
+    # (HoughCircles + projection-profile + shape-match flip).
+    cap_rotation_method: Optional[str] = Field(default="yolo_obb", description="Method to rotate caps so date-code text faces upright: 'yolo_obb' (trained YOLO OBB model) | 'yolo_segment' (pure CV — HoughCircles + projection profile + shape match)")
+
     # Wrinkle segmentation model confidence threshold (recipe-level, applies to all cameras)
     wrinkle_conf: Optional[float] = Field(default=0.25, ge=0.0, le=1.0, description="Confidence threshold for wrinkle segmentation model (0.0 - 1.0)")
     wrinkle_show_when_pass: Optional[bool] = Field(default=True, description="Draw detected wrinkle regions on _viz.jpg even when frame passes (for debugging/visualization)")
@@ -208,6 +214,7 @@ class RecipeUpdate(BaseModel):
     char_denoise_enabled: Optional[bool] = None
     product_detection_method: Optional[str] = None
     product_box_wall_type: Optional[str] = None
+    cap_rotation_method: Optional[str] = None
     wrinkle_conf: Optional[float] = Field(None, ge=0.0, le=1.0)
     wrinkle_show_when_pass: Optional[bool] = None
     matching_conf: Optional[float] = Field(None, ge=0.0, le=1.0)

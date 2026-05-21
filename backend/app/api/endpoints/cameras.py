@@ -644,7 +644,10 @@ async def rotate_frames(
     import base64
     import cv2
     import numpy as np
-    from app.services.rotate_obb_service import get_rotate_obb_model, rotate_frame
+    from app.services.rotate_obb_service import (
+        get_rotate_obb_model, rotate_frame, logger as rotate_logger,
+    )
+    from app.services.rotate_cv_service import rotate_frame_cv
 
     frames_input = payload.get("frames", [])
     if not frames_input:
@@ -653,17 +656,30 @@ async def rotate_frames(
             detail="No frames provided"
         )
 
-    model = get_rotate_obb_model()
-    if model is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="OBB rotation model is not available"
-        )
+    # Method: "yolo_obb" (default — trained TRT engine) or "yolo_segment"
+    # (pure CV — HoughCircles + projection profile + shape match).
+    method = (payload.get("method") or "yolo_obb").lower()
+    if method not in ("yolo_obb", "yolo_segment"):
+        method = "yolo_obb"
+
+    model = None
+    if method == "yolo_obb":
+        model = get_rotate_obb_model()
+        if model is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="OBB rotation model is not available"
+            )
 
     quality = payload.get("quality", 90)
     rotated_frames = []
 
-    for item in frames_input:
+    rotate_logger.info(
+        f"[/frames/rotate] Received {len(frames_input)} frame(s) to rotate "
+        f"(method={method})"
+    )
+
+    for fi, item in enumerate(frames_input):
         try:
             frame_base64 = item.get("frame_base64", "")
             metadata = item.get("metadata", {})
@@ -674,11 +690,15 @@ async def rotate_frames(
             frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
 
             if frame is None:
-                logger.warning("Failed to decode frame, skipping")
+                rotate_logger.warning(f"[/frames/rotate] Frame #{fi}: failed to decode, skipping")
                 continue
 
-            # Rotate
-            rotated = rotate_frame(frame, model)
+            rotate_logger.info(f"[/frames/rotate] Frame #{fi} (camera={metadata.get('serial_number', '?')}):")
+            # Rotate via selected method
+            if method == "yolo_segment":
+                rotated = rotate_frame_cv(frame)
+            else:
+                rotated = rotate_frame(frame, model)
 
             # Encode back to base64 JPEG
             success, jpeg_buffer = cv2.imencode(
@@ -695,9 +715,12 @@ async def rotate_frames(
             })
 
         except Exception as e:
-            logger.error(f"Error rotating frame: {e}")
+            rotate_logger.error(f"[/frames/rotate] Frame #{fi}: error during rotation: {e}", exc_info=True)
             continue
 
+    rotate_logger.info(
+        f"[/frames/rotate] Done — rotated {len(rotated_frames)}/{len(frames_input)} frame(s)"
+    )
     return {
         "count": len(rotated_frames),
         "frames": rotated_frames

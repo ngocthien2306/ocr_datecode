@@ -422,6 +422,11 @@ class InferenceHandler:
         logger.info(f"OBBRotationService initialized: {obb_rotation_engine}")
         logger.info(f"OBBRotationService available: {self.obb_rotation_service.available}")
 
+        # Pure-CV alternative — selected per-recipe via cap_rotation_method='yolo_segment'
+        from .preprocessing.cv_rotator import CVRotationService
+        self.cv_rotation_service = CVRotationService(inverse_transform=False)
+        logger.info(f"CVRotationService initialized (always available)")
+
     def init_matchers(self, cameras: List['Camera']):
         """
         Initialize matchers for all cameras using MatcherFactory.
@@ -1168,6 +1173,7 @@ class InferenceHandler:
                 template_verification_service=self.template_verification_service,
                 product_verification_service=self.product_verification_service,
                 obb_rotation_service=self.obb_rotation_service,
+                cv_rotation_service=self.cv_rotation_service,
                 emit_callback=emit_callback,
                 statistics=statistics
             )

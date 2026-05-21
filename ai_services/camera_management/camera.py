@@ -293,6 +293,9 @@ class Camera:
         # "outer" = product box = bottle silhouette (default, matches YOLO convention)
         # "inner" = product box = sát label (tighter)
         self.product_box_wall_type: str = "outer"
+        # Cap rotation method for /frames/rotate + Check_Color OCR sub-mode:
+        # 'yolo_obb' = trained best_bottle_m engine | 'yolo_segment' = pure CV
+        self.cap_rotation_method: str = "yolo_obb"
 
         # Frame tracking
         self.frame_idx = 0
@@ -1199,6 +1202,9 @@ class Camera:
             # Product box wall type (chỉ áp dụng cho yolo_segment): "outer" | "inner"
             pwt = recipe_data.get("product_box_wall_type")
             self.product_box_wall_type = pwt if pwt in ("outer", "inner") else "outer"
+            # Cap rotation method: 'yolo_obb' (default, TRT engine) | 'yolo_segment' (pure CV)
+            crm = recipe_data.get("cap_rotation_method")
+            self.cap_rotation_method = crm if crm in ("yolo_obb", "yolo_segment") else "yolo_obb"
             logger.info(
                 f"[{self.serial_number}] Loaded thresholds: "
                 f"matching={self.matching_threshold}, recognition={self.recognition_threshold}"

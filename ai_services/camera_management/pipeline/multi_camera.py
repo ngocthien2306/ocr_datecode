@@ -90,6 +90,36 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             crop_area = getattr(matcher, 'crop_area', None)
             frame = frames[0]  # First frame for each camera
 
+            # ── Per-camera cap rotation gate ────────────────────────────────
+            # Apply for Check_Color cameras WITHOUT a 'product' annotation
+            # (OCR-on-cap sub-mode). Select service via recipe-level
+            # `cap_rotation_method`. Cap-only rotation → safe to do before crop;
+            # background untouched, so crop_area still aligns.
+            _first_template_has_product = bool(
+                camera.templates
+                and any(a.get('type') == 'product'
+                         for a in (camera.templates[0].get('annotations') or []))
+            )
+            _need_rotation = (
+                getattr(camera, 'function_type', '') == 'Check_Color'
+                and not _first_template_has_product
+            )
+            if _need_rotation:
+                _method = getattr(camera, 'cap_rotation_method', 'yolo_obb')
+                _rot_svc = (
+                    context.cv_rotation_service
+                    if _method == 'yolo_segment'
+                    else context.obb_rotation_service
+                )
+                if _rot_svc is not None and getattr(_rot_svc, 'available', False):
+                    rotated, _M = _rot_svc.rotate_frame(
+                        frame, frame_tag=f"{serial_number}/multi"
+                    )
+                    # Replace the frame so downstream verify + save use the
+                    # rotated image (cap-only rotation, so crop_area is fine).
+                    context.results[serial_number]['frames'][0] = rotated
+                    frame = rotated
+
             if self._crop_func and crop_area:
                 frame_for_inference = self._crop_func(frame, crop_area)
             else:
@@ -122,45 +152,122 @@ class MultiCameraPipeline(InferencePipelineTemplate):
         serial_numbers = preprocessed['serial_numbers']
         crop_areas = preprocessed['crop_areas']
 
+        # Color-check cameras (function_type=Check_Color + template has 'product')
+        # don't need SuperPoint matching — image-proc in color_verifier handles
+        # bottle localization directly. Skip them from the match batch entirely.
+        cameras_by_serial = {c.serial_number: c for c in (context.cameras_to_process or [])}
+
+        def _is_color_cam(sn: str) -> bool:
+            cam = cameras_by_serial.get(sn)
+            if not cam or getattr(cam, 'function_type', '') != 'Check_Color':
+                return False
+            tmpls = getattr(cam, 'templates', None) or []
+            if not tmpls:
+                return False
+            return any(a.get('type') == 'product' for a in (tmpls[0].get('annotations') or []))
+
+        color_flags = [_is_color_cam(sn) for sn in serial_numbers]
+        non_color_idx = [i for i, c in enumerate(color_flags) if not c]
+        color_idx = [i for i, c in enumerate(color_flags) if c]
+
         try:
-            # Per-recipe matching-confidence gate (shared across all cameras in batch).
-            # Use cameras_to_process[0]; cameras under the same recipe carry identical matching_conf.
-            cameras_in_batch = context.cameras_to_process or []
-            matching_conf = 0.20
-            if cameras_in_batch:
-                matching_conf = float(getattr(cameras_in_batch[0], 'matching_conf', 0.20) or 0.20)
+            transformed_results: Dict[str, Any] = {}
+            batch_timings: Dict[str, Any] = {}
+            batch_result: Optional[Dict[str, Any]] = None
 
-            # Single batch inference call
-            batch_result = matchers[0].match_batch(
-                target_imgs=target_imgs,
-                templates=matchers,
-                score_threshold=0.3,
-                ransac_threshold=5.0,
-                min_confidence=matching_conf,
-            )
+            # ── Run SuperPoint match ONLY for non-color cameras ──────────────
+            if non_color_idx:
+                cameras_in_batch = context.cameras_to_process or []
+                matching_conf = 0.20
+                if cameras_in_batch:
+                    matching_conf = float(getattr(cameras_in_batch[0], 'matching_conf', 0.20) or 0.20)
 
-            if not batch_result.get('success', False):
-                logger.error(f"Batch inference failed: {batch_result.get('error')}")
-                return None
+                sub_targets = [target_imgs[i] for i in non_color_idx]
+                sub_matchers = [matchers[i] for i in non_color_idx]
+                sub_crops    = [crop_areas[i] for i in non_color_idx]
+                sub_serials  = [serial_numbers[i] for i in non_color_idx]
 
-            batch_timings = batch_result.get('batch_timings', {})
-            logger.info(
-                f"Batch inference complete: "
-                f"total={batch_timings.get('total', 0):.1f}ms, "
-                f"trt={batch_timings.get('trt_inference', 0):.1f}ms, "
-                f"cameras={len(serial_numbers)}"
-            )
+                batch_result = sub_matchers[0].match_batch(
+                    target_imgs=sub_targets,
+                    templates=sub_matchers,
+                    score_threshold=0.3,
+                    ransac_threshold=5.0,
+                    min_confidence=matching_conf,
+                )
 
-            # Transform results
-            transformed_results = {}
-            for idx, serial_number in enumerate(serial_numbers):
-                result = batch_result['results'][idx]
-                crop_area = crop_areas[idx]
+                if not batch_result.get('success', False):
+                    logger.error(f"Batch inference failed: {batch_result.get('error')}")
+                    return None
 
-                if self._transform_func:
-                    result = self._transform_func(result, crop_area)
+                batch_timings = batch_result.get('batch_timings', {})
+                logger.info(
+                    f"Batch inference complete: "
+                    f"total={batch_timings.get('total', 0):.1f}ms, "
+                    f"trt={batch_timings.get('trt_inference', 0):.1f}ms, "
+                    f"cameras={len(sub_serials)} (skipped {len(color_idx)} color)"
+                )
 
-                transformed_results[serial_number] = result
+                for k, sn in enumerate(sub_serials):
+                    result = batch_result['results'][k]
+                    crop_area = sub_crops[k]
+                    if self._transform_func:
+                        result = self._transform_func(result, crop_area)
+                    transformed_results[sn] = result
+            else:
+                logger.info(
+                    f"Skipping SuperPoint match: all {len(serial_numbers)} cameras "
+                    f"are color-check (image-proc handles bottle detection)"
+                )
+
+            # ── Build synthetic success results for color cameras ────────────
+            for i in color_idx:
+                sn = serial_numbers[i]
+                cam = cameras_by_serial.get(sn)
+                frames = context.results.get(sn, {}).get('frames', [])
+                frame = frames[0] if frames else None
+                if frame is not None and hasattr(frame, 'shape'):
+                    fh, fw = frame.shape[:2]
+                else:
+                    fh, fw = 1080, 1920
+                annotations = []
+                if cam and getattr(cam, 'templates', None):
+                    annotations = cam.templates[0].get('annotations') or []
+                # Denormalize template annotations → frame pixel coords. Convert
+                # rectangles to 4-corner polygons so downstream visualizer
+                # (`draw_inference_bboxes`) which expects `points` always has a
+                # valid list (avoids `len(None)` crash).
+                tb = []
+                for ann_idx, ann in enumerate(annotations):
+                    new_ann: Dict[str, Any] = dict(ann)
+                    new_ann['annotation_index'] = ann_idx
+                    pts = ann.get('points')
+                    new_pts: List[List[float]] = []
+                    if pts and len(pts) >= 3:
+                        for p in pts:
+                            if isinstance(p, dict):
+                                new_pts.append([float(p.get('x', 0)) * fw, float(p.get('y', 0)) * fh])
+                            elif isinstance(p, (list, tuple)) and len(p) >= 2:
+                                new_pts.append([float(p[0]) * fw, float(p[1]) * fh])
+                    elif ann.get('width') and ann.get('height'):
+                        x1 = float(ann.get('x', 0)) * fw
+                        y1 = float(ann.get('y', 0)) * fh
+                        x2 = (float(ann.get('x', 0)) + float(ann['width'])) * fw
+                        y2 = (float(ann.get('y', 0)) + float(ann['height'])) * fh
+                        new_pts = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+                        new_ann['x'] = x1
+                        new_ann['y'] = y1
+                        new_ann['width'] = x2 - x1
+                        new_ann['height'] = y2 - y1
+                    new_ann['points'] = new_pts  # always a list (possibly empty)
+                    tb.append(new_ann)
+                transformed_results[sn] = {
+                    'success': True,
+                    'confidence': 1.0,
+                    'inliers': 0,
+                    'total_matches': 0,
+                    'transformed_bboxes': tb,
+                    'timings': {'method': 'color_check_no_match'},
+                }
 
             return {
                 'batch_result': batch_result,
@@ -610,6 +717,18 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             serial_number = camera.serial_number
             result = transformed_results.get(serial_number, {})
             frames = context.results.get(serial_number, {}).get('frames', [])
+
+            # Skip template verification for Check_Color + product cameras —
+            # they use image-proc bottle detection and don't run SuperPoint, so
+            # there's no transformed crop to compare against the template image.
+            tmpls = getattr(camera, 'templates', None) or []
+            is_color_camera = (
+                getattr(camera, 'function_type', '') == 'Check_Color'
+                and bool(tmpls)
+                and any(a.get('type') == 'product' for a in (tmpls[0].get('annotations') or []))
+            )
+            if is_color_camera:
+                continue
 
             # Get matcher
             matcher = context.camera_matchers.get(serial_number)

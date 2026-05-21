@@ -316,8 +316,28 @@ class OBBRotationService:
             if th > tw:
                 angle_deg += 90
 
-            # Kiểm tra flip bằng ma trận (không xoay thật)
-            flipped = compute_need_flip(cap_box, text_box, angle_deg)
+            # Shape-match flip detection (100% accurate when text is near cap
+            # center, unlike the legacy compute_need_flip heuristic which is
+            # fragile in that case). Reuse the same logic as the pure-CV path.
+            try:
+                from .cv_rotator import _need_flip as _cv_need_flip
+                cap_cx, cap_cy, cap_w, cap_h, _ = cap_box
+                cap_r = max(float(cap_w), float(cap_h)) / 2.0
+                gray = (
+                    cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    if frame.ndim == 3 else frame
+                )
+                flipped, s0, s180 = _cv_need_flip(
+                    gray, (float(cap_cx), float(cap_cy), cap_r), angle_deg
+                )
+                flip_method = f"shape-match (s0={s0:.3f} s180={s180:.3f})"
+            except Exception as e:
+                # Fall back to old heuristic if shape-match fails for any reason
+                self._rot_logger.warning(
+                    f"{tag}shape-match failed ({e}), falling back to legacy heuristic"
+                )
+                flipped = compute_need_flip(cap_box, text_box, angle_deg)
+                flip_method = "legacy heuristic"
 
             # Chỉ xoay vùng cap (circular mask), background giữ nguyên
             result = rotate_cap_region_only(frame, cap_box, angle_deg, flipped)
@@ -327,7 +347,7 @@ class OBBRotationService:
 
             self._rot_logger.info(
                 f"{tag}OK — angle={angle_deg:.1f}°{flip_str} total={total_angle:.1f}°  "
-                f"cap_only=True  infer={infer_ms:.1f}ms"
+                f"cap_only=True  infer={infer_ms:.1f}ms  flip_via={flip_method}"
             )
 
             return result, None

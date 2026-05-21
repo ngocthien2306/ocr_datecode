@@ -95,21 +95,29 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             matchers = [matcher_or_list]
             num_templates = 1
 
-        # OBB rotation rotates the FULL frame so SuperPoint sees an upright bottle.
-        # This applies to Check_Color cameras whose templates DON'T have a 'product'
-        # annotation (i.e. OCR-on-cap mode). Check_Color + product is the new color
-        # check path → no rotation (image-proc bottle detector handles arbitrary
-        # orientation, and rotating could hide the bottle from the image-proc
-        # sharpness map if the model's rotation hint is wrong for side-view bottles).
+        # Rotation rotates the FULL frame so SuperPoint sees an upright bottle.
+        # Applies to Check_Color cameras whose templates DON'T have a 'product'
+        # annotation (i.e. OCR-on-cap mode). Check_Color + product → color check
+        # mode → no rotation.
+        #
+        # Engine selection (recipe-level `cap_rotation_method`):
+        #   - 'yolo_obb'      → context.obb_rotation_service (trained TRT engine)
+        #   - 'yolo_segment'  → context.cv_rotation_service  (pure CV)
         _first_template_has_product = bool(
             camera.templates
             and any(a.get('type') == 'product' for a in (camera.templates[0].get('annotations') or []))
         )
+        _method = getattr(camera, 'cap_rotation_method', 'yolo_obb')
+        _rotation_service = (
+            context.cv_rotation_service
+            if _method == 'yolo_segment'
+            else context.obb_rotation_service
+        )
         use_obb_rotation = (
             camera.function_type == 'Check_Color'
             and not _first_template_has_product
-            and context.obb_rotation_service
-            and context.obb_rotation_service.available
+            and _rotation_service is not None
+            and getattr(_rotation_service, 'available', False)
         )
         frame_rotation_matrices = [None] * len(frames)
 
@@ -118,13 +126,13 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             rotated_frames = []
             for idx, frame in enumerate(frames):
                 frame_tag = f"{serial_number}/frame{idx}"
-                rotated, M = context.obb_rotation_service.rotate_frame(
+                rotated, M = _rotation_service.rotate_frame(
                     frame, frame_tag=frame_tag
                 )
                 rotated_frames.append(rotated)
                 frame_rotation_matrices[idx] = M  # None means rotation failed → original used
 
-            if context.obb_rotation_service.inverse_transform:
+            if getattr(_rotation_service, 'inverse_transform', False):
                 # inverse_transform=True: output dùng ảnh gốc, bbox sẽ được inverse về tọa độ gốc
                 # → KHÔNG replace frames trong context (giữ ảnh gốc cho display/OCR output)
                 pass
@@ -196,6 +204,61 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             # Per-recipe matching-confidence gate (default 0.20 = 20%)
             camera = context.cameras_to_process[0]
             matching_conf = float(getattr(camera, 'matching_conf', 0.20) or 0.20)
+
+            # If ALL matchers are ColorCheck stubs, skip SuperPoint entirely and
+            # synthesize success results from the raw camera templates (denormalized
+            # to frame coords). Mirrors multi_camera.run_inference's fast path.
+            all_color_stub = all(
+                getattr(m, 'is_color_check_stub', False) for m in matchers
+            )
+            if all_color_stub:
+                logger.info(
+                    f"[{camera.serial_number}] Skipping SuperPoint match: all "
+                    f"{len(matchers)} matchers are ColorCheck stubs"
+                )
+                transformed_results = []
+                for idx in range(len(target_imgs)):
+                    frame = target_imgs[idx]
+                    if frame is not None and hasattr(frame, 'shape'):
+                        fh, fw = frame.shape[:2]
+                    else:
+                        fh, fw = 1080, 1920
+                    annotations = []
+                    if camera.templates and idx < len(camera.templates):
+                        annotations = camera.templates[idx].get('annotations') or []
+                    tb: List[Dict[str, Any]] = []
+                    for ann_idx, ann in enumerate(annotations):
+                        new_ann: Dict[str, Any] = dict(ann)
+                        new_ann['annotation_index'] = ann_idx
+                        pts = ann.get('points')
+                        new_pts: List[List[float]] = []
+                        if pts and len(pts) >= 3:
+                            for p in pts:
+                                if isinstance(p, dict):
+                                    new_pts.append([float(p.get('x', 0)) * fw, float(p.get('y', 0)) * fh])
+                                elif isinstance(p, (list, tuple)) and len(p) >= 2:
+                                    new_pts.append([float(p[0]) * fw, float(p[1]) * fh])
+                        elif ann.get('width') and ann.get('height'):
+                            x1 = float(ann.get('x', 0)) * fw
+                            y1 = float(ann.get('y', 0)) * fh
+                            x2 = (float(ann.get('x', 0)) + float(ann['width'])) * fw
+                            y2 = (float(ann.get('y', 0)) + float(ann['height'])) * fh
+                            new_pts = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+                        new_ann['points'] = new_pts
+                        tb.append(new_ann)
+                    transformed_results.append({
+                        'success': True,
+                        'confidence': 1.0,
+                        'inliers': 0,
+                        'total_matches': 0,
+                        'transformed_bboxes': tb,
+                        'timings': {'method': 'color_check_no_match'},
+                    })
+                return {
+                    'batch_result': None,
+                    'transformed_results': transformed_results,
+                    'timings': {'total': 0.0}
+                }
 
             # Use first matcher for batch inference
             batch_result = matchers[0].match_batch(
@@ -360,8 +423,20 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             frame = frames[idx]
             matcher = matchers[idx] if idx < len(matchers) else matchers[0]
 
+            # Skip template verification for Check_Color + product templates —
+            # no SuperPoint match runs so there's no aligned crop to compare.
+            template_annotations_now = (
+                camera.templates[idx].get('annotations') or []
+                if camera.templates and idx < len(camera.templates) else []
+            )
+            _is_color_frame_tv = (
+                getattr(camera, 'function_type', '') == 'Check_Color'
+                and any(a.get('type') == 'product' for a in template_annotations_now)
+            )
+
             # Template verification
-            if (result.get('success') and
+            if (not _is_color_frame_tv and
+                result.get('success') and
                 context.template_verification_service and
                 hasattr(matcher, 'template_img') and
                 hasattr(matcher, 'template_bbox')):

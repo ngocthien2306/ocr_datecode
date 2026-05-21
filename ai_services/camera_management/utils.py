@@ -389,7 +389,10 @@ def draw_inference_bboxes(
     # Draw each bbox
     for bbox in transformed_bboxes:
         bbox_type = bbox.get('type', 'text')
-        points = bbox.get('points', [])
+        # `dict.get` returns the value if the key exists even when that value is
+        # None (the default is only used for MISSING keys). Pydantic rectangle
+        # annotations leave `points: None` after deserialization, so coerce to [].
+        points = bbox.get('points') or []
         text_label = bbox.get('text', '')
 
         if len(points) < 3:

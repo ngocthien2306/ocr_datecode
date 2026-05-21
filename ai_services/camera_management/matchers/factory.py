@@ -22,6 +22,36 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class ColorCheckStubMatcher:
+    """
+    Stub matcher for Check_Color cameras with a 'product' annotation.
+
+    Color check uses image-proc bottle detection — no SuperPoint inference and
+    no template-image alignment. We still need a *matcher object* so the camera
+    survives the `serial in camera_matchers` gate in inference_handler. Only
+    `crop_area` is consulted downstream; the other attributes exist for
+    interface compatibility with the visualizer / `_batch_verify_templates`
+    (which skips color cameras anyway).
+    """
+
+    def __init__(self, crop_area: Optional[Dict[str, Any]] = None):
+        self.crop_area = crop_area
+        self.template_img = None
+        self.template_bbox = None
+        self.other_bboxes = []
+        self.is_color_check_stub = True
+
+    def match_batch(self, *args, **kwargs):
+        """Return an empty success result. Should not be called in practice — the
+        pipeline filters color cameras out of the match batch before this gets
+        invoked; this fallback exists only so a mis-routed call doesn't crash."""
+        return {
+            'success': True,
+            'results': [],
+            'batch_timings': {'total': 0.0, 'trt_inference': 0.0},
+        }
+
+
 class MatcherFactory:
     """
     Factory for creating template matchers.
@@ -109,6 +139,46 @@ class MatcherFactory:
             if not template_data:
                 logger.error(f"[{serial_number}] Template {template_idx}: No template data")
                 return None
+
+            # ── Fast path: Check_Color + product annotation ──────────────────
+            # These cameras don't need SuperPoint matching — image-proc handles
+            # bottle localization in color_verifier. Skip the heavy template-bbox
+            # requirement and TRT engine load; return a stub matcher carrying
+            # only crop_area (used for optional frame pre-crop).
+            annotations_raw = template_data.get("annotations") or []
+            is_color_camera = (
+                getattr(camera, 'function_type', '') == 'Check_Color'
+                and any(a.get('type') == 'product' for a in annotations_raw)
+            )
+            if is_color_camera:
+                # Best-effort parse of crop_area (optional, may be missing).
+                # If template image dims unknown we skip crop_area; color_verifier
+                # falls back to using the full frame.
+                crop_area_dict: Optional[Dict[str, Any]] = None
+                try:
+                    img_w_t = int(template_data.get('image_width') or 0)
+                    img_h_t = int(template_data.get('image_height') or 0)
+                    if img_w_t > 0 and img_h_t > 0:
+                        crop_area_obj = AnnotationParser._parse_crop_area(
+                            annotations=annotations_raw,
+                            img_width=img_w_t,
+                            img_height=img_h_t,
+                            serial_number=serial_number,
+                            template_idx=template_idx,
+                        )
+                        if crop_area_obj and crop_area_obj.is_valid():
+                            crop_area_dict = crop_area_obj.to_dict()
+                except Exception as e:
+                    logger.warning(
+                        f"[{serial_number}] Template {template_idx}: "
+                        f"crop_area parse failed (continuing without crop): {e}"
+                    )
+                stub = ColorCheckStubMatcher(crop_area=crop_area_dict)
+                logger.info(
+                    f"[{serial_number}] Matcher {template_idx}: ColorCheck stub "
+                    f"(no SuperPoint), crop_area={'set' if crop_area_dict else 'none'}"
+                )
+                return stub
 
             image_url = template_data.get("image_url")
             if not image_url:

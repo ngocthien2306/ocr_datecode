@@ -145,6 +145,7 @@ class RecipeBase(BaseModel):
     template_bank_size: Optional[int] = Field(default=10, ge=1, le=50, description="Max dynamic templates per (camera, annotation)")
     char_denoise_enabled: Optional[bool] = Field(default=False, description="Largest-CC noise filter before centroid alignment in char verification")
     product_detection_method: Optional[str] = Field(default="yolo_obb", description="Method to detect bottle edges: 'yolo_obb' (YOLO OBB model) | 'yolo_segment' (image processing — Sobel/edge detection)")
+    cap_rotation_method: Optional[str] = Field(default="yolo_obb", description="Method to rotate caps so date-code text faces upright: 'yolo_obb' (trained YOLO OBB model) | 'yolo_segment' (pure CV — HoughCircles + projection profile + shape match)")
     product_box_wall_type: Optional[str] = Field(default="outer", description="When product_detection_method='yolo_segment', which wall to use for product box corners: 'outer' (bottle silhouette) | 'inner' (closer to label)")
 
     # Wrinkle segmentation model confidence threshold (recipe-level, applies to all cameras)
@@ -197,6 +198,7 @@ class RecipeUpdate(BaseModel):
     char_denoise_enabled: Optional[bool] = None
     product_detection_method: Optional[str] = None
     product_box_wall_type: Optional[str] = None
+    cap_rotation_method: Optional[str] = None
     wrinkle_conf: Optional[float] = Field(None, ge=0.0, le=1.0)
     wrinkle_show_when_pass: Optional[bool] = None
     matching_conf: Optional[float] = Field(None, ge=0.0, le=1.0)
