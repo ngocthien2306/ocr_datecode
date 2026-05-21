@@ -296,6 +296,14 @@ class Camera:
         # Cap rotation method for /frames/rotate + Check_Color OCR sub-mode:
         # 'yolo_obb' = trained best_bottle_m engine | 'yolo_segment' = pure CV
         self.cap_rotation_method: str = "yolo_obb"
+        # Cap crop method: detect cap circle and feed cap-only crop to SuperPoint
+        # 'none' (default, off) | 'yolo_obb' | 'yolo_segment'
+        self.cap_crop_method: str = "none"
+        # Method for matching template ↔ target crop (transforms annotation
+        # bboxes from template-coords to frame-coords): 'superpoint' (default,
+        # TRT model) | 'shape_outline' (ECC on Sobel gradient — ~30ms, ideal
+        # for cap-OCR after cap_rotation + cap_crop)
+        self.crop_match_method: str = "superpoint"
 
         # Frame tracking
         self.frame_idx = 0
@@ -1205,6 +1213,11 @@ class Camera:
             # Cap rotation method: 'yolo_obb' (default, TRT engine) | 'yolo_segment' (pure CV)
             crm = recipe_data.get("cap_rotation_method")
             self.cap_rotation_method = crm if crm in ("yolo_obb", "yolo_segment") else "yolo_obb"
+            ccm = recipe_data.get("cap_crop_method")
+            self.cap_crop_method = ccm if ccm in ("none", "yolo_obb", "yolo_segment") else "none"
+            # Crop match method: 'superpoint' (default, TRT) | 'shape_outline' (ECC)
+            cmm = recipe_data.get("crop_match_method")
+            self.crop_match_method = cmm if cmm in ("superpoint", "shape_outline") else "superpoint"
             logger.info(
                 f"[{self.serial_number}] Loaded thresholds: "
                 f"matching={self.matching_threshold}, recognition={self.recognition_threshold}"

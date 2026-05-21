@@ -472,6 +472,8 @@ def recipe_to_response(recipe: RecipeInDB, user_names_map: dict = None) -> Recip
         char_denoise_enabled=getattr(recipe, 'char_denoise_enabled', False),
         product_detection_method=getattr(recipe, 'product_detection_method', 'yolo_obb'),
         cap_rotation_method=getattr(recipe, 'cap_rotation_method', 'yolo_obb'),
+        cap_crop_method=getattr(recipe, 'cap_crop_method', 'none'),
+        crop_match_method=getattr(recipe, 'crop_match_method', 'superpoint'),
         product_box_wall_type=getattr(recipe, 'product_box_wall_type', 'outer'),
         wrinkle_conf=getattr(recipe, 'wrinkle_conf', None),
         wrinkle_show_when_pass=getattr(recipe, 'wrinkle_show_when_pass', None),
@@ -939,6 +941,109 @@ async def list_recipe_loads(
 
 
 
+@router.post("/templates/detect-bottle-preview")
+async def detect_bottle_preview(body: dict):
+    """
+    Run the image-proc bottle detector (`color_verifier._detect_bottle`) on a
+    saved template image, using the same tuning params that ColorSetupModal will
+    persist into `color_config`. Returns the detected bottle bbox so the FE can
+    overlay it on the canvas for tuning feedback.
+
+    Body:
+        image_url:                str          (e.g. /api/recipes/templates/images/xxx.jpg)
+        product_polygon:          [[x,y], ...] (TEMPLATE pixel coords)
+        crop_area:                {x1, y1, x2, y2}  (optional — TEMPLATE pixel coords)
+        sharp_threshold:          float        (default 0.30)
+        min_height_ratio:         float        (default 0.20)
+        min_aspect:               float        (default 1.2)
+
+    Returns:
+        {
+          detected: bool,
+          bbox: {x, y, w, h} | null   # in TEMPLATE pixel coords (offset applied)
+          corners: [[x,y]×4] | null
+          score: float | null
+          reason: str | null
+        }
+    """
+    import sys
+    import numpy as np
+    import cv2
+
+    image_url = body.get("image_url", "")
+    product_polygon = body.get("product_polygon")
+    crop_area = body.get("crop_area")
+    sharp_threshold = float(body.get("sharp_threshold", 0.30))
+    min_height_ratio = float(body.get("min_height_ratio", 0.20))
+    min_aspect = float(body.get("min_aspect", 1.2))
+
+    if not image_url or not product_polygon:
+        raise HTTPException(400, "image_url and product_polygon are required")
+    if len(product_polygon) < 3:
+        raise HTTPException(400, "product_polygon must have at least 3 points")
+
+    filename = image_url.split("/")[-1]
+    image_path = TEMPLATE_UPLOAD_DIR / filename
+    if not image_path.exists():
+        raise HTTPException(404, f"Template image not found: {filename}")
+
+    # Add ai_services to sys.path so we can reuse ColorVerificationService._detect_bottle
+    home = os.environ.get("HOME", "")
+    ai_path = os.path.join(home, "Source", "ocr_datecode", "ai_services")
+    if ai_path not in sys.path:
+        sys.path.insert(0, ai_path)
+    try:
+        from camera_management.verification.color_verifier import ColorVerificationService
+    except Exception as e:
+        raise HTTPException(503, f"color_verifier import failed: {e}")
+
+    img = cv2.imread(str(image_path))
+    if img is None:
+        raise HTTPException(500, "Failed to read template image")
+
+    H, W = img.shape[:2]
+
+    # Apply crop_area if provided (already in pixel coords)
+    crop_offset = (0, 0)
+    crop_img = img
+    if crop_area:
+        x1 = max(0, int(crop_area.get("x1", 0)))
+        y1 = max(0, int(crop_area.get("y1", 0)))
+        x2 = min(W, int(crop_area.get("x2", W)))
+        y2 = min(H, int(crop_area.get("y2", H)))
+        if x2 > x1 and y2 > y1:
+            crop_img = img[y1:y2, x1:x2]
+            crop_offset = (x1, y1)
+
+    # Build polygon in CROP coords (subtract crop offset)
+    poly = np.array(product_polygon, dtype=np.float32)
+    poly_in_crop = poly - np.array(crop_offset, dtype=np.float32)
+
+    bottle = ColorVerificationService._detect_bottle(
+        crop_img, poly_in_crop, crop_offset,
+        sharp_threshold=sharp_threshold,
+        min_height_ratio=min_height_ratio,
+        min_aspect=min_aspect,
+    )
+    if bottle is None:
+        return {
+            "detected": False, "bbox": None, "corners": None,
+            "score": None, "reason": "No bottle candidate matched the criteria",
+        }
+
+    box = bottle.get("box", [0, 0, 0, 0, 0])
+    cx, cy, bw, bh = float(box[0]), float(box[1]), float(box[2]), float(box[3])
+    x = int(cx - bw / 2.0)
+    y = int(cy - bh / 2.0)
+    return {
+        "detected": True,
+        "bbox": {"x": x, "y": y, "w": int(bw), "h": int(bh)},
+        "corners": bottle.get("corners"),
+        "score": float(bottle.get("score", 0.0)),
+        "reason": None,
+    }
+
+
 @router.post("/templates/upload")
 async def upload_template_image(
     file: UploadFile = File(...),
@@ -1269,6 +1374,8 @@ async def clone_recipe(
         char_denoise_enabled=getattr(original_recipe, 'char_denoise_enabled', False),
         product_detection_method=getattr(original_recipe, 'product_detection_method', 'yolo_obb'),
         cap_rotation_method=getattr(original_recipe, 'cap_rotation_method', 'yolo_obb'),
+        cap_crop_method=getattr(original_recipe, 'cap_crop_method', 'none'),
+        crop_match_method=getattr(original_recipe, 'crop_match_method', 'superpoint'),
         product_box_wall_type=getattr(original_recipe, 'product_box_wall_type', 'outer'),
         wrinkle_conf=getattr(original_recipe, 'wrinkle_conf', None),
         wrinkle_show_when_pass=getattr(original_recipe, 'wrinkle_show_when_pass', None),
@@ -1425,6 +1532,8 @@ async def load_recipe(
         'char_denoise_enabled': getattr(recipe, 'char_denoise_enabled', False),
         'product_detection_method': getattr(recipe, 'product_detection_method', None) or 'yolo_obb',
         'cap_rotation_method': getattr(recipe, 'cap_rotation_method', None) or 'yolo_obb',
+        'cap_crop_method': getattr(recipe, 'cap_crop_method', None) or 'none',
+        'crop_match_method': getattr(recipe, 'crop_match_method', None) or 'superpoint',
         'product_box_wall_type': getattr(recipe, 'product_box_wall_type', None) or 'outer',
         'wrinkle_conf': getattr(recipe, 'wrinkle_conf', None),
         'wrinkle_show_when_pass': getattr(recipe, 'wrinkle_show_when_pass', None),
@@ -1467,6 +1576,8 @@ async def load_recipe(
         'char_denoise_enabled': getattr(recipe, 'char_denoise_enabled', False),
         'product_detection_method': getattr(recipe, 'product_detection_method', None) or 'yolo_obb',
         'cap_rotation_method': getattr(recipe, 'cap_rotation_method', None) or 'yolo_obb',
+        'cap_crop_method': getattr(recipe, 'cap_crop_method', None) or 'none',
+        'crop_match_method': getattr(recipe, 'crop_match_method', None) or 'superpoint',
         'product_box_wall_type': getattr(recipe, 'product_box_wall_type', None) or 'outer',
         'wrinkle_conf': getattr(recipe, 'wrinkle_conf', None),
         'wrinkle_show_when_pass': getattr(recipe, 'wrinkle_show_when_pass', None),
@@ -1781,6 +1892,8 @@ async def update_recipe_realtime(
         'char_denoise_enabled': getattr(recipe, 'char_denoise_enabled', False),
         'product_detection_method': getattr(recipe, 'product_detection_method', None) or 'yolo_obb',
         'cap_rotation_method': getattr(recipe, 'cap_rotation_method', None) or 'yolo_obb',
+        'cap_crop_method': getattr(recipe, 'cap_crop_method', None) or 'none',
+        'crop_match_method': getattr(recipe, 'crop_match_method', None) or 'superpoint',
         'product_box_wall_type': getattr(recipe, 'product_box_wall_type', None) or 'outer',
         'wrinkle_conf': getattr(recipe, 'wrinkle_conf', None),
         'wrinkle_show_when_pass': getattr(recipe, 'wrinkle_show_when_pass', None),

@@ -191,6 +191,7 @@ export interface Recipe {
   product_box_wall_type?: string;
   cap_rotation_method?: string;
   cap_crop_method?: string;
+  crop_match_method?: string;
   wrinkle_conf?: number;
   wrinkle_show_when_pass?: boolean;
   matching_conf?: number;
@@ -288,6 +289,7 @@ export interface Receipt {
   product_box_wall_type?: string;
   cap_rotation_method?: string;
   cap_crop_method?: string;
+  crop_match_method?: string;
   wrinkle_conf?: number;
   wrinkle_show_when_pass?: boolean;
   matching_conf?: number;

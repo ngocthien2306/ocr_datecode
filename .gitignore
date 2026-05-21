@@ -212,4 +212,17 @@ tests/fragment_removal_demo
 shape_based_matching/
 crop_samples/
 crop_samples_1/
+crop_samples_2/
 tools/annotator/
+languages/english/rec_model_fp16.engine
+languages/english/rec_model_fp32.engine
+languages/english/rec_smtr_fp16.engine
+languages/english/rec_smtr_fp16.onnx
+languages/english/rec_smtr.onnx
+weights/best_bottle_m_1.onnx
+weights/best_wrinkled_instance_segmentation_crop_bottle_m_640.engine
+weights/best_wrinkled_instance_segmentation_crop_bottle_n.engine
+weights/best_wrinkled_instance_segmentation_crop_bottle_n.onnx
+weights/best_wrinkled_instance_segmentation_crop_bottle.engine
+weights/best_bottle_m.onnx
+weights/best_bottle_obb_m_320.engine

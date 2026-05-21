@@ -70,10 +70,19 @@ class MultiCameraPipeline(InferencePipelineTemplate):
 
     def preprocess(self, context: PipelineContext) -> Optional[Dict[str, Any]]:
         """Prepare all camera frames for batch inference"""
+        import time as _time
+        _t_preproc_start = _time.perf_counter()
         target_imgs = []
         matchers = []
         serial_numbers = []
         crop_areas = []
+
+        # Per-stage timing aggregates (ms)
+        _ms_cap_rotation = 0.0
+        _ms_cap_crop = 0.0
+        _ms_crop_apply = 0.0
+        _n_cap_rotation = 0
+        _n_cap_crop = 0
 
         for camera in context.cameras_to_process:
             serial_number = camera.serial_number
@@ -112,16 +121,74 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     else context.obb_rotation_service
                 )
                 if _rot_svc is not None and getattr(_rot_svc, 'available', False):
+                    _t0 = _time.perf_counter()
                     rotated, _M = _rot_svc.rotate_frame(
                         frame, frame_tag=f"{serial_number}/multi"
+                    )
+                    _dt_rot = (_time.perf_counter() - _t0) * 1000
+                    _ms_cap_rotation += _dt_rot
+                    _n_cap_rotation += 1
+                    logger.info(
+                        f"[{serial_number}] cap_rotation ({_method}) "
+                        f"in {_dt_rot:.1f}ms"
                     )
                     # Replace the frame so downstream verify + save use the
                     # rotated image (cap-only rotation, so crop_area is fine).
                     context.results[serial_number]['frames'][0] = rotated
                     frame = rotated
 
-            if self._crop_func and crop_area:
+            # ── cap_crop_method active: detect cap per-frame, override crop_area ──
+            _cap_crop_method = getattr(matcher, 'cap_crop_method', 'none')
+            if _cap_crop_method and _cap_crop_method != 'none':
+                _t0 = _time.perf_counter()
+                try:
+                    from ..preprocessing.cv_rotator import detect_cap_and_crop
+                    cap_result = detect_cap_and_crop(frame, margin_ratio=0.10)
+                    _dt_cap = (_time.perf_counter() - _t0) * 1000
+                    _ms_cap_crop += _dt_cap
+                    _n_cap_crop += 1
+                    if cap_result is not None:
+                        frame_for_inference = cap_result[0]
+                        # Synthesize crop_area from per-frame cap bbox so the
+                        # downstream `_transform_func(result, crop_area)` adds
+                        # the (fx1, fy1) offset back to bboxes — otherwise
+                        # transformed_bboxes stay in cap-crop coords and the
+                        # text/template verifiers crop the wrong region from
+                        # the full frame.
+                        _fx1, _fy1, _fx2, _fy2 = cap_result[1]
+                        crop_area = {
+                            'x1': int(_fx1), 'y1': int(_fy1),
+                            'x2': int(_fx2), 'y2': int(_fy2),
+                        }
+                        logger.info(
+                            f"[{serial_number}] cap_crop ({_cap_crop_method}) "
+                            f"in {_dt_cap:.1f}ms: frame={frame.shape[:2]} → "
+                            f"crop={frame_for_inference.shape[:2]} bbox={cap_result[1]}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[{serial_number}] cap_crop FAIL in {_dt_cap:.1f}ms — "
+                            f"no cap detected; falling back to crop_area"
+                        )
+                        _t1 = _time.perf_counter()
+                        frame_for_inference = (
+                            self._crop_func(frame, crop_area)
+                            if self._crop_func and crop_area else frame
+                        )
+                        _ms_crop_apply += (_time.perf_counter() - _t1) * 1000
+                except Exception as e:
+                    _ms_cap_crop += (_time.perf_counter() - _t0) * 1000
+                    logger.warning(f"[{serial_number}] cap_crop error: {e}")
+                    _t1 = _time.perf_counter()
+                    frame_for_inference = (
+                        self._crop_func(frame, crop_area)
+                        if self._crop_func and crop_area else frame
+                    )
+                    _ms_crop_apply += (_time.perf_counter() - _t1) * 1000
+            elif self._crop_func and crop_area:
+                _t0 = _time.perf_counter()
                 frame_for_inference = self._crop_func(frame, crop_area)
+                _ms_crop_apply += (_time.perf_counter() - _t0) * 1000
             else:
                 frame_for_inference = frame
 
@@ -133,6 +200,15 @@ class MultiCameraPipeline(InferencePipelineTemplate):
         if not target_imgs:
             logger.error(f"[Job #{context.job_id}] No valid frames to process")
             return None
+
+        _dt_total = (_time.perf_counter() - _t_preproc_start) * 1000
+        logger.info(
+            f"[Job #{context.job_id}] preprocess breakdown: "
+            f"total={_dt_total:.1f}ms | "
+            f"cap_rotation={_ms_cap_rotation:.1f}ms (n={_n_cap_rotation}) | "
+            f"cap_crop_detect={_ms_cap_crop:.1f}ms (n={_n_cap_crop}) | "
+            f"crop_apply={_ms_crop_apply:.1f}ms"
+        )
 
         return {
             'target_imgs': target_imgs,
@@ -166,26 +242,41 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                 return False
             return any(a.get('type') == 'product' for a in (tmpls[0].get('annotations') or []))
 
+        # Shape-outline cameras (crop_match_method='shape_outline') also skip
+        # SuperPoint — we run ECC affine alignment on Sobel gradient instead.
+        def _is_shape_outline_cam(sn: str) -> bool:
+            cam = cameras_by_serial.get(sn)
+            if not cam:
+                return False
+            return getattr(cam, 'crop_match_method', 'superpoint') == 'shape_outline'
+
         color_flags = [_is_color_cam(sn) for sn in serial_numbers]
-        non_color_idx = [i for i, c in enumerate(color_flags) if not c]
+        shape_flags = [
+            _is_shape_outline_cam(sn) and not color_flags[i]
+            for i, sn in enumerate(serial_numbers)
+        ]
+        # Non-color & non-shape go through SuperPoint
+        sp_idx    = [i for i in range(len(serial_numbers))
+                      if not color_flags[i] and not shape_flags[i]]
         color_idx = [i for i, c in enumerate(color_flags) if c]
+        shape_idx = [i for i, s in enumerate(shape_flags) if s]
 
         try:
             transformed_results: Dict[str, Any] = {}
             batch_timings: Dict[str, Any] = {}
             batch_result: Optional[Dict[str, Any]] = None
 
-            # ── Run SuperPoint match ONLY for non-color cameras ──────────────
-            if non_color_idx:
+            # ── Run SuperPoint match ONLY for non-color, non-shape cameras ───
+            if sp_idx:
                 cameras_in_batch = context.cameras_to_process or []
                 matching_conf = 0.20
                 if cameras_in_batch:
                     matching_conf = float(getattr(cameras_in_batch[0], 'matching_conf', 0.20) or 0.20)
 
-                sub_targets = [target_imgs[i] for i in non_color_idx]
-                sub_matchers = [matchers[i] for i in non_color_idx]
-                sub_crops    = [crop_areas[i] for i in non_color_idx]
-                sub_serials  = [serial_numbers[i] for i in non_color_idx]
+                sub_targets = [target_imgs[i] for i in sp_idx]
+                sub_matchers = [matchers[i] for i in sp_idx]
+                sub_crops    = [crop_areas[i] for i in sp_idx]
+                sub_serials  = [serial_numbers[i] for i in sp_idx]
 
                 batch_result = sub_matchers[0].match_batch(
                     target_imgs=sub_targets,
@@ -204,7 +295,8 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     f"Batch inference complete: "
                     f"total={batch_timings.get('total', 0):.1f}ms, "
                     f"trt={batch_timings.get('trt_inference', 0):.1f}ms, "
-                    f"cameras={len(sub_serials)} (skipped {len(color_idx)} color)"
+                    f"cameras={len(sub_serials)} (skipped {len(color_idx)} color, "
+                    f"{len(shape_idx)} shape_outline)"
                 )
 
                 for k, sn in enumerate(sub_serials):
@@ -215,9 +307,60 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     transformed_results[sn] = result
             else:
                 logger.info(
-                    f"Skipping SuperPoint match: all {len(serial_numbers)} cameras "
-                    f"are color-check (image-proc handles bottle detection)"
+                    f"Skipping SuperPoint match: 0 SP cameras of "
+                    f"{len(serial_numbers)} (color={len(color_idx)}, "
+                    f"shape_outline={len(shape_idx)})"
                 )
+
+            # ── Shape-outline match for cameras with crop_match_method='shape_outline' ──
+            if shape_idx:
+                from ..matchers.shape_outline import match_shape_outline
+                for i in shape_idx:
+                    sn = serial_numbers[i]
+                    matcher = matchers[i]
+                    target_img = target_imgs[i]
+                    crop_area = crop_areas[i]
+                    template_img = getattr(matcher, 'template_img', None)
+                    template_bbox = getattr(matcher, 'template_bbox', None)
+                    other_bboxes = getattr(matcher, 'other_bboxes', []) or []
+
+                    # SuperPointMatcherTRT stores template_bbox / other_bboxes as
+                    # dicts on the matcher; convert dataclass BoundingBox if needed.
+                    def _to_dict(bb):
+                        if bb is None:
+                            return None
+                        if isinstance(bb, dict):
+                            return bb
+                        if hasattr(bb, 'to_dict'):
+                            return bb.to_dict()
+                        return None
+                    template_bbox_d = _to_dict(template_bbox)
+                    other_bboxes_d = [_to_dict(b) for b in other_bboxes if b is not None]
+
+                    if template_img is None or template_bbox_d is None:
+                        logger.warning(
+                            f"[{sn}] shape_outline: matcher missing template_img/template_bbox; "
+                            f"using passthrough (no transformation)"
+                        )
+                        result = {
+                            'success': False,
+                            'error': 'no template data on matcher',
+                            'transformed_bboxes': [],
+                            'confidence': 0.0, 'inliers': 0, 'total_matches': 0,
+                            'target_img': target_img,
+                        }
+                    else:
+                        result = match_shape_outline(
+                            template_img=template_img,
+                            target_img=target_img,
+                            template_bbox=template_bbox_d,
+                            other_bboxes=other_bboxes_d,
+                            serial=sn,
+                        )
+
+                    if self._transform_func:
+                        result = self._transform_func(result, crop_area)
+                    transformed_results[sn] = result
 
             # ── Build synthetic success results for color cameras ────────────
             for i in color_idx:

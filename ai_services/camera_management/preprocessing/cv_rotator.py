@@ -30,6 +30,16 @@ import numpy as np
 logger = logging.getLogger(__name__)
 _FONT = cv2.FONT_HERSHEY_SIMPLEX
 
+# Pre-rendered "BEST" templates at fixed scales — cached at import time so
+# _need_flip doesn't re-render on every frame. Two scales cover the typical
+# size variation of date-code text inside the cap region; more scales would
+# re-introduce the matchTemplate cost dominating cap_rotation.
+# Scales here are matched to the 2× downsampled ROI used in _need_flip
+# (i.e. 0.5 == effective 1.0× on full ROI).
+_REF_SCALES = (0.5, 0.75)
+_REF_THICKNESS = 1
+_REF_TEMPLATES: list = []  # filled lazily by _get_ref_templates()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Cap detection
@@ -126,6 +136,16 @@ def _render_ref(text: str, scale: float, thickness: int) -> np.ndarray:
     return img
 
 
+def _get_ref_templates() -> list:
+    """Render 'BEST' templates once at module load and reuse across frames."""
+    global _REF_TEMPLATES
+    if not _REF_TEMPLATES:
+        _REF_TEMPLATES = [
+            _render_ref("BEST", s, _REF_THICKNESS) for s in _REF_SCALES
+        ]
+    return _REF_TEMPLATES
+
+
 def _need_flip(gray: np.ndarray, cap: Tuple[float, float, float],
                 angle_deg: float) -> Tuple[bool, float, float]:
     cx, cy, r = cap
@@ -138,16 +158,21 @@ def _need_flip(gray: np.ndarray, cap: Tuple[float, float, float],
     M = cv2.getRotationMatrix2D((lcx, lcy), angle_deg, 1.0)
     rotated = cv2.warpAffine(roi, M, (roi.shape[1], roi.shape[0]),
                               flags=cv2.INTER_LINEAR, borderValue=255)
-    flipped = cv2.rotate(rotated, cv2.ROTATE_180)
+    # Downsample 2× before matchTemplate — matchTemplate is O((W·H)·(w·h))
+    # so halving both dimensions gives ~16× speedup with negligible accuracy
+    # impact for shape-match at the scales we use.
+    rotated_ds = cv2.resize(rotated, None, fx=0.5, fy=0.5,
+                             interpolation=cv2.INTER_AREA)
+    flipped_ds = cv2.rotate(rotated_ds, cv2.ROTATE_180)
 
     best_s0, best_s180 = -2.0, -2.0
-    for scale in (0.8, 1.0, 1.2, 1.5, 1.8, 2.2):
-        tpl = _render_ref("BEST", scale, 2)
-        if tpl.shape[0] >= rotated.shape[0] or tpl.shape[1] >= rotated.shape[1]:
+    for tpl in _get_ref_templates():
+        if (tpl.shape[0] >= rotated_ds.shape[0]
+                or tpl.shape[1] >= rotated_ds.shape[1]):
             continue
         try:
-            s0 = float(cv2.matchTemplate(rotated, tpl, cv2.TM_CCOEFF_NORMED).max())
-            s180 = float(cv2.matchTemplate(flipped, tpl, cv2.TM_CCOEFF_NORMED).max())
+            s0 = float(cv2.matchTemplate(rotated_ds, tpl, cv2.TM_CCOEFF_NORMED).max())
+            s180 = float(cv2.matchTemplate(flipped_ds, tpl, cv2.TM_CCOEFF_NORMED).max())
         except cv2.error:
             continue
         if max(s0, s180) > max(best_s0, best_s180):
@@ -184,6 +209,58 @@ def _rotate_cap_region(image: np.ndarray, cap: Tuple[float, float, float],
 # Public service (mirrors OBBRotationService interface)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def detect_cap_and_crop(
+    image: np.ndarray,
+    margin_ratio: float = 0.10,
+    fill_value: int = 114,
+) -> Optional[Tuple[np.ndarray, Tuple[int, int, int, int]]]:
+    """
+    Detect the bottle cap (white disc) via HoughCircles, crop a tight square
+    around it, and fill pixels outside the circular cap region with `fill_value`
+    (gray 114 by default — neutral for SuperPoint).
+
+    Args:
+        image:         BGR or grayscale frame.
+        margin_ratio:  Extra padding around cap radius (fraction of radius).
+        fill_value:    Pixel intensity for pixels outside the cap circle.
+
+    Returns:
+        (cropped_image, (x1, y1, x2, y2)) — cropped image with circular mask
+        applied, and the bbox in original image coords. Returns None if cap not
+        detected.
+    """
+    if image is None or image.size == 0:
+        return None
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+    cap = _detect_cap(gray)
+    if cap is None:
+        return None
+    cx, cy, r = cap
+    H, W = image.shape[:2]
+    margin = int(r * margin_ratio)
+    sq = int(r + margin)
+    x1 = max(0, int(cx) - sq)
+    y1 = max(0, int(cy) - sq)
+    x2 = min(W, int(cx) + sq)
+    y2 = min(H, int(cy) + sq)
+    if x2 <= x1 or y2 <= y1:
+        return None
+    crop = image[y1:y2, x1:x2].copy()
+    ch, cw = crop.shape[:2]
+    # Local cap center inside crop
+    lcx = int(cx) - x1
+    lcy = int(cy) - y1
+    # Build circular mask, fill outside with neutral gray
+    mask = np.zeros((ch, cw), dtype=np.uint8)
+    cv2.circle(mask, (lcx, lcy), int(r), 255, -1)
+    if image.ndim == 3:
+        fill = np.full_like(crop, fill_value)
+        crop = np.where(mask[..., None] > 0, crop, fill)
+    else:
+        crop[mask == 0] = fill_value
+    return crop, (x1, y1, x2, y2)
+
+
 class CVRotationService:
     """Pure-CV alternative to OBBRotationService. Same `rotate_frame` signature."""
 
@@ -202,25 +279,47 @@ class CVRotationService:
         frame: np.ndarray,
         frame_tag: str = ""
     ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+        import time as _time
         tag = f"[{frame_tag}] " if frame_tag else ""
         if frame is None or frame.size == 0:
             return frame, None
         try:
+            _t0 = _time.perf_counter()
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+            _t_gray = (_time.perf_counter() - _t0) * 1000
+
+            _t1 = _time.perf_counter()
             cap = _detect_cap(gray)
+            _t_detect = (_time.perf_counter() - _t1) * 1000
             if cap is None:
-                logger.info(f"{tag}[RotateCV] FAIL — no cap detected")
+                logger.info(
+                    f"{tag}[RotateCV] FAIL — no cap detected "
+                    f"(gray={_t_gray:.1f}ms, detect={_t_detect:.1f}ms)"
+                )
                 return frame, None
             cx, cy, r = cap
+
+            _t2 = _time.perf_counter()
             angle_deg, n_dark = _text_angle(gray, cap)
+            _t_angle = (_time.perf_counter() - _t2) * 1000
+
+            _t3 = _time.perf_counter()
             flip, s0, s180 = _need_flip(gray, cap, angle_deg)
-            final_angle = angle_deg + (180.0 if flip else 0.0)
-            logger.info(
-                f"{tag}[RotateCV] OK — cap=(cx={cx:.0f}, cy={cy:.0f}, r={r:.0f}) "
-                f"angle={angle_deg:.1f}° score_0={s0:.3f} score_180={s180:.3f} "
-                f"flip={flip} → total={final_angle:.1f}°"
-            )
+            _t_flip = (_time.perf_counter() - _t3) * 1000
+
+            _t4 = _time.perf_counter()
             result = _rotate_cap_region(frame, cap, angle_deg, flip)
+            _t_rot = (_time.perf_counter() - _t4) * 1000
+
+            final_angle = angle_deg + (180.0 if flip else 0.0)
+            _t_total = (_time.perf_counter() - _t0) * 1000
+            logger.info(
+                f"{tag}[RotateCV] OK in {_t_total:.1f}ms — cap=(cx={cx:.0f}, cy={cy:.0f}, "
+                f"r={r:.0f}) angle={angle_deg:.1f}° flip={flip} → total={final_angle:.1f}° | "
+                f"gray={_t_gray:.1f}ms, detect_cap={_t_detect:.1f}ms, "
+                f"text_angle={_t_angle:.1f}ms, need_flip={_t_flip:.1f}ms, "
+                f"rotate={_t_rot:.1f}ms"
+            )
             return result, None
         except Exception as e:
             logger.error(f"{tag}[RotateCV] ERROR — {e}", exc_info=True)

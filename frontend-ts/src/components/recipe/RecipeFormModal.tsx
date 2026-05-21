@@ -66,6 +66,7 @@ interface FormDataType {
   product_box_wall_type: string;
   cap_rotation_method: string;
   cap_crop_method: string;
+  crop_match_method: string;
   template_bank_enabled: boolean;
   template_bank_size: number;
   char_denoise_enabled: boolean;
@@ -196,6 +197,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     product_detection_method: 'yolo_obb',
     cap_rotation_method: 'yolo_obb',
     cap_crop_method: 'none',
+    crop_match_method: 'superpoint',
     product_box_wall_type: 'outer',
     template_bank_enabled: false,
     template_bank_size: 10,
@@ -402,6 +404,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         product_detection_method: recipeAny.product_detection_method || 'yolo_obb',
         cap_rotation_method: recipeAny.cap_rotation_method || 'yolo_obb',
         cap_crop_method: recipeAny.cap_crop_method || 'none',
+        crop_match_method: recipeAny.crop_match_method || 'superpoint',
         product_box_wall_type: recipeAny.product_box_wall_type || 'outer',
         template_bank_enabled: recipeAny.template_bank_enabled ?? false,
         template_bank_size: recipeAny.template_bank_size ?? 10,
@@ -477,6 +480,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         product_box_wall_type: 'outer',
         cap_rotation_method: 'yolo_obb',
         cap_crop_method: 'none',
+        crop_match_method: 'superpoint',
         wrinkle_conf: 0.25,
         wrinkle_show_when_pass: true,
         matching_conf: 0.20,
@@ -865,6 +869,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         product_detection_method: formData.product_detection_method || 'yolo_obb',
         cap_rotation_method: formData.cap_rotation_method || 'yolo_obb',
         cap_crop_method: formData.cap_crop_method || 'none',
+        crop_match_method: formData.crop_match_method || 'superpoint',
         product_box_wall_type: formData.product_box_wall_type || 'outer',
         template_bank_enabled: formData.template_bank_enabled ?? false,
         template_bank_size: formData.template_bank_size ?? 10,
@@ -2401,6 +2406,23 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                             <option value="none">None (use crop_area)</option>
                             <option value="yolo_obb">YOLO OBB</option>
                             <option value="yolo_segment">YOLO Segment</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Row 3: Crop Match Method (full row) */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12, marginTop: 10, marginBottom: 0 }}>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Crop Match Method</label>
+                          <select
+                            name="crop_match_method"
+                            value={formData.crop_match_method}
+                            onChange={(e) =>
+                              setFormData(prev => ({ ...prev, crop_match_method: e.target.value }))
+                            }
+                          >
+                            <option value="superpoint">SuperPoint (TRT deep model, ~95ms)</option>
+                            <option value="shape_outline">Shape Outline (ECC gradient, ~30ms)</option>
                           </select>
                         </div>
                       </div>

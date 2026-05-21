@@ -81,6 +81,13 @@ class SingleCameraPipeline(InferencePipelineTemplate):
 
     def preprocess(self, context: PipelineContext) -> Optional[Dict[str, Any]]:
         """Prepare frames for inference"""
+        import time as _time
+        _t_preproc_start = _time.perf_counter()
+        _ms_cap_rotation = 0.0
+        _ms_cap_crop = 0.0
+        _ms_crop_apply = 0.0
+        _n_cap_rotation = 0
+        _n_cap_crop = 0
         camera = context.cameras_to_process[0]
         serial_number = camera.serial_number
         frames = context.results[serial_number].get('frames', [])
@@ -126,9 +133,12 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             rotated_frames = []
             for idx, frame in enumerate(frames):
                 frame_tag = f"{serial_number}/frame{idx}"
+                _t_rot = _time.perf_counter()
                 rotated, M = _rotation_service.rotate_frame(
                     frame, frame_tag=frame_tag
                 )
+                _ms_cap_rotation += (_time.perf_counter() - _t_rot) * 1000
+                _n_cap_rotation += 1
                 rotated_frames.append(rotated)
                 frame_rotation_matrices[idx] = M  # None means rotation failed → original used
 
@@ -155,8 +165,56 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             if M is not None and crop_area:
                 crop_area = transform_crop_area(crop_area, M)
 
-            if self._crop_func and crop_area:
+            # ── cap_crop_method active: detect cap per-frame, override crop_area ──
+            _cap_crop_method = getattr(matcher, 'cap_crop_method', 'none')
+            if _cap_crop_method and _cap_crop_method != 'none':
+                _t_cap = _time.perf_counter()
+                try:
+                    from ..preprocessing.cv_rotator import detect_cap_and_crop
+                    cap_result = detect_cap_and_crop(frame, margin_ratio=0.10)
+                    _dt_cap = (_time.perf_counter() - _t_cap) * 1000
+                    _ms_cap_crop += _dt_cap
+                    _n_cap_crop += 1
+                    if cap_result is not None:
+                        frame_for_inference = cap_result[0]
+                        # Synthesize crop_area from per-frame cap bbox so
+                        # `_transform_func` later maps bboxes back to full
+                        # frame coords (otherwise they stay in cap-crop coords
+                        # and verifiers crop the wrong region).
+                        _fx1, _fy1, _fx2, _fy2 = cap_result[1]
+                        crop_area = {
+                            'x1': int(_fx1), 'y1': int(_fy1),
+                            'x2': int(_fx2), 'y2': int(_fy2),
+                        }
+                        logger.info(
+                            f"[{serial_number}] cap_crop ({_cap_crop_method}) "
+                            f"in {_dt_cap:.1f}ms: frame={frame.shape[:2]} → "
+                            f"crop={frame_for_inference.shape[:2]} bbox={cap_result[1]}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[{serial_number}] cap_crop FAIL in {_dt_cap:.1f}ms — "
+                            f"no cap detected in frame {idx}; falling back"
+                        )
+                        _t_cr = _time.perf_counter()
+                        frame_for_inference = (
+                            self._crop_func(frame, crop_area)
+                            if self._crop_func and crop_area else frame
+                        )
+                        _ms_crop_apply += (_time.perf_counter() - _t_cr) * 1000
+                except Exception as e:
+                    _ms_cap_crop += (_time.perf_counter() - _t_cap) * 1000
+                    logger.warning(f"[{serial_number}] cap_crop error: {e}")
+                    _t_cr = _time.perf_counter()
+                    frame_for_inference = (
+                        self._crop_func(frame, crop_area)
+                        if self._crop_func and crop_area else frame
+                    )
+                    _ms_crop_apply += (_time.perf_counter() - _t_cr) * 1000
+            elif self._crop_func and crop_area:
+                _t_cr = _time.perf_counter()
                 frame_for_inference = self._crop_func(frame, crop_area)
+                _ms_crop_apply += (_time.perf_counter() - _t_cr) * 1000
             else:
                 frame_for_inference = frame
 
@@ -177,6 +235,15 @@ class SingleCameraPipeline(InferencePipelineTemplate):
 
             target_imgs.append(frame_for_inference)
             crop_areas.append(crop_area)
+
+        _dt_total = (_time.perf_counter() - _t_preproc_start) * 1000
+        logger.info(
+            f"[Job #{context.job_id}] [{serial_number}] preprocess breakdown: "
+            f"total={_dt_total:.1f}ms | "
+            f"cap_rotation={_ms_cap_rotation:.1f}ms (n={_n_cap_rotation}) | "
+            f"cap_crop_detect={_ms_cap_crop:.1f}ms (n={_n_cap_crop}) | "
+            f"crop_apply={_ms_crop_apply:.1f}ms"
+        )
 
         return {
             'camera': camera,
@@ -260,14 +327,53 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     'timings': {'total': 0.0}
                 }
 
-            # Use first matcher for batch inference
-            batch_result = matchers[0].match_batch(
-                target_imgs=target_imgs,
-                templates=matchers,
-                score_threshold=0.3,
-                ransac_threshold=5.0,
-                min_confidence=matching_conf,
-            )
+            # ── shape_outline path: skip SuperPoint, run ECC affine ─────────
+            if getattr(camera, 'crop_match_method', 'superpoint') == 'shape_outline':
+                from ..matchers.shape_outline import match_shape_outline
+                def _to_dict(bb):
+                    if bb is None:
+                        return None
+                    if isinstance(bb, dict):
+                        return bb
+                    if hasattr(bb, 'to_dict'):
+                        return bb.to_dict()
+                    return None
+                synthetic_results = []
+                for idx, matcher in enumerate(matchers):
+                    target_img = target_imgs[idx]
+                    template_img = getattr(matcher, 'template_img', None)
+                    template_bbox = _to_dict(getattr(matcher, 'template_bbox', None))
+                    other_bboxes = [
+                        _to_dict(b) for b in (getattr(matcher, 'other_bboxes', None) or [])
+                        if b is not None
+                    ]
+                    if template_img is None or template_bbox is None:
+                        synthetic_results.append({
+                            'success': False,
+                            'error': 'no template data',
+                            'transformed_bboxes': [],
+                            'confidence': 0.0, 'inliers': 0, 'total_matches': 0,
+                            'target_img': target_img,
+                        })
+                    else:
+                        synthetic_results.append(match_shape_outline(
+                            template_img=template_img,
+                            target_img=target_img,
+                            template_bbox=template_bbox,
+                            other_bboxes=other_bboxes,
+                            serial=f"{camera.serial_number}_t{idx}",
+                        ))
+                batch_result = {'success': True, 'results': synthetic_results,
+                                 'batch_timings': {'total': 0.0, 'trt_inference': 0.0}}
+            else:
+                # Use first matcher for batch inference
+                batch_result = matchers[0].match_batch(
+                    target_imgs=target_imgs,
+                    templates=matchers,
+                    score_threshold=0.3,
+                    ransac_threshold=5.0,
+                    min_confidence=matching_conf,
+                )
 
             if not batch_result.get('success', False):
                 logger.error(f"Batch inference failed: {batch_result.get('error')}")

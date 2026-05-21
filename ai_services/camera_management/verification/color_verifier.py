@@ -161,7 +161,12 @@ class ColorVerificationService:
         crop_area = self._extract_crop_area(annotations)
         crop_img, crop_offset = self._apply_crop_area(frame_img, crop_area, W, H)
 
-        bottle_box = self._detect_bottle(crop_img, product_polygon, crop_offset)
+        bottle_box = self._detect_bottle(
+            crop_img, product_polygon, crop_offset,
+            sharp_threshold=float(color_config.get("bottle_sharp_threshold", 0.30) or 0.30),
+            min_height_ratio=float(color_config.get("bottle_min_height_ratio", 0.20) or 0.20),
+            min_aspect=float(color_config.get("bottle_min_aspect", 1.2) or 1.2),
+        )
         threshold = int(color_config.get("pixel_threshold", 1000))
 
         if bottle_box is None:
@@ -323,11 +328,19 @@ class ColorVerificationService:
         crop_img: np.ndarray,
         product_polygon: np.ndarray,
         crop_offset: Tuple[int, int],
+        sharp_threshold: float = _SHARP_NORM_THRESHOLD,
+        min_height_ratio: float = _MIN_HEIGHT_RATIO,
+        min_aspect: float = _MIN_ASPECT_H_OVER_W,
     ) -> Optional[Dict[str, Any]]:
         """
         Sharpness-based bottle detection. Returns a YOLO-OBB-compatible dict in
         FRAME coordinates (crop_offset applied) so the existing visualizer can
         draw it directly.
+
+        Tunable via color_config:
+        - sharp_threshold:    sharpness mask threshold (fraction of max)
+        - min_height_ratio:   min bottle height / crop height
+        - min_aspect:         min h/w aspect (bottle taller than wide)
         """
         if crop_img is None or crop_img.size == 0:
             return None
@@ -343,7 +356,7 @@ class ColorVerificationService:
         if smax <= 1e-6:
             return None
         s_norm = sharp / (smax + 1e-6)
-        mask = (s_norm > _SHARP_NORM_THRESHOLD).astype(np.uint8) * 255
+        mask = (s_norm > sharp_threshold).astype(np.uint8) * 255
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones(_CLOSE_KERNEL, np.uint8))
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones(_OPEN_KERNEL, np.uint8))
 
@@ -351,34 +364,149 @@ class ColorVerificationService:
         if nlabels <= 1:
             return None
 
-        # Expected aspect from product polygon (template coords).
+        # Expected width/aspect from product polygon (template coords). The
+        # bottle WIDTH is the most reliable shape constraint — bottle position
+        # in frame varies a lot but width is consistent.
         poly_x = product_polygon[:, 0]
         poly_y = product_polygon[:, 1]
         expected_w = float(poly_x.max() - poly_x.min())
         expected_h = float(poly_y.max() - poly_y.min())
         expected_aspect = expected_h / max(1.0, expected_w)
 
+        # ── Shape-match reference: vertical width profile of the product polygon ──
+        # For a rectangle annotation this is a flat (uniform) profile; for a free
+        # polygon it varies per row. Each candidate's mask profile is compared via
+        # Pearson correlation — discriminates bottle silhouettes from non-bottle
+        # blobs of similar bbox dimensions.
+        template_profile_ref: Optional[np.ndarray] = None
+        try:
+            poly_h_int = max(2, int(round(expected_h)))
+            poly_w_int = max(2, int(round(expected_w)))
+            tpl_canvas = np.zeros((poly_h_int, poly_w_int), dtype=np.uint8)
+            shifted = (product_polygon - np.array(
+                [poly_x.min(), poly_y.min()], dtype=np.float32
+            )).astype(np.int32)
+            cv2.fillPoly(tpl_canvas, [shifted], 255)
+            prof = (tpl_canvas > 0).sum(axis=1).astype(np.float32)
+            pmax = float(prof.max())
+            if pmax > 1.0:
+                template_profile_ref = prof / pmax
+        except Exception:
+            template_profile_ref = None
+
+        def _shape_match_score(cand_x: int, cand_y: int, cand_w: int, cand_h: int) -> float:
+            """Pearson correlation between candidate mask profile and template
+            profile. Returns value in [0, 1] (negative correlations clipped to 0).
+            Returns 1.0 (no penalty) if profile can't be computed.
+            """
+            if template_profile_ref is None or cand_h < 8 or cand_w < 4:
+                return 1.0
+            cand_mask = mask[cand_y:cand_y + cand_h, cand_x:cand_x + cand_w]
+            cand_prof = (cand_mask > 0).sum(axis=1).astype(np.float32)
+            cmax = float(cand_prof.max())
+            if cmax < 1.0:
+                return 0.0
+            cand_prof = cand_prof / cmax
+            tlen = len(template_profile_ref)
+            if len(cand_prof) != tlen:
+                cand_prof = np.interp(
+                    np.linspace(0, len(cand_prof) - 1, tlen),
+                    np.arange(len(cand_prof)),
+                    cand_prof,
+                )
+            tp = template_profile_ref
+            t_std = float(tp.std())
+            c_std = float(cand_prof.std())
+            if t_std < 1e-6 or c_std < 1e-6:
+                # Template/candidate is flat — fall back to RMSE-based similarity.
+                rmse = float(np.sqrt(((tp - cand_prof) ** 2).mean()))
+                return float(max(0.0, 1.0 - rmse))
+            tp_c = tp - tp.mean()
+            cp_c = cand_prof - cand_prof.mean()
+            corr = float((tp_c * cp_c).mean() / (t_std * c_std))
+            return float(max(0.0, corr))
+
         best = None
         best_score = 0.0
+        best_shape = 0.0
         for i in range(1, nlabels):
             x, y, bw, bh, area = stats[i]
-            if bh < _MIN_HEIGHT_RATIO * h:
+            if bh < min_height_ratio * h:
                 continue
-            if bh < _MIN_ASPECT_H_OVER_W * bw:
+            if bh < min_aspect * bw:
                 continue
             aspect = bh / max(1.0, float(bw))
+            # Width match — penalize candidates whose width differs from the
+            # product polygon's width (relative). Squared to be more selective.
+            width_diff_rel = abs(float(bw) - expected_w) / max(1.0, expected_w)
+            width_match = 1.0 / (1.0 + width_diff_rel * width_diff_rel * 4.0)
             aspect_match = 1.0 / (1.0 + abs(aspect - expected_aspect))
-            cx_dist = abs((x + bw / 2.0) - w / 2.0) / max(1.0, float(w))
-            score = float(area) * aspect_match * (1.0 - 0.5 * cx_dist)
+            # Shape match — vertical width profile vs template polygon's profile.
+            # Map [0, 1] correlation → [0.5, 1.0] factor so candidates with bad
+            # profile are penalized but not fully excluded (allow for noise).
+            shape_corr = _shape_match_score(int(x), int(y), int(bw), int(bh))
+            shape_factor = 0.5 + 0.5 * shape_corr
+            # No centrality factor — bottle position can vary across frames.
+            score = float(area) * width_match * aspect_match * shape_factor
             if score > best_score:
                 best_score = score
+                best_shape = shape_corr
                 best = (int(x), int(y), int(bw), int(bh), int(area))
 
+        # Fallback: best candidate's width is abnormally off from the product
+        # polygon's width → trust the user-drawn crop_area instead. Range
+        # [0.5×, 2.0×] of expected width is considered "acceptable"; outside →
+        # fallback to crop_area bbox. Also fires when no candidate survived.
+        ox, oy = crop_offset
+        WIDTH_MIN_RATIO = 0.7   # bottle ≥ 70% of expected width
+        WIDTH_MAX_RATIO = 2.0   # bottle ≤ 200% of expected width
+
+        use_fallback = False
+        fallback_reason = ""
         if best is None:
-            return None
+            use_fallback = True
+            fallback_reason = "no candidate"
+        else:
+            bw_best = float(best[2])
+            ratio = bw_best / max(1.0, expected_w)
+            if ratio < WIDTH_MIN_RATIO or ratio > WIDTH_MAX_RATIO:
+                use_fallback = True
+                fallback_reason = (
+                    f"width {bw_best:.0f}px is {ratio:.2f}× expected ({expected_w:.0f}px) "
+                    f"— outside [{WIDTH_MIN_RATIO}, {WIDTH_MAX_RATIO}]"
+                )
+
+        if use_fallback:
+            # Use the full crop_area as the bottle bbox.
+            fx = float(ox)
+            fy = float(oy)
+            bw = int(w)   # crop_img width
+            bh = int(h)   # crop_img height
+            area = bw * bh
+            logger.info(
+                f"_detect_bottle fallback to crop_area: {fallback_reason}; "
+                f"bbox=({int(fx)},{int(fy)},{bw}×{bh})"
+            )
+            cx = fx + bw / 2.0
+            cy = fy + bh / 2.0
+            corners = np.array(
+                [
+                    [fx, fy],
+                    [fx + bw, fy],
+                    [fx + bw, fy + bh],
+                    [fx, fy + bh],
+                ],
+                dtype=np.float32,
+            )
+            return {
+                "box": [float(cx), float(cy), float(bw), float(bh), 0.0],
+                "score": 0.3,   # lower score to flag this is a fallback
+                "class": "product",
+                "corners": corners.tolist(),
+                "source": "image_proc_color_fallback_crop_area",
+            }
 
         x, y, bw, bh, area = best
-        ox, oy = crop_offset
         fx = x + ox
         fy = y + oy
         cx = fx + bw / 2.0
@@ -397,12 +525,18 @@ class ColorVerificationService:
         # Mask fill ratio as a confidence-ish score.
         fill_ratio = area / float(max(1, bw * bh))
 
+        logger.debug(
+            f"_detect_bottle picked: bbox=({int(fx)},{int(fy)},{bw}×{bh}) "
+            f"shape_match={best_shape:.2f} fill={fill_ratio:.2f}"
+        )
+
         return {
             "box": [float(cx), float(cy), float(bw), float(bh), 0.0],
             "score": float(min(1.0, fill_ratio)),
             "class": "product",
             "corners": corners.tolist(),
             "source": "image_proc_color",
+            "shape_match": float(best_shape),
         }
 
     @staticmethod

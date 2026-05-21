@@ -34,6 +34,10 @@ class ColorConfig(BaseModel):
     v_max: int = Field(default=255, ge=0, le=255)
     pixel_threshold: int = Field(default=1000, ge=0, description="Minimum matching HSV pixels (summed across product polygons) required to pass")
     roi_circle: Optional[ColorRoiCircle] = Field(default=None, description="Persisted ROI used by ColorSetupModal so user can re-edit")
+    # ── Bottle detection (image-proc) tuning, used by ColorVerificationService._detect_bottle ──
+    bottle_sharp_threshold: Optional[float] = Field(default=0.30, ge=0.05, le=0.95, description="Sharpness mask threshold (fraction of max). Higher → stricter mask, fewer false positives but may miss low-contrast bottles.")
+    bottle_min_height_ratio: Optional[float] = Field(default=0.20, ge=0.05, le=0.95, description="Bottle height ≥ this fraction of crop height to be considered valid")
+    bottle_min_aspect: Optional[float] = Field(default=1.2, ge=0.5, le=5.0, description="Minimum h/w aspect ratio (bottles are taller than wide)")
 
 
 class TemplateImage(BaseModel):
@@ -165,6 +169,17 @@ class RecipeBase(BaseModel):
     # "yolo_segment" name kept for UI consistency but internally uses pure CV
     # (HoughCircles + projection-profile + shape-match flip).
     cap_rotation_method: Optional[str] = Field(default="yolo_obb", description="Method to rotate caps so date-code text faces upright: 'yolo_obb' (trained YOLO OBB model) | 'yolo_segment' (pure CV — HoughCircles + projection profile + shape match)")
+    # Crop a tight square around the detected cap (plus circular mask) and feed
+    # that to SuperPoint instead of the full crop_area. Helps when background
+    # clutter overwhelms the cap region in the camera frame. Applies only to
+    # cameras in the OCR-on-cap sub-mode (Check_Color + no 'product' annotation).
+    cap_crop_method: Optional[str] = Field(default="none", description="Detect+crop bottle cap for matching: 'none' (use user-drawn crop_area) | 'yolo_obb' (trained YOLO OBB model) | 'yolo_segment' (HoughCircles)")
+    # Alternative to SuperPoint for transforming annotation bboxes from
+    # template-coords to target-coords. ECC affine on Sobel gradient — fast
+    # (~30ms) and robust under lighting changes; only works well when template
+    # and target are similar size and orientation (cap-OCR mode after cap
+    # rotation + cap-crop). Falls back to legacy SuperPoint when 'superpoint'.
+    crop_match_method: Optional[str] = Field(default="superpoint", description="Method for matching template ↔ target crop: 'superpoint' (TRT deep model, ~95ms) | 'shape_outline' (ECC on Sobel gradient magnitude, ~30ms — best for cap-OCR with cap_rotation+cap_crop active)")
 
     # Wrinkle segmentation model confidence threshold (recipe-level, applies to all cameras)
     wrinkle_conf: Optional[float] = Field(default=0.25, ge=0.0, le=1.0, description="Confidence threshold for wrinkle segmentation model (0.0 - 1.0)")
@@ -215,6 +230,8 @@ class RecipeUpdate(BaseModel):
     product_detection_method: Optional[str] = None
     product_box_wall_type: Optional[str] = None
     cap_rotation_method: Optional[str] = None
+    cap_crop_method: Optional[str] = None
+    crop_match_method: Optional[str] = None
     wrinkle_conf: Optional[float] = Field(None, ge=0.0, le=1.0)
     wrinkle_show_when_pass: Optional[bool] = None
     matching_conf: Optional[float] = Field(None, ge=0.0, le=1.0)

@@ -214,6 +214,63 @@ class MatcherFactory:
                 logger.error(f"[{serial_number}] Template {template_idx}: No template bbox found")
                 return None
 
+            # ── Cap-crop fast path (cap_crop_method='yolo_segment'/'yolo_obb') ──
+            # Detect cap in template, crop tight square + circular mask, replace
+            # the user's crop_area with the cap bbox. Adjust template_bbox +
+            # other_bboxes to the new (cropped) coordinate space.
+            cap_crop_method = getattr(camera, 'cap_crop_method', 'none') or 'none'
+            cap_crop_bbox: Optional[Tuple[int, int, int, int]] = None
+            if cap_crop_method != 'none':
+                try:
+                    if cap_crop_method == 'yolo_segment':
+                        from ..preprocessing.cv_rotator import detect_cap_and_crop
+                        result = detect_cap_and_crop(template_img, margin_ratio=0.10)
+                    else:
+                        # 'yolo_obb' — for now reuse HoughCircles too (the OBB
+                        # cap-detect engine isn't wired here yet; falls back to
+                        # HoughCircles which has been validated on user data).
+                        from ..preprocessing.cv_rotator import detect_cap_and_crop
+                        result = detect_cap_and_crop(template_img, margin_ratio=0.10)
+
+                    if result is None:
+                        logger.warning(
+                            f"[{serial_number}] Template {template_idx}: cap_crop_method="
+                            f"{cap_crop_method} but no cap detected — falling back to "
+                            f"normal crop_area flow"
+                        )
+                    else:
+                        cap_crop_img, (cx1, cy1, cx2, cy2) = result
+                        cap_crop_bbox = (cx1, cy1, cx2, cy2)
+                        # Save cap-cropped template as new template image
+                        cap_crop_path = template_path.parent / f"cap_crop_{template_path.name}"
+                        cv2.imwrite(str(cap_crop_path), cap_crop_img)
+                        # Adjust template_bbox + other_bboxes to cap-crop coords
+                        # (BoundingBox stores corners in `points: List[List[int]]`).
+                        # Use the dataclass `.offset()` helper to subtract (cx1, cy1).
+                        try:
+                            template_bbox = template_bbox.offset(cx1, cy1)
+                            other_bboxes = [ob.offset(cx1, cy1) for ob in (other_bboxes or [])]
+                        except Exception as e:
+                            logger.warning(
+                                f"[{serial_number}] cap_crop bbox adjust failed: {e}"
+                            )
+                        # Use cap-cropped template path for SuperPoint
+                        template_path = cap_crop_path
+                        template_img = cap_crop_img
+                        # IMPORTANT: skip _apply_crop because template_img is
+                        # already cropped. Pipeline preprocess will detect cap
+                        # per-frame and crop frames the same way.
+                        crop_area = None
+                        logger.info(
+                            f"[{serial_number}] Template {template_idx}: cap_crop_method="
+                            f"{cap_crop_method} → cropped ({cx2-cx1}×{cy2-cy1}) at ({cx1},{cy1})"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"[{serial_number}] Template {template_idx}: cap_crop failed: {e}; "
+                        f"continuing with normal crop_area"
+                    )
+
             # Apply crop if needed
             final_template_path = template_path
             if crop_area and crop_area.is_valid():
@@ -260,6 +317,12 @@ class MatcherFactory:
                 matcher.crop_area = crop_area.to_dict()
             else:
                 matcher.crop_area = None
+            # Flag this matcher as cap-cropped (pipeline preprocess will detect
+            # cap in frame per-inference and crop the same way, instead of using
+            # crop_area).
+            matcher.cap_crop_method = cap_crop_method if cap_crop_bbox else 'none'
+            if cap_crop_bbox:
+                matcher.template_cap_bbox = cap_crop_bbox
 
             # Save template crop + product bbox for analysis
             self._save_template_sample(

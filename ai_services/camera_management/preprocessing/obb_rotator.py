@@ -276,6 +276,8 @@ class OBBRotationService:
             return frame, None
 
         try:
+            import time as _time
+            _t_total_start = _time.perf_counter()
             results, timing = self._model.predict(
                 [frame], conf_threshold=self.conf_threshold, return_timing=True
             )
@@ -319,6 +321,7 @@ class OBBRotationService:
             # Shape-match flip detection (100% accurate when text is near cap
             # center, unlike the legacy compute_need_flip heuristic which is
             # fragile in that case). Reuse the same logic as the pure-CV path.
+            _t_flip_start = _time.perf_counter()
             try:
                 from .cv_rotator import _need_flip as _cv_need_flip
                 cap_cx, cap_cy, cap_w, cap_h, _ = cap_box
@@ -338,16 +341,22 @@ class OBBRotationService:
                 )
                 flipped = compute_need_flip(cap_box, text_box, angle_deg)
                 flip_method = "legacy heuristic"
+            _t_flip = (_time.perf_counter() - _t_flip_start) * 1000
 
             # Chỉ xoay vùng cap (circular mask), background giữ nguyên
+            _t_rot_start = _time.perf_counter()
             result = rotate_cap_region_only(frame, cap_box, angle_deg, flipped)
+            _t_rot = (_time.perf_counter() - _t_rot_start) * 1000
 
+            _t_total = (_time.perf_counter() - _t_total_start) * 1000
             total_angle = angle_deg + (180.0 if flipped else 0.0)
             flip_str    = " + flip180" if flipped else ""
 
             self._rot_logger.info(
-                f"{tag}OK — angle={angle_deg:.1f}°{flip_str} total={total_angle:.1f}°  "
-                f"cap_only=True  infer={infer_ms:.1f}ms  flip_via={flip_method}"
+                f"{tag}OK in {_t_total:.1f}ms — angle={angle_deg:.1f}°{flip_str} "
+                f"total={total_angle:.1f}°  cap_only=True  "
+                f"infer={infer_ms:.1f}ms  need_flip={_t_flip:.1f}ms  "
+                f"rotate={_t_rot:.1f}ms  flip_via={flip_method}"
             )
 
             return result, None
