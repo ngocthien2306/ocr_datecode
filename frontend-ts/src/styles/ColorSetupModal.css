@@ -85,13 +85,35 @@
   min-height: 0;
 }
 
-.color-setup-canvas-wrap {
+.color-setup-canvas-col {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.color-setup-canvas-wrap {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.cs-histogram-section .cs-histogram {
+  width: 100%;
+  height: 120px;
+}
+
+.cs-roi-warn {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .color-setup-canvas-wrap canvas {

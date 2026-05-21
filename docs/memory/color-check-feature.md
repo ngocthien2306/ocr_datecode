@@ -247,6 +247,29 @@ Pure-CV algorithm summary (`backend/app/services/rotate_cv_service.py` + `ai_ser
 4. **180° flip**: render `"BEST"` via cv2.putText at multiple scales, `cv2.matchTemplate(rotated_roi, tpl, TM_CCOEFF_NORMED)` at 0° and 180°, flip if score_180 > score_0.
 5. **Output**: rotate cap region only (`warpAffine` + circular mask), background untouched. Returns `(rotated_frame, None)` — `None` matches OBB service's convention (no inverse-transform needed because rotation is local to cap region).
 
+## Bottle detection tuning (image-proc)
+
+`color_verifier._detect_bottle` exposes 3 tunable params via `color_config`:
+
+| Field | Default | Effect |
+|---|---|---|
+| `bottle_sharp_threshold` | 0.30 | Higher → stricter sharpness mask, fewer false positives but may miss low-contrast bottles |
+| `bottle_min_height_ratio` | 0.20 | Bottle height ≥ this × crop height. Higher → reject smaller blobs |
+| `bottle_min_aspect` | 1.2 | Bottle must be taller than wide by this ratio |
+
+**Scoring (post-2026-05-21)**: `score = area × width_match × aspect_match`. Centrality factor REMOVED because bottle position varies between frames. `width_match = 1 / (1 + (Δw/expected_w)² × 4)` heavily weights candidates whose width matches the product polygon's width — most reliable shape cue since position is unstable but width is consistent.
+
+**Hard width gate + fallback (post-2026-05-21)**: After picking the best candidate, if its width is < 0.5× or > 2.0× the product polygon's width, the detector **falls back to using the crop_area as the bottle bbox** (instead of returning the bad candidate). Returned dict has `source='image_proc_color_fallback_crop_area'` and `score=0.3` to flag the fallback. Same when no candidate survives the filters. Logged at INFO level via `_detect_bottle fallback to crop_area: <reason>`.
+
+**Width-profile shape match (post-2026-05-21)**: Adds a `shape_factor` multiplier to the score. Renders the product polygon to a binary canvas once, computes the per-row "width profile" (number of mask pixels per row) → normalized 1D template signature. For each candidate, computes the same profile from the sharpness mask, resamples to template length, then Pearson correlation → `shape_corr ∈ [0, 1]` (negative clipped to 0). Factor = `0.5 + 0.5 × shape_corr` so a bad-profile candidate is halved, not excluded. Rationale: rectangle product annotations give a flat profile that approximately matches a bottle silhouette; free-polygon annotations (e.g. necked bottle) give a varying profile that strongly discriminates. Score = `area × width_match × aspect_match × shape_factor`. Result dict carries `shape_match` field for debug; debug log line `_detect_bottle picked: bbox=... shape_match=... fill=...`.
+
+**FE preview**: `POST /api/recipes/templates/detect-bottle-preview` — accepts `image_url + product_polygon + crop_area + sharp_threshold + min_height_ratio + min_aspect`, runs `ColorVerificationService._detect_bottle` on the saved template image, returns bbox. UI overlays the bbox in **amber (#f59e0b)** on the canvas for tuning feedback. ColorSetupModal "🍶 Bottle Detection" section in the right sidebar.
+
+**ColorSetupModal layout (post-2026-05-21)**:
+- LEFT column: canvas (top) + histogram (bottom, full width 720px)
+- RIGHT column: ROI · Bottle Detection · HSV (H/S/V) · Pass criterion
+- Color legend in hint line below canvas: ROI cyan, Product polygon purple, Detected bottle amber, HSV match yellow
+
 ## Related memory
 - [[recipe-system]] — recipe data flow, the 19-step plumb checklist (color_config skips most of it because it's nested per-template)
 - [[feedback-ui-theme]] — modal CSS theme conventions

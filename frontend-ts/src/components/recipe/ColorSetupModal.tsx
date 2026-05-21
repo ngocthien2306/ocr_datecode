@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import '@/styles/ColorSetupModal.css';
+import { API_BASE_URL } from '@/config/api';
 
 export interface ColorConfig {
   h_min: number;
@@ -10,14 +11,20 @@ export interface ColorConfig {
   v_max: number;
   pixel_threshold: number;
   roi_circle: { center: [number, number]; radius: number };
+  // Bottle detection (image-proc) tuning — passed to color_verifier._detect_bottle
+  bottle_sharp_threshold?: number;
+  bottle_min_height_ratio?: number;
+  bottle_min_aspect?: number;
 }
 
 interface ColorSetupModalProps {
   isOpen: boolean;
   templateImage: string;
+  templateImageUrl?: string;          // server URL — needed for /detect-bottle-preview
   imageWidth: number;
   imageHeight: number;
   productPolygons: Array<Array<[number, number]>>;
+  cropArea?: { x1: number; y1: number; x2: number; y2: number } | null;
   initialConfig?: ColorConfig | null;
   templateName?: string;
   onSave: (config: ColorConfig) => void;
@@ -66,14 +73,19 @@ const DEFAULT_CONFIG: ColorConfig = {
   v_min: 0, v_max: 255,
   pixel_threshold: 1000,
   roi_circle: { center: [0, 0], radius: 50 },
+  bottle_sharp_threshold: 0.30,
+  bottle_min_height_ratio: 0.20,
+  bottle_min_aspect: 1.2,
 };
 
 const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
   isOpen,
   templateImage,
+  templateImageUrl,
   imageWidth,
   imageHeight,
   productPolygons,
+  cropArea,
   initialConfig,
   templateName,
   onSave,
@@ -100,6 +112,10 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
   const [matchCount, setMatchCount] = useState(0);
   const [isReady, setIsReady] = useState(false);
   const [draggingCircle, setDraggingCircle] = useState(false);
+  // Detected bottle bbox (TEMPLATE pixel coords) from /detect-bottle-preview
+  const [detectedBottle, setDetectedBottle] = useState<{ x: number; y: number; w: number; h: number; score: number } | null>(null);
+  const [bottleDetecting, setBottleDetecting] = useState(false);
+  const [bottleDetectError, setBottleDetectError] = useState<string | null>(null);
 
   // Init config from props (edit mode) when modal opens.
   useEffect(() => {
@@ -333,6 +349,20 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
       ctx.stroke();
     }
 
+    // Draw detected bottle bbox (orange) from /detect-bottle-preview
+    if (detectedBottle) {
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#f59e0b';      // amber
+      const bx = detectedBottle.x * displayScale;
+      const by = detectedBottle.y * displayScale;
+      const bw = detectedBottle.w * displayScale;
+      const bh = detectedBottle.h * displayScale;
+      ctx.strokeRect(bx, by, bw, bh);
+      ctx.font = '14px sans-serif';
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillText(`bottle ${(detectedBottle.score * 100).toFixed(0)}%`, bx + 4, Math.max(14, by - 4));
+    }
+
     // Draw ROI circle (cyan)
     const { center, radius } = config.roi_circle;
     const cx0 = center[0]!;
@@ -351,7 +381,7 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
     ctx.moveTo(ccx, ccy - 5);
     ctx.lineTo(ccx, ccy + 5);
     ctx.stroke();
-  }, [config, displayScale, imageWidth, imageHeight, productPolygons]);
+  }, [config, displayScale, imageWidth, imageHeight, productPolygons, detectedBottle]);
 
   // Composite an overlay ImageData on top of current canvas content
   // (we already drew the image, then need to alpha-blend overlay on top).
@@ -443,6 +473,62 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
     setDraggingCircle(false);
   };
 
+  // Run BE /templates/detect-bottle-preview to test bottle detection with
+  // current tuning params. Overlays the resulting bbox on the canvas.
+  const runDetectBottle = useCallback(async () => {
+    if (!templateImageUrl || productPolygons.length === 0) {
+      setBottleDetectError('Need server-side image_url and at least one product polygon');
+      return;
+    }
+    setBottleDetecting(true);
+    setBottleDetectError(null);
+    try {
+      const poly = productPolygons[0]!; // use first product polygon as hint
+      const body: any = {
+        image_url: templateImageUrl,
+        product_polygon: poly,
+        sharp_threshold: config.bottle_sharp_threshold ?? 0.30,
+        min_height_ratio: config.bottle_min_height_ratio ?? 0.20,
+        min_aspect: config.bottle_min_aspect ?? 1.2,
+      };
+      if (cropArea) body.crop_area = cropArea;
+      const token = localStorage.getItem('access_token');
+      const res = await fetch(
+        `${API_BASE_URL}/api/recipes/templates/detect-bottle-preview`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Bypass-Tunnel-Reminder': 'true',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(body),
+        }
+      );
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`HTTP ${res.status}: ${txt}`);
+      }
+      const data = await res.json();
+      if (data.detected && data.bbox) {
+        setDetectedBottle({
+          x: data.bbox.x, y: data.bbox.y, w: data.bbox.w, h: data.bbox.h,
+          score: data.score ?? 0,
+        });
+        setBottleDetectError(null);
+      } else {
+        setDetectedBottle(null);
+        setBottleDetectError(data.reason || 'No bottle detected');
+      }
+    } catch (e: any) {
+      setBottleDetectError(String(e?.message || e));
+      setDetectedBottle(null);
+    } finally {
+      setBottleDetecting(false);
+    }
+  }, [templateImageUrl, productPolygons, cropArea, config.bottle_sharp_threshold,
+      config.bottle_min_height_ratio, config.bottle_min_aspect]);
+
   // Generic slider handler factory
   const setField = (k: keyof ColorConfig) => (val: number) => {
     setConfig((prev) => ({ ...prev, [k]: val } as ColorConfig));
@@ -483,21 +569,34 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
         </div>
 
         <div className="color-setup-body">
-          <div className="color-setup-canvas-wrap">
-            {!isReady && <div className="color-setup-loading">Loading image…</div>}
-            <canvas
-              ref={canvasRef}
-              onMouseDown={onMouseDown}
-              onMouseMove={onMouseMove}
-              onMouseUp={onMouseUp}
-              onMouseLeave={onMouseUp}
-              style={{ cursor: draggingCircle ? 'grabbing' : 'crosshair' }}
-            />
-            <div className="color-setup-hint">
-              Click/drag on image to move ROI circle. Yellow = pixels matching current HSV range inside product polygon.
+          {/* LEFT: canvas + histogram below */}
+          <div className="color-setup-canvas-col">
+            <div className="color-setup-canvas-wrap">
+              {!isReady && <div className="color-setup-loading">Loading image…</div>}
+              <canvas
+                ref={canvasRef}
+                onMouseDown={onMouseDown}
+                onMouseMove={onMouseMove}
+                onMouseUp={onMouseUp}
+                onMouseLeave={onMouseUp}
+                style={{ cursor: draggingCircle ? 'grabbing' : 'crosshair' }}
+              />
+              <div className="color-setup-hint">
+                <span style={{ color: '#22d3ee' }}>●</span> ROI &nbsp;
+                <span style={{ color: '#7513dd' }}>●</span> Product polygon &nbsp;
+                <span style={{ color: '#f59e0b' }}>●</span> Detected bottle &nbsp;
+                <span style={{ color: '#facc15' }}>●</span> HSV match pixels
+              </div>
+            </div>
+
+            {/* Histogram BELOW canvas */}
+            <div className="cs-section cs-histogram-section">
+              <div className="cs-section-title">Histogram (R=H, G=S, B=V)</div>
+              <canvas ref={histCanvasRef} width={720} height={120} className="cs-histogram" />
             </div>
           </div>
 
+          {/* RIGHT sidebar */}
           <div className="color-setup-controls">
             <div className="cs-section">
               <div className="cs-section-title">ROI</div>
@@ -523,6 +622,46 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
               </button>
             </div>
 
+            {/* Bottle Detection tuning (image-proc) */}
+            <div className="cs-section">
+              <div className="cs-section-title">Bottle Detection</div>
+              <SliderRow
+                label="Sharp"
+                min={0.05} max={0.95}
+                value={config.bottle_sharp_threshold ?? 0.30}
+                onChange={(v) => setConfig((p) => ({ ...p, bottle_sharp_threshold: v }))}
+              />
+              <SliderRow
+                label="MinH"
+                min={0.05} max={0.95}
+                value={config.bottle_min_height_ratio ?? 0.20}
+                onChange={(v) => setConfig((p) => ({ ...p, bottle_min_height_ratio: v }))}
+              />
+              <SliderRow
+                label="Aspect"
+                min={0.5} max={5.0}
+                value={config.bottle_min_aspect ?? 1.2}
+                onChange={(v) => setConfig((p) => ({ ...p, bottle_min_aspect: v }))}
+              />
+              <button
+                type="button"
+                className="btn btn-secondary cs-auto-btn"
+                onClick={runDetectBottle}
+                disabled={!isReady || bottleDetecting || !templateImageUrl}
+                title={!templateImageUrl ? 'Save template first to enable preview' : ''}
+              >
+                {bottleDetecting ? 'Detecting…' : 'Detect Bottle'}
+              </button>
+              {detectedBottle && (
+                <div className="cs-row cs-stats">
+                  <span>Detected: <b>{detectedBottle.w}×{detectedBottle.h}</b> px at ({detectedBottle.x}, {detectedBottle.y}), score={detectedBottle.score.toFixed(2)}</span>
+                </div>
+              )}
+              {bottleDetectError && (
+                <div className="cs-roi-warn" style={{ marginTop: 4 }}>{bottleDetectError}</div>
+              )}
+            </div>
+
             <div className="cs-section">
               <div className="cs-section-title">Hue (0-180)</div>
               <SliderRow label="Min" min={0} max={180} value={config.h_min} onChange={setHMin} />
@@ -537,11 +676,6 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
               <div className="cs-section-title">Value (0-255)</div>
               <SliderRow label="Min" min={0} max={255} value={config.v_min} onChange={setVMin} />
               <SliderRow label="Max" min={0} max={255} value={config.v_max} onChange={setVMax} />
-            </div>
-
-            <div className="cs-section">
-              <div className="cs-section-title">Histogram (R=H, G=S, B=V)</div>
-              <canvas ref={histCanvasRef} width={360} height={120} className="cs-histogram" />
             </div>
 
             <div className="cs-section">
@@ -582,31 +716,43 @@ interface SliderRowProps {
   max: number;
   value: number;
   onChange: (v: number) => void;
+  step?: number;
 }
 
-const SliderRow: React.FC<SliderRowProps> = ({ label, min, max, value, onChange }) => (
-  <div className="cs-slider-row">
-    <span className="cs-slider-label">{label}</span>
-    <input
-      type="range"
-      min={min}
-      max={max}
-      value={value}
-      onChange={(e) => onChange(parseFloat(e.target.value))}
-      className="cs-slider"
-    />
-    <input
-      type="number"
-      min={min}
-      max={max}
-      value={Math.round(value)}
-      onChange={(e) => {
-        const v = parseFloat(e.target.value);
-        if (!isNaN(v)) onChange(Math.max(min, Math.min(max, v)));
-      }}
-      className="cs-slider-num"
-    />
-  </div>
-);
+const SliderRow: React.FC<SliderRowProps> = ({ label, min, max, value, onChange, step }) => {
+  // Auto step: integer slider if range > 10, else fine-grained.
+  const stepActual = step ?? (max - min > 10 ? 1 : 0.01);
+  const decimals = stepActual < 1 ? 2 : 0;
+  // Display value: keep float precision when step < 1.
+  const displayValue = stepActual < 1
+    ? Number(value.toFixed(decimals))
+    : Math.round(value);
+  return (
+    <div className="cs-slider-row">
+      <span className="cs-slider-label">{label}</span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={stepActual}
+        value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+        className="cs-slider"
+      />
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={stepActual}
+        value={displayValue}
+        onChange={(e) => {
+          const v = parseFloat(e.target.value);
+          if (!isNaN(v)) onChange(Math.max(min, Math.min(max, v)));
+        }}
+        className="cs-slider-num"
+      />
+    </div>
+  );
+};
 
 export default ColorSetupModal;

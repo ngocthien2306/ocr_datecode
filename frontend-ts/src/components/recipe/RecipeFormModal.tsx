@@ -65,6 +65,7 @@ interface FormDataType {
   product_detection_method: string;
   product_box_wall_type: string;
   cap_rotation_method: string;
+  cap_crop_method: string;
   template_bank_enabled: boolean;
   template_bank_size: number;
   char_denoise_enabled: boolean;
@@ -194,6 +195,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     cv_method: 'legacy',
     product_detection_method: 'yolo_obb',
     cap_rotation_method: 'yolo_obb',
+    cap_crop_method: 'none',
     product_box_wall_type: 'outer',
     template_bank_enabled: false,
     template_bank_size: 10,
@@ -399,6 +401,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         cv_method: recipeAny.cv_method || 'legacy',
         product_detection_method: recipeAny.product_detection_method || 'yolo_obb',
         cap_rotation_method: recipeAny.cap_rotation_method || 'yolo_obb',
+        cap_crop_method: recipeAny.cap_crop_method || 'none',
         product_box_wall_type: recipeAny.product_box_wall_type || 'outer',
         template_bank_enabled: recipeAny.template_bank_enabled ?? false,
         template_bank_size: recipeAny.template_bank_size ?? 10,
@@ -473,6 +476,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         product_detection_method: 'yolo_obb',
         product_box_wall_type: 'outer',
         cap_rotation_method: 'yolo_obb',
+        cap_crop_method: 'none',
         wrinkle_conf: 0.25,
         wrinkle_show_when_pass: true,
         matching_conf: 0.20,
@@ -860,6 +864,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         cv_method: formData.cv_method || 'legacy',
         product_detection_method: formData.product_detection_method || 'yolo_obb',
         cap_rotation_method: formData.cap_rotation_method || 'yolo_obb',
+        cap_crop_method: formData.cap_crop_method || 'none',
         product_box_wall_type: formData.product_box_wall_type || 'outer',
         template_bank_enabled: formData.template_bank_enabled ?? false,
         template_bank_size: formData.template_bank_size ?? 10,
@@ -2053,93 +2058,6 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       <small className="field-description">Template model used for per-character OK/NG classification</small>
                     </div>
 
-                    {/* ─── Bottle Edge Detection group ────────────────────── */}
-                    <div
-                      style={{
-                        background: '#f8f9fa',
-                        padding: '12px',
-                        borderRadius: '6px',
-                        border: '1px solid #dee2e6',
-                        marginBottom: '15px',
-                      }}
-                    >
-                      <div style={{ fontWeight: 600, marginBottom: '10px', color: '#495057' }}>
-                        🍶 Bottle Edge Detection
-                      </div>
-
-                      {/* Method */}
-                      <div className="form-group" style={{ marginBottom: '10px' }}>
-                        <label>Method</label>
-                        <select
-                          name="product_detection_method"
-                          value={formData.product_detection_method}
-                          onChange={(e) =>
-                            setFormData(prev => ({ ...prev, product_detection_method: e.target.value }))
-                          }
-                        >
-                          <option value="yolo_obb">YOLO OBB (trained model)</option>
-                          <option value="yolo_segment">YOLO Segment (trained model)</option>
-                        </select>
-                        {/* <small className="field-description">
-                          {formData.product_detection_method === 'yolo_obb'
-                            ? 'Uses trained YOLO OBB model. Recommended for production with diverse bottles.'
-                            : 'Uses Sobel edge detection + outer-anchored algorithm. No GPU model required.'}
-                        </small> */}
-                      </div>
-
-                      {/* Cap Rotation Method — applies to ALL cameras in the recipe.
-                          'yolo_obb'    : trained best_bottle_m engine
-                          'yolo_segment': pure CV (HoughCircles + projection profile +
-                                          shape-match flip) — no GPU/TRT required */}
-                      <div className="form-group" style={{ marginTop: 12, marginBottom: 10 }}>
-                        <label>Cap Rotation Method</label>
-                        <select
-                          name="cap_rotation_method"
-                          value={formData.cap_rotation_method}
-                          onChange={(e) =>
-                            setFormData(prev => ({ ...prev, cap_rotation_method: e.target.value }))
-                          }
-                        >
-                          <option value="yolo_obb">YOLO OBB</option>
-                          <option value="yolo_segment">YOLO Segment</option>
-                        </select>
-                        {/* <small className="field-description">
-                          {formData.cap_rotation_method === 'yolo_obb'
-                            ? 'Uses trained YOLO OBB model (best_bottle_m). Needs GPU/TRT.'
-                            : 'HoughCircles + projection profile + shape match. No GPU model required.'}
-                        </small> */}
-                      </div>
-
-                      {/* Wall type — only active when yolo_segment */}
-                      <div
-                        className="form-group"
-                        style={{
-                          marginBottom: 0,
-                          opacity: formData.product_detection_method === 'yolo_segment' ? 1 : 0.45,
-                          pointerEvents: formData.product_detection_method === 'yolo_segment' ? 'auto' : 'none',
-                        }}
-                      >
-                        <label>Product Box Wall Type</label>
-                        <select
-                          name="product_box_wall_type"
-                          value={formData.product_box_wall_type}
-                          onChange={(e) =>
-                            setFormData(prev => ({ ...prev, product_box_wall_type: e.target.value }))
-                          }
-                        >
-                          <option value="outer">Outer wall (bottle silhouette - wider OBB)</option>
-                          <option value="inner">Inner wall (closer to label — tighter OBB)</option>
-                        </select>
-                        {/* <small className="field-description">
-                          {formData.product_detection_method !== 'yolo_segment'
-                            ? '⚙️ Only applies when Method = "YOLO Segment"'
-                            : formData.product_box_wall_type === 'outer'
-                              ? 'Yellow OBB matches full bottle silhouette (matches YOLO OBB convention)'
-                              : 'Yellow OBB hugs label edges — visually easier to spot misalignment'}
-                        </small> */}
-                      </div>
-                    </div>
-
                     {/* CV Method — chỉ áp dụng khi classifier_backend='embedding' */}
                     <div
                       className="form-group"
@@ -2400,6 +2318,92 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                           )}
                         </div>
                       )}
+                    </div>
+
+                    {/* ─── Bottle Edge Detection group ────────────────────── */}
+                    <div
+                      style={{
+                        background: '#f8f9fa',
+                        padding: '12px',
+                        borderRadius: '6px',
+                        border: '1px solid #dee2e6',
+                        marginTop: '15px',
+                        marginBottom: '15px',
+                      }}
+                    >
+                      <div style={{ fontWeight: 600, marginBottom: '10px', color: '#495057' }}>
+                        Bottle Edge Detection
+                      </div>
+
+                      {/* Row 1: Method + Product Box Wall Type */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 10 }}>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Method</label>
+                          <select
+                            name="product_detection_method"
+                            value={formData.product_detection_method}
+                            onChange={(e) =>
+                              setFormData(prev => ({ ...prev, product_detection_method: e.target.value }))
+                            }
+                          >
+                            <option value="yolo_obb">YOLO OBB (trained model)</option>
+                            <option value="yolo_segment">YOLO Segment (trained model)</option>
+                          </select>
+                        </div>
+
+                        <div
+                          className="form-group"
+                          style={{
+                            marginBottom: 0,
+                            opacity: formData.product_detection_method === 'yolo_segment' ? 1 : 0.45,
+                            pointerEvents: formData.product_detection_method === 'yolo_segment' ? 'auto' : 'none',
+                          }}
+                        >
+                          <label>Product Box Wall Type</label>
+                          <select
+                            name="product_box_wall_type"
+                            value={formData.product_box_wall_type}
+                            onChange={(e) =>
+                              setFormData(prev => ({ ...prev, product_box_wall_type: e.target.value }))
+                            }
+                          >
+                            <option value="outer">Outer wall (bottle silhouette - wider OBB)</option>
+                            <option value="inner">Inner wall (closer to label — tighter OBB)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Row 2: Cap Rotation Method + Cap Crop Method */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 0 }}>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Cap Rotation Method</label>
+                          <select
+                            name="cap_rotation_method"
+                            value={formData.cap_rotation_method}
+                            onChange={(e) =>
+                              setFormData(prev => ({ ...prev, cap_rotation_method: e.target.value }))
+                            }
+                          >
+                            <option value="yolo_obb">YOLO OBB</option>
+                            <option value="yolo_segment">YOLO Segment</option>
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Cap Crop Method</label>
+                          <select
+                            name="cap_crop_method"
+                            value={formData.cap_crop_method}
+                            onChange={(e) =>
+                              setFormData(prev => ({ ...prev, cap_crop_method: e.target.value }))
+                            }
+                          >
+                            <option value="none">None (use crop_area)</option>
+                            <option value="yolo_obb">YOLO OBB</option>
+                            <option value="yolo_segment">YOLO Segment</option>
+                          </select>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -3146,13 +3150,35 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
             return null;
           })
           .filter((p): p is Array<[number, number]> => p !== null);
+
+        // crop_area annotation → pixel bbox (same normalization story as polygons)
+        let cropAreaPx: { x1: number; y1: number; x2: number; y2: number } | null = null;
+        const ca = (tmpl.annotations || []).find((a: any) => a.type === 'crop_area');
+        if (ca) {
+          if (ca.points && Array.isArray(ca.points) && ca.points.length >= 3) {
+            const xs = ca.points.map((p: any) => (p.x ?? p[0]) * imgW);
+            const ys = ca.points.map((p: any) => (p.y ?? p[1]) * imgH);
+            cropAreaPx = {
+              x1: Math.round(Math.min(...xs)), y1: Math.round(Math.min(...ys)),
+              x2: Math.round(Math.max(...xs)), y2: Math.round(Math.max(...ys)),
+            };
+          } else if (ca.x != null && ca.y != null && ca.width && ca.height) {
+            cropAreaPx = {
+              x1: Math.round(ca.x * imgW), y1: Math.round(ca.y * imgH),
+              x2: Math.round((ca.x + ca.width) * imgW), y2: Math.round((ca.y + ca.height) * imgH),
+            };
+          }
+        }
+
         return (
           <ColorSetupModal
             isOpen={true}
             templateImage={tmpl.image}
+            templateImageUrl={tmpl.image_url}
             imageWidth={tmpl.image_width ?? 0}
             imageHeight={tmpl.image_height ?? 0}
             productPolygons={productPolys}
+            cropArea={cropAreaPx}
             initialConfig={tmpl.color_config ?? null}
             templateName={tmpl.name}
             onClose={() => setColorSetupTarget(null)}
