@@ -126,7 +126,19 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             and _rotation_service is not None
             and getattr(_rotation_service, 'available', False)
         )
+        # Dual rotation: emit BOTH no-flip + flip180 candidates per frame and let
+        # SuperPoint match confidence pick the winner downstream. Bypasses the
+        # shape-match `_need_flip` heuristic ("BEST" template). Mirrors
+        # multi_camera.preprocess dual logic.
+        _dual_rotation = (
+            use_obb_rotation
+            and bool(getattr(camera, 'dual_rotation_check', False))
+            and hasattr(_rotation_service, 'rotate_frame_dual')
+        )
         frame_rotation_matrices = [None] * len(frames)
+        # Alt full-frame per template idx (parallel to `frames`); None when
+        # rotation wasn't dual or dual emit failed for that frame.
+        alt_full_frames: List[Optional[Any]] = [None] * len(frames)
 
         if use_obb_rotation:
             from ..preprocessing.obb_rotator import transform_crop_area
@@ -134,13 +146,39 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             for idx, frame in enumerate(frames):
                 frame_tag = f"{serial_number}/frame{idx}"
                 _t_rot = _time.perf_counter()
-                rotated, M = _rotation_service.rotate_frame(
-                    frame, frame_tag=frame_tag
-                )
-                _ms_cap_rotation += (_time.perf_counter() - _t_rot) * 1000
-                _n_cap_rotation += 1
-                rotated_frames.append(rotated)
-                frame_rotation_matrices[idx] = M  # None means rotation failed → original used
+                if _dual_rotation:
+                    cand_a, cand_b = _rotation_service.rotate_frame_dual(
+                        frame, frame_tag=f"{frame_tag}-dual"
+                    )
+                    _ms_cap_rotation += (_time.perf_counter() - _t_rot) * 1000
+                    _n_cap_rotation += 1
+                    if cand_a is not None and cand_b is not None:
+                        rotated_frames.append(cand_a)
+                        alt_full_frames[idx] = cand_b
+                        frame_rotation_matrices[idx] = None  # cap-only rotation
+                        logger.info(
+                            f"[{serial_number}] dual cap_rotation OK frame{idx} "
+                            f"— both candidates emitted"
+                        )
+                    else:
+                        # Dual failed → fall back to single rotate_frame for this frame
+                        rotated, M = _rotation_service.rotate_frame(
+                            frame, frame_tag=f"{frame_tag}-fallback"
+                        )
+                        rotated_frames.append(rotated)
+                        frame_rotation_matrices[idx] = M
+                        logger.info(
+                            f"[{serial_number}] dual cap_rotation fallback to "
+                            f"single frame{idx}"
+                        )
+                else:
+                    rotated, M = _rotation_service.rotate_frame(
+                        frame, frame_tag=frame_tag
+                    )
+                    _ms_cap_rotation += (_time.perf_counter() - _t_rot) * 1000
+                    _n_cap_rotation += 1
+                    rotated_frames.append(rotated)
+                    frame_rotation_matrices[idx] = M  # None means rotation failed → original used
 
             if getattr(_rotation_service, 'inverse_transform', False):
                 # inverse_transform=True: output dùng ảnh gốc, bbox sẽ được inverse về tọa độ gốc
@@ -149,13 +187,45 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             else:
                 # inverse_transform=False: output dùng ảnh đã xoay
                 # → replace frames để verify/display dùng ảnh xoay
+                # In dual mode, store PRIMARY candidates here; run_inference may
+                # swap individual entries to alt if alt wins.
                 context.results[serial_number]['frames'] = rotated_frames
 
-            frames = rotated_frames  # superpoint luôn dùng ảnh đã xoay
+            frames = rotated_frames  # superpoint luôn dùng ảnh đã xoay (primary cand)
 
-        # Prepare inputs: crop from (rotated or original) frame
+        # Prepare inputs: crop from (rotated or original) frame.
+        #
+        # In dual_rotation mode we emit TWO batch entries per template idx:
+        # primary (no-flip) first, then alt (flip180). All parallel lists
+        # (target_imgs / crop_areas / batch_matchers / is_alt_candidate /
+        # template_idx_per_entry) keep the same length.
         target_imgs = []
         crop_areas = []
+        batch_matchers: List[Any] = []
+        is_alt_candidate: List[bool] = []
+        template_idx_per_entry: List[int] = []
+        # Map template idx → alt full-frame, for swapping into context.results
+        # if the alt candidate wins.
+        alt_full_frame_by_idx: Dict[int, Any] = {}
+
+        def _apply_match_erosion(img, idx_tag: str):
+            """Horizontal erosion to suppress variable text before SuperPoint."""
+            if not getattr(camera, 'match_erosion_enabled', False):
+                return img
+            kw = getattr(camera, 'match_erosion_kernel_w', 80)
+            kh = getattr(camera, 'match_erosion_kernel_h', 1)
+            iters = getattr(camera, 'match_erosion_iterations', 1)
+            kernel = np.ones((kh, kw), np.uint8)
+            eroded = cv2.erode(img, kernel, iterations=iters)
+            try:
+                from pathlib import Path as _Path
+                _dbg = _Path("ocr_inference") / (
+                    f"debug_frame_{camera.serial_number}_{idx_tag}_eroded.jpg"
+                )
+                cv2.imwrite(str(_dbg), eroded)
+            except Exception:
+                pass
+            return eroded
 
         for idx, (frame, matcher) in enumerate(zip(frames[:num_templates], matchers)):
             crop_area = getattr(matcher, 'crop_area', None)
@@ -167,11 +237,20 @@ class SingleCameraPipeline(InferencePipelineTemplate):
 
             # ── cap_crop_method active: detect cap per-frame, override crop_area ──
             _cap_crop_method = getattr(matcher, 'cap_crop_method', 'none')
+            # Cache cap circle from primary to reuse on alt (cap-only rotation
+            # → cap position identical between candidates, skip HoughCircles 2nd time).
+            _cached_cap_circle = None
             if _cap_crop_method and _cap_crop_method != 'none':
                 _t_cap = _time.perf_counter()
                 try:
-                    from ..preprocessing.cv_rotator import detect_cap_and_crop
-                    cap_result = detect_cap_and_crop(frame, margin_ratio=0.10)
+                    from ..preprocessing.cv_rotator import (
+                        detect_cap_circle, apply_cap_crop,
+                    )
+                    _cached_cap_circle = detect_cap_circle(frame)
+                    cap_result = (
+                        apply_cap_crop(frame, _cached_cap_circle, margin_ratio=0.10)
+                        if _cached_cap_circle is not None else None
+                    )
                     _dt_cap = (_time.perf_counter() - _t_cap) * 1000
                     _ms_cap_crop += _dt_cap
                     _n_cap_crop += 1
@@ -218,23 +297,63 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             else:
                 frame_for_inference = frame
 
-            # Apply horizontal erosion to suppress variable text before SuperPoint matching
-            if getattr(camera, 'match_erosion_enabled', False):
-                kw = getattr(camera, 'match_erosion_kernel_w', 80)
-                kh = getattr(camera, 'match_erosion_kernel_h', 1)
-                iters = getattr(camera, 'match_erosion_iterations', 1)
-                kernel = np.ones((kh, kw), np.uint8)
-                frame_for_inference = cv2.erode(frame_for_inference, kernel, iterations=iters)
-                # Debug: save eroded frame (overwrite → always latest)
-                try:
-                    from pathlib import Path as _Path
-                    _dbg = _Path("ocr_inference") / f"debug_frame_{camera.serial_number}_t{idx}_eroded.jpg"
-                    cv2.imwrite(str(_dbg), frame_for_inference)
-                except Exception:
-                    pass
+            frame_for_inference = _apply_match_erosion(frame_for_inference, f"t{idx}")
 
             target_imgs.append(frame_for_inference)
             crop_areas.append(crop_area)
+            batch_matchers.append(matcher)
+            is_alt_candidate.append(False)
+            template_idx_per_entry.append(idx)
+
+            # ── Dual rotation: emit ALT candidate as a separate batch entry ──
+            alt_frame_full = alt_full_frames[idx] if idx < len(alt_full_frames) else None
+            if alt_frame_full is not None:
+                alt_crop_area = crop_area
+                alt_frame_for_inference = None
+                if _cap_crop_method and _cap_crop_method != 'none':
+                    # Reuse cap circle from primary — cap_rotation is cap-only,
+                    # so the cap position is identical in primary and alt.
+                    _t_alt = _time.perf_counter()
+                    try:
+                        from ..preprocessing.cv_rotator import apply_cap_crop
+                        alt_cap = (
+                            apply_cap_crop(alt_frame_full, _cached_cap_circle, margin_ratio=0.10)
+                            if _cached_cap_circle is not None else None
+                        )
+                        _dt_alt = (_time.perf_counter() - _t_alt) * 1000
+                        if alt_cap is not None:
+                            alt_frame_for_inference = alt_cap[0]
+                            _ax1, _ay1, _ax2, _ay2 = alt_cap[1]
+                            alt_crop_area = {
+                                'x1': int(_ax1), 'y1': int(_ay1),
+                                'x2': int(_ax2), 'y2': int(_ay2),
+                            }
+                            logger.info(
+                                f"[{serial_number}] alt cap_crop (cached cap) in "
+                                f"{_dt_alt:.1f}ms — reused HoughCircles result"
+                            )
+                        else:
+                            logger.warning(
+                                f"[{serial_number}] dual alt cap_crop FAIL "
+                                f"— primary cap not detected, skipping alt"
+                            )
+                    except Exception as e:
+                        logger.warning(f"[{serial_number}] dual alt cap_crop error: {e}")
+                elif self._crop_func and crop_area:
+                    alt_frame_for_inference = self._crop_func(alt_frame_full, crop_area)
+                else:
+                    alt_frame_for_inference = alt_frame_full
+
+                if alt_frame_for_inference is not None:
+                    alt_frame_for_inference = _apply_match_erosion(
+                        alt_frame_for_inference, f"t{idx}_alt"
+                    )
+                    target_imgs.append(alt_frame_for_inference)
+                    crop_areas.append(alt_crop_area)
+                    batch_matchers.append(matcher)
+                    is_alt_candidate.append(True)
+                    template_idx_per_entry.append(idx)
+                    alt_full_frame_by_idx[idx] = alt_frame_full
 
         _dt_total = (_time.perf_counter() - _t_preproc_start) * 1000
         logger.info(
@@ -249,10 +368,23 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             'camera': camera,
             'serial_number': serial_number,
             'frames': frames,
-            'matchers': matchers,
+            # `matchers` is parallel to `target_imgs` (length N normally, or 2N
+            # in dual mode). run_inference uses it for `templates=` in match_batch.
+            'matchers': batch_matchers,
+            # `template_matchers` is the original 1-per-template list (length N),
+            # kept for code paths that index by template idx (e.g. ColorCheck stub
+            # path or shape_outline). Equals `batch_matchers` when not dual.
+            'template_matchers': matchers,
             'target_imgs': target_imgs,
             'crop_areas': crop_areas,
+            # `rotation_matrices` stays length N (one per template idx), NOT
+            # parallel to target_imgs. Used for inverse_transform on the winning
+            # candidate. Always None in dual mode (cap-only rotation).
             'rotation_matrices': frame_rotation_matrices,
+            'is_alt_candidate': is_alt_candidate,
+            'template_idx_per_entry': template_idx_per_entry,
+            'alt_full_frame_by_idx': alt_full_frame_by_idx,
+            'num_templates': num_templates,
             'is_multi_template': is_multi_template
         }
 
@@ -262,10 +394,26 @@ class SingleCameraPipeline(InferencePipelineTemplate):
         preprocessed: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """Run batch inference"""
-        matchers = preprocessed['matchers']
+        matchers = preprocessed['matchers']            # parallel to target_imgs
+        template_matchers = preprocessed.get('template_matchers', matchers)  # length N
         target_imgs = preprocessed['target_imgs']
         crop_areas = preprocessed['crop_areas']
         rotation_matrices = preprocessed.get('rotation_matrices', [None] * len(target_imgs))
+        is_alt_candidate = preprocessed.get(
+            'is_alt_candidate', [False] * len(target_imgs)
+        )
+        template_idx_per_entry = preprocessed.get(
+            'template_idx_per_entry', list(range(len(target_imgs)))
+        )
+        alt_full_frame_by_idx = preprocessed.get('alt_full_frame_by_idx', {})
+        num_templates = preprocessed.get('num_templates', len(template_matchers))
+
+        # Map template_idx → primary batch index. Used by stub fast-path to
+        # pick the primary entry per template (skipping alt entries).
+        primary_k_by_tidx: Dict[int, int] = {}
+        for _k, _tidx in enumerate(template_idx_per_entry):
+            if not is_alt_candidate[_k] and _tidx not in primary_k_by_tidx:
+                primary_k_by_tidx[_tidx] = _k
 
         try:
             # Per-recipe matching-confidence gate (default 0.20 = 20%)
@@ -275,24 +423,33 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             # If ALL matchers are ColorCheck stubs, skip SuperPoint entirely and
             # synthesize success results from the raw camera templates (denormalized
             # to frame coords). Mirrors multi_camera.run_inference's fast path.
+            #
+            # Note: stub mode is mutually exclusive with dual_rotation (stub is
+            # for Check_Color+product; dual is for Check_Color WITHOUT product),
+            # but we iterate by template_idx via primary_k_by_tidx defensively.
             all_color_stub = all(
-                getattr(m, 'is_color_check_stub', False) for m in matchers
+                getattr(m, 'is_color_check_stub', False) for m in template_matchers
             )
             if all_color_stub:
                 logger.info(
                     f"[{camera.serial_number}] Skipping SuperPoint match: all "
-                    f"{len(matchers)} matchers are ColorCheck stubs"
+                    f"{len(template_matchers)} matchers are ColorCheck stubs"
                 )
                 transformed_results = []
-                for idx in range(len(target_imgs)):
-                    frame = target_imgs[idx]
+                for t_idx in range(num_templates):
+                    primary_k = primary_k_by_tidx.get(t_idx)
+                    frame = (
+                        target_imgs[primary_k]
+                        if primary_k is not None and primary_k < len(target_imgs)
+                        else None
+                    )
                     if frame is not None and hasattr(frame, 'shape'):
                         fh, fw = frame.shape[:2]
                     else:
                         fh, fw = 1080, 1920
                     annotations = []
-                    if camera.templates and idx < len(camera.templates):
-                        annotations = camera.templates[idx].get('annotations') or []
+                    if camera.templates and t_idx < len(camera.templates):
+                        annotations = camera.templates[t_idx].get('annotations') or []
                     tb: List[Dict[str, Any]] = []
                     for ann_idx, ann in enumerate(annotations):
                         new_ann: Dict[str, Any] = dict(ann)
@@ -347,6 +504,10 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                         _to_dict(b) for b in (getattr(matcher, 'other_bboxes', None) or [])
                         if b is not None
                     ]
+                    _tag = (
+                        f"{camera.serial_number}_t{template_idx_per_entry[idx]}"
+                        f"{'_alt' if is_alt_candidate[idx] else ''}"
+                    )
                     if template_img is None or template_bbox is None:
                         synthetic_results.append({
                             'success': False,
@@ -361,12 +522,12 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                             target_img=target_img,
                             template_bbox=template_bbox,
                             other_bboxes=other_bboxes,
-                            serial=f"{camera.serial_number}_t{idx}",
+                            serial=_tag,
                         ))
                 batch_result = {'success': True, 'results': synthetic_results,
                                  'batch_timings': {'total': 0.0, 'trt_inference': 0.0}}
             else:
-                # Use first matcher for batch inference
+                # Batch SuperPoint match (matchers parallel to target_imgs)
                 batch_result = matchers[0].match_batch(
                     target_imgs=target_imgs,
                     templates=matchers,
@@ -379,25 +540,71 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 logger.error(f"Batch inference failed: {batch_result.get('error')}")
                 return None
 
-            # Transform results back to full frame coordinates:
-            # 1. crop offset (cropped-rotated → full-rotated)
-            # 2. inverse rotation (full-rotated → full-original)
-            transformed_results = []
-            for idx, result in enumerate(batch_result['results']):
-                # Step 1: offset back from (rotated) crop area → full rotated frame coords
-                crop_area = crop_areas[idx]
+            # Stash transformed results by (template_idx, is_alt). For each
+            # batch entry:
+            #   1. crop offset (cropped-rotated → full-rotated coords)
+            #   2. inverse rotation (full-rotated → full-original) if enabled
+            #
+            # Then resolve per template_idx — in dual mode pick higher-confidence
+            # winner; in normal mode (no alt), use whichever entry is present.
+            serial_number = camera.serial_number
+            _stash: Dict[tuple, Any] = {}
+            for k, result in enumerate(batch_result['results']):
+                crop_area = crop_areas[k]
                 if self._transform_func:
                     result = self._transform_func(result, crop_area)
-
-                # Step 2: inverse rotation → original frame coords (if enabled)
-                M = rotation_matrices[idx] if idx < len(rotation_matrices) else None
+                t_idx = template_idx_per_entry[k] if k < len(template_idx_per_entry) else k
+                M = rotation_matrices[t_idx] if t_idx < len(rotation_matrices) else None
                 if (M is not None
                         and context.obb_rotation_service
                         and context.obb_rotation_service.inverse_transform):
                     from ..preprocessing.obb_rotator import inverse_transform_bboxes
                     result = inverse_transform_bboxes(result, M)
+                is_alt = is_alt_candidate[k] if k < len(is_alt_candidate) else False
+                _stash[(t_idx, is_alt)] = result
 
-                transformed_results.append(result)
+            transformed_results: List[Dict[str, Any]] = []
+            for t_idx in range(num_templates):
+                r_primary = _stash.get((t_idx, False))
+                r_alt     = _stash.get((t_idx, True))
+
+                if r_primary is None and r_alt is None:
+                    # Defensive: no match entries for this template idx
+                    transformed_results.append({
+                        'success': False,
+                        'error': 'no match result',
+                        'transformed_bboxes': [],
+                        'confidence': 0.0, 'inliers': 0, 'total_matches': 0,
+                    })
+                    continue
+
+                if r_alt is None:
+                    # Non-dual path (or dual emit failed for this idx)
+                    transformed_results.append(r_primary)
+                    continue
+
+                # Dual mode: pair primary + alt and pick higher confidence
+                if r_primary is None:
+                    winner, alt_wins = r_alt, True
+                else:
+                    c_p = float(r_primary.get('confidence', 0.0) or 0.0)
+                    c_a = float(r_alt.get('confidence', 0.0) or 0.0)
+                    alt_wins = c_a > c_p
+                    winner = r_alt if alt_wins else r_primary
+                    logger.info(
+                        f"[{serial_number}] dual_rotation t{t_idx}: "
+                        f"{'ALT' if alt_wins else 'primary'} wins "
+                        f"(primary_conf={c_p:.3f}, alt_conf={c_a:.3f})"
+                    )
+
+                transformed_results.append(winner)
+
+                # On alt-wins, swap context.results[sn]['frames'][t_idx] to the
+                # alt full frame so verify + viz use the winning rotation.
+                if alt_wins and t_idx in alt_full_frame_by_idx:
+                    _frames = context.results[serial_number].get('frames', [])
+                    if t_idx < len(_frames):
+                        _frames[t_idx] = alt_full_frame_by_idx[t_idx]
 
             return {
                 'batch_result': batch_result,

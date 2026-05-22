@@ -30,6 +30,7 @@ from .char_quality import (
 )
 from .text_ocr_utils import (
     AUGMENT_SIMILARITY_THRESHOLD,
+    augment_dot_matrix_text,
     augment_laser_text,
     calculate_text_similarity,
     pick_winning_candidate,
@@ -122,6 +123,30 @@ class TextVerificationService:
     CHAR_QUAD_MIN_EDGE_PX       = 3.0    # any edge shorter than this → degenerate
     CHAR_QUAD_ASPECT_DEV_MIN    = 0.5    # transformed (w/h) / original (w/h) must be in
     CHAR_QUAD_ASPECT_DEV_MAX    = 2.0    # this band — else char shape got warped
+
+    # ── V-suffix bypass: Check_Color CIJ dot-matrix, ký tự V cuối chuỗi ──
+    # Khi expected kết thúc bằng 'V' và prefix expected[:-1] khớp ĐÚNG ký tự với
+    # recognized, coi như PASS — bất kể ký tự cuối OCR đọc là gì (kể cả mất).
+    # Lý do: chữ V dot-matrix dưới cùng có đáy chỉ 1-2 chấm, OCR thường xuyên
+    # đọc thành U/chấm/missing dù mọi ký tự khác đúng 100%.
+    # KHÔNG dùng counter — bypass này áp dụng vĩnh viễn cho mọi chai cùng pattern.
+    # Rủi ro: nếu line có biến thể sản phẩm khác V ở ký tự cuối (vd ...-U thật)
+    # → 100% pass nhầm. Cần đảm bảo line chỉ chạy 1 product type tại 1 thời điểm.
+    V_SUFFIX_BYPASS_ENABLED                         = True
+    V_SUFFIX_BYPASS_LAST_CHARS: Tuple[str, ...]     = ('V',)    # mở rộng nếu sau có chữ khác (vd 'W')
+    V_SUFFIX_BYPASS_MIN_EXPECTED_LEN                = 3         # chống case pathological expected='V' hay 'XV'
+    V_SUFFIX_BYPASS_FUNCTION_TYPES: Tuple[str, ...] = ("Check_Color",)
+
+    # Khi augment retry fail toàn bộ 5 versions, lưu composite (INPUT crop + 5
+    # augments) ra ổ đĩa để review offline. Subfolder ngày trong debug_path:
+    # → {debug_path}/augment_fails/{YYYY-MM-DD}/{HHMMSS_xxx}_{serial}_ann{idx}.png
+    # Phụ thuộc save_debug_images flag (đã có sẵn). Đặt False nếu sợ đầy đĩa.
+    SAVE_AUGMENT_FAIL_DEBUG = False
+
+    # Camera Check_Color in dot-matrix (CIJ) lên nắp chai → cần augment khác hẳn:
+    # gộp các chấm thành nét liền thay vì sharpen (vốn làm khoảng cách chấm rõ hơn).
+    # Các function_type khác giữ nguyên augment cũ (chữ in liền, laser-engrave).
+    DOT_MATRIX_AUGMENT_FUNCTION_TYPES: Tuple[str, ...] = ("Check_Color",)
 
     def __init__(
         self,
@@ -551,7 +576,28 @@ class TextVerificationService:
                 f"recognized='{recognized}', match={match}, conf={confidence:.2%}"
             )
 
-            # Augment retry for failed regions with near-similar text
+            # Early V-suffix bypass: nếu kết quả OCR pass đầu đã đủ điều kiện
+            # bypass (prefix khớp 100%, expected kết thúc V, function_type=Check_Color),
+            # SKIP augment_retry — tiết kiệm ~44ms TRT call. Augment chỉ giúp đọc
+            # đúng V, nhưng V-bypass cho phép trailing tự do nên không cần đọc.
+            if not match:
+                pre_bypassed, pre_reason = self._check_v_suffix_bypass(
+                    expected=expected,
+                    recognized=recognized,
+                    function_type=item.get('function_type', 'OCR'),
+                )
+                if pre_bypassed:
+                    logger.info(
+                        f"[{serial}] Ann {ann_idx}: EARLY V-SUFFIX BYPASS PASS "
+                        f"recognized='{recognized}' → expected='{expected}' "
+                        f"({pre_reason}) — skipping augment_retry"
+                    )
+                    match = True
+
+            # Augment retry for failed regions with near-similar text (chỉ chạy
+            # nếu early bypass không kích hoạt). Sau augment vẫn thử bypass lần
+            # nữa với recognized mới (augment có thể đổi recognized).
+            augment_attempted = False
             if not match:
                 sim_score = calculate_text_similarity(recognized, expected)
                 if sim_score >= AUGMENT_SIMILARITY_THRESHOLD:
@@ -565,12 +611,35 @@ class TextVerificationService:
                         serial_number=serial,
                         annotation_idx=ann_idx,
                         conf_threshold=conf_thr,
+                        function_type=item.get('function_type', 'OCR'),
                     )
+                    augment_attempted = True
                 else:
                     logger.info(
                         f"[{serial}] Annotation {ann_idx}: FAIL and similarity={sim_score:.2%} "
                         f"< {AUGMENT_SIMILARITY_THRESHOLD:.0%}, skip augment retry"
                     )
+
+            # Post-augment V-suffix bypass — fallback nếu augment cũng fail.
+            if not match and augment_attempted:
+                bypassed, bypass_reason = self._check_v_suffix_bypass(
+                    expected=expected,
+                    recognized=recognized,
+                    function_type=item.get('function_type', 'OCR'),
+                )
+                if bypassed:
+                    logger.info(
+                        f"[{serial}] Ann {ann_idx}: V-SUFFIX BYPASS PASS "
+                        f"recognized='{recognized}' → expected='{expected}' ({bypass_reason})"
+                    )
+                    match = True
+                else:
+                    logger.info(
+                        f"[{serial}] Ann {ann_idx}: V-suffix bypass not applied — {bypass_reason}"
+                    )
+
+            # Always overwrite recognized with expected for any match (real or bypass)
+            # — keep FE display simple and consistent. Drift info stays in logs.
             if match:
                 recognized = expected[:]
 
@@ -1134,6 +1203,8 @@ class TextVerificationService:
                 'conf_threshold': conf_threshold,
                 'expected_text': expected_text,
                 'cropped_region': cropped,
+                # Used by V-suffix bypass + dot-matrix augment gates — both chỉ áp cho Check_Color.
+                'function_type': getattr(camera, 'function_type', 'OCR'),
             })
 
             if use_sim_task and ann_idx in original_bbox_map:
@@ -1697,15 +1768,30 @@ class TextVerificationService:
         serial_number: str,
         annotation_idx: int,
         conf_threshold: float = 0.8,
+        function_type: str = "OCR",
     ):
         """
         Run OCR on 5 augmented versions of cropped_region (batch per region).
         Returns (match, recognized_text) of the first matching version,
         or (False, best_recognized_text) if none match.
+
+        Augment profile được chọn theo `function_type`:
+          - Check_Color (CIJ dot-matrix in lên nắp) → augment_dot_matrix_text
+          - Còn lại (chữ in liền, laser-engrave, label thường) → augment_laser_text
         """
-        aug_versions = augment_laser_text(cropped_region)
+        if function_type in self.DOT_MATRIX_AUGMENT_FUNCTION_TYPES:
+            aug_versions = augment_laser_text(cropped_region)
+            profile = "dot_matrix"
+        else:
+            aug_versions = augment_laser_text(cropped_region)
+            profile = "laser_text"
         aug_names = list(aug_versions.keys())
         aug_images = list(aug_versions.values())
+        logger.info(
+            f"[{serial_number}] Annotation {annotation_idx}: "
+            f"augment profile='{profile}' (function_type={function_type}), "
+            f"versions={aug_names}"
+        )
 
         try:
             t0 = time.time()
@@ -1727,6 +1813,9 @@ class TextVerificationService:
 
         best_text = ""
         best_conf = -1.0
+        # Per-version results — used to build the augment-fail debug composite
+        # when ALL 5 versions fail (lets operator inspect crops offline).
+        per_version: List[Tuple[str, str, float, bool]] = []
 
         for ver_name, aug_result in zip(aug_names, aug_results):
             candidates = _to_candidates(aug_result)
@@ -1737,6 +1826,7 @@ class TextVerificationService:
                 f"[{serial_number}] Annotation {annotation_idx} "
                 f"augment[{ver_name}]: '{aug_recognized}' conf={aug_conf:.2%} match={aug_match}"
             )
+            per_version.append((ver_name, aug_recognized, float(aug_conf), bool(aug_match)))
             if aug_match:
                 logger.info(f"[{serial_number}] Annotation {annotation_idx}: PASS via augment[{ver_name}]")
                 return True, expected_text[:]
@@ -1748,7 +1838,158 @@ class TextVerificationService:
             f"[{serial_number}] Annotation {annotation_idx}: "
             f"still FAIL after augment retry, best='{best_text}' conf={best_conf:.2%}"
         )
+        # Persist crops + augments to disk for offline review of why OCR misses
+        # the target character (vd chữ V cuối). Fails silent — không ảnh hưởng
+        # pipeline nếu disk write lỗi.
+        self._save_augment_fail_debug(
+            serial_number=serial_number,
+            annotation_idx=annotation_idx,
+            expected_text=expected_text,
+            cropped_region=cropped_region,
+            aug_versions=aug_versions,
+            per_version=per_version,
+        )
         return False, best_text
+
+    def _save_augment_fail_debug(
+        self,
+        serial_number: str,
+        annotation_idx: int,
+        expected_text: str,
+        cropped_region: np.ndarray,
+        aug_versions: Dict[str, np.ndarray],
+        per_version: List[Tuple[str, str, float, bool]],
+    ) -> None:
+        """
+        Lưu composite 1 ảnh dọc gồm: INPUT crop + 5 augment versions, mỗi panel
+        có 1 dải label trên cho biết tên version + text OCR đọc + conf.
+
+        Chỉ kích hoạt khi cả save_debug_images và SAVE_AUGMENT_FAIL_DEBUG = True.
+        Folder: {debug_path}/augment_fails/{YYYY-MM-DD}/
+        Filename: {HHMMSS_msec}_{serial}_ann{idx}_exp-{expected}.png
+        """
+        if not (self.save_debug_images and self.SAVE_AUGMENT_FAIL_DEBUG):
+            return
+        try:
+            date_str = time.strftime("%Y-%m-%d")
+            out_dir = os.path.join(self.debug_path, "augment_fails", date_str)
+            os.makedirs(out_dir, exist_ok=True)
+
+            panels: List[Tuple[str, np.ndarray, str]] = [
+                ("INPUT", cropped_region, f"expected='{expected_text}'"),
+            ]
+            for ver_name, recognized, conf, matched in per_version:
+                tag = "PASS" if matched else "FAIL"
+                label = f"{ver_name:14s} {tag}  '{recognized}'  conf={conf:.2%}"
+                panels.append((ver_name, aug_versions[ver_name], label))
+
+            target_w = max(p[1].shape[1] for p in panels)
+            target_w = max(target_w, 480)  # đảm bảo text label đọc được
+
+            rows: List[np.ndarray] = []
+            for name, img, label in panels:
+                # Resize ảnh về cùng width (giữ aspect)
+                if img.shape[1] != target_w:
+                    scale = target_w / img.shape[1]
+                    new_h = max(1, int(img.shape[0] * scale))
+                    img = cv2.resize(img, (target_w, new_h), interpolation=cv2.INTER_AREA)
+                # Convert grayscale → BGR để vstack được
+                if img.ndim == 2:
+                    img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+                elif img.shape[2] == 1:
+                    img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+
+                # Dải label trên (dark grey, text trắng/xanh/cam)
+                band = np.full((28, target_w, 3), 40, dtype=np.uint8)
+                if name == "INPUT":
+                    color = (220, 220, 220)
+                elif "PASS" in label:
+                    color = (60, 220, 60)
+                else:
+                    color = (60, 140, 255)
+                cv2.putText(
+                    band, label, (6, 19),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA,
+                )
+                rows.append(band)
+                rows.append(img)
+
+            composite = np.vstack(rows)
+
+            ts_ms = int(time.time() * 1000)
+            ts_str = time.strftime("%H%M%S") + f"_{ts_ms % 1000:03d}"
+            safe_exp = "".join(c if c.isalnum() else "_" for c in expected_text)[:24]
+            fname = f"{ts_str}_{serial_number}_ann{annotation_idx}_exp-{safe_exp}.png"
+            out_path = os.path.join(out_dir, fname)
+            cv2.imwrite(out_path, composite)
+            logger.info(
+                f"[{serial_number}] Saved augment-fail debug: {out_path}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"[{serial_number}] Failed to save augment-fail debug ann {annotation_idx}: {e}"
+            )
+
+    # ── V-suffix bypass (known weak char: V dot-matrix dưới cùng) ──
+
+    @staticmethod
+    def _alnum_only(s: str) -> str:
+        """Gỡ tất cả ký tự non-alphanumeric. Dùng cho v-suffix bypass vì OCR
+        đôi khi đọc text dot-matrix không kèm dấu '-' (vd '0614113311U' thay
+        vì '06141-13311-U'). So sánh trên dạng alnum-only để robust."""
+        return ''.join(c for c in s if c.isalnum())
+
+    def _check_v_suffix_bypass(
+        self,
+        expected: str,
+        recognized: str,
+        function_type: str,
+    ) -> Tuple[bool, str]:
+        """
+        Bypass cho Check_Color CIJ dot-matrix:
+        - expected phải kết thúc bằng ký tự trong V_SUFFIX_BYPASS_LAST_CHARS ('V')
+        - Sau khi gỡ ký tự non-alphanumeric khỏi cả 2 chuỗi, recognized phải
+          bắt đầu ĐÚNG với expected_norm[:-1] (prefix match từng ký tự alnum)
+        - recognized_norm chỉ được dài hơn prefix_norm tối đa 1 ký tự
+          → cho phép mất ký tự cuối / sai ký tự cuối, chặn garbage dài
+
+        OCR có thể đọc với hoặc không có dấu '-' tuỳ trường hợp (dot-matrix in
+        dấu '-' bằng 3-4 chấm ngang, thi thoảng OCR bỏ qua). Normalize đảm bảo
+        bypass hoạt động ổn định không phụ thuộc dấu phân cách.
+
+        Returns (bypassed, reason).
+        """
+        if not self.V_SUFFIX_BYPASS_ENABLED:
+            return False, "disabled"
+        if function_type not in self.V_SUFFIX_BYPASS_FUNCTION_TYPES:
+            return False, f"wrong_function_type={function_type!r}"
+        if not expected or len(expected) < self.V_SUFFIX_BYPASS_MIN_EXPECTED_LEN:
+            return False, f"expected_too_short_len={len(expected)}"
+        if expected[-1] not in self.V_SUFFIX_BYPASS_LAST_CHARS:
+            return False, f"expected_last_char={expected[-1]!r}_not_in_target"
+
+        # Normalize: gỡ '-', ' ', etc. khỏi cả hai để so prefix
+        expected_norm = self._alnum_only(expected)
+        recognized_norm = self._alnum_only(recognized)
+        if len(expected_norm) < 2:
+            return False, f"expected_norm_too_short={expected_norm!r}"
+        # Confirm normalized cũng kết thúc bằng V (an toàn — expected_norm bỏ '-'
+        # cuối ra trước, V là ký tự cuối alnum).
+        if expected_norm[-1] not in self.V_SUFFIX_BYPASS_LAST_CHARS:
+            return False, f"expected_norm_last_char={expected_norm[-1]!r}_not_in_target"
+
+        prefix_norm = expected_norm[:-1]
+        if not recognized_norm.startswith(prefix_norm):
+            return False, (
+                f"prefix_mismatch (expected_prefix_norm={prefix_norm!r}, "
+                f"recognized_norm[:{len(prefix_norm)}]={recognized_norm[:len(prefix_norm)]!r})"
+            )
+
+        trailing = recognized_norm[len(prefix_norm):]
+        if len(trailing) > 1:
+            return False, f"too_many_trailing_chars={trailing!r}"
+
+        return True, f"bypassed (trailing={trailing!r})"
 
     @staticmethod
     def update_bboxes_with_recognized_text(

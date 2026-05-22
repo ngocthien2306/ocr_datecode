@@ -56,6 +56,59 @@ def augment_laser_text(img_bgr: np.ndarray) -> dict:
     return results
 
 
+def augment_dot_matrix_text(img_bgr: np.ndarray) -> dict:
+    """
+    5 versions tuned for CIJ ink-jet **dot-matrix** text (mỗi ký tự = lưới chấm rời).
+    Mục tiêu: gộp các chấm gần nhau thành nét liền để OCR không nhầm chấm thưa
+    thành ký tự sai (vd V dot-matrix → U vì đáy V chỉ 1-2 chấm dễ trông như cong).
+
+    Khác `augment_laser_text` ở chỗ KHÔNG sharpen / KHÔNG subtract background —
+    các op đó càng làm khoảng cách giữa chấm rõ hơn → đọc tệ hơn. Thay vào đó
+    dùng blur / morph close / erode / downup để TRIỆT TIÊU khe trống.
+
+    Returns:
+        dict keys: 'original', 'gauss_merge', 'close_bridge',
+                   'fatten_strokes', 'downup_antialias'
+    """
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(4, 4))
+
+    results = {'original': img_bgr.copy()}
+
+    # 1. Gaussian merge — blur σ=1.8 đủ mạnh để chấm liền kề hợp thành blob stroke,
+    # CLAHE phục hồi tương phản tổng thể sau blur.
+    blurred = cv2.GaussianBlur(gray, (0, 0), 1.8)
+    results['gauss_merge'] = cv2.cvtColor(clahe.apply(blurred), cv2.COLOR_GRAY2BGR)
+
+    # 2. Morph CLOSE trên ảnh inverted — text dark on light → invert để text bright,
+    # close (dilate+erode) bridge khe LIGHT (vốn là gap giữa chấm) bên trong stroke,
+    # rồi invert về. Kernel 3×5 ưu tiên dọc — phù hợp các chấm xếp dọc trong chữ.
+    inv = cv2.bitwise_not(gray)
+    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 5))
+    closed = cv2.morphologyEx(inv, cv2.MORPH_CLOSE, kernel_close)
+    closed_back = cv2.bitwise_not(closed)
+    results['close_bridge'] = cv2.cvtColor(clahe.apply(closed_back), cv2.COLOR_GRAY2BGR)
+
+    # 3. Fatten dark strokes — median 3 xoá nhiễu muối tiêu, erode 2×2 ellipse
+    # làm dark pixel "lan" ra → các chấm phình + tự overlap → thành nét.
+    median = cv2.medianBlur(gray, 3)
+    kernel_erode = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+    fattened = cv2.erode(median, kernel_erode)
+    results['fatten_strokes'] = cv2.cvtColor(clahe.apply(fattened), cv2.COLOR_GRAY2BGR)
+
+    # 4. Down→up anti-alias — downscale 0.5× rồi upscale lại kích thước gốc:
+    # bước down area-average gộp chấm thành mức xám trung gian, bước up linear
+    # bôi mịn → chấm biến mất nhưng stroke vẫn nhận diện được.
+    new_w = max(1, w // 2)
+    new_h = max(1, h // 2)
+    small = cv2.resize(gray, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    restored = cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
+    results['downup_antialias'] = cv2.cvtColor(clahe.apply(restored), cv2.COLOR_GRAY2BGR)
+
+    return results
+
+
 def apply_text_corrections(text: str) -> str:
     """Apply common OCR correction rules before comparison."""
     if "Pt" in text:
@@ -127,3 +180,28 @@ def calculate_text_similarity(text1: str, text2: str) -> float:
 
     ratio = SequenceMatcher(None, text1_norm, text2_norm).ratio()
     return ratio
+
+
+def levenshtein_distance(a: str, b: str) -> int:
+    """
+    Character-level edit distance. O(len(a) * len(b)) DP — cheap for OCR strings (<50 chars).
+    Used by tolerance check to count exact #-of-chars differing.
+    """
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        curr = [i] + [0] * len(b)
+        for j, cb in enumerate(b, 1):
+            cost = 0 if ca == cb else 1
+            curr[j] = min(
+                curr[j - 1] + 1,        # insert
+                prev[j] + 1,            # delete
+                prev[j - 1] + cost,     # substitute
+            )
+        prev = curr
+    return prev[-1]

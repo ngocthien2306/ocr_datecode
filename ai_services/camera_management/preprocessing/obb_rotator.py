@@ -414,9 +414,15 @@ class OBBRotationService:
             angle_deg = text_angle * 180 / np.pi
             if th > tw:
                 angle_deg += 90
-            # Apply rotation WITHOUT flip and WITH flip — let downstream choose
-            candidate_a = rotate_cap_region_only(frame, cap_box, angle_deg, False)
-            candidate_b = rotate_cap_region_only(frame, cap_box, angle_deg, True)
+            # Apply rotation WITHOUT flip and WITH flip — let downstream choose.
+            # 2 warpAffine độc lập, cv2 release GIL → chạy song song 2 threads
+            # tiết kiệm ~30ms so với serial.
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=2) as _pool:
+                _fa = _pool.submit(rotate_cap_region_only, frame, cap_box, angle_deg, False)
+                _fb = _pool.submit(rotate_cap_region_only, frame, cap_box, angle_deg, True)
+                candidate_a = _fa.result()
+                candidate_b = _fb.result()
             _t_total = (_time.perf_counter() - _t0) * 1000
             self._rot_logger.info(
                 f"{tag}DUAL OK in {_t_total:.1f}ms — angle={angle_deg:.1f}° "

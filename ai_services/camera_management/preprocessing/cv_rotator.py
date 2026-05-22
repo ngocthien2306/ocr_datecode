@@ -30,6 +30,42 @@ import numpy as np
 logger = logging.getLogger(__name__)
 _FONT = cv2.FONT_HERSHEY_SIMPLEX
 
+
+# ─── File logger for rotation results ─────────────────────────────────────────
+
+_rotation_file_logger: Optional[logging.Logger] = None
+
+
+def _get_rotation_file_logger() -> logging.Logger:
+    """Lazy-init a dedicated file logger for CV rotation results.
+
+    Mirrors the OBB rotator's logger so both rotation methods produce
+    daily files under logs/{category}/{date}.log with identical formatting.
+    """
+    global _rotation_file_logger
+    if _rotation_file_logger is not None:
+        return _rotation_file_logger
+
+    from logging_config import make_handler
+
+    _rotation_file_logger = logging.getLogger('cv_rotation')
+    _rotation_file_logger.setLevel(logging.DEBUG)
+    _rotation_file_logger.propagate = False  # don't bubble to root logger
+
+    if not any(getattr(h, "_marker", None) == "daily-cv_rotation"
+               for h in _rotation_file_logger.handlers):
+        fh = make_handler(
+            "cv_rotation",
+            level=logging.DEBUG,
+            fmt='%(asctime)s  %(levelname)-8s  %(message)s',
+        )
+        fh.formatter.datefmt = '%Y-%m-%d %H:%M:%S'
+        setattr(fh, "_marker", "daily-cv_rotation")
+        _rotation_file_logger.addHandler(fh)
+
+    logger.info("CV rotation log: cv_rotation/{date}.log")
+    return _rotation_file_logger
+
 # Pre-rendered "BEST" templates at fixed scales — cached at import time so
 # _need_flip doesn't re-render on every frame. Two scales cover the typical
 # size variation of date-code text inside the cap region; more scales would
@@ -304,7 +340,11 @@ class CVRotationService:
     # do cap-only rotation so the inverse-transform branch is never used.
     def __init__(self, inverse_transform: bool = True):
         self.inverse_transform = inverse_transform
+        self._rot_logger = _get_rotation_file_logger()
         logger.info("CVRotationService initialized (pure CV — no model needed)")
+        self._rot_logger.info(
+            f"CVRotationService initialized (inverse_transform={inverse_transform})"
+        )
 
     @property
     def available(self) -> bool:
@@ -328,7 +368,7 @@ class CVRotationService:
             cap = _detect_cap(gray)
             _t_detect = (_time.perf_counter() - _t1) * 1000
             if cap is None:
-                logger.info(
+                self._rot_logger.info(
                     f"{tag}[RotateCV] FAIL — no cap detected "
                     f"(gray={_t_gray:.1f}ms, detect={_t_detect:.1f}ms)"
                 )
@@ -349,16 +389,17 @@ class CVRotationService:
 
             final_angle = angle_deg + (180.0 if flip else 0.0)
             _t_total = (_time.perf_counter() - _t0) * 1000
-            logger.info(
+            self._rot_logger.info(
                 f"{tag}[RotateCV] OK in {_t_total:.1f}ms — cap=(cx={cx:.0f}, cy={cy:.0f}, "
-                f"r={r:.0f}) angle={angle_deg:.1f}° flip={flip} → total={final_angle:.1f}° | "
+                f"r={r:.0f}) angle={angle_deg:.1f}° flip={flip} (s0={s0:.3f} s180={s180:.3f}) "
+                f"→ total={final_angle:.1f}° | "
                 f"gray={_t_gray:.1f}ms, detect_cap={_t_detect:.1f}ms, "
                 f"text_angle={_t_angle:.1f}ms, need_flip={_t_flip:.1f}ms, "
                 f"rotate={_t_rot:.1f}ms"
             )
             return result, None
         except Exception as e:
-            logger.error(f"{tag}[RotateCV] ERROR — {e}", exc_info=True)
+            self._rot_logger.error(f"{tag}[RotateCV] ERROR — {e}", exc_info=True)
             return frame, None
 
     def rotate_frame_dual(
@@ -380,17 +421,17 @@ class CVRotationService:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
             cap = _detect_cap(gray)
             if cap is None:
-                logger.info(f"{tag}[RotateCV-Dual] FAIL — no cap detected")
+                self._rot_logger.info(f"{tag}[RotateCV-Dual] FAIL — no cap detected")
                 return None, None
             angle_deg, _n_dark = _text_angle(gray, cap)
             cand_a = _rotate_cap_region(frame, cap, angle_deg, False)
             cand_b = _rotate_cap_region(frame, cap, angle_deg, True)
             _t_total = (_time.perf_counter() - _t0) * 1000
-            logger.info(
+            self._rot_logger.info(
                 f"{tag}[RotateCV-Dual] OK in {_t_total:.1f}ms — angle={angle_deg:.1f}° "
                 f"both candidates emitted"
             )
             return cand_a, cand_b
         except Exception as e:
-            logger.error(f"{tag}[RotateCV-Dual] ERROR — {e}", exc_info=True)
+            self._rot_logger.error(f"{tag}[RotateCV-Dual] ERROR — {e}", exc_info=True)
             return None, None
