@@ -730,7 +730,7 @@ class TextVerificationService:
                     'conf_threshold': m['conf_threshold'],
                     'serial_number':  m['serial_number'],
                     'annotation_idx': m['annotation_idx'],
-                    'cv_method':                (m.get('cv_method') or 'legacy'),
+                    'cv_method':                (m.get('cv_method') or 'v4'),
                     # Template bank HARDCODED disabled — single-template path always
                     'recipe_id':                m.get('recipe_id'),
                     'template_bank_enabled':    False,
@@ -851,7 +851,7 @@ class TextVerificationService:
                     'conf_threshold': m['conf_threshold'],
                     'serial_number':  m['serial_number'],
                     'annotation_idx': m['annotation_idx'],
-                    'cv_method':                (m.get('cv_method') or 'legacy'),
+                    'cv_method':                (m.get('cv_method') or 'v4'),
                     'recipe_id':                m.get('recipe_id'),
                     'template_bank_enabled':    False,  # HARDCODED disabled
                     'template_bank_size':       int(m.get('template_bank_size', 10)),
@@ -1353,7 +1353,7 @@ class TextVerificationService:
                     'defect_model': getattr(camera, 'defect_model', None) or 'arcface',
                     'classifier_backend': camera_backend,
                     # CV pipeline variant when classifier_backend='embedding': 'legacy' | 'v4' | 'shape_v7'
-                    'cv_method':             (getattr(camera, 'cv_method', None) or 'legacy'),
+                    'cv_method':             (getattr(camera, 'cv_method', None) or 'v4'),
                     # Template bank HARDCODED disabled (per recipe-system refactor) — single-template path always
                     'recipe_id':             getattr(camera, 'recipe_id', None),
                     'template_bank_enabled': False,  # was: getattr(camera, 'template_bank_enabled', False)
