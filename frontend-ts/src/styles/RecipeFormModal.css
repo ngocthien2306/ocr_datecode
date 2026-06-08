@@ -2771,3 +2771,52 @@ body.dark-mode .bottle-edge-card {
 body.dark-mode .bottle-edge-card__title {
   color: #d1d5db;
 }
+
+/* Conditional sub-section blocks inside form sections (e.g. Time-based vs
+   Sensor-based reject config). Light-theme palette per feedback_ui_theme. */
+.form-subsection {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+}
+.form-subsection-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.form-hint {
+  display: block;
+  margin-top: 4px;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.4;
+}
+body.dark-mode .form-subsection {
+  border-top-color: #4b5563;
+}
+body.dark-mode .form-subsection-title {
+  color: #d1d5db;
+}
+body.dark-mode .form-hint {
+  color: #9ca3af;
+}
+
+/* Modbus address row: prefix (D/M/...) next to numeric address. */
+.plc-address-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+.plc-address-row .plc-prefix-input {
+  width: 60px;
+  flex: 0 0 60px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.plc-address-row input[type="number"] {
+  flex: 1;
+  min-width: 0;
+}

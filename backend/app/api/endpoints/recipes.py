@@ -454,6 +454,16 @@ def recipe_to_response(recipe: RecipeInDB, user_names_map: dict = None) -> Recip
         do_alarm_number=recipe.do_alarm_number if hasattr(recipe, 'do_alarm_number') else 0,
         allow_late_reject=getattr(recipe, 'allow_late_reject', False),
         normal_pulse_ms=getattr(recipe, 'normal_pulse_ms', 0.0),
+        reject_mode=getattr(recipe, 'reject_mode', 'time_based'),
+        plc_verdict_register=getattr(recipe, 'plc_verdict_register', 0),
+        plc_verdict_prefix=getattr(recipe, 'plc_verdict_prefix', 'D'),
+        plc_ready_coil=getattr(recipe, 'plc_ready_coil', 0),
+        plc_ready_prefix=getattr(recipe, 'plc_ready_prefix', 'M'),
+        plc_ack_coil=getattr(recipe, 'plc_ack_coil', 1),
+        plc_ack_prefix=getattr(recipe, 'plc_ack_prefix', 'M'),
+        plc_pulse_register=getattr(recipe, 'plc_pulse_register', 10),
+        plc_pulse_prefix=getattr(recipe, 'plc_pulse_prefix', 'D'),
+        plc_ack_timeout_ms=getattr(recipe, 'plc_ack_timeout_ms', 200),
         cameras=cameras_data,
         camera_templates=camera_templates_data,
         camera_settings=recipe.camera_settings.model_dump() if hasattr(recipe.camera_settings, 'model_dump') and recipe.camera_settings else recipe.camera_settings,
@@ -1359,6 +1369,16 @@ async def clone_recipe(
         do_alarm_number=getattr(original_recipe, 'do_alarm_number', 0),
         allow_late_reject=getattr(original_recipe, 'allow_late_reject', False),
         normal_pulse_ms=getattr(original_recipe, 'normal_pulse_ms', 0.0),
+        reject_mode=getattr(original_recipe, 'reject_mode', 'time_based'),
+        plc_verdict_register=getattr(original_recipe, 'plc_verdict_register', 0),
+        plc_verdict_prefix=getattr(original_recipe, 'plc_verdict_prefix', 'D'),
+        plc_ready_coil=getattr(original_recipe, 'plc_ready_coil', 0),
+        plc_ready_prefix=getattr(original_recipe, 'plc_ready_prefix', 'M'),
+        plc_ack_coil=getattr(original_recipe, 'plc_ack_coil', 1),
+        plc_ack_prefix=getattr(original_recipe, 'plc_ack_prefix', 'M'),
+        plc_pulse_register=getattr(original_recipe, 'plc_pulse_register', 10),
+        plc_pulse_prefix=getattr(original_recipe, 'plc_pulse_prefix', 'D'),
+        plc_ack_timeout_ms=getattr(original_recipe, 'plc_ack_timeout_ms', 200),
         camera_settings=to_dict(original_recipe.camera_settings),
         model_thresholds=to_dict(original_recipe.model_thresholds),
         template_config=original_recipe.template_config,
@@ -1519,6 +1539,16 @@ async def load_recipe(
         'do_alarm_number': getattr(recipe, 'do_alarm_number', 0),
         'allow_late_reject': getattr(recipe, 'allow_late_reject', False),
         'normal_pulse_ms': getattr(recipe, 'normal_pulse_ms', 0.0),
+        'reject_mode': getattr(recipe, 'reject_mode', 'time_based'),
+        'plc_verdict_register': getattr(recipe, 'plc_verdict_register', 0),
+        'plc_verdict_prefix': getattr(recipe, 'plc_verdict_prefix', 'D'),
+        'plc_ready_coil': getattr(recipe, 'plc_ready_coil', 0),
+        'plc_ready_prefix': getattr(recipe, 'plc_ready_prefix', 'M'),
+        'plc_ack_coil': getattr(recipe, 'plc_ack_coil', 1),
+        'plc_ack_prefix': getattr(recipe, 'plc_ack_prefix', 'M'),
+        'plc_pulse_register': getattr(recipe, 'plc_pulse_register', 10),
+        'plc_pulse_prefix': getattr(recipe, 'plc_pulse_prefix', 'D'),
+        'plc_ack_timeout_ms': getattr(recipe, 'plc_ack_timeout_ms', 200),
         'product_code': recipe.product_code,
         'camera_templates': _to_primitive(camera_templates),
         'model_thresholds': _to_primitive(getattr(recipe, 'model_thresholds', None)),
@@ -1562,6 +1592,16 @@ async def load_recipe(
         'do_alarm_number': getattr(recipe, 'do_alarm_number', 0),
         'allow_late_reject': getattr(recipe, 'allow_late_reject', False),
         'normal_pulse_ms': getattr(recipe, 'normal_pulse_ms', 0.0),
+        'reject_mode': getattr(recipe, 'reject_mode', 'time_based'),
+        'plc_verdict_register': getattr(recipe, 'plc_verdict_register', 0),
+        'plc_verdict_prefix': getattr(recipe, 'plc_verdict_prefix', 'D'),
+        'plc_ready_coil': getattr(recipe, 'plc_ready_coil', 0),
+        'plc_ready_prefix': getattr(recipe, 'plc_ready_prefix', 'M'),
+        'plc_ack_coil': getattr(recipe, 'plc_ack_coil', 1),
+        'plc_ack_prefix': getattr(recipe, 'plc_ack_prefix', 'M'),
+        'plc_pulse_register': getattr(recipe, 'plc_pulse_register', 10),
+        'plc_pulse_prefix': getattr(recipe, 'plc_pulse_prefix', 'D'),
+        'plc_ack_timeout_ms': getattr(recipe, 'plc_ack_timeout_ms', 200),
         'cameras': enriched_cameras,  # Use enriched cameras with function_type
         'camera_templates': _to_primitive(camera_templates),
         'model_thresholds': _to_primitive(getattr(recipe, 'model_thresholds', None)),
@@ -1879,6 +1919,16 @@ async def update_recipe_realtime(
         'do_alarm_number': getattr(recipe, 'do_alarm_number', 0),
         'allow_late_reject': getattr(recipe, 'allow_late_reject', False),
         'normal_pulse_ms': getattr(recipe, 'normal_pulse_ms', 0.0),
+        'reject_mode': getattr(recipe, 'reject_mode', 'time_based'),
+        'plc_verdict_register': getattr(recipe, 'plc_verdict_register', 0),
+        'plc_verdict_prefix': getattr(recipe, 'plc_verdict_prefix', 'D'),
+        'plc_ready_coil': getattr(recipe, 'plc_ready_coil', 0),
+        'plc_ready_prefix': getattr(recipe, 'plc_ready_prefix', 'M'),
+        'plc_ack_coil': getattr(recipe, 'plc_ack_coil', 1),
+        'plc_ack_prefix': getattr(recipe, 'plc_ack_prefix', 'M'),
+        'plc_pulse_register': getattr(recipe, 'plc_pulse_register', 10),
+        'plc_pulse_prefix': getattr(recipe, 'plc_pulse_prefix', 'D'),
+        'plc_ack_timeout_ms': getattr(recipe, 'plc_ack_timeout_ms', 200),
         'cameras': enriched_cameras,
         'camera_templates': _to_primitive(camera_templates),
         'model_thresholds': _to_primitive(getattr(recipe, 'model_thresholds', None)),
@@ -1926,6 +1976,46 @@ async def update_recipe_realtime(
     if 'normal_pulse_ms' in update_data:
         recipe_dict['normal_pulse_ms'] = update_data['normal_pulse_ms']
         logger.info(f"📝 [REALTIME UPDATE] normal_pulse_ms → {update_data['normal_pulse_ms']} ms")
+
+    if 'reject_mode' in update_data:
+        recipe_dict['reject_mode'] = update_data['reject_mode']
+        logger.info(f"📝 [REALTIME UPDATE] reject_mode → {update_data['reject_mode']}")
+
+    if 'plc_verdict_register' in update_data:
+        recipe_dict['plc_verdict_register'] = update_data['plc_verdict_register']
+        logger.info(f"📝 [REALTIME UPDATE] plc_verdict_register → {update_data['plc_verdict_register']}")
+
+    if 'plc_verdict_prefix' in update_data:
+        recipe_dict['plc_verdict_prefix'] = update_data['plc_verdict_prefix']
+        logger.info(f"📝 [REALTIME UPDATE] plc_verdict_prefix → {update_data['plc_verdict_prefix']}")
+
+    if 'plc_ready_coil' in update_data:
+        recipe_dict['plc_ready_coil'] = update_data['plc_ready_coil']
+        logger.info(f"📝 [REALTIME UPDATE] plc_ready_coil → {update_data['plc_ready_coil']}")
+
+    if 'plc_ready_prefix' in update_data:
+        recipe_dict['plc_ready_prefix'] = update_data['plc_ready_prefix']
+        logger.info(f"📝 [REALTIME UPDATE] plc_ready_prefix → {update_data['plc_ready_prefix']}")
+
+    if 'plc_ack_coil' in update_data:
+        recipe_dict['plc_ack_coil'] = update_data['plc_ack_coil']
+        logger.info(f"📝 [REALTIME UPDATE] plc_ack_coil → {update_data['plc_ack_coil']}")
+
+    if 'plc_ack_prefix' in update_data:
+        recipe_dict['plc_ack_prefix'] = update_data['plc_ack_prefix']
+        logger.info(f"📝 [REALTIME UPDATE] plc_ack_prefix → {update_data['plc_ack_prefix']}")
+
+    if 'plc_pulse_register' in update_data:
+        recipe_dict['plc_pulse_register'] = update_data['plc_pulse_register']
+        logger.info(f"📝 [REALTIME UPDATE] plc_pulse_register → {update_data['plc_pulse_register']}")
+
+    if 'plc_pulse_prefix' in update_data:
+        recipe_dict['plc_pulse_prefix'] = update_data['plc_pulse_prefix']
+        logger.info(f"📝 [REALTIME UPDATE] plc_pulse_prefix → {update_data['plc_pulse_prefix']}")
+
+    if 'plc_ack_timeout_ms' in update_data:
+        recipe_dict['plc_ack_timeout_ms'] = update_data['plc_ack_timeout_ms']
+        logger.info(f"📝 [REALTIME UPDATE] plc_ack_timeout_ms → {update_data['plc_ack_timeout_ms']} ms")
 
     if 'wrinkle_conf' in update_data:
         recipe_dict['wrinkle_conf'] = update_data['wrinkle_conf']

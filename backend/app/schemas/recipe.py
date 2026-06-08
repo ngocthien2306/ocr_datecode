@@ -123,6 +123,23 @@ class RecipeBase(BaseModel):
     allow_late_reject: Optional[bool] = Field(default=False, description="Allow reject to fire immediately when inference_time > delay_reject (use for carton/alarm-only systems where late reject is harmless)")
     normal_pulse_ms: Optional[float] = Field(default=0.0, ge=0.0, le=999999.0, description="Expected normal DI pulse width in ms (used for stuck bottle detection)")
 
+    # Reject scheduling mode
+    reject_mode: Optional[str] = Field(default='time_based', description="time_based: AI canh thời gian (delay_reject + reject_pulse). sensor_based: PLC tự bắn pulse khi sensor trước rejector kích hoạt; AI chỉ gửi verdict 0/1 + handshake.")
+    # Sensor-based PLC handshake config (used when reject_mode='sensor_based')
+    # Each Modbus address has a "prefix" (cosmetic — picks how the field is labelled
+    # to match the PLC ladder's device naming, e.g. Delta D/M/Y/HR/T/C/SD/S/SM/L).
+    # At the Modbus TCP layer only the integer address + register-vs-coil function
+    # matters; prefix is documentation only.
+    plc_verdict_register: Optional[int] = Field(default=0, ge=0, le=9999, description="Modbus register address where AI writes verdict (0=PASS, 1=FAIL)")
+    plc_verdict_prefix: Optional[str] = Field(default='D', max_length=4, description="Vendor-side device prefix for verdict register (D/HR/T/C/SD/custom). Cosmetic.")
+    plc_ready_coil: Optional[int] = Field(default=0, ge=0, le=2047, description="Modbus coil address AI sets to signal 'verdict ready'")
+    plc_ready_prefix: Optional[str] = Field(default='M', max_length=4, description="Vendor-side device prefix for ready coil (M/Y/S/SM/L/custom). Cosmetic.")
+    plc_ack_coil: Optional[int] = Field(default=1, ge=0, le=2047, description="Modbus coil address PLC sets to acknowledge verdict consumed")
+    plc_ack_prefix: Optional[str] = Field(default='M', max_length=4, description="Vendor-side device prefix for ack coil (M/Y/S/SM/L/custom). Cosmetic.")
+    plc_pulse_register: Optional[int] = Field(default=10, ge=0, le=9999, description="Modbus register address where AI writes pulse_width (ms) once at recipe load")
+    plc_pulse_prefix: Optional[str] = Field(default='D', max_length=4, description="Vendor-side device prefix for pulse register (D/HR/T/C/SD/custom). Cosmetic.")
+    plc_ack_timeout_ms: Optional[int] = Field(default=200, ge=10, le=5000, description="Max time (ms) AI waits for PLC ack after writing verdict")
+
     # Multiple cameras support (new approach)
     cameras: List[CameraConfiguration] = Field(default_factory=list, description="Camera configurations for this recipe")
 
@@ -186,6 +203,16 @@ class RecipeUpdate(BaseModel):
     do_alarm_number: Optional[int] = Field(None, ge=0, le=4)
     allow_late_reject: Optional[bool] = None
     normal_pulse_ms: Optional[float] = Field(None, ge=0.0, le=999999.0)
+    reject_mode: Optional[str] = None
+    plc_verdict_register: Optional[int] = Field(None, ge=0, le=9999)
+    plc_verdict_prefix: Optional[str] = Field(None, max_length=4)
+    plc_ready_coil: Optional[int] = Field(None, ge=0, le=2047)
+    plc_ready_prefix: Optional[str] = Field(None, max_length=4)
+    plc_ack_coil: Optional[int] = Field(None, ge=0, le=2047)
+    plc_ack_prefix: Optional[str] = Field(None, max_length=4)
+    plc_pulse_register: Optional[int] = Field(None, ge=0, le=9999)
+    plc_pulse_prefix: Optional[str] = Field(None, max_length=4)
+    plc_ack_timeout_ms: Optional[int] = Field(None, ge=10, le=5000)
     cameras: Optional[List[CameraConfiguration]] = None
     camera_templates: Optional[List[CameraTemplates]] = None
     camera_settings: Optional[CameraSettings] = None

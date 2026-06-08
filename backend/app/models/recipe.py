@@ -131,6 +131,18 @@ class RecipeBase(BaseModel):
     allow_late_reject: Optional[bool] = Field(default=False, description="Allow reject to fire immediately when inference_time > delay_reject (use for carton/alarm-only systems where late reject is harmless)")
     normal_pulse_ms: Optional[float] = Field(default=0.0, ge=0.0, le=999999.0, description="Expected normal DI pulse width in ms (used for stuck bottle detection)")
 
+    # Reject scheduling mode
+    reject_mode: Optional[str] = Field(default='time_based', description="time_based: AI canh thời gian (delay_reject + reject_pulse). sensor_based: PLC tự bắn pulse khi sensor trước rejector kích hoạt; AI chỉ gửi verdict 0/1.")
+    plc_verdict_register: Optional[int] = Field(default=0, ge=0, le=9999, description="Modbus register where AI writes verdict (0/1)")
+    plc_verdict_prefix: Optional[str] = Field(default='D', max_length=4, description="Vendor device prefix for verdict register (cosmetic)")
+    plc_ready_coil: Optional[int] = Field(default=0, ge=0, le=2047, description="Modbus coil AI sets to signal 'verdict ready'")
+    plc_ready_prefix: Optional[str] = Field(default='M', max_length=4, description="Vendor device prefix for ready coil (cosmetic)")
+    plc_ack_coil: Optional[int] = Field(default=1, ge=0, le=2047, description="Modbus coil PLC sets to acknowledge")
+    plc_ack_prefix: Optional[str] = Field(default='M', max_length=4, description="Vendor device prefix for ack coil (cosmetic)")
+    plc_pulse_register: Optional[int] = Field(default=10, ge=0, le=9999, description="Modbus register where AI writes pulse_width once at recipe load")
+    plc_pulse_prefix: Optional[str] = Field(default='D', max_length=4, description="Vendor device prefix for pulse register (cosmetic)")
+    plc_ack_timeout_ms: Optional[int] = Field(default=200, ge=10, le=5000, description="Timeout (ms) AI waits for PLC ack")
+
     # Multiple cameras support (new approach)
     cameras: List[CameraConfiguration] = Field(default_factory=list, description="Camera configurations for this recipe")
 

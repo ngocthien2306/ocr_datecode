@@ -37,6 +37,16 @@ interface FormDataType {
   do_alarm_number: number;
   allow_late_reject: boolean;
   normal_pulse_ms: number;
+  reject_mode: string;
+  plc_verdict_register: number;
+  plc_verdict_prefix: string;
+  plc_ready_coil: number;
+  plc_ready_prefix: string;
+  plc_ack_coil: number;
+  plc_ack_prefix: string;
+  plc_pulse_register: number;
+  plc_pulse_prefix: string;
+  plc_ack_timeout_ms: number;
   is_active: boolean;
   cameras: RecipeCamera[];
   camera_settings: {
@@ -170,6 +180,16 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     do_alarm_number: 0,
     allow_late_reject: false,
     normal_pulse_ms: 0,
+    reject_mode: 'time_based',
+    plc_verdict_register: 0,
+    plc_verdict_prefix: 'D',
+    plc_ready_coil: 0,
+    plc_ready_prefix: 'M',
+    plc_ack_coil: 1,
+    plc_ack_prefix: 'M',
+    plc_pulse_register: 10,
+    plc_pulse_prefix: 'D',
+    plc_ack_timeout_ms: 200,
     is_active: true,
     cameras: [],
     camera_settings: {
@@ -380,6 +400,16 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         do_alarm_number: recipeAny.do_alarm_number !== undefined ? recipeAny.do_alarm_number : 0,
         allow_late_reject: recipeAny.allow_late_reject === true,
         normal_pulse_ms: recipeAny.normal_pulse_ms !== undefined ? recipeAny.normal_pulse_ms : 0,
+        reject_mode: recipeAny.reject_mode || 'time_based',
+        plc_verdict_register: recipeAny.plc_verdict_register !== undefined ? recipeAny.plc_verdict_register : 0,
+        plc_verdict_prefix: recipeAny.plc_verdict_prefix || 'D',
+        plc_ready_coil: recipeAny.plc_ready_coil !== undefined ? recipeAny.plc_ready_coil : 0,
+        plc_ready_prefix: recipeAny.plc_ready_prefix || 'M',
+        plc_ack_coil: recipeAny.plc_ack_coil !== undefined ? recipeAny.plc_ack_coil : 1,
+        plc_ack_prefix: recipeAny.plc_ack_prefix || 'M',
+        plc_pulse_register: recipeAny.plc_pulse_register !== undefined ? recipeAny.plc_pulse_register : 10,
+        plc_pulse_prefix: recipeAny.plc_pulse_prefix || 'D',
+        plc_ack_timeout_ms: recipeAny.plc_ack_timeout_ms !== undefined ? recipeAny.plc_ack_timeout_ms : 200,
         is_active: recipeAny.is_active !== undefined ? recipeAny.is_active : (recipeAny.status === 'Active'),
         cameras: normalizedCameras,
         camera_settings: recipeAny.cameraSettings || recipeAny.camera_settings || {
@@ -451,6 +481,16 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         do_alarm_number: 0,
         allow_late_reject: false,
         normal_pulse_ms: 0,
+        reject_mode: 'time_based',
+        plc_verdict_register: 0,
+        plc_verdict_prefix: 'D',
+        plc_ready_coil: 0,
+        plc_ready_prefix: 'M',
+        plc_ack_coil: 1,
+        plc_ack_prefix: 'M',
+        plc_pulse_register: 10,
+        plc_pulse_prefix: 'D',
+        plc_ack_timeout_ms: 200,
         is_active: true,
         cameras: [],
         camera_settings: {
@@ -660,6 +700,14 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     } else if (name === 'delay_reject' || name === 'reject_pulse' || name === 'normal_pulse_ms') {
       finalValue = parseFloat(value) || 0;
     } else if (name === 'do_reject_number' || name === 'do_alarm_number') {
+      finalValue = parseInt(value) || 0;
+    } else if (
+      name === 'plc_verdict_register' ||
+      name === 'plc_ready_coil' ||
+      name === 'plc_ack_coil' ||
+      name === 'plc_pulse_register' ||
+      name === 'plc_ack_timeout_ms'
+    ) {
       finalValue = parseInt(value) || 0;
     }
 
@@ -1696,45 +1744,26 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                     {errors.description && <span className="error-message">{errors.description}</span>}
                   </div>
                   <div className="form-group">
-                    <label>Delay Reject (ms)</label>
-                    <input type="number" name="delay_reject" value={formData.delay_reject}
-                           onChange={handleInputChange} step="0.1" min="0"
-                           placeholder="Delay reject time in milliseconds" />
+                    <label>Reject Mode</label>
+                    <select
+                      name="reject_mode"
+                      value={formData.reject_mode}
+                      onChange={handleInputChange}
+                    >
+                      <option value="time_based">Time-based (AI timer)</option>
+                      <option value="sensor_based">Sensor-based (PLC controls)</option>
+                    </select>
+                    <small className="form-hint">
+                      Time-based: AI schedules the reject pulse after capture. Sensor-based: PLC fires the pulse via a dedicated sensor in front of the rejector; AI only sends a 0/1 verdict plus handshake (no timing involved).
+                    </small>
                   </div>
                   <div className="form-group">
                     <label>Reject Pulse (ms)</label>
                     <input type="number" name="reject_pulse" value={formData.reject_pulse}
                            onChange={handleInputChange} step="0.1" min="0"
                            placeholder="Reject pulse duration in milliseconds" />
-                  </div>
-                  <div className="form-group">
-                    <label>Reject Output Method</label>
-                    <select
-                      name="reject_method"
-                      value={formData.reject_method}
-                      onChange={handleInputChange}
-                    >
-                      <option value="DIO">DIO_OUT</option>
-                      <option value="PLC">PLC</option>
-                    </select>
-                    <small style={{display: 'block', marginTop: 4, color: '#666'}}>
-                      Output method for reject signal
-                    </small>
-                  </div>
-                  <div className="form-group">
-                    <label>Reject DO Number</label>
-                    <select
-                      name="do_reject_number"
-                      value={formData.do_reject_number.toString()}
-                      onChange={handleInputChange}
-                    >
-                      <option value="0">DO 0</option>
-                      <option value="1">DO 1</option>
-                      <option value="2">DO 2</option>
-                      <option value="3">DO 3</option>
-                    </select>
-                    <small style={{display: 'block', marginTop: 4, color: '#666'}}>
-                      Digital Output port for reject control (0-3)
+                    <small className="form-hint">
+                      Pulse width. Time-based: AI controls the pulse. Sensor-based: written once into the pulse-width register at recipe load for the PLC to use.
                     </small>
                   </div>
                   <div className="form-group">
@@ -1751,39 +1780,241 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       <option value="3">DO 3</option>
                       <option value="4">DO 4</option>
                     </select>
-                    <small style={{display: 'block', marginTop: 4, color: '#666'}}>
+                    <small className="form-hint">
                       Digital Output port for alarm output (0-4)
                     </small>
                   </div>
-                  <div className="form-group">
-                    <label>Allow Late Reject</label>
-                    <input
-                      type="checkbox"
-                      name="allow_late_reject"
-                      checked={formData.allow_late_reject}
-                      onChange={handleInputChange}
-                      style={{width: 'auto', alignSelf: 'flex-start', marginRight: 'auto'}}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Normal Pulse Width (ms)</label>
-                    <input
-                      type="number"
-                      name="normal_pulse_ms"
-                      value={formData.normal_pulse_ms}
-                      onChange={handleInputChange}
-                      step="10"
-                      min="0"
-                      max="999999"
-                      placeholder="Expected pulse width per bottle (ms)"
-                      className={errors.normal_pulse_ms ? 'error' : ''}
-                    />
-                    {errors.normal_pulse_ms && <span className="error-message">{errors.normal_pulse_ms}</span>}
-                    <small style={{display: 'block', marginTop: 4, color: '#666'}}>
-                      Expected DI pulse width per bottle (ms). Stuck detected when pulse &gt; 2.0×
-                    </small>
-                  </div>
                 </div>
+
+                {formData.reject_mode === 'time_based' && (
+                  <div className="form-subsection">
+                    <div className="form-subsection-title">Time-based config</div>
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Delay Reject (ms)</label>
+                        <input type="number" name="delay_reject" value={formData.delay_reject}
+                               onChange={handleInputChange} step="0.1" min="0"
+                               placeholder="Delay reject time in milliseconds" />
+                        <small className="form-hint">Time from camera capture to product arriving at the rejector (ms).</small>
+                      </div>
+                      <div className="form-group">
+                        <label>Reject Output Method</label>
+                        <select
+                          name="reject_method"
+                          value={formData.reject_method}
+                          onChange={handleInputChange}
+                        >
+                          <option value="DIO">DIO_OUT</option>
+                          <option value="PLC">PLC</option>
+                        </select>
+                        <small className="form-hint">Output method for reject signal</small>
+                      </div>
+                      <div className="form-group">
+                        <label>Reject DO Number</label>
+                        <select
+                          name="do_reject_number"
+                          value={formData.do_reject_number.toString()}
+                          onChange={handleInputChange}
+                        >
+                          <option value="0">DO 0</option>
+                          <option value="1">DO 1</option>
+                          <option value="2">DO 2</option>
+                          <option value="3">DO 3</option>
+                        </select>
+                        <small className="form-hint">Digital Output port for reject control (0-3)</small>
+                      </div>
+                      <div className="form-group">
+                        <label>Allow Late Reject</label>
+                        <input
+                          type="checkbox"
+                          name="allow_late_reject"
+                          checked={formData.allow_late_reject}
+                          onChange={handleInputChange}
+                          style={{width: 'auto', alignSelf: 'flex-start', marginRight: 'auto'}}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Normal Pulse Width (ms)</label>
+                        <input
+                          type="number"
+                          name="normal_pulse_ms"
+                          value={formData.normal_pulse_ms}
+                          onChange={handleInputChange}
+                          step="10"
+                          min="0"
+                          max="999999"
+                          placeholder="Expected pulse width per bottle (ms)"
+                          className={errors.normal_pulse_ms ? 'error' : ''}
+                        />
+                        {errors.normal_pulse_ms && <span className="error-message">{errors.normal_pulse_ms}</span>}
+                        <small className="form-hint">
+                          Expected DI pulse width per bottle (ms). Stuck detected when pulse &gt; 2.0×
+                        </small>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {formData.reject_mode === 'sensor_based' && (
+                  <div className="form-subsection">
+                    <div className="form-subsection-title">Sensor-based PLC config</div>
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Verdict Register</label>
+                        <div className="plc-address-row">
+                          <input
+                            type="text"
+                            name="plc_verdict_prefix"
+                            value={formData.plc_verdict_prefix}
+                            onChange={handleInputChange}
+                            list="plc-register-prefixes"
+                            className="plc-prefix-input"
+                            maxLength={4}
+                            placeholder="D"
+                          />
+                          <input
+                            type="number"
+                            name="plc_verdict_register"
+                            value={formData.plc_verdict_register}
+                            onChange={handleInputChange}
+                            min="0"
+                            max="9999"
+                            list="plc-d-registers"
+                            placeholder="0"
+                          />
+                        </div>
+                        <small className="form-hint">Modbus register where AI writes the verdict (0 = PASS, 1 = FAIL). Prefix is cosmetic — pick D/HR/T/C/SD or type your own.</small>
+                      </div>
+                      <div className="form-group">
+                        <label>Verdict Ready Coil</label>
+                        <div className="plc-address-row">
+                          <input
+                            type="text"
+                            name="plc_ready_prefix"
+                            value={formData.plc_ready_prefix}
+                            onChange={handleInputChange}
+                            list="plc-coil-prefixes"
+                            className="plc-prefix-input"
+                            maxLength={4}
+                            placeholder="M"
+                          />
+                          <input
+                            type="number"
+                            name="plc_ready_coil"
+                            value={formData.plc_ready_coil}
+                            onChange={handleInputChange}
+                            min="0"
+                            max="2047"
+                            list="plc-m-coils"
+                            placeholder="0"
+                          />
+                        </div>
+                        <small className="form-hint">Modbus coil AI sets HIGH right after writing the verdict. Prefix is cosmetic — pick M/Y/S/SM/L or type your own.</small>
+                      </div>
+                      <div className="form-group">
+                        <label>Verdict ACK Coil</label>
+                        <div className="plc-address-row">
+                          <input
+                            type="text"
+                            name="plc_ack_prefix"
+                            value={formData.plc_ack_prefix}
+                            onChange={handleInputChange}
+                            list="plc-coil-prefixes"
+                            className="plc-prefix-input"
+                            maxLength={4}
+                            placeholder="M"
+                          />
+                          <input
+                            type="number"
+                            name="plc_ack_coil"
+                            value={formData.plc_ack_coil}
+                            onChange={handleInputChange}
+                            min="0"
+                            max="2047"
+                            list="plc-m-coils"
+                            placeholder="1"
+                          />
+                        </div>
+                        <small className="form-hint">Modbus coil the PLC raises to acknowledge the verdict was consumed.</small>
+                      </div>
+                      <div className="form-group">
+                        <label>Pulse Width Register</label>
+                        <div className="plc-address-row">
+                          <input
+                            type="text"
+                            name="plc_pulse_prefix"
+                            value={formData.plc_pulse_prefix}
+                            onChange={handleInputChange}
+                            list="plc-register-prefixes"
+                            className="plc-prefix-input"
+                            maxLength={4}
+                            placeholder="D"
+                          />
+                          <input
+                            type="number"
+                            name="plc_pulse_register"
+                            value={formData.plc_pulse_register}
+                            onChange={handleInputChange}
+                            min="0"
+                            max="9999"
+                            list="plc-d-registers"
+                            placeholder="10"
+                          />
+                        </div>
+                        <small className="form-hint">Modbus register AI writes pulse_width (ms) into once on recipe load.</small>
+                      </div>
+                      <div className="form-group">
+                        <label>ACK Timeout (ms)</label>
+                        <input
+                          type="number"
+                          name="plc_ack_timeout_ms"
+                          value={formData.plc_ack_timeout_ms}
+                          onChange={handleInputChange}
+                          min="10"
+                          max="5000"
+                          step="10"
+                          list="plc-ack-timeouts"
+                          placeholder="e.g. 200"
+                        />
+                        <small className="form-hint">Max time AI waits for the PLC ACK before logging an error.</small>
+                      </div>
+                    </div>
+                    <datalist id="plc-d-registers">
+                      <option value="0" />
+                      <option value="1" />
+                      <option value="2" />
+                      <option value="10" />
+                      <option value="11" />
+                      <option value="20" />
+                    </datalist>
+                    <datalist id="plc-m-coils">
+                      <option value="0" />
+                      <option value="1" />
+                      <option value="10" />
+                      <option value="11" />
+                    </datalist>
+                    <datalist id="plc-ack-timeouts">
+                      <option value="100" />
+                      <option value="200" />
+                      <option value="500" />
+                      <option value="1000" />
+                    </datalist>
+                    <datalist id="plc-register-prefixes">
+                      <option value="D" />
+                      <option value="HR" />
+                      <option value="T" />
+                      <option value="C" />
+                      <option value="SD" />
+                    </datalist>
+                    <datalist id="plc-coil-prefixes">
+                      <option value="M" />
+                      <option value="Y" />
+                      <option value="S" />
+                      <option value="SM" />
+                      <option value="L" />
+                    </datalist>
+                  </div>
+                )}
                 <div className="form-group checkbox-group">
                   <label>
                     <input type="checkbox" name="is_active" checked={formData.is_active} onChange={handleInputChange} />
