@@ -54,7 +54,9 @@ TEMPLATE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # MUST stay BEFORE any `/{recipe_id}` route (FastAPI static-first rule).
 # ────────────────────────────────────────────────────────────────────────────
 @router.post("/cv-preview")
-async def cv_method_preview(payload: Dict[str, Any]):
+def cv_method_preview(payload: Dict[str, Any]):  # sync → FastAPI runs it in a
+    # threadpool so the heavy folder scan + cv2 work never blocks the event loop
+    # (otherwise a slow preview freezes every other request, e.g. recipe Save).
     """Run a given cv_method against N random char pairs from the latest
     inference debug folder and return base64 thumbnails + per-pair scores.
 
@@ -85,8 +87,11 @@ async def cv_method_preview(payload: Dict[str, Any]):
         return {"folder": None, "method": cv_method, "pairs": [],
                 "error": f"test_result dir missing: {test_result_dir}"}
 
-    emb_folders = [d for d in test_result_dir.iterdir()
-                   if d.is_dir() and d.name.startswith("emb_")]
+    # scandir + name-based timestamp avoids stat()-ing every folder when
+    # test_result accumulates thousands of emb_* dirs (one per inference run).
+    import os as _os
+    emb_folders = [Path(e.path) for e in _os.scandir(test_result_dir)
+                   if e.name.startswith("emb_") and e.is_dir()]
     if not emb_folders:
         return {"folder": None, "method": cv_method, "pairs": [],
                 "error": "no emb_* folders found"}
@@ -134,7 +139,12 @@ async def cv_method_preview(payload: Dict[str, Any]):
 
     # Path B (default): latest folder, random shuffle
     if not sample:
-        latest = max(emb_folders, key=lambda d: d.stat().st_mtime)
+        # Latest by trailing timestamp in the name (emb_{serial}_{YYYYMMDD}_{HHMMSS},
+        # lexicographically sortable) — no stat() per folder.
+        def _folder_ts(d: Path) -> str:
+            parts = d.name.split("_")
+            return "_".join(parts[-2:]) if len(parts) >= 3 else d.name
+        latest = max(emb_folders, key=_folder_ts)
         pairs_on_disk = _scan_folder(latest)
         if not pairs_on_disk:
             return {"folder": latest.name, "method": cv_method, "pairs": [],

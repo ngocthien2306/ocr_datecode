@@ -16,6 +16,8 @@ import base64
 import json
 import logging
 import os
+import shutil
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -42,6 +44,41 @@ def _crop_std(bgr: np.ndarray) -> float:
     """Return grayscale std-dev of an image crop."""
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY) if bgr.ndim == 3 else bgr
     return float(np.std(gray))
+
+
+# Debug-folder retention: test_result/emb_* gets one folder per inference run.
+# Keep only the newest N so the dir doesn't grow unbounded (which slows the
+# recipe cv-preview scan and fills disk). Trimming runs in a background thread
+# and only every Nth save — it never adds latency to the inference hot path.
+EMB_DEBUG_KEEP: int = int(os.environ.get("EMB_DEBUG_KEEP", "200"))
+_EMB_TRIM_EVERY: int = 50
+_emb_trim_lock = threading.Lock()
+
+
+def _trim_emb_debug_folders(debug_root: str, keep: int = EMB_DEBUG_KEEP) -> None:
+    """Delete oldest emb_* debug folders, keeping the newest `keep`.
+
+    Designed to run OFF the inference path (background thread): grabs a
+    non-blocking lock (skips if another trim is running) and never raises.
+    """
+    if not _emb_trim_lock.acquire(blocking=False):
+        return  # a trim is already in progress
+    try:
+        entries = [e for e in os.scandir(debug_root)
+                   if e.name.startswith("emb_") and e.is_dir()]
+        if len(entries) <= keep:
+            return
+        # emb_{serial}_{YYYYMMDD}_{HHMMSS}: sort by trailing timestamp (sortable).
+        def _ts(e: "os.DirEntry") -> str:
+            parts = e.name.split("_")
+            return "_".join(parts[-2:]) if len(parts) >= 3 else e.name
+        entries.sort(key=_ts)  # oldest first
+        for e in entries[:len(entries) - keep]:
+            shutil.rmtree(e.path, ignore_errors=True)
+    except Exception as exc:
+        logger.debug(f"emb debug trim skipped: {exc}")
+    finally:
+        _emb_trim_lock.release()
 
 
 
@@ -846,6 +883,8 @@ class EmbeddingClassifierService:
         self.debug_path = debug_path or f"{os.environ.get('HOME')}/Source/ocr_datecode/ai_services/test_result"
         if self.save_debug_images:
             os.makedirs(self.debug_path, exist_ok=True)
+        # Counter to throttle background debug-folder cleanup (every Nth save).
+        self._debug_save_count = 0
 
         # Template bank registry — persists to filesystem.
         # Filesystem path is sibling of debug_path so it shares the same root.
@@ -978,6 +1017,17 @@ class EmbeddingClassifierService:
                 os.makedirs(debug_dir, exist_ok=True)
             except Exception:
                 debug_dir = None
+            # Throttled, non-blocking retention: every Nth save spawn a daemon
+            # thread to trim old emb_* folders. Off the hot path → inference
+            # latency untouched. (Outside the try above so a trim error can
+            # never disable debug saving.)
+            self._debug_save_count += 1
+            if self._debug_save_count % _EMB_TRIM_EVERY == 0:
+                threading.Thread(
+                    target=_trim_emb_debug_folders,
+                    args=(self.debug_path,),
+                    daemon=True,
+                ).start()
 
         for i in valid_idxs:
             item = items[i]
