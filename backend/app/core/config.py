@@ -6,6 +6,10 @@ class Settings(BaseSettings):
     # MongoDB
     MONGODB_URL: str = "mongodb://localhost:27017"
     DATABASE_NAME: str = "ocr_datecode_db"
+    # TTL retention (days). MongoDB auto-deletes documents older than this.
+    # 0 disables the TTL index for that collection.
+    INFERENCE_RESULTS_TTL_DAYS: int = 30
+    ACTION_LOGS_TTL_DAYS: int = 90
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
