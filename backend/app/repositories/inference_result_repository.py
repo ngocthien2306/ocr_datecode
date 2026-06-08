@@ -37,10 +37,24 @@ class InferenceResultRepository:
 
     async def create_indexes(self):
         """Create database indexes"""
+        from app.core.config import settings
+        from app.db.mongodb import ensure_ttl_index
+
         await self.collection.create_index([("timestamp", -1)])
         await self.collection.create_index([("recipe_id", 1)])
         await self.collection.create_index([("product_pass_fail", 1)])
-        await self.collection.create_index([("created_at", -1)])
+        # Covering index for the summary/timeseries aggregations. They match a
+        # created_at range and group by recipe, needing only these 4 fields.
+        # Including them all lets MongoDB answer from the index alone (COVERED)
+        # instead of fetching each ~12.7KB document just to count PASS/FAIL.
+        await self.collection.create_index(
+            [("created_at", 1), ("product_pass_fail", 1), ("recipe_id", 1), ("recipe_name", 1)]
+        )
+        # created_at doubles as the TTL field: documents older than the
+        # configured retention are auto-deleted by MongoDB's TTL monitor.
+        await ensure_ttl_index(
+            self.collection, "created_at", settings.INFERENCE_RESULTS_TTL_DAYS * 86400
+        )
         logger.info("✅ Inference result indexes created")
 
     async def create(
@@ -380,7 +394,7 @@ class InferenceResultRepository:
             }
         ]
 
-        result = await self.collection.aggregate(pipeline).to_list(length=1)
+        result = await self.collection.aggregate(pipeline, allowDiskUse=True).to_list(length=1)
 
         if not result:
             # No data
@@ -535,7 +549,7 @@ class InferenceResultRepository:
             {"$sort": {"_id": 1}}
         ]
 
-        results = await self.collection.aggregate(pipeline).to_list(length=None)
+        results = await self.collection.aggregate(pipeline, allowDiskUse=True).to_list(length=None)
 
         # Build timeseries data points
         data_points = []

@@ -995,7 +995,7 @@ class EmbeddingClassifierService:
             ann_idx         = item.get('annotation_idx', -1)
             seed_version_key = item.get('template_version_key')
             # Per-recipe CV method routing: 'legacy' (default) | 'v4' | 'v7'
-            cv_method = str(item.get('cv_method', 'legacy')).lower()
+            cv_method = str(item.get('cv_method', 'v4')).lower()
 
             try:
                 metrics: Optional[Dict[str, Any]] = None
