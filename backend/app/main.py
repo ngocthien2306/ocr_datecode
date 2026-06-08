@@ -36,10 +36,15 @@ async def lifespan(app: FastAPI):
     from app.repositories.inference_result_repository import InferenceResultRepository
     inference_result_repo = InferenceResultRepository(db)
 
+    from app.db.mongodb import ensure_ttl_index
+
     await user_repo.create_indexes()
     await recipe_repo.create_indexes()
     await inference_result_repo.create_indexes()
-    await action_log_repo.collection.create_index([("timestamp", -1)])
+    # timestamp doubles as the TTL field: old audit logs are auto-deleted.
+    await ensure_ttl_index(
+        action_log_repo.collection, "timestamp", settings.ACTION_LOGS_TTL_DAYS * 86400
+    )
     await action_log_repo.collection.create_index([("user_id", 1)])
     await action_log_repo.collection.create_index([("action_type", 1)])
     await action_log_repo.collection.create_index([("resource_type", 1)])

@@ -1853,6 +1853,32 @@ body.dark-mode .camera-management .status-badge.info {
   stroke-width: 2.5;
 }
 
+/* Refresh Button - dashboard header (manual reload) */
+.action-btn.refresh-btn {
+  color: #3b82f6;
+  background: #eff6ff;
+  font-weight: 600;
+  padding: 8px 16px;
+  gap: 6px;
+}
+
+.action-btn.refresh-btn:hover {
+  background: #dbeafe;
+}
+
+.action-btn.refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.action-btn.refresh-btn.spinning svg {
+  animation: refresh-spin 0.8s linear infinite;
+}
+
+@keyframes refresh-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* Selected Row Highlight */
 .data-table tbody tr.selected-row {
   background: #eff6ff !important;
@@ -2358,6 +2384,15 @@ body.dark-mode .action-btn {
 
 body.dark-mode .action-btn:hover {
   background: #4b5563;
+}
+
+body.dark-mode .action-btn.refresh-btn {
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.15);
+}
+
+body.dark-mode .action-btn.refresh-btn:hover {
+  background: rgba(59, 130, 246, 0.28);
 }
 
 body.dark-mode .action-btn.edit {

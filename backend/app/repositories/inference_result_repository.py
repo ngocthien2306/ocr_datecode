@@ -37,10 +37,17 @@ class InferenceResultRepository:
 
     async def create_indexes(self):
         """Create database indexes"""
+        from app.core.config import settings
+        from app.db.mongodb import ensure_ttl_index
+
         await self.collection.create_index([("timestamp", -1)])
         await self.collection.create_index([("recipe_id", 1)])
         await self.collection.create_index([("product_pass_fail", 1)])
-        await self.collection.create_index([("created_at", -1)])
+        # created_at doubles as the TTL field: documents older than the
+        # configured retention are auto-deleted by MongoDB's TTL monitor.
+        await ensure_ttl_index(
+            self.collection, "created_at", settings.INFERENCE_RESULTS_TTL_DAYS * 86400
+        )
         logger.info("✅ Inference result indexes created")
 
     async def create(

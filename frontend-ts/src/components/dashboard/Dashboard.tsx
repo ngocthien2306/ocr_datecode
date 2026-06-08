@@ -830,15 +830,25 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     fetchRecipeCharts();
   }, []);
 
-  // Auto-refresh today stats and charts every 30 seconds
-  useEffect(() => {
-    const interval = setInterval(() => {
-      fetchTodayStatistics();
-      fetchRecipeCharts(selectedChartRecipeId || undefined);
-    }, 30000); // 30 seconds
-
-    return () => clearInterval(interval);
-  }, [selectedChartRecipeId]);
+  // Manual refresh: dashboard data reloads only when the user clicks the
+  // Refresh button. The previous 30s auto-refresh was removed to avoid
+  // hammering MongoDB with timeseries aggregations on the Jetson.
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await Promise.all([
+        fetchTodayStatistics(),
+        fetchRecipeCharts(selectedChartRecipeId || undefined),
+        fetchCameras(),
+        fetchRecentLoads(),
+        fetchRecentMembers(),
+      ]);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   // When runningRecipeId changes, auto-select and fetch chart for that recipe
   useEffect(() => {
@@ -1585,6 +1595,18 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                   <div className="time">{timeString}</div>
                   <div className="date">{dateString}</div>
                 </div>
+                <button
+                  className={`action-btn refresh-btn ${isRefreshing ? 'spinning' : ''}`}
+                  onClick={handleRefresh}
+                  disabled={isRefreshing}
+                  title="Làm mới dữ liệu dashboard"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M23 4v6h-6M1 20v-6h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  {isRefreshing ? 'Đang làm mới...' : 'Làm mới'}
+                </button>
               </div>
 
               {/* Summary Cards Row */}
