@@ -100,14 +100,14 @@ class TriggerHandler:
         self._per_camera_cumulative_stats: Dict[str, Dict[str, int]] = {}
         self._camera_cumulative_lock = threading.Lock()
 
-        # Auto-restart on consecutive capture failures per camera
-        _CAPTURE_FAIL_RESTART_N = 2          # consecutive failures before restart
-        _CAPTURE_FAIL_COOLDOWN_S = 20.0      # minimum seconds between restarts
-        self._capture_fail_restart_n = _CAPTURE_FAIL_RESTART_N
-        self._capture_fail_cooldown_s = _CAPTURE_FAIL_COOLDOWN_S
+        # Per-camera recovery on consecutive capture failures.
+        # NOTE: we NEVER restart the whole service — only the affected camera is
+        # reconnected in a background loop, so the other cameras keep running.
+        _CAPTURE_FAIL_RECOVER_N = 2          # consecutive failures before reconnect kicks in
+        self._capture_fail_recover_n = _CAPTURE_FAIL_RECOVER_N
         self._consecutive_capture_failures: Dict[str, int] = {}  # {serial_number: count}
-        self._last_restart_time: float = 0.0
-        self._restart_lock = threading.Lock()
+        self._recovering_cameras: set = set()  # serials with an active recovery loop
+        self._recovery_lock = threading.Lock()
 
         # Statistics monitoring thread
         self._monitoring = False
@@ -696,9 +696,11 @@ class TriggerHandler:
                         camera.serial_number,
                         result.get('frames', [])
                     )
-                    # Reset consecutive failure counter on success
-                    with self._restart_lock:
+                    # Reset consecutive failure counter on success and stop any
+                    # in-flight recovery loop for this camera (it's back online).
+                    with self._recovery_lock:
                         self._consecutive_capture_failures.pop(camera.serial_number, None)
+                        self._recovering_cameras.discard(camera.serial_number)
                 else:
                     logger.error(
                         f"[Group #{group_id}] Camera {camera.serial_number} failed: "
@@ -1133,74 +1135,97 @@ class TriggerHandler:
     def _handle_capture_failure(self, serial_number: str, group_id: int):
         """
         Track consecutive capture failures per camera.
-        If a single camera fails N times in a row, trigger service restart
-        (subject to cooldown).
+
+        After N consecutive failures, start a background reconnect loop for THAT
+        camera only — the other cameras keep running and the whole service is
+        never restarted. At most one recovery loop runs per camera at a time.
         """
-        with self._restart_lock:
+        with self._recovery_lock:
             count = self._consecutive_capture_failures.get(serial_number, 0) + 1
             self._consecutive_capture_failures[serial_number] = count
 
             logger.warning(
                 f"[Group #{group_id}] Camera {serial_number} consecutive failures: "
-                f"{count}/{self._capture_fail_restart_n}"
+                f"{count}/{self._capture_fail_recover_n}"
             )
 
-            if count >= self._capture_fail_restart_n:
-                now = time.time()
-                elapsed = now - self._last_restart_time
-                if elapsed < self._capture_fail_cooldown_s:
-                    remaining = self._capture_fail_cooldown_s - elapsed
-                    logger.warning(
-                        f"[Group #{group_id}] Camera {serial_number} reached {count} consecutive "
-                        f"failures but cooldown active ({remaining:.0f}s remaining). Skip restart."
-                    )
-                    return
+            if count < self._capture_fail_recover_n:
+                return
 
-                logger.error(
-                    f"[Group #{group_id}] Camera {serial_number} failed {count} times consecutively. "
-                    f"Triggering service restart!"
-                )
-                self._last_restart_time = now
-                self._consecutive_capture_failures[serial_number] = 0
-                # Run restart in background thread to not block capture loop
-                t = threading.Thread(
-                    target=self._restart_service,
-                    args=(serial_number,),
-                    daemon=True,
-                    name="ServiceRestartThread"
-                )
-                t.start()
+            if serial_number in self._recovering_cameras:
+                # A recovery loop is already running for this camera
+                return
 
-    def _restart_service(self, trigger_camera: str):
-        """
-        Execute 'sudo systemctl restart ocr-all' with auto password input.
-        Called in a background thread.
-        """
-        import subprocess
-        service = "ocr-all"
-        logger.warning(
-            f"[AUTO-RESTART] Camera {trigger_camera} triggered service restart → "
-            f"sudo systemctl restart {service}"
+            self._recovering_cameras.add(serial_number)
+
+        logger.error(
+            f"[Group #{group_id}] Camera {serial_number} failed {count} times consecutively. "
+            f"Starting background reconnect (service NOT restarted)."
         )
+        t = threading.Thread(
+            target=self._recover_camera,
+            args=(serial_number,),
+            daemon=True,
+            name=f"CameraRecover-{serial_number}"
+        )
+        t.start()
+
+    def _recover_camera(self, serial_number: str):
+        """
+        Background per-camera recovery loop.
+
+        Keeps reconnecting the camera with increasing backoff until it succeeds,
+        the camera disappears from the manager, or polling stops. Emits events so
+        the frontend reflects the disconnected/recovered state instead of failing
+        silently. Never restarts the service.
+        """
+        camera = self.camera_manager.cameras.get(serial_number)
+        if camera is None:
+            logger.error(f"[RECOVER] Camera {serial_number} not in manager, aborting recovery")
+            with self._recovery_lock:
+                self._recovering_cameras.discard(serial_number)
+            return
+
+        # Surface the disconnect to the frontend
         try:
-            result = subprocess.run(
-                ['sudo', '-S', 'systemctl', 'restart', service],
-                input='1\n',
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            if result.returncode == 0:
+            camera._emit_event("camera_recovering", {"reason": "consecutive_capture_failures"})
+        except Exception:
+            pass
+
+        backoffs = [1.0, 2.0, 5.0, 10.0]  # last value repeats
+        attempt = 0
+        while self._polling and serial_number in self._recovering_cameras:
+            attempt += 1
+            try:
+                # Serialize against any in-flight capture on the same camera
+                with camera._capture_lock:
+                    ok = camera._attempt_reconnect()
+            except Exception as e:
+                ok = False
+                logger.error(f"[RECOVER] Camera {serial_number} reconnect attempt {attempt} raised: {e}")
+
+            if ok:
                 logger.warning(
-                    f"[AUTO-RESTART] Service '{service}' restarted successfully "
-                    f"(triggered by camera {trigger_camera})"
+                    f"[RECOVER] Camera {serial_number} reconnected successfully "
+                    f"after {attempt} attempt(s)"
                 )
-            else:
-                logger.error(
-                    f"[AUTO-RESTART] Restart failed (rc={result.returncode}): "
-                    f"{result.stderr.strip()}"
-                )
-        except subprocess.TimeoutExpired:
-            logger.error(f"[AUTO-RESTART] Restart command timed out after 30s")
-        except Exception as e:
-            logger.error(f"[AUTO-RESTART] Restart exception: {e}")
+                with self._recovery_lock:
+                    self._consecutive_capture_failures.pop(serial_number, None)
+                    self._recovering_cameras.discard(serial_number)
+                return
+
+            delay = backoffs[min(attempt - 1, len(backoffs) - 1)]
+            logger.warning(
+                f"[RECOVER] Camera {serial_number} reconnect attempt {attempt} failed, "
+                f"retrying in {delay:.0f}s"
+            )
+            try:
+                camera._emit_event("camera_reconnect_failed", {"attempt": attempt})
+            except Exception:
+                pass
+            time.sleep(delay)
+
+        # Loop ended without success (polling stopped or flag cleared elsewhere)
+        with self._recovery_lock:
+            self._recovering_cameras.discard(serial_number)
+        logger.info(f"[RECOVER] Camera {serial_number} recovery loop ended (attempts={attempt})")

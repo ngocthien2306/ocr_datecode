@@ -9,6 +9,7 @@ from pypylon import pylon
 import cv2
 import numpy as np
 import time
+import threading
 import pickle
 import struct
 import logging
@@ -244,6 +245,10 @@ class Camera:
         self.camera: Optional[pylon.InstantCamera] = None
         self.shm: Optional[shared_memory.SharedMemory] = None
         self.shm_name = f"camera_{serial_number}"
+
+        # Serializes capture vs. background reconnect so the two never touch
+        # self.camera concurrently (capture path + recovery thread share this).
+        self._capture_lock = threading.Lock()
 
         # Camera settings (from DB config or defaults)
         self.exposure_time = 500  # μs (default 500μs = 0.5ms)
@@ -975,6 +980,16 @@ class Camera:
 
     def execute_software_trigger_immediate(self) -> Dict[str, Any]:
         """
+        Public capture entry point.
+
+        Serialized against the background reconnect loop via _capture_lock so a
+        recovery thread can't close/reopen the device while a capture is mid-grab.
+        """
+        with self._capture_lock:
+            return self._do_immediate_capture()
+
+    def _do_immediate_capture(self) -> Dict[str, Any]:
+        """
         Execute software trigger IMMEDIATELY without delay_trigger
 
         Differences from execute_software_trigger():
@@ -994,12 +1009,18 @@ class Camera:
         if not self.camera:
             return {'success': False, 'error': 'Camera not initialized'}
 
-        if not self.camera.IsOpen():
-            logger.error(f"[{self.serial_number}] Camera control channel not open")
-            return {'success': False, 'error': 'Camera control channel not open'}
-
-        if not self.camera.IsGrabbing():
-            return {'success': False, 'error': 'Camera not grabbing'}
+        # Self-heal: if the channel dropped before this capture, try ONE in-place
+        # reconnect (we already hold _capture_lock) before giving up. This lets a
+        # transient drop recover on the very next trigger without waiting for the
+        # background recovery loop.
+        if not self.camera.IsOpen() or not self.camera.IsGrabbing():
+            logger.warning(
+                f"[{self.serial_number}] Camera not ready at capture entry "
+                f"(open={self.camera.IsOpen()}, grabbing={self.camera.IsGrabbing()}), "
+                f"attempting reconnect..."
+            )
+            if not self._attempt_reconnect():
+                return {'success': False, 'error': 'Camera connection lost, reconnect failed'}
 
         if not self.templates:
             return {'success': False, 'error': 'No templates loaded'}
