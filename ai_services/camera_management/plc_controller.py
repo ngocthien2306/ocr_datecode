@@ -36,11 +36,26 @@ class PLCController:
     PLC_PORT = 502
     PLC_TIMEOUT = 3.0  # seconds
 
+    # Keep-alive — prevents Delta PLC's Modbus TCP idle timeout (~30-60s) from
+    # silently closing the connection between writes. Combines OS TCP-keepalive
+    # (early dead-connection detection) and an application-level heartbeat
+    # (Modbus read so PLC sees traffic and doesn't idle-close us).
+    HEARTBEAT_INTERVAL_S = 5.0  # how often to send a probe read
+    HEARTBEAT_PROBE_ADDR = 0    # register to read (any valid addr will do)
+    TCP_KEEPIDLE_S = 10         # OS starts probing after this many idle seconds
+    TCP_KEEPINTVL_S = 5         # probe interval
+    TCP_KEEPCNT = 3             # dead after N missed probes
+
     def __init__(self):
         """Initialize PLC Controller"""
         self._client: Optional[ModbusTcpClient] = None
         self._connected = False
         self._lock = threading.RLock()
+
+        # Heartbeat thread
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread: Optional[threading.Thread] = None
+        self._last_activity = time.time()  # updated by writes + heartbeat reads
 
         # Statistics
         self._stats = {
@@ -55,6 +70,109 @@ class PLCController:
         self._stats_lock = threading.Lock()
 
         logger.info("PLCController initialized")
+
+    def _apply_socket_keepalive(self) -> None:
+        """
+        Enable TCP keepalive on the underlying socket so the OS probes idle
+        connections and reports them dead before our next write fails. Best-
+        effort: silently skips if the pymodbus client doesn't expose `.socket`
+        or the platform doesn't support the TCP_KEEP* options.
+        """
+        sock = None
+        # pymodbus 3.x exposes `socket` on ModbusTcpClient. Older releases stash
+        # it under different names; try a couple of fallbacks.
+        for attr in ('socket', '_sock'):
+            sock = getattr(self._client, attr, None)
+            if sock is not None:
+                break
+        if sock is None:
+            logger.warning(
+                "PLC keepalive: underlying socket not exposed by pymodbus — skipping"
+            )
+            return
+        try:
+            import socket as _socket
+            sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_KEEPALIVE, 1)
+            # Linux-only TCP_KEEP* options — wrap each in try so unknown
+            # platforms still get SO_KEEPALIVE.
+            for name, val in (
+                ('TCP_KEEPIDLE',  self.TCP_KEEPIDLE_S),
+                ('TCP_KEEPINTVL', self.TCP_KEEPINTVL_S),
+                ('TCP_KEEPCNT',   self.TCP_KEEPCNT),
+            ):
+                opt = getattr(_socket, name, None)
+                if opt is not None:
+                    try:
+                        sock.setsockopt(_socket.IPPROTO_TCP, opt, val)
+                    except OSError:
+                        pass
+            logger.info(
+                f"PLC keepalive: SO_KEEPALIVE ON, "
+                f"idle={self.TCP_KEEPIDLE_S}s intvl={self.TCP_KEEPINTVL_S}s "
+                f"count={self.TCP_KEEPCNT}"
+            )
+        except Exception as e:
+            logger.warning(f"PLC keepalive: setsockopt failed ({e})")
+
+    def _heartbeat_loop(self) -> None:
+        """
+        Application-level heartbeat. Every HEARTBEAT_INTERVAL_S, if the
+        connection has been idle long enough, send a cheap Modbus read so the
+        PLC sees ongoing traffic and won't idle-close us. Real writes update
+        `_last_activity` so we only probe on truly idle stretches.
+        """
+        logger.info(
+            f"PLC heartbeat: started (every {self.HEARTBEAT_INTERVAL_S}s when idle)"
+        )
+        try:
+            while not self._heartbeat_stop.wait(self.HEARTBEAT_INTERVAL_S):
+                # Skip if other traffic already kept the link warm
+                if (time.time() - self._last_activity) < self.HEARTBEAT_INTERVAL_S:
+                    continue
+                with self._lock:
+                    if not self._connected or self._client is None:
+                        continue
+                    try:
+                        result = self._client.read_holding_registers(
+                            self.HEARTBEAT_PROBE_ADDR, count=1
+                        )
+                        if result.isError():
+                            logger.warning(
+                                f"PLC heartbeat: probe returned error — marking disconnected ({result})"
+                            )
+                            self._connected = False
+                        else:
+                            self._last_activity = time.time()
+                            logger.debug("PLC heartbeat: probe OK")
+                    except Exception as e:
+                        # PLC dropped us between writes → mark disconnected,
+                        # next write will trigger reconnect (or sensor_based
+                        # send_verdict will retry).
+                        logger.warning(
+                            f"PLC heartbeat: probe exception ({e}) — marking disconnected"
+                        )
+                        self._connected = False
+                        try:
+                            self._client.close()
+                        except Exception:
+                            pass
+        finally:
+            logger.info("PLC heartbeat: stopped")
+
+    def _start_heartbeat(self) -> None:
+        if self._heartbeat_thread is not None and self._heartbeat_thread.is_alive():
+            return
+        self._heartbeat_stop.clear()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop, daemon=True, name='PLCHeartbeat'
+        )
+        self._heartbeat_thread.start()
+
+    def _stop_heartbeat(self) -> None:
+        self._heartbeat_stop.set()
+        if self._heartbeat_thread is not None:
+            self._heartbeat_thread.join(timeout=2.0)
+            self._heartbeat_thread = None
 
     def connect(self) -> bool:
         """
@@ -88,6 +206,9 @@ class PLCController:
                 # Attempt connection
                 if self._client.connect():
                     self._connected = True
+                    self._last_activity = time.time()
+                    self._apply_socket_keepalive()
+                    self._start_heartbeat()
                     logger.info(f"✅ Connected to PLC at {self.PLC_IP}:{self.PLC_PORT}")
                     return True
                 else:
@@ -102,6 +223,9 @@ class PLCController:
 
     def disconnect(self):
         """Disconnect from PLC"""
+        # Stop heartbeat BEFORE taking the lock so the thread can finish its
+        # current probe without deadlocking on `self._lock`.
+        self._stop_heartbeat()
         with self._lock:
             if self._client:
                 try:
@@ -151,12 +275,78 @@ class PLCController:
                 else:
                     logger.debug(f"✅ PLC write OK: D{address}={value} | {write_time_ms:.2f}ms")
                     self._update_stats(write_time_ms, success=True)
+                    self._last_activity = time.time()
                     return True, write_time_ms
 
             except Exception as e:
                 logger.error(f"❌ Exception writing to PLC: {e}")
                 self._update_stats(0.0, success=False)
+                # Drop the connected flag so next call triggers reconnect
+                # instead of attempting another write through a dead socket.
+                self._connected = False
                 return False, 0.0
+
+    def write_coil(self, address: int, value: bool) -> bool:
+        """
+        Write single coil (bit) to PLC. Used by sensor_based reject for the
+        ready/ack handshake signals.
+
+        Args:
+            address: Coil address (M0=0, M1=1, etc.)
+            value: Coil state (True=ON, False=OFF)
+
+        Returns:
+            True if write succeeded, False otherwise.
+        """
+        with self._lock:
+            if not self.is_connected():
+                logger.warning(f"PLC not connected, cannot write coil at {address}")
+                return False
+            try:
+                t_start = time.perf_counter()
+                result = self._client.write_coil(address, bool(value))
+                t_end = time.perf_counter()
+                dt_ms = (t_end - t_start) * 1000.0
+                if result.isError():
+                    logger.error(f"❌ PLC write_coil error: coil@{address}={value} | {result}")
+                    self._update_stats(dt_ms, success=False)
+                    return False
+                logger.debug(f"✅ PLC write_coil OK: coil@{address}={value} | {dt_ms:.2f}ms")
+                self._update_stats(dt_ms, success=True)
+                self._last_activity = time.time()
+                return True
+            except Exception as e:
+                logger.error(f"❌ Exception writing PLC coil: {e}")
+                self._update_stats(0.0, success=False)
+                self._connected = False
+                return False
+
+    def read_coil(self, address: int) -> Optional[bool]:
+        """
+        Read single coil (bit) from PLC. Used by sensor_based reject to poll
+        the ACK handshake signal.
+
+        Args:
+            address: Coil address.
+
+        Returns:
+            True/False on success. None on read error / not connected — caller
+            should treat None as "ack not yet observed" (still in poll loop).
+        """
+        with self._lock:
+            if not self.is_connected():
+                return None
+            try:
+                result = self._client.read_coils(address, count=1)
+                if result.isError():
+                    logger.debug(f"PLC read_coil error: coil@{address} | {result}")
+                    return None
+                self._last_activity = time.time()
+                return bool(result.bits[0])
+            except Exception as e:
+                logger.debug(f"Exception reading PLC coil: {e}")
+                self._connected = False
+                return None
 
     def write_pulse(self, register_address: int, pulse_ms: float) -> Tuple[bool, float]:
         """

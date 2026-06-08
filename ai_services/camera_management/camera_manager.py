@@ -326,21 +326,57 @@ class CameraManager:
                 # Update reject configuration from recipe
                 reject_pulse = recipe_data.get("reject_pulse", 50.0)
                 reject_method = recipe_data.get("reject_method", "DIO").upper()
+                reject_mode = recipe_data.get("reject_mode", "time_based")
 
-                logger.info(f"Reject config: method={reject_method}, pulse={reject_pulse}ms")
+                logger.info(
+                    f"Reject config: mode={reject_mode}, method={reject_method}, "
+                    f"pulse={reject_pulse}ms"
+                )
 
-                # Connect PLC if using PLC mode
-                if reject_method == "PLC" and self.plc_controller:
-                    logger.info("Connecting to PLC...")
-                    if self.plc_controller.connect():
-                        logger.info("✅ PLC connected successfully")
+                # Sensor-based mode: AI sends verdict only, PLC owns timing via
+                # its dedicated sensor in front of the rejector. Connect PLC
+                # unconditionally (it's required for verdict + handshake) and
+                # delegate setup to RejectScheduler.set_sensor_based_mode.
+                if reject_mode == "sensor_based":
+                    if not self.plc_controller:
+                        logger.error(
+                            "Sensor-based reject mode requires PLC, but plc_controller is not available"
+                        )
                     else:
-                        logger.warning("⚠️ PLC connection failed, will fallback to DIO")
+                        if not self.plc_controller.is_connected():
+                            logger.info("Connecting to PLC (sensor-based mode)...")
+                            if self.plc_controller.connect():
+                                logger.info("✅ PLC connected successfully")
+                            else:
+                                logger.error("❌ PLC connection failed for sensor-based mode")
+                        plc_sensor_cfg = {
+                            'verdict_register': int(recipe_data.get('plc_verdict_register', 0)),
+                            'verdict_prefix':   recipe_data.get('plc_verdict_prefix', 'D'),
+                            'ready_coil':       int(recipe_data.get('plc_ready_coil', 0)),
+                            'ready_prefix':     recipe_data.get('plc_ready_prefix', 'M'),
+                            'ack_coil':         int(recipe_data.get('plc_ack_coil', 1)),
+                            'ack_prefix':       recipe_data.get('plc_ack_prefix', 'M'),
+                            'pulse_register':   int(recipe_data.get('plc_pulse_register', 10)),
+                            'pulse_prefix':     recipe_data.get('plc_pulse_prefix', 'D'),
+                            'ack_timeout_ms':   int(recipe_data.get('plc_ack_timeout_ms', 200)),
+                        }
+                        self.reject_scheduler.set_sensor_based_mode(
+                            plc_sensor_cfg, reject_pulse
+                        )
+                else:
+                    # Time-based path (existing behavior)
+                    if reject_method == "PLC" and self.plc_controller:
+                        logger.info("Connecting to PLC...")
+                        if self.plc_controller.connect():
+                            logger.info("✅ PLC connected successfully")
+                        else:
+                            logger.warning("⚠️ PLC connection failed, will fallback to DIO")
+                    self.reject_scheduler.set_reject_config(reject_pulse, reject_method)
 
-                # Update reject scheduler config
-                self.reject_scheduler.set_reject_config(reject_pulse, reject_method)
-
-                # Start reject scheduler (if not already running)
+                # Start reject scheduler (if not already running). For
+                # sensor_based mode the scheduler thread still runs but the
+                # priority queue stays empty — schedule_reject is replaced by
+                # send_verdict in the inference handler.
                 self.reject_scheduler.start()
 
                 return {

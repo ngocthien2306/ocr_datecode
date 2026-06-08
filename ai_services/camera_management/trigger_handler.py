@@ -441,7 +441,9 @@ class TriggerHandler:
 
                                         # Schedule rejects for bottles NOT yet scheduled proactively
                                         already_proactive = self._proactive_rejects_per_di[di_number]
-                                        if cameras_list and self.camera_manager.reject_scheduler:
+                                        if (cameras_list
+                                                and self.camera_manager.reject_scheduler
+                                                and self.camera_manager.inference_enabled):
                                             cam0 = cameras_list[0]
                                             delay_rej = int(cam0.delay_reject)
                                             do_num = cam0.do_reject_number
@@ -497,7 +499,9 @@ class TriggerHandler:
                     # so early bottles aren't missed by the time the falling edge is detected.
                     if previous_value == 1 and current_value == 1:
                         start_t = self._pulse_start_times[di_number]
-                        if start_t is not None and self.camera_manager.reject_scheduler:
+                        if (start_t is not None
+                                and self.camera_manager.reject_scheduler
+                                and self.camera_manager.inference_enabled):
                             duration_ms = (time.time() - start_t) * 1000.0
                             ratio = duration_ms / self.normal_pulse_ms
                             if ratio > 1.5:

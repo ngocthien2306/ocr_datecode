@@ -612,6 +612,8 @@ class TextVerificationService:
                         annotation_idx=ann_idx,
                         conf_threshold=conf_thr,
                         function_type=item.get('function_type', 'OCR'),
+                        frame_img=item.get('frame_img'),
+                        points=item.get('points'),
                     )
                     augment_attempted = True
                 else:
@@ -1205,6 +1207,10 @@ class TextVerificationService:
                 'cropped_region': cropped,
                 # Used by V-suffix bypass + dot-matrix augment gates — both chỉ áp cho Check_Color.
                 'function_type': getattr(camera, 'function_type', 'OCR'),
+                # Used by _augment_retry pad_x versions để re-crop với polygon
+                # mở rộng (lấy pixel thật từ frame thay vì pad nhân tạo).
+                'frame_img': frame_img,
+                'points': points,
             })
 
             if use_sim_task and ann_idx in original_bbox_map:
@@ -1761,6 +1767,98 @@ class TextVerificationService:
 
         return camera_results
 
+    @staticmethod
+    def _sort_quad_tl_tr_br_bl(points) -> Optional[np.ndarray]:
+        """
+        Sort 4-point polygon thành thứ tự [TL, TR, BR, BL] dùng standard trick:
+          - TL = point có x+y nhỏ nhất (góc trên-trái)
+          - BR = point có x+y lớn nhất (góc dưới-phải)
+          - TR = point có x-y lớn nhất (góc trên-phải)
+          - BL = point có x-y nhỏ nhất (góc dưới-trái)
+        Approach này robust với bbox xoay ±45° (vs y-then-x sort chỉ work
+        với axis-aligned bbox).
+
+        Returns None nếu shape != (4, 2).
+        """
+        try:
+            pts = np.array(points, dtype=np.float32).reshape(-1, 2)
+        except Exception:
+            return None
+        if pts.shape != (4, 2):
+            return None
+        s = pts[:, 0] + pts[:, 1]
+        d = pts[:, 0] - pts[:, 1]
+        tl = pts[int(np.argmin(s))]
+        br = pts[int(np.argmax(s))]
+        tr = pts[int(np.argmax(d))]
+        bl = pts[int(np.argmin(d))]
+        return np.array([tl, tr, br, bl], dtype=np.float32)
+
+    @classmethod
+    def _compute_text_width(cls, points) -> float:
+        """
+        Tính độ rộng text bbox = trung bình của (top edge length + bot edge length).
+        Returns 0.0 nếu points không hợp lệ.
+        """
+        ordered = cls._sort_quad_tl_tr_br_bl(points)
+        if ordered is None:
+            return 0.0
+        tl, tr, br, bl = ordered
+        top_len = float(np.linalg.norm(tr - tl))
+        bot_len = float(np.linalg.norm(br - bl))
+        return (top_len + bot_len) / 2.0
+
+    @classmethod
+    def _extend_quad_x(
+        cls,
+        points,
+        pad_left_px: float,
+        pad_right_px: float,
+        frame_shape: Optional[Tuple[int, int]] = None,
+    ) -> Optional[List[List[float]]]:
+        """
+        Mở rộng quad polygon theo hướng text-x (TL→TR direction).
+        Clip về biên frame nếu frame_shape (H, W) được cung cấp.
+
+        Args:
+            points: 4 corners [[x,y], ...] (any order)
+            pad_left_px: extend mép trái thêm bao nhiêu pixel (≥0)
+            pad_right_px: extend mép phải thêm bao nhiêu pixel (≥0)
+            frame_shape: (h, w) để clip — pass frame.shape[:2]
+
+        Returns:
+            new_points [[x,y], ...] theo thứ tự [TL, TR, BR, BL], hoặc None nếu fail.
+        """
+        ordered = cls._sort_quad_tl_tr_br_bl(points)
+        if ordered is None:
+            return None
+        tl, tr, br, bl = ordered
+
+        # Unit vector hướng text (left → right)
+        top_dir = tr - tl
+        top_norm = float(np.linalg.norm(top_dir))
+        bot_dir = br - bl
+        bot_norm = float(np.linalg.norm(bot_dir))
+        if top_norm < 1e-6 or bot_norm < 1e-6:
+            return None
+        top_dir /= top_norm
+        bot_dir /= bot_norm
+
+        # Extend
+        new_tl = tl - top_dir * pad_left_px
+        new_tr = tr + top_dir * pad_right_px
+        new_bl = bl - bot_dir * pad_left_px
+        new_br = br + bot_dir * pad_right_px
+
+        # Clip về biên frame
+        if frame_shape is not None and len(frame_shape) >= 2:
+            h, w = frame_shape[0], frame_shape[1]
+            for p in (new_tl, new_tr, new_br, new_bl):
+                p[0] = max(0.0, min(float(w - 1), float(p[0])))
+                p[1] = max(0.0, min(float(h - 1), float(p[1])))
+
+        return [new_tl.tolist(), new_tr.tolist(), new_br.tolist(), new_bl.tolist()]
+
     def _augment_retry(
         self,
         cropped_region: np.ndarray,
@@ -1769,22 +1867,69 @@ class TextVerificationService:
         annotation_idx: int,
         conf_threshold: float = 0.8,
         function_type: str = "OCR",
+        frame_img: Optional[np.ndarray] = None,
+        points: Optional[List] = None,
     ):
         """
-        Run OCR on 5 augmented versions of cropped_region (batch per region).
-        Returns (match, recognized_text) of the first matching version,
-        or (False, best_recognized_text) if none match.
+        Run OCR on 9 augmented versions of cropped_region (batch per region):
+          - 5 từ augment_laser_text: original, clahe, bg_subtract, unsharp_clahe, tophat
+          - 4 pad_x re-crop từ frame_img với polygon mở rộng (cần frame_img + points):
+            pad_x_sym_5pct, pad_x_sym_10pct, pad_x_left_15pct, pad_x_right_15pct
 
-        Augment profile được chọn theo `function_type`:
-          - Check_Color (CIJ dot-matrix in lên nắp) → augment_dot_matrix_text
-          - Còn lại (chữ in liền, laser-engrave, label thường) → augment_laser_text
+        Returns (match, recognized_text) của version đầu tiên match, hoặc
+        (False, best_recognized_text) nếu không có version nào match.
+
+        Note: mọi function_type (kể cả Check_Color) đều dùng augment_laser_text.
         """
-        if function_type in self.DOT_MATRIX_AUGMENT_FUNCTION_TYPES:
-            aug_versions = augment_laser_text(cropped_region)
-            profile = "dot_matrix"
-        else:
-            aug_versions = augment_laser_text(cropped_region)
-            profile = "laser_text"
+        # User chốt: mọi function_type (kể cả Check_Color) đều dùng
+        # augment_laser_text. `augment_dot_matrix_text` vẫn import + giữ
+        # trong text_ocr_utils.py phòng khi cần, nhưng không gọi ở đây nữa.
+        aug_versions = augment_laser_text(cropped_region)
+        profile = "laser_text"
+
+        # ── Bổ sung 4 phiên bản pad_x (re-crop từ frame gốc với polygon mở rộng) ──
+        # Apply cho mọi profile khi có sẵn frame_img + points. Lấy pixel THẬT
+        # từ frame gốc → không pad nhân tạo.
+        # Note: trước đây gate bằng `profile == "laser_text"` — đã bỏ vì
+        # Check_Color đi vào nhánh profile="dot_matrix" (label) nên skip pad_x.
+        # Nay apply cho tất cả khi có frame+points.
+        #   - pad_x_sym_5pct:    đối xứng 5% width mỗi bên (insurance nhẹ)
+        #   - pad_x_sym_10pct:   đối xứng 10% width mỗi bên (insurance vừa)
+        #   - pad_x_left_15pct:  chỉ bên trái 15% (vd '0' đầu hay 'B' đầu bị cắt)
+        #   - pad_x_right_15pct: chỉ bên phải 15% (vd 'V' cuối hay 'y' cuối bị cắt)
+        if frame_img is not None and points is not None:
+            try:
+                text_w = self._compute_text_width(points)
+                if text_w > 0:
+                    pad_configs = [
+                        ('pad_x_sym_5pct',    text_w * 0.05, text_w * 0.05),
+                        ('pad_x_sym_10pct',   text_w * 0.10, text_w * 0.10),
+                        ('pad_x_left_15pct',  text_w * 0.15, 0.0),
+                        ('pad_x_right_15pct', 0.0,            text_w * 0.15),
+                    ]
+                    for name, pad_l, pad_r in pad_configs:
+                        new_pts = self._extend_quad_x(
+                            points,
+                            pad_left_px=pad_l,
+                            pad_right_px=pad_r,
+                            frame_shape=frame_img.shape[:2],
+                        )
+                        if new_pts is None:
+                            continue
+                        try:
+                            padded_crop = crop_text_region(frame_img, new_pts)
+                            aug_versions[name] = padded_crop
+                        except Exception as e_pad:
+                            logger.warning(
+                                f"[{serial_number}] Ann {annotation_idx}: "
+                                f"pad version '{name}' crop failed: {e_pad}"
+                            )
+            except Exception as e_outer:
+                logger.warning(
+                    f"[{serial_number}] Ann {annotation_idx}: "
+                    f"pad_x augment setup failed: {e_outer}"
+                )
+
         aug_names = list(aug_versions.keys())
         aug_images = list(aug_versions.values())
         logger.info(

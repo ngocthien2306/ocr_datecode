@@ -1374,6 +1374,16 @@ class InferenceHandler:
                 )
                 overall_pass_fail = "FAIL"
 
+            # Sensor-based mode: AI does NOT time the pulse. It writes a single
+            # 0/1 verdict to the PLC + handshake; the PLC fires the pulse when
+            # its dedicated sensor in front of the rejector triggers. Stuck
+            # bottles are handled naturally by the PLC (one sensor edge per
+            # bottle → one pulse), so stuck_count is ignored here.
+            if self.reject_scheduler.is_sensor_based():
+                verdict = 1 if overall_pass_fail in ("FAIL", "ERROR") else 0
+                self.reject_scheduler.send_verdict(verdict, group_id=group_id)
+                return
+
             if overall_pass_fail == "FAIL" or overall_pass_fail == "ERROR":
                 # Get reject config from first camera (recipe-level config)
                 if not cameras:

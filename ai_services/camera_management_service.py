@@ -97,6 +97,15 @@ class CameraManagementService:
                 pulse_width_ms = data.get('pulse_width_ms', 0.0)
                 T_capture_complete = data.get('T_capture_complete')
                 ratio = pulse_width_ms / self.camera_manager.trigger_handler.normal_pulse_ms
+
+                if not self.camera_manager.inference_enabled:
+                    logger.info(
+                        f"[Group #{group_id}] STUCK BOTTLES N={stuck_count} "
+                        f"(pulse={pulse_width_ms:.0f}ms, ratio={ratio:.2f}): "
+                        f"⏸️ [INFERENCE OFFLINE] skipping auto-FAIL emit"
+                    )
+                    return
+
                 logger.warning(
                     f"[Group #{group_id}] STUCK BOTTLES N={stuck_count} "
                     f"(pulse={pulse_width_ms:.0f}ms, ratio={ratio:.2f}): "

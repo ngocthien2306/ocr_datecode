@@ -3,7 +3,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +72,20 @@ class RejectScheduler:
         self._reject_pulse_ms = 50.0
         self._reject_method = "DIO"  # Default: DIO, can be "PLC"
 
+        # Sensor-based mode (PLC owns timing via a sensor in front of the rejector).
+        # When enabled, AI does NOT schedule pulses; it writes a verdict + handshake
+        # to PLC on each inference and the PLC fires the pulse internally.
+        self._sensor_based_mode = False
+        self._plc_sensor_cfg: Optional[Dict[str, Any]] = None  # set via set_sensor_based_mode
+        self._sensor_stats = {
+            'verdicts_sent': 0,
+            'verdicts_fail': 0,
+            'verdicts_pass': 0,
+            'ack_timeouts': 0,
+            'plc_errors': 0,
+        }
+        self._sensor_stats_lock = threading.Lock()
+
         # Scheduler thread
         self._running = False
         self._scheduler_thread: Optional[threading.Thread] = None
@@ -114,18 +128,193 @@ class RejectScheduler:
 
     def set_reject_config(self, pulse_ms: float, reject_method: str = "DIO"):
         """
-        Set reject configuration from recipe
+        Set reject configuration from recipe (time_based mode).
 
         Args:
             pulse_ms: Pulse duration in milliseconds
             reject_method: Reject method ("PLC" or "DIO")
         """
+        self._sensor_based_mode = False
+        self._plc_sensor_cfg = None
         self._reject_pulse_ms = pulse_ms
         self._reject_method = reject_method.upper()
 
         logger.info(
-            f"Reject config updated: method={self._reject_method}, pulse={pulse_ms}ms"
+            f"Reject config updated (time_based): method={self._reject_method}, pulse={pulse_ms}ms"
         )
+
+    def set_sensor_based_mode(
+        self,
+        plc_cfg: Dict[str, Any],
+        pulse_width_ms: float,
+    ) -> bool:
+        """
+        Switch the scheduler into sensor_based mode. The AI service no longer
+        times the reject pulse; instead it writes a verdict + handshake to PLC
+        on each inference, and the PLC fires its own pulse when its dedicated
+        sensor in front of the rejector triggers.
+
+        Pulse width is written to the configured register ONCE here (so the PLC
+        ladder reads it at startup).
+
+        Args:
+            plc_cfg: dict with keys verdict_register / verdict_prefix /
+                ready_coil / ready_prefix / ack_coil / ack_prefix /
+                pulse_register / pulse_prefix / ack_timeout_ms
+            pulse_width_ms: pulse width (ms) — written to pulse_register
+
+        Returns:
+            True if the pulse_width write succeeded, False otherwise (mode is
+            still activated either way; failure is logged so operator can fix
+            connectivity and retry).
+        """
+        self._sensor_based_mode = True
+        self._plc_sensor_cfg = dict(plc_cfg)  # shallow copy
+        self._reject_pulse_ms = pulse_width_ms
+
+        v_label = f"{plc_cfg.get('verdict_prefix','D')}{plc_cfg['verdict_register']}"
+        rdy_label = f"{plc_cfg.get('ready_prefix','M')}{plc_cfg['ready_coil']}"
+        ack_label = f"{plc_cfg.get('ack_prefix','M')}{plc_cfg['ack_coil']}"
+        pulse_label = f"{plc_cfg.get('pulse_prefix','D')}{plc_cfg['pulse_register']}"
+
+        logger.info(
+            f"Sensor-based mode ENABLED — verdict={v_label}, ready={rdy_label}, "
+            f"ack={ack_label}, pulse_reg={pulse_label}, "
+            f"ack_timeout={plc_cfg['ack_timeout_ms']}ms"
+        )
+
+        # Push pulse_width to the PLC pulse register so the ladder has it.
+        if not PLC_AVAILABLE or self._plc_controller is None:
+            logger.error(
+                "Sensor-based mode: PLCController unavailable — pulse_width "
+                "could not be pushed. Verdict writes will also fail until PLC "
+                "is reachable."
+            )
+            return False
+        if not self._plc_controller.is_connected():
+            logger.info("Sensor-based mode: PLC not connected, attempting connect...")
+            if not self._plc_controller.connect():
+                logger.error(
+                    "Sensor-based mode: PLC connect failed — pulse_width not pushed"
+                )
+                return False
+        ok, _dt = self._plc_controller.write_register(
+            int(plc_cfg['pulse_register']), int(round(pulse_width_ms))
+        )
+        if ok:
+            logger.info(
+                f"Sensor-based mode: pulse_width={int(round(pulse_width_ms))}ms "
+                f"written to {pulse_label}"
+            )
+        else:
+            logger.error(
+                f"Sensor-based mode: failed to write pulse_width to {pulse_label}"
+            )
+        return ok
+
+    def is_sensor_based(self) -> bool:
+        """True when the scheduler is in sensor_based mode."""
+        return self._sensor_based_mode
+
+    def send_verdict(self, verdict: int, group_id: int = 0) -> bool:
+        """
+        Push a PASS/FAIL verdict to the PLC (sensor_based mode).
+
+        Sequence:
+            1. Pre-clear the ack coil (defensive — clears any stale ack).
+            2. Write the verdict register (0=PASS, 1=FAIL).
+            3. Set the ready coil HIGH.
+            4. Poll the ack coil until either the PLC sets it HIGH or
+               `ack_timeout_ms` elapses.
+            5. Drop the ready coil LOW so the PLC sees a clean edge next time.
+
+        Returns:
+            True if PLC acknowledged within the timeout, False otherwise.
+            Caller should still consider the verdict "delivered" on True;
+            False means the PLC did not confirm and the product may not be
+            handled correctly — operator should be alerted.
+        """
+        if not self._sensor_based_mode or self._plc_sensor_cfg is None:
+            logger.error(
+                f"[Group #{group_id}] send_verdict called outside sensor_based mode"
+            )
+            return False
+
+        cfg = self._plc_sensor_cfg
+        with self._sensor_stats_lock:
+            self._sensor_stats['verdicts_sent'] += 1
+            if verdict:
+                self._sensor_stats['verdicts_fail'] += 1
+            else:
+                self._sensor_stats['verdicts_pass'] += 1
+
+        if self._plc_controller is None or not self._plc_controller.is_connected():
+            logger.warning(
+                f"[Group #{group_id}] send_verdict: PLC not connected — attempting reconnect"
+            )
+            if self._plc_controller is None or not self._plc_controller.connect():
+                logger.error(
+                    f"[Group #{group_id}] send_verdict: PLC unreachable, verdict={verdict} dropped"
+                )
+                with self._sensor_stats_lock:
+                    self._sensor_stats['plc_errors'] += 1
+                return False
+
+        t_start = time.perf_counter()
+
+        # 1. Pre-clear ack
+        self._plc_controller.write_coil(int(cfg['ack_coil']), False)
+
+        # 2. Write verdict register
+        ok_verdict, _ = self._plc_controller.write_register(
+            int(cfg['verdict_register']), int(verdict)
+        )
+        if not ok_verdict:
+            logger.error(
+                f"[Group #{group_id}] send_verdict: failed to write verdict register"
+            )
+            with self._sensor_stats_lock:
+                self._sensor_stats['plc_errors'] += 1
+            return False
+
+        # 3. Set ready coil HIGH
+        if not self._plc_controller.write_coil(int(cfg['ready_coil']), True):
+            logger.error(
+                f"[Group #{group_id}] send_verdict: failed to set ready coil"
+            )
+            with self._sensor_stats_lock:
+                self._sensor_stats['plc_errors'] += 1
+            return False
+
+        # 4. Poll ACK until timeout
+        timeout_s = float(cfg['ack_timeout_ms']) / 1000.0
+        poll_interval = 0.005  # 5 ms — Modbus read takes longer in practice
+        ack_seen = False
+        while (time.perf_counter() - t_start) < timeout_s:
+            ack = self._plc_controller.read_coil(int(cfg['ack_coil']))
+            if ack is True:
+                ack_seen = True
+                break
+            time.sleep(poll_interval)
+
+        elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+
+        # 5. Drop ready coil regardless of ack outcome (clean edge for next cycle)
+        self._plc_controller.write_coil(int(cfg['ready_coil']), False)
+
+        if ack_seen:
+            logger.info(
+                f"[Group #{group_id}] verdict={verdict} delivered → ACK in {elapsed_ms:.1f}ms"
+            )
+            return True
+        else:
+            logger.error(
+                f"[Group #{group_id}] verdict={verdict} sent but ACK timeout after "
+                f"{elapsed_ms:.1f}ms (limit={cfg['ack_timeout_ms']}ms)"
+            )
+            with self._sensor_stats_lock:
+                self._sensor_stats['ack_timeouts'] += 1
+            return False
 
     def start(self):
         """Start scheduler thread"""
