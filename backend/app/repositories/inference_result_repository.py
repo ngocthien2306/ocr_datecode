@@ -43,6 +43,13 @@ class InferenceResultRepository:
         await self.collection.create_index([("timestamp", -1)])
         await self.collection.create_index([("recipe_id", 1)])
         await self.collection.create_index([("product_pass_fail", 1)])
+        # Covering index for the summary/timeseries aggregations. They match a
+        # created_at range and group by recipe, needing only these 4 fields.
+        # Including them all lets MongoDB answer from the index alone (COVERED)
+        # instead of fetching each ~12.7KB document just to count PASS/FAIL.
+        await self.collection.create_index(
+            [("created_at", 1), ("product_pass_fail", 1), ("recipe_id", 1), ("recipe_name", 1)]
+        )
         # created_at doubles as the TTL field: documents older than the
         # configured retention are auto-deleted by MongoDB's TTL monitor.
         await ensure_ttl_index(
@@ -379,7 +386,7 @@ class InferenceResultRepository:
             }
         ]
 
-        result = await self.collection.aggregate(pipeline).to_list(length=1)
+        result = await self.collection.aggregate(pipeline, allowDiskUse=True).to_list(length=1)
 
         if not result:
             # No data
@@ -534,7 +541,7 @@ class InferenceResultRepository:
             {"$sort": {"_id": 1}}
         ]
 
-        results = await self.collection.aggregate(pipeline).to_list(length=None)
+        results = await self.collection.aggregate(pipeline, allowDiskUse=True).to_list(length=None)
 
         # Build timeseries data points
         data_points = []
