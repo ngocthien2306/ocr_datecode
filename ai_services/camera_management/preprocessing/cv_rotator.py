@@ -21,7 +21,7 @@ is skipped (matches OBB service behavior).
 from __future__ import annotations
 
 import logging
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -80,6 +80,30 @@ _REF_TEMPLATES: list = []  # filled lazily by _get_ref_templates()
 # ─────────────────────────────────────────────────────────────────────────────
 # Cap detection
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _slice_by_crop_area(
+    arr: np.ndarray,
+    crop_area: Optional[Dict[str, int]],
+) -> Tuple[int, int, Optional[np.ndarray]]:
+    """
+    Slice `arr` by user-provided crop_area dict {x1,y1,x2,y2}. Returns
+    (offset_x, offset_y, sub_array). When crop_area is falsy or its bounds
+    collapse, returns (0, 0, arr) or (0, 0, None) respectively.
+
+    Coords are clamped to array bounds. Callers add (offset_x, offset_y)
+    back onto sub-array detection results to land in full-frame coords.
+    """
+    if not crop_area:
+        return 0, 0, arr
+    H, W = arr.shape[:2]
+    x1 = max(0, int(crop_area.get('x1', 0)))
+    y1 = max(0, int(crop_area.get('y1', 0)))
+    x2 = min(W, int(crop_area.get('x2', W)))
+    y2 = min(H, int(crop_area.get('y2', H)))
+    if x2 <= x1 or y2 <= y1:
+        return x1, y1, None
+    return x1, y1, arr[y1:y2, x1:x2]
+
 
 def _detect_cap(gray: np.ndarray) -> Optional[Tuple[float, float, float]]:
     h, w = gray.shape
@@ -305,15 +329,34 @@ def _compose_cap_result(
     return crop, (x1, y1, x2, y2)
 
 
-def detect_cap_circle(image: np.ndarray) -> Optional[Tuple[float, float, float]]:
+def detect_cap_circle(
+    image: np.ndarray,
+    crop_area: Optional[Dict[str, int]] = None,
+) -> Optional[Tuple[float, float, float]]:
     """
-    Run HoughCircles ONLY (no crop/mask) and return the cap (cx, cy, r).
-    Use this when you already plan to apply the cap crop to multiple frames
-    that share the same cap position (e.g. dual_rotation_check candidates).
+    Run HoughCircles ONLY (no crop/mask) and return the cap (cx, cy, r) in
+    FULL-frame coordinates.
+
+    If `crop_area` is provided, restrict the search to that sub-region and
+    offset the result back to full-frame coords. Returns None if no cap is
+    found within the sub-region (no fallback to full-frame — caller chose
+    crop_area on purpose, trust it).
     """
     if image is None or image.size == 0:
         return None
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+    if crop_area:
+        x1 = max(0, int(crop_area['x1']))
+        y1 = max(0, int(crop_area['y1']))
+        x2 = min(gray.shape[1], int(crop_area['x2']))
+        y2 = min(gray.shape[0], int(crop_area['y2']))
+        if x2 <= x1 or y2 <= y1:
+            return None
+        sub = gray[y1:y2, x1:x2]
+        cap = _detect_cap(sub)
+        if cap is None:
+            return None
+        return (cap[0] + float(x1), cap[1] + float(y1), cap[2])
     return _detect_cap(gray)
 
 
@@ -353,38 +396,56 @@ class CVRotationService:
     def rotate_frame(
         self,
         frame: np.ndarray,
-        frame_tag: str = ""
-    ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+        frame_tag: str = "",
+        crop_area: Optional[Dict[str, int]] = None,
+    ) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[Tuple[float, float, float]]]:
+        """Returns (rotated_frame, M, cap_circle).
+        cap_circle = cap đã detect bằng HoughCircles — downstream reuse được
+        thay vì gọi detect_cap_circle 1 lần nữa.
+
+        If `crop_area` is provided, cap detection + angle search are restricted
+        to that sub-region (avoid picking up neighbouring bottles). The rotated
+        full frame is returned; cap_circle is reported in FULL-frame coords.
+        """
         import time as _time
         tag = f"[{frame_tag}] " if frame_tag else ""
         if frame is None or frame.size == 0:
-            return frame, None
+            return frame, None, None
         try:
             _t0 = _time.perf_counter()
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+            gray_full = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+            ox, oy, sub_gray = _slice_by_crop_area(gray_full, crop_area)
+            if sub_gray is None:
+                self._rot_logger.info(f"{tag}[RotateCV] FAIL — crop_area outside frame")
+                return frame, None, None
             _t_gray = (_time.perf_counter() - _t0) * 1000
 
             _t1 = _time.perf_counter()
-            cap = _detect_cap(gray)
+            cap_sub = _detect_cap(sub_gray)
             _t_detect = (_time.perf_counter() - _t1) * 1000
-            if cap is None:
+            if cap_sub is None:
                 self._rot_logger.info(
                     f"{tag}[RotateCV] FAIL — no cap detected "
-                    f"(gray={_t_gray:.1f}ms, detect={_t_detect:.1f}ms)"
+                    f"(crop_area={'on' if crop_area else 'off'}, "
+                    f"gray={_t_gray:.1f}ms, detect={_t_detect:.1f}ms)"
                 )
-                return frame, None
-            cx, cy, r = cap
+                return frame, None, None
+            cap_full = (cap_sub[0] + ox, cap_sub[1] + oy, cap_sub[2])
+            cx, cy, r = cap_full
 
             _t2 = _time.perf_counter()
-            angle_deg, n_dark = _text_angle(gray, cap)
+            # _text_angle + _need_flip work on sub_gray + sub-coord cap so the
+            # ROI computation stays inside the user-bounded region. Angle/flip
+            # are coord-independent.
+            angle_deg, n_dark = _text_angle(sub_gray, cap_sub)
             _t_angle = (_time.perf_counter() - _t2) * 1000
 
             _t3 = _time.perf_counter()
-            flip, s0, s180 = _need_flip(gray, cap, angle_deg)
+            flip, s0, s180 = _need_flip(sub_gray, cap_sub, angle_deg)
             _t_flip = (_time.perf_counter() - _t3) * 1000
 
             _t4 = _time.perf_counter()
-            result = _rotate_cap_region(frame, cap, angle_deg, flip)
+            result = _rotate_cap_region(frame, cap_full, angle_deg, flip)
             _t_rot = (_time.perf_counter() - _t4) * 1000
 
             final_angle = angle_deg + (180.0 if flip else 0.0)
@@ -397,41 +458,50 @@ class CVRotationService:
                 f"text_angle={_t_angle:.1f}ms, need_flip={_t_flip:.1f}ms, "
                 f"rotate={_t_rot:.1f}ms"
             )
-            return result, None
+            return result, None, (float(cx), float(cy), float(r))
         except Exception as e:
             self._rot_logger.error(f"{tag}[RotateCV] ERROR — {e}", exc_info=True)
-            return frame, None
+            return frame, None, None
 
     def rotate_frame_dual(
         self,
         frame: np.ndarray,
-        frame_tag: str = ""
-    ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        frame_tag: str = "",
+        crop_area: Optional[Dict[str, int]] = None,
+    ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[Tuple[float, float, float]]]:
         """
         Produce BOTH rotation candidates (no-flip + flip180) without running
         the shape-match `_need_flip` step. Caller picks via match confidence.
-        Returns (candidate_no_flip, candidate_flipped180); either may be None.
+        Returns (candidate_no_flip, candidate_flipped180, cap_circle).
+
+        If `crop_area` is provided, cap detection is restricted to that
+        sub-region; cap_circle in the returned tuple is in FULL-frame coords.
         """
         tag = f"[{frame_tag}] " if frame_tag else ""
         if frame is None or frame.size == 0:
-            return None, None
+            return None, None, None
         try:
             import time as _time
             _t0 = _time.perf_counter()
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
-            cap = _detect_cap(gray)
-            if cap is None:
+            gray_full = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+            ox, oy, sub_gray = _slice_by_crop_area(gray_full, crop_area)
+            if sub_gray is None:
+                self._rot_logger.info(f"{tag}[RotateCV-Dual] FAIL — crop_area outside frame")
+                return None, None, None
+            cap_sub = _detect_cap(sub_gray)
+            if cap_sub is None:
                 self._rot_logger.info(f"{tag}[RotateCV-Dual] FAIL — no cap detected")
-                return None, None
-            angle_deg, _n_dark = _text_angle(gray, cap)
-            cand_a = _rotate_cap_region(frame, cap, angle_deg, False)
-            cand_b = _rotate_cap_region(frame, cap, angle_deg, True)
+                return None, None, None
+            cap_full = (cap_sub[0] + ox, cap_sub[1] + oy, cap_sub[2])
+            angle_deg, _n_dark = _text_angle(sub_gray, cap_sub)
+            cand_a = _rotate_cap_region(frame, cap_full, angle_deg, False)
+            cand_b = _rotate_cap_region(frame, cap_full, angle_deg, True)
             _t_total = (_time.perf_counter() - _t0) * 1000
             self._rot_logger.info(
                 f"{tag}[RotateCV-Dual] OK in {_t_total:.1f}ms — angle={angle_deg:.1f}° "
                 f"both candidates emitted"
             )
-            return cand_a, cand_b
+            return cand_a, cand_b, (float(cap_full[0]), float(cap_full[1]), float(cap_full[2]))
         except Exception as e:
             self._rot_logger.error(f"{tag}[RotateCV-Dual] ERROR — {e}", exc_info=True)
-            return None, None
+            return None, None, None

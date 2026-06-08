@@ -218,6 +218,12 @@ class MatcherFactory:
             # Detect cap in template, crop tight square + circular mask, replace
             # the user's crop_area with the cap bbox. Adjust template_bbox +
             # other_bboxes to the new (cropped) coordinate space.
+            #
+            # We still preserve `user_crop_area_obj` so the pipeline can pass
+            # it down to rotation / HoughCircles to bound the search to the
+            # product region (otherwise OBB sees the full frame and picks up
+            # neighbouring bottles).
+            user_crop_area_obj = crop_area
             cap_crop_method = getattr(camera, 'cap_crop_method', 'none') or 'none'
             cap_crop_bbox: Optional[Tuple[int, int, int, int]] = None
             if cap_crop_method != 'none':
@@ -312,9 +318,12 @@ class MatcherFactory:
                 verbose=verbose
             )
 
-            # Store crop_area metadata
-            if crop_area:
-                matcher.crop_area = crop_area.to_dict()
+            # Store crop_area metadata — use the ORIGINAL user-drawn crop_area
+            # (`user_crop_area_obj`), not the local `crop_area` which gets
+            # zeroed-out in the cap_crop_method fast-path above. The pipeline
+            # uses this to bound rotation / HoughCircles to the product region.
+            if user_crop_area_obj:
+                matcher.crop_area = user_crop_area_obj.to_dict()
             else:
                 matcher.crop_area = None
             # Flag this matcher as cap-cropped (pipeline preprocess will detect

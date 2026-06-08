@@ -56,6 +56,41 @@ class TemplateConfig:
     # Original annotations for reference
     annotations: List[Dict[str, Any]] = field(default_factory=list)
 
+    # Cache scale_matrix + inverse — chỉ phụ thuộc `scale`, không đổi giữa
+    # các frame. Tính 1 lần khi __post_init__ thay vì mỗi call _postprocess_pair.
+    _scale_matrix: Optional[np.ndarray] = field(default=None, init=False, repr=False)
+    _scale_matrix_inv: Optional[np.ndarray] = field(default=None, init=False, repr=False)
+    # Cache pre-formatted bbox points arrays — không đổi giữa các frame.
+    # _template_pts_arr: shape (-1, 1, 2) float32 sẵn sàng cho perspectiveTransform
+    # _other_pts_arrs:   list các array tương ứng với template.other_bboxes
+    _template_pts_arr: Optional[np.ndarray] = field(default=None, init=False, repr=False)
+    _other_pts_arrs: Optional[List[np.ndarray]] = field(default=None, init=False, repr=False)
+
+    def __post_init__(self):
+        inv_s = 1.0 / float(self.scale)
+        self._scale_matrix = np.array([
+            [inv_s, 0.0,   0.0],
+            [0.0,   inv_s, 0.0],
+            [0.0,   0.0,   1.0],
+        ], dtype=np.float64)
+        # inverse is just element-wise reciprocal cho ma trận diagonal
+        self._scale_matrix_inv = np.array([
+            [self.scale, 0.0,        0.0],
+            [0.0,        self.scale, 0.0],
+            [0.0,        0.0,        1.0],
+        ], dtype=np.float64)
+        # Pre-format bbox points cho cv2.perspectiveTransform (shape -1,1,2 float32).
+        # Tránh tạo numpy array mỗi frame.
+        if self.template_bbox and 'points' in self.template_bbox:
+            self._template_pts_arr = np.array(
+                self.template_bbox['points'], dtype=np.float32
+            ).reshape(-1, 1, 2)
+        self._other_pts_arrs = [
+            np.array(bbox['points'], dtype=np.float32).reshape(-1, 1, 2)
+            if bbox.get('points') else None
+            for bbox in (self.other_bboxes or [])
+        ]
+
     @classmethod
     def from_json(cls, json_path: str, scale: float = 1.0) -> 'TemplateConfig':
         """
@@ -173,6 +208,13 @@ class SuperPointEngineTRT:
 
         if verbose:
             logger.info(f"   Warm-up done: {(time.time()-t0)*1000:.1f}ms")
+
+        # Persistent thread pool for postprocess parallelism — tránh recreate
+        # ThreadPoolExecutor mỗi call match_batch (overhead ~25-35ms / call).
+        # Tối đa 4 worker — đủ cover batch size lớn nhất hiện tại.
+        self._postproc_pool = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="sp_postproc"
+        )
 
         logger.info(f"✅ SuperPointEngineTRT initialized ({(time.time()-t_start)*1000:.1f}ms)")
         logger.info(f"   Engine: {Path(engine_path).name}")
@@ -446,15 +488,39 @@ class SuperPointEngineTRT:
         results = [None] * num_pairs
         per_pair_postprocess = [0.0] * num_pairs
 
-        # Parallel postprocessing with ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=min(num_pairs, 4)) as executor:
+        # Postprocess:
+        #  - batch=1 → chạy inline (threading overhead ~30ms > compute ~15ms → lỗ).
+        #  - batch>1 → submit vào persistent pool để chạy song song.
+        if num_pairs == 1:
+            try:
+                idx, result, postprocess_time = self._postprocess_pair_wrapper(
+                    0, kpts_raw, matches_raw, mscores_raw,
+                    0, 1, templates[0], target_imgs[0],
+                    score_threshold, ransac_threshold, min_confidence,
+                )
+                results[idx] = result
+                per_pair_postprocess[idx] = postprocess_time
+            except Exception as e:
+                logger.error(f"Postprocess failed for pair 0: {e}")
+                results[0] = {
+                    'success': False,
+                    'error': f'Postprocess exception: {e}',
+                    'homography': None,
+                    'confidence': 0.0,
+                    'inliers': 0,
+                    'total_matches': 0,
+                    'transformed_bboxes': [],
+                    'target_img': target_imgs[0] if target_imgs else None,
+                }
+                per_pair_postprocess[0] = 0.0
+        else:
+            # Parallel postprocessing — reuse persistent thread pool (created at
+            # service init) thay vì recreate mỗi call. Tiết kiệm ~25-35ms / call.
             futures = []
-
             for idx, template in enumerate(templates):
                 template_idx = idx * 2
                 target_idx = idx * 2 + 1
-
-                future = executor.submit(
+                future = self._postproc_pool.submit(
                     self._postprocess_pair_wrapper,
                     idx,
                     kpts_raw,
@@ -594,19 +660,25 @@ class SuperPointEngineTRT:
                 'target_img': target_img_full
             }
 
-        m_kpts0 = kpts0[valid_matches[:, 1]].copy()
-        m_kpts1 = kpts1[valid_matches[:, 2]].copy()
+        # Fancy indexing (advanced indexing với integer array) đã trả về copy
+        # độc lập theo numpy spec — bỏ .copy() dư. In-place multiply bên dưới
+        # an toàn, không ảnh hưởng kpts0/kpts1.
+        m_kpts0 = kpts0[valid_matches[:, 1]]
+        m_kpts1 = kpts1[valid_matches[:, 2]]
 
         # Scale keypoints back
         template_h, template_w = template.template_gray.shape[:2]
         engine_h, engine_w = self.input_shape[2:]
         template_scale = (template_w / engine_w, template_h / engine_h)
 
-        target_scaled = target_img_full
+        # Target dimensions chỉ cần tính ratio — không cần resize + cvtColor
+        # lại (đã thực hiện trong preprocess step trước đó). Trước đây gọi
+        # cv2.resize + cv2.cvtColor trên ảnh 1200×1600 chỉ để lấy shape → phí
+        # ~5-10ms / pair.
+        target_h, target_w = target_img_full.shape[:2]
         if template.scale != 1.0:
-            target_scaled = cv2.resize(target_img_full, None, fx=template.scale, fy=template.scale)
-        target_gray = cv2.cvtColor(target_scaled, cv2.COLOR_BGR2GRAY)
-        target_h, target_w = target_gray.shape[:2]
+            target_h = int(round(target_h * template.scale))
+            target_w = int(round(target_w * template.scale))
         target_scale = (target_w / engine_w, target_h / engine_h)
 
         m_kpts0[:, 0] *= template_scale[0]
@@ -614,8 +686,14 @@ class SuperPointEngineTRT:
         m_kpts1[:, 0] *= target_scale[0]
         m_kpts1[:, 1] *= target_scale[1]
 
-        # RANSAC homography
-        H, mask = cv2.findHomography(m_kpts0, m_kpts1, cv2.RANSAC, ransac_threshold)
+        # RANSAC homography — cap maxIters=500 (default 2000) để bound
+        # worst-case khi matches toàn nhiễu (FAIL frame). RANSAC trên noisy
+        # matches iterate gần hết maxIters → tốn 20-30ms. Cap 500 giảm xuống
+        # ~5-8ms mà vẫn đủ cho ca thật (good matches converge sau ~50-200 iter).
+        H, mask = cv2.findHomography(
+            m_kpts0, m_kpts1, cv2.RANSAC, ransac_threshold,
+            maxIters=500,
+        )
 
         if H is None:
             return {
@@ -653,30 +731,28 @@ class SuperPointEngineTRT:
                 'target_img': target_img_full,
             }
 
-        # Transform bboxes
-        scale_matrix = np.array([
-            [1/template.scale, 0, 0],
-            [0, 1/template.scale, 0],
-            [0, 0, 1]
-        ])
-
-        H_full = scale_matrix @ H @ np.linalg.inv(scale_matrix)
+        # Transform bboxes — reuse cached scale_matrix + inverse từ TemplateConfig
+        # (không phụ thuộc frame, chỉ phụ thuộc template.scale).
+        H_full = template._scale_matrix @ H @ template._scale_matrix_inv
 
         transformed_bboxes = []
 
-        # Transform template bbox
-        template_pts = np.array(template.template_bbox['points'], dtype=np.float32).reshape(-1, 1, 2)
-        template_transformed = cv2.perspectiveTransform(template_pts, H_full)
-        transformed_bboxes.append({
-            'type': 'template',
-            'points': template_transformed.reshape(-1, 2).tolist(),
-            'conf': template.template_bbox.get('conf', 0.8)
-        })
+        # Transform template bbox — reuse cached np.array (pre-built in
+        # TemplateConfig.__post_init__, không thay đổi giữa frames).
+        if template._template_pts_arr is not None:
+            template_transformed = cv2.perspectiveTransform(template._template_pts_arr, H_full)
+            transformed_bboxes.append({
+                'type': 'template',
+                'points': template_transformed.reshape(-1, 2).tolist(),
+                'conf': template.template_bbox.get('conf', 0.8)
+            })
 
-        # Transform other bboxes
-        for bbox in template.other_bboxes:
-            pts = np.array(bbox['points'], dtype=np.float32).reshape(-1, 1, 2)
-            pts_transformed = cv2.perspectiveTransform(pts, H_full)
+        # Transform other bboxes — dùng cached arrays parallel với other_bboxes
+        cached_pts_list = template._other_pts_arrs or []
+        for bbox, pts_arr in zip(template.other_bboxes, cached_pts_list):
+            if pts_arr is None:
+                continue
+            pts_transformed = cv2.perspectiveTransform(pts_arr, H_full)
             transformed_bboxes.append({
                 'type': bbox['type'],
                 'points': pts_transformed.reshape(-1, 2).tolist(),

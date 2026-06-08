@@ -8,7 +8,7 @@ Handles inference for single camera scenarios:
 
 import logging
 import time
-from typing import Dict, Any, List, Optional, TYPE_CHECKING
+from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 
 import cv2
 import numpy as np
@@ -139,16 +139,26 @@ class SingleCameraPipeline(InferencePipelineTemplate):
         # Alt full-frame per template idx (parallel to `frames`); None when
         # rotation wasn't dual or dual emit failed for that frame.
         alt_full_frames: List[Optional[Any]] = [None] * len(frames)
+        # cap_circle (cx, cy, r) derived từ OBB/CV rotation per frame. Dùng
+        # downstream cho cap_crop step → bỏ HoughCircles lần 2.
+        cap_circles_from_rot: List[Optional[Tuple[float, float, float]]] = [None] * len(frames)
 
         if use_obb_rotation:
             from ..preprocessing.obb_rotator import transform_crop_area
             rotated_frames = []
             for idx, frame in enumerate(frames):
                 frame_tag = f"{serial_number}/frame{idx}"
+                # Pass the user-drawn product region down to the rotation step
+                # so OBB inference + CV fallback only search inside it (avoid
+                # neighbouring bottles in the FOV). matchers parallels frames.
+                _rot_crop = (
+                    getattr(matchers[idx], 'crop_area', None)
+                    if idx < len(matchers) else None
+                )
                 _t_rot = _time.perf_counter()
                 if _dual_rotation:
-                    cand_a, cand_b = _rotation_service.rotate_frame_dual(
-                        frame, frame_tag=f"{frame_tag}-dual"
+                    cand_a, cand_b, cap_circle = _rotation_service.rotate_frame_dual(
+                        frame, frame_tag=f"{frame_tag}-dual", crop_area=_rot_crop
                     )
                     _ms_cap_rotation += (_time.perf_counter() - _t_rot) * 1000
                     _n_cap_rotation += 1
@@ -156,29 +166,32 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                         rotated_frames.append(cand_a)
                         alt_full_frames[idx] = cand_b
                         frame_rotation_matrices[idx] = None  # cap-only rotation
+                        cap_circles_from_rot[idx] = cap_circle
                         logger.info(
                             f"[{serial_number}] dual cap_rotation OK frame{idx} "
                             f"— both candidates emitted"
                         )
                     else:
                         # Dual failed → fall back to single rotate_frame for this frame
-                        rotated, M = _rotation_service.rotate_frame(
-                            frame, frame_tag=f"{frame_tag}-fallback"
+                        rotated, M, cap_circle = _rotation_service.rotate_frame(
+                            frame, frame_tag=f"{frame_tag}-fallback", crop_area=_rot_crop
                         )
                         rotated_frames.append(rotated)
                         frame_rotation_matrices[idx] = M
+                        cap_circles_from_rot[idx] = cap_circle
                         logger.info(
                             f"[{serial_number}] dual cap_rotation fallback to "
                             f"single frame{idx}"
                         )
                 else:
-                    rotated, M = _rotation_service.rotate_frame(
-                        frame, frame_tag=frame_tag
+                    rotated, M, cap_circle = _rotation_service.rotate_frame(
+                        frame, frame_tag=frame_tag, crop_area=_rot_crop
                     )
                     _ms_cap_rotation += (_time.perf_counter() - _t_rot) * 1000
                     _n_cap_rotation += 1
                     rotated_frames.append(rotated)
                     frame_rotation_matrices[idx] = M  # None means rotation failed → original used
+                    cap_circles_from_rot[idx] = cap_circle
 
             if getattr(_rotation_service, 'inverse_transform', False):
                 # inverse_transform=True: output dùng ảnh gốc, bbox sẽ được inverse về tọa độ gốc
@@ -229,6 +242,11 @@ class SingleCameraPipeline(InferencePipelineTemplate):
 
         for idx, (frame, matcher) in enumerate(zip(frames[:num_templates], matchers)):
             crop_area = getattr(matcher, 'crop_area', None)
+            # Keep the user-drawn region pristine: cap_crop synthesis below
+            # OVERWRITES `crop_area` with the auto-detected cap bbox. We need
+            # the original to (a) bound HoughCircles to the product region and
+            # (b) clip the resulting cap bbox so it stays inside.
+            user_crop_area = crop_area
 
             # Transform crop_area coords into rotated frame space (if rotation succeeded)
             M = frame_rotation_matrices[idx] if idx < len(frame_rotation_matrices) else None
@@ -246,7 +264,14 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     from ..preprocessing.cv_rotator import (
                         detect_cap_circle, apply_cap_crop,
                     )
-                    _cached_cap_circle = detect_cap_circle(frame)
+                    # Reuse cap_circle từ rotation step nếu có — bỏ HoughCircles
+                    # lần 2 (tiết kiệm ~55ms). Fallback Hough khi rotation fail —
+                    # restrict to user_crop_area so we don't pick up a neighbour.
+                    _cached_cap_circle = (
+                        cap_circles_from_rot[idx]
+                        if idx < len(cap_circles_from_rot) and cap_circles_from_rot[idx] is not None
+                        else detect_cap_circle(frame, crop_area=user_crop_area)
+                    )
                     cap_result = (
                         apply_cap_crop(frame, _cached_cap_circle, margin_ratio=0.10)
                         if _cached_cap_circle is not None else None
@@ -255,12 +280,21 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     _ms_cap_crop += _dt_cap
                     _n_cap_crop += 1
                     if cap_result is not None:
-                        frame_for_inference = cap_result[0]
-                        # Synthesize crop_area from per-frame cap bbox so
+                        # Clip cap bbox to user's product crop_area so the
+                        # 10% margin doesn't reach outside the labelled region.
+                        _fx1, _fy1, _fx2, _fy2 = cap_result[1]
+                        if user_crop_area:
+                            _fx1 = max(_fx1, int(user_crop_area['x1']))
+                            _fy1 = max(_fy1, int(user_crop_area['y1']))
+                            _fx2 = min(_fx2, int(user_crop_area['x2']))
+                            _fy2 = min(_fy2, int(user_crop_area['y2']))
+                            frame_for_inference = frame[_fy1:_fy2, _fx1:_fx2]
+                        else:
+                            frame_for_inference = cap_result[0]
+                        # Synthesize crop_area from clipped cap bbox so
                         # `_transform_func` later maps bboxes back to full
                         # frame coords (otherwise they stay in cap-crop coords
                         # and verifiers crop the wrong region).
-                        _fx1, _fy1, _fx2, _fy2 = cap_result[1]
                         crop_area = {
                             'x1': int(_fx1), 'y1': int(_fy1),
                             'x2': int(_fx2), 'y2': int(_fy2),
@@ -268,7 +302,9 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                         logger.info(
                             f"[{serial_number}] cap_crop ({_cap_crop_method}) "
                             f"in {_dt_cap:.1f}ms: frame={frame.shape[:2]} → "
-                            f"crop={frame_for_inference.shape[:2]} bbox={cap_result[1]}"
+                            f"crop={frame_for_inference.shape[:2]} "
+                            f"bbox=({_fx1},{_fy1},{_fx2},{_fy2}) "
+                            f"clipped_to_user={user_crop_area is not None}"
                         )
                     else:
                         logger.warning(
@@ -322,8 +358,16 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                         )
                         _dt_alt = (_time.perf_counter() - _t_alt) * 1000
                         if alt_cap is not None:
-                            alt_frame_for_inference = alt_cap[0]
+                            # Match primary's user_crop_area clipping.
                             _ax1, _ay1, _ax2, _ay2 = alt_cap[1]
+                            if user_crop_area:
+                                _ax1 = max(_ax1, int(user_crop_area['x1']))
+                                _ay1 = max(_ay1, int(user_crop_area['y1']))
+                                _ax2 = min(_ax2, int(user_crop_area['x2']))
+                                _ay2 = min(_ay2, int(user_crop_area['y2']))
+                                alt_frame_for_inference = alt_frame_full[_ay1:_ay2, _ax1:_ax2]
+                            else:
+                                alt_frame_for_inference = alt_cap[0]
                             alt_crop_area = {
                                 'x1': int(_ax1), 'y1': int(_ay1),
                                 'x2': int(_ax2), 'y2': int(_ay2),
@@ -535,6 +579,19 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     ransac_threshold=5.0,
                     min_confidence=matching_conf,
                 )
+                # Log breakdown thực tế của match_batch để đo cost post-SuperPoint.
+                # batch_timings có: preprocess, concat, trt_inference, postprocess, total.
+                _bt = batch_result.get('batch_timings', {}) or {}
+                if _bt:
+                    logger.info(
+                        f"[{camera.serial_number}] SuperPoint match_batch breakdown: "
+                        f"total={_bt.get('total', 0):.1f}ms "
+                        f"| preprocess={_bt.get('preprocess', 0):.1f}ms "
+                        f"| concat={_bt.get('concat', 0):.1f}ms "
+                        f"| trt={_bt.get('trt_inference', 0):.1f}ms "
+                        f"| postprocess={_bt.get('postprocess', 0):.1f}ms "
+                        f"(pairs={len(target_imgs)})"
+                    )
 
             if not batch_result.get('success', False):
                 logger.error(f"Batch inference failed: {batch_result.get('error')}")

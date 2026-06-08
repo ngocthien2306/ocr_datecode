@@ -7,7 +7,7 @@ All cameras are processed in a single batch inference call.
 
 import logging
 import time
-from typing import Dict, Any, List, Optional, TYPE_CHECKING
+from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 
 from .base import InferencePipelineTemplate, PipelineContext
 
@@ -124,6 +124,9 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             )
             # Alt frame (full-frame) for dual_rotation_check; None for normal cams
             frame_alt: Optional[np.ndarray] = None
+            # cap_circle from rotation step — reuse cho cap_crop downstream
+            # (tránh HoughCircles lần 2). None khi rotation không chạy/fail.
+            _cap_circle_from_rot: Optional[Tuple[float, float, float]] = None
             if _need_rotation:
                 _method = getattr(camera, 'cap_rotation_method', 'yolo_obb')
                 _rot_svc = (
@@ -134,9 +137,12 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                 _dual = bool(getattr(camera, 'dual_rotation_check', False))
                 if _rot_svc is not None and getattr(_rot_svc, 'available', False):
                     _t0 = _time.perf_counter()
+                    # Pass the user-drawn product region to rotation so
+                    # OBB/CV detect only inside it (avoid neighbour bottles).
                     if _dual and hasattr(_rot_svc, 'rotate_frame_dual'):
-                        cand_a, cand_b = _rot_svc.rotate_frame_dual(
-                            frame, frame_tag=f"{serial_number}/multi-dual"
+                        cand_a, cand_b, _cap_circle_from_rot = _rot_svc.rotate_frame_dual(
+                            frame, frame_tag=f"{serial_number}/multi-dual",
+                            crop_area=crop_area,
                         )
                         _dt_rot = (_time.perf_counter() - _t0) * 1000
                         if cand_a is not None and cand_b is not None:
@@ -148,16 +154,18 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                             )
                         else:
                             # Dual failed → fall back to single rotate_frame
-                            rotated, _M = _rot_svc.rotate_frame(
-                                frame, frame_tag=f"{serial_number}/multi-fallback"
+                            rotated, _M, _cap_circle_from_rot = _rot_svc.rotate_frame(
+                                frame, frame_tag=f"{serial_number}/multi-fallback",
+                                crop_area=crop_area,
                             )
                             logger.info(
                                 f"[{serial_number}] cap_rotation DUAL fallback "
                                 f"({_method}) in {_dt_rot:.1f}ms"
                             )
                     else:
-                        rotated, _M = _rot_svc.rotate_frame(
-                            frame, frame_tag=f"{serial_number}/multi"
+                        rotated, _M, _cap_circle_from_rot = _rot_svc.rotate_frame(
+                            frame, frame_tag=f"{serial_number}/multi",
+                            crop_area=crop_area,
                         )
                         _dt_rot = (_time.perf_counter() - _t0) * 1000
                         logger.info(
@@ -175,6 +183,10 @@ class MultiCameraPipeline(InferencePipelineTemplate):
 
             # ── cap_crop_method active: detect cap per-frame, override crop_area ──
             _cap_crop_method = getattr(matcher, 'cap_crop_method', 'none')
+            # Keep user-drawn region pristine — used to (a) bound HoughCircles
+            # and (b) clip the synthesised cap bbox so the 10% margin doesn't
+            # leak outside the labelled product area.
+            user_crop_area = crop_area
             # Cache the detected cap circle (cx, cy, r) from primary so we can
             # reuse it on the ALT candidate (cap_rotation is cap-only → cap
             # position identical in both candidates → no need to re-run HoughCircles).
@@ -185,7 +197,13 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     from ..preprocessing.cv_rotator import (
                         detect_cap_circle, apply_cap_crop,
                     )
-                    _cached_cap_circle = detect_cap_circle(frame)
+                    # Reuse cap_circle từ rotation step → bỏ HoughCircles ~55ms.
+                    # Fallback Hough restricted to user_crop_area.
+                    _cached_cap_circle = (
+                        _cap_circle_from_rot
+                        if _cap_circle_from_rot is not None
+                        else detect_cap_circle(frame, crop_area=user_crop_area)
+                    )
                     cap_result = (
                         apply_cap_crop(frame, _cached_cap_circle, margin_ratio=0.10)
                         if _cached_cap_circle is not None else None
@@ -194,14 +212,23 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     _ms_cap_crop += _dt_cap
                     _n_cap_crop += 1
                     if cap_result is not None:
-                        frame_for_inference = cap_result[0]
-                        # Synthesize crop_area from per-frame cap bbox so the
+                        # Clip cap bbox to user_crop_area so the margin stays
+                        # inside the labelled product region.
+                        _fx1, _fy1, _fx2, _fy2 = cap_result[1]
+                        if user_crop_area:
+                            _fx1 = max(_fx1, int(user_crop_area['x1']))
+                            _fy1 = max(_fy1, int(user_crop_area['y1']))
+                            _fx2 = min(_fx2, int(user_crop_area['x2']))
+                            _fy2 = min(_fy2, int(user_crop_area['y2']))
+                            frame_for_inference = frame[_fy1:_fy2, _fx1:_fx2]
+                        else:
+                            frame_for_inference = cap_result[0]
+                        # Synthesize crop_area from clipped cap bbox so the
                         # downstream `_transform_func(result, crop_area)` adds
                         # the (fx1, fy1) offset back to bboxes — otherwise
                         # transformed_bboxes stay in cap-crop coords and the
                         # text/template verifiers crop the wrong region from
                         # the full frame.
-                        _fx1, _fy1, _fx2, _fy2 = cap_result[1]
                         crop_area = {
                             'x1': int(_fx1), 'y1': int(_fy1),
                             'x2': int(_fx2), 'y2': int(_fy2),
@@ -209,7 +236,9 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                         logger.info(
                             f"[{serial_number}] cap_crop ({_cap_crop_method}) "
                             f"in {_dt_cap:.1f}ms: frame={frame.shape[:2]} → "
-                            f"crop={frame_for_inference.shape[:2]} bbox={cap_result[1]}"
+                            f"crop={frame_for_inference.shape[:2]} "
+                            f"bbox=({_fx1},{_fy1},{_fx2},{_fy2}) "
+                            f"clipped_to_user={user_crop_area is not None}"
                         )
                     else:
                         logger.warning(
@@ -263,8 +292,17 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                         )
                         _dt_alt = (_time.perf_counter() - _t_alt) * 1000
                         if alt_cap is not None:
-                            alt_frame_for_inference = alt_cap[0]
+                            # Same user_crop_area clipping as primary path so
+                            # alt matches the labelled product region.
                             _ax1, _ay1, _ax2, _ay2 = alt_cap[1]
+                            if user_crop_area:
+                                _ax1 = max(_ax1, int(user_crop_area['x1']))
+                                _ay1 = max(_ay1, int(user_crop_area['y1']))
+                                _ax2 = min(_ax2, int(user_crop_area['x2']))
+                                _ay2 = min(_ay2, int(user_crop_area['y2']))
+                                alt_frame_for_inference = frame_alt[_ay1:_ay2, _ax1:_ax2]
+                            else:
+                                alt_frame_for_inference = alt_cap[0]
                             alt_crop_area = {
                                 'x1': int(_ax1), 'y1': int(_ay1),
                                 'x2': int(_ax2), 'y2': int(_ay2),
@@ -396,8 +434,11 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                 batch_timings = batch_result.get('batch_timings', {})
                 logger.info(
                     f"Batch inference complete: "
-                    f"total={batch_timings.get('total', 0):.1f}ms, "
-                    f"trt={batch_timings.get('trt_inference', 0):.1f}ms, "
+                    f"total={batch_timings.get('total', 0):.1f}ms "
+                    f"| preprocess={batch_timings.get('preprocess', 0):.1f}ms "
+                    f"| concat={batch_timings.get('concat', 0):.1f}ms "
+                    f"| trt={batch_timings.get('trt_inference', 0):.1f}ms "
+                    f"| postprocess={batch_timings.get('postprocess', 0):.1f}ms, "
                     f"cameras={len(sub_serials)} (skipped {len(color_idx)} color, "
                     f"{len(shape_idx)} shape_outline)"
                 )

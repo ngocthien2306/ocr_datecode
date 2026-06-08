@@ -16,6 +16,10 @@ from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
 import sys
 
+# crop_area sub-slicing helper — shared with CV rotator (search restricted
+# to user-defined product region; results offset back to full-frame coords).
+from .cv_rotator import _slice_by_crop_area
+
 logger = logging.getLogger(__name__)
 
 HOME = os.environ.get('HOME', '/home/demo')
@@ -26,12 +30,18 @@ _rotation_file_logger: Optional[logging.Logger] = None
 
 
 def _get_rotation_file_logger() -> logging.Logger:
-    """Lazy-init a dedicated file logger for rotation results."""
+    """Lazy-init a dedicated file logger for rotation results.
+
+    Wraps the daily file handler in a MemoryHandler so INFO writes get buffered
+    (~5-10ms saved per frame on sync disk I/O). WARNING+ auto-flush ngay để
+    không mất diagnostic khi có lỗi.
+    """
     global _rotation_file_logger
     if _rotation_file_logger is not None:
         return _rotation_file_logger
 
     from logging_config import make_handler
+    from logging.handlers import MemoryHandler
 
     _rotation_file_logger = logging.getLogger('obb_rotation')
     _rotation_file_logger.setLevel(logging.DEBUG)
@@ -44,11 +54,25 @@ def _get_rotation_file_logger() -> logging.Logger:
             fmt='%(asctime)s  %(levelname)-8s  %(message)s',
         )
         fh.formatter.datefmt = '%Y-%m-%d %H:%M:%S'
-        setattr(fh, "_marker", "daily-obb_rotation")
-        _rotation_file_logger.addHandler(fh)
+        # Buffer up to 200 INFO records; auto-flush on WARNING+ hoặc khi handler đóng.
+        buffered = MemoryHandler(capacity=200, flushLevel=logging.WARNING, target=fh)
+        setattr(buffered, "_marker", "daily-obb_rotation")
+        _rotation_file_logger.addHandler(buffered)
 
-    logger.info("OBB rotation log: obb_rotation/{date}.log")
+    logger.info("OBB rotation log: obb_rotation/{date}.log (buffered)")
     return _rotation_file_logger
+
+
+# Helper: derive a generous bounding circle from a YOLO OBB cap_box.
+# Replaces the need to run HoughCircles on the same frame — saves ~55ms.
+def _obb_cap_box_to_circle(cap_box: np.ndarray, margin: float = 8.0) -> Tuple[float, float, float]:
+    """
+    Convert OBB cap_box (cx, cy, w, h, angle) → (cx, cy, radius) with margin.
+    Use max(w, h)/2 so the circle bao trùm toàn bộ cap (an toàn cho downstream crop).
+    """
+    cx, cy, w, h, _ = cap_box
+    r = max(float(w), float(h)) / 2.0 + float(margin)
+    return (float(cx), float(cy), r)
 
 
 # ─── Import YOLO OBB (same as product_verifier) ───────────────────────────────
@@ -83,22 +107,27 @@ def rotate_cap_region_only(image: np.ndarray, cap_box: np.ndarray, angle_deg: fl
     x2 = min(image.shape[1], int(cx + crop_r))
     y2 = min(image.shape[0], int(cy + crop_r))
 
-    crop = image[y1:y2, x1:x2].copy()
+    # View thay vì copy — warpAffine không modify input nên không cần copy.
+    # Tiết kiệm ~2ms / call so với image[y1:y2, x1:x2].copy() trước đây.
+    crop_view = image[y1:y2, x1:x2]
     local_cx = float(cx - x1)
     local_cy = float(cy - y1)
 
     M = cv2.getRotationMatrix2D((local_cx, local_cy), total_angle, 1.0)
-    crop_rotated = cv2.warpAffine(crop, M, (crop.shape[1], crop.shape[0]),
-                                   flags=cv2.INTER_LINEAR, borderValue=(114, 114, 114))
+    crop_rotated = cv2.warpAffine(
+        crop_view, M, (crop_view.shape[1], crop_view.shape[0]),
+        flags=cv2.INTER_LINEAR, borderValue=(114, 114, 114),
+    )
 
-    mask = np.zeros(crop.shape[:2], dtype=np.uint8)
+    mask = np.zeros(crop_view.shape[:2], dtype=np.uint8)
     cv2.circle(mask, (int(local_cx), int(local_cy)), radius, 255, -1)
 
-    result_crop = crop.copy()
-    result_crop[mask > 0] = crop_rotated[mask > 0]
-
+    # Copy full frame once cho output (cần thiết — không in-place vào input).
+    # Bỏ bước trung gian `result_crop = crop.copy()` — apply mask-blend trực tiếp
+    # vào sub-region của full_result. Tiết kiệm thêm ~2ms / call.
     full_result = image.copy()
-    full_result[y1:y2, x1:x2] = result_crop
+    sub = full_result[y1:y2, x1:x2]
+    sub[mask > 0] = crop_rotated[mask > 0]
     return full_result
 
 
@@ -255,8 +284,9 @@ class OBBRotationService:
     def rotate_frame(
         self,
         frame: np.ndarray,
-        frame_tag: str = ""
-    ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+        frame_tag: str = "",
+        crop_area: Optional[Dict[str, int]] = None,
+    ) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[Tuple[float, float, float]]]:
         """
         Detect OBB trên full frame và xoay về hướng chuẩn.
 
@@ -265,32 +295,49 @@ class OBBRotationService:
             frame_tag: Optional tag để log (vd. serial_number + frame_idx)
 
         Returns:
-            (result_frame, M) trong đó:
+            (result_frame, M, cap_circle) trong đó:
             - result_frame: rotated frame nếu thành công, hoặc frame gốc nếu thất bại
             - M: combined affine matrix (None nếu không xoay)
+            - cap_circle: (cx, cy, r) derived from OBB cap_box, dùng cho cap_crop
+              step bên downstream (tránh chạy HoughCircles lần 2). None nếu fail.
         """
         tag = f"[{frame_tag}] " if frame_tag else ""
 
         if self._model is None:
             self._rot_logger.warning(f"{tag}SKIP — model not loaded")
-            return frame, None
+            return frame, None, None
 
         try:
             import time as _time
             _t_total_start = _time.perf_counter()
+            # Restrict OBB inference to user-defined product crop_area so we
+            # don't detect bottles outside that region (multi-bottle FOV).
+            # Boxes returned from the sub-frame are offset back to full coords
+            # before any downstream use.
+            ox, oy, sub_frame = _slice_by_crop_area(frame, crop_area)
+            if sub_frame is None:
+                self._rot_logger.info(
+                    f"{tag}FAIL — crop_area outside frame bounds"
+                )
+                return frame, None, None
             results, timing = self._model.predict(
-                [frame], conf_threshold=self.conf_threshold, return_timing=True
+                [sub_frame], conf_threshold=self.conf_threshold, return_timing=True
             )
             boxes, scores, class_ids = results[0]
+            if crop_area and len(boxes) > 0:
+                boxes = boxes.copy()
+                boxes[:, 0] += ox
+                boxes[:, 1] += oy
 
             infer_ms = timing.get('total', 0)
 
             if len(boxes) == 0:
                 self._rot_logger.info(
                     f"{tag}FAIL — no boxes detected  "
-                    f"(infer={infer_ms:.1f}ms)"
+                    f"(crop_area={'on' if crop_area else 'off'}, "
+                    f"infer={infer_ms:.1f}ms)"
                 )
-                return frame, None
+                return frame, None, None
 
             # Tìm text_box và bottle_cap
             text_box_idx = next(
@@ -307,10 +354,13 @@ class OBBRotationService:
                     f"{tag}FAIL — text_box or bottle_cap not detected "
                     f"(found {len(boxes)} boxes, infer={infer_ms:.1f}ms)"
                 )
-                return frame, None
+                return frame, None, None
 
             text_box = boxes[text_box_idx]
             cap_box  = boxes[bottle_cap_idx]
+            # Derive cap_circle from OBB cap_box — downstream cap_crop step
+            # sẽ dùng cái này thay vì gọi HoughCircles trên cùng frame nữa.
+            cap_circle = _obb_cap_box_to_circle(cap_box)
 
             # Tính góc xoay từ text_box
             _, _, tw, th, text_angle = text_box
@@ -359,41 +409,62 @@ class OBBRotationService:
                 f"rotate={_t_rot:.1f}ms  flip_via={flip_method}"
             )
 
-            return result, None
+            return result, None, cap_circle
 
         except Exception as e:
             logger.error(f"OBBRotationService.rotate_frame error: {e}")
             self._rot_logger.error(f"{tag}ERROR — {e}")
-            return frame, None
+            return frame, None, None
 
     def rotate_frame_dual(
         self,
         frame: np.ndarray,
-        frame_tag: str = ""
-    ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        frame_tag: str = "",
+        crop_area: Optional[Dict[str, int]] = None,
+    ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[Tuple[float, float, float]]]:
         """
         Produce BOTH rotation candidates (no-flip + flip180) without using the
         shape-match `_need_flip` heuristic. The caller picks the higher-scoring
         candidate via match confidence.
 
-        Returns (candidate_no_flip, candidate_flipped180). Either may be None
-        on failure (no cap detected, no text_box, etc.).
+        Returns (candidate_no_flip, candidate_flipped180, cap_circle):
+        - candidate_no_flip / candidate_flipped180: rotation candidates; either
+          may be None on failure (no cap detected, no text_box, etc.).
+        - cap_circle: (cx, cy, r) derived from OBB cap_box — downstream skip
+          HoughCircles bằng cách dùng cái này. None khi rotation fail.
         """
         tag = f"[{frame_tag}] " if frame_tag else ""
         if self._model is None or frame is None or frame.size == 0:
-            return None, None
+            return None, None, None
         try:
             import time as _time
             _t0 = _time.perf_counter()
+            # Restrict OBB inference + CV fallback to user-defined crop_area.
+            # Boxes/cap detected on sub_frame are offset back to full coords
+            # before any downstream rotation/return.
+            ox, oy, sub_frame = _slice_by_crop_area(frame, crop_area)
+            if sub_frame is None:
+                self._rot_logger.info(
+                    f"{tag}DUAL FAIL — crop_area outside frame bounds"
+                )
+                return None, None, None
             results, timing = self._model.predict(
-                [frame], conf_threshold=self.conf_threshold, return_timing=True
+                [sub_frame], conf_threshold=self.conf_threshold, return_timing=True
             )
             boxes, scores, class_ids = results[0]
+            if crop_area and len(boxes) > 0:
+                boxes = boxes.copy()
+                boxes[:, 0] += ox
+                boxes[:, 1] += oy
             infer_ms = timing.get('total', 0)
 
             if len(boxes) == 0:
-                self._rot_logger.info(f"{tag}DUAL FAIL — no boxes (infer={infer_ms:.1f}ms)")
-                return None, None
+                self._rot_logger.info(
+                    f"{tag}DUAL FAIL — no boxes "
+                    f"(crop_area={'on' if crop_area else 'off'}, "
+                    f"infer={infer_ms:.1f}ms)"
+                )
+                return None, None, None
             text_box_idx = next(
                 (i for i, c in enumerate(class_ids)
                  if self.CLASS_NAMES[int(c)] == 'text_box'), None
@@ -403,13 +474,54 @@ class OBBRotationService:
                  if self.CLASS_NAMES[int(c)] == 'bottle_cap'), None
             )
             if text_box_idx is None or bottle_cap_idx is None:
+                # OBB thiếu 1 trong 2 box → fallback CV: HoughCircles tìm cap,
+                # dark-pixel histogram (`_text_angle`) tìm góc text. OBB cap_box
+                # angle vốn không align với text (label được vẽ axis-aligned),
+                # nên không thể tận dụng được cái có sẵn từ OBB — cứ chạy CV
+                # lại từ đầu cho đơn giản. CV cũng chạy trong sub-frame.
                 self._rot_logger.info(
-                    f"{tag}DUAL FAIL — missing text_box/bottle_cap "
-                    f"(infer={infer_ms:.1f}ms)"
+                    f"{tag}DUAL OBB miss → CV fallback "
+                    f"(text_box={text_box_idx is not None}, "
+                    f"bottle_cap={bottle_cap_idx is not None}, "
+                    f"infer={infer_ms:.1f}ms)"
                 )
-                return None, None
+                try:
+                    from .cv_rotator import _detect_cap, _text_angle, _rotate_cap_region
+                    gray = (
+                        cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                        if frame.ndim == 3 else frame
+                    )
+                    sub_gray = (
+                        gray[oy:oy + sub_frame.shape[0], ox:ox + sub_frame.shape[1]]
+                        if crop_area else gray
+                    )
+                    cap_sub = _detect_cap(sub_gray)
+                    if cap_sub is None:
+                        self._rot_logger.info(
+                            f"{tag}DUAL CV-fallback FAIL — no cap detected"
+                        )
+                        return None, None, None
+                    cap_full = (cap_sub[0] + ox, cap_sub[1] + oy, cap_sub[2])
+                    angle_deg, n_dark = _text_angle(sub_gray, cap_sub)
+                    cand_a = _rotate_cap_region(frame, cap_full, angle_deg, False)
+                    cand_b = _rotate_cap_region(frame, cap_full, angle_deg, True)
+                    _t_total = (_time.perf_counter() - _t0) * 1000
+                    self._rot_logger.info(
+                        f"{tag}DUAL CV-fallback OK in {_t_total:.1f}ms — "
+                        f"angle={angle_deg:.1f}° n_dark={n_dark} "
+                        f"both candidates emitted"
+                    )
+                    return cand_a, cand_b, (float(cap_full[0]), float(cap_full[1]), float(cap_full[2]))
+                except Exception as cv_err:
+                    logger.error(f"OBB→CV fallback error: {cv_err}")
+                    self._rot_logger.error(
+                        f"{tag}DUAL CV-fallback ERROR — {cv_err}"
+                    )
+                    return None, None, None
             text_box = boxes[text_box_idx]
             cap_box  = boxes[bottle_cap_idx]
+            # Derive cap_circle ngay sau khi có cap_box → return cùng candidates.
+            cap_circle = _obb_cap_box_to_circle(cap_box)
             _, _, tw, th, text_angle = text_box
             angle_deg = text_angle * 180 / np.pi
             if th > tw:
@@ -428,11 +540,11 @@ class OBBRotationService:
                 f"{tag}DUAL OK in {_t_total:.1f}ms — angle={angle_deg:.1f}° "
                 f"both candidates emitted (infer={infer_ms:.1f}ms)"
             )
-            return candidate_a, candidate_b
+            return candidate_a, candidate_b, cap_circle
         except Exception as e:
             logger.error(f"OBBRotationService.rotate_frame_dual error: {e}")
             self._rot_logger.error(f"{tag}DUAL ERROR — {e}")
-            return None, None
+            return None, None, None
 
 
 def inverse_transform_bboxes(match_result: dict, M: np.ndarray) -> dict:
