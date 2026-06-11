@@ -153,6 +153,7 @@ class TextVerificationService:
     CONFUSABLE_PAIRS: Dict[str, frozenset]             = {
         '8': frozenset({'6', '0'}),   # expected 8, OCR đọc 6 hoặc 0
         '5': frozenset({'6'}),        # expected 5, OCR đọc 6
+        '6': frozenset({'0'}),        # expected 6, OCR đọc 0 (vd 06160→00160)
     }
 
     # Khi augment retry fail toàn bộ 5 versions, lưu composite (INPUT crop + 5
