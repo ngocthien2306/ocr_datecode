@@ -137,6 +137,24 @@ class TextVerificationService:
     V_SUFFIX_BYPASS_MIN_EXPECTED_LEN                = 3         # chống case pathological expected='V' hay 'XV'
     V_SUFFIX_BYPASS_FUNCTION_TYPES: Tuple[str, ...] = ("Check_Color", "Check_Type_Product")
 
+    # ── Confusable-digit bypass: OCR nhầm các số hình dạng giống nhau ──
+    # Khi recognized chỉ khác expected ở những vị trí mà cặp (expected→recognized)
+    # nằm trong CONFUSABLE_PAIRS (vd 8→6, 5→6), coi như PASS.
+    # Substitution-only: 2 chuỗi (alnum-normalized, bỏ '-'/space) phải CÙNG ĐỘ DÀI.
+    # CONFUSABLE_BYPASS_MAX_SUBS giới hạn số ký tự được tha → chặn pass nhầm hàng loạt.
+    # Map DIRECTIONAL: key = ký tự expected, value = set ký tự recognized chấp nhận.
+    #   '8': {'6'}  nghĩa là expected '8' mà OCR đọc '6' thì tha; CHIỀU NGƯỢC LẠI
+    #   (expected '6' đọc '8') KHÔNG tha trừ khi thêm entry '6': {'8'}.
+    # Rủi ro QC: tha số sai → có thể pass mã sai thật. Chỉ bật cho function_type
+    # đã kiểm soát 1 product type tại 1 thời điểm (giống V-suffix bypass).
+    CONFUSABLE_BYPASS_ENABLED                          = True
+    CONFUSABLE_BYPASS_FUNCTION_TYPES: Tuple[str, ...]  = ("Check_Color", "Check_Type_Product")
+    CONFUSABLE_BYPASS_MAX_SUBS                         = 2
+    CONFUSABLE_PAIRS: Dict[str, frozenset]             = {
+        '8': frozenset({'6'}),   # expected 8, OCR đọc 6
+        '5': frozenset({'6'}),   # expected 5, OCR đọc 6
+    }
+
     # Khi augment retry fail toàn bộ 5 versions, lưu composite (INPUT crop + 5
     # augments) ra ổ đĩa để review offline. Subfolder ngày trong debug_path:
     # → {debug_path}/augment_fails/{YYYY-MM-DD}/{HHMMSS_xxx}_{serial}_ann{idx}.png
@@ -594,6 +612,22 @@ class TextVerificationService:
                     )
                     match = True
 
+            # Early confusable-digit bypass (vd 8→6, 5→6). Cũng skip augment vì
+            # augment khó sửa nhầm-số (số đã rõ nét, chỉ là hình giống nhau).
+            if not match:
+                cf_bypassed, cf_reason = self._check_confusable_bypass(
+                    expected=expected,
+                    recognized=recognized,
+                    function_type=item.get('function_type', 'OCR'),
+                )
+                if cf_bypassed:
+                    logger.info(
+                        f"[{serial}] Ann {ann_idx}: EARLY CONFUSABLE BYPASS PASS "
+                        f"recognized='{recognized}' → expected='{expected}' "
+                        f"({cf_reason}) — skipping augment_retry"
+                    )
+                    match = True
+
             # Augment retry for failed regions with near-similar text (chỉ chạy
             # nếu early bypass không kích hoạt). Sau augment vẫn thử bypass lần
             # nữa với recognized mới (augment có thể đổi recognized).
@@ -639,6 +673,20 @@ class TextVerificationService:
                     logger.info(
                         f"[{serial}] Ann {ann_idx}: V-suffix bypass not applied — {bypass_reason}"
                     )
+
+            # Post-augment confusable-digit bypass — fallback nếu augment cũng fail.
+            if not match and augment_attempted:
+                cf_bypassed, cf_reason = self._check_confusable_bypass(
+                    expected=expected,
+                    recognized=recognized,
+                    function_type=item.get('function_type', 'OCR'),
+                )
+                if cf_bypassed:
+                    logger.info(
+                        f"[{serial}] Ann {ann_idx}: CONFUSABLE BYPASS PASS "
+                        f"recognized='{recognized}' → expected='{expected}' ({cf_reason})"
+                    )
+                    match = True
 
             # Always overwrite recognized with expected for any match (real or bypass)
             # — keep FE display simple and consistent. Drift info stays in logs.
@@ -2135,6 +2183,53 @@ class TextVerificationService:
             return False, f"too_many_trailing_chars={trailing!r}"
 
         return True, f"bypassed (trailing={trailing!r})"
+
+    def _check_confusable_bypass(
+        self,
+        expected: str,
+        recognized: str,
+        function_type: str,
+    ) -> Tuple[bool, str]:
+        """
+        Bypass khi recognized chỉ khác expected ở các cặp số dễ nhầm (vd 8→6, 5→6).
+
+        - Chỉ áp cho function_type trong CONFUSABLE_BYPASS_FUNCTION_TYPES.
+        - So sánh trên dạng alnum-only (bỏ '-', ' '), 2 chuỗi phải CÙNG ĐỘ DÀI
+          (substitution-only — không xử lý thêm/thiếu ký tự).
+        - Mỗi vị trí khác nhau phải là cặp directional (expected_char →
+          recognized_char) có trong CONFUSABLE_PAIRS; nếu có 1 diff không thuộc
+          map → fail.
+        - Tổng số ký tự được tha ≤ CONFUSABLE_BYPASS_MAX_SUBS.
+
+        Returns (bypassed, reason).
+        """
+        if not self.CONFUSABLE_BYPASS_ENABLED:
+            return False, "disabled"
+        if function_type not in self.CONFUSABLE_BYPASS_FUNCTION_TYPES:
+            return False, f"wrong_function_type={function_type!r}"
+
+        exp = self._alnum_only(expected)
+        rec = self._alnum_only(recognized)
+        if not exp:
+            return False, "expected_empty"
+        if len(exp) != len(rec):
+            return False, f"len_mismatch(exp={len(exp)},rec={len(rec)})"
+
+        subs: List[Tuple[str, str]] = []
+        for ce, cr in zip(exp, rec):
+            if ce == cr:
+                continue
+            allowed = self.CONFUSABLE_PAIRS.get(ce)
+            if not allowed or cr not in allowed:
+                return False, f"non_confusable_diff({ce!r}->{cr!r})"
+            subs.append((ce, cr))
+
+        if not subs:
+            return False, "no_confusable_diff"   # khác biệt nằm ngoài cặp số (vd chỉ '-')
+        if len(subs) > self.CONFUSABLE_BYPASS_MAX_SUBS:
+            return False, f"too_many_subs={len(subs)}>{self.CONFUSABLE_BYPASS_MAX_SUBS}"
+
+        return True, f"bypassed (subs={subs})"
 
     @staticmethod
     def update_bboxes_with_recognized_text(
