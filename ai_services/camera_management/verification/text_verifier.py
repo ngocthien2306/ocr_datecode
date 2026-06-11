@@ -627,6 +627,12 @@ class TextVerificationService:
                         f"({cf_reason}) — skipping augment_retry"
                     )
                     match = True
+                else:
+                    logger.info(
+                        f"[{serial}] Ann {ann_idx}: confusable bypass NOT applied (early) — "
+                        f"expected='{expected}' recognized='{recognized}' "
+                        f"ft={item.get('function_type', 'OCR')!r} reason=({cf_reason})"
+                    )
 
             # Augment retry for failed regions with near-similar text (chỉ chạy
             # nếu early bypass không kích hoạt). Sau augment vẫn thử bypass lần
