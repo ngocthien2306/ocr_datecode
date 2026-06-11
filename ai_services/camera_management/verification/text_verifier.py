@@ -124,7 +124,7 @@ class TextVerificationService:
     CHAR_QUAD_ASPECT_DEV_MIN    = 0.5    # transformed (w/h) / original (w/h) must be in
     CHAR_QUAD_ASPECT_DEV_MAX    = 2.0    # this band — else char shape got warped
 
-    # ── V-suffix bypass: Check_Color CIJ dot-matrix, ký tự V cuối chuỗi ──
+    # ── V-suffix bypass: Check_Color / Check_Type_Product CIJ dot-matrix, ký tự V cuối ──
     # Khi expected kết thúc bằng 'V' và prefix expected[:-1] khớp ĐÚNG ký tự với
     # recognized, coi như PASS — bất kể ký tự cuối OCR đọc là gì (kể cả mất).
     # Lý do: chữ V dot-matrix dưới cùng có đáy chỉ 1-2 chấm, OCR thường xuyên
@@ -135,7 +135,7 @@ class TextVerificationService:
     V_SUFFIX_BYPASS_ENABLED                         = True
     V_SUFFIX_BYPASS_LAST_CHARS: Tuple[str, ...]     = ('V',)    # mở rộng nếu sau có chữ khác (vd 'W')
     V_SUFFIX_BYPASS_MIN_EXPECTED_LEN                = 3         # chống case pathological expected='V' hay 'XV'
-    V_SUFFIX_BYPASS_FUNCTION_TYPES: Tuple[str, ...] = ("Check_Color",)
+    V_SUFFIX_BYPASS_FUNCTION_TYPES: Tuple[str, ...] = ("Check_Color", "Check_Type_Product")
 
     # Khi augment retry fail toàn bộ 5 versions, lưu composite (INPUT crop + 5
     # augments) ra ổ đĩa để review offline. Subfolder ngày trong debug_path:
