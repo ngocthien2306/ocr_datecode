@@ -7,8 +7,12 @@ xử lý ảnh thuần (Sobel + outer-anchored peak detection) để tìm cạnh
 
 Pipeline:
 1. Lấy label polygon từ transformed_bboxes (SuperPoint matching) — đã có sẵn
-2. Build rotated search strip 2 bên label (outward)
-3. Fill label đen middle 60% theo Y (top/bot 20% giữ để bắt cạnh khi label che)
+2. Build rotated search strip 2 bên label. Product detection quét CẢ vào trong
+   mép label (INNER_SEARCH_MAX px) → bắt được cạnh chai khi label lệch mạnh
+   (gap có thể âm). Template detection vẫn outward-only (inner_search=0).
+3. Fill label đen middle 60% theo Y (top/bot 20% giữ để bắt cạnh khi label che);
+   product path co fill vào trong x_inset=INNER_SEARCH_MAX để mép đen không tạo
+   peak giả trong cửa sổ inner search.
 4. Specular suppression: zero-out Sobel ở blob sáng lớn (>230, blob >5x5px)
 5. Sobel X → 1D profile + per-column height_ratio (2-pass: global + P95 robust)
 6. OUTER wall = peak xa nhất với height_ratio >= 0.55
@@ -34,6 +38,10 @@ logger = logging.getLogger(__name__)
 
 # ─── Tuned defaults (xem test_alignment.py để tweak) ─────────────────────────
 OUTER_SEARCH_MAX  = 150
+# Quét THÊM vào PHÍA TRONG mép label (px). Cần khi label lệch mạnh, cạnh chai
+# thật rơi vào trong mép label → search outward-only sẽ miss và box bị ghim về
+# sát label. Chỉ áp cho product detection; template detection vẫn dùng 0.
+INNER_SEARCH_MAX  = 80
 EDGE_MARGIN       = 2
 Y_EXTENSION       = 0.2
 FILL_KEEP_RATIO   = 0.6
@@ -48,8 +56,18 @@ SPECULAR_THR      = 230
 
 
 # ─── Geometric helpers ───────────────────────────────────────────────────────
-def fill_label_black(img_bgr: np.ndarray, label_pts, keep_ratio: float = FILL_KEEP_RATIO) -> np.ndarray:
-    """Fill middle keep_ratio% theo Y label (top/bot (1-keep)/2 giữ pixel gốc)."""
+def fill_label_black(
+    img_bgr: np.ndarray, label_pts,
+    keep_ratio: float = FILL_KEEP_RATIO, x_inset: float = 0.0,
+) -> np.ndarray:
+    """Fill middle keep_ratio% theo Y label (top/bot (1-keep)/2 giữ pixel gốc).
+
+    x_inset: co vùng fill VÀO TRONG theo trục X mỗi bên (px). Cần khi bật inner
+    search — nếu không, mép đen↔nền tại biên label sẽ tạo peak giả full-height
+    ngay tại gap≈0 và lấn át cạnh chai thật nằm trong mép label. Inset đẩy mép
+    đen ra ngoài cửa sổ search nên artifact biến mất. Mặc định 0 = không co
+    (giữ nguyên hành vi cho template detection / outward-only).
+    """
     pts = np.asarray(label_pts, dtype=np.float32)
     TL, TR, BR, BL = pts[0], pts[1], pts[2], pts[3]
     y_skip = (1.0 - keep_ratio) / 2
@@ -57,6 +75,18 @@ def fill_label_black(img_bgr: np.ndarray, label_pts, keep_ratio: float = FILL_KE
     new_BL = BL - y_skip * (BL - TL)
     new_TR = TR + y_skip * (BR - TR)
     new_BR = BR - y_skip * (BR - TR)
+    if x_inset > 0:
+        top_w = float(np.linalg.norm(TR - TL)) or 1.0
+        bot_w = float(np.linalg.norm(BR - BL)) or 1.0
+        # Clamp để không lật ngược quad ở label hẹp (giữ ≥10% lõi giữa).
+        ins_top = min(x_inset, 0.45 * top_w)
+        ins_bot = min(x_inset, 0.45 * bot_w)
+        dir_top = (TR - TL) / top_w
+        dir_bot = (BR - BL) / bot_w
+        new_TL = new_TL + ins_top * dir_top
+        new_TR = new_TR - ins_top * dir_top
+        new_BL = new_BL + ins_bot * dir_bot
+        new_BR = new_BR - ins_bot * dir_bot
     inner_quad = np.array([new_TL, new_TR, new_BR, new_BL], dtype=np.int32)
     out = img_bgr.copy()
     cv2.fillPoly(out, [inner_quad.reshape(-1, 1, 2)], (0, 0, 0))
@@ -65,8 +95,16 @@ def fill_label_black(img_bgr: np.ndarray, label_pts, keep_ratio: float = FILL_KE
 
 def _compute_strip_profile(
     gray: np.ndarray, label_pts, side: str,
-    search_w: float = OUTER_SEARCH_MAX
+    search_w: float = OUTER_SEARCH_MAX,
+    inner_search: float = 0.0,
 ) -> Optional[Dict[str, Any]]:
+    """Build search strip 2 bên label + Sobel profile.
+
+    inner_search: px quét vào PHÍA TRONG mép label (gap âm). 0 = chỉ outward
+    (cột 0 bắt đầu ở +EDGE_MARGIN, hành vi cũ). >0 → strip bắt đầu từ
+    gap = EDGE_MARGIN - inner_search (âm). Peak→gap qua 'gap_offset':
+    gap = peak_col + gap_offset.
+    """
     pts = np.asarray(label_pts, dtype=np.float32)
     if side == 'left':
         p_top, p_bot = pts[0], pts[3]
@@ -85,14 +123,16 @@ def _compute_strip_profile(
     p_top_ext = p_top - y_ext * edge_dir
     p_bot_ext = p_bot + y_ext * edge_dir
     h = int(round(elen * (1.0 + 2 * Y_EXTENSION)))
-    w = int(search_w - EDGE_MARGIN)
+    near_edge = EDGE_MARGIN - inner_search   # gap tại cột 0 (âm nếu inner_search>0)
+    far_edge  = search_w                     # gap tại cột w
+    w = int(far_edge - near_edge)            # 1px/cột → gap = col + near_edge
     if h < 50 or w < 30:
         return None
 
-    inner_top = p_top_ext + EDGE_MARGIN * perp
-    outer_top = p_top_ext + search_w   * perp
-    outer_bot = p_bot_ext + search_w   * perp
-    inner_bot = p_bot_ext + EDGE_MARGIN * perp
+    inner_top = p_top_ext + near_edge * perp
+    outer_top = p_top_ext + far_edge  * perp
+    outer_bot = p_bot_ext + far_edge  * perp
+    inner_bot = p_bot_ext + near_edge * perp
     src = np.array([inner_top, outer_top, outer_bot, inner_bot], dtype=np.float32)
     dst = np.array([[0, 0], [w, 0], [w, h], [0, h]], dtype=np.float32)
     M = cv2.getPerspectiveTransform(src, dst)
@@ -141,6 +181,7 @@ def _compute_strip_profile(
         'perp': perp,
         'edge_dir': edge_dir,
         'edge_len': elen,
+        'gap_offset': float(near_edge),   # gap = peak_col + gap_offset (có thể âm)
     }
 
 
@@ -151,22 +192,23 @@ def _find_outer_inner(pd: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]
     peaks = pd['peaks']
     hr_global = pd['height_ratio']
     hr_robust = pd['height_ratio_robust']
+    go = pd['gap_offset']   # gap = peak_col + go (có thể âm khi bật inner search)
 
     # Pass 1: global threshold (chính xác cho frame clean)
     outer_q = [int(p) for p in peaks if hr_global[p] >= OUTER_MIN_HRATIO]
     if not outer_q:
         # Pass 2: robust (P95) — frame có specular/window light mạnh
         outer_q = [int(p) for p in peaks if hr_robust[p] >= OUTER_MIN_HRATIO]
-    outer = (max(outer_q) + EDGE_MARGIN) if outer_q else None
+    outer = (max(outer_q) + go) if outer_q else None
 
     hr_max = np.maximum(hr_global, hr_robust)
     inner_q = [int(p) for p in peaks if hr_max[p] >= INNER_MIN_HRATIO]
     inner = None
     if outer is not None:
-        cands = [p for p in inner_q if (p + EDGE_MARGIN) < (outer - 4)]
-        inner = (min(cands) + EDGE_MARGIN) if cands else None
+        cands = [p for p in inner_q if (p + go) < (outer - 4)]
+        inner = (min(cands) + go) if cands else None
     elif inner_q:
-        inner = min(inner_q) + EDGE_MARGIN
+        inner = min(inner_q) + go
     return inner, outer
 
 
@@ -176,10 +218,11 @@ def _find_inner_near(pd: Dict[str, Any], predicted_gap: float, tol: int = INNER_
     peaks = pd['peaks']
     hr_global = pd['height_ratio']
     hr_robust = pd['height_ratio_robust']
+    go = pd['gap_offset']
     hr_max = np.maximum(hr_global, hr_robust)
     cands = []
     for p in peaks:
-        gap = int(p) + EDGE_MARGIN
+        gap = int(p) + go
         if hr_max[p] >= INNER_MIN_HRATIO and abs(gap - predicted_gap) <= tol:
             cands.append((gap, abs(gap - predicted_gap)))
     if not cands:
@@ -266,12 +309,15 @@ def detect_product_box(
         return None
 
     # 1) Fill label đen + extract grayscale
-    masked = fill_label_black(frame_img, label_pts)
+    #    x_inset=INNER_SEARCH_MAX: co vùng đen vào trong để mép đen↔nền không tạo
+    #    peak giả trong cửa sổ inner search.
+    masked = fill_label_black(frame_img, label_pts, x_inset=INNER_SEARCH_MAX)
     gray = cv2.cvtColor(masked, cv2.COLOR_BGR2GRAY)
 
-    # 2) Compute profile + peaks 2 bên
-    pd_L = _compute_strip_profile(gray, label_pts, 'left')
-    pd_R = _compute_strip_profile(gray, label_pts, 'right')
+    # 2) Compute profile + peaks 2 bên (quét cả vào trong mép label INNER_SEARCH_MAX
+    #    px — bắt được cạnh chai khi label lệch mạnh, gap có thể âm)
+    pd_L = _compute_strip_profile(gray, label_pts, 'left',  inner_search=INNER_SEARCH_MAX)
+    pd_R = _compute_strip_profile(gray, label_pts, 'right', inner_search=INNER_SEARCH_MAX)
 
     # 3) Detect outer wall mỗi bên (height_ratio strict)
     outer_L = _find_outer_inner(pd_L)[1]
@@ -281,12 +327,12 @@ def detect_product_box(
     #    inner near template với tol rộng hơn
     def _resolve(pd, outer, tmpl_inner, plastic):
         if outer is not None:
+            # outer tìm được (kể cả gap âm = cạnh chai trong mép label) → side KHÔNG
+            # hidden. inner chỉ phụ trợ (dùng khi wall_type='inner'); pred có thể âm.
             pred = outer - plastic
-            if pred < 0:
-                return None, pred, True
-            inner = _find_inner_near(pd, max(pred, EDGE_MARGIN))
+            inner = _find_inner_near(pd, pred)
             return inner, pred, False
-        # Fallback
+        # Fallback: outer fail hẳn → bám template inner với tol rộng
         pred = tmpl_inner
         inner = _find_inner_near(pd, max(pred, EDGE_MARGIN), tol=INNER_TOL_PX + 8)
         if inner is None:
