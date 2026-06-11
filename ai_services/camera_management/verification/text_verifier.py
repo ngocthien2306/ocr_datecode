@@ -148,11 +148,11 @@ class TextVerificationService:
     # Rủi ro QC: tha số sai → có thể pass mã sai thật. Chỉ bật cho function_type
     # đã kiểm soát 1 product type tại 1 thời điểm (giống V-suffix bypass).
     CONFUSABLE_BYPASS_ENABLED                          = True
-    CONFUSABLE_BYPASS_FUNCTION_TYPES: Tuple[str, ...]  = ("Check_Color", "Check_Type_Product")
+    CONFUSABLE_BYPASS_FUNCTION_TYPES: Tuple[str, ...]  = ("Check_Color", "Check_Type_Product", "OCR")
     CONFUSABLE_BYPASS_MAX_SUBS                         = 2
     CONFUSABLE_PAIRS: Dict[str, frozenset]             = {
-        '8': frozenset({'6'}),   # expected 8, OCR đọc 6
-        '5': frozenset({'6'}),   # expected 5, OCR đọc 6
+        '8': frozenset({'6', '0'}),   # expected 8, OCR đọc 6 hoặc 0
+        '5': frozenset({'6'}),        # expected 5, OCR đọc 6
     }
 
     # Khi augment retry fail toàn bộ 5 versions, lưu composite (INPUT crop + 5
