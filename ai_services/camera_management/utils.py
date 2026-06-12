@@ -283,9 +283,9 @@ def trigger_reject_pulse(do_number: int, pulse_ms: int = 100):
                     released = True
                     break
                 logger.warning(
-                    f"DO{do_number} release attempt {attempt + 1}/3 failed, retrying in 10ms..."
+                    f"DO{do_number} release attempt {attempt + 1}/3 failed, retrying in 100ms..."
                 )
-                time.sleep(0.010)
+                time.sleep(0.100)
             if not released:
                 logger.critical(
                     f"CRITICAL: DO{do_number} stuck at LOW after 3 release attempts — pin LOCKED active!"
