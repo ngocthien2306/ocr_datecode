@@ -2002,11 +2002,12 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       </select>
                       {/* <small className="field-description">OCR recognition backbone used for text reading</small> */}
                     </div>
-                    <div className="form-group">
-                      <label>Defect Model</label>
+                    <div className="form-group" style={{ opacity: 0.55 }}>
+                      <label>Defect Model <small style={{ fontWeight: 400, opacity: 0.7 }}>(locked)</small></label>
                       <select
                         name="defect_model"
                         value={formData.defect_model}
+                        disabled
                         onChange={(e) => setFormData(prev => ({ ...prev, defect_model: e.target.value }))}
                       >
                         <option value="arcface">ArcChar (class-anchored)</option>
@@ -2015,16 +2016,16 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       <small className="field-description">Template model used for per-character OK/NG classification</small>
                     </div>
 
-                    {/* CV Method — chỉ áp dụng khi classifier_backend='embedding' */}
+                    {/* CV Method — locked to v4 (Ink Defect Detector Scale-Tolerant) */}
                     <div
                       className="form-group"
-                      style={{ opacity: formData.classifier_backend === 'embedding' ? 1 : 0.55 }}
+                      style={{ opacity: 0.55 }}
                     >
-                      <label>CV Method</label>
+                      <label>CV Method <small style={{ fontWeight: 400, opacity: 0.7 }}>(locked)</small></label>
                       <select
                         name="cv_method"
                         value={formData.cv_method}
-                        disabled={formData.classifier_backend !== 'embedding'}
+                        disabled
                         onChange={(e) => setFormData(prev => ({ ...prev, cv_method: e.target.value }))}
                       >
                         <option value="legacy">Pattern Match (Classic)</option>
@@ -2175,19 +2176,20 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                   </div>
                   <div className="model-column">
                     <h3>ML Quality Inspection</h3>
-                    {/* Active method toggle — embedding vs ML trained model */}
-                    <div className="form-group">
-                      <label>Active Method</label>
+                    {/* Active method toggle — locked to embedding */}
+                    <div className="form-group" style={{ opacity: 0.55 }}>
+                      <label>Active Method <small style={{ fontWeight: 400, opacity: 0.7 }}>(locked)</small></label>
                       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 4 }}>
                         {([
                           { value: 'embedding', label: 'Embedding (defect_model cosine)', hint: 'Pure template matching, no training' },
                           { value: 'ml',        label: 'ML Trained Model',                 hint: 'Use the trained classifier below' },
                         ] as const).map(opt => (
                           <label key={opt.value}
-                            style={{ display: 'flex', alignItems: 'flex-start', gap: 6, cursor: 'pointer', flex: '1 1 220px' }}>
+                            style={{ display: 'flex', alignItems: 'flex-start', gap: 6, cursor: 'not-allowed', flex: '1 1 220px' }}>
                             <input type="radio" name="classifier_backend"
                               value={opt.value}
                               checked={formData.classifier_backend === opt.value}
+                              disabled
                               onChange={() => setFormData(prev => ({ ...prev, classifier_backend: opt.value }))} />
                             <div style={{ display: 'flex', flexDirection: 'column' }}>
                               <span style={{ fontSize: 13, fontWeight: formData.classifier_backend === opt.value ? 600 : 400 }}>

@@ -87,10 +87,12 @@ def read_di_value(di_number: int) -> int:
         Pin value (0 or 1), or 0 on error
 
     Note:
-        Uses global _gpio_lock because libapmi is not thread-safe.
+        _gpio_lock is held ONLY for the native lib call (libapmi is not thread-safe).
+        Subprocess fallback runs outside the lock so DO writes are never blocked by
+        a slow "sudo dio_in" call.
     """
+    # Only hold lock for native lib call
     with _gpio_lock:
-        # Try native library first (faster)
         if _use_native_gpio and _apmi_dio_read_input is not None:
             try:
                 value = ctypes.c_int()
@@ -98,52 +100,47 @@ def read_di_value(di_number: int) -> int:
                 if lib_pin is not None:
                     ret = _apmi_dio_read_input(lib_pin, ctypes.byref(value))
                     if ret == 0:
-                        # print(f"DI{di_number} = {value.value} (native)")
                         return value.value
                     else:
-                        print(f"Native DI{di_number} read failed: ret={ret}")
                         logger.warning(f"Native DI{di_number} read failed: ret={ret}")
             except Exception as e:
                 logger.warning(f"Native DI{di_number} read error: {e}")
 
-        # Fallback to subprocess
-        try:
-            result = subprocess.run(
-                ["sudo", "dio_in", str(di_number)],
-                capture_output=True,
-                text=True,
-                timeout=0.5
-            )
+    # Fallback subprocess — outside gpio_lock (subprocess does not use libapmi)
+    try:
+        result = subprocess.run(
+            ["sudo", "dio_in", str(di_number)],
+            capture_output=True,
+            text=True,
+            timeout=0.5
+        )
 
-            if result.returncode == 0:
-                # Parse output format: "The id-X input gpio status = Y\nCompletion code = 0x00"
-                output = result.stdout.strip()
+        if result.returncode == 0:
+            # Parse output format: "The id-X input gpio status = Y\nCompletion code = 0x00"
+            output = result.stdout.strip()
 
-                # Extract value from "status = Y" line
-                for line in output.split('\n'):
-                    if 'status' in line and '=' in line:
-                        # Extract the value after '='
-                        value_str = line.split('=')[-1].strip()
-                        try:
-                            value = int(value_str)
-                            return value
-                        except ValueError:
-                            logger.warning(f"Failed to parse DI{di_number} value: {value_str}")
-                            return 0
+            # Extract value from "status = Y" line
+            for line in output.split('\n'):
+                if 'status' in line and '=' in line:
+                    value_str = line.split('=')[-1].strip()
+                    try:
+                        return int(value_str)
+                    except ValueError:
+                        logger.warning(f"Failed to parse DI{di_number} value: {value_str}")
+                        return 0
 
-                # Fallback: couldn't find status line
-                logger.warning(f"Unexpected DI{di_number} output format: {output}")
-                return 0
-            else:
-                logger.warning(f"Failed to read DI{di_number}: {result.stderr.strip()}")
-                return 0
-
-        except subprocess.TimeoutExpired:
-            logger.warning(f"Timeout reading DI{di_number}")
+            logger.warning(f"Unexpected DI{di_number} output format: {output}")
             return 0
-        except Exception as e:
-            logger.error(f"Error reading DI{di_number}: {e}")
+        else:
+            logger.warning(f"Failed to read DI{di_number}: {result.stderr.strip()}")
             return 0
+
+    except subprocess.TimeoutExpired:
+        logger.warning(f"Timeout reading DI{di_number}")
+        return 0
+    except Exception as e:
+        logger.error(f"Error reading DI{di_number}: {e}")
+        return 0
 
 
 def check_trigger_edge(current: int, previous: Optional[int], activation: str) -> bool:
@@ -178,53 +175,52 @@ def _write_do_raw(do_number: int, value: int) -> bool:
     Used by trigger_reject_pulse which already holds pulse_lock.
 
     MUST be called while holding pulse_lock for the pin!
+
+    Note: _gpio_lock is held ONLY for the native lib call. Subprocess fallback
+    runs outside the lock so DI polling never blocks a reject pulse release.
     """
     with _gpio_lock:
-        # Try native library first (faster)
         if _use_native_gpio and _apmi_dio_write_output is not None:
             try:
                 lib_pin = _LIBAPMI_PIN_MAP.get(do_number)
                 if lib_pin is not None:
                     ret = _apmi_dio_write_output(lib_pin, value)
                     if ret == 0:
-                        print(f"DO{do_number} = {value} (native)")
                         logger.debug(f"DO{do_number} = {value} (native)")
                         return True
                     else:
-                        print(f"Native DO{do_number} write failed: ret={ret}")
                         logger.warning(f"Native DO{do_number} write failed: ret={ret}")
             except Exception as e:
-                print(f"Native DO{do_number} write error: {e}")
                 logger.warning(f"Native DO{do_number} write error: {e}")
 
-        # Fallback to subprocess
-        try:
-            result = subprocess.run(
-                ["sudo", "dio_out", str(do_number), str(value)],
-                capture_output=True,
-                text=True,
-                timeout=1.0
-            )
+    # Fallback subprocess — outside gpio_lock (subprocess does not use libapmi)
+    try:
+        result = subprocess.run(
+            ["sudo", "dio_out", str(do_number), str(value)],
+            capture_output=True,
+            text=True,
+            timeout=1.0
+        )
 
-            if "Completion code = 0x00" in result.stdout or "Completion code = 0x00" in result.stderr:
-                logger.debug(f"DO{do_number} = {value}")
-                return True
-            elif "Completion code = 0xFFFFFFFF" in result.stdout or "Completion code = 0xFFFFFFFF" in result.stderr:
-                logger.debug(f"DO{do_number} already at {value}")
-                return True
-            elif result.returncode == 0:
-                logger.debug(f"DO{do_number} = {value} (returncode=0)")
-                return True
-            else:
-                logger.error(f"Failed to set DO{do_number}: {result.returncode}")
-                return False
+        if "Completion code = 0x00" in result.stdout or "Completion code = 0x00" in result.stderr:
+            logger.debug(f"DO{do_number} = {value}")
+            return True
+        elif "Completion code = 0xFFFFFFFF" in result.stdout or "Completion code = 0xFFFFFFFF" in result.stderr:
+            logger.debug(f"DO{do_number} already at {value}")
+            return True
+        elif result.returncode == 0:
+            logger.debug(f"DO{do_number} = {value} (returncode=0)")
+            return True
+        else:
+            logger.error(f"Failed to set DO{do_number}: {result.returncode}")
+            return False
 
-        except subprocess.TimeoutExpired:
-            logger.error(f"Timeout setting DO{do_number}")
-            return False
-        except Exception as e:
-            logger.error(f"Error setting DO{do_number}: {e}")
-            return False
+    except subprocess.TimeoutExpired:
+        logger.error(f"Timeout setting DO{do_number}")
+        return False
+    except Exception as e:
+        logger.error(f"Error setting DO{do_number}: {e}")
+        return False
 
 
 def write_do_value(do_number: int, value: int) -> bool:
@@ -277,15 +273,24 @@ def trigger_reject_pulse(do_number: int, pulse_ms: int = 100):
             raise RuntimeError(f"Failed to set DO{do_number} LOW")
 
         try:
-            # Hold pulse - _gpio_lock is FREE during sleep, DI reads can proceed
             time.sleep(pulse_ms / 1000.0)
         finally:
-            # Always release pin to HIGH — even if sleep is interrupted or exception occurs.
-            # Without this, a hardware write failure leaves the relay energized (stuck ON).
-            if not _write_do_raw(do_number, 1):
-                logger.error(f"CRITICAL: Failed to release DO{do_number} to HIGH — pin may be stuck active!")
+            # Retry HIGH release — without this, a single write failure leaves the
+            # relay energized (pin stuck at 0) and the buzzer rings continuously.
+            released = False
+            for attempt in range(3):
+                if _write_do_raw(do_number, 1):
+                    released = True
+                    break
+                logger.warning(
+                    f"DO{do_number} release attempt {attempt + 1}/3 failed, retrying in 10ms..."
+                )
+                time.sleep(0.010)
+            if not released:
+                logger.critical(
+                    f"CRITICAL: DO{do_number} stuck at LOW after 3 release attempts — pin LOCKED active!"
+                )
 
-    print(f"DO{do_number} pulse complete ({pulse_ms}ms)")
     logger.info(f"DO{do_number} pulse complete ({pulse_ms}ms)")
 
 
