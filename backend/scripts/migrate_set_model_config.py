@@ -37,8 +37,8 @@ async def migrate():
         print(f"  {k:25s} → {v}")
     print()
 
-    client = AsyncIOMotorClient(settings.MONGO_URL)
-    db = client[settings.MONGO_DB_NAME]
+    client = AsyncIOMotorClient(settings.MONGODB_URL)
+    db = client[settings.DATABASE_NAME]
     collection = db["recipes"]
 
     total = await collection.count_documents({})
