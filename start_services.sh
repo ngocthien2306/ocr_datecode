@@ -195,7 +195,32 @@ echo "   PID: $NGROK_FRONTEND_PID"
 
 sleep 2
 
-# 6. Auto-open Firefox after services are ready
+# 6. Wait for all services to be ready, then open Firefox
+echo "⏳ Waiting for services to be ready before opening browser..."
+
+# Wait for backend API (max 60s)
+echo "   Backend API..."
+for _i in $(seq 1 60); do
+    curl -sf http://localhost:8000/health -o /dev/null 2>/dev/null && break
+    curl -sf http://localhost:8000/docs   -o /dev/null 2>/dev/null && break
+    sleep 1
+done
+
+# Wait for AI camera service websocket to connect (max 30s)
+# Proxy through backend: if /api/cameras returns 200, AI service is up
+echo "   AI camera service..."
+for _i in $(seq 1 30); do
+    curl -sf http://localhost:8000/api/cameras -o /dev/null 2>/dev/null && break
+    sleep 1
+done
+
+# Wait for frontend (max 30s)
+echo "   Frontend..."
+for _i in $(seq 1 30); do
+    curl -sf http://localhost:5173 -o /dev/null 2>/dev/null && break
+    sleep 1
+done
+
 echo "🦊 Opening Firefox..."
 
 # Get the current display and xauthority
@@ -204,13 +229,6 @@ CURRENT_DISPLAY=":${CURRENT_DISPLAY##*:}"
 [ -z "$CURRENT_DISPLAY" ] && CURRENT_DISPLAY=":0"
 export DISPLAY="$CURRENT_DISPLAY"
 export XAUTHORITY="$HOME/.Xauthority"
-
-# Wait for frontend to respond (max 30s) before opening browser
-echo "   Waiting for frontend to be ready..."
-for _i in $(seq 1 30); do
-    curl -s -o /dev/null http://localhost:5173 && break
-    sleep 1
-done
 
 FIREFOX_PID=""
 if command -v firefox &> /dev/null; then
