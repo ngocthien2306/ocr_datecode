@@ -142,21 +142,22 @@ if cd "$PROJECT_DIR"; then
 fi
 
 # 1. Start Backend (FastAPI)
+# Guarantee the backend is up WITHOUT needing sudo:
+#   - If something is already listening on :8000 (ocr-backend.service started by
+#     systemd on boot, or a prior run), leave it alone.
+#   - Otherwise start uvicorn inline. This way the backend always comes up even
+#     if the systemd unit is missing/failed (a non-root `systemctl start` under
+#     systemd would be denied by polkit, which is what left the backend down).
 echo "📦 Starting Backend API (port 8000)..."
-if _systemd_managed "ocr-backend.service"; then
-    # Backend is its own enabled systemd unit (Restart=always) and auto-starts on
-    # boot. We do NOT start it here — that would need `sudo systemctl` (interactive
-    # password under systemd) and would fight the unit. We just wait for /health
-    # further below. Nudge it active without sudo if it happens to be down.
-    systemctl is-active --quiet ocr-backend || systemctl --no-block start ocr-backend 2>/dev/null || true
+if lsof -Pi :8000 -sTCP:LISTEN -t >/dev/null 2>&1; then
     BACKEND_PID=$(systemctl show -p MainPID ocr-backend 2>/dev/null | cut -d= -f2)
-    echo "   Managed by systemd (PID: ${BACKEND_PID:-?}) — waiting for health below"
+    echo "   Already listening on :8000 (systemd unit or prior run, PID: ${BACKEND_PID:-?})"
 else
     cd "$BACKEND_DIR"
     nohup python3 -m uvicorn app.main:app --port 8000 --host 0.0.0.0 \
         >> "$LOG_DIR/backend.log" 2>&1 &
     BACKEND_PID=$!
-    echo "   PID: $BACKEND_PID"
+    echo "   Started inline (PID: $BACKEND_PID)"
 fi
 sleep 3
 

@@ -94,8 +94,10 @@ echo "Creating ocr-all.service..."
 sudo tee /etc/systemd/system/ocr-all.service > /dev/null << EOF
 [Unit]
 Description=OCR Datecode All Services
-After=network.target mongodb.service
-Wants=mongodb.service
+After=network.target mongodb.service ocr-backend.service
+# Wants= ocr-backend so that \`systemctl start ocr-all\` (and boot) pulls the
+# backend up via systemd (as root — no sudo needed inside start_services.sh).
+Wants=mongodb.service ocr-backend.service
 
 [Service]
 Type=oneshot

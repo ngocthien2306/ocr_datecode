@@ -11,7 +11,6 @@ import { API_BASE_URL } from '@/config/api';
 class SocketIOService {
   private socket: Socket | null = null;
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
 
   /**
    * Initialize and connect to SocketIO server
@@ -33,7 +32,11 @@ class SocketIOService {
       },
       reconnection: true,
       reconnectionDelay: 1000,
-      reconnectionAttempts: this.maxReconnectAttempts
+      reconnectionDelayMax: 5000,
+      // Retry forever — this is a kiosk. If we give up, the ServiceDownOverlay
+      // would stay stuck until a manual page reload even after the backend
+      // comes back. Socket.IO auto-reconnects and fires 'connect' on recovery.
+      reconnectionAttempts: Infinity
     });
 
     this.setupEventListeners();
@@ -55,13 +58,11 @@ class SocketIOService {
     });
 
     this.socket.on('connect_error', (error) => {
-      console.error('[SocketIO] Connection error:', error);
+      // Don't tear down the socket — keep retrying. Socket.IO handles the
+      // backoff internally (reconnectionAttempts: Infinity) and will fire
+      // 'connect' once the backend is reachable again.
       this.reconnectAttempts++;
-
-      if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-        console.error('[SocketIO] Max reconnection attempts reached');
-        this.disconnect();
-      }
+      console.error(`[SocketIO] Connection error (attempt ${this.reconnectAttempts}):`, error?.message || error);
     });
 
     this.socket.on('connection_response', (data) => {
