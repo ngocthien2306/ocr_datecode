@@ -59,7 +59,7 @@ echo ""
 # ── STEP 1: Tear down old services ───────────────────────────────────────────
 echo "[1/4] Removing old service units..."
 
-OLD_SERVICES=(ocr-all ocr-backend ocr-ai ocr-frontend ocr-camera-check)
+OLD_SERVICES=(ocr-all ocr-backend ocr-ai ocr-frontend ocr-camera-check ocr-firefox)
 
 for svc in "${OLD_SERVICES[@]}"; do
     unit_file="/etc/systemd/system/${svc}.service"
@@ -214,7 +214,34 @@ else
     echo "   ⚠️  yarn not found — skipping ocr-frontend.service"
 fi
 
-# ── 2d. ocr-all.target (convenience group) ───────────────────────────────────
+# ── 2d. Firefox (kiosk browser) ─────────────────────────────────────────────
+sudo tee /etc/systemd/system/ocr-firefox.service > /dev/null << EOF
+[Unit]
+Description=OCR Datecode Firefox Kiosk
+After=ocr-frontend.service
+Wants=ocr-frontend.service
+PartOf=ocr-all.target
+
+[Service]
+User=${USER_NAME}
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/${USER_NAME}/.Xauthority
+# Kill any existing Firefox first, then wait for frontend to respond
+ExecStartPre=-/usr/bin/pkill -u ${USER_NAME} firefox
+ExecStartPre=/bin/sh -c 'for i in \$(seq 30); do curl -sf http://localhost:5173 >/dev/null 2>&1 && break; sleep 1; done'
+ExecStart=/usr/bin/firefox --kiosk http://localhost:5173
+# on-failure: don't restart if user closes Firefox normally (exit 0)
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:${LOG_DIR}/firefox.log
+StandardError=append:${LOG_DIR}/firefox.log
+
+[Install]
+WantedBy=ocr-all.target
+EOF
+echo "   ✅ ocr-firefox.service"
+
+# ── 2e. ocr-all.target (convenience group) ───────────────────────────────────
 #
 # With PartOf=ocr-all.target in each service:
 #   systemctl start ocr-all.target   → starts all 3 (via Wants below)
@@ -224,8 +251,8 @@ fi
 sudo tee /etc/systemd/system/ocr-all.target > /dev/null << EOF
 [Unit]
 Description=OCR Datecode — All Services
-Wants=ocr-backend.service ocr-ai.service ocr-frontend.service
-After=ocr-backend.service ocr-ai.service ocr-frontend.service
+Wants=ocr-backend.service ocr-ai.service ocr-frontend.service ocr-firefox.service
+After=ocr-backend.service ocr-ai.service ocr-frontend.service ocr-firefox.service
 
 [Install]
 WantedBy=multi-user.target
@@ -241,6 +268,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable ocr-backend.service
 sudo systemctl enable ocr-ai.service
 [ -n "$YARN" ] && sudo systemctl enable ocr-frontend.service
+sudo systemctl enable ocr-firefox.service
 sudo systemctl enable ocr-all.target
 
 echo "   ✅ Services enabled (auto-start on boot)"
@@ -257,6 +285,7 @@ echo "   ocr-backend started, waiting 4s for API to be ready..."
 sleep 4
 sudo systemctl start ocr-ai.service
 [ -n "$YARN" ] && sudo systemctl start ocr-frontend.service
+sudo systemctl start ocr-firefox.service
 echo ""
 
 # ── Status report ─────────────────────────────────────────────────────────────
@@ -277,6 +306,7 @@ check_service() {
 check_service ocr-backend.service
 check_service ocr-ai.service
 [ -n "$YARN" ] && check_service ocr-frontend.service
+check_service ocr-firefox.service
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
