@@ -37,9 +37,6 @@ if [ "$USER_HOME" = "/home/suntech" ] || [ "$USER_HOME" = "/home/demo" ]; then
     else
         CAM_SCRIPT="camera_check_eth1.py"
         CAM_TITLE="Camera Health Check - eth1"
-        # --no-reboot: on failure, exit 1 instead of rebooting the whole box.
-        # ocr-all.service (Restart=on-failure) re-runs this script → popup again.
-        CAM_ARGS="--no-reboot"
     fi
 
     TERMINAL_CMD="python3 '${SCRIPT_DIR}/${CAM_SCRIPT}' ${CAM_ARGS}; \
