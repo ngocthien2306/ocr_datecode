@@ -19,28 +19,9 @@ echo ""
 
 mkdir -p "$LOG_DIR"
 
-# ── Network tuning for GigE cameras ─────────────────────────────────────────
-echo "Tuning network for GigE camera performance..."
-
-sudo sysctl -w net.core.rmem_max=33554432 net.core.rmem_default=8388608 2>/dev/null || true
-if ! grep -q "net.core.rmem_max" /etc/sysctl.d/60-gige-camera.conf 2>/dev/null; then
-    sudo tee /etc/sysctl.d/60-gige-camera.conf > /dev/null << 'EOF'
-# GigE camera receive buffer tuning (ocr_datecode)
-net.core.rmem_max=33554432
-net.core.rmem_default=8388608
-EOF
-    echo "   ✅ /etc/sysctl.d/60-gige-camera.conf written (persistent)"
-fi
-
-CURRENT_MTU=$(ip link show eth1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="mtu") print $(i+1)}' | head -1)
-if [ "${CURRENT_MTU:-0}" -lt 9000 ] 2>/dev/null; then
-    sudo ip link set eth1 mtu 9000 2>/dev/null \
-        && echo "   ✅ eth1 MTU set to 9000 (Jumbo Frames)" \
-        || echo "   ⚠️  Could not set eth1 MTU — camera.py adapts automatically"
-else
-    echo "   ✅ eth1 MTU already ${CURRENT_MTU}"
-fi
-echo ""
+# NOTE: GigE network tuning (rmem_max + eth1 MTU) is intentionally NOT done here.
+# eth1 is a USB 10/100 adapter (r8152) on this machine, so jumbo frames (MTU 9000)
+# are harmful — set MTU/buffers by hand per-machine if ever needed.
 
 # ── Remove old units ─────────────────────────────────────────────────────────
 echo "Removing old service units..."

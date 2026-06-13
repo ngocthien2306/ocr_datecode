@@ -3,7 +3,9 @@
 .sdo-overlay {
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  /* Above the InferenceRealtime fullscreen view (z-index 10000) and the settings
+     modal (9999) — this is a system-down notice that must cover everything. */
+  z-index: 100000;
   display: flex;
   align-items: center;
   justify-content: center;

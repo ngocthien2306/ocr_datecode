@@ -33,6 +33,21 @@ async def connect(sid, environ, auth):
     logger.info(f"Client connected: {sid}")
     await sio.emit('connection_response', {'status': 'connected', 'sid': sid}, room=sid)
 
+    # Push the CURRENT camera-service status to THIS client right away. The
+    # camera_service_status events are otherwise edge-triggered (emitted only when
+    # the AI service connects/disconnects or an API call fails), so a client that
+    # loads/reloads/navigates AFTER the service went down would never see it and
+    # the ServiceDownOverlay would stay hidden. Sending current state on connect
+    # makes the overlay reflect reality immediately on every page load.
+    try:
+        from app.api.websocket.camera_ws import camera_ws_manager
+        await sio.emit('camera_service_status', {
+            'connected': camera_ws_manager.is_connected(),
+            'message': 'Camera Management Service status (on connect)'
+        }, room=sid)
+    except Exception as e:
+        logger.error(f"Failed to emit initial camera_service_status: {e}")
+
 
 @sio.event
 async def disconnect(sid):
