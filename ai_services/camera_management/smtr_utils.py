@@ -181,20 +181,29 @@ def build_postprocessors(dict_path):
     return gtc, ctc
 
 
-def preprocess(img_bgr: np.ndarray) -> np.ndarray:
+def preprocess(img_bgr: np.ndarray, max_width: int = None) -> np.ndarray:
     h, w = img_bgr.shape[:2]
     new_w = max(int(w * IMG_HEIGHT / h), 1)
+    # Clamp về profile width tối đa của engine (TRT) — tránh tensor vượt
+    # optimization profile gây setInputShape bị từ chối → output rác.
+    if max_width is not None:
+        new_w = min(new_w, max_width)
     img = cv2.resize(img_bgr, (new_w, IMG_HEIGHT))
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32)
     img = (img / 255.0 - 0.5) / 0.5
     return img.transpose(2, 0, 1)[np.newaxis]
 
 
-def preprocess_batch(imgs_bgr: list) -> np.ndarray:
+def preprocess_batch(imgs_bgr: list, max_width: int = None) -> np.ndarray:
     tensors = []
     for img_bgr in imgs_bgr:
         h, w = img_bgr.shape[:2]
         new_w = max(int(w * IMG_HEIGHT / h), 1)
+        # Clamp từng crop trước khi pad: crop hẹp giữ nguyên (chỉ bị pad), chỉ
+        # crop quá rộng mới bị nén — nhờ vậy width batch luôn ≤ max_width và
+        # không crop nào "đầu độc" cả batch.
+        if max_width is not None:
+            new_w = min(new_w, max_width)
         img = cv2.resize(img_bgr, (new_w, IMG_HEIGHT))
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32)
         img = (img / 255.0 - 0.5) / 0.5

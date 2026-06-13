@@ -1,4 +1,5 @@
 import logging
+import cv2
 import numpy as np
 from pathlib import Path
 
@@ -41,6 +42,10 @@ class TextRecognizerSMTRTRT:
         assert self._in_name and len(self._out_names) == 2
 
         _, _, in_max = self._engine.get_tensor_profile_shape(self._in_name, 0)
+        # Profile width tối đa của engine (NCHW). Crop sau resize về h=32 mà
+        # rộng hơn ngưỡng này sẽ làm setInputShape bị từ chối → output rác cho
+        # cả batch. Dùng để clamp width trong preprocess.
+        self._max_w = int(in_max[3])
         self._ctx.set_input_shape(self._in_name, in_max)
         self._d_in = cuda.mem_alloc(int(np.prod(in_max)) * 4)
         self._d_outs = []
@@ -56,6 +61,20 @@ class TextRecognizerSMTRTRT:
 
     def _infer(self, x: np.ndarray):
         x = np.ascontiguousarray(x, dtype=np.float32)
+        # Lưới an toàn: nếu vì lý do nào đó width vẫn vượt profile, nén ngang
+        # về _max_w để setInputShape không bị từ chối (tránh output rác).
+        if x.shape[3] > self._max_w:
+            logger.warning(
+                f"SMTR input width {x.shape[3]} > engine max {self._max_w}, "
+                f"resizing down to avoid profile violation"
+            )
+            x = np.ascontiguousarray(
+                np.stack([
+                    np.stack([cv2.resize(c, (self._max_w, x.shape[2])) for c in img], axis=0)
+                    for img in x
+                ], axis=0),
+                dtype=np.float32,
+            )
         self._ctx.set_input_shape(self._in_name, x.shape)
         out_shapes = [tuple(self._ctx.get_tensor_shape(n)) for n in self._out_names]
         cuda.memcpy_htod_async(self._d_in, x, self._stream)
@@ -69,7 +88,7 @@ class TextRecognizerSMTRTRT:
         return outputs[0], outputs[1]
 
     def recognize(self, image: np.ndarray):
-        gtc, ctc = self._infer(preprocess(image))
+        gtc, ctc = self._infer(preprocess(image, max_width=self._max_w))
         return _decode_dual(gtc, ctc, self._gtc, self._ctc)[0]
 
     def recognize_with_char_conf(self, image: np.ndarray):
@@ -78,7 +97,7 @@ class TextRecognizerSMTRTRT:
     def recognize_batch(self, images: list):
         if not images:
             return []
-        gtc, ctc = self._infer(preprocess_batch(images))
+        gtc, ctc = self._infer(preprocess_batch(images, max_width=self._max_w))
         return _decode_dual(gtc, ctc, self._gtc, self._ctc)
 
     def __del__(self):

@@ -465,28 +465,36 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                         transformed_results[sn] = r_primary
                     elif r_primary is None:
                         transformed_results[sn] = r_alt
+                        pair = dual_frames_by_serial.get(sn)
+                        if pair is not None:
+                            _, _frame_alt = pair
+                            context.results[sn]['frames'][0] = _frame_alt
                     else:
-                        # Compare confidence (RANSAC inlier ratio for SuperPoint)
+                        # Both candidates available — defer winner pick to OCR
+                        # in verify_results. SuperPoint conf is unreliable on
+                        # caps with low-contrast laser-etched text (cap-rim
+                        # keypoints dominate, no orientation signal). OCR on
+                        # the expected text is the ground truth.
                         c_p = float(r_primary.get('confidence', 0.0) or 0.0)
                         c_a = float(r_alt.get('confidence', 0.0) or 0.0)
-                        if c_a > c_p:
-                            transformed_results[sn] = r_alt
-                            logger.info(
-                                f"[{sn}] dual_rotation: ALT wins "
-                                f"(alt_conf={c_a:.3f} > primary_conf={c_p:.3f}) "
-                                f"— swapping frame[0] to alt rotation"
-                            )
-                            # Swap the stored frame so verify + viz use alt
-                            pair = dual_frames_by_serial.get(sn)
-                            if pair is not None:
-                                _frame_primary, _frame_alt = pair
-                                context.results[sn]['frames'][0] = _frame_alt
-                        else:
-                            transformed_results[sn] = r_primary
-                            logger.info(
-                                f"[{sn}] dual_rotation: primary wins "
-                                f"(primary_conf={c_p:.3f} >= alt_conf={c_a:.3f})"
-                            )
+                        combined = dict(r_primary)
+                        # OR success so verify doesn't gate-out alt-only-
+                        # successful frames (Bug 14 in the original draft).
+                        combined['success'] = bool(
+                            r_primary.get('success') or r_alt.get('success')
+                        )
+                        combined['_dual_alt_result'] = r_alt
+                        pair = dual_frames_by_serial.get(sn)
+                        combined['_dual_alt_frame']  = pair[1] if pair else None
+                        combined['_dual_sp_primary'] = c_p
+                        combined['_dual_sp_alt']     = c_a
+                        transformed_results[sn] = combined
+                        logger.info(
+                            f"[{sn}] dual_rotation: deferring winner pick to OCR "
+                            f"(sp_primary={c_p:.3f}, sp_alt={c_a:.3f}, "
+                            f"primary_match={r_primary.get('success')}, "
+                            f"alt_match={r_alt.get('success')})"
+                        )
             else:
                 logger.info(
                     f"Skipping SuperPoint match: 0 SP cameras of "
@@ -648,40 +656,72 @@ class MultiCameraPipeline(InferencePipelineTemplate):
         """Verify results for all cameras"""
         transformed_results = inference_results['transformed_results']
 
-        # Collect OCR tasks for batch processing
+        # Collect OCR tasks for batch processing. Dual_rotation cameras emit
+        # TWO tasks: primary keyed by serial_number, alt keyed by
+        # `serial_number::dual_alt`. Post-OCR step compares text-match counts
+        # to pick the winner (Bug 14 + Bug 10/11 + Bug 12 fixes:
+        #   * primary.success OR alt.success → both tried even when SP failed
+        #     one side
+        #   * tiebreak by SuperPoint conf when match counts equal
+        #   * count text matches only (char ML can false-positive))
         ocr_tasks = []
+        # serial_number → '::dual_alt'-suffixed key for the alt task (when
+        # the camera ran in dual mode). Drives the post-OCR pick + swap.
+        dual_alt_serial: Dict[str, str] = {}
 
         for camera in context.cameras_to_process:
             serial_number = camera.serial_number
             result = transformed_results.get(serial_number, {})
             frames = context.results.get(serial_number, {}).get('frames', [])
 
+            # `success` is OR'd in run_inference for dual entries — if either
+            # candidate matched, run OCR; alt may still pass even if primary
+            # SuperPoint match failed.
             if not result.get('success') or not frames:
                 continue
 
             frame_expected_texts = camera.expected_texts.get(0, {})
-            if frame_expected_texts:
-                if frame_expected_texts:
-                    # Get matcher for sim check (template_img + original_bboxes)
-                    matcher = context.camera_matchers.get(serial_number)
-                    if isinstance(matcher, list):
-                        matcher = matcher[0]
+            if not frame_expected_texts:
+                continue
 
-                    ocr_task = {
-                        'serial_number': serial_number,
-                        'frame_img': frames[0],
-                        'transformed_bboxes': result.get('transformed_bboxes', []),
-                        'expected_texts': frame_expected_texts,
-                        'camera': camera,
-                        'recognition_threshold': getattr(camera, 'recognition_threshold', 0.5),
-                    }
+            matcher = context.camera_matchers.get(serial_number)
+            if isinstance(matcher, list):
+                matcher = matcher[0]
 
-                    # Attach template_img + original_bboxes for sim check
-                    if matcher and hasattr(matcher, 'template_img') and hasattr(matcher, 'other_bboxes'):
-                        ocr_task['template_img'] = matcher.template_img
-                        ocr_task['original_bboxes'] = matcher.other_bboxes
+            sim_template_img = (
+                matcher.template_img
+                if matcher and hasattr(matcher, 'template_img') else None
+            )
+            sim_original_bboxes = (
+                matcher.other_bboxes
+                if matcher and hasattr(matcher, 'other_bboxes') else None
+            )
 
-                    ocr_tasks.append(ocr_task)
+            primary_task = {
+                'serial_number': serial_number,
+                'frame_img': frames[0],
+                'transformed_bboxes': result.get('transformed_bboxes', []),
+                'expected_texts': frame_expected_texts,
+                'camera': camera,
+                'recognition_threshold': getattr(camera, 'recognition_threshold', 0.5),
+            }
+            if sim_template_img is not None:
+                primary_task['template_img'] = sim_template_img
+            if sim_original_bboxes is not None:
+                primary_task['original_bboxes'] = sim_original_bboxes
+            ocr_tasks.append(primary_task)
+
+            # Alt task — only when run_inference kept a dual_rotation pair.
+            alt_result = result.get('_dual_alt_result')
+            alt_frame  = result.get('_dual_alt_frame')
+            if alt_result is not None and alt_frame is not None:
+                alt_key = f"{serial_number}::dual_alt"
+                dual_alt_serial[serial_number] = alt_key
+                alt_task = dict(primary_task)
+                alt_task['serial_number']      = alt_key
+                alt_task['frame_img']          = alt_frame
+                alt_task['transformed_bboxes'] = alt_result.get('transformed_bboxes', [])
+                ocr_tasks.append(alt_task)
 
         # ── 3 verify phases IN PARALLEL ──────────────────────────────────────
         # OCR (TRT GPU), Product verify (TRT GPU + CPU), Template verify (CPU)
@@ -711,6 +751,61 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             batch_product_results  = product_future.result()
             batch_template_results = template_future.result()
             batch_ocr_results      = ocr_future.result() if ocr_future else {}
+
+        # ── Dual_rotation OCR-based winner pick ──
+        # Count text-only matches (char ML can false-positive). Strict
+        # majority wins; on tie fall back to SuperPoint conf so we don't
+        # always default to primary when both candidates fail OCR.
+        def _count_text(v: Dict[str, Any]) -> int:
+            return sum(1 for r in (v.get('text') or {}).get('results', [])
+                        if r.get('match', False))
+        for _sn, _alt_key in dual_alt_serial.items():
+            _v_p = batch_ocr_results.get(_sn) or {}
+            _v_a = batch_ocr_results.get(_alt_key) or {}
+            _n_p = _count_text(_v_p)
+            _n_a = _count_text(_v_a)
+            _r = transformed_results.get(_sn) or {}
+            tie_breaker = ""
+            if _n_a > _n_p:
+                alt_wins = True
+            elif _n_p > _n_a:
+                alt_wins = False
+            else:
+                sp_p = float(_r.get('_dual_sp_primary', 0.0) or 0.0)
+                sp_a = float(_r.get('_dual_sp_alt', 0.0) or 0.0)
+                alt_wins = sp_a > sp_p
+                tie_breaker = f" tiebreak by sp_conf (p={sp_p:.3f}, a={sp_a:.3f})"
+
+            if alt_wins:
+                _alt_res   = _r.get('_dual_alt_result') or {}
+                _alt_frame = _r.get('_dual_alt_frame')
+                _ctx_frames = context.results.get(_sn, {}).get('frames', [])
+                if _alt_frame is not None and _ctx_frames:
+                    _ctx_frames[0] = _alt_frame
+                # Promote alt's match metrics into transformed_results so the
+                # final response (built downstream from transformed_results)
+                # reflects the winning candidate consistently.
+                _r['transformed_bboxes'] = _alt_res.get('transformed_bboxes', [])
+                if 'confidence' in _alt_res:
+                    _r['confidence']    = _alt_res['confidence']
+                if 'inliers' in _alt_res:
+                    _r['inliers']       = _alt_res['inliers']
+                if 'total_matches' in _alt_res:
+                    _r['total_matches'] = _alt_res['total_matches']
+                if 'success' in _alt_res:
+                    _r['success']       = _alt_res['success']
+                batch_ocr_results[_sn] = _v_a
+                logger.info(
+                    f"[{_sn}] dual_rotation OCR-pick: ALT wins "
+                    f"({_n_a} text matches vs primary {_n_p}{tie_breaker})"
+                )
+            else:
+                logger.info(
+                    f"[{_sn}] dual_rotation OCR-pick: primary wins "
+                    f"({_n_p} text matches vs alt {_n_a}{tie_breaker})"
+                )
+            # Drop alt entry so downstream sees a single verification per sn.
+            batch_ocr_results.pop(_alt_key, None)
 
         t_phases_ms = (time.perf_counter() - t_phases_start) * 1000
         t_ocr_ms = t_phases_ms  # approximation — actual concurrent

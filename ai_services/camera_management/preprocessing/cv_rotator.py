@@ -106,6 +106,12 @@ def _slice_by_crop_area(
 
 
 def _detect_cap(gray: np.ndarray) -> Optional[Tuple[float, float, float]]:
+    """Detect bottle cap via HoughCircles. Polarity-agnostic — accepts both
+    bright (white) and dark (black) caps; the per-candidate score is
+    `|inner_mean - 127|` (contrast against neutral gray) so a black cap and a
+    white cap score symmetrically. Ambiguous candidates (low contrast, e.g.
+    background blur or mid-gray noise) are rejected.
+    """
     h, w = gray.shape
     blur = cv2.medianBlur(gray, 9)
     min_dim = min(h, w)
@@ -129,14 +135,35 @@ def _detect_cap(gray: np.ndarray) -> Optional[Tuple[float, float, float]]:
         if sub.size == 0:
             continue
         inner_mean = float(sub.mean())
-        if inner_mean < 140:
+        # Contrast against neutral 127 — symmetric for both bright (~255) and
+        # dark (~0) caps. <50 = mid-gray noise, not a real cap.
+        contrast = abs(inner_mean - 127.0)
+        if contrast < 50.0:
             continue
         cdist = float(np.hypot(x - cx_img, y - cy_img))
-        score = inner_mean - 0.3 * cdist
+        score = contrast - 0.3 * cdist
         if score > best_score:
             best_score = score
             best = (float(x), float(y), float(r))
     return best
+
+
+def _is_dark_cap(gray: np.ndarray, cap: Tuple[float, float, float]) -> bool:
+    """True if cap interior is dark (black cap with light text), False if
+    bright (white cap with dark text). Used to flip Otsu direction in
+    `_text_mask` and to invert ROI before template-match in `_need_flip`.
+    """
+    cx, cy, r = cap
+    H, W = gray.shape
+    r_i = int(r)
+    y1 = max(0, int(cy) - r_i // 3)
+    y2 = min(H, int(cy) + r_i // 3)
+    x1 = max(0, int(cx) - r_i // 3)
+    x2 = min(W, int(cx) + r_i // 3)
+    sub = gray[y1:y2, x1:x2]
+    if sub.size == 0:
+        return False
+    return float(sub.mean()) < 127.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -144,19 +171,47 @@ def _detect_cap(gray: np.ndarray) -> Optional[Tuple[float, float, float]]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _text_mask(gray: np.ndarray, cap: Tuple[float, float, float],
-                shrink: float = 0.88) -> np.ndarray:
+                shrink: float = 0.88,
+                dark_cap: Optional[bool] = None) -> np.ndarray:
+    """Otsu-threshold the gray image and mask outside-cap pixels. Output is
+    `text=255, background=0` regardless of cap polarity:
+      - Bright cap → text is darker than cap → THRESH_BINARY_INV
+      - Dark cap   → text is brighter than cap → THRESH_BINARY
+
+    Otsu is computed **on the cap-interior pixels only** (not the whole frame)
+    so the threshold is tuned to the local cap/text bimodality. With Otsu over
+    the full frame the bright background dominates and the cap/text contrast
+    falls below threshold → text mask comes out near-empty for low-contrast
+    laser-etched text on dark caps.
+    """
+    if dark_cap is None:
+        dark_cap = _is_dark_cap(gray, cap)
     cx, cy, r = cap
     blur = cv2.GaussianBlur(gray, (3, 3), 0)
-    _, dark = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     cap_mask = np.zeros_like(gray)
     cv2.circle(cap_mask, (int(cx), int(cy)), int(r * shrink), 255, -1)
-    text = cv2.bitwise_and(dark, cap_mask)
+    # Compute Otsu threshold from cap-interior pixels only.
+    interior = blur[cap_mask > 0]
+    if interior.size == 0:
+        return np.zeros_like(gray)
+    interior_2d = interior.reshape(-1, 1).astype(np.uint8)
+    thresh_val, _ = cv2.threshold(
+        interior_2d, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+    # Apply that threshold to the full blur image with the direction matching
+    # cap polarity, then mask outside-cap.
+    thresh_mode = cv2.THRESH_BINARY if dark_cap else cv2.THRESH_BINARY_INV
+    _, text_full = cv2.threshold(blur, thresh_val, 255, thresh_mode)
+    text = cv2.bitwise_and(text_full, cap_mask)
     text = cv2.morphologyEx(text, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     return text
 
 
-def _text_angle(gray: np.ndarray, cap: Tuple[float, float, float]) -> Tuple[float, int]:
-    text = _text_mask(gray, cap)
+def _text_angle(gray: np.ndarray, cap: Tuple[float, float, float],
+                 dark_cap: Optional[bool] = None) -> Tuple[float, int]:
+    if dark_cap is None:
+        dark_cap = _is_dark_cap(gray, cap)
+    text = _text_mask(gray, cap, dark_cap=dark_cap)
     n_dark = int((text > 0).sum())
     if n_dark < 50:
         return 0.0, n_dark
@@ -207,7 +262,10 @@ def _get_ref_templates() -> list:
 
 
 def _need_flip(gray: np.ndarray, cap: Tuple[float, float, float],
-                angle_deg: float) -> Tuple[bool, float, float]:
+                angle_deg: float,
+                dark_cap: Optional[bool] = None) -> Tuple[bool, float, float]:
+    if dark_cap is None:
+        dark_cap = _is_dark_cap(gray, cap)
     cx, cy, r = cap
     H, W = gray.shape
     pad = int(r + 10)
@@ -216,14 +274,23 @@ def _need_flip(gray: np.ndarray, cap: Tuple[float, float, float],
     roi = gray[y1:y2, x1:x2].copy()
     lcx, lcy = float(cx - x1), float(cy - y1)
     M = cv2.getRotationMatrix2D((lcx, lcy), angle_deg, 1.0)
+    # borderValue chọn theo polarity: white border cho bright cap (giúp ROI
+    # outside-cap == template white background), black border cho dark cap.
+    border_val = 0 if dark_cap else 255
     rotated = cv2.warpAffine(roi, M, (roi.shape[1], roi.shape[0]),
-                              flags=cv2.INTER_LINEAR, borderValue=255)
+                              flags=cv2.INTER_LINEAR, borderValue=border_val)
     # Downsample 2× before matchTemplate — matchTemplate is O((W·H)·(w·h))
     # so halving both dimensions gives ~16× speedup with negligible accuracy
     # impact for shape-match at the scales we use.
     rotated_ds = cv2.resize(rotated, None, fx=0.5, fy=0.5,
                              interpolation=cv2.INTER_AREA)
     flipped_ds = cv2.rotate(rotated_ds, cv2.ROTATE_180)
+    # Template ("BEST") is rendered as dark text on white background. For dark
+    # caps (light text on dark cap), invert ROI to match template polarity so
+    # matchTemplate produces a meaningful correlation.
+    if dark_cap:
+        rotated_ds = cv2.bitwise_not(rotated_ds)
+        flipped_ds = cv2.bitwise_not(flipped_ds)
 
     best_s0, best_s180 = -2.0, -2.0
     for tpl in _get_ref_templates():
@@ -273,6 +340,8 @@ def detect_cap_and_crop(
     image: np.ndarray,
     margin_ratio: float = 0.10,
     fill_value: int = 114,
+    inner_mask_ratio: float = 1.0,
+    apply_clahe: bool = False,
 ) -> Optional[Tuple[np.ndarray, Tuple[int, int, int, int]]]:
     """
     Detect the bottle cap (white disc) via HoughCircles, crop a tight square
@@ -280,9 +349,20 @@ def detect_cap_and_crop(
     (gray 114 by default — neutral for SuperPoint).
 
     Args:
-        image:         BGR or grayscale frame.
-        margin_ratio:  Extra padding around cap radius (fraction of radius).
-        fill_value:    Pixel intensity for pixels outside the cap circle.
+        image:             BGR or grayscale frame.
+        margin_ratio:      Extra padding around cap radius (fraction of radius).
+        fill_value:        Pixel intensity for pixels outside the cap circle.
+        inner_mask_ratio:  Fraction of cap radius kept inside the circle mask
+                           (default 1.0 = full cap). Set to <1.0 (e.g. 0.85)
+                           to mask out the bright rim — forces SuperPoint to
+                           match on the cap interior / text rather than the
+                           rotation-symmetric rim, which dominates on caps
+                           with low-contrast laser-etched text.
+        apply_clahe:       Apply Contrast Limited Adaptive Histogram
+                           Equalization on the cap interior to boost the
+                           laser-etched text contrast before downstream
+                           matching. Off by default — keep behavior identical
+                           for color-check / non-text recipes.
 
     Returns:
         (cropped_image, (x1, y1, x2, y2)) — cropped image with circular mask
@@ -295,7 +375,14 @@ def detect_cap_and_crop(
     cap = _detect_cap(gray)
     if cap is None:
         return None
-    return _compose_cap_result(image, cap, margin_ratio, fill_value)
+    return _compose_cap_result(image, cap, margin_ratio, fill_value,
+                                inner_mask_ratio=inner_mask_ratio,
+                                apply_clahe=apply_clahe)
+
+
+# Module-level CLAHE instance — created once, reused. Param tuned for cap-
+# interior text contrast at ~200-500 px region size.
+_CLAHE = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
 
 def _compose_cap_result(
@@ -303,8 +390,15 @@ def _compose_cap_result(
     cap: Tuple[float, float, float],
     margin_ratio: float,
     fill_value: int,
+    inner_mask_ratio: float = 1.0,
+    apply_clahe: bool = False,
 ) -> Optional[Tuple[np.ndarray, Tuple[int, int, int, int]]]:
-    """Inner helper: given a detected cap, crop+mask + return bbox."""
+    """Inner helper: given a detected cap, crop+mask + return bbox.
+
+    `inner_mask_ratio` <1.0 shrinks the circular mask to exclude the cap rim
+    (sets rim pixels to `fill_value`). `apply_clahe` enhances text contrast
+    inside the kept circular region.
+    """
     cx, cy, r = cap
     H, W = image.shape[:2]
     margin = int(r * margin_ratio)
@@ -319,8 +413,24 @@ def _compose_cap_result(
     ch, cw = crop.shape[:2]
     lcx = int(cx) - x1
     lcy = int(cy) - y1
+
+    # CLAHE on cap interior — apply BEFORE masking so contrast stretch is
+    # driven by the cap's own intensity range, not the fill_value plateau.
+    if apply_clahe:
+        try:
+            if crop.ndim == 3:
+                # Convert to LAB, CLAHE on L only, convert back. Preserves color.
+                lab = cv2.cvtColor(crop, cv2.COLOR_BGR2LAB)
+                lab[:, :, 0] = _CLAHE.apply(lab[:, :, 0])
+                crop = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+            else:
+                crop = _CLAHE.apply(crop)
+        except cv2.error:
+            pass  # fall through with unenhanced crop
+
+    mask_r = max(1, int(r * float(inner_mask_ratio)))
     mask = np.zeros((ch, cw), dtype=np.uint8)
-    cv2.circle(mask, (lcx, lcy), int(r), 255, -1)
+    cv2.circle(mask, (lcx, lcy), mask_r, 255, -1)
     if image.ndim == 3:
         fill = np.full_like(crop, fill_value)
         crop = np.where(mask[..., None] > 0, crop, fill)
@@ -365,15 +475,22 @@ def apply_cap_crop(
     cap: Tuple[float, float, float],
     margin_ratio: float = 0.10,
     fill_value: int = 114,
+    inner_mask_ratio: float = 1.0,
+    apply_clahe: bool = False,
 ) -> Optional[Tuple[np.ndarray, Tuple[int, int, int, int]]]:
     """
     Apply the cap crop+mask to `image` using a PRE-DETECTED cap circle. Skips
     HoughCircles entirely — useful when the caller already detected the cap on
     a different (but spatially-aligned) frame.
+
+    See `detect_cap_and_crop` for `inner_mask_ratio` / `apply_clahe` semantics
+    (rim-mask + CLAHE for text-on-cap matching, e.g. Check_Color datecode).
     """
     if image is None or image.size == 0 or cap is None:
         return None
-    return _compose_cap_result(image, cap, margin_ratio, fill_value)
+    return _compose_cap_result(image, cap, margin_ratio, fill_value,
+                                inner_mask_ratio=inner_mask_ratio,
+                                apply_clahe=apply_clahe)
 
 
 class CVRotationService:
@@ -432,16 +549,19 @@ class CVRotationService:
                 return frame, None, None
             cap_full = (cap_sub[0] + ox, cap_sub[1] + oy, cap_sub[2])
             cx, cy, r = cap_full
+            # Detect polarity once and propagate to downstream steps — avoids
+            # re-computing inner_mean inside _text_mask + _need_flip.
+            dark_cap = _is_dark_cap(sub_gray, cap_sub)
 
             _t2 = _time.perf_counter()
             # _text_angle + _need_flip work on sub_gray + sub-coord cap so the
             # ROI computation stays inside the user-bounded region. Angle/flip
             # are coord-independent.
-            angle_deg, n_dark = _text_angle(sub_gray, cap_sub)
+            angle_deg, n_dark = _text_angle(sub_gray, cap_sub, dark_cap=dark_cap)
             _t_angle = (_time.perf_counter() - _t2) * 1000
 
             _t3 = _time.perf_counter()
-            flip, s0, s180 = _need_flip(sub_gray, cap_sub, angle_deg)
+            flip, s0, s180 = _need_flip(sub_gray, cap_sub, angle_deg, dark_cap=dark_cap)
             _t_flip = (_time.perf_counter() - _t3) * 1000
 
             _t4 = _time.perf_counter()
@@ -452,7 +572,8 @@ class CVRotationService:
             _t_total = (_time.perf_counter() - _t0) * 1000
             self._rot_logger.info(
                 f"{tag}[RotateCV] OK in {_t_total:.1f}ms — cap=(cx={cx:.0f}, cy={cy:.0f}, "
-                f"r={r:.0f}) angle={angle_deg:.1f}° flip={flip} (s0={s0:.3f} s180={s180:.3f}) "
+                f"r={r:.0f}) polarity={'DARK' if dark_cap else 'BRIGHT'} "
+                f"angle={angle_deg:.1f}° flip={flip} (s0={s0:.3f} s180={s180:.3f}) "
                 f"→ total={final_angle:.1f}° | "
                 f"gray={_t_gray:.1f}ms, detect_cap={_t_detect:.1f}ms, "
                 f"text_angle={_t_angle:.1f}ms, need_flip={_t_flip:.1f}ms, "
@@ -493,13 +614,15 @@ class CVRotationService:
                 self._rot_logger.info(f"{tag}[RotateCV-Dual] FAIL — no cap detected")
                 return None, None, None
             cap_full = (cap_sub[0] + ox, cap_sub[1] + oy, cap_sub[2])
-            angle_deg, _n_dark = _text_angle(sub_gray, cap_sub)
+            dark_cap = _is_dark_cap(sub_gray, cap_sub)
+            angle_deg, _n_dark = _text_angle(sub_gray, cap_sub, dark_cap=dark_cap)
             cand_a = _rotate_cap_region(frame, cap_full, angle_deg, False)
             cand_b = _rotate_cap_region(frame, cap_full, angle_deg, True)
             _t_total = (_time.perf_counter() - _t0) * 1000
             self._rot_logger.info(
-                f"{tag}[RotateCV-Dual] OK in {_t_total:.1f}ms — angle={angle_deg:.1f}° "
-                f"both candidates emitted"
+                f"{tag}[RotateCV-Dual] OK in {_t_total:.1f}ms — "
+                f"polarity={'DARK' if dark_cap else 'BRIGHT'} "
+                f"angle={angle_deg:.1f}° both candidates emitted"
             )
             return cand_a, cand_b, (float(cap_full[0]), float(cap_full[1]), float(cap_full[2]))
         except Exception as e:
