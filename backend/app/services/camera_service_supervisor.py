@@ -71,6 +71,27 @@ def _is_connected() -> bool:
     return camera_ws_manager.is_connected()
 
 
+def _camera_process_alive() -> bool:
+    """
+    True if a `camera_management_service.py` process exists. Lets recovery tell
+    apart 'process crashed/dead' (restart immediately, grace is pointless) from
+    'process alive but WS blipped' (wait grace, it auto-reconnects). Conservative:
+    on any error returns True so we fall back to the safe grace path.
+    """
+    try:
+        import psutil
+        for proc in psutil.process_iter(['cmdline']):
+            try:
+                cmd = proc.info.get('cmdline') or []
+                if any('camera_management_service.py' in str(c) for c in cmd):
+                    return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return False
+    except Exception:
+        return True
+
+
 # ── Restart primitives (run in a worker thread — they block) ─────────────────
 
 def _systemd_unit_installed() -> bool:
@@ -164,8 +185,11 @@ async def _recover():
         _recovery_in_progress = True
 
     try:
-        # 1. Give the service a chance to self-heal (auto-reconnect / systemd).
-        logger.info("Camera service down — waiting %.0fs for self-heal", _GRACE_SECONDS)
+        # 1. Give the service a chance to self-heal (auto-reconnect WS).
+        #    BUT if the process is actually DEAD, there's nothing to self-heal —
+        #    skip the grace and restart immediately (this is what makes a real
+        #    crash recover fast instead of waiting the full grace window).
+        logger.info("Camera service down — waiting up to %.0fs for self-heal", _GRACE_SECONDS)
         waited = 0.0
         step = 1.0
         while waited < _GRACE_SECONDS:
@@ -174,6 +198,9 @@ async def _recover():
             if _is_connected():
                 logger.info("Camera service self-healed after %.0fs", waited)
                 return  # connect() already emitted connected:true
+            if not await asyncio.to_thread(_camera_process_alive):
+                logger.warning("Camera service PROCESS is dead — skipping grace, restarting now")
+                break
 
         # 2. Still down. Restart — but respect the debounce window.
         now = time.monotonic()
@@ -224,3 +251,55 @@ async def require_camera_service(reason: Optional[str] = None):
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Camera Management Service is not connected. Restarting — please retry shortly.",
     )
+
+
+# ── Watchdog ─────────────────────────────────────────────────────────────────
+# Proactively detect a dead/crashed AI camera service WITHOUT waiting for a user
+# API call. Without this, if the service crashes overnight and nobody touches the
+# UI, the line keeps running with no inspection until someone notices.
+
+_WATCHDOG_INTERVAL = 8.0
+_watchdog_task: Optional[asyncio.Task] = None
+
+
+async def _watchdog_loop(interval: float):
+    announced_down = False
+    while True:
+        try:
+            await asyncio.sleep(interval)
+
+            if _is_connected():
+                announced_down = False
+                continue
+
+            # Camera service is down. Announce ONCE per outage (FE toast is
+            # edge-triggered anyway), then keep nudging recovery each tick.
+            if not announced_down:
+                announced_down = True
+                logger.warning("Watchdog: camera service DOWN — notifying UI + recovering")
+                try:
+                    emit = _import_emit()
+                    await emit({
+                        "connected": False,
+                        "message": "Camera Management Service down (watchdog)",
+                    })
+                except Exception as e:
+                    logger.error("Watchdog emit failed: %s", e)
+
+            # _recover() is guarded (single-flight + debounce) so calling it every
+            # tick is safe; it restarts as soon as the debounce window allows.
+            asyncio.create_task(_recover())
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error("Watchdog loop error: %s", e)
+
+
+async def start_watchdog(interval: float = _WATCHDOG_INTERVAL):
+    """Start the periodic camera-service watchdog. Idempotent — call once at startup."""
+    global _watchdog_task
+    if _watchdog_task is not None and not _watchdog_task.done():
+        return
+    _watchdog_task = asyncio.create_task(_watchdog_loop(interval))
+    logger.info("Camera service watchdog started (interval=%.0fs)", interval)

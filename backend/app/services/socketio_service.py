@@ -2,6 +2,7 @@
 SocketIO Service for Real-time Frontend Updates
 """
 
+import asyncio
 import logging
 import socketio
 
@@ -271,9 +272,11 @@ async def set_do_pin(sid, data):
 
         logger.info(f"Client {sid} setting DO{pin_number} to {value}")
 
-        # Write to DO pin directly
+        # Write to DO pin. io_utils.write_do_pin is a sync subprocess call
+        # (~1-3s); run it in a thread so it doesn't block the event loop and
+        # freeze every other SocketIO client.
         from app.utils.io_utils import write_do_pin
-        success = write_do_pin(pin_number, value)
+        success = await asyncio.to_thread(write_do_pin, pin_number, value)
 
         if success:
             await sio.emit('do_pin_set_success', {'pin_number': pin_number, 'value': value}, room=sid)

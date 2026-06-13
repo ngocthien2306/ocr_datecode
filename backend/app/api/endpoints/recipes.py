@@ -1873,7 +1873,7 @@ async def update_recipe_realtime(
     # 5. Stop current recipe
     logger.info(f"🛑 [REALTIME UPDATE] Stopping recipe: {recipe.name}")
     stop_success = await send_stop_recipe(recipe_id)
-    time.sleep(2)
+    await asyncio.sleep(2)  # was time.sleep — blocked the whole event loop
 
     if not stop_success:
         raise HTTPException(

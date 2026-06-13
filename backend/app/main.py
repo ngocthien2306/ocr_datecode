@@ -114,6 +114,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Warning: training-mode flag cleanup failed: {e}")
 
+    # Start camera-service watchdog — proactively detects when the AI camera
+    # service dies and recovers it WITHOUT waiting for a user API call.
+    try:
+        from app.services.camera_service_supervisor import start_watchdog
+        await start_watchdog()
+        print("✅ Camera service watchdog started")
+    except Exception as e:
+        print(f"⚠️ Warning: camera service watchdog failed to start: {e}")
+
     yield
 
     # Stop Jetson monitoring service
