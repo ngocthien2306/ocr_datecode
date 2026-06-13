@@ -504,7 +504,10 @@ class Camera:
         # used to produce — keeps colors correct for display + Check_Color.
         if current_format and "Bayer" in current_format:
             if "RG" in current_format:
-                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_RG2BGR)
+                # Basler "BayerRG8" maps to OpenCV's BG pattern (the two naming
+                # conventions are offset by one) — BG2BGR gives correct brown/BGR;
+                # RG2BGR comes out R/B-swapped (blue). Confirmed empirically.
+                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_BG2BGR)
             elif "BG" in current_format:
                 return cv2.cvtColor(img_array, cv2.COLOR_BAYER_BG2BGR)
             elif "GR" in current_format:
