@@ -96,9 +96,18 @@ kill_port() {
     fi
 }
 
+# Helper: true if a systemd service unit is installed (enabled, disabled or static)
+_systemd_managed() {
+    systemctl list-unit-files "$1" --no-legend 2>/dev/null | grep -qE "enabled|static|disabled"
+}
+
 # Kill existing processes
-kill_port 8000
+# NOTE: port 8000 (backend) is intentionally NOT killed here — the backend runs
+# as its own systemd unit (ocr-backend.service, Restart=always). Killing it would
+# fight systemd and cause an unnecessary restart/outage.
 kill_port 5173
+# Camera management runs as a plain background process (started below, after the
+# camera check). Kill any leftover instance so we start fresh.
 pkill -f "camera_management_service.py" 2>/dev/null || true
 pkill ngrok 2>/dev/null || true
 
@@ -130,11 +139,6 @@ if cd "$PROJECT_DIR"; then
         || echo "   ⚠️  git pull skipped/failed (see $LOG_DIR/git_pull.log) — starting with current code"
 fi
 
-# Helper: true if a systemd service unit is installed (enabled or static)
-_systemd_managed() {
-    systemctl list-unit-files "$1" --no-legend 2>/dev/null | grep -qE "enabled|static"
-}
-
 # 1. Start Backend (FastAPI)
 echo "📦 Starting Backend API (port 8000)..."
 if _systemd_managed "ocr-backend.service"; then
@@ -159,17 +163,14 @@ echo "   PID: $FRONTEND_PID"
 sleep 3
 
 # 3. Start AI Services (Camera Management)
+# Runs as a plain background process (NOT a systemd service) so it stays
+# sequential after the camera check above. Crash recovery is handled by the
+# backend supervisor (kill + respawn via app/services/camera_service_supervisor.py).
 echo "📷 Starting AI Camera Services..."
-if _systemd_managed "ocr-ai.service"; then
-    sudo systemctl start ocr-ai
-    AI_PID=$(systemctl show -p MainPID ocr-ai 2>/dev/null | cut -d= -f2)
-    echo "   Managed by systemd (PID: $AI_PID)"
-else
-    cd "$AI_SERVICES_DIR"
-    nohup python camera_management_service.py >> "$LOG_DIR/ai_camera.log" 2>&1 &
-    AI_PID=$!
-    echo "   PID: $AI_PID"
-fi
+cd "$AI_SERVICES_DIR"
+nohup python camera_management_service.py >> "$LOG_DIR/ai_camera.log" 2>&1 &
+AI_PID=$!
+echo "   PID: $AI_PID"
 sleep 2
 
 # 4. Start ngrok for Backend API

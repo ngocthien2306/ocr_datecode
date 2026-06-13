@@ -422,13 +422,6 @@ class SocketIOService {
   }
 
   /**
-   * Check if connected
-   */
-  isConnected(): boolean {
-    return this.socket?.connected ?? false;
-  }
-
-  /**
    * Get socket instance
    */
   getSocket(): Socket | null {

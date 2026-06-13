@@ -33,6 +33,7 @@ from app.api.websocket.camera_ws import (
     send_discover_cameras,
     camera_ws_manager
 )
+from app.services.camera_service_supervisor import require_camera_service
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
@@ -169,12 +170,8 @@ async def discover_available_cameras(
     Returns:
         List of discovered cameras with their basic information
     """
-    # Check if camera service is connected
-    if not camera_ws_manager.is_connected():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Camera Management Service is not connected. Please ensure the service is running."
-        )
+    # Ensure camera service is connected (notifies UI + triggers recovery if down)
+    await require_camera_service("Camera Management Service is not connected. Please ensure the service is running.")
 
     # Send discover command to camera service
     result = await send_discover_cameras(timeout=10.0)
@@ -792,12 +789,8 @@ async def connect_camera(
             detail=f"Camera with serial number '{serial_number}' not found"
         )
 
-    # Check if CameraManagement service is connected
-    if not camera_ws_manager.is_connected():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Camera Management service is not connected. Please start the service."
-        )
+    # Ensure camera service is connected (notifies UI + triggers recovery if down)
+    await require_camera_service("Camera Management service is not connected. Please start the service.")
 
     # Send connect command via WebSocket
     success = await send_connect_camera(serial_number, pixel_format)
@@ -845,12 +838,8 @@ async def disconnect_camera(
             detail=f"Camera with serial number '{serial_number}' not found"
         )
 
-    # Check if CameraManagement service is connected
-    if not camera_ws_manager.is_connected():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Camera Management service is not connected"
-        )
+    # Ensure camera service is connected (notifies UI + triggers recovery if down)
+    await require_camera_service()
 
     # Send disconnect command via WebSocket
     success = await send_disconnect_camera(serial_number)

@@ -38,6 +38,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from app.core.config import settings
 from app.api.websocket.camera_ws import send_load_recipe, send_stop_recipe, send_set_inference_mode, camera_ws_manager
+from app.services.camera_service_supervisor import require_camera_service
 
 router = APIRouter()
 
@@ -1343,12 +1344,8 @@ async def load_recipe(
             detail="Recipe has no camera templates. Please draw templates before loading."
         )
 
-    # Check if CameraManagement service is connected
-    if not camera_ws_manager.is_connected():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Camera Management service is not connected. Please start the service."
-        )
+    # Ensure camera service is connected (notifies UI + triggers recovery if down)
+    await require_camera_service("Camera Management service is not connected. Please start the service.")
 
     # Check and auto-connect cameras if needed
     cameras_config = getattr(recipe, 'cameras', [])
@@ -1659,12 +1656,8 @@ async def set_inference_mode(
         mode_str = mode.get("mode", "online")
         enabled = mode_str.lower() == "online"
 
-    # Check if CameraManagement service is connected
-    if not camera_ws_manager.is_connected():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Camera Management service is not connected"
-        )
+    # Ensure camera service is connected (notifies UI + triggers recovery if down)
+    await require_camera_service()
 
     # Send command to Camera Service
     success = await send_set_inference_mode(recipe_id, enabled)
@@ -1719,12 +1712,8 @@ async def update_recipe_realtime(
     Returns:
         Status message with restarted flag
     """
-    # 1. Check if CameraManagement service is connected
-    if not camera_ws_manager.is_connected():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Camera Management service is not connected"
-        )
+    # 1. Ensure camera service is connected (notifies UI + triggers recovery if down)
+    await require_camera_service()
 
     # 2. Load recipe from DB to get full config
     recipe = await recipe_repo.get_by_id(recipe_id)

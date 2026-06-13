@@ -58,8 +58,12 @@ echo ""
 PYTHON3=$(which python3)
 YARN=$(which yarn 2>/dev/null || echo "")
 
-# ── Create individual crash-recovery services ────────────────────────────────
-echo "Creating crash-recovery services..."
+# ── Create backend crash-recovery service ─────────────────────────────────────
+# NOTE: Camera Management does NOT get its own systemd service. It runs as a
+# plain background process inside start_services.sh (sequential, after the camera
+# health-check). Crash recovery for it is handled by the backend supervisor
+# (kill + respawn via app/services/camera_service_supervisor.py).
+echo "Creating backend crash-recovery service..."
 
 sudo tee /etc/systemd/system/ocr-backend.service > /dev/null << EOF
 [Unit]
@@ -83,29 +87,6 @@ Environment=PYTHONUNBUFFERED=1
 WantedBy=multi-user.target
 EOF
 echo "   ✅ ocr-backend.service (Restart=always)"
-
-sudo tee /etc/systemd/system/ocr-ai.service > /dev/null << EOF
-[Unit]
-Description=OCR Datecode AI Camera Service
-After=network.target ocr-backend.service
-Wants=ocr-backend.service
-
-[Service]
-User=${USER_NAME}
-WorkingDirectory=${PROJECT_DIR}/ai_services
-ExecStart=${PYTHON3} camera_management_service.py
-Restart=always
-RestartSec=5
-StartLimitIntervalSec=600
-StartLimitBurst=10
-StandardOutput=append:${LOG_DIR}/ai_camera.log
-StandardError=append:${LOG_DIR}/ai_camera.log
-Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=multi-user.target
-EOF
-echo "   ✅ ocr-ai.service      (Restart=always)"
 echo ""
 
 echo "Creating ocr-all.service..."
@@ -138,8 +119,10 @@ echo ""
 
 # ── Enable & start ───────────────────────────────────────────────────────────
 sudo systemctl daemon-reload
-sudo systemctl enable ocr-backend.service ocr-ai.service ocr-all.service
-echo "   ✅ Enabled (auto-start on boot)"
+# Only backend + all auto-start on boot. Camera management has no systemd unit —
+# start_services.sh launches it as a background process after the camera check.
+sudo systemctl enable ocr-backend.service ocr-all.service
+echo "   ✅ Enabled ocr-backend + ocr-all (auto-start on boot)"
 echo ""
 
 echo "Starting ocr-all (runs camera check first)..."

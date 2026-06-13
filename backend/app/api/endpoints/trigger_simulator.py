@@ -11,6 +11,7 @@ import asyncio
 
 from app.api.dependencies.auth import get_current_user
 from app.api.websocket.camera_ws import camera_ws_manager
+from app.services.camera_service_supervisor import require_camera_service
 
 logger = logging.getLogger(__name__)
 
@@ -59,12 +60,8 @@ async def simulate_trigger(
     - Success status and message
     """
 
-    # Check if camera service is connected
-    if not camera_ws_manager.is_connected():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Camera management service is not connected"
-        )
+    # Ensure camera service is connected (notifies UI + triggers recovery if down)
+    await require_camera_service("Camera management service is not connected")
 
     # Send trigger simulation command via WebSocket
     message = {
@@ -126,12 +123,8 @@ async def simulate_continuous_triggers(
     **Note:** This endpoint blocks until all triggers are sent.
     """
 
-    # Check if camera service is connected
-    if not camera_ws_manager.is_connected():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Camera management service is not connected"
-        )
+    # Ensure camera service is connected (notifies UI + triggers recovery if down)
+    await require_camera_service("Camera management service is not connected")
 
     logger.info(
         f"Starting continuous trigger by {current_user.username}: "
@@ -228,12 +221,8 @@ async def simulate_trigger_sequence(
             detail="Interval must be between 100ms and 10000ms"
         )
 
-    # Check if camera service is connected
-    if not camera_ws_manager.is_connected():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Camera management service is not connected"
-        )
+    # Ensure camera service is connected (notifies UI + triggers recovery if down)
+    await require_camera_service("Camera management service is not connected")
 
     # Send trigger sequence command
     message = {
