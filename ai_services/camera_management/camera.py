@@ -378,7 +378,7 @@ class Camera:
             self._apply_settings()
 
             # Configure GigE buffer and network settings (must be done after Open and before StartGrabbing)
-            # self._configure_gige_buffer_settings()
+            self._configure_gige_buffer_settings()
 
             # Setup ring buffer shared memory
             actual_width = self.camera.Width.GetValue()
@@ -663,32 +663,47 @@ class Camera:
             except Exception as e:
                 logger.warning(f"[{self.serial_number}] Could not set MaxNumBuffer: {e}")
 
-            # 2. Optimize GigE packet size
-            # 8192 bytes for Jumbo Frames (MTU 9000), 1500 for standard Ethernet
+            # 2. Optimize GigE packet size based on actual network MTU.
+            # Setting packet size higher than MTU causes IP fragmentation which
+            # leads to "incompletely grabbed" buffer errors on Jetson.
             try:
-                # Try to set to 8192 first (Jumbo Frames)
+                import subprocess as _sp
+                eth_mtu = 1500
                 try:
-                    max_packet_size = self.camera.GevSCPSPacketSize.GetMax()
-                    packet_size = min(8192, max_packet_size)
-                    self.camera.GevSCPSPacketSize.SetValue(packet_size)
-                    logger.info(f"[{self.serial_number}] ✓ GevSCPSPacketSize set to {packet_size} bytes")
-                    if packet_size < 8192:
-                        logger.warning(
-                            f"[{self.serial_number}] Packet size limited to {packet_size}. "
-                            f"Enable Jumbo Frames (MTU 9000) for better performance"
-                        )
-                except Exception as e:
-                    # Fallback to 1500 (standard Ethernet MTU)
-                    self.camera.GevSCPSPacketSize.SetValue(1500)
-                    logger.info(f"[{self.serial_number}] ✓ GevSCPSPacketSize set to 1500 bytes (standard MTU)")
+                    out = _sp.run(["ip", "link", "show", "eth1"], capture_output=True, text=True, timeout=2)
+                    for part in out.stdout.split():
+                        if part.isdigit() and int(part) > 1000:
+                            # The integer after "mtu" in ip-link output
+                            idx = out.stdout.split().index(part)
+                            if out.stdout.split()[idx - 1] == "mtu":
+                                eth_mtu = int(part)
+                                break
+                except Exception:
+                    pass
+
+                # Leave headroom for IP+UDP headers (28 bytes)
+                target_packet_size = 8192 if eth_mtu >= 9000 else (eth_mtu - 28)
+                target_packet_size = max(576, target_packet_size)  # floor at minimum GigE size
+
+                self.camera.GevSCPSPacketSize.SetValue(target_packet_size)
+                logger.info(
+                    f"[{self.serial_number}] ✓ GevSCPSPacketSize set to {target_packet_size} bytes "
+                    f"(eth1 MTU={eth_mtu})"
+                )
+                if eth_mtu < 9000:
+                    logger.warning(
+                        f"[{self.serial_number}] eth1 MTU={eth_mtu} — set to 9000 for best GigE performance: "
+                        f"sudo ip link set eth1 mtu 9000"
+                    )
             except Exception as e:
                 logger.warning(f"[{self.serial_number}] Could not set GevSCPSPacketSize: {e}")
 
-            # 3. Configure inter-packet delay
-            # 0 = maximum speed, increase if network congestion occurs
+            # 3. Inter-packet delay — give the host NIC time to drain its receive queue.
+            # GevSCPD=0 sends at full line rate which overwhelms Jetson causing
+            # "incompletely grabbed" errors. 1000 clock ticks ≈ 8–10 µs per packet.
             try:
-                self.camera.GevSCPD.SetValue(0)
-                logger.info(f"[{self.serial_number}] ✓ GevSCPD (inter-packet delay) set to 0 μs")
+                self.camera.GevSCPD.SetValue(1000)
+                logger.info(f"[{self.serial_number}] ✓ GevSCPD (inter-packet delay) set to 1000 ticks")
             except Exception as e:
                 logger.warning(f"[{self.serial_number}] Could not set GevSCPD: {e}")
 

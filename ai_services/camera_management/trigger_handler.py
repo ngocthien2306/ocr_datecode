@@ -1170,18 +1170,23 @@ class TriggerHandler:
         )
         t.start()
 
-    # After this many failed reconnect attempts, restart the whole AI service.
-    # Change to match the actual systemd unit name on the target machine.
-    _RECOVER_MAX_ATTEMPTS = 10
-    _AI_SERVICE_NAME = "ocr-all"
+    # Log a CRITICAL warning after this many consecutive failed reconnects.
+    # The service does NOT restart itself — it keeps retrying indefinitely so
+    # there is no dead time and no crash loop. systemd only restarts the process
+    # if it actually crashes (unhandled exception), which is the correct behavior.
+    _RECOVER_WARN_AFTER = 10
 
     def _recover_camera(self, serial_number: str):
         """
         Background per-camera recovery loop.
 
-        Keeps reconnecting the camera with increasing backoff. After
-        _RECOVER_MAX_ATTEMPTS consecutive failures, restarts the AI service via
-        systemctl — last resort when the GigE stack is unrecoverable in-process.
+        Retries reconnect indefinitely with increasing backoff (capped at 30s).
+        Never calls systemctl restart — the service stays alive so that:
+          1. Triggers during camera downtime are handled gracefully (capture
+             fails but no false reject is emitted).
+          2. No artificial dead time from unnecessary service restarts.
+          3. No crash loop that drains systemd's StartLimitBurst.
+        When the camera hardware is fixed it reconnects automatically.
         """
         camera = self.camera_manager.cameras.get(serial_number)
         if camera is None:
@@ -1195,7 +1200,7 @@ class TriggerHandler:
         except Exception:
             pass
 
-        backoffs = [1.0, 2.0, 5.0, 10.0]  # last value repeats
+        backoffs = [1.0, 2.0, 5.0, 10.0, 30.0]  # last value repeats (30s steady-state)
         attempt = 0
         while self._polling and serial_number in self._recovering_cameras:
             attempt += 1
@@ -1214,30 +1219,30 @@ class TriggerHandler:
                 with self._recovery_lock:
                     self._consecutive_capture_failures.pop(serial_number, None)
                     self._recovering_cameras.discard(serial_number)
+                try:
+                    camera._emit_event("camera_recovered", {"attempts": attempt})
+                except Exception:
+                    pass
                 return
 
-            if attempt >= self._RECOVER_MAX_ATTEMPTS:
+            if attempt == self._RECOVER_WARN_AFTER:
+                # Log once at threshold — operators should physically inspect the camera.
+                # Service keeps running and retrying every 30s.
                 logger.critical(
-                    f"[RECOVER] Camera {serial_number} failed {attempt} reconnect attempts — "
-                    f"restarting service '{self._AI_SERVICE_NAME}' as last resort"
+                    f"[RECOVER] Camera {serial_number} still unreachable after {attempt} attempts. "
+                    f"Please inspect the camera hardware. Service will keep retrying every 30s."
                 )
                 try:
                     camera._emit_event("camera_fatal", {
                         "serial_number": serial_number,
-                        "reason": f"reconnect failed after {attempt} attempts, service restarting"
+                        "reason": f"unreachable after {attempt} attempts — hardware inspection needed",
                     })
                 except Exception:
                     pass
-                import subprocess
-                subprocess.Popen(
-                    ["sudo", "systemctl", "restart", self._AI_SERVICE_NAME],
-                    close_fds=True
-                )
-                return
 
             delay = backoffs[min(attempt - 1, len(backoffs) - 1)]
             logger.warning(
-                f"[RECOVER] Camera {serial_number} reconnect attempt {attempt}/{self._RECOVER_MAX_ATTEMPTS} failed, "
+                f"[RECOVER] Camera {serial_number} reconnect attempt {attempt} failed, "
                 f"retrying in {delay:.0f}s"
             )
             try:
