@@ -50,6 +50,18 @@ else \
     echo ''; echo '>>> Camera check FAILED. Services will NOT start (will retry).'; sleep 6; \
 fi"
 
+    # Kill any stale camera_management process BEFORE the camera check. Otherwise
+    # it keeps the GVCP control session alive (it has auto-reconnect, so even an
+    # eth1 reset won't free the camera — it just re-grabs it), and the check below
+    # fails with "The device is controlled by another application (0xE1018006)".
+    # A previous instance that crashed uncleanly (e.g. PyCUDA abort) is the usual
+    # culprit. sleep 3 lets the camera release the session (HeartbeatTimeout).
+    if pgrep -f "camera_management_service.py" >/dev/null 2>&1; then
+        echo "🔪 Killing stale camera_management before camera check..."
+        pkill -9 -f "camera_management_service.py" 2>/dev/null || true
+        sleep 3
+    fi
+
     echo "📷 Opening camera health check terminal..."
     # Show the GUI popup (gnome-terminal/xterm) FIRST — works under systemd too as
     # long as DISPLAY=:0 + XAUTHORITY are exported (done above). If the GUI can't

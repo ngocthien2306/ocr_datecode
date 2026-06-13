@@ -108,7 +108,10 @@ def try_open_and_grab(device_info):
             node_map = camera.GetNodeMap()
             scpd = node_map.GetNode("GevSCPD")
             if scpd and scpd.IsWritable():
-                scpd.SetValue(1000)  # GigE clock units (~1000 ≈ 8µs delay between packets)
+                # Bigger inter-packet delay = lower instantaneous bandwidth = far
+                # fewer "incompletely grabbed" underruns on a marginal Jetson link.
+                # The check grabs at full rate (no fps cap) so it needs more spacing.
+                scpd.SetValue(4000)  # GigE clock ticks (~32µs between packets)
         except Exception:
             pass
 
