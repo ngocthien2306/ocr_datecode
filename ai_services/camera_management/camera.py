@@ -366,23 +366,11 @@ class Camera:
             self.camera = pylon.InstantCamera(tlFactory.CreateDevice(target_device))
             self.camera.Open()
 
-            # Heartbeat timeout = how long the camera waits for the host before it
-            # drops the GVCP session and reports "device physically removed".
-            # 1000ms was far too aggressive: on a busy Jetson (continuous streaming
-            # + recipe load + GIL) the host can stall >1s, and the camera then
-            # tears down mid-run → every subsequent SetValue fails with
-            # "physically removed". 5000ms tolerates host-busy spikes while still
-            # releasing the session reasonably fast on a real disconnect.
-            try:
-                self.camera.GetTLNodeMap()["HeartbeatTimeout"].SetValue(5000)
-            except Exception:
-                pass  # Not all transport layers expose this node
-
             # Apply initial settings
             self._apply_settings()
 
             # Configure GigE buffer and network settings (must be done after Open and before StartGrabbing)
-            self._configure_gige_buffer_settings()
+            # self._configure_gige_buffer_settings()
 
             # Setup ring buffer shared memory
             actual_width = self.camera.Width.GetValue()
@@ -413,11 +401,6 @@ class Camera:
             logger.error(f"Failed to connect camera {self.serial_number}: {e}")
             self._emit_event("camera_error", {"error": str(e)})
             return False
-
-    @property
-    def is_connected(self) -> bool:
-        """True when the pylon camera object exists and the control channel is open."""
-        return self.camera is not None and self.camera.IsOpen()
 
     def disconnect(self):
         """Disconnect camera and cleanup resources"""
@@ -474,40 +457,16 @@ class Camera:
                         self.camera.StartGrabbing(pylon.GrabStrategy_OneByOne)
                     else:
                         self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+
+                    logger.info(f"[{self.serial_number}] ✅ Camera reconnected successfully")
+                    self._emit_event("camera_reconnected", {
+                        "serial_number": self.serial_number,
+                        "mode": self.mode.value
+                    })
+                    return True
                 except Exception as e:
                     logger.error(f"[{self.serial_number}] Failed to restart grabbing after reconnect: {e}")
                     return False
-
-                # Verify the GigE stream is actually working, not just the SDK
-                # connection. Camera can report IsGrabbing()=True but the image
-                # pipeline is broken (buffer overrun, dropped stream, etc.).
-                if self.mode == CameraMode.SOFTWARE_TRIGGER:
-                    try:
-                        self.camera.ExecuteSoftwareTrigger()
-                        probe = self.camera.RetrieveResult(1500, pylon.TimeoutHandling_Return)
-                        if probe and probe.GrabSucceeded():
-                            probe.Release()
-                            logger.info(f"[{self.serial_number}] ✅ Stream verified — frame grabbed after reconnect")
-                        else:
-                            if probe:
-                                probe.Release()
-                            logger.warning(
-                                f"[{self.serial_number}] ⚠️ Reconnect OK but stream not delivering frames — "
-                                f"declaring reconnect failed so recovery retries"
-                            )
-                            return False
-                    except Exception as e:
-                        logger.warning(
-                            f"[{self.serial_number}] ⚠️ Stream probe failed after reconnect: {e} — retrying"
-                        )
-                        return False
-
-                logger.info(f"[{self.serial_number}] ✅ Camera reconnected successfully")
-                self._emit_event("camera_reconnected", {
-                    "serial_number": self.serial_number,
-                    "mode": self.mode.value
-                })
-                return True
 
             return True
 
@@ -667,47 +626,32 @@ class Camera:
             except Exception as e:
                 logger.warning(f"[{self.serial_number}] Could not set MaxNumBuffer: {e}")
 
-            # 2. Optimize GigE packet size based on actual network MTU.
-            # Setting packet size higher than MTU causes IP fragmentation which
-            # leads to "incompletely grabbed" buffer errors on Jetson.
+            # 2. Optimize GigE packet size
+            # 8192 bytes for Jumbo Frames (MTU 9000), 1500 for standard Ethernet
             try:
-                import subprocess as _sp
-                eth_mtu = 1500
+                # Try to set to 8192 first (Jumbo Frames)
                 try:
-                    out = _sp.run(["ip", "link", "show", "eth1"], capture_output=True, text=True, timeout=2)
-                    for part in out.stdout.split():
-                        if part.isdigit() and int(part) > 1000:
-                            # The integer after "mtu" in ip-link output
-                            idx = out.stdout.split().index(part)
-                            if out.stdout.split()[idx - 1] == "mtu":
-                                eth_mtu = int(part)
-                                break
-                except Exception:
-                    pass
-
-                # Leave headroom for IP+UDP headers (28 bytes)
-                target_packet_size = 8192 if eth_mtu >= 9000 else (eth_mtu - 28)
-                target_packet_size = max(576, target_packet_size)  # floor at minimum GigE size
-
-                self.camera.GevSCPSPacketSize.SetValue(target_packet_size)
-                logger.info(
-                    f"[{self.serial_number}] ✓ GevSCPSPacketSize set to {target_packet_size} bytes "
-                    f"(eth1 MTU={eth_mtu})"
-                )
-                if eth_mtu < 9000:
-                    logger.warning(
-                        f"[{self.serial_number}] eth1 MTU={eth_mtu} — set to 9000 for best GigE performance: "
-                        f"sudo ip link set eth1 mtu 9000"
-                    )
+                    max_packet_size = self.camera.GevSCPSPacketSize.GetMax()
+                    packet_size = min(8192, max_packet_size)
+                    self.camera.GevSCPSPacketSize.SetValue(packet_size)
+                    logger.info(f"[{self.serial_number}] ✓ GevSCPSPacketSize set to {packet_size} bytes")
+                    if packet_size < 8192:
+                        logger.warning(
+                            f"[{self.serial_number}] Packet size limited to {packet_size}. "
+                            f"Enable Jumbo Frames (MTU 9000) for better performance"
+                        )
+                except Exception as e:
+                    # Fallback to 1500 (standard Ethernet MTU)
+                    self.camera.GevSCPSPacketSize.SetValue(1500)
+                    logger.info(f"[{self.serial_number}] ✓ GevSCPSPacketSize set to 1500 bytes (standard MTU)")
             except Exception as e:
                 logger.warning(f"[{self.serial_number}] Could not set GevSCPSPacketSize: {e}")
 
-            # 3. Inter-packet delay — give the host NIC time to drain its receive queue.
-            # GevSCPD=0 sends at full line rate which overwhelms Jetson causing
-            # "incompletely grabbed" errors. 1000 clock ticks ≈ 8–10 µs per packet.
+            # 3. Configure inter-packet delay
+            # 0 = maximum speed, increase if network congestion occurs
             try:
-                self.camera.GevSCPD.SetValue(1000)
-                logger.info(f"[{self.serial_number}] ✓ GevSCPD (inter-packet delay) set to 1000 ticks")
+                self.camera.GevSCPD.SetValue(0)
+                logger.info(f"[{self.serial_number}] ✓ GevSCPD (inter-packet delay) set to 0 μs")
             except Exception as e:
                 logger.warning(f"[{self.serial_number}] Could not set GevSCPD: {e}")
 
@@ -718,25 +662,6 @@ class Camera:
                     logger.info(f"[{self.serial_number}] ✓ GevSCBWR (bandwidth reserve) set to 10%")
             except Exception as e:
                 logger.warning(f"[{self.serial_number}] Could not set GevSCBWR: {e}")
-
-            # 4b. Cap the free-run acquisition frame rate. At full speed an
-            # a2A1920-51gc pushes ~117 MB/s which saturates a marginal Jetson GigE
-            # link → every frame comes back "incompletely grabbed" and NOTHING is
-            # written to shared memory (live preview stays blank). Capping to a
-            # modest fps keeps the data rate well under the link budget. In trigger
-            # modes the trigger gates capture, so this cap is harmless there.
-            gige_max_fps = float(getattr(self, 'gige_max_fps', 15.0))
-            try:
-                if hasattr(self.camera, 'AcquisitionFrameRateEnable'):
-                    self.camera.AcquisitionFrameRateEnable.SetValue(True)
-                if hasattr(self.camera, 'AcquisitionFrameRate'):
-                    self.camera.AcquisitionFrameRate.SetValue(gige_max_fps)
-                    logger.info(f"[{self.serial_number}] ✓ AcquisitionFrameRate capped to {gige_max_fps} fps")
-                elif hasattr(self.camera, 'AcquisitionFrameRateAbs'):
-                    self.camera.AcquisitionFrameRateAbs.SetValue(gige_max_fps)
-                    logger.info(f"[{self.serial_number}] ✓ AcquisitionFrameRateAbs capped to {gige_max_fps} fps")
-            except Exception as e:
-                logger.warning(f"[{self.serial_number}] Could not cap AcquisitionFrameRate: {e}")
 
             # 5. Enable resend mechanism for lost packets (if available)
             try:
@@ -1525,28 +1450,8 @@ class Camera:
                             # Release grab result
                             grab_result.Release()
                         else:
-                            # Grab failed or incomplete. This is the silent killer
-                            # behind a blank live preview: "incompletely grabbed"
-                            # (GigE buffer underrun) means GrabSucceeded()=False, so
-                            # no frame reaches shared memory. Log it (rate-limited)
-                            # so the underrun is visible instead of an empty stream.
-                            if grab_result is not None:
-                                try:
-                                    err = f"0x{grab_result.GetErrorCode():08x}: {grab_result.GetErrorDescription()}"
-                                except Exception:
-                                    err = "unknown grab error"
-                                grab_result.Release()
-                                self._grab_fail_count = getattr(self, '_grab_fail_count', 0) + 1
-                                if self._grab_fail_count % 50 == 1:
-                                    logger.warning(
-                                        f"[{self.serial_number}] Continuous grab failing "
-                                        f"({self._grab_fail_count} so far) — {err}. "
-                                        f"Likely GigE buffer underrun: check eth1 MTU/rmem_max "
-                                        f"and AcquisitionFrameRate cap."
-                                    )
-                            else:
-                                # No frame available yet, sleep briefly
-                                time.sleep(0.001)
+                            # No frame available, sleep briefly
+                            time.sleep(0.001)
 
                     except Exception as e:
                         logger.error(f"[{self.serial_number}] Error in continuous mode: {e}")
