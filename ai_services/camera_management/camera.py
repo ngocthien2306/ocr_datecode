@@ -366,6 +366,14 @@ class Camera:
             self.camera = pylon.InstantCamera(tlFactory.CreateDevice(target_device))
             self.camera.Open()
 
+            # Lower heartbeat timeout so the camera releases its GVCP session
+            # quickly when the host disconnects — avoids "session already open"
+            # failures on reconnect. 1000ms matches the watchdog scripts.
+            try:
+                self.camera.GetTLNodeMap()["HeartbeatTimeout"].SetValue(1000)
+            except Exception:
+                pass  # Not all transport layers expose this node
+
             # Apply initial settings
             self._apply_settings()
 
@@ -401,6 +409,11 @@ class Camera:
             logger.error(f"Failed to connect camera {self.serial_number}: {e}")
             self._emit_event("camera_error", {"error": str(e)})
             return False
+
+    @property
+    def is_connected(self) -> bool:
+        """True when the pylon camera object exists and the control channel is open."""
+        return self.camera is not None and self.camera.IsOpen()
 
     def disconnect(self):
         """Disconnect camera and cleanup resources"""
@@ -457,16 +470,40 @@ class Camera:
                         self.camera.StartGrabbing(pylon.GrabStrategy_OneByOne)
                     else:
                         self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
-
-                    logger.info(f"[{self.serial_number}] ✅ Camera reconnected successfully")
-                    self._emit_event("camera_reconnected", {
-                        "serial_number": self.serial_number,
-                        "mode": self.mode.value
-                    })
-                    return True
                 except Exception as e:
                     logger.error(f"[{self.serial_number}] Failed to restart grabbing after reconnect: {e}")
                     return False
+
+                # Verify the GigE stream is actually working, not just the SDK
+                # connection. Camera can report IsGrabbing()=True but the image
+                # pipeline is broken (buffer overrun, dropped stream, etc.).
+                if self.mode == CameraMode.SOFTWARE_TRIGGER:
+                    try:
+                        self.camera.ExecuteSoftwareTrigger()
+                        probe = self.camera.RetrieveResult(1500, pylon.TimeoutHandling_Return)
+                        if probe and probe.GrabSucceeded():
+                            probe.Release()
+                            logger.info(f"[{self.serial_number}] ✅ Stream verified — frame grabbed after reconnect")
+                        else:
+                            if probe:
+                                probe.Release()
+                            logger.warning(
+                                f"[{self.serial_number}] ⚠️ Reconnect OK but stream not delivering frames — "
+                                f"declaring reconnect failed so recovery retries"
+                            )
+                            return False
+                    except Exception as e:
+                        logger.warning(
+                            f"[{self.serial_number}] ⚠️ Stream probe failed after reconnect: {e} — retrying"
+                        )
+                        return False
+
+                logger.info(f"[{self.serial_number}] ✅ Camera reconnected successfully")
+                self._emit_event("camera_reconnected", {
+                    "serial_number": self.serial_number,
+                    "mode": self.mode.value
+                })
+                return True
 
             return True
 

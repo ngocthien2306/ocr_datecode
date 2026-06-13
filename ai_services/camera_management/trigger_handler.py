@@ -1170,14 +1170,18 @@ class TriggerHandler:
         )
         t.start()
 
+    # After this many failed reconnect attempts, restart the whole AI service.
+    # Change to match the actual systemd unit name on the target machine.
+    _RECOVER_MAX_ATTEMPTS = 10
+    _AI_SERVICE_NAME = "ocr-all"
+
     def _recover_camera(self, serial_number: str):
         """
         Background per-camera recovery loop.
 
-        Keeps reconnecting the camera with increasing backoff until it succeeds,
-        the camera disappears from the manager, or polling stops. Emits events so
-        the frontend reflects the disconnected/recovered state instead of failing
-        silently. Never restarts the service.
+        Keeps reconnecting the camera with increasing backoff. After
+        _RECOVER_MAX_ATTEMPTS consecutive failures, restarts the AI service via
+        systemctl — last resort when the GigE stack is unrecoverable in-process.
         """
         camera = self.camera_manager.cameras.get(serial_number)
         if camera is None:
@@ -1186,7 +1190,6 @@ class TriggerHandler:
                 self._recovering_cameras.discard(serial_number)
             return
 
-        # Surface the disconnect to the frontend
         try:
             camera._emit_event("camera_recovering", {"reason": "consecutive_capture_failures"})
         except Exception:
@@ -1197,7 +1200,6 @@ class TriggerHandler:
         while self._polling and serial_number in self._recovering_cameras:
             attempt += 1
             try:
-                # Serialize against any in-flight capture on the same camera
                 with camera._capture_lock:
                     ok = camera._attempt_reconnect()
             except Exception as e:
@@ -1214,9 +1216,28 @@ class TriggerHandler:
                     self._recovering_cameras.discard(serial_number)
                 return
 
+            if attempt >= self._RECOVER_MAX_ATTEMPTS:
+                logger.critical(
+                    f"[RECOVER] Camera {serial_number} failed {attempt} reconnect attempts — "
+                    f"restarting service '{self._AI_SERVICE_NAME}' as last resort"
+                )
+                try:
+                    camera._emit_event("camera_fatal", {
+                        "serial_number": serial_number,
+                        "reason": f"reconnect failed after {attempt} attempts, service restarting"
+                    })
+                except Exception:
+                    pass
+                import subprocess
+                subprocess.Popen(
+                    ["sudo", "systemctl", "restart", self._AI_SERVICE_NAME],
+                    close_fds=True
+                )
+                return
+
             delay = backoffs[min(attempt - 1, len(backoffs) - 1)]
             logger.warning(
-                f"[RECOVER] Camera {serial_number} reconnect attempt {attempt} failed, "
+                f"[RECOVER] Camera {serial_number} reconnect attempt {attempt}/{self._RECOVER_MAX_ATTEMPTS} failed, "
                 f"retrying in {delay:.0f}s"
             )
             try:
@@ -1225,7 +1246,6 @@ class TriggerHandler:
                 pass
             time.sleep(delay)
 
-        # Loop ended without success (polling stopped or flag cleared elsewhere)
         with self._recovery_lock:
             self._recovering_cameras.discard(serial_number)
         logger.info(f"[RECOVER] Camera {serial_number} recovery loop ended (attempts={attempt})")
