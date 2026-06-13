@@ -130,13 +130,24 @@ if cd "$PROJECT_DIR"; then
         || echo "   ⚠️  git pull skipped/failed (see $LOG_DIR/git_pull.log) — starting with current code"
 fi
 
+# Helper: true if a systemd service unit is installed (enabled or static)
+_systemd_managed() {
+    systemctl list-unit-files "$1" --no-legend 2>/dev/null | grep -qE "enabled|static"
+}
+
 # 1. Start Backend (FastAPI)
 echo "📦 Starting Backend API (port 8000)..."
-cd "$BACKEND_DIR"
-nohup python3 -m uvicorn app.main:app --port 8000 --host 0.0.0.0 \
-    >> "$LOG_DIR/backend.log" 2>&1 &
-BACKEND_PID=$!
-echo "   PID: $BACKEND_PID"
+if _systemd_managed "ocr-backend.service"; then
+    sudo systemctl start ocr-backend
+    BACKEND_PID=$(systemctl show -p MainPID ocr-backend 2>/dev/null | cut -d= -f2)
+    echo "   Managed by systemd (PID: $BACKEND_PID)"
+else
+    cd "$BACKEND_DIR"
+    nohup python3 -m uvicorn app.main:app --port 8000 --host 0.0.0.0 \
+        >> "$LOG_DIR/backend.log" 2>&1 &
+    BACKEND_PID=$!
+    echo "   PID: $BACKEND_PID"
+fi
 sleep 3
 
 # 2. Start Frontend (Vite)
@@ -149,10 +160,16 @@ sleep 3
 
 # 3. Start AI Services (Camera Management)
 echo "📷 Starting AI Camera Services..."
-cd "$AI_SERVICES_DIR"
-nohup python camera_management_service.py >> "$LOG_DIR/ai_camera.log" 2>&1 &
-AI_PID=$!
-echo "   PID: $AI_PID"
+if _systemd_managed "ocr-ai.service"; then
+    sudo systemctl start ocr-ai
+    AI_PID=$(systemctl show -p MainPID ocr-ai 2>/dev/null | cut -d= -f2)
+    echo "   Managed by systemd (PID: $AI_PID)"
+else
+    cd "$AI_SERVICES_DIR"
+    nohup python camera_management_service.py >> "$LOG_DIR/ai_camera.log" 2>&1 &
+    AI_PID=$!
+    echo "   PID: $AI_PID"
+fi
 sleep 2
 
 # 4. Start ngrok for Backend API

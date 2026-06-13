@@ -263,6 +263,30 @@ class SocketIOService {
     console.log('[SocketIO] Unsubscribed from camera_status_update events');
   }
 
+  onSocketConnect(callback: () => void): void {
+    if (!this.socket) return;
+    this.socket.on('connect', callback);
+  }
+
+  offSocketConnect(callback: () => void): void {
+    if (!this.socket) return;
+    this.socket.off('connect', callback);
+  }
+
+  onSocketDisconnect(callback: (reason: string) => void): void {
+    if (!this.socket) return;
+    this.socket.on('disconnect', callback);
+  }
+
+  offSocketDisconnect(callback: (reason: string) => void): void {
+    if (!this.socket) return;
+    this.socket.off('disconnect', callback);
+  }
+
+  isConnected(): boolean {
+    return this.socket?.connected ?? false;
+  }
+
   /**
    * Disconnect from SocketIO server
    */

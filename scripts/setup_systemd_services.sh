@@ -55,6 +55,59 @@ echo "   ✅ Done"
 echo ""
 
 # ── Create ocr-all.service ───────────────────────────────────────────────────
+PYTHON3=$(which python3)
+YARN=$(which yarn 2>/dev/null || echo "")
+
+# ── Create individual crash-recovery services ────────────────────────────────
+echo "Creating crash-recovery services..."
+
+sudo tee /etc/systemd/system/ocr-backend.service > /dev/null << EOF
+[Unit]
+Description=OCR Datecode Backend API
+After=network.target mongod.service
+Wants=mongod.service
+
+[Service]
+User=${USER_NAME}
+WorkingDirectory=${PROJECT_DIR}/backend
+ExecStart=${PYTHON3} -m uvicorn app.main:app --port 8000 --host 0.0.0.0
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=600
+StartLimitBurst=10
+StandardOutput=append:${LOG_DIR}/backend.log
+StandardError=append:${LOG_DIR}/backend.log
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+echo "   ✅ ocr-backend.service (Restart=always)"
+
+sudo tee /etc/systemd/system/ocr-ai.service > /dev/null << EOF
+[Unit]
+Description=OCR Datecode AI Camera Service
+After=network.target ocr-backend.service
+Wants=ocr-backend.service
+
+[Service]
+User=${USER_NAME}
+WorkingDirectory=${PROJECT_DIR}/ai_services
+ExecStart=${PYTHON3} camera_management_service.py
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=600
+StartLimitBurst=10
+StandardOutput=append:${LOG_DIR}/ai_camera.log
+StandardError=append:${LOG_DIR}/ai_camera.log
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+echo "   ✅ ocr-ai.service      (Restart=always)"
+echo ""
+
 echo "Creating ocr-all.service..."
 
 sudo tee /etc/systemd/system/ocr-all.service > /dev/null << EOF
@@ -85,7 +138,7 @@ echo ""
 
 # ── Enable & start ───────────────────────────────────────────────────────────
 sudo systemctl daemon-reload
-sudo systemctl enable ocr-all.service
+sudo systemctl enable ocr-backend.service ocr-ai.service ocr-all.service
 echo "   ✅ Enabled (auto-start on boot)"
 echo ""
 
