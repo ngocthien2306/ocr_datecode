@@ -46,20 +46,21 @@ else \
     echo ''; echo '>>> Camera check FAILED. System reboot was triggered.'; sleep 6; \
 fi"
 
-    # Detect whether we have an accessible display (fails under systemd daemon context)
-    _has_display() {
-        [ -n "${DISPLAY:-}" ] && xdpyinfo -display "${DISPLAY}" >/dev/null 2>&1
-    }
-
     echo "📷 Opening camera health check terminal..."
-    if _has_display && command -v gnome-terminal &>/dev/null; then
+    # When run under systemd, INVOCATION_ID is set — no display available, run inline.
+    # When run manually (user session), try GUI terminal and fall back inline if it fails.
+    if [ -n "${INVOCATION_ID:-}" ]; then
+        echo "⚠️  Running under systemd (no display) — camera check inline..."
+        python3 "${SCRIPT_DIR}/${CAM_SCRIPT}" --no-reboot
+        echo $? > "${TMPFILE}"
+    elif command -v gnome-terminal &>/dev/null; then
         gnome-terminal --wait --title="$CAM_TITLE" -- bash -c "$TERMINAL_CMD" \
             || { echo "⚠️  gnome-terminal failed, running inline..."; python3 "${SCRIPT_DIR}/${CAM_SCRIPT}"; echo $? > "${TMPFILE}"; }
-    elif _has_display && command -v xterm &>/dev/null; then
+    elif command -v xterm &>/dev/null; then
         xterm -title "$CAM_TITLE" -geometry 120x35 -e bash -c "$TERMINAL_CMD" \
             || { echo "⚠️  xterm failed, running inline..."; python3 "${SCRIPT_DIR}/${CAM_SCRIPT}"; echo $? > "${TMPFILE}"; }
     else
-        echo "⚠️  No accessible display (daemon mode?) — running camera check inline..."
+        echo "⚠️  No GUI terminal found, running inline..."
         python3 "${SCRIPT_DIR}/${CAM_SCRIPT}"
         echo $? > "${TMPFILE}"
     fi
