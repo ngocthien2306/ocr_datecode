@@ -8,8 +8,6 @@ import os
 from datetime import datetime
 import pypylon.pylon as py
 
-import argparse
-
 INTERFACE = "eth1"
 # Log to centralized {repo}/logs/camera_check/{YYYY-MM-DD}.log
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "camera_check")
@@ -83,67 +81,41 @@ def get_interface_ip(iface):
     return None
 
 
-GRAB_RETRY_COUNT = 3  # Retry grabs within one open attempt (cold-start frames often incomplete)
-
-
 def try_open_and_grab(device_info):
     camera = None
+    grab_result = None
     try:
         camera = py.InstantCamera(py.TlFactory.GetInstance().CreateDevice(device_info))
         camera.Open()
 
-        # Heartbeat timeout: 1000ms was too aggressive — a busy host stalls >1s
-        # and the camera reports "physically removed". 3000ms is safer while still
-        # releasing stale sessions reasonably fast.
+        # Reduce heartbeat timeout so camera releases stale sessions faster
         try:
             if camera.HeartbeatTimeout.IsWritable():
-                camera.HeartbeatTimeout.Value = 3000
+                camera.HeartbeatTimeout.Value = 1000
         except Exception:
-            pass
-
-        # Slow down inter-packet transmission so the host NIC has time to buffer.
-        # Without this, at MTU=1500 the camera overwhelms the receive queue and
-        # produces "incompletely grabbed" errors on the first few frames.
-        try:
-            node_map = camera.GetNodeMap()
-            scpd = node_map.GetNode("GevSCPD")
-            if scpd and scpd.IsWritable():
-                # Bigger inter-packet delay = lower instantaneous bandwidth = far
-                # fewer "incompletely grabbed" underruns on a marginal Jetson link.
-                # The check grabs at full rate (no fps cap) so it needs more spacing.
-                scpd.SetValue(4000)  # GigE clock ticks (~32µs between packets)
-        except Exception:
-            pass
+            pass  # Not all cameras expose this param
 
         camera.StartGrabbing(py.GrabStrategy_LatestImageOnly)
+        grab_result = camera.RetrieveResult(GRAB_TIMEOUT_MS, py.TimeoutHandling_ThrowException)
 
-        for grab_attempt in range(1, GRAB_RETRY_COUNT + 1):
-            grab_result = None
-            try:
-                grab_result = camera.RetrieveResult(GRAB_TIMEOUT_MS, py.TimeoutHandling_ThrowException)
-                if grab_result.GrabSucceeded():
-                    logging.info(f"[OK] Grab successful! Size: {grab_result.Width}x{grab_result.Height} (attempt {grab_attempt})")
-                    return True
-                else:
-                    logging.warning(f"[FAIL] Grab attempt {grab_attempt}/{GRAB_RETRY_COUNT}: {grab_result.ErrorDescription}")
-            except Exception as e:
-                logging.warning(f"[FAIL] Grab attempt {grab_attempt}/{GRAB_RETRY_COUNT} exception: {e}")
-            finally:
-                try:
-                    if grab_result is not None:
-                        grab_result.Release()
-                except Exception:
-                    pass
-            if grab_attempt < GRAB_RETRY_COUNT:
-                time.sleep(0.5)
-
-        return False
+        if grab_result.GrabSucceeded():
+            logging.info(f"[OK] Grab successful! Size: {grab_result.Width}x{grab_result.Height}")
+            return True
+        else:
+            logging.warning(f"[FAIL] Grab failed: {grab_result.ErrorDescription}")
+            return False
 
     except Exception as e:
         logging.error(f"[ERROR] Failed to open camera: {e}")
         return False
 
     finally:
+        # Always cleanup regardless of success/failure/exception
+        try:
+            if grab_result is not None:
+                grab_result.Release()
+        except Exception:
+            pass
         try:
             if camera is not None:
                 if camera.IsGrabbing():
@@ -155,19 +127,12 @@ def try_open_and_grab(device_info):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--no-reboot", action="store_true",
-        help="Exit with code 1 instead of rebooting (use when called from systemd)"
-    )
-    args = parser.parse_args()
-
     setup_logger()
     logging.info("=" * 50)
     logging.info("Camera check started")
     logging.info(f"Interface: {INTERFACE}")
     logging.info(f"Max attempts: {MAX_ATTEMPTS}")
-    logging.info(f"Reboot on failure: {not args.no_reboot}")
+    # logging.info(f"Log file: {LOG_FILE}")
     logging.info("=" * 50)
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -194,26 +159,18 @@ def main():
         logging.warning(f"Grab failed. Resetting {INTERFACE} and retrying...")
         reset_interface(INTERFACE)
 
-    logging.error(f"[FATAL] Camera still not working after {MAX_ATTEMPTS} attempts.")
-    if args.no_reboot:
-        # Running under systemd — exit with failure so journalctl captures it.
-        # ocr-ai.service will still start (Wants, not Requires) and its internal
-        # recovery loop will keep retrying.
-        logging.error("[FATAL] --no-reboot mode: exiting with code 1 (no reboot triggered)")
-        sys.exit(1)
-    else:
-        logging.error("[FATAL] Triggering system reboot...")
-        for i in range(5, 0, -1):
-            logging.info(f"  Reboot trong {i} giây...")
-            time.sleep(1)
-        logging.info("Rebooting now...")
-        subprocess.run(
-            ["sudo", "-S", "reboot"],
-            input=SUDO_PASSWORD + "\n",
-            text=True,
-            stderr=subprocess.DEVNULL,
-        )
-        sys.exit(1)
+    logging.error(f"[FATAL] Camera still not working after {MAX_ATTEMPTS} attempts. Tiến hành reboot...")
+    for i in range(5, 0, -1):
+        logging.info(f"  Reboot trong {i} giây...")
+        time.sleep(1)
+    logging.info("Rebooting now...")
+    subprocess.run(
+        ["sudo", "-S", "reboot"],
+        input=SUDO_PASSWORD + "\n",
+        text=True,
+        stderr=subprocess.DEVNULL,
+    )
+    sys.exit(1)
 
 
 if __name__ == "__main__":
