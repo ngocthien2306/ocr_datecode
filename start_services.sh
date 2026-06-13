@@ -33,41 +33,38 @@ if [ "$USER_HOME" = "/home/suntech" ] || [ "$USER_HOME" = "/home/demo" ]; then
     if [ "$USER_HOME" = "/home/demo" ]; then
         CAM_SCRIPT="camera_check_all.py"
         CAM_TITLE="Camera Health Check - ALL"
+        CAM_ARGS=""
     else
         CAM_SCRIPT="camera_check_eth1.py"
         CAM_TITLE="Camera Health Check - eth1"
+        # --no-reboot: on failure, exit 1 instead of rebooting the whole box.
+        # ocr-all.service (Restart=on-failure) re-runs this script → popup again.
+        CAM_ARGS="--no-reboot"
     fi
 
-    TERMINAL_CMD="python3 '${SCRIPT_DIR}/${CAM_SCRIPT}'; \
+    TERMINAL_CMD="python3 '${SCRIPT_DIR}/${CAM_SCRIPT}' ${CAM_ARGS}; \
 EXIT=\$?; echo \$EXIT > '${TMPFILE}'; \
 if [ \$EXIT -eq 0 ]; then \
     echo ''; echo '>>> Camera OK! Services will start in 3 seconds...'; sleep 3; \
 else \
-    echo ''; echo '>>> Camera check FAILED. System reboot was triggered.'; sleep 6; \
+    echo ''; echo '>>> Camera check FAILED. Services will NOT start (will retry).'; sleep 6; \
 fi"
 
     echo "📷 Opening camera health check terminal..."
-    # When run under systemd, INVOCATION_ID is set — no display available, run inline.
-    # When run manually (user session), try GUI terminal and fall back inline if it fails.
-    # NB: capture the exit code via `if` so `set -e` does NOT abort the script
-    # when the camera check fails — we need to reach the CAMERA_EXIT check below
-    # and print the friendly message.
-    if [ -n "${INVOCATION_ID:-}" ]; then
-        echo "⚠️  Running under systemd (no display) — camera check inline..."
-        if python3 "${SCRIPT_DIR}/${CAM_SCRIPT}" --no-reboot; then echo 0 > "${TMPFILE}"; else echo $? > "${TMPFILE}"; fi
-    elif command -v gnome-terminal &>/dev/null; then
-        if ! gnome-terminal --wait --title="$CAM_TITLE" -- bash -c "$TERMINAL_CMD"; then
-            echo "⚠️  gnome-terminal failed, running inline..."
-            if python3 "${SCRIPT_DIR}/${CAM_SCRIPT}"; then echo 0 > "${TMPFILE}"; else echo $? > "${TMPFILE}"; fi
-        fi
-    elif command -v xterm &>/dev/null; then
-        if ! xterm -title "$CAM_TITLE" -geometry 120x35 -e bash -c "$TERMINAL_CMD"; then
-            echo "⚠️  xterm failed, running inline..."
-            if python3 "${SCRIPT_DIR}/${CAM_SCRIPT}"; then echo 0 > "${TMPFILE}"; else echo $? > "${TMPFILE}"; fi
-        fi
+    # Show the GUI popup (gnome-terminal/xterm) FIRST — works under systemd too as
+    # long as DISPLAY=:0 + XAUTHORITY are exported (done above). If the GUI can't
+    # open (no X access), fall back to an inline run so the service still proceeds.
+    # NB: capture the exit code via `if` so `set -e` does NOT abort the script when
+    # the camera check fails — we need to reach the CAMERA_EXIT check below.
+    if command -v gnome-terminal &>/dev/null && \
+       gnome-terminal --wait --title="$CAM_TITLE" -- bash -c "$TERMINAL_CMD"; then
+        :  # popup ran; it wrote the exit code into TMPFILE
+    elif command -v xterm &>/dev/null && \
+         xterm -title "$CAM_TITLE" -geometry 120x35 -e bash -c "$TERMINAL_CMD"; then
+        :  # popup ran; it wrote the exit code into TMPFILE
     else
-        echo "⚠️  No GUI terminal found, running inline..."
-        if python3 "${SCRIPT_DIR}/${CAM_SCRIPT}"; then echo 0 > "${TMPFILE}"; else echo $? > "${TMPFILE}"; fi
+        echo "⚠️  No usable GUI terminal — running camera check inline..."
+        if python3 "${SCRIPT_DIR}/${CAM_SCRIPT}" ${CAM_ARGS}; then echo 0 > "${TMPFILE}"; else echo $? > "${TMPFILE}"; fi
     fi
 
     CAMERA_EXIT=$(cat "${TMPFILE}" 2>/dev/null || echo "1")
@@ -245,7 +242,8 @@ if command -v firefox &> /dev/null; then
             sleep 1
         done
     fi
-    firefox --kiosk http://localhost:5173 >> "$LOG_DIR/firefox.log" 2>&1 &
+    # firefox --kiosk http://localhost:5173 >> "$LOG_DIR/firefox.log" 2>&1 &
+    firefox http://localhost:5173 >> "$LOG_DIR/firefox.log" 2>&1 &
     FIREFOX_PID=$!
     echo "   PID: $FIREFOX_PID (DISPLAY=$DISPLAY)"
 else
