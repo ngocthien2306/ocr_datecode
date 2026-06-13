@@ -49,20 +49,25 @@ fi"
     echo "📷 Opening camera health check terminal..."
     # When run under systemd, INVOCATION_ID is set — no display available, run inline.
     # When run manually (user session), try GUI terminal and fall back inline if it fails.
+    # NB: capture the exit code via `if` so `set -e` does NOT abort the script
+    # when the camera check fails — we need to reach the CAMERA_EXIT check below
+    # and print the friendly message.
     if [ -n "${INVOCATION_ID:-}" ]; then
         echo "⚠️  Running under systemd (no display) — camera check inline..."
-        python3 "${SCRIPT_DIR}/${CAM_SCRIPT}" --no-reboot
-        echo $? > "${TMPFILE}"
+        if python3 "${SCRIPT_DIR}/${CAM_SCRIPT}" --no-reboot; then echo 0 > "${TMPFILE}"; else echo $? > "${TMPFILE}"; fi
     elif command -v gnome-terminal &>/dev/null; then
-        gnome-terminal --wait --title="$CAM_TITLE" -- bash -c "$TERMINAL_CMD" \
-            || { echo "⚠️  gnome-terminal failed, running inline..."; python3 "${SCRIPT_DIR}/${CAM_SCRIPT}"; echo $? > "${TMPFILE}"; }
+        if ! gnome-terminal --wait --title="$CAM_TITLE" -- bash -c "$TERMINAL_CMD"; then
+            echo "⚠️  gnome-terminal failed, running inline..."
+            if python3 "${SCRIPT_DIR}/${CAM_SCRIPT}"; then echo 0 > "${TMPFILE}"; else echo $? > "${TMPFILE}"; fi
+        fi
     elif command -v xterm &>/dev/null; then
-        xterm -title "$CAM_TITLE" -geometry 120x35 -e bash -c "$TERMINAL_CMD" \
-            || { echo "⚠️  xterm failed, running inline..."; python3 "${SCRIPT_DIR}/${CAM_SCRIPT}"; echo $? > "${TMPFILE}"; }
+        if ! xterm -title "$CAM_TITLE" -geometry 120x35 -e bash -c "$TERMINAL_CMD"; then
+            echo "⚠️  xterm failed, running inline..."
+            if python3 "${SCRIPT_DIR}/${CAM_SCRIPT}"; then echo 0 > "${TMPFILE}"; else echo $? > "${TMPFILE}"; fi
+        fi
     else
         echo "⚠️  No GUI terminal found, running inline..."
-        python3 "${SCRIPT_DIR}/${CAM_SCRIPT}"
-        echo $? > "${TMPFILE}"
+        if python3 "${SCRIPT_DIR}/${CAM_SCRIPT}"; then echo 0 > "${TMPFILE}"; else echo $? > "${TMPFILE}"; fi
     fi
 
     CAMERA_EXIT=$(cat "${TMPFILE}" 2>/dev/null || echo "1")
@@ -142,9 +147,13 @@ fi
 # 1. Start Backend (FastAPI)
 echo "📦 Starting Backend API (port 8000)..."
 if _systemd_managed "ocr-backend.service"; then
-    sudo systemctl start ocr-backend
+    # Backend is its own enabled systemd unit (Restart=always) and auto-starts on
+    # boot. We do NOT start it here — that would need `sudo systemctl` (interactive
+    # password under systemd) and would fight the unit. We just wait for /health
+    # further below. Nudge it active without sudo if it happens to be down.
+    systemctl is-active --quiet ocr-backend || systemctl --no-block start ocr-backend 2>/dev/null || true
     BACKEND_PID=$(systemctl show -p MainPID ocr-backend 2>/dev/null | cut -d= -f2)
-    echo "   Managed by systemd (PID: $BACKEND_PID)"
+    echo "   Managed by systemd (PID: ${BACKEND_PID:-?}) — waiting for health below"
 else
     cd "$BACKEND_DIR"
     nohup python3 -m uvicorn app.main:app --port 8000 --host 0.0.0.0 \
