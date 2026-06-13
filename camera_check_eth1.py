@@ -95,6 +95,19 @@ def try_open_and_grab(device_info):
         except Exception:
             pass  # Not all cameras expose this param
 
+        # Force a known-good, low-bandwidth config so the check is deterministic
+        # regardless of whatever the camera's stored/last format is. eth1 is a
+        # 100 Mbit USB link: BGR8 (3 B/px, ~6.9MB) overruns it → "incompletely
+        # grabbed"; BayerRG8 (1 B/px, ~2.3MB) fits. Packet 1500 (no jumbo).
+        try:
+            camera.GevSCPSPacketSize.SetValue(1500)
+        except Exception:
+            pass
+        try:
+            camera.PixelFormat.SetValue("BayerRG8")
+        except Exception:
+            pass
+
         camera.StartGrabbing(py.GrabStrategy_LatestImageOnly)
         grab_result = camera.RetrieveResult(GRAB_TIMEOUT_MS, py.TimeoutHandling_ThrowException)
 
