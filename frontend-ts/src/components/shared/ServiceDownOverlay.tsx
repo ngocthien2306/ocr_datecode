@@ -12,7 +12,10 @@ export const ServiceDownOverlay: React.FC = () => {
     setState(prev => prev === 'backend_down' ? 'ok' : prev);
   }, []);
 
-  const handleDisconnect = useCallback((_reason: string) => {
+  const handleDisconnect = useCallback((reason: string) => {
+    // 'io client disconnect' = we called disconnect() ourselves (e.g. logout /
+    // page teardown) — not an outage, don't flash the overlay.
+    if (reason === 'io client disconnect') return;
     setState('backend_down');
   }, []);
 
@@ -30,12 +33,21 @@ export const ServiceDownOverlay: React.FC = () => {
     socketService.onSocketDisconnect(handleDisconnect);
     socketService.onCameraServiceStatus(handleCameraServiceStatus);
 
-    // Sync initial socket state
+    // Don't flash "backend down" on every page load — the socket connects
+    // asynchronously and is NOT connected for the first ~1s. Give it a grace
+    // window; only declare the backend down if it still hasn't connected.
+    // handleConnect ('connect') resets to 'ok' if/when it succeeds.
+    let graceTimer: ReturnType<typeof setTimeout> | null = null;
     if (!socketService.isConnected()) {
-      setState('backend_down');
+      graceTimer = setTimeout(() => {
+        if (!socketService.isConnected()) {
+          setState(prev => prev === 'ok' ? 'backend_down' : prev);
+        }
+      }, 4000);
     }
 
     return () => {
+      if (graceTimer) clearTimeout(graceTimer);
       socketService.offSocketConnect(handleConnect);
       socketService.offSocketDisconnect(handleDisconnect);
       socketService.offCameraServiceStatus(handleCameraServiceStatus);

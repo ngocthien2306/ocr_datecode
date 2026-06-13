@@ -245,6 +245,10 @@ class TriggerHandler:
         stats_logger = logging.getLogger('trigger_stats')
         stats_logger.setLevel(logging.INFO)
         stats_logger.propagate = False
+        # Only track a handler for cleanup if WE create it here. If the daily
+        # handler already exists (marker found) file_handler stays None — the
+        # finally block must not touch it (this was the UnboundLocalError crash).
+        file_handler = None
         if not any(getattr(h, "_marker", None) == "daily-trigger_stats" for h in stats_logger.handlers):
             file_handler = make_handler(
                 "trigger_stats",
@@ -319,9 +323,11 @@ class TriggerHandler:
             import traceback
             traceback.print_exc()
         finally:
-            # Cleanup
-            stats_logger.removeHandler(file_handler)
-            file_handler.close()
+            # Cleanup — only the handler we created in this run (the shared daily
+            # handler created elsewhere must stay attached).
+            if file_handler is not None:
+                stats_logger.removeHandler(file_handler)
+                file_handler.close()
             logger.info("Monitoring loop stopped")
 
     def _setup_pulse_logger(self):
