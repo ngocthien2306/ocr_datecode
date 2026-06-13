@@ -499,17 +499,18 @@ class Camera:
         if len(img_array.shape) == 3 and img_array.shape[2] == 3:
             return img_array
 
-        # Detect Bayer pattern from actual pixel format
+        # Detect Bayer pattern from actual pixel format.
+        # NOTE: convert to BGR (not RGB) so the result matches what on-camera BGR8
+        # used to produce — keeps colors correct for display + Check_Color.
         if current_format and "Bayer" in current_format:
-            # BayerRG8/BayerRG12 -> BGR using debayering
             if "RG" in current_format:
-                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_RG2RGB)
+                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_RG2BGR)
             elif "BG" in current_format:
-                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_BG2RGB)
+                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_BG2BGR)
             elif "GR" in current_format:
-                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_GR2RGB)
+                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_GR2BGR)
             elif "GB" in current_format:
-                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_GB2RGB)
+                return cv2.cvtColor(img_array, cv2.COLOR_BAYER_GB2BGR)
         # Grayscale (Mono8, Mono12) -> BGR
         if len(img_array.shape) == 2:
             return cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
@@ -530,10 +531,18 @@ class Camera:
             # Pixel Format (can ONLY be set when camera is NOT grabbing)
             # Only apply during initial connect, not during runtime settings update
             if apply_pixel_format and self.pixel_format and not self.camera.IsGrabbing():
+                # On GigE, BGR8/RGB8 (3 bytes/px) uses 3x the bandwidth of the raw
+                # Bayer format (1 byte/px). On a 100 Mbit link that overruns and every
+                # frame returns "incompletely grabbed". So transmit raw BayerRG8 and
+                # debayer on the host in _convert_to_bgr() — same final BGR image, 1/3
+                # the network load. (Non-GigE / USB3 cameras keep the requested format.)
+                is_gige = hasattr(self.camera, 'GevSCPSPacketSize')
+                _heavy_to_bayer = {"BGR8": "BayerRG8", "RGB8": "BayerRG8"}
+                wire_format = _heavy_to_bayer.get(self.pixel_format, self.pixel_format) if is_gige else self.pixel_format
                 try:
-                    self.camera.PixelFormat.SetValue(self.pixel_format)
+                    self.camera.PixelFormat.SetValue(wire_format)
                     actual_pixel_format = self.camera.PixelFormat.GetValue()
-                    logger.info(f"[{self.serial_number}] PixelFormat set: {actual_pixel_format}")
+                    logger.info(f"[{self.serial_number}] PixelFormat set: {actual_pixel_format} (requested {self.pixel_format})")
                 except Exception as pixel_error:
                     # USB format -> GigE format mapping
                     logger.warning(f"[{self.serial_number}] Failed to set {self.pixel_format}: {pixel_error}")
