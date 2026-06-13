@@ -366,11 +366,15 @@ class Camera:
             self.camera = pylon.InstantCamera(tlFactory.CreateDevice(target_device))
             self.camera.Open()
 
-            # Lower heartbeat timeout so the camera releases its GVCP session
-            # quickly when the host disconnects — avoids "session already open"
-            # failures on reconnect. 1000ms matches the watchdog scripts.
+            # Heartbeat timeout = how long the camera waits for the host before it
+            # drops the GVCP session and reports "device physically removed".
+            # 1000ms was far too aggressive: on a busy Jetson (continuous streaming
+            # + recipe load + GIL) the host can stall >1s, and the camera then
+            # tears down mid-run → every subsequent SetValue fails with
+            # "physically removed". 5000ms tolerates host-busy spikes while still
+            # releasing the session reasonably fast on a real disconnect.
             try:
-                self.camera.GetTLNodeMap()["HeartbeatTimeout"].SetValue(1000)
+                self.camera.GetTLNodeMap()["HeartbeatTimeout"].SetValue(5000)
             except Exception:
                 pass  # Not all transport layers expose this node
 
@@ -714,6 +718,25 @@ class Camera:
                     logger.info(f"[{self.serial_number}] ✓ GevSCBWR (bandwidth reserve) set to 10%")
             except Exception as e:
                 logger.warning(f"[{self.serial_number}] Could not set GevSCBWR: {e}")
+
+            # 4b. Cap the free-run acquisition frame rate. At full speed an
+            # a2A1920-51gc pushes ~117 MB/s which saturates a marginal Jetson GigE
+            # link → every frame comes back "incompletely grabbed" and NOTHING is
+            # written to shared memory (live preview stays blank). Capping to a
+            # modest fps keeps the data rate well under the link budget. In trigger
+            # modes the trigger gates capture, so this cap is harmless there.
+            gige_max_fps = float(getattr(self, 'gige_max_fps', 15.0))
+            try:
+                if hasattr(self.camera, 'AcquisitionFrameRateEnable'):
+                    self.camera.AcquisitionFrameRateEnable.SetValue(True)
+                if hasattr(self.camera, 'AcquisitionFrameRate'):
+                    self.camera.AcquisitionFrameRate.SetValue(gige_max_fps)
+                    logger.info(f"[{self.serial_number}] ✓ AcquisitionFrameRate capped to {gige_max_fps} fps")
+                elif hasattr(self.camera, 'AcquisitionFrameRateAbs'):
+                    self.camera.AcquisitionFrameRateAbs.SetValue(gige_max_fps)
+                    logger.info(f"[{self.serial_number}] ✓ AcquisitionFrameRateAbs capped to {gige_max_fps} fps")
+            except Exception as e:
+                logger.warning(f"[{self.serial_number}] Could not cap AcquisitionFrameRate: {e}")
 
             # 5. Enable resend mechanism for lost packets (if available)
             try:
@@ -1502,8 +1525,28 @@ class Camera:
                             # Release grab result
                             grab_result.Release()
                         else:
-                            # No frame available, sleep briefly
-                            time.sleep(0.001)
+                            # Grab failed or incomplete. This is the silent killer
+                            # behind a blank live preview: "incompletely grabbed"
+                            # (GigE buffer underrun) means GrabSucceeded()=False, so
+                            # no frame reaches shared memory. Log it (rate-limited)
+                            # so the underrun is visible instead of an empty stream.
+                            if grab_result is not None:
+                                try:
+                                    err = f"0x{grab_result.GetErrorCode():08x}: {grab_result.GetErrorDescription()}"
+                                except Exception:
+                                    err = "unknown grab error"
+                                grab_result.Release()
+                                self._grab_fail_count = getattr(self, '_grab_fail_count', 0) + 1
+                                if self._grab_fail_count % 50 == 1:
+                                    logger.warning(
+                                        f"[{self.serial_number}] Continuous grab failing "
+                                        f"({self._grab_fail_count} so far) — {err}. "
+                                        f"Likely GigE buffer underrun: check eth1 MTU/rmem_max "
+                                        f"and AcquisitionFrameRate cap."
+                                    )
+                            else:
+                                # No frame available yet, sleep briefly
+                                time.sleep(0.001)
 
                     except Exception as e:
                         logger.error(f"[{self.serial_number}] Error in continuous mode: {e}")

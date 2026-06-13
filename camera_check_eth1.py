@@ -92,10 +92,12 @@ def try_open_and_grab(device_info):
         camera = py.InstantCamera(py.TlFactory.GetInstance().CreateDevice(device_info))
         camera.Open()
 
-        # Reduce heartbeat timeout so camera releases stale sessions faster
+        # Heartbeat timeout: 1000ms was too aggressive — a busy host stalls >1s
+        # and the camera reports "physically removed". 3000ms is safer while still
+        # releasing stale sessions reasonably fast.
         try:
             if camera.HeartbeatTimeout.IsWritable():
-                camera.HeartbeatTimeout.Value = 1000
+                camera.HeartbeatTimeout.Value = 3000
         except Exception:
             pass
 

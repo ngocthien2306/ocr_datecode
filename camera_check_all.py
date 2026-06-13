@@ -81,8 +81,9 @@ def try_open_and_grab(device_info):
         camera = py.InstantCamera(py.TlFactory.GetInstance().CreateDevice(device_info))
         camera.Open()
         try:
+            # 3000ms (was 1000) — avoid "physically removed" when the host stalls.
             if camera.HeartbeatTimeout.IsWritable():
-                camera.HeartbeatTimeout.Value = 1000
+                camera.HeartbeatTimeout.Value = 3000
         except Exception:
             pass
         camera.StartGrabbing(py.GrabStrategy_LatestImageOnly)
