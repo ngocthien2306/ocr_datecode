@@ -196,21 +196,33 @@ sleep 2
 
 # 6. Auto-open Firefox after services are ready
 echo "🦊 Opening Firefox..."
-sleep 5  # Wait for frontend to be fully ready
 
 # Get the current display and xauthority
 CURRENT_DISPLAY=$(who | grep "$USER" | awk '{print $2}' | head -1)
 CURRENT_DISPLAY=":${CURRENT_DISPLAY##*:}"
 [ -z "$CURRENT_DISPLAY" ] && CURRENT_DISPLAY=":0"
-
 export DISPLAY="$CURRENT_DISPLAY"
 export XAUTHORITY="$HOME/.Xauthority"
 
-# Open Firefox
+# Wait for frontend to respond (max 30s) before opening browser
+echo "   Waiting for frontend to be ready..."
+for _i in $(seq 1 30); do
+    curl -s -o /dev/null http://localhost:5173 && break
+    sleep 1
+done
+
 FIREFOX_PID=""
 if command -v firefox &> /dev/null; then
-    firefox --kiosk http://localhost:5173 > "$LOG_DIR/firefox.log" 2>&1 &
-    # firefox http://localhost:5173 > "$LOG_DIR/firefox.log" 2>&1 &
+    # Kill any existing Firefox before opening fresh kiosk session
+    if pgrep -u "$USER" firefox > /dev/null 2>&1; then
+        echo "   Closing existing Firefox..."
+        pkill -u "$USER" firefox 2>/dev/null || true
+        for _i in 1 2 3 4 5; do
+            pgrep -u "$USER" firefox > /dev/null 2>&1 || break
+            sleep 1
+        done
+    fi
+    firefox --kiosk http://localhost:5173 >> "$LOG_DIR/firefox.log" 2>&1 &
     FIREFOX_PID=$!
     echo "   PID: $FIREFOX_PID (DISPLAY=$DISPLAY)"
 else
