@@ -3,7 +3,7 @@ import Dashboard from './components/dashboard/Dashboard';
 import Login from './components/login/Login';
 import { ToastProvider } from './contexts/ToastContext';
 import { UserProvider } from './contexts/UserContext';
-import { ServiceStatusWatcher } from './components/shared/ServiceStatusWatcher';
+import { ServiceDownOverlay } from './components/shared/ServiceDownOverlay';
 import './styles/App.css';
 
 export default function SuntechAutomation() {
@@ -47,7 +47,7 @@ export default function SuntechAutomation() {
       <ToastProvider>
         <UserProvider>
           <Dashboard onLogout={handleLogout} />
-          <ServiceStatusWatcher />
+          <ServiceDownOverlay />
         </UserProvider>
       </ToastProvider>
     );

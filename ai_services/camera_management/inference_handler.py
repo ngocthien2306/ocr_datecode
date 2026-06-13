@@ -303,27 +303,6 @@ class InferenceHandler:
             traceback.print_exc()
             raise
 
-    def _release_cuda_context_for_thread(self):
-        """
-        Pop the CUDA primary context that _initialize_cuda_context_for_thread
-        pushed. MUST run on the SAME thread that pushed it (the single inference
-        worker) — otherwise the context stays on that thread's stack and PyCUDA
-        aborts the whole process at interpreter cleanup:
-            "PyCUDA ERROR: The context stack was not empty upon module cleanup."
-        Submit this onto self._inference_executor at shutdown so it runs on the
-        worker thread.
-        """
-        current_thread = threading.current_thread()
-        ctx = getattr(current_thread, '_cuda_context', None)
-        if ctx is None:
-            return
-        try:
-            ctx.pop()
-            current_thread._cuda_context = None
-            current_thread._cuda_context_initialized = False
-            logger.info("✅ CUDA context popped on inference worker (clean shutdown)")
-        except Exception as e:
-            logger.warning(f"Failed to pop CUDA context on shutdown: {e}")
 
     def _init_verification_services(self):
         """Initialize text and template verification services"""
@@ -575,14 +554,6 @@ class InferenceHandler:
         """Shutdown inference handler and cleanup resources"""
         logger.info("Shutting down InferenceHandler...")
 
-        # Pop the CUDA context on the worker thread BEFORE tearing the executor
-        # down. max_workers=1, so this task queues after any in-flight inference
-        # (which still needs the context) and runs last on the same worker thread
-        # that pushed it. Without this, PyCUDA aborts the process at cleanup.
-        try:
-            self._inference_executor.submit(self._release_cuda_context_for_thread)
-        except RuntimeError:
-            pass  # executor already shut down
 
         # Shutdown executor (wait for pending jobs + the context-pop above)
         self._inference_executor.shutdown(wait=True, cancel_futures=False)

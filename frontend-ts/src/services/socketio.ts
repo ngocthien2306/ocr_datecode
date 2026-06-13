@@ -33,9 +33,9 @@ class SocketIOService {
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      // Retry forever — this is a kiosk. If we give up, ServiceStatusWatcher
-      // would never see the backend come back. Socket.IO auto-reconnects and
-      // fires 'connect' on recovery, which clears the "backend down" toast.
+      // Retry forever — this is a kiosk. If we give up, the ServiceDownOverlay
+      // would stay stuck until a manual page reload even after the backend
+      // comes back. Socket.IO auto-reconnects and fires 'connect' on recovery.
       reconnectionAttempts: Infinity
     });
 
