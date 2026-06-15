@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { socketService } from '../../services/socketio';
 import './ServiceDownOverlay.css';
 
@@ -6,6 +6,8 @@ type ServiceState = 'ok' | 'backend_down' | 'camera_down';
 
 export const ServiceDownOverlay: React.FC = () => {
   const [state, setState] = useState<ServiceState>('ok');
+  // Đã từng mất kết nối hay chưa — để biết lúc nào là "recover" (down -> ok).
+  const wasDownRef = useRef(false);
 
   const handleConnect = useCallback(() => {
     // Backend socket reconnected — camera service state will be re-announced via event
@@ -51,6 +53,21 @@ export const ServiceDownOverlay: React.FC = () => {
       socketService.offCameraServiceStatus(handleCameraServiceStatus);
     };
   }, [handleConnect, handleDisconnect, handleCameraServiceStatus]);
+
+  // Khi kết nối lại được (down -> ok), tự refresh lại trang để mọi state/stream
+  // được khởi tạo lại sạch sẽ thay vì chỉ ẩn overlay.
+  useEffect(() => {
+    if (state === 'backend_down' || state === 'camera_down') {
+      wasDownRef.current = true;
+    } else if (state === 'ok' && wasDownRef.current) {
+      wasDownRef.current = false;
+      // Chờ một chút cho backend/camera service ổn định trước khi reload.
+      const t = setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+      return () => clearTimeout(t);
+    }
+  }, [state]);
 
   if (state === 'ok') return null;
 
