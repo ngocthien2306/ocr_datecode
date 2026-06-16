@@ -32,6 +32,19 @@ async def connect(sid, environ, auth):
     logger.info(f"Client connected: {sid}")
     await sio.emit('connection_response', {'status': 'connected', 'sid': sid}, room=sid)
 
+    # Push the CURRENT camera-service status to THIS client right away so the
+    # ServiceDownOverlay reflects reality immediately on (re)connect — e.g. if
+    # the camera service is already down at page load there is no disconnect
+    # event to rely on.
+    try:
+        from app.api.websocket.camera_ws import camera_ws_manager
+        await sio.emit('camera_service_status', {
+            'connected': camera_ws_manager.is_connected(),
+            'message': 'Camera Management Service status (on connect)'
+        }, room=sid)
+    except Exception as e:
+        logger.error(f"Failed to emit initial camera_service_status: {e}")
+
 
 @sio.event
 async def disconnect(sid):

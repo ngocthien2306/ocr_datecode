@@ -53,6 +53,18 @@ class CameraWebSocketManager:
 
             logger.info("Camera service connected via WebSocket")
 
+        # Notify frontend clients that camera service is back up so the
+        # ServiceDownOverlay hides itself. Done outside the lock to avoid
+        # holding it across the emit.
+        try:
+            from app.services.socketio_service import emit_camera_service_status
+            await emit_camera_service_status({
+                'connected': True,
+                'message': 'Camera Management Service connected'
+            })
+        except Exception as e:
+            logger.error(f"Failed to emit camera_service_status up: {e}")
+
     async def disconnect(self):
         """Disconnect camera service WebSocket"""
         async with self._lock:

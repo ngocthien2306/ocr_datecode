@@ -243,6 +243,30 @@ class SocketIOService {
   }
 
   /**
+   * Listen for the underlying socket (backend) connect/disconnect.
+   * Used by ServiceDownOverlay to detect when the BACKEND is down.
+   */
+  onSocketConnect(callback: () => void): void {
+    if (!this.socket) return;
+    this.socket.on('connect', callback);
+  }
+
+  offSocketConnect(callback: () => void): void {
+    if (!this.socket) return;
+    this.socket.off('connect', callback);
+  }
+
+  onSocketDisconnect(callback: (reason: string) => void): void {
+    if (!this.socket) return;
+    this.socket.on('disconnect', callback);
+  }
+
+  offSocketDisconnect(callback: (reason: string) => void): void {
+    if (!this.socket) return;
+    this.socket.off('disconnect', callback);
+  }
+
+  /**
    * Listen for individual camera status updates
    */
   onCameraStatusUpdate(callback: (data: any) => void): void {
