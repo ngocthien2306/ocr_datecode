@@ -33,28 +33,47 @@ if [ "$USER_HOME" = "/home/suntech" ] || [ "$USER_HOME" = "/home/demo" ]; then
     if [ "$USER_HOME" = "/home/demo" ]; then
         CAM_SCRIPT="camera_check_all.py"
         CAM_TITLE="Camera Health Check - ALL"
+        CAM_ARGS=""
     else
         CAM_SCRIPT="camera_check_eth1.py"
         CAM_TITLE="Camera Health Check - eth1"
     fi
 
-    TERMINAL_CMD="python3 '${SCRIPT_DIR}/${CAM_SCRIPT}'; \
+    TERMINAL_CMD="python3 '${SCRIPT_DIR}/${CAM_SCRIPT}' ${CAM_ARGS}; \
 EXIT=\$?; echo \$EXIT > '${TMPFILE}'; \
 if [ \$EXIT -eq 0 ]; then \
     echo ''; echo '>>> Camera OK! Services will start in 3 seconds...'; sleep 3; \
 else \
-    echo ''; echo '>>> Camera check FAILED. System reboot was triggered.'; sleep 6; \
+    echo ''; echo '>>> Camera check FAILED. Services will NOT start (will retry).'; sleep 6; \
 fi"
 
+    # Kill any stale camera_management process BEFORE the camera check. Otherwise
+    # it keeps the GVCP control session alive (it has auto-reconnect, so even an
+    # eth1 reset won't free the camera — it just re-grabs it), and the check below
+    # fails with "The device is controlled by another application (0xE1018006)".
+    # A previous instance that crashed uncleanly (e.g. PyCUDA abort) is the usual
+    # culprit. sleep 3 lets the camera release the session (HeartbeatTimeout).
+    if pgrep -f "camera_management_service.py" >/dev/null 2>&1; then
+        echo "🔪 Killing stale camera_management before camera check..."
+        pkill -9 -f "camera_management_service.py" 2>/dev/null || true
+        sleep 3
+    fi
+
     echo "📷 Opening camera health check terminal..."
-    if command -v gnome-terminal &>/dev/null; then
-        gnome-terminal --wait --title="$CAM_TITLE" -- bash -c "$TERMINAL_CMD"
-    elif command -v xterm &>/dev/null; then
-        xterm -title "$CAM_TITLE" -geometry 120x35 -e bash -c "$TERMINAL_CMD"
+    # Show the GUI popup (gnome-terminal/xterm) FIRST — works under systemd too as
+    # long as DISPLAY=:0 + XAUTHORITY are exported (done above). If the GUI can't
+    # open (no X access), fall back to an inline run so the service still proceeds.
+    # NB: capture the exit code via `if` so `set -e` does NOT abort the script when
+    # the camera check fails — we need to reach the CAMERA_EXIT check below.
+    if command -v gnome-terminal &>/dev/null && \
+       gnome-terminal --wait --title="$CAM_TITLE" -- bash -c "$TERMINAL_CMD"; then
+        :  # popup ran; it wrote the exit code into TMPFILE
+    elif command -v xterm &>/dev/null && \
+         xterm -title "$CAM_TITLE" -geometry 120x35 -e bash -c "$TERMINAL_CMD"; then
+        :  # popup ran; it wrote the exit code into TMPFILE
     else
-        echo "⚠️  No GUI terminal found, running inline..."
-        python3 "${SCRIPT_DIR}/${CAM_SCRIPT}"
-        echo $? > "${TMPFILE}"
+        echo "⚠️  No usable GUI terminal — running camera check inline..."
+        if python3 "${SCRIPT_DIR}/${CAM_SCRIPT}" ${CAM_ARGS}; then echo 0 > "${TMPFILE}"; else echo $? > "${TMPFILE}"; fi
     fi
 
     CAMERA_EXIT=$(cat "${TMPFILE}" 2>/dev/null || echo "1")
@@ -88,9 +107,18 @@ kill_port() {
     fi
 }
 
+# Helper: true if a systemd service unit is installed (enabled, disabled or static)
+_systemd_managed() {
+    systemctl list-unit-files "$1" --no-legend 2>/dev/null | grep -qE "enabled|static|disabled"
+}
+
 # Kill existing processes
-kill_port 8000
+# NOTE: port 8000 (backend) is intentionally NOT killed here — the backend runs
+# as its own systemd unit (ocr-backend.service, Restart=always). Killing it would
+# fight systemd and cause an unnecessary restart/outage.
 kill_port 5173
+# Camera management runs as a plain background process (started below, after the
+# camera check). Kill any leftover instance so we start fresh.
 pkill -f "camera_management_service.py" 2>/dev/null || true
 pkill ngrok 2>/dev/null || true
 
@@ -111,27 +139,52 @@ fi
 
 sleep 2
 
+# 0.5 Update code from git before starting services.
+# Non-fatal: a failed pull (no network, local changes, conflicts) must NOT
+# block service startup, so we never let it trip `set -e`.
+echo "⬇️  Updating code (git pull)..."
+PROJECT_DIR="${USER_HOME}/Source/ocr_datecode"
+if cd "$PROJECT_DIR"; then
+    GIT_TERMINAL_PROMPT=0 git pull --ff-only > "$LOG_DIR/git_pull.log" 2>&1 \
+        && echo "   ✅ Code updated" \
+        || echo "   ⚠️  git pull skipped/failed (see $LOG_DIR/git_pull.log) — starting with current code"
+fi
+
 # 1. Start Backend (FastAPI)
+# Guarantee the backend is up WITHOUT needing sudo:
+#   - If something is already listening on :8000 (ocr-backend.service started by
+#     systemd on boot, or a prior run), leave it alone.
+#   - Otherwise start uvicorn inline. This way the backend always comes up even
+#     if the systemd unit is missing/failed (a non-root `systemctl start` under
+#     systemd would be denied by polkit, which is what left the backend down).
 echo "📦 Starting Backend API (port 8000)..."
-cd "$BACKEND_DIR"
-nohup python3 -m uvicorn app.main:app --reload --port 8000 --host 0.0.0.0 \
-    > "$LOG_DIR/backend.log" 2>&1 &
-BACKEND_PID=$!
-echo "   PID: $BACKEND_PID"
+if lsof -Pi :8000 -sTCP:LISTEN -t >/dev/null 2>&1; then
+    BACKEND_PID=$(systemctl show -p MainPID ocr-backend 2>/dev/null | cut -d= -f2)
+    echo "   Already listening on :8000 (systemd unit or prior run, PID: ${BACKEND_PID:-?})"
+else
+    cd "$BACKEND_DIR"
+    nohup python3 -m uvicorn app.main:app --port 8000 --host 0.0.0.0 \
+        >> "$LOG_DIR/backend.log" 2>&1 &
+    BACKEND_PID=$!
+    echo "   Started inline (PID: $BACKEND_PID)"
+fi
 sleep 3
 
 # 2. Start Frontend (Vite)
 echo "🎨 Starting Frontend (port 5173)..."
 cd "$FRONTEND_DIR"
-nohup yarn dev > "$LOG_DIR/frontend.log" 2>&1 &
+nohup yarn dev >> "$LOG_DIR/frontend.log" 2>&1 &
 FRONTEND_PID=$!
 echo "   PID: $FRONTEND_PID"
 sleep 3
 
 # 3. Start AI Services (Camera Management)
+# Runs as a plain background process (NOT a systemd service) so it stays
+# sequential after the camera check above. Crash recovery is handled by the
+# backend supervisor (kill + respawn via app/services/camera_service_supervisor.py).
 echo "📷 Starting AI Camera Services..."
 cd "$AI_SERVICES_DIR"
-nohup python camera_management_service.py > "$LOG_DIR/ai_camera.log" 2>&1 &
+nohup python camera_management_service.py >> "$LOG_DIR/ai_camera.log" 2>&1 &
 AI_PID=$!
 echo "   PID: $AI_PID"
 sleep 2
@@ -153,23 +206,54 @@ echo "   PID: $NGROK_FRONTEND_PID"
 
 sleep 2
 
-# 6. Auto-open Firefox after services are ready
+# 6. Wait for all services to be ready, then open Firefox
+echo "⏳ Waiting for services to be ready before opening browser..."
+
+# Wait for backend API (max 60s)
+echo "   Backend API..."
+for _i in $(seq 1 60); do
+    curl -sf http://localhost:8000/health -o /dev/null 2>/dev/null && break
+    curl -sf http://localhost:8000/docs   -o /dev/null 2>/dev/null && break
+    sleep 1
+done
+
+# Wait for AI camera service websocket to connect (max 30s)
+# Proxy through backend: if /api/cameras returns 200, AI service is up
+echo "   AI camera service..."
+for _i in $(seq 1 30); do
+    curl -sf http://localhost:8000/api/cameras -o /dev/null 2>/dev/null && break
+    sleep 1
+done
+
+# Wait for frontend (max 30s)
+echo "   Frontend..."
+for _i in $(seq 1 30); do
+    curl -sf http://localhost:5173 -o /dev/null 2>/dev/null && break
+    sleep 1
+done
+
 echo "🦊 Opening Firefox..."
-sleep 5  # Wait for frontend to be fully ready
 
 # Get the current display and xauthority
 CURRENT_DISPLAY=$(who | grep "$USER" | awk '{print $2}' | head -1)
 CURRENT_DISPLAY=":${CURRENT_DISPLAY##*:}"
 [ -z "$CURRENT_DISPLAY" ] && CURRENT_DISPLAY=":0"
-
 export DISPLAY="$CURRENT_DISPLAY"
 export XAUTHORITY="$HOME/.Xauthority"
 
-# Open Firefox
 FIREFOX_PID=""
 if command -v firefox &> /dev/null; then
-    firefox --kiosk http://localhost:5173 > "$LOG_DIR/firefox.log" 2>&1 &
-    # firefox http://localhost:5173 > "$LOG_DIR/firefox.log" 2>&1 &
+    # Kill any existing Firefox before opening fresh kiosk session
+    if pgrep -u "$USER" firefox > /dev/null 2>&1; then
+        echo "   Closing existing Firefox..."
+        pkill -u "$USER" firefox 2>/dev/null || true
+        for _i in 1 2 3 4 5; do
+            pgrep -u "$USER" firefox > /dev/null 2>&1 || break
+            sleep 1
+        done
+    fi
+    # firefox --kiosk http://localhost:5173 >> "$LOG_DIR/firefox.log" 2>&1 &
+    firefox http://localhost:5173 >> "$LOG_DIR/firefox.log" 2>&1 &
     FIREFOX_PID=$!
     echo "   PID: $FIREFOX_PID (DISPLAY=$DISPLAY)"
 else
