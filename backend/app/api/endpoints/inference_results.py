@@ -239,6 +239,36 @@ async def get_timeseries_statistics(
 
 
 @router.get(
+    "/frame-images",
+    summary="Get recent recorded frame images for one camera (for Edge Setup testing)"
+)
+async def get_frame_images(
+    recipe_id: str = Query(..., description="Recipe id"),
+    serial_number: str = Query(..., description="Camera serial number"),
+    result: Optional[str] = Query(None, regex="^(PASS|FAIL|ERROR)$", description="Filter by frame pass/fail"),
+    limit: int = Query(60, ge=1, le=300),
+    db=Depends(get_database),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Return recent recorded frame images for a single camera in a recipe, newest
+    first. Used by the Edge Setup modal to load real frames and test the
+    edge-detection config against them.
+
+    Each item: { image_path, org_path, timestamp, frame_idx, template_name,
+                 pass_fail, label_polygon }. `label_polygon` (frame pixel coords,
+                 from SuperPoint) lets the preview run wall detection on the frame.
+    """
+    repo = InferenceResultRepository(db)
+    return await repo.get_frame_images(
+        recipe_id=recipe_id,
+        serial_number=serial_number,
+        result=result,
+        limit=limit,
+    )
+
+
+@router.get(
     "/{result_id}",
     response_model=InferenceResultResponse,
     summary="Get inference result by ID"

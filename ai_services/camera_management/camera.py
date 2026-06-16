@@ -293,6 +293,9 @@ class Camera:
         # "outer" = product box = bottle silhouette (default, matches YOLO convention)
         # "inner" = product box = sát label (tighter)
         self.product_box_wall_type: str = "outer"
+        # Save PASS-frame images to disk (default ON). 200-most-recent ring buffer
+        # per camera per recipe (see PassImagePruner). Used to re-test missed defects.
+        self.save_pass_images: bool = True
         # Cap rotation method for /frames/rotate + Check_Color OCR sub-mode:
         # 'yolo_obb' = trained best_bottle_m engine | 'yolo_segment' = pure CV
         self.cap_rotation_method: str = "yolo_obb"
@@ -1214,6 +1217,9 @@ class Camera:
             # Product box wall type (chỉ áp dụng cho yolo_segment): "outer" | "inner"
             pwt = recipe_data.get("product_box_wall_type")
             self.product_box_wall_type = pwt if pwt in ("outer", "inner") else "outer"
+            # Save PASS images to disk (default ON unless explicitly disabled)
+            spi = recipe_data.get("save_pass_images")
+            self.save_pass_images = True if spi is None else bool(spi)
             # Cap rotation method: 'yolo_obb' (default, TRT engine) | 'yolo_segment' (pure CV)
             crm = recipe_data.get("cap_rotation_method")
             self.cap_rotation_method = crm if crm in ("yolo_obb", "yolo_segment") else "yolo_obb"

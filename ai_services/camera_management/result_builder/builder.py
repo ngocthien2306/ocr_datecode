@@ -149,7 +149,8 @@ class FrameResultBuilder:
         serial_number: str,
         recipe_id: int,
         save_and_encode_func,
-        encode_display_func
+        encode_display_func,
+        save_pass_images: bool = False
     ) -> 'FrameResultBuilder':
         """
         Encode frame image for display.
@@ -160,8 +161,9 @@ class FrameResultBuilder:
             recipe_id: Recipe ID
             save_and_encode_func: Function to save and encode frame
             encode_display_func: Function to encode for display only
+            save_pass_images: When True, also persist PASS frames to disk
         """
-        if self._pass_fail in ["FAIL", "ERROR"]:
+        if self._pass_fail in ["FAIL", "ERROR"] or (self._pass_fail == "PASS" and save_pass_images):
             # Save to disk + encode
             base_dir = f"{home}/Source/ocr_datecode/backend/uploads/inference_results"
             self._image_path, self._image_base64 = save_and_encode_func(
@@ -565,6 +567,7 @@ class InferenceResultBuilder:
                     'frame_img': frame_img,
                     'serial_number': serial_number,
                     'recipe_id': camera.recipe_id,
+                    'save_pass_images': getattr(camera, 'save_pass_images', True),
                     'pass_fail': frame_builder._pass_fail,
                     'frame_idx': idx,
                     'transformed_bboxes': frame_builder._detected_regions,
@@ -696,10 +699,13 @@ class InferenceResultBuilder:
     ) -> tuple:
         """Encode a single frame"""
         pass_fail = task.get('pass_fail', 'PASS')
+        save_pass = bool(task.get('save_pass_images', False))
 
-        if pass_fail in ['FAIL', 'ERROR']:
+        # Persist to disk for FAIL/ERROR always, and for PASS when the recipe
+        # opts in (default ON). PASS images are ring-buffered to 200/camera.
+        if pass_fail in ['FAIL', 'ERROR'] or (pass_fail == 'PASS' and save_pass):
             base_dir = f"{home}/Source/ocr_datecode/backend/uploads/inference_results"
-            return save_and_encode_func(
+            result = save_and_encode_func(
                 frame_img=task['frame_img'],
                 serial_number=task['serial_number'],
                 recipe_id=task['recipe_id'],
@@ -713,6 +719,16 @@ class InferenceResultBuilder:
                 crop_area=task.get('crop_area'),
                 product_verification=task.get('product_verification')
             )
+            # Ring-buffer PASS images so disk usage stays bounded per camera.
+            if pass_fail == 'PASS' and result and result[0]:
+                try:
+                    from ..pass_image_pruner import PassImagePruner
+                    PassImagePruner.instance(base_dir=base_dir).enqueue(
+                        str(task['recipe_id']), str(task['serial_number'])
+                    )
+                except Exception as e:
+                    logger.warning(f"PassImagePruner enqueue failed: {e}")
+            return result
         else:
             image_base64 = encode_display_func(
                 frame_img=task['frame_img'],

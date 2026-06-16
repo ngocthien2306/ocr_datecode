@@ -200,6 +200,7 @@ export interface Recipe {
   char_denoise_enabled?: boolean;
   product_detection_method?: string;
   product_box_wall_type?: string;
+  save_pass_images?: boolean;
   cap_rotation_method?: string;
   cap_crop_method?: string;
   crop_match_method?: string;
@@ -329,6 +330,7 @@ export interface Receipt {
   char_denoise_enabled?: boolean;
   product_detection_method?: string;
   product_box_wall_type?: string;
+  save_pass_images?: boolean;
   cap_rotation_method?: string;
   cap_crop_method?: string;
   crop_match_method?: string;

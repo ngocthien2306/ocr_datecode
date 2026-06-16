@@ -39,6 +39,37 @@ class ColorConfig(BaseModel):
     bottle_min_aspect: Optional[float] = Field(default=1.2, ge=0.5, le=5.0, description="Minimum h/w aspect ratio (bottles are taller than wide)")
 
 
+class EdgeWalls(BaseModel):
+    """Template inner/outer wall gaps (px outward from label edge), computed on
+    the template image at EdgeSetupModal save time and reused at inference."""
+    inner_L: float = 0.0
+    inner_R: float = 0.0
+    outer_L: float = 0.0
+    outer_R: float = 0.0
+    plastic_L: float = 0.0
+    plastic_R: float = 0.0
+
+
+class EdgeConfig(BaseModel):
+    """Per-template edge-detection tuning. Only used when the recipe's
+    product_detection_method == 'yolo_segment' (image-proc bottle-wall detection).
+    Field names mirror EdgeParams in ai_services .../image_proc_detector.py."""
+    outer_search_max: float = Field(default=150.0, ge=10.0, le=600.0)
+    inner_search_max: float = Field(default=80.0, ge=0.0, le=400.0)
+    edge_margin: float = Field(default=2.0, ge=0.0, le=50.0)
+    y_extension: float = Field(default=0.2, ge=0.0, le=1.0)
+    fill_keep_ratio: float = Field(default=0.6, ge=0.0, le=1.0)
+    peak_height: float = Field(default=0.05, ge=0.0, le=1.0)
+    peak_prom: float = Field(default=0.02, ge=0.0, le=1.0)
+    peak_dist: int = Field(default=4, ge=1, le=50)
+    strong_thr: float = Field(default=0.15, ge=0.0, le=1.0)
+    outer_min_hratio: float = Field(default=0.55, ge=0.0, le=1.0)
+    inner_min_hratio: float = Field(default=0.20, ge=0.0, le=1.0)
+    inner_tol_px: int = Field(default=12, ge=0, le=100)
+    specular_thr: int = Field(default=230, ge=0, le=255)
+    template_walls: Optional[EdgeWalls] = Field(default=None, description="Walls computed on the template image at setup; used directly at inference")
+
+
 class TemplateImage(BaseModel):
     """Template image with annotations"""
     name: str = Field(..., description="Template name")
@@ -54,6 +85,7 @@ class TemplateImage(BaseModel):
     wrinkle_min_area: Optional[float] = Field(default=0.0, ge=0.0, description="Per-region min area filter — regions smaller than this are ignored (0 = no filter)")
     wrinkle_max_area: Optional[float] = Field(default=0.0, ge=0.0, description="Per-region critical area — any region ≥ this value triggers FAIL immediately (0 = disabled)")
     color_config: Optional[ColorConfig] = Field(default=None, description="HSV color check config (only used when function_type=Check_Color and template has 'product' annotation)")
+    edge_config: Optional[EdgeConfig] = Field(default=None, description="Per-bottle edge-detection tuning (only used when product_detection_method='yolo_segment')")
 
 class CameraTemplates(BaseModel):
     """Templates configuration for a camera"""
@@ -171,6 +203,8 @@ class RecipeBase(BaseModel):
     dual_rotation_check: Optional[bool] = Field(default=False, description="Try BOTH cap rotation candidates (angle + flipped180) and pick the one with higher match confidence. Only applies to Check_Color cap-OCR cameras. Doubles match cost but fixes ambiguous flip detection.")
     product_box_wall_type: Optional[str] = Field(default="outer", description="When product_detection_method='yolo_segment', which wall to use for product box corners: 'outer' (bottle silhouette) | 'inner' (closer to label)")
 
+    save_pass_images: Optional[bool] = Field(default=True, description="Save PASS-frame images to disk (ring buffer of 200 most-recent per camera). Used to re-test missed defects.")
+
     # Wrinkle segmentation model confidence threshold (recipe-level, applies to all cameras)
     wrinkle_conf: Optional[float] = Field(default=0.25, ge=0.0, le=1.0, description="Confidence threshold for wrinkle segmentation model (0.0 - 1.0)")
     wrinkle_show_when_pass: Optional[bool] = Field(default=True, description="Draw detected wrinkle regions on _viz.jpg even when frame passes (for debugging/visualization)")
@@ -231,6 +265,7 @@ class RecipeUpdate(BaseModel):
     char_denoise_enabled: Optional[bool] = None
     product_detection_method: Optional[str] = None
     product_box_wall_type: Optional[str] = None
+    save_pass_images: Optional[bool] = None
     cap_rotation_method: Optional[str] = None
     cap_crop_method: Optional[str] = None
     crop_match_method: Optional[str] = None

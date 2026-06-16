@@ -486,6 +486,7 @@ def recipe_to_response(recipe: RecipeInDB, user_names_map: dict = None) -> Recip
         crop_match_method=getattr(recipe, 'crop_match_method', 'superpoint'),
         dual_rotation_check=getattr(recipe, 'dual_rotation_check', False),
         product_box_wall_type=getattr(recipe, 'product_box_wall_type', 'outer'),
+        save_pass_images=getattr(recipe, 'save_pass_images', True),
         wrinkle_conf=getattr(recipe, 'wrinkle_conf', None),
         wrinkle_show_when_pass=getattr(recipe, 'wrinkle_show_when_pass', None),
         matching_conf=getattr(recipe, 'matching_conf', None),
@@ -1055,6 +1056,137 @@ async def detect_bottle_preview(body: dict):
     }
 
 
+def _resolve_preview_image_path(image_url: str) -> Optional[Path]:
+    """Resolve a FE-supplied image_url to an on-disk path for edge preview.
+
+    Handles two sources:
+      • template images:  /api/recipes/templates/images/<file>  -> uploads/templates/<file>
+      • recorded frames:  .../inference_results/<...>/<file>     -> uploads/inference_results/<...>/<file>
+    Prefers the clean '*_org.jpg' over the annotated '*_viz.jpg' when present.
+    """
+    if not image_url:
+        return None
+    uploads_root = TEMPLATE_UPLOAD_DIR.parent  # Path("uploads")
+    url = image_url.split("?")[0]
+
+    if "inference_results" in url:
+        rel = url[url.index("inference_results"):]
+        path = uploads_root / rel
+    elif "/templates/images/" in url or url.startswith("uploads/templates"):
+        path = TEMPLATE_UPLOAD_DIR / url.split("/")[-1]
+    else:
+        # Bare filename fallback → assume a template image
+        path = TEMPLATE_UPLOAD_DIR / url.split("/")[-1]
+
+    # Prefer the un-annotated original for accurate edge detection
+    if path.name.endswith("_viz.jpg"):
+        org = path.with_name(path.name[:-len("_viz.jpg")] + "_org.jpg")
+        if org.exists():
+            return org
+    return path
+
+
+@router.post("/templates/detect-walls-preview")
+async def detect_walls_preview(body: dict):
+    """
+    Run the image-proc bottle-edge detector on a template OR a recorded frame
+    image, using the tuning params EdgeSetupModal will persist into `edge_config`.
+    Returns the detected inner/outer wall corners so the FE can overlay them and
+    let the user verify the config per image.
+
+    Body:
+        image_url:       str           (template image URL or recorded-frame path)
+        label_polygon:   [[x,y], ...]  (label quad in IMAGE pixel coords)
+        wall_type:       'outer'|'inner'  (default 'outer')
+        params:          { ...EdgeParams fields... }  (optional; defaults used for missing)
+        template_walls:  { inner_L,inner_R,outer_L,outer_R,plastic_L,plastic_R } (optional)
+                         → when omitted, walls are computed from THIS image
+                           (template-setup mode) and returned for persistence.
+
+    Returns:
+        {
+          detected: bool,
+          inner_corners: [[x,y]x4] | null,
+          outer_corners: [[x,y]x4] | null,
+          corners:       [[x,y]x4] | null,   # chosen wall_type
+          template_walls: {...} | null,      # computed walls (template mode) or echoed
+          detection_info: {...} | null,
+          reason: str | null,
+        }
+    """
+    import sys
+    import numpy as np
+    import cv2
+
+    image_url = body.get("image_url", "")
+    label_polygon = body.get("label_polygon")
+    wall_type = (body.get("wall_type") or "outer").lower()
+    params_dict = body.get("params") or {}
+    template_walls = body.get("template_walls")
+
+    if not image_url or not label_polygon:
+        raise HTTPException(400, "image_url and label_polygon are required")
+    if len(label_polygon) < 4:
+        raise HTTPException(400, "label_polygon must have 4 points [TL, TR, BR, BL]")
+
+    image_path = _resolve_preview_image_path(image_url)
+    if image_path is None or not image_path.exists():
+        raise HTTPException(404, f"Image not found: {image_url}")
+
+    home = os.environ.get("HOME", "")
+    ai_path = os.path.join(home, "Source", "ocr_datecode", "ai_services")
+    if ai_path not in sys.path:
+        sys.path.insert(0, ai_path)
+    try:
+        from camera_management.verification.image_proc_detector import (
+            EdgeParams, detect_template_walls, detect_product_box,
+        )
+    except Exception as e:
+        raise HTTPException(503, f"image_proc_detector import failed: {e}")
+
+    img = cv2.imread(str(image_path))
+    if img is None:
+        raise HTTPException(500, "Failed to read image")
+
+    params = EdgeParams.from_config(params_dict)
+    label_pts = np.array(label_polygon, dtype=np.float32)
+
+    # Compute walls from this image when not supplied (template-setup mode)
+    walls = template_walls
+    if not walls:
+        walls = detect_template_walls(img, label_pts, params=params)
+        if walls is None:
+            return {
+                "detected": False, "inner_corners": None, "outer_corners": None,
+                "corners": None, "template_walls": None, "detection_info": None,
+                "reason": "Failed to detect template walls (try lowering thresholds)",
+            }
+
+    result = detect_product_box(
+        img, label_pts, walls,
+        serial_number="preview", wall_type=wall_type, params=params,
+    )
+    if result is None:
+        return {
+            "detected": False, "inner_corners": None, "outer_corners": None,
+            "corners": None, "template_walls": walls, "detection_info": None,
+            "reason": "Both walls hidden / detection failed for this image",
+        }
+
+    def _to_list(arr):
+        return arr.tolist() if hasattr(arr, "tolist") else arr
+
+    return {
+        "detected": True,
+        "inner_corners": _to_list(result.get("inner_corners")),
+        "outer_corners": _to_list(result.get("outer_corners")),
+        "corners": _to_list(result.get("corners")),
+        "template_walls": walls,
+        "detection_info": result.get("detection_info"),
+        "reason": None,
+    }
+
+
 @router.post("/templates/upload")
 async def upload_template_image(
     file: UploadFile = File(...),
@@ -1399,6 +1531,7 @@ async def clone_recipe(
         crop_match_method=getattr(original_recipe, 'crop_match_method', 'superpoint'),
         dual_rotation_check=getattr(original_recipe, 'dual_rotation_check', False),
         product_box_wall_type=getattr(original_recipe, 'product_box_wall_type', 'outer'),
+        save_pass_images=getattr(original_recipe, 'save_pass_images', True),
         wrinkle_conf=getattr(original_recipe, 'wrinkle_conf', None),
         wrinkle_show_when_pass=getattr(original_recipe, 'wrinkle_show_when_pass', None),
         matching_conf=getattr(original_recipe, 'matching_conf', None),
@@ -1568,6 +1701,7 @@ async def load_recipe(
         'crop_match_method': getattr(recipe, 'crop_match_method', None) or 'superpoint',
         'dual_rotation_check': bool(getattr(recipe, 'dual_rotation_check', False)),
         'product_box_wall_type': getattr(recipe, 'product_box_wall_type', None) or 'outer',
+        'save_pass_images': bool(getattr(recipe, 'save_pass_images', True)),
         'wrinkle_conf': getattr(recipe, 'wrinkle_conf', None),
         'wrinkle_show_when_pass': getattr(recipe, 'wrinkle_show_when_pass', None),
         'matching_conf': getattr(recipe, 'matching_conf', None),
@@ -1623,6 +1757,7 @@ async def load_recipe(
         'crop_match_method': getattr(recipe, 'crop_match_method', None) or 'superpoint',
         'dual_rotation_check': bool(getattr(recipe, 'dual_rotation_check', False)),
         'product_box_wall_type': getattr(recipe, 'product_box_wall_type', None) or 'outer',
+        'save_pass_images': bool(getattr(recipe, 'save_pass_images', True)),
         'wrinkle_conf': getattr(recipe, 'wrinkle_conf', None),
         'wrinkle_show_when_pass': getattr(recipe, 'wrinkle_show_when_pass', None),
         'matching_conf': getattr(recipe, 'matching_conf', None),
@@ -1950,6 +2085,7 @@ async def update_recipe_realtime(
         'crop_match_method': getattr(recipe, 'crop_match_method', None) or 'superpoint',
         'dual_rotation_check': bool(getattr(recipe, 'dual_rotation_check', False)),
         'product_box_wall_type': getattr(recipe, 'product_box_wall_type', None) or 'outer',
+        'save_pass_images': bool(getattr(recipe, 'save_pass_images', True)),
         'wrinkle_conf': getattr(recipe, 'wrinkle_conf', None),
         'wrinkle_show_when_pass': getattr(recipe, 'wrinkle_show_when_pass', None),
         'matching_conf': getattr(recipe, 'matching_conf', None),

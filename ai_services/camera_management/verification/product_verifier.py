@@ -423,7 +423,9 @@ class ProductVerificationService:
         Wrinkle vẫn chạy qua WrinkledSegmenter (separate model, không phụ thuộc YOLO).
         """
         import time
-        from .image_proc_detector import detect_product_box, label_box_from_pts
+        from .image_proc_detector import (
+            detect_product_box, label_box_from_pts, EdgeParams, DEFAULT_EDGE_PARAMS,
+        )
         t_start = time.perf_counter()
 
         # Filter frames that need verification (cùng logic như YOLO path)
@@ -452,17 +454,35 @@ class ProductVerificationService:
         def _detect_one(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             cam = data['camera']
             serial = cam.serial_number
-            walls = self._load_template_walls(serial)
             label_region = next(
                 (b for b in data['transformed_bboxes'] if b.get('type') == 'label'), None
             )
-            if walls is None or label_region is None:
+            if label_region is None:
                 return None
+
+            # Per-template edge_config (tuned in EdgeSetupModal). Falls back to
+            # globals + factory-computed template_walls when not configured.
+            template_idx = int(data.get('template_idx', 0) or 0)
+            templates = getattr(cam, 'templates', None) or []
+            edge_cfg = None
+            if 0 <= template_idx < len(templates):
+                edge_cfg = (templates[template_idx] or {}).get('edge_config')
+
+            params = EdgeParams.from_config(edge_cfg) if edge_cfg else DEFAULT_EDGE_PARAMS
+
+            # Walls: prefer the ones saved into edge_config at setup time; else
+            # use the factory-computed template_walls.json for this camera.
+            walls = (edge_cfg or {}).get('template_walls') if edge_cfg else None
+            if not walls:
+                walls = self._load_template_walls(serial)
+            if walls is None:
+                return None
+
             wall_type = getattr(cam, 'product_box_wall_type', 'outer') or 'outer'
             try:
                 return detect_product_box(
                     data['frame_img'], label_region['points'], walls,
-                    serial_number=serial, wall_type=wall_type,
+                    serial_number=serial, wall_type=wall_type, params=params,
                 )
             except Exception as e:
                 logger.warning(f"[{serial}] image_proc detect failed: {e}")

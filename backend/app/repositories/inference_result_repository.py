@@ -228,6 +228,69 @@ class InferenceResultRepository:
 
         return results
 
+    async def get_frame_images(
+        self,
+        recipe_id: str,
+        serial_number: str,
+        result: Optional[str] = None,
+        limit: int = 60,
+        scan_docs: int = 800,
+    ) -> List[Dict[str, Any]]:
+        """Collect recent recorded frame images for ONE camera in a recipe.
+
+        Scans the newest `scan_docs` result documents for the recipe, extracts
+        frames of `serial_number` that have a saved `image_path`, optionally
+        filtered by frame-level pass/fail. Returns up to `limit`, newest first.
+        """
+        query: Dict[str, Any] = {"recipe_id": recipe_id}
+        projection = {
+            "timestamp": 1,
+            "camera_results.serial_number": 1,
+            "camera_results.frames.image_path": 1,
+            "camera_results.frames.pass_fail": 1,
+            "camera_results.frames.frame_idx": 1,
+            "camera_results.frames.template_name": 1,
+            "camera_results.frames.detected_regions": 1,
+        }
+        cursor = self.collection.find(query, projection).sort("timestamp", -1).limit(scan_docs)
+
+        want = result.upper() if result else None
+        out: List[Dict[str, Any]] = []
+        async for doc in cursor:
+            ts = doc.get("timestamp")
+            for cam in doc.get("camera_results", []):
+                if cam.get("serial_number") != serial_number:
+                    continue
+                for fr in cam.get("frames", []):
+                    image_path = fr.get("image_path")
+                    if not image_path:
+                        continue
+                    pf = (fr.get("pass_fail") or "").upper()
+                    if want and pf != want:
+                        continue
+                    # Label polygon (frame pixel coords) for wall-detection preview
+                    label_polygon = None
+                    for reg in (fr.get("detected_regions") or []):
+                        if reg.get("type") == "label" and reg.get("points"):
+                            label_polygon = reg.get("points")
+                            break
+                    org_path = (
+                        image_path[: -len("_viz.jpg")] + "_org.jpg"
+                        if image_path.endswith("_viz.jpg") else image_path
+                    )
+                    out.append({
+                        "image_path": image_path,
+                        "org_path": org_path,
+                        "timestamp": ts,
+                        "frame_idx": fr.get("frame_idx"),
+                        "template_name": fr.get("template_name"),
+                        "pass_fail": pf,
+                        "label_polygon": label_polygon,
+                    })
+                    if len(out) >= limit:
+                        return out
+        return out
+
     async def count(
         self,
         recipe_id: Optional[str] = None,

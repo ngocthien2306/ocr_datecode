@@ -5,6 +5,7 @@ import TemplateEditor from './TemplateEditorRefactored';
 import AnnotationsPanel from '@/components/shared/AnnotationsPanel';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import ColorSetupModal, { ColorConfig } from './ColorSetupModal';
+import EdgeSetupModal, { EdgeConfig } from './EdgeSetupModal';
 import { camerasAPI } from '@/services/api';
 import recipesAPI from '@/services/recipes';
 import { mlTrainingAPI, MLProject, MLModel } from '@/services/mlTraining';
@@ -74,6 +75,7 @@ interface FormDataType {
   cv_method: string;
   product_detection_method: string;
   product_box_wall_type: string;
+  save_pass_images: boolean;
   cap_rotation_method: string;
   cap_crop_method: string;
   crop_match_method: string;
@@ -106,6 +108,7 @@ interface Template {
   wrinkle_min_area?: number;               // Per-region: ignore regions smaller than this (0 = no filter)
   wrinkle_max_area?: number;               // Per-region: any region ≥ this triggers FAIL immediately (0 = disabled)
   color_config?: ColorConfig | null;       // HSV color check config (only used when function_type='Check_Color' + template has 'product')
+  edge_config?: EdgeConfig | null;          // Per-bottle edge-detection tuning (only used when product_detection_method='yolo_segment')
 }
 
 interface CameraTemplates {
@@ -216,6 +219,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     classifier_backend: 'embedding',
     cv_method: 'v4',
     product_detection_method: 'yolo_obb',
+    save_pass_images: true,
     cap_rotation_method: 'yolo_obb',
     cap_crop_method: 'none',
     crop_match_method: 'superpoint',
@@ -293,6 +297,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
   // Color setup modal state — open for a specific (cameraId, templateIdx) pair.
   const [colorSetupTarget, setColorSetupTarget] = useState<{ cameraId: string; templateIdx: number } | null>(null);
+  const [edgeSetupTarget, setEdgeSetupTarget] = useState<{ cameraId: string; templateIdx: number } | null>(null);
 
   // Confirm dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -363,7 +368,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               wrinkle_area: template.wrinkle_area ?? 2000.0,
               wrinkle_min_area: template.wrinkle_min_area ?? 0.0,
               wrinkle_max_area: template.wrinkle_max_area ?? 0.0,
-              color_config: template.color_config ?? null
+              color_config: template.color_config ?? null,
+              edge_config: template.edge_config ?? null
             }));
 
             // Load function_type for this camera (default to 'OCR' if not set)
@@ -434,6 +440,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         classifier_backend: recipeAny.classifier_backend || 'embedding',
         cv_method: recipeAny.cv_method || 'v4',
         product_detection_method: recipeAny.product_detection_method || 'yolo_obb',
+        save_pass_images: recipeAny.save_pass_images ?? true,
         cap_rotation_method: recipeAny.cap_rotation_method || 'yolo_obb',
         cap_crop_method: recipeAny.cap_crop_method || 'none',
         crop_match_method: recipeAny.crop_match_method || 'superpoint',
@@ -521,6 +528,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         char_denoise_enabled: false,
         product_detection_method: 'yolo_obb',
         product_box_wall_type: 'outer',
+        save_pass_images: true,
         cap_rotation_method: 'yolo_obb',
         cap_crop_method: 'none',
         crop_match_method: 'superpoint',
@@ -897,7 +905,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               wrinkle_area: template.wrinkle_area ?? 2000.0,
               wrinkle_min_area: template.wrinkle_min_area ?? 0.0,
               wrinkle_max_area: template.wrinkle_max_area ?? 0.0,
-              color_config: template.color_config ?? null
+              color_config: template.color_config ?? null,
+              edge_config: template.edge_config ?? null
             }))
           });
         }
@@ -919,6 +928,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         classifier_backend: formData.classifier_backend || 'embedding',
         cv_method: formData.cv_method || 'v4',
         product_detection_method: formData.product_detection_method || 'yolo_obb',
+        save_pass_images: formData.save_pass_images ?? true,
         cap_rotation_method: formData.cap_rotation_method || 'yolo_obb',
         cap_crop_method: formData.cap_crop_method || 'none',
         crop_match_method: formData.crop_match_method || 'superpoint',
@@ -1145,7 +1155,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           wrinkle_area: sourceTemplate?.wrinkle_area ?? 2000.0,
           wrinkle_min_area: sourceTemplate?.wrinkle_min_area ?? 0.0,
           wrinkle_max_area: sourceTemplate?.wrinkle_max_area ?? 0.0,
-          color_config: sourceTemplate?.color_config ?? null
+          color_config: sourceTemplate?.color_config ?? null,
+          edge_config: sourceTemplate?.edge_config ?? null
         };
 
         newTemplates.push(newTemplate);
@@ -1238,7 +1249,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               wrinkle_area: 2000.0,
               wrinkle_min_area: 0.0,
               wrinkle_max_area: 0.0,
-              color_config: null as ColorConfig | null
+              color_config: null as ColorConfig | null,
+              edge_config: null as EdgeConfig | null
             };
 
             setCameraTemplates(prev => ({
@@ -2667,6 +2679,20 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                           <span>Dual Rotation Check (Check_Color only — try both rotations, pick higher match)</span>
                         </label>
                       </div>
+
+                      {/* Row 5: Save PASS images (checkbox, full row) */}
+                      <div className="bottle-edge-checkbox">
+                        <label className="bottle-edge-checkbox__label">
+                          <input
+                            type="checkbox"
+                            checked={formData.save_pass_images}
+                            onChange={(e) =>
+                              setFormData(prev => ({ ...prev, save_pass_images: e.target.checked }))
+                            }
+                          />
+                          <span>Save PASS images (keep 200 most-recent per camera — used to re-test missed defects in Edge Setup)</span>
+                        </label>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -3187,7 +3213,38 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                               </div>
                                             );
                                           }
+                                          const edgeConfigured = !!template.edge_config;
+                                          const isSegmentMethod = formData.product_detection_method === 'yolo_segment';
                                           return (<>
+                                        <div className="filmstrip-setting-row" style={{ gap: 6 }}>
+                                          <button
+                                            type="button"
+                                            className="filmstrip-action-btn"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setEdgeSetupTarget({ cameraId: selectedCameraForTemplate, templateIdx: idx });
+                                            }}
+                                            title={isSegmentMethod
+                                              ? 'Setup edge (bottle wall) detection for this bottle type'
+                                              : "Edge config only runs when Model tab → Bottle Edge Detection = 'yolo_segment'"}
+                                            style={{ flex: 1, padding: '4px 8px', fontSize: 11, fontWeight: 500, justifyContent: 'center' }}
+                                          >
+                                            Setup Edge
+                                          </button>
+                                          <span
+                                            style={{
+                                              fontSize: 10,
+                                              fontWeight: 600,
+                                              padding: '2px 6px',
+                                              borderRadius: 4,
+                                              background: edgeConfigured ? '#dcfce7' : '#fef3c7',
+                                              color: edgeConfigured ? '#166534' : '#92400e',
+                                            }}
+                                            title={!isSegmentMethod ? "Not active: detection method is not 'yolo_segment'" : ''}
+                                          >
+                                            {edgeConfigured ? 'Configured' : 'Not set'}
+                                          </span>
+                                        </div>
                                         <div className="filmstrip-setting-row">
                                           <span className="filmstrip-setting-label">Offset L/R:</span>
                                           {(() => {
@@ -3453,6 +3510,67 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                 ),
               }));
               setColorSetupTarget(null);
+            }}
+          />
+        );
+      })()}
+
+      {/* Edge Setup Modal — opened from filmstrip "Setup Edge" button (Check_Type_Product) */}
+      {edgeSetupTarget && (() => {
+        const tmpl = cameraTemplates[edgeSetupTarget.cameraId]?.[edgeSetupTarget.templateIdx];
+        if (!tmpl) {
+          setEdgeSetupTarget(null);
+          return null;
+        }
+        const imgW = tmpl.image_width ?? 0;
+        const imgH = tmpl.image_height ?? 0;
+
+        // Denormalize a [0,1] annotation to TEMPLATE pixel coords (polygon or bbox).
+        const toPixels = (a: any): Array<[number, number]> | null => {
+          if (a?.points && Array.isArray(a.points) && a.points.length >= 3) {
+            return a.points.map((p: any) => [ (p.x ?? p[0]) * imgW, (p.y ?? p[1]) * imgH ] as [number, number]);
+          }
+          if (a && a.x != null && a.y != null && a.width && a.height) {
+            const x1 = a.x * imgW, y1 = a.y * imgH;
+            const x2 = (a.x + a.width) * imgW, y2 = (a.y + a.height) * imgH;
+            return [[x1, y1], [x2, y1], [x2, y2], [x1, y2]];
+          }
+          return null;
+        };
+
+        const labelAnn = (tmpl.annotations || []).find((a: any) => a.type === 'label');
+        const labelPolygon = labelAnn ? toPixels(labelAnn) : null;
+        const productPolys = (tmpl.annotations || [])
+          .filter((a: any) => a.type === 'product')
+          .map(toPixels)
+          .filter((p): p is Array<[number, number]> => p !== null);
+
+        // camera_id → serial_number (inference results are keyed by serial)
+        const serial = formData.cameras.find(c => c.camera_id === edgeSetupTarget.cameraId)?.serial_number;
+
+        return (
+          <EdgeSetupModal
+            isOpen={true}
+            recipeId={(recipe as any)?.id ? String((recipe as any).id) : undefined}
+            serialNumber={serial}
+            templateImage={tmpl.image}
+            templateImageUrl={tmpl.image_url}
+            imageWidth={imgW}
+            imageHeight={imgH}
+            labelPolygon={labelPolygon}
+            productPolygons={productPolys}
+            wallType={(formData.product_box_wall_type as 'outer' | 'inner') || 'outer'}
+            initialConfig={tmpl.edge_config ?? null}
+            templateName={tmpl.name}
+            onClose={() => setEdgeSetupTarget(null)}
+            onSave={(cfg) => {
+              setCameraTemplates(prev => ({
+                ...prev,
+                [edgeSetupTarget.cameraId]: (prev[edgeSetupTarget.cameraId] || []).map((t, i) =>
+                  i === edgeSetupTarget.templateIdx ? { ...t, edge_config: cfg } : t
+                ),
+              }));
+              setEdgeSetupTarget(null);
             }}
           />
         );
