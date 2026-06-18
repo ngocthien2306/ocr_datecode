@@ -8,9 +8,12 @@ import ctypes
 import subprocess
 import logging
 import base64
+import time
+import heapq
 import numpy as np
 import threading
 import atexit
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple, List, Dict, Any
 from pathlib import Path
@@ -22,13 +25,16 @@ logger = logging.getLogger(__name__)
 
 # ============= GPIO/DI/DO Utilities =============
 
-# Global lock for ALL GPIO operations (libapmi is NOT thread-safe!)
-# DI read and DO write must be serialized to prevent ret=-1 errors
+# All libapmi access is funneled through a single owner thread (_GpioIO, defined
+# at the bottom of this section). libapmi is NOT thread-safe and the embedded
+# controller (EC) returns ret=-1 under concurrent / bursty access, so serializing
+# every DI read and DO write on ONE thread eliminates the contention at its source
+# (a plain lock prevents simultaneous calls but not the EC settling problem).
+#
+# _gpio_lock is kept only as belt-and-suspenders around the raw native calls, and
+# for backward-compat with tools/test.py which imports it. In normal operation it
+# is uncontended because only the _GpioIO thread ever touches the lib.
 _gpio_lock = threading.Lock()
-
-# Per-pin locks for pulse sequences (prevent concurrent writes during pulse)
-# Use RLock to allow reentrant calls from trigger_reject_pulse
-_pulse_locks = {i: threading.RLock() for i in range(8)}
 
 # ============= ASUS libapmi Native Library (Fast GPIO) =============
 # Uses ctypes to call ASUS PE1100N native library directly
@@ -76,22 +82,14 @@ def _init_libapmi():
 # Initialize on module load
 _init_libapmi()
 
-def read_di_value(di_number: int) -> int:
+def _native_read_di(di_number: int) -> Tuple[bool, int]:
     """
-    Read Digital Input pin value (0 or 1)
+    Low-level Digital Input read. Returns (ok, value).
 
-    Args:
-        di_number: DI pin number (0-3)
-
-    Returns:
-        Pin value (0 or 1), or 0 on error
-
-    Note:
-        _gpio_lock is held ONLY for the native lib call (libapmi is not thread-safe).
-        Subprocess fallback runs outside the lock so DO writes are never blocked by
-        a slow "sudo dio_in" call.
+    MUST be called only from the _GpioIO owner thread. Tries native libapmi
+    first, then falls back to the "sudo dio_in" subprocess. Returns ok=False on
+    any failure so the caller (owner thread) can retry / hold the last value.
     """
-    # Only hold lock for native lib call
     with _gpio_lock:
         if _use_native_gpio and _apmi_dio_read_input is not None:
             try:
@@ -100,11 +98,10 @@ def read_di_value(di_number: int) -> int:
                 if lib_pin is not None:
                     ret = _apmi_dio_read_input(lib_pin, ctypes.byref(value))
                     if ret == 0:
-                        return value.value
-                    else:
-                        logger.warning(f"Native DI{di_number} read failed: ret={ret}")
+                        return True, value.value
+                    logger.debug(f"Native DI{di_number} read failed: ret={ret}")
             except Exception as e:
-                logger.warning(f"Native DI{di_number} read error: {e}")
+                logger.debug(f"Native DI{di_number} read error: {e}")
 
     # Fallback subprocess — outside gpio_lock (subprocess does not use libapmi)
     try:
@@ -114,33 +111,33 @@ def read_di_value(di_number: int) -> int:
             text=True,
             timeout=0.5
         )
-
         if result.returncode == 0:
             # Parse output format: "The id-X input gpio status = Y\nCompletion code = 0x00"
-            output = result.stdout.strip()
-
-            # Extract value from "status = Y" line
-            for line in output.split('\n'):
+            for line in result.stdout.strip().split('\n'):
                 if 'status' in line and '=' in line:
-                    value_str = line.split('=')[-1].strip()
                     try:
-                        return int(value_str)
+                        return True, int(line.split('=')[-1].strip())
                     except ValueError:
-                        logger.warning(f"Failed to parse DI{di_number} value: {value_str}")
-                        return 0
-
-            logger.warning(f"Unexpected DI{di_number} output format: {output}")
-            return 0
-        else:
-            logger.warning(f"Failed to read DI{di_number}: {result.stderr.strip()}")
-            return 0
-
+                        return False, 0
+        return False, 0
     except subprocess.TimeoutExpired:
-        logger.warning(f"Timeout reading DI{di_number}")
-        return 0
+        logger.debug(f"Timeout reading DI{di_number}")
+        return False, 0
     except Exception as e:
-        logger.error(f"Error reading DI{di_number}: {e}")
-        return 0
+        logger.debug(f"Error reading DI{di_number}: {e}")
+        return False, 0
+
+
+def read_di_value(di_number: int) -> int:
+    """
+    Read Digital Input pin value (0 or 1) — public API.
+
+    Delegates to the single _GpioIO owner thread so this never races with DO
+    writes. On persistent read failure the LAST KNOWN value for the pin is
+    returned (PLC-style hold) instead of a phantom 0 that would create false
+    edges in the 100Hz polling loop.
+    """
+    return _gpio_io.read_di(di_number)
 
 
 def check_trigger_edge(current: int, previous: Optional[int], activation: str) -> bool:
@@ -169,15 +166,12 @@ def check_trigger_edge(current: int, previous: Optional[int], activation: str) -
         return False
 
 
-def _write_do_raw(do_number: int, value: int) -> bool:
+def _native_write_do(do_number: int, value: int) -> bool:
     """
-    Internal: Write DO value with only _gpio_lock (no pulse_lock).
-    Used by trigger_reject_pulse which already holds pulse_lock.
+    Low-level Digital Output write. Returns True on success.
 
-    MUST be called while holding pulse_lock for the pin!
-
-    Note: _gpio_lock is held ONLY for the native lib call. Subprocess fallback
-    runs outside the lock so DI polling never blocks a reject pulse release.
+    MUST be called only from the _GpioIO owner thread. Tries native libapmi
+    first, then falls back to the "sudo dio_out" subprocess.
     """
     with _gpio_lock:
         if _use_native_gpio and _apmi_dio_write_output is not None:
@@ -188,10 +182,9 @@ def _write_do_raw(do_number: int, value: int) -> bool:
                     if ret == 0:
                         logger.debug(f"DO{do_number} = {value} (native)")
                         return True
-                    else:
-                        logger.warning(f"Native DO{do_number} write failed: ret={ret}")
+                    logger.debug(f"Native DO{do_number} write failed: ret={ret}")
             except Exception as e:
-                logger.warning(f"Native DO{do_number} write error: {e}")
+                logger.debug(f"Native DO{do_number} write error: {e}")
 
     # Fallback subprocess — outside gpio_lock (subprocess does not use libapmi)
     try:
@@ -201,25 +194,19 @@ def _write_do_raw(do_number: int, value: int) -> bool:
             text=True,
             timeout=1.0
         )
-
         if "Completion code = 0x00" in result.stdout or "Completion code = 0x00" in result.stderr:
-            logger.debug(f"DO{do_number} = {value}")
             return True
         elif "Completion code = 0xFFFFFFFF" in result.stdout or "Completion code = 0xFFFFFFFF" in result.stderr:
-            logger.debug(f"DO{do_number} already at {value}")
-            return True
+            return True  # already at target value
         elif result.returncode == 0:
-            logger.debug(f"DO{do_number} = {value} (returncode=0)")
             return True
-        else:
-            logger.error(f"Failed to set DO{do_number}: {result.returncode}")
-            return False
-
+        logger.debug(f"Failed to set DO{do_number}: rc={result.returncode}")
+        return False
     except subprocess.TimeoutExpired:
-        logger.error(f"Timeout setting DO{do_number}")
+        logger.debug(f"Timeout setting DO{do_number}")
         return False
     except Exception as e:
-        logger.error(f"Error setting DO{do_number}: {e}")
+        logger.debug(f"Error setting DO{do_number}: {e}")
         return False
 
 
@@ -227,71 +214,238 @@ def write_do_value(do_number: int, value: int) -> bool:
     """
     Set Digital Output pin value (public API).
 
-    Args:
-        do_number: DO pin number (0-7)
-        value: Pin value (0 or 1)
-
-    Returns:
-        True if success, False on error
-
-    Note:
-        Uses per-pin pulse lock to prevent writes during active pulse.
-        If a pulse is in progress on this pin, this call will block until complete.
+    Delegates to the _GpioIO owner thread so it never races with DI polling or
+    an in-flight reject pulse. Returns True on success, False on error/timeout.
     """
-    pulse_lock = _pulse_locks.get(do_number)
-    if pulse_lock is None:
-        logger.error(f"Invalid DO pin: {do_number}")
-        return False
-
-    with pulse_lock:  # Wait for any active pulse on this pin
-        return _write_do_raw(do_number, value)
+    return _gpio_io.write_do(do_number, value)
 
 
 def trigger_reject_pulse(do_number: int, pulse_ms: int = 100):
     """
-    Trigger reject pulse on DO pin (ACTIVE LOW logic).
+    Trigger reject pulse on DO pin (ACTIVE LOW: HIGH -> LOW(pulse_ms) -> HIGH).
 
-    Pulse sequence: HIGH -> LOW (pulse_ms) -> HIGH
-    Uses per-pin lock to prevent concurrent writes during pulse.
+    Delegates to the _GpioIO owner thread. The LOW edge is written immediately;
+    the HIGH release is scheduled by deadline so the owner thread keeps serving
+    DI reads during the pulse instead of blocking on sleep(). This call blocks
+    until the HIGH release has been written, preserving the previous synchronous
+    contract used by reject_scheduler.
 
-    Args:
-        do_number: DO pin number (0-3)
-        pulse_ms: Pulse duration in milliseconds
-
-    Raises:
-        RuntimeError: If write fails
+    Returns True only if both the LOW edge and the HIGH release succeeded.
     """
-    import time
+    return _gpio_io.pulse_do(do_number, pulse_ms)
 
-    pulse_lock = _pulse_locks.get(do_number)
-    if pulse_lock is None:
-        raise RuntimeError(f"Invalid DO pin: {do_number}")
 
-    with pulse_lock:
-        # Set LOW (active)
-        if not _write_do_raw(do_number, 0):
-            raise RuntimeError(f"Failed to set DO{do_number} LOW")
+# ============= Single-owner GPIO IO thread =============
+# Every libapmi call (DI read, DO write, reject pulse) is funneled through this
+# one thread so that:
+#   - No contention: only one thread ever touches the non-thread-safe lib / EC.
+#   - A settling delay sits between consecutive native calls (the EC needs time).
+#   - Retry + hold-last-value (DI) and retry (DO) live in ONE place.
 
-        try:
-            time.sleep(pulse_ms / 1000.0)
-        finally:
-            # Retry HIGH release — without this, a single write failure leaves the
-            # relay energized (pin stuck at 0) and the buzzer rings continuously.
-            released = False
-            for attempt in range(3):
-                if _write_do_raw(do_number, 1):
-                    released = True
-                    break
-                logger.warning(
-                    f"DO{do_number} release attempt {attempt + 1}/3 failed, retrying in 100ms..."
-                )
-                time.sleep(0.100)
+_GPIO_RETRY = 3
+_GPIO_SETTLE_S = 0.0005       # ~0.5ms between consecutive native calls
+_DI_READ_TIMEOUT_S = 0.5
+_DO_WRITE_TIMEOUT_S = 1.0
+_GPIO_IDLE_WAIT_S = 0.05      # max idle sleep when nothing is queued/pending
+
+
+class _GpioCmd:
+    __slots__ = ('kind', 'pin', 'value', 'pulse_ms', 'event', 'result')
+
+    def __init__(self, kind, pin, value=0, pulse_ms=0):
+        self.kind = kind            # 'read' | 'write' | 'pulse'
+        self.pin = pin
+        self.value = value
+        self.pulse_ms = pulse_ms
+        self.event = threading.Event()
+        self.result = None
+
+
+class _GpioIO:
+    """Single owner thread for all GPIO/libapmi access (see section header)."""
+
+    def __init__(self):
+        self._q = deque()
+        self._cond = threading.Condition()
+        self._pending_high = []                       # heap: (deadline, seq, cmd)
+        self._seq = 0
+        self._last_di = {0: 0, 1: 0, 2: 0, 3: 0}      # hold-last-value cache
+        self._fail_streak = {0: 0, 1: 0, 2: 0, 3: 0}  # consecutive read failures per pin
+        self._running = False
+        self._thread = None
+        self._start_lock = threading.Lock()
+
+    def start(self):
+        with self._start_lock:
+            if self._running:
+                return
+            self._running = True
+            self._thread = threading.Thread(target=self._loop, daemon=True, name="GpioIO")
+            self._thread.start()
+            logger.info("GpioIO owner thread started")
+
+    def _submit(self, cmd: '_GpioCmd'):
+        if not self._running:
+            self.start()
+        with self._cond:
+            self._q.append(cmd)
+            self._cond.notify()
+
+    # ---- public API (callable from any thread) ----
+    def read_di(self, pin: int) -> int:
+        cmd = _GpioCmd('read', pin)
+        self._submit(cmd)
+        if cmd.event.wait(_DI_READ_TIMEOUT_S):
+            return cmd.result
+        # Owner thread stuck/slow: hold last known value, never a phantom 0
+        logger.warning(f"DI{pin} read timed out, holding last value={self._last_di.get(pin, 0)}")
+        return self._last_di.get(pin, 0)
+
+    def write_do(self, pin: int, value: int) -> bool:
+        cmd = _GpioCmd('write', pin, value=value)
+        self._submit(cmd)
+        return bool(cmd.result) if cmd.event.wait(_DO_WRITE_TIMEOUT_S) else False
+
+    def pulse_do(self, pin: int, pulse_ms: int) -> bool:
+        """Returns True only if BOTH the LOW edge and the HIGH release succeeded."""
+        cmd = _GpioCmd('pulse', pin, pulse_ms=pulse_ms)
+        self._submit(cmd)
+        # Block until the HIGH release fires (preserves old synchronous contract)
+        if cmd.event.wait(pulse_ms / 1000.0 + 1.0):
+            return bool(cmd.result)
+        logger.warning(f"DO{pin} reject pulse did not confirm release within timeout")
+        return False
+
+    # ---- owner-thread internals ----
+    def _read_with_retry(self, pin: int) -> int:
+        for _ in range(_GPIO_RETRY):
+            ok, val = _native_read_di(pin)
+            if ok:
+                self._last_di[pin] = val
+                self._fail_streak[pin] = 0
+                return val
+            time.sleep(_GPIO_SETTLE_S)
+        # Persistent failure → hold last known value (PLC-style), log sparsely
+        self._fail_streak[pin] += 1
+        streak = self._fail_streak[pin]
+        if streak == 1 or streak == 50 or streak % 500 == 0:
+            logger.warning(
+                f"DI{pin} read failed {streak}x in a row (EC busy?), "
+                f"holding last value={self._last_di.get(pin, 0)}"
+            )
+        return self._last_di.get(pin, 0)
+
+    def _write_with_retry(self, pin: int, value: int) -> bool:
+        for attempt in range(_GPIO_RETRY):
+            if _native_write_do(pin, value):
+                return True
+            logger.warning(f"DO{pin}={value} write attempt {attempt + 1}/{_GPIO_RETRY} failed")
+            time.sleep(_GPIO_SETTLE_S)
+        return False
+
+    def _release_due_pulses(self, now: float):
+        """Write the HIGH (release) edge for any pulse whose deadline has passed."""
+        while self._pending_high and self._pending_high[0][0] <= now:
+            _, _, cmd = heapq.heappop(self._pending_high)
+            released = self._write_with_retry(cmd.pin, 1)
+            time.sleep(_GPIO_SETTLE_S)
             if not released:
+                # Pin stuck LOW = relay energized / buzzer stuck. Loudest possible log.
                 logger.critical(
-                    f"CRITICAL: DO{do_number} stuck at LOW after 3 release attempts — pin LOCKED active!"
+                    f"CRITICAL: DO{cmd.pin} stuck at LOW after {_GPIO_RETRY} release "
+                    f"attempts — pin LOCKED active!"
                 )
+            # cmd.result was set to the LOW-write outcome; success = LOW ok AND released
+            cmd.result = bool(cmd.result) and released
+            cmd.event.set()
 
-    logger.info(f"DO{do_number} pulse complete ({pulse_ms}ms)")
+    def _flush_pending_high(self):
+        """Force every still-pending pin back HIGH (release). Called on shutdown so
+        no reject relay / buzzer is left energized when the service stops mid-pulse."""
+        while self._pending_high:
+            _, _, cmd = heapq.heappop(self._pending_high)
+            try:
+                self._write_with_retry(cmd.pin, 1)
+            except Exception as e:
+                logger.error(f"GpioIO flush: DO{cmd.pin} release failed: {e}")
+            finally:
+                cmd.result = False
+                if not cmd.event.is_set():
+                    cmd.event.set()
+
+    def stop(self, timeout: float = 2.0):
+        """Stop the owner thread and release any pin still held LOW."""
+        if not self._running and self._thread is None:
+            return
+        self._running = False
+        with self._cond:
+            self._cond.notify()
+        if self._thread:
+            self._thread.join(timeout=timeout)
+            self._thread = None
+        # Thread has stopped → safe to drain pending pulses without racing it
+        self._flush_pending_high()
+        logger.info("GpioIO stopped and pending pulses flushed HIGH")
+
+    def _loop(self):
+        logger.info("GpioIO loop running")
+        try:
+            while self._running:
+                # Per-iteration guard: a single bad native call / unexpected error
+                # must never kill the owner thread (that would freeze ALL GPIO I/O).
+                cmd = None
+                try:
+                    self._release_due_pulses(time.time())
+
+                    with self._cond:
+                        if not self._q:
+                            if self._pending_high:
+                                timeout = max(self._pending_high[0][0] - time.time(), 0.0)
+                            else:
+                                timeout = _GPIO_IDLE_WAIT_S
+                            self._cond.wait(timeout)
+                        if self._q:
+                            cmd = self._q.popleft()
+
+                    if cmd is None:
+                        continue  # woke for a pulse deadline → handled at loop top
+
+                    if cmd.kind == 'read':
+                        cmd.result = self._read_with_retry(cmd.pin)
+                        cmd.event.set()
+                    elif cmd.kind == 'write':
+                        cmd.result = self._write_with_retry(cmd.pin, cmd.value)
+                        cmd.event.set()
+                    elif cmd.kind == 'pulse':
+                        # Active LOW now; HIGH release scheduled by deadline (non-blocking).
+                        # Stash the LOW-write outcome in cmd.result; _release_due_pulses
+                        # ANDs it with the release outcome and sets the event.
+                        cmd.result = self._write_with_retry(cmd.pin, 0)
+                        time.sleep(_GPIO_SETTLE_S)
+                        self._seq += 1
+                        deadline = time.time() + cmd.pulse_ms / 1000.0
+                        heapq.heappush(
+                            self._pending_high, (deadline, self._seq, cmd)
+                        )
+                except Exception as e:
+                    logger.error(f"GpioIO iteration error (continuing): {e}")
+                    # Never leave a caller blocked forever on a half-processed cmd.
+                    if cmd is not None and not cmd.event.is_set():
+                        cmd.event.set()
+                    time.sleep(_GPIO_SETTLE_S)
+        finally:
+            # If we ever fall out of the loop, allow a later _submit() to restart us.
+            self._running = False
+            logger.info("GpioIO loop stopped")
+
+
+# Module-level singleton, started on import (idempotent; also self-starts on first submit)
+_gpio_io = _GpioIO()
+_gpio_io.start()
+
+# On interpreter shutdown, release any pin still held LOW so a reject relay/buzzer
+# is never left energized if the service exits mid-pulse (R2).
+atexit.register(_gpio_io.stop)
 
 
 # ============= Image Processing Utilities =============

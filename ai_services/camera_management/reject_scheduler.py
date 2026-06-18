@@ -70,7 +70,7 @@ class RejectScheduler:
 
         # Reject configuration from recipe
         self._reject_pulse_ms = 50.0
-        self._reject_method = "DIO"  # Default: DIO, can be "PLC"
+        self._reject_method = "DIO_OUT"  # Default: DIO_OUT, can be "PLC"
 
         # Scheduler thread
         self._running = False
@@ -112,16 +112,28 @@ class RejectScheduler:
         self._reject_pulse_ms = pulse_ms
         logger.info(f"Reject pulse duration updated: {pulse_ms}ms")
 
-    def set_reject_config(self, pulse_ms: float, reject_method: str = "DIO"):
+    def set_reject_config(self, pulse_ms: float, reject_method: str = "DIO_OUT"):
         """
         Set reject configuration from recipe
 
         Args:
             pulse_ms: Pulse duration in milliseconds
-            reject_method: Reject method ("PLC" or "DIO")
+            reject_method: Reject method ("PLC" or "DIO_OUT")
         """
         self._reject_pulse_ms = pulse_ms
-        self._reject_method = reject_method.upper()
+
+        # Normalize so the executor's `method == "DIO_OUT"` check always matches.
+        # Legacy recipes / callers may still send "DIO" — map it to "DIO_OUT"
+        # instead of silently dropping every reject.
+        normalized = (reject_method or "").upper()
+        if normalized in ("DIO", "DIO_OUT", "DO"):
+            normalized = "DIO_OUT"
+        elif normalized != "PLC":
+            logger.warning(
+                f"Unknown reject_method '{reject_method}', defaulting to DIO_OUT"
+            )
+            normalized = "DIO_OUT"
+        self._reject_method = normalized
 
         logger.info(
             f"Reject config updated: method={self._reject_method}, pulse={pulse_ms}ms"
@@ -542,78 +554,66 @@ class RejectScheduler:
 
             # Execute DIO only when method is DIO (no fallback from PLC failure)
             if method == "DIO_OUT":
-                # Check if reject and alarm use same address
+
+                def _pulse_dio(addr) -> bool:
+                    """Pulse one DO pin. Returns True on success.
+                    The callback path has no return contract, so a callback that
+                    doesn't raise is treated as success; the trigger_reject_pulse
+                    path reports the real LOW+release outcome."""
+                    try:
+                        if self._do_control_callback:
+                            self._do_control_callback(addr, pulse_ms=self._reject_pulse_ms)
+                            return True
+                        from .utils import trigger_reject_pulse
+                        return bool(trigger_reject_pulse(addr, pulse_ms=self._reject_pulse_ms))
+                    except Exception as exc:
+                        logger.error(f"[Group #{entry.group_id}] ❌ DIO pulse DO{addr} failed: {exc}")
+                        return False
+
+                # success tracks the REJECT pin specifically; a failed alarm is
+                # logged but must not, on its own, count the reject as fired.
                 if alarm_address >= 0 and alarm_address == reject_address:
                     logger.info(
                         f"[Group #{entry.group_id}] Reject and Alarm use same DO{reject_address}, "
                         f"triggering once"
                     )
-                    # Same address, pulse once
-                    if self._do_control_callback:
-                        self._do_control_callback(reject_address, pulse_ms=self._reject_pulse_ms)
-                    else:
-                        from .utils import trigger_reject_pulse
-                        trigger_reject_pulse(reject_address, pulse_ms=self._reject_pulse_ms)
+                    success = _pulse_dio(reject_address)
                 elif alarm_address >= 0:
-                    # Different addresses, pulse in parallel (threading)
+                    # Different addresses — pulse SEQUENTIALLY. All DO writes are now
+                    # serialized through the single GpioIO owner thread anyway, so the
+                    # old parallel-thread approach bought nothing but thread churn.
+                    # Alarm fires ~pulse_ms after reject; that small stagger is fine
+                    # for the buzzer/relay.
                     logger.info(
-                        f"[Group #{entry.group_id}] Executing parallel DIO pulses "
-                        f"(DO{reject_address} + DO{alarm_address})"
+                        f"[Group #{entry.group_id}] Executing sequential DIO pulses "
+                        f"(DO{reject_address} → DO{alarm_address})"
                     )
-
-                    import threading
-
-                    def pulse_reject_dio():
-                        try:
-                            if self._do_control_callback:
-                                self._do_control_callback(reject_address, pulse_ms=self._reject_pulse_ms)
-                            else:
-                                from .utils import trigger_reject_pulse
-                                trigger_reject_pulse(reject_address, pulse_ms=self._reject_pulse_ms)
-                        except Exception as exc:
-                            logger.error(f"[Group #{entry.group_id}] ❌ Reject pulse DO{reject_address} failed: {exc}")
-
-                    def pulse_alarm_dio():
-                        try:
-                            if self._do_control_callback:
-                                self._do_control_callback(alarm_address, pulse_ms=self._reject_pulse_ms)
-                            else:
-                                from .utils import trigger_reject_pulse
-                                trigger_reject_pulse(alarm_address, pulse_ms=self._reject_pulse_ms)
-                        except Exception as exc:
-                            logger.error(f"[Group #{entry.group_id}] ❌ Alarm pulse DO{alarm_address} failed: {exc}")
-
-                    # Start both threads
-                    t_reject = threading.Thread(target=pulse_reject_dio, daemon=True)
-                    t_alarm = threading.Thread(target=pulse_alarm_dio, daemon=True)
-
-                    t_reject.start()
-                    t_alarm.start()
-
-                    # Wait for both to complete
-                    t_reject.join()
-                    t_alarm.join()
+                    success = _pulse_dio(reject_address)
+                    alarm_ok = _pulse_dio(alarm_address)
+                    if not alarm_ok:
+                        logger.warning(
+                            f"[Group #{entry.group_id}] ⚠️ Alarm pulse DO{alarm_address} did not confirm"
+                        )
                 else:
                     # Only reject, no alarm
                     logger.info(f"[Group #{entry.group_id}] Executing DIO reject (DO{reject_address})")
-                    if self._do_control_callback:
-                        self._do_control_callback(reject_address, pulse_ms=self._reject_pulse_ms)
+                    success = _pulse_dio(reject_address)
+
+                if success:
+                    with self._stats_lock:
+                        self._stats['dio_rejects'] += 1
+                    if alarm_address >= 0 and alarm_address != reject_address:
+                        logger.info(
+                            f"[Group #{entry.group_id}] ✅ DIO sequential pulses done "
+                            f"(Reject DO{reject_address} → Alarm DO{alarm_address})"
+                        )
                     else:
-                        from .utils import trigger_reject_pulse
-                        trigger_reject_pulse(reject_address, pulse_ms=self._reject_pulse_ms)
-
-                success = True
-                with self._stats_lock:
-                    self._stats['dio_rejects'] += 1
-
-                if alarm_address >= 0 and alarm_address != reject_address:
-                    logger.info(
-                        f"[Group #{entry.group_id}] ✅ DIO parallel pulses successful "
-                        f"(Reject DO{reject_address} + Alarm DO{alarm_address})"
-                    )
+                        logger.info(
+                            f"[Group #{entry.group_id}] ✅ DIO pulse successful (DO{reject_address})"
+                        )
                 else:
-                    logger.info(
-                        f"[Group #{entry.group_id}] ✅ DIO pulse successful (DO{reject_address})"
+                    logger.error(
+                        f"[Group #{entry.group_id}] ❌ DIO reject pulse FAILED (DO{reject_address})"
                     )
 
             # Calculate actual duration
@@ -636,8 +636,8 @@ class RejectScheduler:
                 )
             else:
                 logger.warning(
-                    f"[Group #{entry.group_id}] ⚠️ Reject SKIPPED "
-                    f"(method={method}, PLC unavailable/failed)"
+                    f"[Group #{entry.group_id}] ⚠️ Reject SKIPPED / FAILED "
+                    f"(method={method} — PLC unavailable, or DIO write failed after retries)"
                 )
 
             logger.info(
