@@ -36,8 +36,6 @@ When the AI service (re)connects, ``camera_ws_manager.connect()`` emits
 
 import asyncio
 import logging
-import os
-import signal
 import subprocess
 import time
 from typing import Optional
@@ -54,22 +52,21 @@ _GRACE_SECONDS = 15.0
 # storms when many API calls fail back-to-back while the service is down.
 _MIN_RESTART_INTERVAL = 60.0
 # systemd unit name for the AI camera service.
+# NOTE: under this deployment the camera runs as a plain nohup process (started by
+# start_services.sh), NOT this unit — so _do_restart_blocking() falls through to
+# kill+respawn via service_tools. Leaving the name as-is keeps that fallback path.
 _AI_UNIT = "ocr-ai.service"
-# Grace before the backend self-terminates during a FULL restart. Gives the
-# in-flight HTTP response time to flush (so the FE still gets its 404) and the
-# camera_service_status emit time to reach connected clients before the socket
-# drops. systemd (Restart=always) respawns the backend afterwards.
-_SELF_EXIT_DELAY = 2.0
 
 # ── Internal state ───────────────────────────────────────────────────────────
 _recovery_lock = asyncio.Lock()
 _recovery_in_progress = False
 _last_restart_ts: float = 0.0
-# Full restart (backend + camera) is a heavier, separate operation from the
-# WS-only recovery above; it gets its own debounce so a burst of failing
-# get-frame calls (e.g. several cameras at once) only restarts the line once.
-_full_restart_in_progress = False
-_last_full_restart_ts: float = 0.0
+# Stale-shm recovery (cache-clear + camera kill/respawn) gets its own debounce so
+# a burst of failing get-frame calls (e.g. several cameras at once) only recovers
+# once. Because the backend is NOT restarted, this state survives across the whole
+# recovery — which is what prevents a restart loop.
+_shm_recovery_in_progress = False
+_last_shm_recovery_ts: float = 0.0
 
 
 def _import_emit():
@@ -265,81 +262,80 @@ async def require_camera_service(reason: Optional[str] = None):
     )
 
 
-# ── Full restart (backend + camera) ──────────────────────────────────────────
+# ── Stale shared-memory recovery (cache-clear + camera respawn) ───────────────
 # Recovery path for the "stale shared-memory" failure mode: the camera is still
 # grabbing (DB says connected, AI service is connected) but the BE reads no frame
-# from shared memory. This happens because the AI service unlink()s + recreates
-# its shm segment on every (re)connect, while SharedMemoryService caches its
-# handle forever and keeps reading the OLD, orphaned segment. The cache lives in
-# the BACKEND process, so restarting the camera alone never clears it — the
-# backend must restart too. We therefore restart both.
+# from shared memory. Root cause: the AI service unlink()s + recreates its shm
+# segment on every (re)connect, while SharedMemoryService caches its handle and
+# keeps reading the OLD, orphaned segment (or fails to find the unlinked name).
+#
+# The cache lives in THIS (backend) process, so we don't need to restart the
+# backend at all — we just drop the cached handle in-process. We then kill+respawn
+# the camera (a plain nohup process here, restarted via service_tools — the same
+# path the existing crash-recovery uses) so a fresh, correctly-named segment is
+# created. The next get-frame re-attaches to it.
 
-def _self_terminate_backend():
-    """SIGTERM ourselves so systemd (Restart=always) respawns the backend with a
-    clean SharedMemoryService cache."""
-    logger.warning("Self-terminating backend for full restart — systemd will respawn it")
-    os.kill(os.getpid(), signal.SIGTERM)
-
-
-async def restart_backend_and_camera(reason: str):
+async def recover_stale_shm(serial_number: str, reason: str):
     """
-    Kill + restart BOTH the backend and the camera (AI) service. Used when a
-    frame is missing from shared memory despite the camera being live (stale-shm
-    bug). Debounced so concurrent failing requests trigger only one restart.
-
-    Flow:
-      1. Announce the outage (popup) — though the backend death below also makes
-         the FE socket drop, which shows the overlay regardless.
-      2. Restart the camera service in a DETACHED process so it survives the
-         backend's own death moments later.
-      3. Self-terminate the backend after a short grace (so the current 404
-         response still reaches the FE); systemd respawns it with a fresh cache.
+    Recover from the stale-shm condition WITHOUT restarting the backend:
+      1. Drop the (possibly stale) cached shm handle for this camera.
+      2. Kill + respawn the camera service so it recreates a fresh segment.
+    Debounced (single-flight + _MIN_RESTART_INTERVAL) so a burst of failing
+    get-frame calls only recovers once. Fire-and-forget: returns immediately so
+    the caller's 404 still reaches the FE.
     """
-    global _full_restart_in_progress, _last_full_restart_ts
+    global _shm_recovery_in_progress, _last_shm_recovery_ts
 
-    if _full_restart_in_progress:
+    if _shm_recovery_in_progress:
         return
     now = time.monotonic()
-    since = now - _last_full_restart_ts
+    since = now - _last_shm_recovery_ts
     if since < _MIN_RESTART_INTERVAL:
         logger.warning(
-            "Skipping full restart — last full restart was %.0fs ago (< %.0fs debounce)",
+            "Skipping shm recovery — last recovery was %.0fs ago (< %.0fs debounce)",
             since, _MIN_RESTART_INTERVAL,
         )
         return
-    _full_restart_in_progress = True
-    _last_full_restart_ts = now
+    _shm_recovery_in_progress = True
+    _last_shm_recovery_ts = now
 
-    logger.warning("FULL RESTART (backend + camera) triggered: %s", reason)
+    logger.warning("STALE-SHM RECOVERY triggered: %s", reason)
 
-    # 1. Tell the UI (best-effort — backend death below shows the overlay anyway).
+    # Tell the UI (the camera kill below also drops its WS, which shows the overlay
+    # via camera_service_status — emit here too for an immediate popup).
     try:
         emit = _import_emit()
         await emit({"connected": False, "message": reason})
     except Exception as e:
-        logger.error("Full restart: emit failed: %s", e)
+        logger.error("Shm recovery: emit failed: %s", e)
 
-    # 2. Restart the camera service detached so it outlives the backend.
-    #    `sudo -n systemctl restart ocr-ai.service` is already permitted (used by
-    #    _restart_via_systemd). start_new_session=True detaches it from the
-    #    backend's process group so our SIGTERM below doesn't take it down.
-    try:
-        subprocess.Popen(
-            ["sh", "-c", "sleep 1; sudo -n systemctl restart ocr-ai.service"],
-            start_new_session=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        logger.info("Full restart: camera service restart spawned (detached)")
-    except Exception as e:
-        logger.error("Full restart: failed to spawn camera restart: %s", e)
+    asyncio.create_task(_do_shm_recovery(serial_number))
 
-    # 3. Schedule backend self-termination after the response flushes.
+
+async def _do_shm_recovery(serial_number: str):
+    global _shm_recovery_in_progress
     try:
-        loop = asyncio.get_running_loop()
-        loop.call_later(_SELF_EXIT_DELAY, _self_terminate_backend)
+        from app.services.shared_memory_service import shared_memory_service
+        from app.agent.tools.service_tools import stop_service, start_service
+
+        # 1. Drop the stale cached handle so the next read re-attaches fresh.
+        shared_memory_service.cleanup(serial_number)
+
+        # 2. Kill + respawn the camera (blocking psutil/Popen work → run in thread).
+        stop_res = await asyncio.to_thread(stop_service, "camera_management")
+        logger.info("Shm recovery: stop camera → %s", stop_res.get("message"))
+        await asyncio.sleep(2)
+        start_res = await asyncio.to_thread(start_service, "camera_management")
+        logger.info("Shm recovery: start camera → %s", start_res.get("message"))
+
+        # 3. Drop the handle again so the next read attaches to the freshly created
+        #    segment rather than any handle re-cached during the window above.
+        shared_memory_service.cleanup(serial_number)
+        logger.info("Shm recovery: done for %s", serial_number)
     except Exception as e:
-        logger.error("Full restart: failed to schedule self-exit: %s", e)
+        logger.error("Shm recovery failed for %s: %s", serial_number, e)
+    finally:
+        _shm_recovery_in_progress = False
 
 
 async def handle_missing_frame(serial_number: str, is_connected_in_db: bool):
@@ -349,19 +345,20 @@ async def handle_missing_frame(serial_number: str, is_connected_in_db: bool):
     Distinguishes the two reasons a read can come back empty:
       (A) the camera was never connected / isn't streaming yet  → benign, no-op.
       (B) the camera SHOULD be live (DB connected + AI service connected) but the
-          frame is missing → the stale-shm bug → restart backend + camera.
+          frame is missing → the stale-shm bug → clear cache + respawn camera.
 
-    Only case (B) triggers a restart, so merely opening a recipe before a camera
-    is connected never restarts the line.
+    Only case (B) triggers recovery, so merely opening a recipe before a camera
+    is connected never restarts anything.
     """
     if not is_connected_in_db:
         return  # (A) camera not marked connected — nothing should be streaming
     if not _is_connected():
         return  # camera service itself is down — handled by require_camera_service
-    # (B) camera is supposed to be live but shm has no frame → recover hard.
-    await restart_backend_and_camera(
+    # (B) camera is supposed to be live but shm has no frame → recover.
+    await recover_stale_shm(
+        serial_number,
         f"Camera {serial_number} is connected but no frame in shared memory "
-        f"(stale shm) — restarting backend + camera"
+        f"(stale shm) — clearing cache + restarting camera",
     )
 
 
