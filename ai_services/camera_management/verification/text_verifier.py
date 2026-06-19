@@ -33,6 +33,7 @@ from .text_ocr_utils import (
     augment_dot_matrix_text,
     augment_laser_text,
     calculate_text_similarity,
+    looks_truncated,
     pick_winning_candidate,
 )
 from .char_preprocess import remove_fragments_local_bg
@@ -151,10 +152,11 @@ class TextVerificationService:
     CONFUSABLE_BYPASS_FUNCTION_TYPES: Tuple[str, ...]  = ("Check_Color", "Check_Type_Product", "OCR")
     CONFUSABLE_BYPASS_MAX_SUBS                         = 2
     CONFUSABLE_PAIRS: Dict[str, frozenset]             = {
-        '8': frozenset({'6', '0'}),   # expected 8, OCR đọc 6 hoặc 0
-        '5': frozenset({'6'}),        # expected 5, OCR đọc 6
-        '6': frozenset({'0'}),        # expected 6, OCR đọc 0 (vd 06160→00160)
-        'N': frozenset({'M'}),        # expected N, OCR đọc M
+        # '8': frozenset({'6', '0', '9'}),   # expected 8, OCR đọc 6 hoặc 0
+        # '5': frozenset({'6'}),        # expected 5, OCR đọc 6
+        # '6': frozenset({'0'}),        # expected 6, OCR đọc 0 (vd 06160→00160)
+        # '0': frozenset({'B'}),        # expected 0, OCR đọc B
+        # 'N': frozenset({'M'}),        # expected N, OCR đọc M
     }
 
     # Khi augment retry fail toàn bộ 5 versions, lưu composite (INPUT crop + 5
@@ -642,10 +644,13 @@ class TextVerificationService:
             augment_attempted = False
             if not match:
                 sim_score = calculate_text_similarity(recognized, expected)
-                if sim_score >= AUGMENT_SIMILARITY_THRESHOLD:
+                # Cụt-prefix (vd '06168' của '06168-11878-V') cho similarity thấp
+                # do lệch độ dài → vẫn cần augment vì đây là lỗi close_dots sửa được.
+                truncated = looks_truncated(recognized, expected)
+                if sim_score >= AUGMENT_SIMILARITY_THRESHOLD or truncated:
                     logger.info(
-                        f"[{serial}] Annotation {ann_idx}: FAIL but similarity={sim_score:.2%} "
-                        f">= {AUGMENT_SIMILARITY_THRESHOLD:.0%}, retrying with augmentation..."
+                        f"[{serial}] Annotation {ann_idx}: FAIL (similarity={sim_score:.2%}, "
+                        f"truncated={truncated}), retrying with augmentation..."
                     )
                     match, recognized = self._augment_retry(
                         cropped_region=cropped,
@@ -1927,13 +1932,17 @@ class TextVerificationService:
         points: Optional[List] = None,
     ):
         """
-        Run OCR on 9 augmented versions of cropped_region (batch per region):
-          - 5 từ augment_laser_text: original, clahe, bg_subtract, unsharp_clahe, tophat
-          - 4 pad_x re-crop từ frame_img với polygon mở rộng (cần frame_img + points):
-            pad_x_sym_5pct, pad_x_sym_10pct, pad_x_left_15pct, pad_x_right_15pct
+        Run OCR on các augmented versions of cropped_region (batch per region):
+          - 7 từ augment_laser_text: original, clahe, bg_subtract, unsharp_clahe,
+            tophat, close_dots, close_gauss (2 cái cuối cho dot-matrix CIJ)
+          - pad_x re-crop từ frame_img với polygon mở rộng (cần frame_img + points):
+            pad_x_sym_5pct (các config khác đang comment)
+        Tổng ≤ 8 versions → vẫn dưới engine max_batch (16).
 
         Returns (match, recognized_text) của version đầu tiên match, hoặc
-        (False, best_recognized_text) nếu không có version nào match.
+        (False, best_recognized_text) nếu không có version nào match —
+        best chọn theo similarity-với-expected (conf tie-break), KHÔNG theo conf
+        thuần (tránh chọn bản đọc cụt conf cao).
 
         Note: mọi function_type (kể cả Check_Color) đều dùng augment_laser_text.
         """
@@ -1959,9 +1968,9 @@ class TextVerificationService:
                 if text_w > 0:
                     pad_configs = [
                         ('pad_x_sym_5pct',    text_w * 0.05, text_w * 0.05),
-                        ('pad_x_sym_10pct',   text_w * 0.10, text_w * 0.10),
-                        ('pad_x_left_15pct',  text_w * 0.15, 0.0),
-                        ('pad_x_right_15pct', 0.0,            text_w * 0.15),
+                        # ('pad_x_sym_10pct',   text_w * 0.10, text_w * 0.10),
+                        # ('pad_x_left_15pct',  text_w * 0.15, 0.0),
+                        # ('pad_x_right_15pct', 0.0,            text_w * 0.15),
                     ]
                     for name, pad_l, pad_r in pad_configs:
                         new_pts = self._extend_quad_x(
@@ -2013,9 +2022,16 @@ class TextVerificationService:
             return False, ""
 
         best_text = ""
-        best_conf = -1.0
+        # Chọn best theo (similarity-với-expected, conf) — similarity ƯU TIÊN,
+        # conf chỉ tie-break. Tránh chọn nhầm bản đọc CỤT (vd '06168-11' conf
+        # 94%) thay vì bản đọc ĐỦ ('06169-11879-V' conf 91%): bản cụt conf cao
+        # hơn vì ít ký tự + sạch, nhưng sai bản chất. Giữ bản đủ thì confusable-
+        # bypass (8↔9) mới có cơ hội cứu được.
+        # Chi phí: SequenceMatcher trên chuỗi <20 ký tự, ≤7 candidate, chỉ chạy
+        # cho region đã FAIL → vài µs, không đáng so với 1 lần OCR.
+        best_score: Tuple[float, float] = (-1.0, -1.0)
         # Per-version results — used to build the augment-fail debug composite
-        # when ALL 5 versions fail (lets operator inspect crops offline).
+        # when ALL versions fail (lets operator inspect crops offline).
         per_version: List[Tuple[str, str, float, bool]] = []
 
         for ver_name, aug_result in zip(aug_names, aug_results):
@@ -2031,13 +2047,39 @@ class TextVerificationService:
             if aug_match:
                 logger.info(f"[{serial_number}] Annotation {annotation_idx}: PASS via augment[{ver_name}]")
                 return True, expected_text[:]
-            if aug_conf > best_conf:
-                best_conf = aug_conf
+
+            # Per-version bypass: thử confusable / V-suffix bypass NGAY cho TỪNG
+            # version, không chỉ cho best_text cuối. Lý do: best chọn theo
+            # similarity có thể KHÔNG qua bypass (vd '616911878V' rớt '0' đầu →
+            # lệch độ dài) trong khi MỘT version khác lại đọc bản qua được bypass
+            # (vd '06169-11879-V' 2-subs). Version nào qua bypass → PASS luôn.
+            cf_ok, _ = self._check_confusable_bypass(
+                expected=expected_text, recognized=aug_recognized, function_type=function_type,
+            )
+            if cf_ok:
+                logger.info(
+                    f"[{serial_number}] Annotation {annotation_idx}: PASS via augment[{ver_name}] "
+                    f"CONFUSABLE BYPASS recognized='{aug_recognized}'"
+                )
+                return True, expected_text[:]
+            vf_ok, _ = self._check_v_suffix_bypass(
+                expected=expected_text, recognized=aug_recognized, function_type=function_type,
+            )
+            if vf_ok:
+                logger.info(
+                    f"[{serial_number}] Annotation {annotation_idx}: PASS via augment[{ver_name}] "
+                    f"V-SUFFIX BYPASS recognized='{aug_recognized}'"
+                )
+                return True, expected_text[:]
+            aug_sim = calculate_text_similarity(aug_recognized, expected_text)
+            if (aug_sim, aug_conf) > best_score:
+                best_score = (aug_sim, aug_conf)
                 best_text = aug_recognized
 
         logger.info(
             f"[{serial_number}] Annotation {annotation_idx}: "
-            f"still FAIL after augment retry, best='{best_text}' conf={best_conf:.2%}"
+            f"still FAIL after augment retry, best='{best_text}' "
+            f"sim={best_score[0]:.2%} conf={best_score[1]:.2%}"
         )
         # Persist crops + augments to disk for offline review of why OCR misses
         # the target character (vd chữ V cuối). Fails silent — không ảnh hưởng

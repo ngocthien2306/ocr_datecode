@@ -84,12 +84,12 @@ export const ServiceDownOverlay: React.FC = () => {
           {isBackendDown ? '⚠ Backend Service' : '⚠ Camera Service'}
         </div>
         <div className="sdo-title">
-          {isBackendDown ? 'Mất kết nối' : 'Đang khởi động lại'}
+          {isBackendDown ? 'Connection Lost' : 'Restarting'}
         </div>
         <div className="sdo-message">
           {isBackendDown
-            ? 'Backend không phản hồi. Đang thử kết nối lại...'
-            : 'Camera management service bị gián đoạn. Hệ thống đang tự khởi động lại, vui lòng chờ...'
+            ? 'Backend is not responding. Trying to reconnect...'
+            : 'Camera management service was interrupted. The system is restarting automatically, please wait...'
           }
         </div>
 

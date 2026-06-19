@@ -453,13 +453,17 @@ class ColorVerificationService:
                 best_shape = shape_corr
                 best = (int(x), int(y), int(bw), int(bh), int(area))
 
-        # Fallback: best candidate's width is abnormally off from the product
-        # polygon's width → trust the user-drawn crop_area instead. Range
-        # [0.5×, 2.0×] of expected width is considered "acceptable"; outside →
+        # Fallback: best candidate's width OR height is abnormally off from the
+        # product polygon → trust the user-drawn crop_area instead. Ranges below
+        # define the "acceptable" band (relative to expected); outside →
         # fallback to crop_area bbox. Also fires when no candidate survived.
+        # Height check catches sharpness mask only lighting up part of the
+        # bottle (e.g. detected height ≈ 30% of the real bottle).
         ox, oy = crop_offset
-        WIDTH_MIN_RATIO = 0.7   # bottle ≥ 70% of expected width
-        WIDTH_MAX_RATIO = 2.0   # bottle ≤ 200% of expected width
+        WIDTH_MIN_RATIO = 0.7    # bottle ≥ 70% of expected width
+        WIDTH_MAX_RATIO = 2.0    # bottle ≤ 200% of expected width
+        HEIGHT_MIN_RATIO = 0.9   # bottle ≥ 70% of expected height
+        HEIGHT_MAX_RATIO = 1.5   # bottle ≤ 200% of expected height
 
         use_fallback = False
         fallback_reason = ""
@@ -468,12 +472,20 @@ class ColorVerificationService:
             fallback_reason = "no candidate"
         else:
             bw_best = float(best[2])
-            ratio = bw_best / max(1.0, expected_w)
-            if ratio < WIDTH_MIN_RATIO or ratio > WIDTH_MAX_RATIO:
+            bh_best = float(best[3])
+            w_ratio = bw_best / max(1.0, expected_w)
+            h_ratio = bh_best / max(1.0, expected_h)
+            if w_ratio < WIDTH_MIN_RATIO or w_ratio > WIDTH_MAX_RATIO:
                 use_fallback = True
                 fallback_reason = (
-                    f"width {bw_best:.0f}px is {ratio:.2f}× expected ({expected_w:.0f}px) "
+                    f"width {bw_best:.0f}px is {w_ratio:.2f}× expected ({expected_w:.0f}px) "
                     f"— outside [{WIDTH_MIN_RATIO}, {WIDTH_MAX_RATIO}]"
+                )
+            elif h_ratio < HEIGHT_MIN_RATIO or h_ratio > HEIGHT_MAX_RATIO:
+                use_fallback = True
+                fallback_reason = (
+                    f"height {bh_best:.0f}px is {h_ratio:.2f}× expected ({expected_h:.0f}px) "
+                    f"— outside [{HEIGHT_MIN_RATIO}, {HEIGHT_MAX_RATIO}]"
                 )
 
         if use_fallback:

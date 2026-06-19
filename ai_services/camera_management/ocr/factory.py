@@ -587,7 +587,7 @@ class OCRBackendFactory:
     SVTRV2_DICT_PATH  = f"{home}/Source/ocr_datecode/languages/english/ppocr_keys_v1.txt"
 
     # SMTR dual-head paths
-    SMTR_TRT_ENGINE = f"{home}/Source/ocr_datecode/languages/english/rec_smtr_fp16.engine"
+    SMTR_TRT_ENGINE = f"{home}/Source/ocr_datecode/languages/english/rec_smtr_attn_fp16.engine"
     SMTR_ONNX_MODEL = f"{home}/Source/ocr_datecode/languages/english/rec_smtr_fp16.onnx"
     SMTR_DICT_PATH  = f"{home}/Source/ocr_datecode/languages/english/EN_symbol_dict.txt"
 
