@@ -21,9 +21,22 @@ Dùng:
 """
 import struct
 import sys
-from multiprocessing import shared_memory
+from multiprocessing import shared_memory, resource_tracker
 
 FRAME_COUNT_OFFSET = 4  # header: write_idx(<I)@0, frame_count(<I)@4
+
+
+def _detach_from_resource_tracker(shm):
+    """
+    QUAN TRỌNG: mặc định CPython đăng ký MỌI SharedMemory (kể cả create=False) với
+    resource_tracker và sẽ tự gọi unlink() lúc process này thoát -> XOÁ segment của
+    process khác (BE/camera service). Gỡ đăng ký để script chỉ ĐỌC/GHI chứ không
+    huỷ segment.  (CPython bug: https://github.com/python/cpython/issues/82300)
+    """
+    try:
+        resource_tracker.unregister(shm._name, "shared_memory")
+    except Exception:
+        pass
 
 
 def main():
@@ -37,6 +50,7 @@ def main():
 
     try:
         shm = shared_memory.SharedMemory(name=shm_name, create=False)
+        _detach_from_resource_tracker(shm)  # KHÔNG để script này unlink segment khi thoát
     except FileNotFoundError:
         print(f"[!] Không tìm thấy segment '{shm_name}' trong /dev/shm.")
         print("    => Camera có thể chưa connect, hoặc segment đã bị unlink.")
