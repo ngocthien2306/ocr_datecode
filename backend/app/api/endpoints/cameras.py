@@ -33,7 +33,7 @@ from app.api.websocket.camera_ws import (
     send_discover_cameras,
     camera_ws_manager
 )
-from app.services.camera_service_supervisor import require_camera_service
+from app.services.camera_service_supervisor import require_camera_service, handle_missing_frame
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
@@ -465,6 +465,8 @@ async def get_camera_frame(
     result = shared_memory_service.read_frame(serial_number)
 
     if result is None:
+        # Camera live in DB but no frame in shm → stale-shm bug → restart both.
+        await handle_missing_frame(serial_number, camera.get('is_connected', False))
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Camera '{serial_number}' is not streaming. Please ensure camera is connected."
@@ -581,6 +583,8 @@ async def get_latest_frames(
     frames_data = shared_memory_service.read_latest_frames(serial_number, count)
 
     if not frames_data:
+        # Camera live in DB but no frame in shm → stale-shm bug → restart both.
+        await handle_missing_frame(serial_number, camera.get('is_connected', False))
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No frames available for camera '{serial_number}'. Please ensure camera is connected and streaming."
