@@ -101,9 +101,12 @@ class TriggerHandler:
         self._camera_cumulative_lock = threading.Lock()
 
         # Per-camera recovery on consecutive capture failures.
-        # NOTE: we NEVER restart the whole service — only the affected camera is
-        # reconnected in a background loop, so the other cameras keep running.
-        _CAPTURE_FAIL_RECOVER_N = 2          # consecutive failures before reconnect kicks in
+        # Policy: after N consecutive failures, retry reconnecting the camera for a
+        # bounded budget (_RECONNECT_BUDGET_SECONDS). If it comes back, only that
+        # camera blipped. If it is STILL unreachable after the budget, escalate to a
+        # full AI-service restart (process exit → FE service-down popup → backend
+        # supervisor respawns a clean process).
+        _CAPTURE_FAIL_RECOVER_N = 1          # consecutive failures before recovery kicks in
         self._capture_fail_recover_n = _CAPTURE_FAIL_RECOVER_N
         self._consecutive_capture_failures: Dict[str, int] = {}  # {serial_number: count}
         self._recovering_cameras: set = set()  # serials with an active recovery loop
@@ -1176,23 +1179,22 @@ class TriggerHandler:
         )
         t.start()
 
-    # Log a CRITICAL warning after this many consecutive failed reconnects.
-    # The service does NOT restart itself — it keeps retrying indefinitely so
-    # there is no dead time and no crash loop. systemd only restarts the process
-    # if it actually crashes (unhandled exception), which is the correct behavior.
-    _RECOVER_WARN_AFTER = 10
+    # How long to retry reconnecting a failed camera before giving up and
+    # restarting the WHOLE AI service. Short on purpose: a quick reconnect window,
+    # then escalate so the line doesn't sit silently broken.
+    _RECONNECT_BUDGET_SECONDS = 5.0
 
     def _recover_camera(self, serial_number: str):
         """
-        Background per-camera recovery loop.
+        Background per-camera recovery with a bounded budget.
 
-        Retries reconnect indefinitely with increasing backoff (capped at 30s).
-        Never calls systemctl restart — the service stays alive so that:
-          1. Triggers during camera downtime are handled gracefully (capture
-             fails but no false reject is emitted).
-          2. No artificial dead time from unnecessary service restarts.
-          3. No crash loop that drains systemd's StartLimitBurst.
-        When the camera hardware is fixed it reconnects automatically.
+        Retries reconnect for up to _RECONNECT_BUDGET_SECONDS:
+          - If the camera comes back, only that camera blipped — the service kept
+            running and the other cameras were unaffected.
+          - If it is STILL unreachable after the budget, escalate to a full
+            AI-service restart (see _restart_ai_service): the process exits, the FE
+            shows the service-down popup, and the backend supervisor respawns a
+            clean process.
         """
         camera = self.camera_manager.cameras.get(serial_number)
         if camera is None:
@@ -1206,7 +1208,7 @@ class TriggerHandler:
         except Exception:
             pass
 
-        backoffs = [1.0, 2.0, 5.0, 10.0, 30.0]  # last value repeats (30s steady-state)
+        deadline = time.monotonic() + self._RECONNECT_BUDGET_SECONDS
         attempt = 0
         while self._polling and serial_number in self._recovering_cameras:
             attempt += 1
@@ -1231,32 +1233,69 @@ class TriggerHandler:
                     pass
                 return
 
-            if attempt == self._RECOVER_WARN_AFTER:
-                # Log once at threshold — operators should physically inspect the camera.
-                # Service keeps running and retrying every 30s.
+            # Out of budget → escalate to a full AI-service restart.
+            if time.monotonic() >= deadline:
                 logger.critical(
-                    f"[RECOVER] Camera {serial_number} still unreachable after {attempt} attempts. "
-                    f"Please inspect the camera hardware. Service will keep retrying every 30s."
+                    f"[RECOVER] Camera {serial_number} still unreachable after "
+                    f"{attempt} attempt(s) / {self._RECONNECT_BUDGET_SECONDS:.0f}s — "
+                    f"restarting the AI service"
                 )
-                try:
-                    camera._emit_event("camera_fatal", {
-                        "serial_number": serial_number,
-                        "reason": f"unreachable after {attempt} attempts — hardware inspection needed",
-                    })
-                except Exception:
-                    pass
+                self._restart_ai_service(serial_number, attempt)
+                return  # process exits inside _restart_ai_service; explicit for clarity
 
-            delay = backoffs[min(attempt - 1, len(backoffs) - 1)]
             logger.warning(
                 f"[RECOVER] Camera {serial_number} reconnect attempt {attempt} failed, "
-                f"retrying in {delay:.0f}s"
+                f"retrying (budget {self._RECONNECT_BUDGET_SECONDS:.0f}s)"
             )
             try:
                 camera._emit_event("camera_reconnect_failed", {"attempt": attempt})
             except Exception:
                 pass
-            time.sleep(delay)
+            time.sleep(1.0)
 
         with self._recovery_lock:
             self._recovering_cameras.discard(serial_number)
         logger.info(f"[RECOVER] Camera {serial_number} recovery loop ended (attempts={attempt})")
+
+    def _restart_ai_service(self, serial_number: str, attempt: int):
+        """
+        Restart the whole AI camera service by exiting the process.
+
+        The camera service runs as a plain background process, so the cleanest
+        "restart" is to die and let the backend supervisor/watchdog respawn a fresh
+        process (it detects the dropped WS within ~8s). The dropped WS also makes
+        the backend emit camera_service_status{connected:false}, so the FE shows
+        the service-down popup during the gap; on respawn it flips back to
+        connected and the overlay reloads the page.
+
+        NOTE: this restarts ALL cameras, not just the failed one — by design, per
+        the "retry briefly, then restart the service" policy.
+        """
+        logger.critical(
+            f"[RECOVER] Restarting AI service now (camera {serial_number} "
+            f"unrecoverable after {attempt} attempt(s))"
+        )
+        # Best-effort notify; the WS drop on exit is what reliably shows the popup.
+        try:
+            camera = self.camera_manager.cameras.get(serial_number)
+            if camera:
+                camera._emit_event("camera_fatal", {
+                    "serial_number": serial_number,
+                    "reason": f"capture unrecoverable after {attempt} attempt(s) — restarting AI service",
+                })
+        except Exception:
+            pass
+
+        # Flush logs and give the event a brief moment to go out, then hard-exit.
+        # os._exit (not sys.exit) because this runs in a daemon thread and must
+        # terminate the WHOLE process, not just the thread.
+        try:
+            for h in list(logging.getLogger().handlers) + list(logger.handlers):
+                try:
+                    h.flush()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        time.sleep(0.5)
+        os._exit(1)
