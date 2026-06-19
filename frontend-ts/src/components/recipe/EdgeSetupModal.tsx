@@ -129,6 +129,7 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [showSearch, setShowSearch] = useState(true);
 
   // Recorded-frame loading + per-image test badges
   const [frames, setFrames] = useState<FrameImage[]>([]);
@@ -168,7 +169,10 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
       setNatH(img.naturalHeight);
       setImgReady(true);
     };
-    img.onerror = () => setPreviewError('Failed to load image');
+    img.onerror = () => {
+      console.error('[EdgeSetupModal] image load failed:', active.canvasSrc);
+      setPreviewError(`Failed to load image: ${active.canvasSrc}`);
+    };
     img.src = active.canvasSrc;
   }, [isOpen, active]);
 
@@ -203,6 +207,29 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
       ctx.stroke();
     };
 
+    // Search-range bands (dashed): outer search (blue) outward from label edge,
+    // inner search (pink) inward into the label. Drawn first so walls sit on top.
+    if (showSearch && active.label && active.label.length >= 4) {
+      const dashPoly = (pts: Pt[], color: string) => {
+        ctx.save();
+        ctx.setLineDash([6, 4]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color + '22';
+        ctx.beginPath();
+        ctx.moveTo(pts[0]![0] * displayScale, pts[0]![1] * displayScale);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i]![0] * displayScale, pts[i]![1] * displayScale);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      };
+      for (const side of ['left', 'right'] as const) {
+        dashPoly(bandQuad(active.label, side, 0, config.outer_search_max, config.y_extension), '#3b82f6');
+        dashPoly(bandQuad(active.label, side, -config.inner_search_max, 0, config.y_extension), '#ec4899');
+      }
+    }
+
     // Product polygons (purple), label (cyan)
     for (const p of active.product) poly(p, '#7513dd', 2);
     poly(active.label, '#22d3ee', 2);
@@ -210,7 +237,8 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
     // Detected walls: outer (yellow), inner (orange)
     if (preview?.outer_corners) poly(preview.outer_corners, '#facc15', 3);
     if (preview?.inner_corners) poly(preview.inner_corners, '#f59e0b', 2);
-  }, [active, natW, natH, displayScale, preview]);
+  }, [active, natW, natH, displayScale, preview, showSearch,
+      config.outer_search_max, config.inner_search_max, config.y_extension]);
 
   useEffect(() => {
     if (!imgReady) return;
@@ -402,6 +430,12 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
                 <span style={{ color: '#7513dd' }}>●</span> Product &nbsp;
                 <span style={{ color: '#facc15' }}>●</span> Outer wall &nbsp;
                 <span style={{ color: '#f59e0b' }}>●</span> Inner wall &nbsp;
+                <span style={{ color: '#3b82f6' }}>▢</span> Outer search &nbsp;
+                <span style={{ color: '#ec4899' }}>▢</span> Inner search &nbsp;
+                <label className="es-show-search">
+                  <input type="checkbox" checked={showSearch} onChange={(e) => setShowSearch(e.target.checked)} />
+                  show search range
+                </label>
                 <b style={{ marginLeft: 8 }}>
                   {active?.isTemplate ? 'Template' : 'Recorded frame'}
                 </b>
@@ -529,6 +563,33 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
     </div>
   );
 };
+
+// Compute a search-band quad on one side of the label, mirroring the geometry
+// in image_proc_detector (_compute_strip_profile): point = p_top + gap * perp,
+// with the strip extended along Y by y_extension. Returns [innerTop, outerTop,
+// outerBot, innerBot] in image pixel coords.
+function bandQuad(
+  label: Pt[], side: 'left' | 'right', innerGap: number, outerGap: number, yExt: number,
+): Pt[] {
+  const pTop = side === 'left' ? label[0]! : label[1]!;
+  const pBot = side === 'left' ? label[3]! : label[2]!;
+  const ex = pBot[0] - pTop[0];
+  const ey = pBot[1] - pTop[1];
+  const elen = Math.hypot(ex, ey) || 1;
+  const edx = ex / elen, edy = ey / elen;
+  const perpx = side === 'left' ? -edy : edy;
+  const perpy = side === 'left' ? edx : -edx;
+  const ye = yExt * elen;
+  const topX = pTop[0] - ye * edx, topY = pTop[1] - ye * edy;
+  const botX = pBot[0] + ye * edx, botY = pBot[1] + ye * edy;
+  const at = (bx: number, by: number, gap: number): Pt => [bx + gap * perpx, by + gap * perpy];
+  return [
+    at(topX, topY, innerGap),
+    at(topX, topY, outerGap),
+    at(botX, botY, outerGap),
+    at(botX, botY, innerGap),
+  ];
+}
 
 function fmt(v: any): string {
   if (v === null || v === undefined) return '–';
