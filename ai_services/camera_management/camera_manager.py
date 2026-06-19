@@ -64,6 +64,10 @@ class CameraManager:
         # Inference mode flag (ONLINE/OFFLINE)
         self.inference_enabled = True
 
+        # OCR bypass master flag (confusable + V-suffix). Mặc định TẮT, memory-only.
+        # Toggle ngầm qua hotkey; trạng thái chỉ ghi vào logs/bypass_state.log.
+        self.bypass_enabled = False
+
         # Initialize PLC Controller
         self.plc_controller = None
         if PLC_AVAILABLE:
@@ -868,6 +872,33 @@ class CameraManager:
                 "do2_success": do_success,
                 "message": f"Inference mode set to {mode_name}"
             }
+
+    def toggle_bypass_mode(self) -> Dict[str, Any]:
+        """
+        Đảo trạng thái OCR bypass (confusable + V-suffix) cho toàn line.
+        Memory-only. KHÔNG hiển thị lên UI — trạng thái ghi vào logs/bypass_state.log
+        để theo dõi (tail -f).
+        """
+        with self._lock:
+            self.bypass_enabled = not self.bypass_enabled
+            enabled = self.bypass_enabled
+            try:
+                self.inference_handler.set_text_bypass(enabled)
+            except Exception as e:
+                logger.warning(f"[BYPASS] apply to text_verification failed: {e}")
+            # File log riêng để giám sát ON/OFF
+            try:
+                from datetime import datetime
+                from pathlib import Path
+                log_path = Path(__file__).resolve().parents[2] / "logs" / "bypass_state.log"
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(f"{ts}  BYPASS {'ON' if enabled else 'OFF'}\n")
+            except Exception as e:
+                logger.warning(f"[BYPASS] write state log failed: {e}")
+            logger.info(f"🔁 [BYPASS] {'ON' if enabled else 'OFF'}")
+            return {"success": True, "enabled": enabled}
 
     def get_reject_stats(self) -> Dict[str, Any]:
         """

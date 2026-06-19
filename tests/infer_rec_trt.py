@@ -3,8 +3,8 @@ SMTR (GTC + CTC dual-head) — Pure TensorRT backend (pycuda, TensorRT 10.x)
 
 Build engine once:
     /usr/src/tensorrt/bin/trtexec \
-        --onnx=languages/english/rec_smtr_fp16.onnx \
-        --saveEngine=languages/english/rec_smtr_fp16.engine \
+        --onnx=languages/english/rec_smtr_fp16_new.onnx \
+        --saveEngine=languages/english/rec_smtr_attn_fp16.engine \
         --fp16 \
         --minShapes=image:1x3x32x32 \
         --optShapes=image:4x3x32x320 \
@@ -13,6 +13,7 @@ Build engine once:
 
 Usage:
     python infer_rec_trt.py --img <file_or_dir> [--batch N] [--verbose]
+    python tests/infer_rec_trt.py --img data_ocr_merged/train/pass-69ae5d9a_6a31b4ada446062618f7efa4_24026290_f0_ann2__06167-13019-V__exp__06167-13019-V__vc__0.992__thr__0.00.jpg --verbose
 """
 
 import argparse, os, time
@@ -32,7 +33,7 @@ from infer_rec_onnx import (
     CTCLabelDecode,
 )
 
-ENGINE_PATH = './languages/english/rec_smtr_fp16.engine'
+ENGINE_PATH = './languages/english/rec_smtr_attn_fp16.engine'
 DICT_PATH   = './languages/english/EN_symbol_dict.txt'
 
 

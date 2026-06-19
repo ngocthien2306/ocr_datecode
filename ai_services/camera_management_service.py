@@ -248,6 +248,15 @@ class CameraManagementService:
                     "data": result
                 })
 
+            elif event == "toggle_bypass":
+                # Đảo OCR bypass (confusable + V-suffix) toàn line. Trạng thái chỉ
+                # ghi logs/bypass_state.log, không trả thông tin nhạy cảm lên UI.
+                result = self.camera_manager.toggle_bypass_mode()
+                await self.ws_client.send_message({
+                    "event": "toggle_bypass_response",
+                    "data": {"success": result.get("success", True)}
+                })
+
             elif event == "simulate_trigger":
                 # Simulate hardware trigger
                 serial_number = data.get("serial_number")

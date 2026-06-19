@@ -429,6 +429,14 @@ async def send_set_inference_mode(recipe_id: str, enabled: bool) -> bool:
     })
 
 
+async def send_toggle_bypass() -> bool:
+    """Gửi lệnh ĐẢO OCR bypass xuống AI service (toggle, không kèm state)."""
+    return await camera_ws_manager.send_to_camera_service({
+        "event": "toggle_bypass",
+        "data": {}
+    })
+
+
 async def send_set_camera_mode(serial_number: str, mode: str) -> bool:
     """Send set camera mode command to AI service"""
     return await camera_ws_manager.send_to_camera_service({

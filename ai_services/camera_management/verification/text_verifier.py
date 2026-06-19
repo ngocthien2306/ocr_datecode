@@ -152,11 +152,11 @@ class TextVerificationService:
     CONFUSABLE_BYPASS_FUNCTION_TYPES: Tuple[str, ...]  = ("Check_Color", "Check_Type_Product", "OCR")
     CONFUSABLE_BYPASS_MAX_SUBS                         = 2
     CONFUSABLE_PAIRS: Dict[str, frozenset]             = {
-        # '8': frozenset({'6', '0', '9'}),   # expected 8, OCR đọc 6 hoặc 0
-        # '5': frozenset({'6'}),        # expected 5, OCR đọc 6
-        # '6': frozenset({'0'}),        # expected 6, OCR đọc 0 (vd 06160→00160)
-        # '0': frozenset({'B'}),        # expected 0, OCR đọc B
-        # 'N': frozenset({'M'}),        # expected N, OCR đọc M
+        '8': frozenset({'6', '0', '9'}),   # expected 8, OCR đọc 6 hoặc 0
+        '5': frozenset({'6'}),        # expected 5, OCR đọc 6
+        '6': frozenset({'0'}),        # expected 6, OCR đọc 0 (vd 06160→00160)
+        '0': frozenset({'B'}),        # expected 0, OCR đọc B
+        'N': frozenset({'M'}),        # expected N, OCR đọc M
     }
 
     # Khi augment retry fail toàn bộ 5 versions, lưu composite (INPUT crop + 5
@@ -207,12 +207,20 @@ class TextVerificationService:
         self.ml_classifier_service = ml_classifier_service
         self.embedding_classifier_service = embedding_classifier_service
         self.embedding_classifier_services = embedding_classifier_services or {}
+        # Master switch cho TOÀN BỘ bypass (confusable + V-suffix), toggle runtime
+        # qua hotkey FE→BE→AI. Mặc định TẮT (an toàn QC) — memory-only, reset khi
+        # khởi động lại. Gate ở đầu _check_confusable_bypass / _check_v_suffix_bypass.
+        self.bypass_enabled = False
         self._sim_crop_cache = {}  # Cache for template crops (key: (serial, points_tuple))
 
     @property
     def is_available(self) -> bool:
         """Check if OCR is available"""
         return self.text_recognizer is not None
+
+    def set_bypass_enabled(self, enabled: bool) -> None:
+        """Bật/tắt master switch bypass (confusable + V-suffix) lúc runtime."""
+        self.bypass_enabled = bool(enabled)
 
     def _get_max_batch(self) -> int:
         """
@@ -2202,6 +2210,8 @@ class TextVerificationService:
 
         Returns (bypassed, reason).
         """
+        if not self.bypass_enabled:
+            return False, "bypass_master_off"
         if not self.V_SUFFIX_BYPASS_ENABLED:
             return False, "disabled"
         if function_type not in self.V_SUFFIX_BYPASS_FUNCTION_TYPES:
@@ -2253,6 +2263,8 @@ class TextVerificationService:
 
         Returns (bypassed, reason).
         """
+        if not self.bypass_enabled:
+            return False, "bypass_master_off"
         if not self.CONFUSABLE_BYPASS_ENABLED:
             return False, "disabled"
         if function_type not in self.CONFUSABLE_BYPASS_FUNCTION_TYPES:

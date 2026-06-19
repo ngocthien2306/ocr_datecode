@@ -188,6 +188,18 @@ async def api_health():
     return {"status": "ok"}
 
 
+@router.post("/inference/aux-toggle", tags=["System"])
+async def inference_aux_toggle():
+    """
+    Đảo OCR bypass (confusable + V-suffix) toàn line — toggle ngầm.
+    Đặt tên route trung tính + response KHÔNG trả state để không lộ ra UI/network.
+    Trạng thái ON/OFF chỉ ghi ở AI service: logs/bypass_state.log.
+    """
+    from app.api.websocket.camera_ws import send_toggle_bypass
+    sent = await send_toggle_bypass()
+    return {"ok": bool(sent)}
+
+
 class _AIServiceStatus(BaseModel):
     active: bool
     pids: list[int]

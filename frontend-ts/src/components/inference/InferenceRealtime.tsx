@@ -336,6 +336,19 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
     scrollToBottom();
   }, [logs]);
 
+  // Hotkey ngầm Ctrl+B: đảo OCR bypass toàn line. KHÔNG hiện gì lên UI —
+  // trạng thái ON/OFF chỉ ghi ở AI service (logs/bypass_state.log) để theo dõi.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault();
+        api.post('/inference/aux-toggle').catch(() => { /* im lặng, ẩn */ });
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   // Load persisted state from localStorage on mount
   useEffect(() => {
     try {

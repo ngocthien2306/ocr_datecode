@@ -229,3 +229,10 @@ weights/best_bottle_obb_m_320.engine
 weights/best_bottle_m_320_new_1.engine
 weights/best_bottle_m_320_new.engine
 weights/yolo26_bottle_obb.engine
+ai_services/logs/dual_rotation_debug
+debug_shape/
+data_ocr/
+ocr_check_data/
+ocr_training_data/
+data_ocr_merged/
+logs/

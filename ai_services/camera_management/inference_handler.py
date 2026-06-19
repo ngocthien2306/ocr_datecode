@@ -116,6 +116,9 @@ class InferenceHandler:
         # Text recognizer for Check_Type_Product function
         self.text_recognizer = None
         self.ocr_backend = None
+        # Trạng thái bypass mong muốn (do operator toggle). Lưu ở đây để re-apply
+        # mỗi khi TextVerificationService được tạo lại (đổi model OCR). Mặc định TẮT.
+        self.text_bypass_enabled = False
 
         # OBB rotation service for Check_Color function
         self.obb_rotation_service = None
@@ -158,6 +161,13 @@ class InferenceHandler:
         self._models_init_lock = threading.Lock()
 
         logger.info("InferenceHandler initialized (models will be lazy-loaded on worker thread)")
+
+    def set_text_bypass(self, enabled: bool) -> bool:
+        """Đặt trạng thái bypass mong muốn + áp ngay cho TextVerificationService (nếu có)."""
+        self.text_bypass_enabled = bool(enabled)
+        if self.text_verification_service is not None:
+            self.text_verification_service.set_bypass_enabled(self.text_bypass_enabled)
+        return self.text_bypass_enabled
 
     def set_ocr_model_type(self, model_type_str: Optional[str]) -> bool:
         """Set OCR model type from recipe string. Returns True if changed (needs reinit)."""
@@ -367,6 +377,8 @@ class InferenceHandler:
                 embedding_classifier_service=self.embedding_classifier_service,
                 embedding_classifier_services=self.embedding_classifier_services,
             )
+            # Re-apply trạng thái bypass hiện tại (service mới tạo mặc định TẮT).
+            self.text_verification_service.set_bypass_enabled(self.text_bypass_enabled)
             logger.info(f"TextVerificationService initialized with {self.ocr_backend} backend (debug={save_debug})")
         else:
             self.text_verification_service = None
