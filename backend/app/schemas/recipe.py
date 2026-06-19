@@ -67,6 +67,7 @@ class EdgeConfig(BaseModel):
     inner_min_hratio: float = Field(default=0.20, ge=0.0, le=1.0)
     inner_tol_px: int = Field(default=12, ge=0, le=100)
     specular_thr: int = Field(default=230, ge=0, le=255)
+    detect_mode: str = Field(default="gradient", description="'gradient' (|Scharr| edge) | 'brightness' (intensity peak / bright bottle-rim)")
     template_walls: Optional[EdgeWalls] = Field(default=None, description="Walls computed on the template image at setup; used directly at inference")
 
 

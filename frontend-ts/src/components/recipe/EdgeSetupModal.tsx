@@ -23,6 +23,7 @@ export interface EdgeConfig {
   inner_min_hratio: number;
   inner_tol_px: number;
   specular_thr: number;
+  detect_mode: 'gradient' | 'brightness';
   template_walls?: EdgeWalls | null;
 }
 
@@ -40,8 +41,19 @@ export const DEFAULT_EDGE_CONFIG: EdgeConfig = {
   inner_min_hratio: 0.20,
   inner_tol_px: 12,
   specular_thr: 230,
+  detect_mode: 'gradient',
   template_walls: null,
 };
+
+interface SideProfile {
+  profile: number[];
+  peaks: number[];
+  gap_offset: number;
+  outer_col: number | null;
+  inner_col: number | null;
+  pred_col: number | null;
+  detect_mode?: string;
+}
 
 type Pt = [number, number];
 
@@ -88,6 +100,7 @@ interface PreviewResult {
   corners: Pt[] | null;
   template_walls: EdgeWalls | null;
   detection_info: any | null;
+  profiles?: { left: SideProfile | null; right: SideProfile | null } | null;
   reason: string | null;
 }
 
@@ -118,8 +131,10 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imgElRef = useRef<HTMLImageElement | null>(null);
+  const leftProfRef = useRef<HTMLCanvasElement | null>(null);
+  const rightProfRef = useRef<HTMLCanvasElement | null>(null);
 
-  const [config, setConfig] = useState<EdgeConfig>(initialConfig || DEFAULT_EDGE_CONFIG);
+  const [config, setConfig] = useState<EdgeConfig>({ ...DEFAULT_EDGE_CONFIG, ...(initialConfig || {}) });
   const [active, setActive] = useState<ActiveImage | null>(null);
   const [natW, setNatW] = useState(imageWidth || 0);
   const [natH, setNatH] = useState(imageHeight || 0);
@@ -143,7 +158,7 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
   // ── Init: config + the template as the active image ───────────────────────
   useEffect(() => {
     if (!isOpen) return;
-    setConfig(initialConfig || DEFAULT_EDGE_CONFIG);
+    setConfig({ ...DEFAULT_EDGE_CONFIG, ...(initialConfig || {}) });
     setActive({
       canvasSrc: templateImage,
       previewUrl: templateImageUrl || '',
@@ -245,6 +260,12 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
     draw();
   }, [imgReady, draw]);
 
+  // Render the L/R edge-profile charts whenever a detection result arrives.
+  useEffect(() => {
+    drawProfileChart(leftProfRef.current, preview?.profiles?.left, 'LEFT profile');
+    drawProfileChart(rightProfRef.current, preview?.profiles?.right, 'RIGHT profile');
+  }, [preview]);
+
   // ── Build the preview request body ────────────────────────────────────────
   const buildBody = (img: ActiveImage, walls?: EdgeWalls | null) => {
     const { template_walls, ...params } = config;
@@ -306,6 +327,13 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
     void runDetect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imgReady, active?.key]);
+
+  // Re-run detection when the user switches detection mode (gradient/brightness).
+  useEffect(() => {
+    if (!imgReady || !active?.previewUrl) return;
+    void runDetect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.detect_mode]);
 
   // ── Load recorded frames for this camera ──────────────────────────────────
   const loadFrames = useCallback(async () => {
@@ -454,6 +482,12 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
               {!detecting && previewError && <span className="es-fail">✗ {previewError}</span>}
             </div>
 
+            {/* Edge profile charts (L/R) — peaks + chosen outer(amber)/inner(green)/pred */}
+            <div className="edge-setup-profiles">
+              <canvas ref={leftProfRef} width={360} height={150} />
+              <canvas ref={rightProfRef} width={360} height={150} />
+            </div>
+
             {/* Recorded frame loader */}
             <div className="edge-setup-frames">
               <div className="es-frames-toolbar">
@@ -513,6 +547,18 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
 
           {/* RIGHT: param sliders */}
           <div className="edge-setup-controls">
+            <div className="es-section">
+              <div className="es-section-title">Detection mode</div>
+              <select
+                className="es-mode-select"
+                value={config.detect_mode}
+                onChange={(e) => setConfig((p) => ({ ...p, detect_mode: e.target.value as 'gradient' | 'brightness' }))}
+              >
+                <option value="gradient">Gradient — edge |Scharr| (default)</option>
+                <option value="brightness">Brightness — intensity peak (bright rim)</option>
+              </select>
+            </div>
+
             <button
               type="button" className="btn btn-primary es-detect-btn"
               onClick={runDetect} disabled={detecting || !active?.previewUrl}
@@ -589,6 +635,72 @@ function bandQuad(
     at(botX, botY, outerGap),
     at(botX, botY, innerGap),
   ];
+}
+
+// Render a 1D edge profile (light-theme) like the Python debug viz: profile
+// curve + all peaks (red) + chosen OUTER (amber) / INNER (green) + pred line.
+// Labels show the actual px gap from the label edge (= col + gap_offset).
+function drawProfileChart(canvas: HTMLCanvasElement | null, data: SideProfile | null | undefined, title: string) {
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const W = canvas.width, H = canvas.height;
+  ctx.fillStyle = '#f3f4f6';
+  ctx.fillRect(0, 0, W, H);
+  ctx.font = '11px sans-serif';
+  ctx.fillStyle = '#6b7280';
+  ctx.fillText(title, 6, 13);
+  if (!data || !data.profile || data.profile.length < 2) {
+    ctx.fillStyle = '#9ca3af';
+    ctx.fillText('no data', 6, Math.round(H / 2));
+    return;
+  }
+  const prof = data.profile;
+  const n = prof.length;
+  const padT = 18, padB = 14;
+  const plotH = H - padT - padB;
+  const go = data.gap_offset || 0;
+  const xOf = (col: number) => (col / (n - 1)) * W;
+  const yOf = (v: number) => padT + plotH - v * plotH;
+
+  // profile curve
+  ctx.strokeStyle = '#374151';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const x = xOf(i), y = yOf(prof[i]!);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // all candidate peaks (small red)
+  ctx.fillStyle = '#ef4444';
+  for (const p of data.peaks) {
+    if (p >= 0 && p < n) { ctx.beginPath(); ctx.arc(xOf(p), yOf(prof[p]!), 2.5, 0, Math.PI * 2); ctx.fill(); }
+  }
+
+  // predicted inner (pink dashed vertical line)
+  if (data.pred_col != null && data.pred_col >= 0 && data.pred_col < n) {
+    ctx.save();
+    ctx.setLineDash([4, 3]);
+    ctx.strokeStyle = '#ec4899';
+    ctx.lineWidth = 1;
+    const px = xOf(data.pred_col);
+    ctx.beginPath(); ctx.moveTo(px, padT); ctx.lineTo(px, H - padB); ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = '#ec4899';
+    ctx.fillText(`pred ${Math.round(data.pred_col + go)}`, 6, H - 3);
+  }
+
+  const bigDot = (col: number | null, color: string, label: string) => {
+    if (col == null || col < 0 || col >= n) return;
+    const x = xOf(col), y = yOf(prof[Math.round(col)] ?? 0);
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillText(label, Math.min(x + 7, W - 44), Math.max(12, y - 6));
+  };
+  bigDot(data.outer_col, '#f59e0b', data.outer_col != null ? `OUT ${Math.round(data.outer_col + go)}` : 'OUT');
+  bigDot(data.inner_col, '#16a34a', data.inner_col != null ? `IN ${Math.round(data.inner_col + go)}` : 'IN');
 }
 
 function fmt(v: any): string {

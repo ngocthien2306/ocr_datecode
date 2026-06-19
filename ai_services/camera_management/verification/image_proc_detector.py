@@ -78,6 +78,11 @@ class EdgeParams:
     inner_min_hratio: float = INNER_MIN_HRATIO
     inner_tol_px:     int   = INNER_TOL_PX
     specular_thr:     int   = SPECULAR_THR
+    # Detection signal:
+    #   'gradient'   = |Scharr X| edge strength (default) + specular suppression
+    #   'brightness' = raw intensity peaks (the bright bottle-rim highlight),
+    #                  no specular suppression (the bright line IS the signal)
+    detect_mode:      str   = "gradient"
 
     @classmethod
     def from_config(cls, cfg: Optional[Dict[str, Any]]) -> "EdgeParams":
@@ -186,29 +191,34 @@ def _compute_strip_profile(
         flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE,
     )
 
-    sobel = cv2.Scharr(strip.astype(np.float32), cv2.CV_32F, 1, 0)
-    abs_sobel = np.abs(sobel)
-
-    # Specular suppression: zero-out Sobel near LARGE bright blobs only
-    bright_mask = (strip > params.specular_thr).astype(np.uint8)
-    if bright_mask.sum() > 100:
-        bright_blobs = cv2.erode(
-            bright_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        )
-        if bright_blobs.sum() > 50:
-            bright_dilated = cv2.dilate(
-                bright_blobs, cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+    # ── Build the 1D detection signal (2D map, columns = gap from label) ──────
+    if (params.detect_mode or "gradient").lower() == "brightness":
+        # Brightness mode: the bottle rim shows up as a bright vertical highlight.
+        # Use raw intensity; do NOT suppress specular (the bright line is the signal).
+        signal = strip.astype(np.float32)
+    else:
+        # Gradient mode (default): horizontal edge strength + specular suppression.
+        sobel = cv2.Scharr(strip.astype(np.float32), cv2.CV_32F, 1, 0)
+        signal = np.abs(sobel)
+        bright_mask = (strip > params.specular_thr).astype(np.uint8)
+        if bright_mask.sum() > 100:
+            bright_blobs = cv2.erode(
+                bright_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
             )
-            abs_sobel = abs_sobel * (1 - bright_dilated)
+            if bright_blobs.sum() > 50:
+                bright_dilated = cv2.dilate(
+                    bright_blobs, cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+                )
+                signal = signal * (1 - bright_dilated)
 
-    gmax = float(abs_sobel.max()) + 1e-6
-    strong = (abs_sobel > params.strong_thr * gmax).sum(axis=0)
+    gmax = float(signal.max()) + 1e-6
+    strong = (signal > params.strong_thr * gmax).sum(axis=0)
     height_ratio = strong / float(h)
-    robust_max = float(np.percentile(abs_sobel, 95)) + 1e-6
-    strong_robust = (abs_sobel > params.strong_thr * robust_max).sum(axis=0)
+    robust_max = float(np.percentile(signal, 95)) + 1e-6
+    strong_robust = (signal > params.strong_thr * robust_max).sum(axis=0)
     height_ratio_robust = np.minimum(strong_robust / float(h), 1.0)
 
-    profile = abs_sobel.sum(axis=0)
+    profile = signal.sum(axis=0)
     profile = gaussian_filter1d(profile, sigma=1.5)
     pmax = profile.max() + 1e-6
     profile_n = profile / pmax
@@ -338,8 +348,12 @@ def detect_product_box(
     serial_number: str = "",
     wall_type: str = "outer",
     params: EdgeParams = DEFAULT_EDGE_PARAMS,
+    return_profiles: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Detect product (bottle) box từ frame bằng image processing.
+
+    return_profiles: khi True, đính kèm 'profiles' (curve + peaks + chosen
+    outer/inner/pred per side) để FE vẽ chart chọn cạnh. Off mặc định (inference).
 
     Args:
         frame_img: BGR image
@@ -450,7 +464,7 @@ def detect_product_box(
     angle = float(np.arctan2(edge[0], edge[1]))
     box = np.array([cx, cy, w, h, angle], dtype=np.float32)
 
-    return {
+    result = {
         'box': box,
         'score': 1.0,
         'class': 'product',
@@ -469,6 +483,30 @@ def detect_product_box(
             'outer_L_gap': out_L_gap, 'outer_R_gap': out_R_gap,
         }
     }
+
+    if return_profiles:
+        def _side_payload(pd, outer_gap, inner_gap, pred_gap):
+            if pd is None:
+                return None
+            go = float(pd['gap_offset'])
+            to_col = lambda g: (None if g is None else float(g) - go)
+            return {
+                'profile': [round(float(x), 4) for x in pd['profile']],
+                'peaks': [int(p) for p in pd['peaks']],
+                'gap_offset': go,
+                'outer_col': to_col(outer_gap),
+                'inner_col': to_col(inner_gap),
+                'pred_col': to_col(pred_gap),
+                'outer_min_hratio': float(params.outer_min_hratio),
+                'inner_min_hratio': float(params.inner_min_hratio),
+                'detect_mode': (params.detect_mode or 'gradient'),
+            }
+        result['profiles'] = {
+            'left':  _side_payload(pd_L, outer_L, inner_L, pred_L),
+            'right': _side_payload(pd_R, outer_R, inner_R, pred_R),
+        }
+
+    return result
 
 
 def label_box_from_pts(label_pts: List[List[float]]) -> Dict[str, Any]:

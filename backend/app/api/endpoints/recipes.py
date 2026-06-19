@@ -1165,11 +1165,13 @@ async def detect_walls_preview(body: dict):
     result = detect_product_box(
         img, label_pts, walls,
         serial_number="preview", wall_type=wall_type, params=params,
+        return_profiles=True,
     )
     if result is None:
         return {
             "detected": False, "inner_corners": None, "outer_corners": None,
             "corners": None, "template_walls": walls, "detection_info": None,
+            "profiles": None,
             "reason": "Both walls hidden / detection failed for this image",
         }
 
@@ -1183,6 +1185,7 @@ async def detect_walls_preview(body: dict):
         "corners": _to_list(result.get("corners")),
         "template_walls": walls,
         "detection_info": result.get("detection_info"),
+        "profiles": result.get("profiles"),
         "reason": None,
     }
 
