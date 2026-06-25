@@ -1057,6 +1057,15 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
     const handleNewResult = (data: any) => {
       console.log('New inference result:', stripBase64FromResult(data));
 
+      // Ignore timeout / empty results entirely: don't log them and don't
+      // touch the live display. A timeout result carries `timeout: true` and
+      // `camera_results: []` (no frames, no statistics). Under load these
+      // arrive ~1-2/s; if applied they would spam the result log and
+      // repeatedly clear the camera grid/stats, making the screen flicker.
+      // We keep the last good frames on screen instead.
+      if (data.timeout || !data.camera_results?.length) {
+        return;
+      }
 
       const fullResult = data as InferenceResult;
 

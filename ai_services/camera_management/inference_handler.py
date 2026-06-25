@@ -891,7 +891,7 @@ class InferenceHandler:
             cameras: List of cameras for this job
             emit_callback: Callback to emit results
         """
-        TIMEOUT_SECONDS = 10.0  # 1 second timeout
+        TIMEOUT_SECONDS = 20.0  # inference job timeout (raised from 10s to reduce false timeouts under load)
 
         try:
             # Get future from active jobs

@@ -14,7 +14,7 @@
   background: white;
   border-radius: 12px;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.25);
-  width: min(1400px, 95vw);
+  width: min(1680px, 97vw);
   max-height: 92vh;
   display: flex;
   flex-direction: column;
@@ -168,13 +168,16 @@
   color: #111827;
 }
 
-/* Recorded frames */
-.edge-setup-frames {
-  border-top: 1px solid #e5e7eb;
-  padding-top: 10px;
+/* Recorded frames — dedicated LEFT column, 2-image-wide grid */
+.edge-setup-frames-col {
+  width: 280px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-height: 0;
+  border-right: 1px solid #e5e7eb;
+  padding-right: 12px;
 }
 
 .es-frames-toolbar {
@@ -220,7 +223,6 @@
 .es-frames-toolbar .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .es-frames-count {
-  margin-left: auto;
   font-weight: 600;
   color: #111827;
 }
@@ -234,18 +236,22 @@
   font-size: 12px;
 }
 
+/* 2 images per row, rows grow with count and scroll vertically */
 .es-thumbs {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
   gap: 6px;
-  max-height: 200px;
+  align-content: start;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  padding-right: 2px;
 }
 
 .es-thumb {
   position: relative;
-  width: 84px;
-  height: 64px;
+  width: 100%;
+  height: 92px;
   border: 2px solid #e5e7eb;
   border-radius: 4px;
   overflow: hidden;

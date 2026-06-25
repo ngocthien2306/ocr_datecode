@@ -448,7 +448,61 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
         </div>
 
         <div className="edge-setup-body">
-          {/* LEFT: canvas + detection info + recorded frame strip */}
+          {/* LEFT: recorded-image list (2-col grid, rows scroll) */}
+          <div className="edge-setup-frames-col">
+            <div className="es-frames-toolbar">
+              <span className="es-frames-title">Recorded images</span>
+              <select value={frameResult} onChange={(e) => setFrameResult(e.target.value as any)}>
+                <option value="PASS">PASS</option>
+                <option value="FAIL">FAIL</option>
+                <option value="">All</option>
+              </select>
+              <label className="es-max">
+                Max
+                <input
+                  type="number" min={1} max={300} value={frameLimit}
+                  onChange={(e) => setFrameLimit(Math.max(1, Math.min(300, parseInt(e.target.value) || 1)))}
+                />
+              </label>
+              <button type="button" className="btn btn-secondary" onClick={loadFrames} disabled={loadingFrames}>
+                {loadingFrames ? 'Loading…' : 'Load'}
+              </button>
+              <button
+                type="button" className="btn btn-secondary"
+                onClick={testAll}
+                disabled={frames.length === 0 || testingAll || !config.template_walls}
+                title={!config.template_walls ? 'Detect on the template first' : ''}
+              >
+                {testingAll ? `Testing ${doneCount}/${frames.length}…` : 'Test all'}
+              </button>
+              {frames.length > 0 && (
+                <span className="es-frames-count">{passCount}/{frames.length} detected</span>
+              )}
+            </div>
+            {framesError && <div className="es-frames-error">{framesError}</div>}
+            <div className="es-thumbs">
+              {frames.map((f) => {
+                const b = badges[f.image_path];
+                return (
+                  <div
+                    key={f.image_path}
+                    className={`es-thumb ${active?.key === f.image_path ? 'active' : ''}`}
+                    onClick={() => pickFrame(f)}
+                    title={`${f.pass_fail} · frame ${f.frame_idx ?? '?'} · ${f.timestamp ?? ''}`}
+                  >
+                    <img src={`${API_BASE_URL}/api/uploads/${f.image_path}`} alt="frame" loading="lazy" />
+                    {b && (
+                      <span className={`es-thumb-badge ${b}`}>
+                        {b === 'detected' ? '✓' : b === 'failed' ? '✗' : '…'}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* MIDDLE: canvas + detection info + profiles */}
           <div className="edge-setup-canvas-col">
             <div className="edge-setup-canvas-wrap">
               {!imgReady && <div className="edge-setup-loading">Loading image…</div>}
@@ -488,61 +542,6 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
               <canvas ref={rightProfRef} width={360} height={150} />
             </div>
 
-            {/* Recorded frame loader */}
-            <div className="edge-setup-frames">
-              <div className="es-frames-toolbar">
-                <span className="es-frames-title">Recorded images</span>
-                <select value={frameResult} onChange={(e) => setFrameResult(e.target.value as any)}>
-                  <option value="PASS">PASS</option>
-                  <option value="FAIL">FAIL</option>
-                  <option value="">All</option>
-                </select>
-                <label className="es-max">
-                  Max
-                  <input
-                    type="number" min={1} max={300} value={frameLimit}
-                    onChange={(e) => setFrameLimit(Math.max(1, Math.min(300, parseInt(e.target.value) || 1)))}
-                  />
-                </label>
-                <button type="button" className="btn btn-secondary" onClick={loadFrames} disabled={loadingFrames}>
-                  {loadingFrames ? 'Loading…' : 'Load'}
-                </button>
-                <button
-                  type="button" className="btn btn-secondary"
-                  onClick={testAll}
-                  disabled={frames.length === 0 || testingAll || !config.template_walls}
-                  title={!config.template_walls ? 'Detect on the template first' : ''}
-                >
-                  {testingAll ? `Testing ${doneCount}/${frames.length}…` : 'Test all'}
-                </button>
-                {frames.length > 0 && (
-                  <span className="es-frames-count">
-                    {passCount}/{frames.length} detected
-                  </span>
-                )}
-              </div>
-              {framesError && <div className="es-frames-error">{framesError}</div>}
-              <div className="es-thumbs">
-                {frames.map((f) => {
-                  const b = badges[f.image_path];
-                  return (
-                    <div
-                      key={f.image_path}
-                      className={`es-thumb ${active?.key === f.image_path ? 'active' : ''}`}
-                      onClick={() => pickFrame(f)}
-                      title={`${f.pass_fail} · frame ${f.frame_idx ?? '?'} · ${f.timestamp ?? ''}`}
-                    >
-                      <img src={`${API_BASE_URL}/api/uploads/${f.image_path}`} alt="frame" loading="lazy" />
-                      {b && (
-                        <span className={`es-thumb-badge ${b}`}>
-                          {b === 'detected' ? '✓' : b === 'failed' ? '✗' : '…'}
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
           </div>
 
           {/* RIGHT: param sliders */}
