@@ -55,7 +55,7 @@ Wants=mongod.service
 [Service]
 User=${USER_NAME}
 WorkingDirectory=${PROJECT_DIR}/backend
-ExecStart=${PYTHON3} -m uvicorn app.main:app --port 8000 --host 0.0.0.0
+ExecStart=${PYTHON3} -m uvicorn app.main:app --port 8000 --host 0.0.0.0 --ws-ping-interval 20 --ws-ping-timeout 10
 Restart=always
 RestartSec=5
 StartLimitIntervalSec=600

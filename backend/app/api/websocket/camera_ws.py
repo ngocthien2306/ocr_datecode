@@ -7,6 +7,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import json
 import logging
 from typing import Optional, Dict, Any
+from collections import deque
 import asyncio
 import uuid
 
@@ -14,6 +15,16 @@ logger = logging.getLogger(__name__)
 
 # Pending requests for request-response pattern
 _pending_requests: Dict[str, asyncio.Future] = {}
+
+# Recently processed inference_result msg_ids (dedup for at-least-once resend)
+_recent_result_msg_ids: deque = deque(maxlen=500)
+
+# App-level heartbeat: protocol ping/pong keeps working even when the app on
+# either side has stopped reading messages, so a zombie connection can only be
+# detected by a request/response at this layer.
+HEARTBEAT_INTERVAL = 10.0
+HEARTBEAT_TIMEOUT = 5.0
+HEARTBEAT_MAX_MISSES = 2
 
 router = APIRouter()
 
@@ -65,20 +76,36 @@ class CameraWebSocketManager:
         except Exception as e:
             logger.error(f"Failed to emit camera_service_status up: {e}")
 
-    async def disconnect(self):
-        """Disconnect camera service WebSocket"""
+    async def disconnect(self, websocket: Optional[WebSocket] = None):
+        """
+        Disconnect camera service WebSocket.
+
+        Args:
+            websocket: The socket owned by the calling handler. When the AI
+                service reconnects, connect() replaces the old socket; the old
+                handler's cleanup then runs AFTER the new connection is live and
+                must not tear down the new connection's state.
+        """
         async with self._lock:
+            if websocket is not None and self.camera_service_ws is not websocket:
+                logger.info("Stale camera service handler exited; keeping current connection")
+                return
+
             self.connected = False
             self.camera_service_ws = None
 
             logger.info("Camera service disconnected")
 
-            # Notify all frontend clients that camera service is down
+        # Notify all frontend clients that camera service is down.
+        # Done outside the lock to avoid holding it across the emit.
+        try:
             from app.services.socketio_service import emit_camera_service_status
             await emit_camera_service_status({
                 'connected': False,
                 'message': 'Camera Management Service disconnected'
             })
+        except Exception as e:
+            logger.error(f"Failed to emit camera_service_status down: {e}")
 
     async def send_to_camera_service(self, message: dict) -> bool:
         """
@@ -105,36 +132,6 @@ class CameraWebSocketManager:
             self.connected = False
             return False
 
-    async def receive_from_camera_service(self) -> Optional[dict]:
-        """
-        Receive message from camera service
-
-        Returns:
-            Message dict or None
-        """
-        if not self.connected or not self.camera_service_ws:
-            return None
-
-        try:
-            message_raw = await self.camera_service_ws.receive_text()
-            message = json.loads(message_raw)
-            logger.debug(f"Received from camera service: {message.get('event', 'unknown')}")
-            return message
-
-        except WebSocketDisconnect:
-            logger.info("Camera service disconnected")
-            self.connected = False
-            return None
-
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON from camera service: {e}")
-            return None
-
-        except Exception as e:
-            logger.error(f"Error receiving from camera service: {e}")
-            self.connected = False
-            return None
-
     def is_connected(self) -> bool:
         """Check if camera service is connected"""
         return self.connected
@@ -142,6 +139,69 @@ class CameraWebSocketManager:
 
 # Global singleton instance
 camera_ws_manager = CameraWebSocketManager()
+
+
+async def send_request_and_wait(message: dict, timeout: float = 10.0) -> Optional[dict]:
+    """
+    Send a command to the camera service and wait for the matching response
+    (correlated via data.request_id, resolved in handle_camera_service_message).
+
+    Returns:
+        Response data dict, or None if the send failed or no response arrived
+        within the timeout (i.e. the command may not have been executed).
+    """
+    request_id = str(uuid.uuid4())
+    message.setdefault("data", {})["request_id"] = request_id
+
+    future: asyncio.Future = asyncio.get_running_loop().create_future()
+    _pending_requests[request_id] = future
+
+    try:
+        if not await camera_ws_manager.send_to_camera_service(message):
+            return None
+        return await asyncio.wait_for(future, timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"No response from camera service for {message.get('event')} "
+            f"(request_id={request_id}, timeout={timeout}s)"
+        )
+        return None
+    finally:
+        _pending_requests.pop(request_id, None)
+
+
+async def _heartbeat_loop(websocket: WebSocket):
+    """
+    Per-connection app-level heartbeat. After HEARTBEAT_MAX_MISSES consecutive
+    unanswered pings, closes the socket so both sides tear down and the AI
+    service reconnects cleanly.
+    """
+    misses = 0
+    while True:
+        await asyncio.sleep(HEARTBEAT_INTERVAL)
+
+        if camera_ws_manager.camera_service_ws is not websocket:
+            return  # Connection was replaced; this loop is obsolete
+
+        response = await send_request_and_wait(
+            {"event": "ping", "data": {}},
+            timeout=HEARTBEAT_TIMEOUT
+        )
+
+        if response is not None:
+            misses = 0
+            continue
+
+        misses += 1
+        logger.warning(f"Camera service heartbeat miss {misses}/{HEARTBEAT_MAX_MISSES}")
+
+        if misses >= HEARTBEAT_MAX_MISSES:
+            logger.error("Camera service heartbeat failed — closing zombie connection")
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+            return
 
 
 @router.websocket("/ws/camera-management")
@@ -153,16 +213,25 @@ async def camera_management_websocket(websocket: WebSocket):
     - Accepts connection from AI service
     - Forwards commands from backend to AI service
     - Receives events from AI service and processes them
+    - Runs an app-level heartbeat to detect zombie connections
     """
     await camera_ws_manager.connect(websocket)
 
-    try:
-        # Main receive loop
-        while camera_ws_manager.is_connected():
-            message = await camera_ws_manager.receive_from_camera_service()
+    heartbeat_task = asyncio.create_task(_heartbeat_loop(websocket))
 
-            if message is None:
-                break
+    try:
+        # Main receive loop — reads from THIS handler's socket, not the shared
+        # manager state, so a replaced (stale) handler cannot steal messages.
+        while True:
+            message_raw = await websocket.receive_text()
+
+            try:
+                message = json.loads(message_raw)
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON from camera service: {e}")
+                continue
+
+            logger.debug(f"Received from camera service: {message.get('event', 'unknown')}")
 
             # Handle message from camera service
             await handle_camera_service_message(message)
@@ -176,7 +245,8 @@ async def camera_management_websocket(websocket: WebSocket):
         traceback.print_exc()
 
     finally:
-        await camera_ws_manager.disconnect()
+        heartbeat_task.cancel()
+        await camera_ws_manager.disconnect(websocket)
 
 
 async def handle_camera_service_message(message: dict):
@@ -195,7 +265,37 @@ async def handle_camera_service_message(message: dict):
     event = message.get("event")
     data = message.get("data", {})
 
-    logger.info(f"Camera service event: {event}")
+    if event != "live_frame":
+        logger.info(f"Camera service event: {event}")
+
+    # Resolve request-response futures (ACK pattern). Any response carrying a
+    # known request_id unblocks the send_request_and_wait() caller.
+    if isinstance(data, dict):
+        request_id = data.get("request_id")
+        if request_id and request_id in _pending_requests:
+            future = _pending_requests.pop(request_id)
+            if not future.done():
+                future.set_result(data)
+
+    # At-least-once delivery: the AI service resends events that were never
+    # acked (msg_id-tagged). Dedup already-processed ones — ack again and drop.
+    msg_id = data.get("msg_id") if isinstance(data, dict) else None
+    if msg_id and msg_id in _recent_result_msg_ids:
+        logger.info(f"Duplicate {event} (msg_id={msg_id}) — ack only")
+        await camera_ws_manager.send_to_camera_service({
+            "event": "event_ack",
+            "data": {"msg_id": msg_id}
+        })
+        return
+
+    async def _ack_processed():
+        """Record + ack a msg_id-tagged event once it is safely processed"""
+        if msg_id:
+            _recent_result_msg_ids.append(msg_id)
+            await camera_ws_manager.send_to_camera_service({
+                "event": "event_ack",
+                "data": {"msg_id": msg_id}
+            })
 
     try:
         if event == "service_connected":
@@ -312,10 +412,30 @@ async def handle_camera_service_message(message: dict):
 
         elif event == "camera_error":
             logger.error(f"Camera error: {data}")
+            # Forward to frontend so the operator sees the failure
+            from app.services.socketio_service import emit_camera_alert
+            await emit_camera_alert({"type": "camera_error", **(data or {})})
+
+        elif event == "trigger_error":
+            # Camera capture failed after a trigger — the operator must know,
+            # otherwise the trigger silently produces nothing.
+            logger.error(f"Trigger error from camera service: {data}")
+            from app.services.socketio_service import emit_camera_alert
+            await emit_camera_alert({"type": "trigger_error", **(data or {})})
+            await _ack_processed()
+
+        elif event == "inference_skipped":
+            logger.warning(f"Inference skipped: {data}")
+            from app.services.socketio_service import emit_camera_alert
+            await emit_camera_alert({"type": "inference_skipped", **(data or {})})
+            await _ack_processed()
 
         elif event == "inference_result":
-            # Process inference result
-            await process_inference_result(data)
+            # Ack only after the result is safely stored in DB, so a failed
+            # save leads to a resend from the AI service instead of data loss.
+            result = await process_inference_result(data)
+            if result is not None:
+                await _ack_processed()
 
         elif event == "live_frame":
             # Forward live frame to frontend via SocketIO
@@ -330,6 +450,10 @@ async def handle_camera_service_message(message: dict):
                 future = _pending_requests.pop("discover_cameras")
                 if not future.done():
                     future.set_result(data)
+
+        elif event == "ping_response":
+            # Heartbeat reply — already resolved via request_id above
+            pass
 
         elif event.endswith("_response"):
             # Response to command - will be handled by calling code
@@ -350,6 +474,10 @@ async def process_inference_result(data: dict):
 
     Args:
         data: Inference result data
+
+    Returns:
+        The saved result, or None if processing/saving failed (caller must
+        NOT ack in that case so the AI service will resend).
     """
     try:
         # Import here to avoid circular dependency
@@ -364,14 +492,16 @@ async def process_inference_result(data: dict):
 
         if result:
             logger.info(f"Inference result processed successfully: {result.id}")
-            # TODO: Emit SocketIO event to frontend when SocketIO is implemented
         else:
             logger.error("Failed to process inference result")
+
+        return result
 
     except Exception as e:
         logger.error(f"Error in process_inference_result: {e}")
         import traceback
         traceback.print_exc()
+        return None
 
 
 # Utility functions for other endpoints to use

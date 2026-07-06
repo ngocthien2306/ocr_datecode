@@ -1067,10 +1067,35 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
       }
     };
 
+    // Alerts from the AI service (capture failed, inference skipped, camera
+    // error) — without these the trigger silently produces nothing.
+    const handleCameraAlert = (data: any) => {
+      const alertMessage =
+        data.type === 'trigger_error'
+          ? `Trigger error: ${data.error || 'camera capture failed'}`
+          : data.type === 'inference_skipped'
+            ? `Inference skipped: ${data.reason || 'inference mode is OFFLINE'}`
+            : `Camera error: ${data.error || data.message || 'unknown error'}`;
+
+      toast.error(alertMessage);
+
+      const alertLog: InferenceLog = {
+        id: `alert-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        result: 'FAIL',
+        recipe_name: data.recipe_name || '',
+        product_code: '',
+        message: `⚠️ ${alertMessage}`
+      };
+      setLogs(prev => [...prev, alertLog].slice(-100));
+    };
+
     socketService.subscribeToInferenceResults(handleNewResult);
+    socketService.onCameraAlert(handleCameraAlert);
 
     return () => {
       socketService.unsubscribeFromInferenceResults(handleNewResult);
+      socketService.offCameraAlert(handleCameraAlert);
     };
   }, [runningRecipeId]);
 

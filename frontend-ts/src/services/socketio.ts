@@ -11,6 +11,10 @@ import { API_BASE_URL } from '@/config/api';
 class SocketIOService {
   private socket: Socket | null = null;
   private reconnectAttempts = 0;
+  // Server-side rooms are tied to the socket sid. After a reconnect the new
+  // sid is in no rooms, so every active subscription must be re-emitted or
+  // the client silently stops receiving room events until a page reload.
+  private activeSubscriptions = new Set<string>();
 
   /**
    * Initialize and connect to SocketIO server
@@ -51,6 +55,12 @@ class SocketIOService {
     this.socket.on('connect', () => {
       console.log('[SocketIO] Connected:', this.socket?.id);
       this.reconnectAttempts = 0;
+
+      // Re-join server-side rooms after a reconnect (new sid = no rooms)
+      this.activeSubscriptions.forEach((subscribeEvent) => {
+        console.log('[SocketIO] Re-subscribing:', subscribeEvent);
+        this.socket?.emit(subscribeEvent);
+      });
     });
 
     this.socket.on('disconnect', (reason) => {
@@ -83,7 +93,8 @@ class SocketIOService {
       return;
     }
 
-    // Subscribe to channel
+    // Subscribe to channel (re-emitted automatically after reconnect)
+    this.activeSubscriptions.add('subscribe_inference_results');
     this.socket.emit('subscribe_inference_results');
 
     // Listen for new results
@@ -98,6 +109,7 @@ class SocketIOService {
   unsubscribeFromInferenceResults(callback?: (data: any) => void): void {
     if (!this.socket) return;
 
+    this.activeSubscriptions.delete('subscribe_inference_results');
     this.socket.emit('unsubscribe_inference_results');
 
     if (callback) {
@@ -223,6 +235,26 @@ class SocketIOService {
   }
 
   /**
+   * Listen for camera/trigger/inference alerts (trigger_error,
+   * inference_skipped, camera_error) forwarded from the AI service
+   */
+  onCameraAlert(callback: (data: any) => void): void {
+    if (!this.socket) return;
+    this.socket.on('camera_alert', callback);
+    console.log('[SocketIO] Subscribed to camera_alert events');
+  }
+
+  offCameraAlert(callback?: (data: any) => void): void {
+    if (!this.socket) return;
+
+    if (callback) {
+      this.socket.off('camera_alert', callback);
+    } else {
+      this.socket.off('camera_alert');
+    }
+  }
+
+  /**
    * Listen for camera service status changes
    */
   onCameraServiceStatus(callback: (data: any) => void): void {
@@ -309,6 +341,7 @@ class SocketIOService {
     }
 
     console.log('[SocketIO] Requesting I/O status...');
+    this.activeSubscriptions.add('request_io_status');
     this.socket.emit('request_io_status');
   }
 
@@ -319,6 +352,7 @@ class SocketIOService {
     if (!this.socket) return;
 
     console.log('[SocketIO] Stopping I/O tracking...');
+    this.activeSubscriptions.delete('request_io_status');
     this.socket.emit('stop_io_tracking');
   }
 
@@ -368,6 +402,7 @@ class SocketIOService {
       return;
     }
 
+    this.activeSubscriptions.add('subscribe_jetson_monitoring');
     this.socket.emit('subscribe_jetson_monitoring');
     console.log('[SocketIO] Subscribed to Jetson monitoring');
   }
@@ -378,6 +413,7 @@ class SocketIOService {
   unsubscribeFromJetsonMonitoring(): void {
     if (!this.socket) return;
 
+    this.activeSubscriptions.delete('subscribe_jetson_monitoring');
     this.socket.emit('unsubscribe_jetson_monitoring');
     console.log('[SocketIO] Unsubscribed from Jetson monitoring');
   }
