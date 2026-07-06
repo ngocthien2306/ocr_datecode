@@ -11,11 +11,6 @@ class Settings(BaseSettings):
     INFERENCE_RESULTS_TTL_DAYS: int = 30
     ACTION_LOGS_TTL_DAYS: int = 90
 
-    # Redis
-    REDIS_URL: str = "redis://localhost:6379"
-    REDIS_CACHE_TTL_RECENT: int = 60  # 1 minute for recent data
-    REDIS_CACHE_TTL_HISTORICAL: int = 300  # 5 minutes for historical data
-
     # JWT
     SECRET_KEY: str = "your-secret-key-change-this-in-production"
     ALGORITHM: str = "HS256"

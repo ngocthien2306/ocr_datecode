@@ -12,12 +12,6 @@ from app.repositories.inference_result_repository import InferenceResultReposito
 from app.models.inference_result import InferenceResultResponse
 from app.models.statistics import SummaryStatisticsResponse, TimeseriesStatisticsResponse
 from app.api.dependencies.auth import get_current_user
-from app.db.redis import (
-    get_cached_data,
-    set_cached_data,
-    generate_cache_key,
-    get_cache_ttl
-)
 
 logger = logging.getLogger(__name__)
 
@@ -140,31 +134,13 @@ async def get_summary_statistics(
     - Breakdown by camera (camera_id, serial_number, counts, pass rate)
     - Breakdown by recipe (recipe_id, recipe_name, counts, pass rate)
     """
-    # Generate cache key
-    cache_params = {
-        "start_date": start_date.isoformat() if start_date else None,
-        "end_date": end_date.isoformat() if end_date else None,
-        "recipe_id": recipe_id
-    }
-    cache_key = generate_cache_key("stats:summary", cache_params)
-
-    # Try to get from cache
-    cached = await get_cached_data(cache_key)
-    if cached:
-        logger.info("✅ Returning cached summary statistics")
-        return SummaryStatisticsResponse(**cached)
-
-    # Get from database
+    # Query directly from database (caching removed)
     repo = InferenceResultRepository(db)
     result = await repo.get_summary_statistics(
         start_date=start_date,
         end_date=end_date,
         recipe_id=recipe_id
     )
-
-    # Cache the result
-    ttl = get_cache_ttl(end_date)
-    await set_cached_data(cache_key, result.model_dump(by_alias=True), ttl)
 
     logger.info(f"📊 Summary statistics: {result.total} total, {result.pass_rate}% pass rate")
     return result
@@ -206,22 +182,7 @@ async def get_timeseries_statistics(
             detail="Maximum 30 recipes can be selected"
         )
 
-    # Generate cache key
-    cache_params = {
-        "start_date": start_date.isoformat() if start_date else None,
-        "end_date": end_date.isoformat() if end_date else None,
-        "granularity": granularity,
-        "recipe_ids": recipe_ids
-    }
-    cache_key = generate_cache_key("stats:timeseries", cache_params)
-
-    # Try to get from cache
-    cached = await get_cached_data(cache_key)
-    if cached:
-        logger.info("✅ Returning cached timeseries statistics")
-        return TimeseriesStatisticsResponse(**cached)
-
-    # Get from database
+    # Query directly from database (caching removed)
     repo = InferenceResultRepository(db)
     result = await repo.get_timeseries_statistics(
         start_date=start_date,
@@ -229,10 +190,6 @@ async def get_timeseries_statistics(
         granularity=granularity,  # type: ignore
         recipe_ids=recipe_id_list
     )
-
-    # Cache the result
-    ttl = get_cache_ttl(end_date)
-    await set_cached_data(cache_key, result.model_dump(by_alias=True), ttl)
 
     logger.info(f"📈 Timeseries statistics: {len(result.data)} data points ({granularity})")
     return result
