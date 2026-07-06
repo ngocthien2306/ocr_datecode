@@ -12,6 +12,7 @@ Refactored to use separate handlers for better organization:
 import logging
 import os
 import threading
+import time
 from typing import Dict, Any, Optional, Callable
 from datetime import datetime
 
@@ -287,6 +288,20 @@ class CameraManager:
                     f"Recipe '{recipe_name}' loaded to {len(loaded_cameras)}/{len(recipe_cameras)} cameras"
                 )
 
+                # Escalate to a full service restart if we could not bring up every
+                # camera the recipe needs. A camera that fails to connect at
+                # recipe-load time never enters self.cameras, so the per-capture
+                # recovery path (_handle_capture_failure → _recover_camera →
+                # _restart_ai_service) can NEVER fire for it — polling is skipped and
+                # the service would otherwise sit idle with too few working cameras.
+                # Retry the missing cameras briefly; if still short, hard-restart so
+                # the supervisor/systemd (ocr-all) respawns a clean process.
+                if recipe_cameras and len(loaded_cameras) < len(recipe_cameras):
+                    loaded_cameras = self._recover_missing_recipe_cameras(
+                        recipe_data, recipe_cameras, loaded_cameras
+                    )
+                    success = len(loaded_cameras) > 0
+
                 # Initialize inference matchers for all cameras (in main thread - has CUDA context)
                 if success and loaded_cameras:
                     cameras_with_recipe = [self.cameras[sn] for sn in loaded_cameras]
@@ -359,6 +374,60 @@ class CameraManager:
                     "success": False,
                     "error": str(e)
                 }
+
+    # How long to keep retrying cameras that failed to connect during recipe load
+    # before giving up and restarting the whole AI service. Mirrors the per-capture
+    # recovery budget in TriggerHandler ("retry briefly, then restart").
+    _RECIPE_CONNECT_BUDGET_SECONDS = 5.0
+
+    def _recover_missing_recipe_cameras(self, recipe_data, recipe_cameras, loaded_cameras):
+        """
+        Retry-connect cameras that failed to come up during load_recipe, then
+        escalate to a full AI-service restart if any is still unreachable.
+
+        A camera that fails to connect at recipe-load time never enters
+        self.cameras, so the per-capture recovery path never fires for it and the
+        service would sit idle. Retry each still-missing camera for a short budget;
+        if any is still down afterwards, restart the whole service (os._exit → the
+        supervisor/systemd respawns a clean process).
+
+        Runs while holding self._lock (an RLock), same as add_camera below.
+
+        Returns the (possibly extended) list of successfully loaded serials.
+        """
+        loaded = list(loaded_cameras)
+        required = [c.get("serial_number") for c in recipe_cameras]
+        missing = [sn for sn in required if sn and sn not in loaded]
+
+        deadline = time.monotonic() + self._RECIPE_CONNECT_BUDGET_SECONDS
+        attempt = 0
+        while missing and time.monotonic() < deadline:
+            attempt += 1
+            time.sleep(1.0)
+            for cam_config in recipe_cameras:
+                sn = cam_config.get("serial_number")
+                if not sn or sn in loaded:
+                    continue
+                pixel_format = cam_config.get("pixel_format", "Mono8")
+                res = self.add_camera(sn, pixel_format)
+                if res.get("success") and self.cameras[sn].load_recipe(recipe_data):
+                    loaded.append(sn)
+                    logger.warning(
+                        f"Camera {sn} recovered on recipe-load retry attempt {attempt}"
+                    )
+            missing = [sn for sn in required if sn and sn not in loaded]
+
+        if missing:
+            logger.critical(
+                f"Cameras {missing} still unreachable after {attempt} retry attempt(s) "
+                f"/ {self._RECIPE_CONNECT_BUDGET_SECONDS:.0f}s at recipe load — "
+                f"restarting the AI service"
+            )
+            # Reuse the trigger handler's restart (os._exit → supervisor respawns).
+            # This does not return; the process exits inside it.
+            self.trigger_handler._restart_ai_service(missing[0], attempt)
+
+        return loaded
 
     def stop_recipe(self, recipe_id: str) -> Dict[str, Any]:
         """
