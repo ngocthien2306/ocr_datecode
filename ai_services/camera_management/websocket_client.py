@@ -6,8 +6,7 @@ Handles bidirectional communication with Backend FastAPI server
 import asyncio
 import json
 import logging
-import time
-from typing import Optional, Callable, Dict, Any, Awaitable
+from typing import Optional, Callable, Dict, Any
 import websockets
 from websockets.client import WebSocketClientProtocol
 
@@ -28,10 +27,8 @@ class CameraWebSocketClient:
     def __init__(
         self,
         server_url: str,
-        message_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
-        heartbeat_interval: int = 30,
-        connected_callback: Optional[Callable[[], Awaitable[None]]] = None,
-        rx_watchdog_timeout: float = 45.0
+        message_callback: Optional[Callable[[Dict[str, Any]], asyncio.coroutine]] = None,
+        heartbeat_interval: int = 30
     ):
         """
         Initialize WebSocket client
@@ -40,23 +37,14 @@ class CameraWebSocketClient:
             server_url: WebSocket server URL (e.g. "ws://localhost:8000/ws/camera-management")
             message_callback: Async callback for received messages
             heartbeat_interval: Heartbeat interval in seconds
-            connected_callback: Async callback invoked after each successful
-                (re)connect — e.g. to resend unacked messages
-            rx_watchdog_timeout: Force a reconnect if no app-level message is
-                received from the backend for this many seconds. The backend
-                pings every ~10s, so silence means it stopped reading (zombie
-                connection) even though protocol-level pongs still flow.
         """
         self.server_url = server_url
         self.message_callback = message_callback
         self.heartbeat_interval = heartbeat_interval
-        self.connected_callback = connected_callback
-        self.rx_watchdog_timeout = rx_watchdog_timeout
 
         self.ws: Optional[WebSocketClientProtocol] = None
         self.running = False
         self.connected = False
-        self.last_rx_time = time.time()
 
         # Reconnection settings
         self.reconnect_delay = 1  # Start with 1 second
@@ -81,7 +69,6 @@ class CameraWebSocketClient:
 
             self.connected = True
             self.reconnect_delay = 1  # Reset backoff on successful connect
-            self.last_rx_time = time.time()
 
             logger.info("WebSocket connected successfully")
 
@@ -135,7 +122,6 @@ class CameraWebSocketClient:
             try:
                 # Receive message
                 message_raw = await self.ws.recv()
-                self.last_rx_time = time.time()
                 message = json.loads(message_raw)
 
                 event_type = message.get("event", "unknown")
@@ -180,8 +166,6 @@ class CameraWebSocketClient:
                         }
                     })
 
-                    await self._notify_connected()
-
                 else:
                     # Increase backoff delay
                     self.reconnect_delay = min(
@@ -190,27 +174,8 @@ class CameraWebSocketClient:
                     )
 
             else:
-                # Watchdog: if the backend stops reading (zombie connection),
-                # protocol-level ping/pong still succeeds, so the only signal
-                # is app-level silence. The backend heartbeats every ~10s.
-                if time.time() - self.last_rx_time > self.rx_watchdog_timeout:
-                    logger.warning(
-                        f"No message from backend for {self.rx_watchdog_timeout}s "
-                        f"— forcing reconnect"
-                    )
-                    await self.disconnect()
-                    continue
-
                 # Check connection every 1 second
                 await asyncio.sleep(1)
-
-    async def _notify_connected(self):
-        """Invoke the connected callback (used to resend unacked messages)"""
-        if self.connected_callback:
-            try:
-                await self.connected_callback()
-            except Exception as e:
-                logger.error(f"Error in connected callback: {e}")
 
     async def start(self):
         """Start WebSocket client"""
@@ -228,8 +193,6 @@ class CameraWebSocketClient:
                     "service": "camera_management"
                 }
             })
-
-            await self._notify_connected()
 
         # Start reconnect loop
         asyncio.create_task(self._reconnect_loop())

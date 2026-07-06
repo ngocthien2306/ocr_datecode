@@ -10,11 +10,8 @@ import logging
 import asyncio
 
 from app.api.dependencies.auth import get_current_user
-from app.api.websocket.camera_ws import send_request_and_wait
-from app.services.camera_service_supervisor import require_camera_service, notify_service_down
-
-# Waiting for the ACK includes the actual capture time on the AI service side
-TRIGGER_ACK_TIMEOUT = 15.0
+from app.api.websocket.camera_ws import camera_ws_manager
+from app.services.camera_service_supervisor import require_camera_service
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +63,7 @@ async def simulate_trigger(
     # Ensure camera service is connected (notifies UI + triggers recovery if down)
     await require_camera_service("Camera management service is not connected")
 
-    # Send trigger simulation command and wait for the AI service's ACK, so a
-    # 200 here means the trigger was actually received AND executed.
+    # Send trigger simulation command via WebSocket
     message = {
         "event": "simulate_trigger",
         "data": {
@@ -76,33 +72,23 @@ async def simulate_trigger(
         }
     }
 
-    response = await send_request_and_wait(message, timeout=TRIGGER_ACK_TIMEOUT)
+    success = await camera_ws_manager.send_to_camera_service(message)
 
-    if response is None:
-        # Send failed or no ACK — connection is suspect: tell FE + kick recovery
-        await notify_service_down("Camera service did not acknowledge trigger command")
+    if not success:
         raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="Camera service did not acknowledge trigger command — please retry shortly"
-        )
-
-    if not response.get("success", False):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=response.get("error", "Trigger simulation failed")
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to send trigger simulation command"
         )
 
     logger.info(
         f"Trigger simulated by {current_user.username}: "
-        f"camera={request.serial_number or 'all'}, type={request.trigger_type}, "
-        f"triggered={response.get('cameras_triggered', [])}"
+        f"camera={request.serial_number or 'all'}, type={request.trigger_type}"
     )
 
     return {
         "success": True,
-        "message": f"Trigger executed on {'camera ' + request.serial_number if request.serial_number else 'all cameras'}",
-        "trigger_type": request.trigger_type,
-        "cameras_triggered": response.get("cameras_triggered", [])
+        "message": f"Trigger simulation sent to {'camera ' + request.serial_number if request.serial_number else 'all cameras'}",
+        "trigger_type": request.trigger_type
     }
 
 
@@ -150,8 +136,9 @@ async def simulate_continuous_triggers(
     sent_count = 0
     failed_count = 0
 
-    # Loop and send triggers (each one waits for the AI service's ACK)
+    # Loop and send triggers
     for i in range(request.count):
+        # Send trigger simulation command via WebSocket
         message = {
             "event": "simulate_trigger",
             "data": {
@@ -160,17 +147,14 @@ async def simulate_continuous_triggers(
             }
         }
 
-        response = await send_request_and_wait(message, timeout=TRIGGER_ACK_TIMEOUT)
+        success = await camera_ws_manager.send_to_camera_service(message)
 
-        if response is not None and response.get("success", False):
+        if success:
             sent_count += 1
-            logger.debug(f"Trigger {i+1}/{request.count} acknowledged")
+            logger.debug(f"Trigger {i+1}/{request.count} sent successfully")
         else:
             failed_count += 1
-            logger.warning(
-                f"Trigger {i+1}/{request.count} failed: "
-                f"{'no ACK' if response is None else response.get('error')}"
-            )
+            logger.warning(f"Trigger {i+1}/{request.count} failed to send")
 
         # Sleep before next trigger (except for last iteration)
         if i < request.count - 1:
@@ -240,8 +224,7 @@ async def simulate_trigger_sequence(
     # Ensure camera service is connected (notifies UI + triggers recovery if down)
     await require_camera_service("Camera management service is not connected")
 
-    # Send trigger sequence command. The AI service runs the whole sequence
-    # before responding, so scale the ACK timeout with count * interval.
+    # Send trigger sequence command
     message = {
         "event": "simulate_trigger_sequence",
         "data": {
@@ -251,20 +234,12 @@ async def simulate_trigger_sequence(
         }
     }
 
-    sequence_timeout = count * (interval_ms / 1000.0 + 5.0) + 10.0
-    response = await send_request_and_wait(message, timeout=sequence_timeout)
+    success = await camera_ws_manager.send_to_camera_service(message)
 
-    if response is None:
-        await notify_service_down("Camera service did not acknowledge trigger sequence")
+    if not success:
         raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="Camera service did not acknowledge trigger sequence command"
-        )
-
-    if not response.get("success", False):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=response.get("error", "Trigger sequence failed")
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to send trigger sequence command"
         )
 
     logger.info(

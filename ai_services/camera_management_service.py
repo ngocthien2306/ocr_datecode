@@ -15,8 +15,6 @@ import logging
 import os
 import signal
 import sys
-import uuid
-from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -67,15 +65,8 @@ class CameraManagementService:
         self.ws_client = CameraWebSocketClient(
             server_url=self.ws_url,
             message_callback=self._handle_ws_message,
-            heartbeat_interval=30,
-            connected_callback=self._resend_unacked_events
+            heartbeat_interval=30
         )
-
-        # Events awaiting backend ACK (at-least-once delivery for results the
-        # operator must see). Ordered oldest-first; capped to bound memory
-        # since inference_result payloads carry base64 frames.
-        self._unacked_events: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
-        self._max_unacked_events = 50
 
         self.running = False
 
@@ -153,48 +144,11 @@ class CameraManagementService:
 
         # logger.info(f"Camera event: {event_type}, data: {log_data}")
 
-        payload = {
+        # Forward event to backend via WebSocket (with full data including base64)
+        await self.ws_client.send_message({
             "event": event_type,
             "data": data  # Send original data with base64
-        }
-
-        # Reliable delivery for events the operator must see: tag with msg_id,
-        # keep until the backend acks (inference_result_ack), resend after
-        # reconnect. Other events (live_frame, ...) stay fire-and-forget.
-        if event_type in ("inference_result", "trigger_error", "inference_skipped"):
-            msg_id = str(uuid.uuid4())
-            data["msg_id"] = msg_id
-            self._register_unacked(msg_id, payload)
-
-        # Forward event to backend via WebSocket (with full data including base64)
-        await self.ws_client.send_message(payload)
-
-    def _register_unacked(self, msg_id: str, payload: Dict[str, Any]):
-        """Track an event until the backend acknowledges it"""
-        self._unacked_events[msg_id] = payload
-        while len(self._unacked_events) > self._max_unacked_events:
-            dropped_id, dropped = self._unacked_events.popitem(last=False)
-            logger.warning(
-                f"Unacked event buffer full — dropping oldest "
-                f"({dropped.get('event')}, msg_id={dropped_id})"
-            )
-
-    async def _resend_unacked_events(self):
-        """
-        Resend events that were never acked by the backend (lost during a
-        disconnect or zombie connection). Called after each (re)connect.
-        The backend dedups by msg_id, so duplicates are safe.
-        """
-        if not self._unacked_events:
-            return
-
-        pending = list(self._unacked_events.items())
-        logger.info(f"Resending {len(pending)} unacked event(s) to backend")
-
-        for msg_id, payload in pending:
-            if not await self.ws_client.send_message(payload):
-                logger.warning("Resend interrupted — connection lost again")
-                break
+        })
 
     async def _handle_ws_message(self, message: Dict[str, Any]):
         """
@@ -212,20 +166,6 @@ class CameraManagementService:
         data = message.get("data", {})
 
         logger.debug(f"Handling WS message: {event}")
-
-        # Fast-path messages that must never be delayed or trigger error replies
-        if event == "ping":
-            # App-level heartbeat from backend (detects zombie connections)
-            await self.ws_client.send_message({
-                "event": "ping_response",
-                "data": {"request_id": data.get("request_id")}
-            })
-            return
-
-        if event == "event_ack":
-            # Backend confirmed receipt+storage of a reliable event
-            self._unacked_events.pop(data.get("msg_id"), None)
-            return
 
         try:
             if event == "connect_camera":
@@ -300,15 +240,36 @@ class CameraManagementService:
                 })
 
             elif event == "simulate_trigger":
-                # Runs as a background task: the capture blocks for a while and
-                # the receive loop processes messages sequentially — it must
-                # stay free for heartbeat pings, otherwise the backend declares
-                # this connection a zombie mid-trigger.
-                asyncio.create_task(self._run_simulate_trigger(data))
+                # Simulate hardware trigger
+                serial_number = data.get("serial_number")
+                trigger_type = data.get("trigger_type", "rising_edge")
+
+                result = self.camera_manager.simulate_trigger(
+                    serial_number=serial_number,
+                    trigger_type=trigger_type
+                )
+
+                await self.ws_client.send_message({
+                    "event": "simulate_trigger_response",
+                    "data": result
+                })
 
             elif event == "simulate_trigger_sequence":
-                # Background task (blocks count*interval — see simulate_trigger)
-                asyncio.create_task(self._run_simulate_trigger_sequence(data))
+                # Simulate trigger sequence
+                serial_number = data.get("serial_number")
+                count = data.get("count", 5)
+                interval_ms = data.get("interval_ms", 1000)
+
+                result = self.camera_manager.simulate_trigger_sequence(
+                    serial_number=serial_number,
+                    count=count,
+                    interval_ms=interval_ms
+                )
+
+                await self.ws_client.send_message({
+                    "event": "simulate_trigger_sequence_response",
+                    "data": result
+                })
 
             elif event == "update_camera_settings":
                 # Update camera settings
@@ -348,52 +309,6 @@ class CameraManagementService:
                     "error": str(e)
                 }
             })
-
-    async def _run_simulate_trigger(self, data: Dict[str, Any]):
-        """Execute simulate_trigger in a worker thread and send the response"""
-        try:
-            result = await asyncio.get_running_loop().run_in_executor(
-                None,
-                lambda: self.camera_manager.simulate_trigger(
-                    serial_number=data.get("serial_number"),
-                    trigger_type=data.get("trigger_type", "rising_edge")
-                )
-            )
-        except Exception as e:
-            logger.error(f"Error in simulate_trigger task: {e}")
-            result = {"success": False, "error": str(e)}
-
-        # Echo request_id so the backend can correlate the ACK
-        if data.get("request_id"):
-            result = {**result, "request_id": data["request_id"]}
-
-        await self.ws_client.send_message({
-            "event": "simulate_trigger_response",
-            "data": result
-        })
-
-    async def _run_simulate_trigger_sequence(self, data: Dict[str, Any]):
-        """Execute simulate_trigger_sequence in a worker thread and send the response"""
-        try:
-            result = await asyncio.get_running_loop().run_in_executor(
-                None,
-                lambda: self.camera_manager.simulate_trigger_sequence(
-                    serial_number=data.get("serial_number"),
-                    count=data.get("count", 5),
-                    interval_ms=data.get("interval_ms", 1000)
-                )
-            )
-        except Exception as e:
-            logger.error(f"Error in simulate_trigger_sequence task: {e}")
-            result = {"success": False, "error": str(e)}
-
-        if data.get("request_id"):
-            result = {**result, "request_id": data["request_id"]}
-
-        await self.ws_client.send_message({
-            "event": "simulate_trigger_sequence_response",
-            "data": result
-        })
 
     def _discover_pylon_cameras(self) -> Dict[str, Any]:
         """

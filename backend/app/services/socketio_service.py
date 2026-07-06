@@ -102,22 +102,6 @@ async def emit_inference_result(result_data: dict):
         logger.error(f"Error emitting inference result: {e}")
 
 
-async def emit_camera_alert(alert_data: dict):
-    """
-    Emit a camera/trigger/inference alert to subscribed clients so failures
-    (capture error, inference skipped, camera error) are visible instead of
-    the trigger silently producing nothing.
-
-    Args:
-        alert_data: {'type': 'trigger_error' | 'inference_skipped' | 'camera_error', ...}
-    """
-    try:
-        logger.info(f"Broadcasting camera alert: {alert_data.get('type')}")
-        await sio.emit('camera_alert', alert_data, room='inference_results')
-    except Exception as e:
-        logger.error(f"Error emitting camera alert: {e}")
-
-
 @sio.event
 async def start_camera_stream(sid, data):
     """Client requests to start camera stream"""

@@ -1132,23 +1132,6 @@ class InferenceHandler:
                 )
                 return  # Exit early, timeout handler already emitted result
 
-        def _guarded_emit(event_type, payload, _orig=emit_callback):
-            # Close the race where the timeout watchdog and this worker both
-            # emit a result for the same job (duplicate records downstream):
-            # claim the 'emitted' flag under the job lock before emitting.
-            if event_type == "inference_result":
-                with self._job_lock:
-                    job_info = self._active_jobs.get(job_id)
-                    if job_info is not None:
-                        if job_info['timeout'] or job_info['emitted']:
-                            logger.info(
-                                f"[Job #{job_id}] Result already emitted "
-                                f"(timeout={job_info['timeout']}) — skipping duplicate"
-                            )
-                            return
-                        job_info['emitted'] = True
-            _orig(event_type, payload)
-
         try:
             # Get statistics from trigger handler if available
             statistics = {
@@ -1187,7 +1170,7 @@ class InferenceHandler:
                 template_verification_service=self.template_verification_service,
                 product_verification_service=self.product_verification_service,
                 obb_rotation_service=self.obb_rotation_service,
-                emit_callback=_guarded_emit,
+                emit_callback=emit_callback,
                 statistics=statistics
             )
 
@@ -1219,7 +1202,7 @@ class InferenceHandler:
                         "camera_results": [],
                         "metadata": {}
                     }
-                _guarded_emit("inference_result", error_result)
+                emit_callback("inference_result", error_result)
                 return
 
             # Select appropriate pipeline
@@ -1346,7 +1329,7 @@ class InferenceHandler:
                     "camera_results": [],
                     "metadata": {}
                 }
-            _guarded_emit("inference_result", error_result)
+            emit_callback("inference_result", error_result)
             raise
 
     def _handle_reject_decision(

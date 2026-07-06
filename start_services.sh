@@ -163,9 +163,7 @@ if lsof -Pi :8000 -sTCP:LISTEN -t >/dev/null 2>&1; then
     echo "   Already listening on :8000 (systemd unit or prior run, PID: ${BACKEND_PID:-?})"
 else
     cd "$BACKEND_DIR"
-    # --ws-ping-*: detect half-open TCP to the AI service within ~30s
     nohup python3 -m uvicorn app.main:app --port 8000 --host 0.0.0.0 \
-        --ws-ping-interval 20 --ws-ping-timeout 10 \
         >> "$LOG_DIR/backend.log" 2>&1 &
     BACKEND_PID=$!
     echo "   Started inline (PID: $BACKEND_PID)"

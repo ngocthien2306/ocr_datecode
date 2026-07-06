@@ -84,7 +84,8 @@ class InferenceResultService:
                     # No file move operation needed!
 
             # Determine overall product pass/fail
-            # Simple logic: if any frame fails, product fails
+            # TODO: User will implement custom logic
+            # For now, simple logic: if any frame fails, product fails
             product_pass_fail = "PASS"
             for camera_result in camera_results:
                 for frame in camera_result.get("frames", []):
@@ -94,16 +95,6 @@ class InferenceResultService:
                 if product_pass_fail == "FAIL":
                     break
 
-            # Respect an explicit ERROR from the AI service (inference
-            # exception, timeout, no matchers, ...). These results have an
-            # empty camera_results list, which the frame loop above would
-            # otherwise misclassify as PASS.
-            metadata = data.get("metadata") or {}
-            if data.get("product_pass_fail") == "ERROR" or data.get("error"):
-                product_pass_fail = "ERROR"
-                if data.get("error"):
-                    metadata = {**metadata, "error": data.get("error")}
-
             # Create result document
             result_data = InferenceResultCreate(
                 recipe_id=recipe_id,
@@ -111,7 +102,7 @@ class InferenceResultService:
                 product_pass_fail=product_pass_fail,
                 camera_results=camera_results,
                 statistics=data.get("statistics"),
-                metadata=metadata
+                metadata=data.get("metadata")
             )
 
             # Save to database
