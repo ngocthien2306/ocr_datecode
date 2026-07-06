@@ -1259,36 +1259,36 @@ class TriggerHandler:
 
     def _restart_ai_service(self, serial_number: str, attempt: int):
         """
-        Restart the whole AI camera service by exiting the process.
+        Restart the WHOLE stack via `sudo systemctl restart ocr-all`
+        (password auto-fed as "1" on stdin).
 
-        The camera service runs as a plain background process, so the cleanest
-        "restart" is to die and let the backend supervisor/watchdog respawn a fresh
-        process (it detects the dropped WS within ~8s). The dropped WS also makes
-        the backend emit camera_service_status{connected:false}, so the FE shows
-        the service-down popup during the gap; on respawn it flips back to
-        connected and the overlay reloads the page.
+        Camera is unrecoverable after the reconnect budget, so we fall back to a
+        full system restart. Using systemctl (instead of os._exit) means systemd
+        re-runs start_services.sh independently of backend health — it works even
+        if the backend supervisor is down. If the restart command itself fails, we
+        os._exit(1) as a last resort so a broken AI process never lingers.
 
-        NOTE: this restarts ALL cameras, not just the failed one — by design, per
-        the "retry briefly, then restart the service" policy.
+        Runs in a daemon thread. NOTE: restarts ALL services, not just the failed
+        camera — by design, per the "retry briefly, then restart" policy.
         """
+        import subprocess
+
         logger.critical(
-            f"[RECOVER] Restarting AI service now (camera {serial_number} "
-            f"unrecoverable after {attempt} attempt(s))"
+            f"[AUTO-RESTART] Camera {serial_number} unrecoverable after {attempt} "
+            f"attempt(s) → sudo systemctl restart ocr-all"
         )
-        # Best-effort notify; the WS drop on exit is what reliably shows the popup.
+        # Best-effort notify FE before the restart tears everything down.
         try:
             camera = self.camera_manager.cameras.get(serial_number)
             if camera:
                 camera._emit_event("camera_fatal", {
                     "serial_number": serial_number,
-                    "reason": f"capture unrecoverable after {attempt} attempt(s) — restarting AI service",
+                    "reason": f"capture unrecoverable after {attempt} attempt(s) — restarting ocr-all",
                 })
         except Exception:
             pass
 
-        # Flush logs and give the event a brief moment to go out, then hard-exit.
-        # os._exit (not sys.exit) because this runs in a daemon thread and must
-        # terminate the WHOLE process, not just the thread.
+        # Flush logs so the restart reason survives the teardown.
         try:
             for h in list(logging.getLogger().handlers) + list(logger.handlers):
                 try:
@@ -1297,5 +1297,26 @@ class TriggerHandler:
                     pass
         except Exception:
             pass
-        time.sleep(0.5)
-        os._exit(1)
+
+        try:
+            result = subprocess.run(
+                ['sudo', '-S', 'systemctl', 'restart', 'ocr-all'],
+                input='1\n',
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                logger.warning("[AUTO-RESTART] ocr-all restart issued successfully")
+            else:
+                logger.error(
+                    f"[AUTO-RESTART] ocr-all restart failed (rc={result.returncode}): "
+                    f"{result.stderr.strip()} — falling back to os._exit(1)"
+                )
+                os._exit(1)
+        except subprocess.TimeoutExpired:
+            logger.error("[AUTO-RESTART] ocr-all restart timed out — falling back to os._exit(1)")
+            os._exit(1)
+        except Exception as e:
+            logger.error(f"[AUTO-RESTART] ocr-all restart exception: {e} — falling back to os._exit(1)")
+            os._exit(1)
