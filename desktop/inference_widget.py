@@ -306,6 +306,16 @@ def run_inference_process(json_path, pipeline_path, image_path, result_queue,
                 _cfg.OCR_BACKEND = ocr_backend
                 recognizer, ocr_backend_used = _cfg.get_recognizer()
                 print(f"[inference] OCR backend = {ocr_backend_used}")
+
+                def recognize_region_text(region_image):
+                    if hasattr(recognizer, 'recognize_with_chars'):
+                        try:
+                            text, conf, chars = recognizer.recognize_with_chars(region_image)
+                            return text, conf, chars
+                        except Exception as e:
+                            print(f"[inference] recognize_with_chars failed: {e}")
+                    text, conf = recognizer.recognize(region_image)
+                    return text, conf, []
                 
                 # Crop regions for OCR (excluding template).
                 # Also crop the SAME region from the template image so we can
@@ -453,29 +463,32 @@ def run_inference_process(json_path, pipeline_path, image_path, result_queue,
                                     })
                                 else:
                                     # No barcode detected, fallback to OCR
-                                    text, conf = recognizer.recognize(image)
+                                    text, conf, chars = recognize_region_text(image)
                                     ocr_results.append({
                                         'type': region_type,
                                         'text': text,
                                         'confidence': float(conf),
+                                        'chars': chars,
                                         'note': 'No barcode detected, used OCR'
                                     })
                             except Exception as e:
                                 print(f"Barcode decode error: {e}")
                                 # Fallback to OCR on error
-                                text, conf = recognizer.recognize(image)
+                                text, conf, chars = recognize_region_text(image)
                                 ocr_results.append({
                                     'type': region_type,
                                     'text': text,
-                                    'confidence': float(conf)
+                                    'confidence': float(conf),
+                                    'chars': chars
                                 })
                         else:
                             # Use OCR for text/datecode or when barcode lib not available
-                            text, conf = recognizer.recognize(image)
+                            text, conf, chars = recognize_region_text(image)
                             ocr_results.append({
                                 'type': region_type,
                                 'text': text,
-                                'confidence': float(conf)
+                                'confidence': float(conf),
+                                'chars': chars
                             })
                 
                 timings['ocr'] = (time.time() - ocr_start) * 1000
@@ -1166,6 +1179,12 @@ class InferenceWidget(QWidget):
         self.ocr_backend_combo.addItem("TensorRT (GPU)", "tensorrt")
         self.ocr_backend_combo.addItem("ONNX Runtime (GPU)", "onnx_gpu")
         self.ocr_backend_combo.addItem("ONNX Runtime (CPU)", "onnx_cpu")
+        self.ocr_backend_combo.addItem("SMTR/SVTRv2 ONNX (CPU)", "smtr_onnx_cpu")
+        self.ocr_backend_combo.addItem("SMTR/SVTRv2 ONNX (GPU)", "smtr_onnx_gpu")
+        self.ocr_backend_combo.addItem("SMTR/SVTRv2 ONNX (TensorRT EP)", "smtr_onnx_trt")
+        self.ocr_backend_combo.addItem("SMTR Attention ONNX (CPU)", "smtr_attn_onnx_cpu")
+        self.ocr_backend_combo.addItem("SMTR Attention ONNX (GPU)", "smtr_attn_onnx_gpu")
+        self.ocr_backend_combo.addItem("SMTR Attention ONNX (TensorRT EP)", "smtr_attn_onnx_trt")
         self.ocr_backend_combo.addItem("Tesseract (auto-pick lib)", "tesseract")
         self.ocr_backend_combo.addItem("Tesseract — pytesseract", "tesseract_pytesseract")
         self.ocr_backend_combo.addItem("Tesseract — tesserocr", "tesseract_tesserocr")
@@ -1176,6 +1195,8 @@ class InferenceWidget(QWidget):
             "OCR engine:\n"
             "  • TensorRT — fastest, needs NVIDIA GPU + nvidia-tensorrt + pycuda\n"
             "  • ONNX     — PP-OCRv5 model, GPU or CPU\n"
+            "  • SMTR/SVTRv2 ONNX — weights/rec_smtr_fp16.onnx + EN_symbol_dict.txt\n"
+            "  • SMTR Attention ONNX — weights/rec_smtr_attn_fp16.onnx; exposes char bbox metadata\n"
             "  • Tesseract — classic OCR (needs eng tessdata), good for clean printed text\n"
             "  • EasyOCR — PyTorch deep-learning OCR, robust on stylised text (CPU/GPU)\n"
             "  • RapidOCR — PP-OCR via ONNXRuntime, lightweight, fast on CPU.\n"
@@ -1798,6 +1819,7 @@ class InferenceWidget(QWidget):
         self.progress_bar.setVisible(False)
         self.run_btn.setEnabled(True)
         self.current_result = result
+        result['ocr_backend_key'] = self.ocr_backend_combo.currentData() or 'auto'
         
         # Save to cache
         if self.current_index >= 0 and self.current_index < len(self.image_files):
@@ -1871,6 +1893,17 @@ Inliers: {result['inliers']}/{result['total_matches']}
                     ocr_text = ocr['text'].replace(":", "")
                     results_text += f"  📝 Text: {ocr_text}\n"
                     # results_text += f"  🎯 Confidence: {ocr['confidence']:.1%}\n"
+
+                chars = ocr.get('chars') or []
+                if chars:
+                    n_boxes = sum(
+                        1 for ch in chars
+                        if all(k in ch for k in ('x0', 'y0', 'x1', 'y1'))
+                    )
+                    if n_boxes:
+                        results_text += f"  🔠 Char boxes: {n_boxes}\n"
+                    else:
+                        results_text += f"  🔠 Chars: {len(chars)}\n"
                 
                 results_text += "\n"
         else:
@@ -2001,6 +2034,8 @@ Inliers: {result['inliers']}/{result['total_matches']}
                     'total_matches': int(result.get('total_matches', 0)),
                     'transformed_bboxes': result.get('transformed_bboxes', []),
                     'ocr_results': result.get('ocr_results', []),
+                    'ocr_backend_key': result.get('ocr_backend_key'),
+                    'ocr_backend_used': result.get('ocr_backend_used'),
                     'timings': {k: float(v) for k, v in result.get('timings', {}).items()}
                 }
             
@@ -2027,7 +2062,13 @@ Inliers: {result['inliers']}/{result['total_matches']}
             # We only have result data, not annotated images
             # Images will be regenerated on display if needed
             self.results_cache = {}
+            current_backend = self.ocr_backend_combo.currentData() or 'auto'
             for filename, result_data in save_data.items():
+                saved_backend = result_data.get('ocr_backend_key')
+                if saved_backend is not None and saved_backend != current_backend:
+                    continue
+                if saved_backend is None and current_backend != 'auto':
+                    continue
                 self.results_cache[filename] = {
                     'result': result_data,
                     'annotated_image': None  # Will be loaded/generated when needed

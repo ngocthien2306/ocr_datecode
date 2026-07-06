@@ -2,18 +2,58 @@
 OCR Text Processing Utilities
 
 Pure helpers used by TextVerificationService:
-  - augment_laser_text: 5 visual enhancement variants for laser-engraved text
+  - augment_laser_text: visual enhancement variants for laser/text-dot OCR
   - apply_text_corrections: hard-coded OCR substitution rules
   - pick_winning_candidate: choose best candidate from OCR candidate list
   - calculate_text_similarity: SequenceMatcher ratio after normalization
 """
 
 from difflib import SequenceMatcher
+import re
 
 import cv2
 import numpy as np
 
-from ..ocr_utils import compare_texts
+try:
+    from ..ocr_utils import compare_texts
+except ImportError:
+    def compare_texts(
+        text1: str,
+        text2: str,
+        case_sensitive: bool = False,
+        strip: bool = True,
+        space: bool = True,
+    ) -> bool:
+        """Standalone fallback for scripts that load this module by file path."""
+        if strip:
+            text1 = text1.strip()
+            text2 = text2.strip()
+
+        special_chars_to_space = ['_', '-', '－', '—', '–', ',', '.', ':', ';', '--', "'"]
+        for char in special_chars_to_space:
+            text1 = text1.replace(char, ' ')
+            text2 = text2.replace(char, ' ')
+
+        text1 = re.sub(r'\s+', ' ', text1).replace(" ", "")
+        text2 = re.sub(r'\s+', ' ', text2).replace(" ", "")
+
+        text1 = re.sub(r'[^A-Za-z0-9]+$', '', text1)
+        text2 = re.sub(r'[^A-Za-z0-9]+$', '', text2)
+
+        if case_sensitive:
+            text1 = text1.upper()
+            text2 = text2.upper()
+
+        if len(text1) != len(text2):
+            return False
+
+        for c1, c2 in zip(text1, text2):
+            if c1 == c2:
+                continue
+            if {c1, c2} == {'O', '0'}:
+                continue
+            return False
+        return True
 
 
 AUGMENT_SIMILARITY_THRESHOLD = 0.70
@@ -21,11 +61,17 @@ AUGMENT_SIMILARITY_THRESHOLD = 0.70
 
 def augment_laser_text(img_bgr: np.ndarray) -> dict:
     """
-    Generate 5 enhanced versions optimized for difficult backgrounds (laser-engraved, low contrast).
-    Copied from tests/test_trt_inference.py.
+    Generate 7 enhanced versions for difficult backgrounds.
+
+    5 for laser-engrave / low-contrast: original, clahe, bg_subtract,
+    unsharp_clahe, tophat.
+    2 for dot-matrix / CIJ ink-jet: close_dots, close_gauss. Morphological
+    CLOSE bridges separated dots into more continuous strokes, which helps
+    preserve faint trailing characters that sharpen/tophat can split apart.
 
     Returns:
-        dict with keys: 'original', 'clahe', 'bg_subtract', 'unsharp_clahe', 'tophat'
+        dict keys: 'original', 'clahe', 'bg_subtract', 'unsharp_clahe',
+                   'tophat', 'close_dots', 'close_gauss'
     """
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(4, 4))
@@ -52,6 +98,19 @@ def augment_laser_text(img_bgr: np.ndarray) -> dict:
     tophat = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, kernel_morph)
     tophat_eq = cv2.convertScaleAbs(tophat, alpha=6)
     results['tophat'] = cv2.cvtColor(clahe.apply(tophat_eq), cv2.COLOR_GRAY2BGR)
+
+    # Dot-matrix bridge (CIJ ink-jet): invert dark text to bright strokes, close
+    # small gaps between dots, then invert back.
+    inv = cv2.bitwise_not(gray)
+
+    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    closed = cv2.bitwise_not(cv2.morphologyEx(inv, cv2.MORPH_CLOSE, kernel_close))
+    results['close_dots'] = cv2.cvtColor(clahe.apply(closed), cv2.COLOR_GRAY2BGR)
+
+    kernel_cg = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 5))
+    closed_cg = cv2.bitwise_not(cv2.morphologyEx(inv, cv2.MORPH_CLOSE, kernel_cg))
+    smoothed = cv2.GaussianBlur(closed_cg, (0, 0), 1.2)
+    results['close_gauss'] = cv2.cvtColor(clahe.apply(smoothed), cv2.COLOR_GRAY2BGR)
 
     return results
 

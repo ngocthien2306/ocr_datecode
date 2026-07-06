@@ -1,12 +1,17 @@
 """
 Configuration file for OCR backend selection
 """
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 # ============================================================
 # OCR BACKEND CONFIGURATION
 # ============================================================
 
-# Choose OCR backend: 'tensorrt', 'onnx_gpu', 'onnx_cpu', 'tesseract', 'auto'
+# Choose OCR backend: 'auto', 'tensorrt', 'onnx_gpu', 'onnx_cpu',
+# 'smtr_onnx_cpu', 'smtr_attn_onnx_cpu', 'tesseract'
 OCR_BACKEND = 'auto'  # 'auto' will try TensorRT first, fallback to ONNX
 
 # Model paths
@@ -42,6 +47,19 @@ MODEL_CONFIG = {
         'use_cls': False,
         'use_rec': True,
         # 'config_path': '/path/to/custom_config.yaml',  # optional
+    },
+    'smtr_onnx': {
+        'model_path': str(PROJECT_ROOT / 'weights' / 'rec_smtr_fp16.onnx'),
+        'dict_path': str(PROJECT_ROOT / 'languages' / 'english' / 'EN_symbol_dict.txt'),
+        'device': 'cpu',  # 'cpu' | 'cuda' | 'trt'
+        'model_label': 'SMTR ONNX',
+    },
+    'smtr_attn_onnx': {
+        'model_path': str(PROJECT_ROOT / 'weights' / 'rec_smtr_attn_fp16.onnx'),
+        'dict_path': str(PROJECT_ROOT / 'languages' / 'english' / 'EN_symbol_dict.txt'),
+        'device': 'cpu',  # 'cpu' | 'cuda' | 'trt'
+        'model_label': 'SMTR Attention ONNX',
+        'x_source': 'auto',
     },
 }
 
@@ -116,6 +134,12 @@ def get_recognizer():
     except ImportError:
         rapidocr_available = False
 
+    try:
+        from text_recognizer_smtr_onnx import TextRecognizerSMTRONNX
+        smtr_onnx_available = True
+    except ImportError:
+        smtr_onnx_available = False
+
     if OCR_BACKEND == 'tensorrt':
         if not tensorrt_available:
             raise ImportError("TensorRT not available. Install with: pip install nvidia-tensorrt pycuda")
@@ -169,6 +193,24 @@ def get_recognizer():
             )
         rec = TextRecognizerRapidOCR(**MODEL_CONFIG['rapidocr'])
         return rec, 'RapidOCR'
+
+    elif OCR_BACKEND in (
+        'smtr_onnx', 'smtr_onnx_cpu', 'smtr_onnx_gpu', 'smtr_onnx_trt',
+        'smtr_attn_onnx', 'smtr_attn_onnx_cpu', 'smtr_attn_onnx_gpu',
+        'smtr_attn_onnx_trt',
+    ):
+        if not smtr_onnx_available:
+            raise ImportError("SMTR ONNX recognizer module not available.")
+        config_key = 'smtr_attn_onnx' if OCR_BACKEND.startswith('smtr_attn') else 'smtr_onnx'
+        cfg = dict(MODEL_CONFIG[config_key])
+        if OCR_BACKEND.endswith('_gpu'):
+            cfg['device'] = 'cuda'
+        elif OCR_BACKEND.endswith('_trt'):
+            cfg['device'] = 'trt'
+        else:
+            cfg['device'] = 'cpu'
+        rec = TextRecognizerSMTRONNX(**cfg)
+        return rec, f'{rec.model_label} ({rec.provider})'
 
     elif OCR_BACKEND == 'auto':
         # Try TensorRT first, fallback to ONNX
