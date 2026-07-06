@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        # Ignore unknown keys in .env / environment instead of crashing.
+        # Prevents leftover vars (e.g. removed REDIS_* settings) from taking
+        # down the whole app with a pydantic ValidationError on startup.
+        extra = "ignore"
 
 
 settings = Settings()
