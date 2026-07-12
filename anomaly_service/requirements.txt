@@ -1,0 +1,20 @@
+# ── Web framework (mirrors backend/requirements.txt pins) ──────────────────
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-jose[cryptography]==3.3.0
+python-multipart==0.0.6
+pydantic>=2.5.0,<3.0.0
+pydantic-settings==2.1.0
+
+# ── Database (same MongoDB cluster as backend) ──────────────────────────────
+motor>=3.3.0
+pymongo>=4.5.0
+
+# ── Image IO ─────────────────────────────────────────────────────────────
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+
+# ── Anomaly training (pinned in Week 1 spike — placeholder until POC) ──────
+# anomalib==<pin-after-spike>
+# torch, torchvision — install the CUDA build matching this machine's driver
+#   (see https://pytorch.org/get-started/locally/), not via this file.
