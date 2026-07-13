@@ -227,6 +227,22 @@ async def _recover():
         logger.info("AI service restart %s", "succeeded" if ok else "FAILED")
     finally:
         _recovery_in_progress = False
+        # Reconcile the overlay with reality on EVERY exit path. `connected:false`
+        # is edge-triggered from many callers (require_camera_service, watchdog,
+        # send failures), but `connected:true` is otherwise only emitted when the
+        # AI-service WS actually re-accepts. Re-announcing the true current status
+        # here guarantees a {connected:true} eventually reaches the FE once the
+        # service is back — so the ServiceDownOverlay can't stay stuck showing a
+        # down state that no longer reflects reality (self-heal / debounce-skip
+        # paths previously emitted nothing).
+        try:
+            emit = _import_emit()
+            await emit({
+                "connected": _is_connected(),
+                "message": "Camera service status (post-recovery)",
+            })
+        except Exception as e:
+            logger.error("Recovery reconcile emit failed: %s", e)
 
 
 async def notify_service_down(reason: str = "Camera Management Service unreachable"):
@@ -332,6 +348,21 @@ async def _do_shm_recovery(serial_number: str):
         #    segment rather than any handle re-cached during the window above.
         shared_memory_service.cleanup(serial_number)
         logger.info("Shm recovery: done for %s", serial_number)
+
+        # The AI-service WS never dropped during shm recovery (stale-shm means the
+        # service IS connected — only its shared-memory segment went stale), so no
+        # camera_service_status {connected:true} was ever emitted to clear the
+        # overlay we showed at the start (line ~308). Re-announce current status
+        # now so the ServiceDownOverlay hides itself instead of staying stuck until
+        # the user manually reloads.
+        try:
+            emit = _import_emit()
+            await emit({
+                "connected": _is_connected(),
+                "message": "Camera service recovered (shared-memory)",
+            })
+        except Exception as e:
+            logger.error("Shm recovery: recovered-emit failed: %s", e)
     except Exception as e:
         logger.error("Shm recovery failed for %s: %s", serial_number, e)
     finally:

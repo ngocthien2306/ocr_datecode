@@ -65,6 +65,27 @@ async def disconnect(sid):
 
 
 @sio.event
+async def request_camera_service_status(sid, data=None):
+    """
+    On-demand re-verify of the camera-service status (overlay self-heal).
+
+    camera_service_status is otherwise edge-triggered, so if a client ever misses
+    the recovery {connected:true} event (dropped while its socket was down, or a
+    down that had no matching up), the ServiceDownOverlay would stay stuck. The FE
+    polls this while it's showing the overlay; we reply with the CURRENT truth to
+    just THIS client so it can reconcile.
+    """
+    try:
+        from app.api.websocket.camera_ws import camera_ws_manager
+        await sio.emit('camera_service_status', {
+            'connected': camera_ws_manager.is_connected(),
+            'message': 'Camera Management Service status (on request)'
+        }, room=sid)
+    except Exception as e:
+        logger.error(f"Failed to emit requested camera_service_status: {e}")
+
+
+@sio.event
 async def subscribe_inference_results(sid, data=None):
     """Client subscribes to inference result updates"""
     logger.info(f"Client {sid} subscribed to inference_results")

@@ -244,6 +244,16 @@ class SocketIOService {
   }
 
   /**
+   * Ask the backend to re-emit the CURRENT camera-service status (overlay
+   * self-heal). Used when the ServiceDownOverlay is showing to reconcile in case
+   * a recovery event was missed. No-op if the socket isn't connected.
+   */
+  requestCameraServiceStatus(): void {
+    if (!this.socket?.connected) return;
+    this.socket.emit('request_camera_service_status');
+  }
+
+  /**
    * Listen for individual camera status updates
    */
   onCameraStatusUpdate(callback: (data: any) => void): void {

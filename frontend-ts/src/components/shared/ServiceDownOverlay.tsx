@@ -69,6 +69,29 @@ export const ServiceDownOverlay: React.FC = () => {
     }
   }, [state]);
 
+  // Self-heal: while the overlay is up, periodically reconcile with reality
+  // instead of waiting forever for a single push event. camera_service_status is
+  // edge-triggered on the backend, so a missed recovery event (dropped while our
+  // socket was down, or a `down` that had no matching `up` — e.g. the stale-shm
+  // recovery path) would otherwise leave this popup stuck until a manual reload.
+  useEffect(() => {
+    if (state === 'ok') return;
+
+    const reconcile = () => {
+      // If the backend socket is actually connected again, clear a stale
+      // "backend down" even if we somehow missed the 'connect' callback.
+      if (socketService.isConnected()) {
+        setState(prev => (prev === 'backend_down' ? 'ok' : prev));
+      }
+      // Ask the backend for the CURRENT camera-service status so a stuck
+      // "camera down" resolves once the service is really back.
+      socketService.requestCameraServiceStatus();
+    };
+
+    const interval = setInterval(reconcile, 5000);
+    return () => clearInterval(interval);
+  }, [state]);
+
   if (state === 'ok') return null;
 
   const isBackendDown = state === 'backend_down';
