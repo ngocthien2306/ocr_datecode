@@ -40,6 +40,20 @@
 }
 .at-close-btn:hover { background: #f1f5f9; color: #1e293b; }
 
+/* ── Tabs ── */
+.at-tabs {
+  display: flex; align-items: center; gap: 2px; padding: 0 20px;
+  background: #ffffff; border-bottom: 1px solid #e2e8f0; flex-shrink: 0;
+}
+.at-tab-btn {
+  display: flex; align-items: center; gap: 6px; padding: 10px 16px;
+  background: transparent; border: none; border-bottom: 2px solid transparent;
+  color: #94a3b8; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .15s;
+}
+.at-tab-btn:hover { color: #475569; }
+.at-tab-btn.active { color: #2563eb; border-bottom-color: #2563eb; }
+.at-tab-btn:disabled { opacity: .4; cursor: not-allowed; }
+
 .at-body { display: flex; flex: 1; overflow: hidden; }
 
 /* ── Project sidebar ── */
@@ -190,6 +204,7 @@
    Dark mode
    ═══════════════════════════════════════════════════════════════════════════ */
 body.dark-mode .at-overlay { background: #0f172a; color: #e2e8f0; }
+body.dark-mode .at-tabs,
 body.dark-mode .at-header,
 body.dark-mode .at-modal,
 body.dark-mode .at-stat-card,

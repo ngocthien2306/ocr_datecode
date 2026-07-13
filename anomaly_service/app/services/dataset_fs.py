@@ -79,3 +79,7 @@ def list_defect_types(project_id: str) -> list:
     if not test_dir.exists():
         return []
     return sorted(c.name for c in test_dir.iterdir() if c.is_dir() and c.name != "good")
+
+
+def has_images(d: Path) -> bool:
+    return d.exists() and any(f.suffix.lower() in ALLOWED_EXTS for f in d.glob("*"))

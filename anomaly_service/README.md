@@ -15,6 +15,8 @@ MongoDB database backend uses — no REST calls between the two services.
 cd anomaly_service
 python3 -m venv .venv
 source .venv/bin/activate
+# torch first, matching this machine's CUDA driver (verified with cu121):
+pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements.txt
 cp .env.sample .env   # then set SECRET_KEY to MATCH backend/.env exactly
 ```
@@ -37,6 +39,21 @@ backend's `/api/auth/login` — this service verifies it against the same
       `inference_results` filtered by recipe (`GET /api/anomaly/candidates`)
 - [x] Import into dataset (`POST /api/anomaly/projects/{id}/import`) —
       anomalib Folder layout under `data/projects/{id}/dataset/`
-- [ ] Train/Test/Eval (anomalib Engine) — Week 2
-- [ ] Export ONNX + TensorRT — Week 3
+- [x] Train (PatchCore/Padim via anomalib Engine) + live log — end-to-end
+      verified on GPU (fit → predict → metrics), including a real training
+      bug fix (`val_split_mode` must be `SAME_AS_TEST`, not `NONE` —
+      anomalib's Folder datamodule never populates `val_data` for `NONE`
+      and Lightning's fit loop still requires it, so training crashes;
+      `SAME_AS_TEST` reuses the test set for the unused val loop instead of
+      siphoning images out of it)
+- [x] Test/Eval (image AUROC/F1, per-image scores, threshold recompute) —
+      verified against the full imported test set (not a silently-halved one)
+- [x] Export ONNX + TensorRT-verify (build/cache engine on this machine) —
+      verified with real onnxruntime inference. Note: the TensorRT provider
+      needs the TensorRT SDK's shared libraries (`libnvinfer.so.10` etc.)
+      installed on the machine, separate from the `onnxruntime-gpu` pip
+      package — `ai_services` already depends on this today for
+      `wrinkle_segmenter.py`, so the target workstation should already have
+      it; `/verify-tensorrt` reports `active_provider` so a silent fallback
+      to CUDA is visible rather than silently accepted as "TensorRT works".
 - [ ] Live runtime integration in `ai_services` — Week 3

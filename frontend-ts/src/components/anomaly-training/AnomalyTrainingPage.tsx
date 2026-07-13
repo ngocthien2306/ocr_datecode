@@ -1,13 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 import '@/styles/AnomalyTraining.css';
-import { anomalyTrainingAPI, AnomalyProject, DatasetStats, AnomalyImportResult } from '@/services/anomalyTraining';
+import {
+  anomalyTrainingAPI, AnomalyProject, DatasetStats, AnomalyImportResult, AnomalyModel,
+} from '@/services/anomalyTraining';
 import ImportFromRecipeModal from './ImportFromRecipeModal';
+import TrainTab from './TrainTab';
+import EvalTab from './EvalTab';
+import ExportTab from './ExportTab';
 
 interface Props {
   onClose: () => void;
 }
 
+type TabId = 'dataset' | 'train' | 'eval' | 'export';
+
 export default function AnomalyTrainingPage({ onClose }: Props) {
+  const [tab, setTab] = useState<TabId>('dataset');
   const [projects, setProjects] = useState<AnomalyProject[]>([]);
   const [activeProject, setActiveProject] = useState<AnomalyProject | null>(null);
   const [loadingProjects, setLoadingProjects] = useState(false);
@@ -20,6 +28,9 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
   const [stats, setStats] = useState<DatasetStats | null>(null);
   const [showImportModal, setShowImportModal] = useState(false);
   const [lastImportResult, setLastImportResult] = useState<AnomalyImportResult | null>(null);
+
+  const [models, setModels] = useState<AnomalyModel[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
 
   const loadProjects = useCallback(async () => {
     setLoadingProjects(true);
@@ -51,7 +62,22 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
     }
   }, [activeProject]);
 
-  useEffect(() => { refreshStats(); }, [activeProject?.id]);
+  const loadModels = useCallback(async () => {
+    if (!activeProject) { setModels([]); return; }
+    try {
+      const list = await anomalyTrainingAPI.listModels(activeProject.id);
+      setModels(list);
+      if (!selectedModelId && list.length > 0) setSelectedModelId(list[0].id);
+    } catch (e) {
+      console.error('[AnomalyTraining] Failed to load models', e);
+    }
+  }, [activeProject, selectedModelId]);
+
+  useEffect(() => {
+    setSelectedModelId(null);
+    refreshStats();
+    loadModels();
+  }, [activeProject?.id]);
 
   const handleCreateProject = async () => {
     if (!newProjectName.trim()) return;
@@ -88,6 +114,14 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
     refreshStats();
   };
 
+  const selectedModel = models.find((m) => m.id === selectedModelId) || null;
+  const hasDataset = (stats?.normal_count ?? activeProject?.normal_count ?? 0) > 0
+    && (stats?.abnormal_count ?? activeProject?.abnormal_count ?? 0) > 0;
+
+  const TAB_LABELS: Record<TabId, string> = {
+    dataset: 'Dataset', train: 'Train', eval: 'Eval', export: 'Export',
+  };
+
   return (
     <div className="at-overlay">
       <div className="at-header">
@@ -102,6 +136,22 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
           Close
         </button>
       </div>
+
+      {activeProject && (
+        <div className="at-tabs">
+          {(['dataset', 'train', 'eval', 'export'] as TabId[]).map((id) => (
+            <button
+              key={id}
+              className={`at-tab-btn ${tab === id ? 'active' : ''}`}
+              disabled={id !== 'dataset' && !hasDataset}
+              title={id !== 'dataset' && !hasDataset ? 'Import normal + abnormal images first' : undefined}
+              onClick={() => setTab(id)}
+            >
+              {TAB_LABELS[id]}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="at-body">
         <div className="at-sidebar">
@@ -136,7 +186,7 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
             )}
             {projects.map((p) => (
               <div key={p.id} className={`at-project-item ${activeProject?.id === p.id ? 'active' : ''}`}
-                   onClick={() => setActiveProject(p)}>
+                   onClick={() => { setActiveProject(p); setTab('dataset'); }}>
                 <div className="at-project-item-info">
                   <div className="at-project-item-name">{p.name}</div>
                   <div className="at-project-item-meta">{p.normal_count} normal · {p.abnormal_count} abnormal</div>
@@ -150,7 +200,7 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
         <div className="at-content">
           {!activeProject ? (
             <div className="at-empty-state">Select or create a project to get started</div>
-          ) : (
+          ) : tab === 'dataset' ? (
             <>
               <div className="at-stats-row">
                 <div className="at-stat-card normal">
@@ -184,10 +234,24 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
                 </div>
               )}
 
-              <div className="at-hint" style={{ marginTop: 24 }}>
-                Train / Test / Export come online in Week 2–3 (see docs/anomaly_training_plan.md).
-              </div>
+              {!hasDataset && (
+                <div className="at-hint" style={{ marginTop: 24 }}>
+                  Import at least one normal and one abnormal image to unlock Train.
+                </div>
+              )}
             </>
+          ) : tab === 'train' ? (
+            <TrainTab
+              projectId={activeProject.id}
+              models={models}
+              onModelsChange={loadModels}
+              selectedModelId={selectedModelId}
+              onSelectModel={setSelectedModelId}
+            />
+          ) : tab === 'eval' ? (
+            <EvalTab projectId={activeProject.id} model={selectedModel} />
+          ) : (
+            <ExportTab projectId={activeProject.id} model={selectedModel} onModelChange={loadModels} />
           )}
         </div>
       </div>
