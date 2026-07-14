@@ -53,12 +53,15 @@ ocr_datecode/
 - [ ] Test/Eval UI: heatmap overlay, metrics panel, threshold slider.
 
 ### Tuần 3 — Export + runtime integration
-- [ ] Export ONNX từ `anomaly_service`.
-- [ ] Build + verify TensorRT engine ngay trên máy 5060 Ti (cùng máy sẽ chạy `ai_services`).
-- [ ] `ai_services`: viết `verification/anomaly_inference.py` mới, thay lời gọi `WrinkledSegmenterTRT` trong `single_camera.py` / `product_verifier.py` — có cờ bật/tắt để rollback nhanh.
-- [ ] `backend/app/models/recipe.py`: thêm `anomaly_project_id`, `anomaly_model_id`, `anomaly_threshold` vào `TemplateImage` (cạnh `wrinkle_area`).
-- [ ] `RecipeFormModal`: dropdown chọn anomaly project → model version.
-- [ ] Export UI: nút ONNX, trạng thái build + download.
+- [x] Export ONNX từ `anomaly_service` — verify thật trên GPU + data thật.
+- [x] Build + verify TensorRT engine ngay trên máy chạy `ai_services` (`/verify-tensorrt`, tự fallback CUDA nếu thiếu lib TRT).
+- [x] `ai_services`: `verification/anomaly_inference.py` mới (onnxruntime, TRT→CUDA→CPU, mirror pattern SupCon) — crop dùng lại `WrinkledSegmenterTRT.crop_from_obb` để khớp pixel với dữ liệu train.
+- [x] Wire vào `product_verifier.py` (`_batch_wrinkle_check`) + `single_camera.py`/`multi_camera.py` (truyền `anomaly_config` qua `frames_data`) — per-frame route sang anomaly hoặc wrinkle cũ tuỳ `anomaly_config.enabled`; không có anomaly_config → hành vi y hệt trước đây (đã trace kỹ, không đổi behavior mặc định).
+- [x] `backend/app/models/recipe.py` + `schemas/recipe.py`: `AnomalyConfig` (enabled, anomaly_project_id, anomaly_model_id, onnx_path, image_size, threshold) trên `TemplateImage`, cạnh `wrinkle_area`.
+- [x] `RecipeFormModal` + `AnomalySetupModal.tsx` mới: chọn anomaly project → model version cụ thể (không phải "latest"), threshold slider, toggle enabled riêng để rollback nhanh không mất lựa chọn.
+- [x] Export UI: đã có từ Tuần 2 (ExportTab — nút ONNX, verify TensorRT, download).
+
+**Lưu ý thiết kế quan trọng phát hiện khi tích hợp:** hệ thống hiện tại chỉ load 1 model wrinkle DÙNG CHUNG cho toàn bộ process (load 1 lần lúc `ProductVerificationService.__init__`, không hot-swap theo recipe) — đổi model char-classifier hiện tại cũng theo cách này (train xong → `_trigger_restart_all()`). Anomaly theo đúng pattern này: đổi model ở recipe cần **restart `ai_services`** để áp dụng, không hot-swap giữa các recipe đang chạy.
 
 ### Tuần 4 — Song song (không phụ thuộc anomaly)
 - [ ] E3: Cải thiện thuật toán detect cạnh chai (audit + failure cases + tuning).

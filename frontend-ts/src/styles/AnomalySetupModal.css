@@ -1,0 +1,81 @@
+.anomaly-setup-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, .5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10002;
+}
+
+.anomaly-setup-modal {
+  background: #fff;
+  border-radius: 10px;
+  width: 440px;
+  max-width: 92vw;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .25);
+}
+
+.anomaly-setup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.anomaly-setup-header h3 { margin: 0; font-size: 14px; font-weight: 700; color: #0f172a; }
+.anomaly-setup-close { background: none; border: none; font-size: 20px; color: #94a3b8; cursor: pointer; }
+
+.anomaly-setup-body {
+  padding: 16px 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.anomaly-setup-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #334155;
+  cursor: pointer;
+}
+
+.anomaly-setup-row { display: flex; flex-direction: column; gap: 4px; }
+.anomaly-setup-row label { font-size: 11px; font-weight: 600; color: #64748b; }
+.anomaly-setup-row select, .anomaly-setup-row input[type="range"] {
+  padding: 7px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #1e293b;
+  background: #fff;
+}
+.anomaly-setup-hint { font-size: 11px; color: #94a3b8; }
+.anomaly-setup-error {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.anomaly-setup-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid #e2e8f0;
+}
+
+body.dark-mode .anomaly-setup-modal { background: #1e293b; }
+body.dark-mode .anomaly-setup-header, body.dark-mode .anomaly-setup-footer { border-color: #334155; }
+body.dark-mode .anomaly-setup-header h3 { color: #f1f5f9; }
+body.dark-mode .anomaly-setup-row select { background: #0f172a; border-color: #334155; color: #e2e8f0; }

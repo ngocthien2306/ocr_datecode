@@ -1085,11 +1085,20 @@ class ProductVerificationService:
         batch_results: List,
     ) -> Dict[int, Dict[str, Any]]:
         """
-        Crop product region từ mỗi frame → batch predict_batch() 1 lần → build wrinkled_check.
+        Crop product region từ mỗi frame → build wrinkled_check.
+
+        Per-frame routing: if the frame's template has anomaly_config
+        enabled with an onnx_path, run anomaly_inference.py instead of
+        WrinkledSegmenterTRT — same crop, swap-in model, same result shape
+        (see anomaly_inference.build_anomaly_check). Frames without an
+        active anomaly_config are completely unaffected: same batched
+        wrinkle_seg.predict_batch() call as before.
+
         Returns: {orig_idx: wrinkled_check}
         """
         wrinkled_checks: Dict[int, Dict[str, Any]] = {}
-        crops_info = []  # (orig_idx, crop, cx, cy, w, h, angle, crop_offset, frame_img)
+        wrinkle_crops_info = []   # legacy path — batched through wrinkle_seg
+        anomaly_crops_info = []   # new path — one onnxruntime call per frame
 
         for i, orig_idx in enumerate(frame_indices):
             boxes, scores, class_ids = batch_results[i]
@@ -1111,6 +1120,11 @@ class ProductVerificationService:
             if crop.size == 0:
                 continue
 
+            anomaly_config = data.get('anomaly_config') or {}
+            if anomaly_config.get('enabled') and anomaly_config.get('onnx_path'):
+                anomaly_crops_info.append((orig_idx, crop, anomaly_config))
+                continue
+
             wrinkle_area = data.get('wrinkle_area')              # per-template total threshold
             wrinkle_min_area = data.get('wrinkle_min_area', 0.0)  # per-template per-region min
             wrinkle_max_area = data.get('wrinkle_max_area', 0.0)  # per-template per-region critical
@@ -1122,21 +1136,35 @@ class ProductVerificationService:
                 for b in data['transformed_bboxes']
                 if b.get('type') == 'mask' and b.get('points')
             ]
-            crops_info.append((
+            wrinkle_crops_info.append((
                 orig_idx, crop, cx, cy, w, h, angle, crop_offset,
                 data['frame_img'], wrinkle_area, wrinkle_min_area, wrinkle_max_area, wrinkle_conf,
                 mask_polygons, mask_overlap_threshold
             ))
 
-        if not crops_info:
+        # ── Anomaly path — one model call per frame (models can differ per
+        # template, so this isn't batchable the way a single shared wrinkle
+        # model is; frame counts per trigger are small enough this is fine) ──
+        if anomaly_crops_info:
+            from .anomaly_inference import build_anomaly_check, predict as anomaly_predict
+            for orig_idx, crop, anomaly_config in anomaly_crops_info:
+                pred = anomaly_predict(
+                    anomaly_config['onnx_path'], crop,
+                    image_size=int(anomaly_config.get('image_size', 256)),
+                )
+                wrinkled_checks[orig_idx] = build_anomaly_check(
+                    pred, float(anomaly_config.get('threshold', 0.5)),
+                )
+
+        if not wrinkle_crops_info:
             return wrinkled_checks
 
         # Batch predict — predict_batch only accepts a single conf for the whole batch.
         # Use the min conf across frames as a lower bound; per-frame post-hoc filter is
         # applied inside build_wrinkled_check via conf_threshold.
         # NOTE: tuple index 12 is wrinkle_conf (kept in sync with crops_info layout above).
-        batch_min_conf = min(ci[12] for ci in crops_info)
-        crops = [ci[1] for ci in crops_info]
+        batch_min_conf = min(ci[12] for ci in wrinkle_crops_info)
+        crops = [ci[1] for ci in wrinkle_crops_info]
         try:
             seg_results, seg_timing = self.wrinkle_seg.predict_batch(
                 crops, conf_threshold=batch_min_conf, return_timing=True
@@ -1156,7 +1184,7 @@ class ProductVerificationService:
             return wrinkled_checks
 
         # Build wrinkled_check per frame (each frame has its own thresholds)
-        for j, ci in enumerate(crops_info):
+        for j, ci in enumerate(wrinkle_crops_info):
             (orig_idx, _crop, cx, cy, w, h, angle, crop_offset, frame_img,
              wrinkle_area, wrinkle_min_area, wrinkle_max_area, wrinkle_conf,
              mask_polygons, mask_overlap_threshold) = ci

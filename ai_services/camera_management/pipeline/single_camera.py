@@ -1043,6 +1043,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             wrinkle_area = None
             wrinkle_min_area = 0.0
             wrinkle_max_area = 0.0
+            anomaly_config = None
             if camera.templates and idx < len(camera.templates):
                 template = camera.templates[idx]
                 center_offset_threshold = template.get('center_offset_threshold', 50.0)
@@ -1052,6 +1053,10 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 wrinkle_area = template.get('wrinkle_area', None)
                 wrinkle_min_area = template.get('wrinkle_min_area', 0.0) or 0.0
                 wrinkle_max_area = template.get('wrinkle_max_area', 0.0) or 0.0
+                # When set + enabled, product_verifier's _batch_wrinkle_check
+                # routes this template's label-defect check to
+                # anomaly_inference.py instead of WrinkledSegmenterTRT.
+                anomaly_config = template.get('anomaly_config', None)
 
             wrinkle_conf = getattr(camera, 'wrinkle_conf', 0.25)
             wrinkle_show_when_pass = getattr(camera, 'wrinkle_show_when_pass', True)
@@ -1087,6 +1092,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     'wrinkle_conf': wrinkle_conf,
                     'wrinkle_show_when_pass': wrinkle_show_when_pass,
                     'mask_overlap_threshold': mask_overlap_threshold,
+                    'anomaly_config': anomaly_config,
                 })
             else:
                 frames_data.append({
@@ -1103,6 +1109,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     'wrinkle_conf': wrinkle_conf,
                     'wrinkle_show_when_pass': wrinkle_show_when_pass,
                     'mask_overlap_threshold': mask_overlap_threshold,
+                    'anomaly_config': anomaly_config,
                 })
 
         # Filter valid frames for batch processing
