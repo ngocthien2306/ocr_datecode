@@ -34,7 +34,9 @@ import requests
 home = os.environ.get('HOME')
 
 # Centralized logging → {repo_root}/logs/camera_management/{YYYY-MM-DD}.log
-setup_category_logger("camera_management")
+# add_console=False: bỏ StreamHandler→journald — console handler nhân đôi I/O
+# mỗi record (handler lock + GIL block mọi thread khi ghi); file log vẫn đủ.
+setup_category_logger("camera_management", add_console=False)
 logger = logging.getLogger(__name__)
 
 
@@ -590,6 +592,14 @@ def signal_handler(sig, _frame):
 async def main():
     """Main entry point"""
     global service
+
+    # --- MEM_DIAG: chẩn đoán memory leak (additive, tắt bằng env MEM_DIAG=0) ---
+    try:
+        import mem_diag
+        mem_diag.start()
+    except Exception as _e:
+        logger.warning(f"mem_diag không khởi động được: {_e}")
+    # --------------------------------------------------------------------------
 
     # Setup signal handlers
     signal.signal(signal.SIGINT, signal_handler)

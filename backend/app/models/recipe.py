@@ -33,6 +33,7 @@ class ColorConfig(BaseModel):
     v_min: int = Field(default=0, ge=0, le=255)
     v_max: int = Field(default=255, ge=0, le=255)
     pixel_threshold: int = Field(default=1000, ge=0, description="Minimum matching HSV pixels (summed across product polygons) required to pass")
+    localization_method: Optional[str] = Field(default="image_proc", description="Color ROI localization: 'image_proc' (legacy bottle detect) | 'superpoint' (use SuperPoint-transformed product polygon)")
     roi_circle: Optional[ColorRoiCircle] = Field(default=None, description="Persisted ROI used by ColorSetupModal so user can re-edit")
     # ── Bottle detection (image-proc) tuning, used by ColorVerificationService._detect_bottle ──
     bottle_sharp_threshold: Optional[float] = Field(default=0.30, ge=0.05, le=0.95, description="Sharpness mask threshold (fraction of max). Higher → stricter mask, fewer false positives but may miss low-contrast bottles.")
@@ -68,7 +69,10 @@ class EdgeConfig(BaseModel):
     inner_min_hratio: float = Field(default=0.20, ge=0.0, le=1.0)
     inner_tol_px: int = Field(default=12, ge=0, le=100)
     specular_thr: int = Field(default=230, ge=0, le=255)
-    detect_mode: str = Field(default="gradient", description="'gradient' (|Scharr| edge) | 'brightness' (intensity peak / bright bottle-rim)")
+    detect_mode: str = Field(default="gradient", description="'gradient' (|Scharr| edge) | 'brightness' (signed Scharr edge of a chosen polarity)")
+    edge_polarity: str = Field(default="light_to_dark", description="Brightness-mode edge direction when scanning outward: 'light_to_dark' (bright rim→dark bg, default) | 'dark_to_light' (inverted contrast). Ignored by gradient mode.")
+    find_by: str = Field(default="farthest", description="Which qualifying peak becomes the OUTER wall: 'farthest' (outermost, default) | 'nearest' (closest to label) | 'strongest' (highest profile)")
+    edge_width: float = Field(default=3.0, ge=1.0, le=15.0, description="Expected edge transition width in px; profile smoothing sigma = edge_width/2")
     template_walls: Optional[EdgeWalls] = Field(default=None, description="Walls computed on the template image at setup; used directly at inference")
 
 

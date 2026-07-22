@@ -322,9 +322,27 @@
   margin-bottom: 2px;
 }
 
+.es-advanced-toggle {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 2px 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #6b7280;
+  cursor: pointer;
+}
+
+.es-advanced-toggle:hover {
+  color: #374151;
+}
+
 .es-slider-row {
   display: grid;
-  grid-template-columns: 78px 1fr 56px;
+  grid-template-columns: 92px 1fr 56px;
   align-items: center;
   gap: 8px;
 }
@@ -333,6 +351,7 @@
   font-size: 12px;
   color: #374151;
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .es-slider { width: 100%; accent-color: #3b82f6; }

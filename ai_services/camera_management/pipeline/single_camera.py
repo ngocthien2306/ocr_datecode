@@ -19,6 +19,16 @@ from ..camera import Camera
 logger = logging.getLogger(__name__)
 
 
+def _get_color_localization_method(template: Optional[Dict[str, Any]]) -> str:
+    color_cfg = (template or {}).get('color_config') or {}
+    method = (
+        (template or {}).get('color_localization_method')
+        or color_cfg.get('localization_method')
+        or 'image_proc'
+    )
+    return str(method).strip().lower()
+
+
 class SingleCameraPipeline(InferencePipelineTemplate):
     """
     Pipeline for single camera inference.
@@ -1043,6 +1053,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             wrinkle_area = None
             wrinkle_min_area = 0.0
             wrinkle_max_area = 0.0
+            template = None
             if camera.templates and idx < len(camera.templates):
                 template = camera.templates[idx]
                 center_offset_threshold = template.get('center_offset_threshold', 50.0)
@@ -1063,11 +1074,13 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 if camera.templates and idx < len(camera.templates)
                 else None
             )
+            color_localization_method = _get_color_localization_method(template)
             # Color-check frames must run even if SuperPoint match failed —
-            # color_verifier reads the raw template, not transformed_bboxes.
+            # but only for the legacy image-proc localization path.
             is_color_check_frame = (
                 getattr(camera, 'function_type', '') == 'Check_Color'
                 and color_config is not None
+                and color_localization_method != 'superpoint'
             )
 
             if (result.get('success') or is_color_check_frame) and idx < len(frames):
@@ -1077,6 +1090,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     'camera': camera,
                     'template_idx': idx,
                     'color_config': color_config,
+                    'color_localization_method': color_localization_method,
                     'center_offset_threshold': center_offset_threshold,
                     'center_offset_threshold_left': center_offset_threshold_left,
                     'center_offset_threshold_right': center_offset_threshold_right,
@@ -1095,6 +1109,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     'camera': camera,
                     'template_idx': idx,
                     'color_config': color_config,
+                    'color_localization_method': color_localization_method,
                     'center_offset_threshold': center_offset_threshold,
                     'center_offset_unit': center_offset_unit,
                     'wrinkle_area': wrinkle_area,

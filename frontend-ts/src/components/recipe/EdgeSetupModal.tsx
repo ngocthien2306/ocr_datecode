@@ -24,6 +24,9 @@ export interface EdgeConfig {
   inner_tol_px: number;
   specular_thr: number;
   detect_mode: 'gradient' | 'brightness';
+  edge_polarity: 'light_to_dark' | 'dark_to_light';
+  find_by: 'farthest' | 'nearest' | 'strongest';
+  edge_width: number;
   template_walls?: EdgeWalls | null;
 }
 
@@ -42,17 +45,23 @@ export const DEFAULT_EDGE_CONFIG: EdgeConfig = {
   inner_tol_px: 12,
   specular_thr: 230,
   detect_mode: 'gradient',
+  edge_polarity: 'light_to_dark',
+  find_by: 'farthest',
+  edge_width: 3,
   template_walls: null,
 };
 
 interface SideProfile {
   profile: number[];
   peaks: number[];
+  peak_hratio?: number[];          // height_ratio per peak (what outer_hratio filters on)
   gap_offset: number;
   outer_col: number | null;
   inner_col: number | null;
   pred_col: number | null;
+  outer_min_hratio?: number;       // current threshold → drawn for reference
   detect_mode?: string;
+  specular_regions?: Pt[][];       // suppressed glare blobs in image pixel coords
 }
 
 type Pt = [number, number];
@@ -145,6 +154,7 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
   const [detecting, setDetecting] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [showSearch, setShowSearch] = useState(true);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Recorded-frame loading + per-image test badges
   const [frames, setFrames] = useState<FrameImage[]>([]);
@@ -245,6 +255,25 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
       }
     }
 
+    // Specular-suppressed regions (translucent red) — what `specular_thr` removes.
+    // Lower the threshold until glare blobs are covered but the bottle rim is NOT.
+    const specFill = (pts: Pt[] | null | undefined) => {
+      if (!pts || pts.length < 3) return;
+      ctx.save();
+      ctx.fillStyle = 'rgba(239,68,68,0.35)';
+      ctx.strokeStyle = 'rgba(239,68,68,0.85)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(pts[0]![0] * displayScale, pts[0]![1] * displayScale);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i]![0] * displayScale, pts[i]![1] * displayScale);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    };
+    for (const reg of preview?.profiles?.left?.specular_regions || []) specFill(reg);
+    for (const reg of preview?.profiles?.right?.specular_regions || []) specFill(reg);
+
     // Product polygons (purple), label (cyan)
     for (const p of active.product) poly(p, '#7513dd', 2);
     poly(active.label, '#22d3ee', 2);
@@ -328,12 +357,12 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imgReady, active?.key]);
 
-  // Re-run detection when the user switches detection mode (gradient/brightness).
+  // Re-run detection when the user switches detection mode or edge polarity.
   useEffect(() => {
     if (!imgReady || !active?.previewUrl) return;
     void runDetect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.detect_mode]);
+  }, [config.detect_mode, config.edge_polarity]);
 
   // ── Load recorded frames for this camera ──────────────────────────────────
   const loadFrames = useCallback(async () => {
@@ -514,6 +543,7 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
                 <span style={{ color: '#f59e0b' }}>●</span> Inner wall &nbsp;
                 <span style={{ color: '#3b82f6' }}>▢</span> Outer search &nbsp;
                 <span style={{ color: '#ec4899' }}>▢</span> Inner search &nbsp;
+                <span style={{ color: '#ef4444' }}>▩</span> Specular cut &nbsp;
                 <label className="es-show-search">
                   <input type="checkbox" checked={showSearch} onChange={(e) => setShowSearch(e.target.checked)} />
                   show search range
@@ -554,8 +584,19 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
                 onChange={(e) => setConfig((p) => ({ ...p, detect_mode: e.target.value as 'gradient' | 'brightness' }))}
               >
                 <option value="gradient">Gradient — edge |Scharr| (default)</option>
-                <option value="brightness">Brightness — intensity peak (bright rim)</option>
+                <option value="brightness">Brightness — signed edge by polarity</option>
               </select>
+              {config.detect_mode === 'brightness' && (
+                <select
+                  className="es-mode-select"
+                  value={config.edge_polarity}
+                  onChange={(e) => setConfig((p) => ({ ...p, edge_polarity: e.target.value as 'light_to_dark' | 'dark_to_light' }))}
+                  title="Edge direction when scanning outward from the label"
+                >
+                  <option value="light_to_dark">Polarity — light → dark (bright rim, default)</option>
+                  <option value="dark_to_light">Polarity — dark → light (inverted contrast)</option>
+                </select>
+              )}
             </div>
 
             <button
@@ -566,28 +607,50 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
             </button>
 
             <div className="es-section">
-              <div className="es-section-title">Search ranges (px)</div>
+              <div className="es-section-title">Tuning</div>
+              <select
+                className="es-mode-select"
+                value={config.find_by}
+                onChange={(e) => setConfig((p) => ({ ...p, find_by: e.target.value as 'farthest' | 'nearest' | 'strongest' }))}
+                title="Which qualifying peak becomes the OUTER wall"
+              >
+                <option value="farthest">Find by — farthest peak (outermost, default)</option>
+                <option value="nearest">Find by — nearest peak (closest to label)</option>
+                <option value="strongest">Find by — strongest peak (highest profile)</option>
+              </select>
               <Slider label="Outer max" min={10} max={400} value={num('outer_search_max')} onChange={setNum('outer_search_max')} />
-              <Slider label="Inner max" min={0} max={300} value={num('inner_search_max')} onChange={setNum('inner_search_max')} />
-              <Slider label="Edge margin" min={0} max={30} value={num('edge_margin')} onChange={setNum('edge_margin')} />
-              <Slider label="Y extension" min={0} max={1} value={num('y_extension')} onChange={setNum('y_extension')} />
-            </div>
-
-            <div className="es-section">
-              <div className="es-section-title">Wall thresholds</div>
-              <Slider label="Outer hratio" min={0} max={1} value={num('outer_min_hratio')} onChange={setNum('outer_min_hratio')} />
-              <Slider label="Inner hratio" min={0} max={1} value={num('inner_min_hratio')} onChange={setNum('inner_min_hratio')} />
-              <Slider label="Inner tol px" min={0} max={60} value={num('inner_tol_px')} onChange={setNum('inner_tol_px')} />
-              <Slider label="Strong thr" min={0} max={1} value={num('strong_thr')} onChange={setNum('strong_thr')} />
-            </div>
-
-            <div className="es-section">
-              <div className="es-section-title">Peaks &amp; masking</div>
-              <Slider label="Peak height" min={0} max={1} value={num('peak_height')} onChange={setNum('peak_height')} />
-              <Slider label="Peak prom" min={0} max={1} value={num('peak_prom')} onChange={setNum('peak_prom')} />
-              <Slider label="Peak dist" min={1} max={50} value={num('peak_dist')} onChange={setNum('peak_dist')} />
-              <Slider label="Fill keep" min={0} max={1} value={num('fill_keep_ratio')} onChange={setNum('fill_keep_ratio')} />
+              <Slider label="Outer coverage" min={0} max={1} value={num('outer_min_hratio')} onChange={setNum('outer_min_hratio')} />
               <Slider label="Specular" min={0} max={255} value={num('specular_thr')} onChange={setNum('specular_thr')} />
+            </div>
+
+            <div className="es-section">
+              <button
+                type="button" className="es-advanced-toggle"
+                onClick={() => setShowAdvanced((v) => !v)}
+                aria-expanded={showAdvanced}
+              >
+                {showAdvanced ? '▾' : '▸'} Advanced
+              </button>
+
+              {showAdvanced && (
+                <>
+                  <Slider label="Inner max" min={0} max={300} value={num('inner_search_max')} onChange={setNum('inner_search_max')} />
+                  <Slider label="Edge margin" min={0} max={30} value={num('edge_margin')} onChange={setNum('edge_margin')} />
+                  <Slider label="Y extension" min={0} max={1} value={num('y_extension')} onChange={setNum('y_extension')} />
+                  <Slider label="Strong thr" min={0} max={1} value={num('strong_thr')} onChange={setNum('strong_thr')} />
+                  <Slider label="Peak height" min={0} max={1} value={num('peak_height')} onChange={setNum('peak_height')} />
+                  <Slider label="Peak prom" min={0} max={1} value={num('peak_prom')} onChange={setNum('peak_prom')} />
+                  <Slider label="Peak dist" min={1} max={50} value={num('peak_dist')} onChange={setNum('peak_dist')} />
+                  <Slider label="Fill keep" min={0} max={1} value={num('fill_keep_ratio')} onChange={setNum('fill_keep_ratio')} />
+                  <Slider label="Edge width" min={1} max={15} value={num('edge_width')} onChange={setNum('edge_width')} />
+                  {wallType === 'inner' && (
+                    <>
+                      <Slider label="Inner coverage" min={0} max={1} value={num('inner_min_hratio')} onChange={setNum('inner_min_hratio')} />
+                      <Slider label="Inner tol px" min={0} max={60} value={num('inner_tol_px')} onChange={setNum('inner_tol_px')} />
+                    </>
+                  )}
+                </>
+              )}
             </div>
 
             <div className="es-section">
@@ -672,11 +735,30 @@ function drawProfileChart(canvas: HTMLCanvasElement | null, data: SideProfile | 
   }
   ctx.stroke();
 
-  // all candidate peaks (small red)
-  ctx.fillStyle = '#ef4444';
-  for (const p of data.peaks) {
-    if (p >= 0 && p < n) { ctx.beginPath(); ctx.arc(xOf(p), yOf(prof[p]!), 2.5, 0, Math.PI * 2); ctx.fill(); }
-  }
+  // Candidate peaks coloured by whether their height_ratio passes outer_min_hratio
+  // — that is the quantity deciding if a peak can become the OUTER wall. Qualifying
+  // peaks are amber + labelled with their hr; rejected peaks are small grey.
+  const thr = data.outer_min_hratio ?? 0;
+  const hr = data.peak_hratio || [];
+  data.peaks.forEach((p, i) => {
+    if (p < 0 || p >= n) return;
+    const h = hr[i];
+    const pass = h != null && h >= thr;
+    ctx.fillStyle = pass ? '#f59e0b' : '#9ca3af';
+    ctx.beginPath(); ctx.arc(xOf(p), yOf(prof[p]!), pass ? 3.5 : 2.5, 0, Math.PI * 2); ctx.fill();
+    if (pass && h != null) {
+      ctx.font = '9px sans-serif';
+      ctx.fillStyle = '#b45309';
+      ctx.fillText(h.toFixed(2), Math.min(xOf(p) + 4, W - 20), Math.max(10, yOf(prof[p]!) - 8));
+      ctx.font = '11px sans-serif';
+    }
+  });
+  // threshold reference (top-right): peaks with hr ≥ this become wall candidates
+  ctx.font = '10px sans-serif';
+  ctx.fillStyle = '#b45309';
+  const thrTxt = `coverage ≥ ${thr.toFixed(2)} = wall`;
+  ctx.fillText(thrTxt, Math.max(6, W - ctx.measureText(thrTxt).width - 6), 13);
+  ctx.font = '11px sans-serif';
 
   // predicted inner (pink dashed vertical line)
   if (data.pred_col != null && data.pred_col >= 0 && data.pred_col < n) {

@@ -22,6 +22,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _get_color_localization_method(template_data: Dict[str, Any]) -> str:
+    """Template-level guard for color ROI localization.
+
+    Backward compatible default is the legacy image-proc path.
+    """
+    color_cfg = template_data.get("color_config") or {}
+    method = (
+        template_data.get("color_localization_method")
+        or color_cfg.get("localization_method")
+        or "image_proc"
+    )
+    return str(method).strip().lower()
+
+
 class ColorCheckStubMatcher:
     """
     Stub matcher for Check_Color cameras with a 'product' annotation.
@@ -146,11 +160,12 @@ class MatcherFactory:
             # requirement and TRT engine load; return a stub matcher carrying
             # only crop_area (used for optional frame pre-crop).
             annotations_raw = template_data.get("annotations") or []
+            color_localization_method = _get_color_localization_method(template_data)
             is_color_camera = (
                 getattr(camera, 'function_type', '') == 'Check_Color'
                 and any(a.get('type') == 'product' for a in annotations_raw)
             )
-            if is_color_camera:
+            if is_color_camera and color_localization_method != 'superpoint':
                 # Best-effort parse of crop_area (optional, may be missing).
                 # If template image dims unknown we skip crop_area; color_verifier
                 # falls back to using the full frame.

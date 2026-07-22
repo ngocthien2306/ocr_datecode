@@ -17,6 +17,16 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+def _get_color_localization_method(template: Optional[Dict[str, Any]]) -> str:
+    color_cfg = (template or {}).get('color_config') or {}
+    method = (
+        (template or {}).get('color_localization_method')
+        or color_cfg.get('localization_method')
+        or 'image_proc'
+    )
+    return str(method).strip().lower()
+
+
 class MultiCameraPipeline(InferencePipelineTemplate):
     """
     Pipeline for multi-camera batch inference.
@@ -380,7 +390,9 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             tmpls = getattr(cam, 'templates', None) or []
             if not tmpls:
                 return False
-            return any(a.get('type') == 'product' for a in (tmpls[0].get('annotations') or []))
+            if not any(a.get('type') == 'product' for a in (tmpls[0].get('annotations') or [])):
+                return False
+            return _get_color_localization_method(tmpls[0]) != 'superpoint'
 
         # Shape-outline cameras (crop_match_method='shape_outline') also skip
         # SuperPoint — we run ECC affine alignment on Sobel gradient instead.
@@ -654,6 +666,7 @@ class MultiCameraPipeline(InferencePipelineTemplate):
         inference_results: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Verify results for all cameras"""
+        t_vr_entry = time.perf_counter()
         transformed_results = inference_results['transformed_results']
 
         # Collect OCR tasks for batch processing. Dual_rotation cameras emit
@@ -732,19 +745,39 @@ class MultiCameraPipeline(InferencePipelineTemplate):
         batch_ocr_results = {}
         ocr_serial_numbers = set()
         t_phases_start = time.perf_counter()
+        logger.info(
+            f"[Job #{context.job_id}] VERIFY-PHASE task_build="
+            f"{(t_phases_start - t_vr_entry) * 1000:.1f}ms ({len(ocr_tasks)} ocr tasks)"
+        )
+
+        # wait = submit→thread thực sự chạy (thread starvation / GIL chờ)
+        # exec = wall time của chính phase (phình lên khi bị GIL serialize)
+        def _timed_phase(phase_name, fn, *args):
+            t0 = time.perf_counter()
+            wait_ms = (t0 - t_phases_start) * 1000
+            out = fn(*args)
+            exec_ms = (time.perf_counter() - t0) * 1000
+            logger.info(
+                f"[Job #{context.job_id}] VERIFY-PHASE {phase_name}: "
+                f"wait={wait_ms:.1f}ms exec={exec_ms:.1f}ms"
+            )
+            return out
 
         with ThreadPoolExecutor(max_workers=3) as pool:
             ocr_future = None
             if ocr_tasks and context.text_verification_service:
                 ocr_serial_numbers = {task['serial_number'] for task in ocr_tasks}
                 ocr_future = pool.submit(
+                    _timed_phase, "ocr",
                     context.text_verification_service.batch_verify_multi_camera,
                     ocr_tasks,
                 )
             product_future = pool.submit(
+                _timed_phase, "product",
                 self._batch_verify_products, context, transformed_results
             )
             template_future = pool.submit(
+                _timed_phase, "template",
                 self._batch_verify_templates, context, transformed_results
             )
 
@@ -1057,13 +1090,16 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             wrinkle_show_when_pass = getattr(camera, 'wrinkle_show_when_pass', True)
             mask_overlap_threshold = getattr(camera, 'mask_overlap_threshold', 0.6)
             # Per-template color_config (only first template used in multi-camera)
+            template0 = camera.templates[0] if camera.templates else None
             color_config = (
-                camera.templates[0].get('color_config') if camera.templates else None
+                template0.get('color_config') if template0 else None
             )
+            color_localization_method = _get_color_localization_method(template0)
             # Color-check frames must run even if SuperPoint match failed.
             is_color_check_frame = (
                 getattr(camera, 'function_type', '') == 'Check_Color'
                 and color_config is not None
+                and color_localization_method != 'superpoint'
             )
 
             if (result.get('success') or is_color_check_frame) and frames:
@@ -1073,6 +1109,7 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     'camera': camera,
                     'template_idx': 0,
                     'color_config': color_config,
+                    'color_localization_method': color_localization_method,
                     'center_offset_threshold': center_offset_threshold,
                     'center_offset_threshold_left': center_offset_threshold_left,
                     'center_offset_threshold_right': center_offset_threshold_right,

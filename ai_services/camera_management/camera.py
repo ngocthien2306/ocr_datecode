@@ -5,6 +5,7 @@ Manages individual camera instance with shared memory and inference
 
 from multiprocessing import shared_memory, Process, Value
 import os
+import threading
 from pypylon import pylon
 import cv2
 import numpy as np
@@ -264,6 +265,24 @@ class Camera:
         self.trigger_activation = "RisingEdge"  # "RisingEdge", "FallingEdge", "AnyEdge"
         self.di_number = 0  # Digital Input number (0-3) for software trigger
         self.trigger_source = "Line0"  # Camera Line input for hardware trigger (TODO)
+
+        # HW TriggerDelay: camera tự đợi delay_trigger (µs-precision) sau
+        # ExecuteSoftwareTrigger thay vì threading.Timer phía Python (vốn bị
+        # GIL làm trễ 30-350ms khi inference nặng). configure_trigger_delay()
+        # bật cờ này khi camera hỗ trợ.
+        # _hw_delay_mode: "trigger_delay" (node TriggerDelay đủ range) |
+        #                 "timer1" (Timer1 phần cứng: SoftwareSignal1 → Timer1
+        #                  đếm delay → Timer1End trigger FrameStart — dùng khi
+        #                  TriggerDelay max quá nhỏ, vd ace2 chỉ 10ms) | None
+        self.hw_trigger_delay_active = False
+        self._hw_delay_mode: Optional[str] = None
+        # Khoá capture: giữ từ lúc fire_software_trigger tới khi RetrieveResult
+        # xong. Nếu xung DI kế đến khi capture trước chưa xong (2 chai sát hơn
+        # delay_trigger) thì KHÔNG bắn pulse mới — pulse thừa sẽ sinh frame mồ
+        # côi nằm lại grab queue, khiến mọi retrieve sau lấy nhầm frame của
+        # chai TRƯỚC (off-by-one vĩnh viễn → "chụp lệch" dù Timer1 chính xác).
+        self._hw_capture_lock = threading.Lock()
+        self._hw_fire_ts = 0.0  # time.monotonic() của lần fire gần nhất
 
         # Recipe & templates
         self.recipe_id: Optional[str] = None
@@ -778,6 +797,10 @@ class Camera:
             self.pixel_format = settings["pixel_format"]
         if "delay_trigger" in settings:
             self.delay_trigger = settings["delay_trigger"]
+            # HW TriggerDelay bám theo delay mới (node writable cả khi đang grab;
+            # nếu fail → tự fallback timer legacy bên trong)
+            if self.camera and self.camera.IsOpen():
+                self.configure_trigger_delay()
         if "delay_interval" in settings:
             self.delay_interval = settings["delay_interval"]
 
@@ -871,6 +894,9 @@ class Camera:
                     f"[{self.serial_number}] Error checking TriggerActivation: {e}"
                 )
 
+            # HW TriggerDelay (đặt trước khi StartGrabbing — node chắc chắn writable)
+            self.configure_trigger_delay()
+
             # Resume grabbing with OneByOne strategy
             if was_grabbing or self.mode == CameraMode.SOFTWARE_TRIGGER:
                 # MaxNumBuffer is already configured in _configure_gige_buffer_settings()
@@ -884,6 +910,316 @@ class Camera:
             import traceback
             traceback.print_exc()
             return False
+
+    def _get_trigger_delay_node(self):
+        """Node TriggerDelay theo model: ace2/USB = 'TriggerDelay' (µs, float),
+        ace classic GigE = 'TriggerDelayAbs' (µs, float). None nếu không có."""
+        for node_name in ("TriggerDelay", "TriggerDelayAbs"):
+            node = getattr(self.camera, node_name, None)
+            if node is None:
+                continue
+            try:
+                from pypylon import genicam
+                if node.GetAccessMode() in (genicam.RW, genicam.WO):
+                    return node
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _genicam_unit_per_ms(unit: str) -> float:
+        """Hệ số quy đổi 1ms → đơn vị của node (SFNC mặc định µs)."""
+        u = (unit or "").strip().lower()
+        if u in ("us", "µs", "usec", ""):
+            return 1000.0
+        if u in ("ms", "msec"):
+            return 1.0
+        if u == "s":
+            return 0.001
+        if u in ("ns", "nsec"):
+            return 1_000_000.0
+        return 1000.0
+
+    def _disarm_hw_delay(self, delay_node=None):
+        """Về trạng thái legacy an toàn: TriggerDelay=0, TriggerSource=Software."""
+        self.hw_trigger_delay_active = False
+        self._hw_delay_mode = None
+        try:
+            if delay_node is not None:
+                delay_node.SetValue(0.0)
+        except Exception:
+            pass
+        try:
+            # Quan trọng khi trước đó armed timer1 (TriggerSource=Timer1End):
+            # phải trả về Software, nếu không ExecuteSoftwareTrigger thành vô hiệu.
+            self.camera.TriggerSelector.SetValue(self.trigger_selector)
+            self.camera.TriggerSource.SetValue("Software")
+        except Exception as e:
+            logger.error(
+                f"[{self.serial_number}] KHÔNG khôi phục được TriggerSource=Software: {e} "
+                f"— capture có thể kẹt, cần reconfigure camera!"
+            )
+
+    def _arm_timer1_scheme(self) -> bool:
+        """
+        Fallback khi TriggerDelay max quá nhỏ (ace2: 10ms): dùng khối Timer1
+        phần cứng — SoftwareSignal1 → Timer1 đếm delay_trigger → Timer1End
+        trigger FrameStart. Hiệu quả y hệt TriggerDelay: camera tự đợi bằng
+        phần cứng, fire chỉ là 1 control write tại DI edge.
+        """
+        cam = self.camera
+        try:
+            cam.TimerSelector.SetValue("Timer1")
+            dur = cam.TimerDuration
+            unit = ""
+            try:
+                unit = (dur.GetUnit() or "").strip()
+            except Exception:
+                pass
+            per_ms = self._genicam_unit_per_ms(unit)
+            dmax = float(dur.GetMax())
+            target = float(self.delay_trigger) * per_ms
+            logger.info(
+                f"[{self.serial_number}] Timer1Duration node: unit='{unit or 'µs?'}' "
+                f"max={dmax} (≈{dmax/per_ms:.0f}ms) target={target} ({self.delay_trigger}ms)"
+            )
+            if target > dmax:
+                logger.warning(
+                    f"[{self.serial_number}] delay_trigger vượt Timer1 max≈{dmax/per_ms:.0f}ms "
+                    f"— dùng timer (legacy)"
+                )
+                return False
+            dur.SetValue(target)
+            cam.TimerTriggerSource.SetValue("SoftwareSignal1")
+            try:
+                cam.TimerTriggerActivation.SetValue("RisingEdge")
+            except Exception:
+                pass  # một số model không có node này — mặc định RisingEdge
+            cam.TriggerSelector.SetValue(self.trigger_selector)
+            cam.TriggerSource.SetValue("Timer1End")
+            cam.SoftwareSignalSelector.SetValue("SoftwareSignal1")
+            self._hw_delay_mode = "timer1"
+            self.hw_trigger_delay_active = True
+            logger.info(
+                f"[{self.serial_number}] ✅ HW delay armed qua Timer1: "
+                f"{self.delay_trigger}ms in-camera (SoftwareSignal1→Timer1→FrameStart) "
+                f"— hết trễ GIL"
+            )
+            return True
+        except Exception as e:
+            logger.warning(
+                f"[{self.serial_number}] Không arm được Timer1 scheme ({e}) — dùng timer (legacy)"
+            )
+            return False
+
+    def configure_trigger_delay(self) -> bool:
+        """
+        Đưa delay_trigger (ms) xuống camera để camera tự đợi bằng phần cứng.
+        Thứ tự thử: (1) node TriggerDelay nếu max đủ; (2) Timer1 scheme.
+
+        Khi thành công (hw_trigger_delay_active=True), trigger_handler sẽ
+        fire_software_trigger() NGAY tại DI edge — loại threading.Timer khỏi
+        đường timing (hết trễ GIL).
+
+        Kill-switch: env OCR_HW_TRIGGER_DELAY=0 → luôn dùng timer cũ.
+        Multi-template: disarm (delay phần cứng áp lên MỌI trigger → frame 2+ lệch).
+        Fallback: mọi lỗi → disarm về trạng thái legacy nguyên vẹn.
+        """
+        if not self.camera or not self.camera.IsOpen():
+            self.hw_trigger_delay_active = False
+            self._hw_delay_mode = None
+            return False
+
+        node = self._get_trigger_delay_node()
+
+        if os.environ.get("OCR_HW_TRIGGER_DELAY", "1") != "1":
+            logger.info(f"[{self.serial_number}] HW TriggerDelay disabled by env")
+            self._disarm_hw_delay(node)
+            return False
+
+        if len(self.templates) > 1:
+            logger.info(
+                f"[{self.serial_number}] {len(self.templates)} templates — HW delay "
+                f"không áp dụng (multi-template), dùng timer (legacy)"
+            )
+            self._disarm_hw_delay(node)
+            return False
+
+        # (1) Node TriggerDelay — sạch nhất (không đổi TriggerSource)
+        if node is not None:
+            try:
+                unit = ""
+                try:
+                    unit = (node.GetUnit() or "").strip()
+                except Exception:
+                    pass
+                per_ms = self._genicam_unit_per_ms(unit)
+                node_max = float(node.GetMax())
+                target = float(self.delay_trigger) * per_ms
+                logger.info(
+                    f"[{self.serial_number}] TriggerDelay node: unit='{unit or 'µs?'}' "
+                    f"max={node_max} (≈{node_max/per_ms:.0f}ms) target={target} "
+                    f"({self.delay_trigger}ms)"
+                )
+                if target <= node_max:
+                    node.SetValue(target)
+                    self._hw_delay_mode = "trigger_delay"
+                    self.hw_trigger_delay_active = True
+                    logger.info(
+                        f"[{self.serial_number}] ✅ HW TriggerDelay armed: "
+                        f"{self.delay_trigger}ms in-camera — hết trễ GIL"
+                    )
+                    return True
+                logger.info(
+                    f"[{self.serial_number}] TriggerDelay max≈{node_max/per_ms:.0f}ms "
+                    f"< {self.delay_trigger}ms — thử Timer1 scheme..."
+                )
+                node.SetValue(0.0)
+            except Exception as e:
+                logger.warning(f"[{self.serial_number}] TriggerDelay path lỗi: {e}")
+
+        # (2) Timer1 phần cứng
+        if self._arm_timer1_scheme():
+            return True
+
+        self._disarm_hw_delay(node)
+        return False
+
+    def hw_delay_capture_ready(self) -> bool:
+        """HW-delay path chỉ dùng được khi: đã arm + đúng 1 template.
+        Multi-template bị loại vì TriggerDelay áp lên MỌI ExecuteSoftwareTrigger
+        → frame 2+ sẽ lệch thêm delay_trigger."""
+        return (
+            self.hw_trigger_delay_active
+            and len(self.templates) == 1
+            and self.camera is not None
+            and self.camera.IsOpen()
+            and self.camera.IsGrabbing()
+        )
+
+    def _release_hw_capture_lock(self) -> None:
+        """Nhả khoá capture (an toàn khi đã nhả rồi — threading.Lock cho phép
+        release từ thread khác thread acquire)."""
+        try:
+            self._hw_capture_lock.release()
+        except RuntimeError:
+            pass
+
+    def _drain_stale_frames(self) -> int:
+        """Vét frame tồn trong grab queue TRƯỚC khi bắn trigger mới.
+
+        Frame tồn sinh ra khi một trigger đã bắn nhưng retrieve lỗi/bỏ lượt
+        (vd 2 xung DI sát nhau → 'There is already a thread waiting for a
+        result'). Không vét thì RetrieveResult kế tiếp trả về NGAY frame cũ
+        (chụp theo edge của chai trước) → mọi job sau dùng ảnh sai thời điểm.
+        Gọi khi đang giữ _hw_capture_lock (không có retrieve nào đang chờ)."""
+        drained = 0
+        try:
+            while True:
+                res = self.camera.RetrieveResult(0, pylon.TimeoutHandling_Return)
+                if res is None:
+                    break
+                valid = res.IsValid()
+                res.Release()
+                if not valid:
+                    break
+                drained += 1
+        except Exception as e:
+            logger.debug(f"[{self.serial_number}] drain queue dừng: {e}")
+        if drained:
+            logger.warning(
+                f"[{self.serial_number}] Đã vét {drained} frame tồn khỏi grab "
+                f"queue trước trigger mới (tự sửa off-by-one/ảnh lệch)"
+            )
+        return drained
+
+    def fire_software_trigger(self) -> bool:
+        """Bắn trigger ngay (~1-3ms control write, nhả GIL). Gọi tại DI edge.
+        Mode timer1: bắn SoftwareSignal1 → Timer1 đếm delay → FrameStart.
+        Mode khác: ExecuteSoftwareTrigger (exposure sau TriggerDelay nếu armed).
+
+        Giữ _hw_capture_lock từ đây tới khi RetrieveResult xong (nhả trong
+        retrieve_hw_delayed_frame / execute_software_trigger_immediate).
+        Trả False nếu capture trước chưa xong — bỏ lượt thay vì bắn pulse
+        thừa làm hỏng đồng bộ frame↔chai của mọi lần chụp sau."""
+        if not self._hw_capture_lock.acquire(blocking=False):
+            age = time.monotonic() - self._hw_fire_ts
+            if age < (self.delay_trigger + 5000.0) / 1000.0:
+                logger.warning(
+                    f"[{self.serial_number}] Bỏ lượt trigger: capture trước chưa "
+                    f"xong (fire cách đây {age*1000:.0f}ms — xung DI sát hơn "
+                    f"delay_trigger {self.delay_trigger:.0f}ms)"
+                )
+                return False
+            # Retrieve trước chết bất thường (quá delay + 5s) — cướp lại khoá
+            logger.error(
+                f"[{self.serial_number}] Khoá capture kẹt {age:.1f}s — force release"
+            )
+            self._release_hw_capture_lock()
+            if not self._hw_capture_lock.acquire(blocking=False):
+                return False
+        try:
+            self._drain_stale_frames()
+            if self._hw_delay_mode == "timer1":
+                self.camera.SoftwareSignalPulse.Execute()
+            else:
+                self.camera.ExecuteSoftwareTrigger()
+            self._hw_fire_ts = time.monotonic()
+            return True
+        except Exception as e:
+            logger.error(f"[{self.serial_number}] fire_software_trigger failed: {e}")
+            self._release_hw_capture_lock()
+            return False
+
+    def retrieve_hw_delayed_frame(self) -> Dict[str, Any]:
+        """
+        Lấy frame đã được trigger bằng fire_software_trigger() (HW-delay path,
+        single-template). RetrieveResult chỉ chờ (C call, nhả GIL) — không có
+        yêu cầu đúng-giờ nào phía Python nữa.
+
+        Return shape khớp execute_software_trigger_immediate().
+        """
+        try:
+            timeout_ms = 2000 + int(self.delay_trigger)
+            try:
+                grab_result = self.camera.RetrieveResult(
+                    timeout_ms, pylon.TimeoutHandling_ThrowException
+                )
+            finally:
+                # Capture sequence kết thúc tại đây (thành công hay lỗi) —
+                # nhả khoá để xung DI kế được bắn.
+                self._release_hw_capture_lock()
+            if not grab_result or not grab_result.GrabSucceeded():
+                if grab_result:
+                    grab_result.Release()
+                return {'success': False, 'error': 'Failed to grab HW-delayed frame'}
+
+            img_array = self._convert_to_bgr(grab_result.Array)
+            metadata = {
+                "timestamp": time.time(),
+                "mode": self.mode.value,
+                "shape": img_array.shape,
+                "dtype": str(img_array.dtype),
+                "frame_idx": 0,
+                "trigger_event": True,
+                "template_name": self.templates[0].get('name', 'Template 1'),
+            }
+            self._write_frame_to_shm(img_array, metadata)
+            self.captured_frames = [img_array.copy()]
+            grab_result.Release()
+
+            logger.info(
+                f"[{self.serial_number}] ✅ Captured 1 frame (HW TriggerDelay "
+                f"{self.delay_trigger}ms in-camera)"
+            )
+            return {
+                'success': True,
+                'frames': self.captured_frames,
+                'frame_count': 1,
+            }
+        except Exception as e:
+            logger.error(f"[{self.serial_number}] Error retrieving HW-delayed frame: {e}")
+            return {'success': False, 'error': str(e)}
 
     def execute_software_trigger(self) -> Dict[str, Any]:
         """
@@ -1079,14 +1415,30 @@ class Camera:
 
                     logger.info(f"[{self.serial_number}] Reconnect successful, resuming capture...")
 
-                # Execute software trigger
-                self.camera.ExecuteSoftwareTrigger()
+                # Execute software trigger (fire_software_trigger tự chọn
+                # SoftwareSignalPulse khi armed timer1 — ExecuteSoftwareTrigger
+                # sẽ vô hiệu vì TriggerSource=Timer1End)
+                if not self.fire_software_trigger():
+                    return {
+                        'success': False,
+                        'error': f'Software trigger failed at frame {capture_idx}'
+                    }
 
-                # Wait and retrieve frame
-                grab_result = self.camera.RetrieveResult(
-                    2000,  # 2s timeout
-                    pylon.TimeoutHandling_ThrowException
+                # Wait and retrieve frame (+delay_trigger khi HW delay armed —
+                # exposure xảy ra sau khi camera tự đếm xong delay)
+                retrieve_timeout = 2000 + (
+                    int(self.delay_trigger) if self.hw_trigger_delay_active else 0
                 )
+                try:
+                    grab_result = self.camera.RetrieveResult(
+                        retrieve_timeout,
+                        pylon.TimeoutHandling_ThrowException
+                    )
+                finally:
+                    # fire_software_trigger giữ khoá capture — nhả ngay khi
+                    # RetrieveResult kết thúc (kể cả timeout/exception) để
+                    # không chặn xung DI kế / vòng lặp template kế.
+                    self._release_hw_capture_lock()
 
                 if not grab_result or not grab_result.GrabSucceeded():
                     if grab_result:
@@ -1306,6 +1658,11 @@ class Camera:
             if not self.templates:
                 logger.warning(f"No templates found for camera {self.serial_number}")
                 return False
+
+            # Re-arm HW delay theo số template mới: 1 template → arm;
+            # multi-template → disarm (delay phần cứng áp lên mọi trigger).
+            if self.camera and self.camera.IsOpen():
+                self.configure_trigger_delay()
 
             logger.info(
                 f"[{self.serial_number}] Recipe loaded: {self.recipe_name}, "

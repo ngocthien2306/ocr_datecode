@@ -154,7 +154,7 @@ class TextVerificationService:
     CONFUSABLE_PAIRS: Dict[str, frozenset]             = {
         '8': frozenset({'6', '0', '9'}),   # expected 8, OCR đọc 6 hoặc 0
         '5': frozenset({'6'}),        # expected 5, OCR đọc 6
-        '6': frozenset({'0'}),        # expected 6, OCR đọc 0 (vd 06160→00160)
+        '6': frozenset({'0', '8'}),        # expected 6, OCR đọc 0 (vd 06160→00160)
         '0': frozenset({'B'}),        # expected 0, OCR đọc B
         'N': frozenset({'M'}),        # expected N, OCR đọc M
     }
@@ -1731,6 +1731,7 @@ class TextVerificationService:
                 for task in ocr_tasks
             }
 
+        t_bv0 = time.perf_counter()
         ocr_items_all: List[Dict[str, Any]] = []
         sim_items_all: List[Dict[str, Any]] = []
         char_items_all: List[Dict[str, Any]] = []
@@ -1771,6 +1772,7 @@ class TextVerificationService:
                         f"[{serial_number}] {n_inv}/{len(text_bboxes)} bboxes invalid"
                     )
 
+        t_bv_build = time.perf_counter()
         empty_pass = {'all_match': True, 'results': []}
         if not ocr_items_all and not char_items_all and not invalid_map_all:
             logger.warning("No valid text/char regions to process")
@@ -1788,11 +1790,13 @@ class TextVerificationService:
         text_region_map.update(
             (k, v) for k, v in invalid_map_all.items() if 'recognized' in v
         )
+        t_bv_ocr = time.perf_counter()
 
         char_region_map = self._run_char_batch(char_items_all)
         char_region_map.update(
             (k, v) for k, v in invalid_map_all.items() if 'ml_label' in v
         )
+        t_bv_char = time.perf_counter()
 
         # ── Assemble per-camera results preserving original bbox order ──
         camera_results: Dict[str, Dict[str, Any]] = {
@@ -1834,6 +1838,14 @@ class TextVerificationService:
                 all_match = False
             camera_results[serial]['char'] = {'all_match': all_match, 'results': results}
 
+        t_bv_end = time.perf_counter()
+        logger.info(
+            f"[OCR-PHASE] breakdown: build_crops={(t_bv_build - t_bv0) * 1000:.1f}ms | "
+            f"ocr_batch={(t_bv_ocr - t_bv_build) * 1000:.1f}ms | "
+            f"char_batch={(t_bv_char - t_bv_ocr) * 1000:.1f}ms | "
+            f"assemble={(t_bv_end - t_bv_char) * 1000:.1f}ms | "
+            f"total={(t_bv_end - t_bv0) * 1000:.1f}ms"
+        )
         return camera_results
 
     @staticmethod

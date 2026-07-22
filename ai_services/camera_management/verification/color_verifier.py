@@ -145,6 +145,62 @@ class ColorVerificationService:
                 "reason": "color_config not set on template",
             }
 
+        localization_method = str(
+            data.get("color_localization_method")
+            or template.get("color_localization_method")
+            or color_config.get("localization_method")
+            or "image_proc"
+        ).strip().lower()
+
+        threshold = int(color_config.get("pixel_threshold", 1000))
+
+        if localization_method == "superpoint":
+            product_box = self._extract_transformed_product_box(
+                data.get("transformed_bboxes") or []
+            )
+            if product_box is None:
+                return {
+                    "match": False,
+                    "skipped": False,
+                    "reason": "No transformed product region from SuperPoint",
+                    "color_check": {
+                        "matching_pixels": 0,
+                        "bottle_pixels": 0,
+                        "pixel_threshold": threshold,
+                        "detected": False,
+                        "localization_method": "superpoint",
+                    },
+                }
+
+            matching, bottle_pixels = self._count_hsv_match(
+                frame_img, product_box, color_config
+            )
+            ok = matching >= threshold
+
+            logger.info(
+                f"[{serial}] color(superpoint): matching={matching} / threshold={threshold} "
+                f"(roi_px={bottle_pixels}, ratio={matching/max(1,bottle_pixels)*100:.1f}%) "
+                f"→ {'PASS' if ok else 'FAIL'}"
+            )
+
+            return {
+                "match": bool(ok),
+                "skipped": False,
+                "color_check": {
+                    "matching_pixels": int(matching),
+                    "bottle_pixels": int(bottle_pixels),
+                    "pixel_threshold": threshold,
+                    "detected": True,
+                    "localization_method": "superpoint",
+                    "h_range": [int(color_config.get("h_min", 0)), int(color_config.get("h_max", 180))],
+                    "s_range": [int(color_config.get("s_min", 0)), int(color_config.get("s_max", 255))],
+                    "v_range": [int(color_config.get("v_min", 0)), int(color_config.get("v_max", 255))],
+                },
+                "detected_boxes": {
+                    "product": product_box,
+                },
+            }
+
         annotations = template.get("annotations") or []
         # Annotations are stored in normalized [0, 1] coords. Denormalize to
         # FRAME pixel coords (assumes template was captured from the same
@@ -167,8 +223,6 @@ class ColorVerificationService:
             min_height_ratio=float(color_config.get("bottle_min_height_ratio", 0.20) or 0.20),
             min_aspect=float(color_config.get("bottle_min_aspect", 1.2) or 1.2),
         )
-        threshold = int(color_config.get("pixel_threshold", 1000))
-
         if bottle_box is None:
             logger.debug(f"[{serial}] color: failed to detect bottle in crop")
             return {
@@ -180,6 +234,7 @@ class ColorVerificationService:
                     "bottle_pixels": 0,
                     "pixel_threshold": threshold,
                     "detected": False,
+                    "localization_method": "image_proc",
                 },
             }
 
@@ -202,6 +257,7 @@ class ColorVerificationService:
                 "bottle_pixels": int(bottle_pixels),
                 "pixel_threshold": threshold,
                 "detected": True,
+                "localization_method": "image_proc",
                 "h_range": [int(color_config.get("h_min", 0)), int(color_config.get("h_max", 180))],
                 "s_range": [int(color_config.get("s_min", 0)), int(color_config.get("s_max", 255))],
                 "v_range": [int(color_config.get("v_min", 0)), int(color_config.get("v_max", 255))],
@@ -322,6 +378,36 @@ class ColorVerificationService:
         if x2 <= x1 or y2 <= y1:
             return frame_img, (0, 0)
         return frame_img[y1:y2, x1:x2], (x1, y1)
+
+    @staticmethod
+    def _extract_transformed_product_box(
+        transformed_bboxes: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        for bbox in transformed_bboxes:
+            if bbox.get("type") != "product":
+                continue
+            corners = bbox.get("points") or []
+            if len(corners) < 3:
+                continue
+            arr = np.array(corners, dtype=np.float32)
+            x1 = float(arr[:, 0].min())
+            y1 = float(arr[:, 1].min())
+            x2 = float(arr[:, 0].max())
+            y2 = float(arr[:, 1].max())
+            return {
+                "box": [
+                    float((x1 + x2) / 2.0),
+                    float((y1 + y2) / 2.0),
+                    float(x2 - x1),
+                    float(y2 - y1),
+                    0.0,
+                ],
+                "score": float(bbox.get("confidence", 1.0) or 1.0),
+                "class": "product",
+                "corners": arr.tolist(),
+                "source": "superpoint_transformed_product",
+            }
+        return None
 
     @staticmethod
     def _detect_bottle(
@@ -557,7 +643,7 @@ class ColorVerificationService:
         bottle_box: Dict[str, Any],
         color_config: Dict[str, Any],
     ) -> Tuple[int, int]:
-        """Count pixels inside bottle bbox matching the HSV range. Returns (matching, total)."""
+        """Count pixels inside bottle polygon matching the HSV range. Returns (matching, total)."""
         corners = np.array(bottle_box.get("corners", []), dtype=np.int32)
         if corners.shape[0] < 3:
             return 0, 0
@@ -571,6 +657,11 @@ class ColorVerificationService:
 
         roi = frame_img[y1:y2, x1:x2]
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        local_corners = corners.copy()
+        local_corners[:, 0] -= x1
+        local_corners[:, 1] -= y1
+        poly_mask = np.zeros((roi.shape[0], roi.shape[1]), dtype=np.uint8)
+        cv2.fillPoly(poly_mask, [local_corners], 255)
 
         h_lo = int(color_config.get("h_min", 0))
         h_hi = int(color_config.get("h_max", 180))
@@ -580,4 +671,5 @@ class ColorVerificationService:
         v_hi = int(color_config.get("v_max", 255))
 
         mask = cv2.inRange(hsv, (h_lo, s_lo, v_lo), (h_hi, s_hi, v_hi))
-        return int(np.count_nonzero(mask)), int(roi.shape[0] * roi.shape[1])
+        masked = cv2.bitwise_and(mask, poly_mask)
+        return int(np.count_nonzero(masked)), int(np.count_nonzero(poly_mask))

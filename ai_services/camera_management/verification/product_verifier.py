@@ -132,7 +132,7 @@ class ProductVerificationService:
                 from .wrinkle_segmenter import WrinkledSegmenterTRT
                 wrinkle_engine = (
                     f"{home}/Source/ocr_datecode/weights/"
-                    "best_wrinkled_instance_segmentation_crop_bottle_n.engine"
+                    "best_wrinkled_instance_segmentation_crop_bottle.engine"
                 )
                 self.wrinkle_seg = WrinkledSegmenterTRT(
                     engine_path=wrinkle_engine,
@@ -488,13 +488,29 @@ class ProductVerificationService:
                 logger.warning(f"[{serial}] image_proc detect failed: {e}")
                 return None
 
+        def _detect_one_timed(data):
+            t0 = time.perf_counter()
+            out = _detect_one(data)
+            dt = (time.perf_counter() - t0) * 1000
+            if dt > 100:
+                serial = getattr(data.get('camera'), 'serial_number', '?')
+                logger.info(f"[{serial}] image_proc detect_one SLOW: {dt:.1f}ms")
+            return out
+
         def _run_detect_all():
             """Detect product box cho tất cả frames (CPU parallel)."""
+            t0 = time.perf_counter()
             n = len(frames_to_check)
             if n > 1:
                 with ThreadPoolExecutor(max_workers=min(n, 4)) as p:
-                    return list(p.map(_detect_one, frames_to_check))
-            return [_detect_one(frames_to_check[0])]
+                    out = list(p.map(_detect_one_timed, frames_to_check))
+            else:
+                out = [_detect_one_timed(frames_to_check[0])]
+            logger.info(
+                f"[image_proc] detect_all: n={n}, "
+                f"total={(time.perf_counter() - t0) * 1000:.1f}ms"
+            )
+            return out
 
         def _run_wrinkle_all():
             """Wrinkle segmentation cho tất cả frames (GPU TRT)."""

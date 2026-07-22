@@ -101,7 +101,6 @@ def read_di_value(di_number: int) -> int:
                         # print(f"DI{di_number} = {value.value} (native)")
                         return value.value
                     else:
-                        print(f"Native DI{di_number} read failed: ret={ret}")
                         logger.warning(f"Native DI{di_number} read failed: ret={ret}")
             except Exception as e:
                 logger.warning(f"Native DI{di_number} read error: {e}")
@@ -187,14 +186,11 @@ def _write_do_raw(do_number: int, value: int) -> bool:
                 if lib_pin is not None:
                     ret = _apmi_dio_write_output(lib_pin, value)
                     if ret == 0:
-                        print(f"DO{do_number} = {value} (native)")
                         logger.debug(f"DO{do_number} = {value} (native)")
                         return True
                     else:
-                        print(f"Native DO{do_number} write failed: ret={ret}")
                         logger.warning(f"Native DO{do_number} write failed: ret={ret}")
             except Exception as e:
-                print(f"Native DO{do_number} write error: {e}")
                 logger.warning(f"Native DO{do_number} write error: {e}")
 
         # Fallback to subprocess
@@ -285,7 +281,6 @@ def trigger_reject_pulse(do_number: int, pulse_ms: int = 100):
             if not _write_do_raw(do_number, 1):
                 logger.error(f"CRITICAL: Failed to release DO{do_number} to HIGH — pin may be stuck active!")
 
-    print(f"DO{do_number} pulse complete ({pulse_ms}ms)")
     logger.info(f"DO{do_number} pulse complete ({pulse_ms}ms)")
 
 

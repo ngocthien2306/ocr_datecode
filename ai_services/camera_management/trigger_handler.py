@@ -6,7 +6,7 @@ import os
 import logging
 import threading
 import time
-from typing import Dict, List, Tuple, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Tuple, Optional, TYPE_CHECKING
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .utils import read_di_value, check_trigger_edge
@@ -415,9 +415,17 @@ class TriggerHandler:
                                         cameras_list = [cam for cam, _ in cameras]
                                         if cameras_list:
                                             delay_trigger_ms = cameras_list[0].delay_trigger
+                                            # HW TriggerDelay: exposure xảy ra +delay_trigger SAU
+                                            # ExecuteSoftwareTrigger → timer phải bắn sớm hơn đúng
+                                            # delay_trigger để thời điểm chụp thật không đổi.
+                                            hw_offset_ms = (
+                                                delay_trigger_ms
+                                                if cameras_list[0].hw_delay_capture_ready() else 0.0
+                                            )
                                             for i in range(1, stuck_count):
                                                 # Delay from NOW (falling edge) for bottle i+1
-                                                extra_ms = delay_trigger_ms + i * self.normal_pulse_ms - pulse_width_ms
+                                                extra_ms = (delay_trigger_ms + i * self.normal_pulse_ms
+                                                            - pulse_width_ms - hw_offset_ms)
                                                 if extra_ms < 0:
                                                     logger.warning(
                                                         f"DI{di_number} stuck bottle {i+1}/{stuck_count}: "
@@ -567,6 +575,26 @@ class TriggerHandler:
             logger.warning("trigger_cameras_group called with empty camera list")
             return 0
 
+        # ── HW TriggerDelay path: bắn trigger NGAY tại edge, TRƯỚC mọi log/lock ──
+        # Camera tự đợi delay_trigger bằng phần cứng (µs-precision) rồi mới chụp
+        # → threading.Timer (vốn trễ 30-350ms khi GIL bận) ra khỏi đường timing.
+        # Camera nào chưa arm được thì rơi về timer legacy như cũ.
+        hw_fired: List['Camera'] = []
+        hw_missed: List['Camera'] = []
+        legacy_cams: List['Camera'] = []
+        for camera in cameras:
+            if camera.hw_delay_capture_ready():
+                if camera.fire_software_trigger():
+                    hw_fired.append(camera)
+                else:
+                    # Capture trước chưa xong (2 xung DI sát hơn delay_trigger)
+                    # → bỏ lượt, ghi FAIL cho group. KHÔNG rơi về legacy timer:
+                    # bắn thêm trigger sẽ sinh frame mồ côi trong grab queue →
+                    # mọi retrieve sau lấy nhầm frame chai trước (ảnh lệch).
+                    hw_missed.append(camera)
+            else:
+                legacy_cams.append(camera)
+
         # Generate unique group ID
         with self._timer_lock:
             self._timer_counter += 1
@@ -596,8 +624,45 @@ class TriggerHandler:
                 'di_number': di_number  # DI pin that triggered this group (for stuck detection)
             }
 
-        # Schedule individual timer for each camera based on its delay_trigger
-        for camera in cameras:
+        # HW-fired cameras: trigger đã bắn ở đầu hàm — chỉ cần thread lấy frame.
+        # KHÔNG đưa vào _active_timers (stop_polling gọi .cancel() mà Thread
+        # không có); thread tự kết thúc theo RetrieveResult timeout.
+        for camera in hw_fired:
+            logger.info(
+                f"[Group #{group_id}] Camera {camera.serial_number} HW TriggerDelay "
+                f"armed ({camera.delay_trigger:.0f}ms in-camera), retrieving..."
+            )
+            t = threading.Thread(
+                target=self._capture_and_register,
+                args=(camera, group_id, True),
+                daemon=True,
+                name=f"HwRetrieve-{group_id}-{camera.serial_number}",
+            )
+            t.start()
+
+        # Camera bỏ lượt (xung DI quá sát): ghi FAIL vào group qua thread nhỏ
+        # để group vẫn hoàn tất đủ expected_count và chai này bị reject an toàn.
+        for camera in hw_missed:
+            logger.warning(
+                f"[Group #{group_id}] Camera {camera.serial_number} BỎ LƯỢT "
+                f"trigger (capture trước chưa xong — xung DI sát hơn "
+                f"delay_trigger). Ghi FAIL cho group."
+            )
+            t = threading.Thread(
+                target=self._capture_and_register,
+                args=(camera, group_id, True),
+                kwargs={'precomputed_result': {
+                    'success': False,
+                    'error': 'HW trigger skipped: previous capture still in-flight '
+                             '(DI pulses closer than delay_trigger)',
+                }},
+                daemon=True,
+                name=f"HwMiss-{group_id}-{camera.serial_number}",
+            )
+            t.start()
+
+        # Legacy path: schedule individual timer for each camera based on its delay_trigger
+        for camera in legacy_cams:
             delay_ms = camera.delay_trigger
             delay_sec = delay_ms / 1000.0
 
@@ -651,21 +716,38 @@ class TriggerHandler:
 
         return group_id
 
-    def _capture_and_register(self, camera: 'Camera', group_id: int):
+    def _capture_and_register(self, camera: 'Camera', group_id: int,
+                              hw_delayed: bool = False,
+                              precomputed_result: Optional[Dict[str, Any]] = None):
         """
         Timer callback for single camera capture
 
         This runs in Timer's own thread when the camera's delay expires.
+        hw_delayed=True: trigger đã bắn tại DI edge (camera tự đợi TriggerDelay)
+        — thread này chỉ RetrieveResult (blocking C call, nhả GIL), không cần
+        đúng giờ nữa.
 
         Args:
             camera: Camera to capture
             group_id: Capture group ID
+            hw_delayed: True nếu dùng HW TriggerDelay path
         """
         thread_name = threading.current_thread().name
-        logger.info(
-            f"[Group #{group_id}] Camera {camera.serial_number} timer FIRED! "
-            f"Capturing now (Thread: {thread_name})"
-        )
+        if precomputed_result is not None:
+            logger.info(
+                f"[Group #{group_id}] Camera {camera.serial_number} registering "
+                f"precomputed result (Thread: {thread_name})"
+            )
+        elif hw_delayed:
+            logger.info(
+                f"[Group #{group_id}] Camera {camera.serial_number} retrieving "
+                f"HW-delayed frame (Thread: {thread_name})"
+            )
+        else:
+            logger.info(
+                f"[Group #{group_id}] Camera {camera.serial_number} timer FIRED! "
+                f"Capturing now (Thread: {thread_name})"
+            )
 
         # Check if group still exists
         with self._group_lock:
@@ -679,8 +761,15 @@ class TriggerHandler:
             group = self._capture_groups[group_id]
 
         try:
-            # Execute immediate capture (no delay inside!)
-            result = camera.execute_software_trigger_immediate()
+            # HW path: frame đang trên đường về sau TriggerDelay in-camera.
+            # Legacy path: execute immediate capture (no delay inside!)
+            # Precomputed: camera bỏ lượt (xung DI quá sát) — chỉ ghi FAIL.
+            if precomputed_result is not None:
+                result = precomputed_result
+            elif hw_delayed:
+                result = camera.retrieve_hw_delayed_frame()
+            else:
+                result = camera.execute_software_trigger_immediate()
 
             # Register result in group (thread-safe)
             with group['group_lock']:

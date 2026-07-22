@@ -80,9 +80,24 @@ class EdgeParams:
     specular_thr:     int   = SPECULAR_THR
     # Detection signal:
     #   'gradient'   = |Scharr X| edge strength (default) + specular suppression
-    #   'brightness' = raw intensity peaks (the bright bottle-rim highlight),
-    #                  no specular suppression (the bright line IS the signal)
+    #   'brightness' = SIGNED Scharr X edge of a chosen polarity: keeps only
+    #                  edges whose dark/bright direction matches `edge_polarity`
+    #                  while scanning outward. Specular suppression is applied
+    #                  here too.
     detect_mode:      str   = "gradient"
+    # Edge polarity for brightness mode (ignored by gradient):
+    #   'light_to_dark' = bright→dark when scanning OUTWARD (bright bottle rim
+    #                     against a darker background — the default product case)
+    #   'dark_to_light' = dark→bright outward (inverted-contrast products)
+    edge_polarity:    str   = "light_to_dark"
+    # Which qualifying peak becomes the OUTER wall:
+    #   'farthest'  = outermost qualifying peak (default, original behaviour)
+    #   'nearest'   = innermost qualifying peak (closest to the label)
+    #   'strongest' = highest-profile qualifying peak
+    find_by:          str   = "farthest"
+    # Expected edge transition width in px. Sets the 1D profile smoothing as
+    # sigma = edge_width / 2 (→ 1.5 at the default of 3).
+    edge_width:       float = 3.0
 
     @classmethod
     def from_config(cls, cfg: Optional[Dict[str, Any]]) -> "EdgeParams":
@@ -192,34 +207,51 @@ def _compute_strip_profile(
     )
 
     # ── Build the 1D detection signal (2D map, columns = gap from label) ──────
+    # Columns increase OUTWARD (away from the label), so a SIGNED Scharr X gives
+    # the dark/bright transition direction along the search direction.
+    sobel = cv2.Scharr(strip.astype(np.float32), cv2.CV_32F, 1, 0)
     if (params.detect_mode or "gradient").lower() == "brightness":
-        # Brightness mode: the bottle rim shows up as a bright vertical highlight.
-        # Use raw intensity; do NOT suppress specular (the bright line is the signal).
-        signal = strip.astype(np.float32)
+        # Brightness mode (polarity-aware): keep only edges of the chosen
+        # direction. 'light_to_dark' = bright→dark outward (intensity decreases →
+        # negative Scharr), the bright-rim→background silhouette of a backlit
+        # bottle. 'dark_to_light' = the opposite, for inverted-contrast products.
+        if (params.edge_polarity or "light_to_dark").lower() == "dark_to_light":
+            signal = np.maximum(sobel, 0.0)
+        else:
+            signal = np.maximum(-sobel, 0.0)
     else:
-        # Gradient mode (default): horizontal edge strength + specular suppression.
-        sobel = cv2.Scharr(strip.astype(np.float32), cv2.CV_32F, 1, 0)
+        # Gradient mode (default): unsigned horizontal edge strength.
         signal = np.abs(sobel)
-        bright_mask = (strip > params.specular_thr).astype(np.uint8)
-        if bright_mask.sum() > 100:
-            bright_blobs = cv2.erode(
-                bright_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    # Specular suppression (BOTH modes): zero-out large bright blobs that create
+    # spurious edges (window light / glare on the glass). `spec_mask` (strip
+    # space) is kept so callers can map it back to frame coords for the UI.
+    spec_mask = None
+    bright_mask = (strip > params.specular_thr).astype(np.uint8)
+    if bright_mask.sum() > 100:
+        bright_blobs = cv2.erode(
+            bright_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        )
+        if bright_blobs.sum() > 50:
+            bright_dilated = cv2.dilate(
+                bright_blobs, cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
             )
-            if bright_blobs.sum() > 50:
-                bright_dilated = cv2.dilate(
-                    bright_blobs, cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
-                )
-                signal = signal * (1 - bright_dilated)
+            signal = signal * (1 - bright_dilated)
+            spec_mask = bright_dilated
 
     gmax = float(signal.max()) + 1e-6
     strong = (signal > params.strong_thr * gmax).sum(axis=0)
     height_ratio = strong / float(h)
-    robust_max = float(np.percentile(signal, 95)) + 1e-6
+    # np.percentile partition GIỮ GIL suốt (numpy sort không nhả GIL) — với strip
+    # lớn nó chặn mọi thread khác (capture timer, OCR) vài ms. p95 chỉ là
+    # normalizer robust nên strip to thì subsample stride-2 (lệch <0.5%).
+    _sig_for_p95 = signal[::2, ::2] if signal.size > 65536 else signal
+    robust_max = float(np.percentile(_sig_for_p95, 95)) + 1e-6
     strong_robust = (signal > params.strong_thr * robust_max).sum(axis=0)
     height_ratio_robust = np.minimum(strong_robust / float(h), 1.0)
 
     profile = signal.sum(axis=0)
-    profile = gaussian_filter1d(profile, sigma=1.5)
+    sigma = max(0.3, float(params.edge_width) / 2.0)   # edge transition width
+    profile = gaussian_filter1d(profile, sigma=sigma)
     pmax = profile.max() + 1e-6
     profile_n = profile / pmax
 
@@ -238,6 +270,8 @@ def _compute_strip_profile(
         'edge_dir': edge_dir,
         'edge_len': elen,
         'gap_offset': float(near_edge),   # gap = peak_col + gap_offset (có thể âm)
+        'M': M,                           # frame→strip perspective (for inverse map)
+        'specular_mask': spec_mask,       # strip-space suppressed blobs (or None)
     }
 
 
@@ -257,7 +291,19 @@ def _find_outer_inner(
     if not outer_q:
         # Pass 2: robust (P95) — frame có specular/window light mạnh
         outer_q = [int(p) for p in peaks if hr_robust[p] >= params.outer_min_hratio]
-    outer = (max(outer_q) + go) if outer_q else None
+    if outer_q:
+        # Find-by strategy: pick which qualifying peak becomes the outer wall.
+        fb = (params.find_by or "farthest").lower()
+        if fb == "nearest":
+            outer_col = min(outer_q)
+        elif fb == "strongest":
+            prof = pd['profile']
+            outer_col = max(outer_q, key=lambda p: prof[p])
+        else:  # 'farthest' (default, original behaviour)
+            outer_col = max(outer_q)
+        outer = outer_col + go
+    else:
+        outer = None
 
     hr_max = np.maximum(hr_global, hr_robust)
     inner_q = [int(p) for p in peaks if hr_max[p] >= params.inner_min_hratio]
@@ -379,19 +425,66 @@ def detect_product_box(
     if frame_img is None or label_pts is None or template_walls is None:
         return None
 
-    # 1) Fill label đen + extract grayscale
+    # 0) ROI = bbox của label + 2 dải search (chính xác theo quad từng dải).
+    #    fill_label_black copy nguyên ảnh đầu vào và cvtColor chạy trên cả ảnh —
+    #    trên frame 1920×1200 tốn ~7MB copy + 7MB đọc mỗi lần detect, tranh băng
+    #    thông với TRT/capture. Mọi phép đo (gap, peak) là khoảng cách tương đối
+    #    nên bất biến với phép tịnh tiến; chỉ M cần bù lại về frame coords.
+    pts_f = np.asarray(label_pts, dtype=np.float32)
+    strip_corners = [pts_f]
+    for _side in ('left', 'right'):
+        _p_top, _p_bot = (pts_f[0], pts_f[3]) if _side == 'left' else (pts_f[1], pts_f[2])
+        _edge = _p_bot - _p_top
+        _elen = float(np.linalg.norm(_edge)) or 1.0
+        _edir = _edge / _elen
+        if _side == 'left':
+            _perp = np.array([-_edir[1], _edir[0]], dtype=np.float32)
+        else:
+            _perp = np.array([_edir[1], -_edir[0]], dtype=np.float32)
+        _yext = params.y_extension * _elen
+        _pt = _p_top - _yext * _edir
+        _pb = _p_bot + _yext * _edir
+        _near = params.edge_margin - params.inner_search_max
+        _far = params.outer_search_max
+        strip_corners.append(np.array([
+            _pt + _near * _perp, _pt + _far * _perp,
+            _pb + _near * _perp, _pb + _far * _perp,
+        ], dtype=np.float32))
+    _allc = np.vstack(strip_corners)
+    _fh, _fw = frame_img.shape[:2]
+    x0 = max(0, int(_allc[:, 0].min()) - 4)
+    y0 = max(0, int(_allc[:, 1].min()) - 4)
+    x1 = min(_fw, int(_allc[:, 0].max()) + 5)
+    y1 = min(_fh, int(_allc[:, 1].max()) + 5)
+    if (x1 - x0) < 30 or (y1 - y0) < 50:
+        logger.warning(f"[{serial_number}] image_proc: degenerate ROI {x1-x0}x{y1-y0} — skip")
+        return None
+    roi_img = frame_img[y0:y1, x0:x1]
+    roi_offset = np.array([x0, y0], dtype=np.float32)
+    pts_roi = pts_f - roi_offset
+
+    # 1) Fill label đen + extract grayscale (trên ROI)
     #    x_inset=INNER_SEARCH_MAX: co vùng đen vào trong để mép đen↔nền không tạo
     #    peak giả trong cửa sổ inner search.
     masked = fill_label_black(
-        frame_img, label_pts,
+        roi_img, pts_roi,
         keep_ratio=params.fill_keep_ratio, x_inset=params.inner_search_max,
     )
     gray = cv2.cvtColor(masked, cv2.COLOR_BGR2GRAY)
 
     # 2) Compute profile + peaks 2 bên (quét cả vào trong mép label inner_search_max
     #    px — bắt được cạnh chai khi label lệch mạnh, gap có thể âm)
-    pd_L = _compute_strip_profile(gray, label_pts, 'left',  inner_search=params.inner_search_max, params=params)
-    pd_R = _compute_strip_profile(gray, label_pts, 'right', inner_search=params.inner_search_max, params=params)
+    pd_L = _compute_strip_profile(gray, pts_roi, 'left',  inner_search=params.inner_search_max, params=params)
+    pd_R = _compute_strip_profile(gray, pts_roi, 'right', inner_search=params.inner_search_max, params=params)
+
+    # Bù ROI: trả M/p_top/p_bot về frame coords để consumer (specular overlay,
+    # debug) giữ nguyên hợp đồng cũ. gap/peak là scalar — không cần bù.
+    _T_roi = np.array([[1, 0, -x0], [0, 1, -y0], [0, 0, 1]], dtype=np.float64)
+    for _pd in (pd_L, pd_R):
+        if _pd is not None:
+            _pd['M'] = _pd['M'] @ _T_roi
+            _pd['p_top'] = _pd['p_top'] + roi_offset
+            _pd['p_bot'] = _pd['p_bot'] + roi_offset
 
     # 3) Detect outer wall mỗi bên (height_ratio strict)
     outer_L = _find_outer_inner(pd_L, params=params)[1]
@@ -485,14 +578,40 @@ def detect_product_box(
     }
 
     if return_profiles:
+        fh, fw = frame_img.shape[:2]
+
+        def _specular_regions(pd):
+            """Map the strip-space suppressed mask back to frame coords as
+            simplified polygons, so the UI can overlay what specular_thr removes."""
+            if pd is None or pd.get('specular_mask') is None:
+                return []
+            back = cv2.warpPerspective(
+                pd['specular_mask'], pd['M'], (fw, fh),
+                flags=cv2.WARP_INVERSE_MAP | cv2.INTER_NEAREST,
+            )
+            cnts, _ = cv2.findContours(
+                (back > 0).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+            out = []
+            for c in cnts:
+                if cv2.contourArea(c) < 20:
+                    continue
+                approx = cv2.approxPolyDP(c, 2.0, True).reshape(-1, 2)
+                out.append([[int(x), int(y)] for x, y in approx])
+            return out
+
         def _side_payload(pd, outer_gap, inner_gap, pred_gap):
             if pd is None:
                 return None
             go = float(pd['gap_offset'])
             to_col = lambda g: (None if g is None else float(g) - go)
+            # Per-peak height_ratio (the quantity outer/inner_min_hratio filters on):
+            # max of the global + P95-robust passes, matching candidate selection.
+            hr_max = np.maximum(pd['height_ratio'], pd['height_ratio_robust'])
             return {
                 'profile': [round(float(x), 4) for x in pd['profile']],
                 'peaks': [int(p) for p in pd['peaks']],
+                'peak_hratio': [round(float(hr_max[int(p)]), 3) for p in pd['peaks']],
                 'gap_offset': go,
                 'outer_col': to_col(outer_gap),
                 'inner_col': to_col(inner_gap),
@@ -500,6 +619,7 @@ def detect_product_box(
                 'outer_min_hratio': float(params.outer_min_hratio),
                 'inner_min_hratio': float(params.inner_min_hratio),
                 'detect_mode': (params.detect_mode or 'gradient'),
+                'specular_regions': _specular_regions(pd),
             }
         result['profiles'] = {
             'left':  _side_payload(pd_L, outer_L, inner_L, pred_L),

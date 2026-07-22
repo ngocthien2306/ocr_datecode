@@ -10,6 +10,7 @@ export interface ColorConfig {
   v_min: number;
   v_max: number;
   pixel_threshold: number;
+  localization_method?: 'image_proc' | 'superpoint';
   roi_circle: { center: [number, number]; radius: number };
   // Bottle detection (image-proc) tuning — passed to color_verifier._detect_bottle
   bottle_sharp_threshold?: number;
@@ -72,6 +73,7 @@ const DEFAULT_CONFIG: ColorConfig = {
   s_min: 0, s_max: 255,
   v_min: 0, v_max: 255,
   pixel_threshold: 1000,
+  localization_method: 'image_proc',
   roi_circle: { center: [0, 0], radius: 50 },
   bottle_sharp_threshold: 0.30,
   bottle_min_height_ratio: 0.20,
@@ -116,6 +118,7 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
   const [detectedBottle, setDetectedBottle] = useState<{ x: number; y: number; w: number; h: number; score: number } | null>(null);
   const [bottleDetecting, setBottleDetecting] = useState(false);
   const [bottleDetectError, setBottleDetectError] = useState<string | null>(null);
+  const isSuperPointLocalization = (config.localization_method || 'image_proc') === 'superpoint';
 
   // Init config from props (edit mode) when modal opens.
   useEffect(() => {
@@ -476,6 +479,11 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
   // Run BE /templates/detect-bottle-preview to test bottle detection with
   // current tuning params. Overlays the resulting bbox on the canvas.
   const runDetectBottle = useCallback(async () => {
+    if (isSuperPointLocalization) {
+      setBottleDetectError('Bottle preview is only used for image-proc localization');
+      setDetectedBottle(null);
+      return;
+    }
     if (!templateImageUrl || productPolygons.length === 0) {
       setBottleDetectError('Need server-side image_url and at least one product polygon');
       return;
@@ -527,7 +535,7 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
       setBottleDetecting(false);
     }
   }, [templateImageUrl, productPolygons, cropArea, config.bottle_sharp_threshold,
-      config.bottle_min_height_ratio, config.bottle_min_aspect]);
+      config.bottle_min_height_ratio, config.bottle_min_aspect, isSuperPointLocalization]);
 
   // Generic slider handler factory
   const setField = (k: keyof ColorConfig) => (val: number) => {
@@ -599,6 +607,33 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
           {/* RIGHT sidebar */}
           <div className="color-setup-controls">
             <div className="cs-section">
+              <div className="cs-section-title">Localization</div>
+              <div className="cs-row">
+                <label>ROI source:</label>
+                <select
+                  className="cs-num-input"
+                  value={config.localization_method || 'image_proc'}
+                  onChange={(e) => {
+                    const method = e.target.value as 'image_proc' | 'superpoint';
+                    setConfig((prev) => ({ ...prev, localization_method: method }));
+                    setDetectedBottle(null);
+                    setBottleDetectError(null);
+                  }}
+                >
+                  <option value="image_proc">Image processing</option>
+                  <option value="superpoint">SuperPoint product region</option>
+                </select>
+              </div>
+              {/* <div className="cs-row cs-stats">
+                <span>
+                  {isSuperPointLocalization
+                    ? 'Inference will use the SuperPoint-transformed product polygon as the color ROI.'
+                    : 'Inference will detect the bottle inside crop_area/full frame, then count HSV pixels in that ROI.'}
+                </span>
+              </div> */}
+            </div>
+
+            <div className="cs-section">
               <div className="cs-section-title">ROI</div>
               <SliderRow
                 label="Radius (px)"
@@ -623,7 +658,7 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
             </div>
 
             {/* Bottle Detection tuning (image-proc) */}
-            <div className="cs-section">
+            <div className="cs-section" style={{ opacity: isSuperPointLocalization ? 0.5 : 1 }}>
               <div className="cs-section-title">Bottle Detection</div>
               <SliderRow
                 label="Sharp"
@@ -647,11 +682,20 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
                 type="button"
                 className="btn btn-secondary cs-auto-btn"
                 onClick={runDetectBottle}
-                disabled={!isReady || bottleDetecting || !templateImageUrl}
-                title={!templateImageUrl ? 'Save template first to enable preview' : ''}
+                disabled={!isReady || bottleDetecting || !templateImageUrl || isSuperPointLocalization}
+                title={
+                  isSuperPointLocalization
+                    ? 'SuperPoint mode does not use image-proc bottle preview'
+                    : (!templateImageUrl ? 'Save template first to enable preview' : '')
+                }
               >
                 {bottleDetecting ? 'Detecting…' : 'Detect Bottle'}
               </button>
+              {isSuperPointLocalization && (
+                <div className="cs-roi-warn" style={{ marginTop: 4 }}>
+                  Disabled in SuperPoint mode.
+                </div>
+              )}
               {detectedBottle && (
                 <div className="cs-row cs-stats">
                   <span>Detected: <b>{detectedBottle.w}×{detectedBottle.h}</b> px at ({detectedBottle.x}, {detectedBottle.y}), score={detectedBottle.score.toFixed(2)}</span>
