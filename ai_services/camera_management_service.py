@@ -589,6 +589,72 @@ def signal_handler(sig, _frame):
         service.running = False
 
 
+_singleton_lock_fh = None
+
+
+def acquire_singleton_lock() -> bool:
+    """Chỉ cho phép MỘT instance chạy. True nếu giành được quyền chạy.
+
+    Camera Basler là exclusive-access: hai instance sẽ giành nhau và CHIA ĐÔI
+    số camera (mỗi bên nhận 'device is controlled by another application' cho
+    phần còn lại). Tệ hơn, cả hai cùng nối vào /ws/camera-management mà backend
+    chỉ giữ một kết nối ('Replacing existing camera service connection') → UI
+    chỉ thấy kết quả của bên đang giữ WS, tức thiếu camera.
+
+    Đã xảy ra thật (2026-07-22): start_services.sh pkill service cũ → watchdog
+    của backend (8s) tự respawn → start_services.sh cũng spawn tiếp → 2 tiến
+    trình, 3 camera bị chia 2+1. Guard này chặn mọi nguồn double-start chứ
+    không riêng race đó.
+
+    Dùng flock: nguyên tử, kernel tự nhả khi tiến trình chết (kể cả SIGKILL)
+    nên không bao giờ có lockfile "mồ côi" như cách ghi PID.
+    """
+    global _singleton_lock_fh
+    import fcntl
+
+    lock_path = os.environ.get(
+        "OCR_CAMERA_SERVICE_LOCK", "/tmp/ocr_camera_management_service.lock"
+    )
+    try:
+        # "a+" chứ KHÔNG phải "w": "w" truncate ngay lúc mở, tức instance thứ
+        # hai sẽ xoá mất PID của instance đang giữ lock trước khi flock kịp
+        # báo lỗi → log không còn chỉ ra được ai đang chiếm.
+        fh = open(lock_path, "a+")
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        # Đọc PID của instance đang giữ lock để log cho rõ (best-effort).
+        holder = "?"
+        try:
+            with open(lock_path) as rf:
+                holder = (rf.read().strip() or "?")
+        except Exception:
+            pass
+        try:
+            fh.close()
+        except Exception:
+            pass
+        logger.error(
+            f"Đã có instance khác đang chạy (PID {holder}, lock={lock_path}) — "
+            f"thoát. Chạy 2 instance sẽ chia đôi camera và làm UI thiếu camera."
+        )
+        return False
+    except Exception as e:
+        # Không lock được vì lý do khác (FS lạ, quyền...) → cho chạy tiếp,
+        # guard chỉ là lớp phòng vệ chứ không được tự nó chặn service.
+        logger.warning(f"Không tạo được singleton lock ({e}) — chạy tiếp không guard")
+        return True
+
+    _singleton_lock_fh = fh  # giữ tham chiếu: đóng file là mất lock
+    try:
+        fh.seek(0)
+        fh.truncate()
+        fh.write(str(os.getpid()))
+        fh.flush()
+    except Exception:
+        pass
+    return True
+
+
 async def main():
     """Main entry point"""
     global service
@@ -624,5 +690,10 @@ if __name__ == "__main__":
     logger.info("=" * 80)
     logger.info("Camera Management Service v1.0")
     logger.info("=" * 80)
+
+    # Trước MỌI khởi tạo khác: instance thứ hai phải thoát trước khi kịp
+    # chạm vào camera (mở camera rồi mới thoát = cướp mất của instance đầu).
+    if not acquire_singleton_lock():
+        sys.exit(0)
 
     asyncio.run(main())
