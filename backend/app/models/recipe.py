@@ -76,6 +76,26 @@ class EdgeConfig(BaseModel):
     template_walls: Optional[EdgeWalls] = Field(default=None, description="Walls computed on the template image at setup; used directly at inference")
 
 
+class AnomalyConfig(BaseModel):
+    """Per-template anomaly-detection model binding. When enabled, this
+    replaces WrinkledSegmenterTRT for this template's label-defect check
+    (see ai_services/.../verification/anomaly_inference.py) — same 'label'
+    crop, different model. `enabled` is a separate flag from having a model
+    selected so an operator can roll back to the legacy wrinkle check
+    without losing their anomaly project/model selection.
+
+    `onnx_path` and `image_size` are captured by the recipe UI at selection
+    time (read from anomaly_service's model record) and stored directly on
+    the recipe — ai_services reads this path straight off disk and never
+    needs to call anomaly_service at inference time."""
+    enabled: bool = Field(default=False, description="If False, falls back to WrinkledSegmenterTRT even if a model is selected below")
+    anomaly_project_id: Optional[str] = Field(default=None, description="anomaly_service project id")
+    anomaly_model_id: Optional[str] = Field(default=None, description="anomaly_service model id (specific trained version, not 'latest')")
+    onnx_path: Optional[str] = Field(default=None, description="Absolute path to the exported ONNX file, resolved at selection time")
+    image_size: int = Field(default=256, ge=64, le=512, description="Must match the size the model was exported with")
+    threshold: float = Field(default=0.5, ge=0.0, le=1.0, description="pred_score >= threshold => abnormal/FAIL")
+
+
 class TemplateImage(BaseModel):
     """Template image with annotations"""
     name: str = Field(..., description="Template name")
@@ -86,6 +106,7 @@ class TemplateImage(BaseModel):
     center_offset_threshold: float = Field(default=50.0, ge=0.0, le=500.0, description="Center alignment threshold (legacy, pixels)")
     center_offset_threshold_right: float = Field(default=50.0, ge=0.0, le=500.0, description="Right alignment threshold (value in pixels OR %, depending on center_offset_unit)")
     center_offset_threshold_left: float = Field(default=50.0, ge=0.0, le=500.0, description="Left alignment threshold (value in pixels OR %, depending on center_offset_unit)")
+    anomaly_config: Optional[AnomalyConfig] = Field(default=None, description="Anomaly-detection model binding (replaces wrinkle check when enabled)")
     center_offset_unit: Optional[str] = Field(default="px", description="Unit for center_offset_threshold_left/right: 'px' (pixels) or 'pct' (percent of reference width)")
     wrinkle_area: Optional[float] = Field(default=2000.0, ge=0.0, description="Total wrinkle area threshold in pixels — sum of valid regions ≥ this value → FAIL")
     wrinkle_min_area: Optional[float] = Field(default=0.0, ge=0.0, description="Per-region min area filter — regions smaller than this are ignored (0 = no filter)")

@@ -75,6 +75,26 @@ class EdgeConfig(BaseModel):
     template_walls: Optional[EdgeWalls] = Field(default=None, description="Walls computed on the template image at setup; used directly at inference")
 
 
+class AnomalyConfig(BaseModel):
+    """Per-template anomaly-detection model binding. When enabled, this
+    replaces WrinkledSegmenterTRT for this template's label-defect check
+    (see ai_services/.../verification/anomaly_inference.py) — same 'label'
+    crop, different model. `enabled` is a separate flag from having a model
+    selected so an operator can roll back to the legacy wrinkle check
+    without losing their anomaly project/model selection.
+
+    `onnx_path` and `image_size` are captured by the recipe UI at selection
+    time (read from anomaly_service's model record) and stored directly on
+    the recipe — ai_services reads this path straight off disk and never
+    needs to call anomaly_service at inference time."""
+    enabled: bool = Field(default=False, description="If False, falls back to WrinkledSegmenterTRT even if a model is selected below")
+    anomaly_project_id: Optional[str] = Field(default=None, description="anomaly_service project id")
+    anomaly_model_id: Optional[str] = Field(default=None, description="anomaly_service model id (specific trained version, not 'latest')")
+    onnx_path: Optional[str] = Field(default=None, description="Absolute path to the exported ONNX file, resolved at selection time")
+    image_size: int = Field(default=256, ge=64, le=512, description="Must match the size the model was exported with")
+    threshold: float = Field(default=0.5, ge=0.0, le=1.0, description="pred_score >= threshold => abnormal/FAIL")
+
+
 class TemplateImage(BaseModel):
     """Template image with annotations"""
     name: str = Field(..., description="Template name")
@@ -91,6 +111,7 @@ class TemplateImage(BaseModel):
     wrinkle_max_area: Optional[float] = Field(default=0.0, ge=0.0, description="Per-region critical area — any region ≥ this value triggers FAIL immediately (0 = disabled)")
     color_config: Optional[ColorConfig] = Field(default=None, description="HSV color check config (only used when function_type=Check_Color and template has 'product' annotation)")
     edge_config: Optional[EdgeConfig] = Field(default=None, description="Per-bottle edge-detection tuning (only used when product_detection_method='yolo_segment')")
+    anomaly_config: Optional[AnomalyConfig] = Field(default=None, description="Anomaly-detection model binding (replaces wrinkle check when enabled)")
 
 class CameraTemplates(BaseModel):
     """Templates configuration for a camera"""

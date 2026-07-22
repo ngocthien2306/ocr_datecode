@@ -6,6 +6,7 @@ import AnnotationsPanel from '@/components/shared/AnnotationsPanel';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import ColorSetupModal, { ColorConfig } from './ColorSetupModal';
 import EdgeSetupModal, { EdgeConfig } from './EdgeSetupModal';
+import AnomalySetupModal from './AnomalySetupModal';
 import { camerasAPI } from '@/services/api';
 import recipesAPI from '@/services/recipes';
 import { mlTrainingAPI, MLProject, MLModel } from '@/services/mlTraining';
@@ -93,6 +94,15 @@ interface FormDataType {
   match_erosion_iterations: number;
 }
 
+interface AnomalyConfig {
+  enabled: boolean;                        // If false, falls back to the wrinkle check even if a model is selected below
+  anomaly_project_id?: string | null;
+  anomaly_model_id?: string | null;
+  onnx_path?: string | null;               // Resolved at selection time from anomaly_service's model record
+  image_size?: number;                     // Must match the size the model was exported with
+  threshold?: number;                      // pred_score >= threshold => abnormal/FAIL
+}
+
 interface Template {
   id?: string;
   name: string;
@@ -109,6 +119,7 @@ interface Template {
   wrinkle_max_area?: number;               // Per-region: any region ≥ this triggers FAIL immediately (0 = disabled)
   color_config?: ColorConfig | null;       // HSV color check config (only used when function_type='Check_Color' + template has 'product')
   edge_config?: EdgeConfig | null;          // Per-bottle edge-detection tuning (only used when product_detection_method='yolo_segment')
+  anomaly_config?: AnomalyConfig | null;    // Anomaly-detection model binding (replaces wrinkle check when enabled)
 }
 
 interface CameraTemplates {
@@ -298,6 +309,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   // Color setup modal state — open for a specific (cameraId, templateIdx) pair.
   const [colorSetupTarget, setColorSetupTarget] = useState<{ cameraId: string; templateIdx: number } | null>(null);
   const [edgeSetupTarget, setEdgeSetupTarget] = useState<{ cameraId: string; templateIdx: number } | null>(null);
+  const [anomalySetupTarget, setAnomalySetupTarget] = useState<{ cameraId: string; templateIdx: number } | null>(null);
 
   // Confirm dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -369,7 +381,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               wrinkle_min_area: template.wrinkle_min_area ?? 0.0,
               wrinkle_max_area: template.wrinkle_max_area ?? 0.0,
               color_config: template.color_config ?? null,
-              edge_config: template.edge_config ?? null
+              edge_config: template.edge_config ?? null,
+              anomaly_config: template.anomaly_config ?? null
             }));
 
             // Load function_type for this camera (default to 'OCR' if not set)
@@ -906,7 +919,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               wrinkle_min_area: template.wrinkle_min_area ?? 0.0,
               wrinkle_max_area: template.wrinkle_max_area ?? 0.0,
               color_config: template.color_config ?? null,
-              edge_config: template.edge_config ?? null
+              edge_config: template.edge_config ?? null,
+              anomaly_config: template.anomaly_config ?? null
             }))
           });
         }
@@ -1156,7 +1170,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           wrinkle_min_area: sourceTemplate?.wrinkle_min_area ?? 0.0,
           wrinkle_max_area: sourceTemplate?.wrinkle_max_area ?? 0.0,
           color_config: sourceTemplate?.color_config ?? null,
-          edge_config: sourceTemplate?.edge_config ?? null
+          edge_config: sourceTemplate?.edge_config ?? null,
+          anomaly_config: sourceTemplate?.anomaly_config ?? null
         };
 
         newTemplates.push(newTemplate);
@@ -1250,7 +1265,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
               wrinkle_min_area: 0.0,
               wrinkle_max_area: 0.0,
               color_config: null as ColorConfig | null,
-              edge_config: null as EdgeConfig | null
+              edge_config: null as EdgeConfig | null,
+              anomaly_config: null as AnomalyConfig | null
             };
 
             setCameraTemplates(prev => ({
@@ -3330,6 +3346,33 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                             title="Per-region critical — any region ≥ this triggers FAIL immediately (0 = disabled, px²)"
                                           />
                                         </div>
+                                        <div className="filmstrip-setting-row" style={{ gap: 6 }}>
+                                          <button
+                                            type="button"
+                                            className="filmstrip-action-btn"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setAnomalySetupTarget({ cameraId: selectedCameraForTemplate, templateIdx: idx });
+                                            }}
+                                            title="Pick an AI Anomaly project/model to replace the wrinkle check for this template"
+                                            style={{ flex: 1, padding: '4px 8px', fontSize: 11, fontWeight: 500, justifyContent: 'center' }}
+                                          >
+                                            Setup Anomaly
+                                          </button>
+                                          <span
+                                            style={{
+                                              fontSize: 10,
+                                              fontWeight: 600,
+                                              padding: '2px 6px',
+                                              borderRadius: 4,
+                                              background: template.anomaly_config?.enabled ? '#dcfce7' : template.anomaly_config?.anomaly_model_id ? '#fef3c7' : '#f1f5f9',
+                                              color: template.anomaly_config?.enabled ? '#166534' : template.anomaly_config?.anomaly_model_id ? '#92400e' : '#64748b',
+                                            }}
+                                            title={template.anomaly_config?.anomaly_model_id && !template.anomaly_config?.enabled ? 'Model selected but disabled — still using wrinkle check' : ''}
+                                          >
+                                            {template.anomaly_config?.enabled ? 'Active' : template.anomaly_config?.anomaly_model_id ? 'Disabled' : 'Not set'}
+                                          </span>
+                                        </div>
                                         </>);
                                         })()}
                                         <div className="filmstrip-stats">
@@ -3571,6 +3614,32 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                 ),
               }));
               setEdgeSetupTarget(null);
+            }}
+          />
+        );
+      })()}
+
+      {/* Anomaly Setup Modal — opened from filmstrip "Setup Anomaly" button */}
+      {anomalySetupTarget && (() => {
+        const tmpl = cameraTemplates[anomalySetupTarget.cameraId]?.[anomalySetupTarget.templateIdx];
+        if (!tmpl) {
+          setAnomalySetupTarget(null);
+          return null;
+        }
+        return (
+          <AnomalySetupModal
+            isOpen={true}
+            templateName={tmpl.name}
+            initialConfig={tmpl.anomaly_config ?? null}
+            onClose={() => setAnomalySetupTarget(null)}
+            onSave={(cfg) => {
+              setCameraTemplates(prev => ({
+                ...prev,
+                [anomalySetupTarget.cameraId]: (prev[anomalySetupTarget.cameraId] || []).map((t, i) =>
+                  i === anomalySetupTarget.templateIdx ? { ...t, anomaly_config: cfg } : t
+                ),
+              }));
+              setAnomalySetupTarget(null);
             }}
           />
         );
