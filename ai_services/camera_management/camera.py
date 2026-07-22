@@ -270,10 +270,9 @@ class Camera:
         # ExecuteSoftwareTrigger thay vì threading.Timer phía Python (vốn bị
         # GIL làm trễ 30-350ms khi inference nặng). configure_trigger_delay()
         # bật cờ này khi camera hỗ trợ.
-        # _hw_delay_mode: "trigger_delay" (node TriggerDelay đủ range) |
-        #                 "timer1" (Timer1 phần cứng: SoftwareSignal1 → Timer1
-        #                  đếm delay → Timer1End trigger FrameStart — dùng khi
-        #                  TriggerDelay max quá nhỏ, vd ace2 chỉ 10ms) | None
+        # _hw_delay_mode: "timer1" (Timer1 phần cứng: SoftwareSignal1 → Timer1
+        #                  đếm delay → Timer1End trigger FrameStart) | None
+        # Node TriggerDelay KHÔNG được dùng để arm — xem configure_trigger_delay().
         self.hw_trigger_delay_active = False
         self._hw_delay_mode: Optional[str] = None
         # Khoá capture: giữ từ lúc fire_software_trigger tới khi RetrieveResult
@@ -594,41 +593,39 @@ class Camera:
 
                     fallback_format = format_mapping.get(self.pixel_format)
 
+                    applied = False
                     if fallback_format:
                         try:
                             self.camera.PixelFormat.SetValue(fallback_format)
                             actual_pixel_format = self.camera.PixelFormat.GetValue()
                             logger.info(f"[{self.serial_number}] PixelFormat mapped: {self.pixel_format} -> {actual_pixel_format}")
+                            applied = True
                         except Exception as e:
                             logger.error(f"[{self.serial_number}] Failed to set mapped format {fallback_format}: {e}")
                     else:
                         logger.error(f"[{self.serial_number}] No GigE mapping found for {self.pixel_format}")
 
-            # Exposure (can be changed during grabbing) - try different node names
-            try:
-                self.camera.ExposureTime.SetValue(int(self.exposure_time))
-                actual_exposure = self.camera.ExposureTime.GetValue()
-                logger.info(f"[{self.serial_number}] Exposure: {actual_exposure} μs")
-            except:
-                try:
-                    self.camera.ExposureTimeAbs.SetValue(float(self.exposure_time))
-                    actual_exposure = self.camera.ExposureTimeAbs.GetValue()
-                    logger.info(f"[{self.serial_number}] ExposureAbs: {actual_exposure} μs")
-                except Exception as e:
-                    logger.error(f"[{self.serial_number}] Failed to set exposure time: {e}")
+                    if not applied:
+                        # Model không hỗ trợ format của recipe (vd recipe BGR8 trên
+                        # camera mono). Giữ format camera đang chạy và đồng bộ lại
+                        # self.pixel_format để _convert_to_bgr() không debayer nhầm.
+                        try:
+                            actual_pixel_format = self.camera.PixelFormat.GetValue()
+                            logger.warning(
+                                f"[{self.serial_number}] Giữ PixelFormat hiện tại "
+                                f"'{actual_pixel_format}' (model {self.model_name} không "
+                                f"hỗ trợ '{self.pixel_format}')"
+                            )
+                            self.pixel_format = actual_pixel_format
+                        except Exception as e:
+                            logger.error(f"[{self.serial_number}] Không đọc được PixelFormat: {e}")
 
-            # Gain (can be changed during grabbing) - try different node names
-            try:
-                self.camera.Gain.SetValue(float(self.gain))
-                actual_gain = self.camera.Gain.GetValue()
-                logger.info(f"[{self.serial_number}] Gain: {actual_gain}")
-            except:
-                try:
-                    self.camera.GainRaw.SetValue(int(self.gain))
-                    actual_gain = self.camera.GainRaw.GetValue()
-                    logger.info(f"[{self.serial_number}] GainRaw: {actual_gain}")
-                except Exception as e:
-                    logger.error(f"[{self.serial_number}] Failed to set gain: {e}")
+            # Exposure / Gain (can be changed during grabbing) - node name and
+            # valid range đều khác nhau giữa các model → resolve + clamp
+            self._set_numeric_node(
+                ("ExposureTime", "ExposureTimeAbs"), self.exposure_time, "Exposure"
+            )
+            self._set_numeric_node(("Gain", "GainRaw"), self.gain, "Gain")
 
         except Exception as e:
             logger.error(f"Error applying settings: {e}")
@@ -756,15 +753,9 @@ class Camera:
 
         # Apply to camera if connected
         if self.camera and self.camera.IsOpen():
-            try:
-                self.camera.ExposureTime.SetValue(int(exposure_time))
-                logger.info(f"[{self.serial_number}] Exposure time set to {exposure_time}μs")
-            except:
-                try:
-                    self.camera.ExposureTimeAbs.SetValue(float(exposure_time))
-                    logger.info(f"[{self.serial_number}] Exposure time set to {exposure_time}μs")
-                except Exception as e:
-                    logger.error(f"[{self.serial_number}] Failed to set exposure time: {e}")
+            self._set_numeric_node(
+                ("ExposureTime", "ExposureTimeAbs"), exposure_time, "Exposure time"
+            )
 
     def set_gain(self, gain: float):
         """
@@ -777,18 +768,24 @@ class Camera:
 
         # Apply to camera if connected
         if self.camera and self.camera.IsOpen():
-            try:
-                self.camera.Gain.SetValue(float(gain))
-                logger.info(f"[{self.serial_number}] Gain set to {gain}")
-            except:
-                try:
-                    self.camera.GainRaw.SetValue(int(gain))
-                    logger.info(f"[{self.serial_number}] Gain set to {gain}")
-                except Exception as e:
-                    logger.error(f"[{self.serial_number}] Failed to set gain: {e}")
+            self._set_numeric_node(("Gain", "GainRaw"), gain, "Gain")
 
     def update_settings(self, settings: Dict[str, Any]):
-        """Update camera settings from recipe"""
+        """Update camera settings from recipe.
+
+        Không bao giờ ném exception: một node phần cứng thiếu/không ghi được chỉ
+        làm mất TÍNH NĂNG đó, không được làm hỏng load_recipe() — nếu hỏng thì
+        camera bị loại khỏi capture group và cả nhóm chạy thiếu camera.
+        """
+        try:
+            self._update_settings_impl(settings)
+        except Exception as e:
+            logger.error(
+                f"[{self.serial_number}] update_settings gặp lỗi phần cứng ({e}) "
+                f"— tiếp tục với cấu hình hiện có (model: {self.model_name})"
+            )
+
+    def _update_settings_impl(self, settings: Dict[str, Any]):
         if "exposure_time" in settings:
             self.set_exposure_time(settings["exposure_time"])
         if "gain" in settings:
@@ -856,8 +853,25 @@ class Camera:
             if was_grabbing:
                 self.camera.StopGrabbing()
 
-            # Configure software trigger
-            self.camera.TriggerSelector.SetValue(self.trigger_selector)
+            # Configure software trigger.
+            # TriggerSelector nhận enum khác nhau theo model (FrameStart /
+            # AcquisitionStart) — chọn sai chỉ nên rơi về mặc định của camera,
+            # không được làm hỏng cả recipe.
+            try:
+                self.camera.TriggerSelector.SetValue(self.trigger_selector)
+            except Exception as e:
+                logger.warning(
+                    f"[{self.serial_number}] TriggerSelector='{self.trigger_selector}' "
+                    f"không hợp lệ ({e}) — dùng selector mặc định của model "
+                    f"{self.model_name}"
+                )
+                try:
+                    self.trigger_selector = self.camera.TriggerSelector.GetValue()
+                except Exception:
+                    pass
+
+            # Hai node này là bắt buộc: không có software trigger thì camera
+            # không thể tham gia capture group → để exception thoát ra ngoài.
             self.camera.TriggerMode.SetValue("On")
             self.camera.TriggerSource.SetValue("Software")
 
@@ -911,13 +925,25 @@ class Camera:
             traceback.print_exc()
             return False
 
-    def _get_trigger_delay_node(self):
-        """Node TriggerDelay theo model: ace2/USB = 'TriggerDelay' (µs, float),
-        ace classic GigE = 'TriggerDelayAbs' (µs, float). None nếu không có."""
-        for node_name in ("TriggerDelay", "TriggerDelayAbs"):
-            node = getattr(self.camera, node_name, None)
+    def _get_node(self, *node_names, writable: bool = True):
+        """Tìm node đầu tiên tồn tại (và writable nếu yêu cầu) trong danh sách tên.
+
+        KHÔNG BAO GIỜ raise: pypylon ném LogicalErrorException('Node not existing')
+        ngay tại bước truy cập thuộc tính chứ không trả None như getattr thường,
+        nên mọi lookup phải nằm trong try. Đây là điểm khiến camera model khác
+        (vd acA1600 chỉ có 'TriggerDelayAbs') làm hỏng cả quá trình load recipe.
+        """
+        if not self.camera:
+            return None
+        for node_name in node_names:
+            try:
+                node = getattr(self.camera, node_name)
+            except Exception:
+                continue  # node không tồn tại trên model này
             if node is None:
                 continue
+            if not writable:
+                return node
             try:
                 from pypylon import genicam
                 if node.GetAccessMode() in (genicam.RW, genicam.WO):
@@ -925,6 +951,63 @@ class Camera:
             except Exception:
                 continue
         return None
+
+    def _set_numeric_node(self, node_names, value: float, label: str) -> bool:
+        """Ghi giá trị số vào node đầu tiên khả dụng, tự clamp về [Min, Max].
+
+        Mỗi model có dải hợp lệ khác nhau (vd GainRaw của acA1600-60gm max=3
+        trong khi Gain của a2A1920 tính theo dB tới 24) — clamp + cảnh báo thay
+        vì để OutOfRangeException làm hỏng recipe.
+
+        Returns: True nếu ghi được (kể cả khi đã clamp).
+        """
+        node = self._get_node(*node_names)
+        if node is None:
+            logger.warning(
+                f"[{self.serial_number}] {label}: không có node "
+                f"{'/'.join(node_names)} khả dụng (model: {self.model_name}) — bỏ qua"
+            )
+            return False
+
+        try:
+            target = float(value)
+            try:
+                node_min, node_max = float(node.GetMin()), float(node.GetMax())
+                clamped = min(max(target, node_min), node_max)
+            except Exception:
+                node_min = node_max = None
+                clamped = target
+
+            # Node kiểu Integer chỉ nhận int (và phải đúng bội của Inc nếu có)
+            is_int = "Integer" in type(node).__name__
+            if is_int:
+                clamped = int(clamped)
+                try:
+                    inc = int(node.GetInc())
+                    if inc > 1 and node_min is not None:
+                        clamped = int(node_min) + ((clamped - int(node_min)) // inc) * inc
+                except Exception:
+                    pass
+
+            node.SetValue(clamped)
+
+            if node_max is not None and abs(clamped - target) > 1e-6:
+                logger.warning(
+                    f"[{self.serial_number}] {label}={target} ngoài dải "
+                    f"[{node_min}, {node_max}] của model {self.model_name} "
+                    f"— đã clamp về {clamped}"
+                )
+            else:
+                logger.info(f"[{self.serial_number}] {label} set to {clamped}")
+            return True
+        except Exception as e:
+            logger.error(f"[{self.serial_number}] Failed to set {label}: {e}")
+            return False
+
+    def _get_trigger_delay_node(self):
+        """Node TriggerDelay theo model: ace2/USB = 'TriggerDelay' (µs, float),
+        ace classic GigE = 'TriggerDelayAbs' (µs, float). None nếu không có."""
+        return self._get_node("TriggerDelay", "TriggerDelayAbs")
 
     @staticmethod
     def _genicam_unit_per_ms(unit: str) -> float:
@@ -970,7 +1053,14 @@ class Camera:
         cam = self.camera
         try:
             cam.TimerSelector.SetValue("Timer1")
-            dur = cam.TimerDuration
+            # ace2/USB = 'TimerDuration', ace classic GigE = 'TimerDurationAbs'
+            dur = self._get_node("TimerDuration", "TimerDurationAbs")
+            if dur is None:
+                logger.info(
+                    f"[{self.serial_number}] Không có node TimerDuration "
+                    f"(model {self.model_name}) — dùng timer (legacy)"
+                )
+                return False
             unit = ""
             try:
                 unit = (dur.GetUnit() or "").strip()
@@ -1015,7 +1105,15 @@ class Camera:
     def configure_trigger_delay(self) -> bool:
         """
         Đưa delay_trigger (ms) xuống camera để camera tự đợi bằng phần cứng.
-        Thứ tự thử: (1) node TriggerDelay nếu max đủ; (2) Timer1 scheme.
+        CHỈ dùng Timer1 scheme.
+
+        Node TriggerDelay/TriggerDelayAbs KHÔNG được dùng để arm: trên ace
+        classic (acA1600-60gm) node nhận giá trị và báo thành công nhưng camera
+        LỜ HOÀN TOÀN delay khi TriggerSource=Software — đo log 2026-07-20 cho
+        thấy latency ~160ms không đổi dù đặt 200/320/360/370ms, trong khi ace2
+        đi đường Timer1 bám đúng delay. Node "ghi được" không đồng nghĩa "có tác
+        dụng", nên nó chỉ được ZERO HOÁ để không cộng thêm delay ẩn lên Timer1
+        hoặc lên timer legacy.
 
         Khi thành công (hw_trigger_delay_active=True), trigger_handler sẽ
         fire_software_trigger() NGAY tại DI edge — loại threading.Timer khỏi
@@ -1045,43 +1143,25 @@ class Camera:
             self._disarm_hw_delay(node)
             return False
 
-        # (1) Node TriggerDelay — sạch nhất (không đổi TriggerSource)
+        # Zero hoá node TriggerDelay: không tin nó để arm, nhưng nếu nó còn giữ
+        # giá trị cũ trên model CÓ áp dụng thật thì delay sẽ cộng dồn lên Timer1
+        # / timer legacy → chụp trễ gấp đôi.
         if node is not None:
             try:
-                unit = ""
-                try:
-                    unit = (node.GetUnit() or "").strip()
-                except Exception:
-                    pass
-                per_ms = self._genicam_unit_per_ms(unit)
-                node_max = float(node.GetMax())
-                target = float(self.delay_trigger) * per_ms
-                logger.info(
-                    f"[{self.serial_number}] TriggerDelay node: unit='{unit or 'µs?'}' "
-                    f"max={node_max} (≈{node_max/per_ms:.0f}ms) target={target} "
-                    f"({self.delay_trigger}ms)"
-                )
-                if target <= node_max:
-                    node.SetValue(target)
-                    self._hw_delay_mode = "trigger_delay"
-                    self.hw_trigger_delay_active = True
-                    logger.info(
-                        f"[{self.serial_number}] ✅ HW TriggerDelay armed: "
-                        f"{self.delay_trigger}ms in-camera — hết trễ GIL"
-                    )
-                    return True
-                logger.info(
-                    f"[{self.serial_number}] TriggerDelay max≈{node_max/per_ms:.0f}ms "
-                    f"< {self.delay_trigger}ms — thử Timer1 scheme..."
-                )
                 node.SetValue(0.0)
             except Exception as e:
-                logger.warning(f"[{self.serial_number}] TriggerDelay path lỗi: {e}")
+                logger.warning(
+                    f"[{self.serial_number}] Không zero được TriggerDelay node: {e}"
+                )
 
-        # (2) Timer1 phần cứng
+        # Timer1 phần cứng — đường HW delay DUY NHẤT được tin
         if self._arm_timer1_scheme():
             return True
 
+        logger.info(
+            f"[{self.serial_number}] Không arm được Timer1 (model {self.model_name}) "
+            f"— dùng timer legacy cho delay {self.delay_trigger}ms"
+        )
         self._disarm_hw_delay(node)
         return False
 

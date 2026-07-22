@@ -90,6 +90,13 @@ class MatcherFactory:
         self.temp_dir = temp_dir
         self.backend_dir = backend_dir
 
+        # Bộ detect nắp dùng cho TEMPLATE — phải khớp với bộ mà pipeline dùng
+        # cho FRAME runtime, nếu không SuperPoint sẽ so hai vùng ảnh khác nhau.
+        # Gán từ InferenceHandler sau khi service khởi tạo xong (factory được
+        # tạo trước service nên không nhận được qua __init__).
+        self.obb_rotation_service = None
+        self.cv_rotation_service = None
+
         # Ensure temp_dir exists
         self.temp_dir.mkdir(exist_ok=True)
 
@@ -122,6 +129,107 @@ class MatcherFactory:
     def is_available(self) -> bool:
         """Check if matcher class is available"""
         return self._matcher_class is not None
+
+    def _detect_cap_crop_for_template(
+        self,
+        template_img,
+        cap_crop_method: str,
+        user_crop_area,
+        serial_number: str,
+        template_idx: int,
+    ):
+        """Detect nắp trên TEMPLATE bằng ĐÚNG bộ detect mà pipeline dùng cho
+        frame runtime, rồi crop giống hệt.
+
+        Phải khớp `MultiCameraPipeline.preprocess()`: nó lấy cap circle từ
+        rotation service (YOLO-OBB / CV) và chỉ rơi về HoughCircles khi rotation
+        không có, đồng thời LUÔN giới hạn tìm kiếm trong crop_area người dùng vẽ.
+
+        Trước đây hàm này gọi thẳng `detect_cap_and_crop()` — HoughCircles không
+        giới hạn — nên template và frame runtime dùng hai bộ detect khác nhau.
+        Với cảnh ngược sáng, HoughCircles chấm điểm theo |inner_mean − 127| nên
+        nền băng tải cháy trắng (contrast ~102) thắng nắp tối (contrast ~64):
+        template bị cắt trúng băng tải trong khi runtime cắt đúng nắp, và
+        SuperPoint đem hai vùng ảnh khác nhau ra so.
+
+        Returns: (cropped_img, (x1, y1, x2, y2)) hoặc None.
+        """
+        from ..preprocessing.cv_rotator import detect_cap_circle, apply_cap_crop
+
+        crop_dict = None
+        if user_crop_area is not None:
+            try:
+                if user_crop_area.is_valid():
+                    crop_dict = {
+                        'x1': user_crop_area.x1, 'y1': user_crop_area.y1,
+                        'x2': user_crop_area.x2, 'y2': user_crop_area.y2,
+                    }
+            except Exception:
+                crop_dict = None
+
+        # Ưu tiên rotation service — cùng engine pipeline dùng cho runtime.
+        svc = (
+            self.cv_rotation_service
+            if cap_crop_method == 'yolo_segment'
+            else self.obb_rotation_service
+        )
+        cap_circle = None
+        if svc is not None and getattr(svc, 'available', False):
+            try:
+                _, _, cap_circle = svc.rotate_frame(
+                    template_img,
+                    frame_tag=f"{serial_number}/template{template_idx}",
+                    crop_area=crop_dict,
+                )
+                if cap_circle is not None:
+                    logger.info(
+                        f"[{serial_number}] Template {template_idx}: cap detect qua "
+                        f"{type(svc).__name__} ({cap_crop_method}) → "
+                        f"circle=({cap_circle[0]:.0f},{cap_circle[1]:.0f}) r={cap_circle[2]:.0f}"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"[{serial_number}] Template {template_idx}: rotation service "
+                    f"detect nắp lỗi ({e}) — thử HoughCircles"
+                )
+
+        # Fallback: HoughCircles, vẫn giới hạn trong crop_area như runtime.
+        if cap_circle is None:
+            cap_circle = detect_cap_circle(template_img, crop_area=crop_dict)
+            if cap_circle is not None:
+                logger.info(
+                    f"[{serial_number}] Template {template_idx}: cap detect qua "
+                    f"HoughCircles (bounded={crop_dict is not None}) → "
+                    f"circle=({cap_circle[0]:.0f},{cap_circle[1]:.0f}) r={cap_circle[2]:.0f}"
+                )
+
+        if cap_circle is None:
+            return None
+        return apply_cap_crop(template_img, cap_circle, margin_ratio=0.10)
+
+    @staticmethod
+    def _annotations_outside_crop(template_bbox, other_bboxes, crop_bbox):
+        """Trả về danh sách annotation nằm (một phần) NGOÀI vùng cap-crop.
+
+        Dùng để chặn template rác ngay lúc load recipe: nếu detect nắp trượt thì
+        annotation offset ra toạ độ âm và mọi thứ phía sau đều vô nghĩa.
+        """
+        cx1, cy1, cx2, cy2 = crop_bbox
+        outside = []
+        for bb in ([template_bbox] + list(other_bboxes or [])):
+            if bb is None:
+                continue
+            try:
+                xs = [p[0] for p in bb.points]
+                ys = [p[1] for p in bb.points]
+            except Exception:
+                continue
+            if min(xs) < cx1 or min(ys) < cy1 or max(xs) > cx2 or max(ys) > cy2:
+                label = bb.type
+                if getattr(bb, 'text', ''):
+                    label += f":{bb.text!r}"
+                outside.append(label)
+        return outside
 
     def create_matcher(
         self,
@@ -229,6 +337,7 @@ class MatcherFactory:
                 logger.error(f"[{serial_number}] Template {template_idx}: No template bbox found")
                 return None
 
+
             # ── Cap-crop fast path (cap_crop_method='yolo_segment'/'yolo_obb') ──
             # Detect cap in template, crop tight square + circular mask, replace
             # the user's crop_area with the cap bbox. Adjust template_bbox +
@@ -243,15 +352,13 @@ class MatcherFactory:
             cap_crop_bbox: Optional[Tuple[int, int, int, int]] = None
             if cap_crop_method != 'none':
                 try:
-                    if cap_crop_method == 'yolo_segment':
-                        from ..preprocessing.cv_rotator import detect_cap_and_crop
-                        result = detect_cap_and_crop(template_img, margin_ratio=0.10)
-                    else:
-                        # 'yolo_obb' — for now reuse HoughCircles too (the OBB
-                        # cap-detect engine isn't wired here yet; falls back to
-                        # HoughCircles which has been validated on user data).
-                        from ..preprocessing.cv_rotator import detect_cap_and_crop
-                        result = detect_cap_and_crop(template_img, margin_ratio=0.10)
+                    result = self._detect_cap_crop_for_template(
+                        template_img=template_img,
+                        cap_crop_method=cap_crop_method,
+                        user_crop_area=user_crop_area_obj,
+                        serial_number=serial_number,
+                        template_idx=template_idx,
+                    )
 
                     if result is None:
                         logger.warning(
@@ -261,31 +368,50 @@ class MatcherFactory:
                         )
                     else:
                         cap_crop_img, (cx1, cy1, cx2, cy2) = result
-                        cap_crop_bbox = (cx1, cy1, cx2, cy2)
-                        # Save cap-cropped template as new template image
-                        cap_crop_path = template_path.parent / f"cap_crop_{template_path.name}"
-                        cv2.imwrite(str(cap_crop_path), cap_crop_img)
-                        # Adjust template_bbox + other_bboxes to cap-crop coords
-                        # (BoundingBox stores corners in `points: List[List[int]]`).
-                        # Use the dataclass `.offset()` helper to subtract (cx1, cy1).
-                        try:
-                            template_bbox = template_bbox.offset(cx1, cy1)
-                            other_bboxes = [ob.offset(cx1, cy1) for ob in (other_bboxes or [])]
-                        except Exception as e:
-                            logger.warning(
-                                f"[{serial_number}] cap_crop bbox adjust failed: {e}"
-                            )
-                        # Use cap-cropped template path for SuperPoint
-                        template_path = cap_crop_path
-                        template_img = cap_crop_img
-                        # IMPORTANT: skip _apply_crop because template_img is
-                        # already cropped. Pipeline preprocess will detect cap
-                        # per-frame and crop frames the same way.
-                        crop_area = None
-                        logger.info(
-                            f"[{serial_number}] Template {template_idx}: cap_crop_method="
-                            f"{cap_crop_method} → cropped ({cx2-cx1}×{cy2-cy1}) at ({cx1},{cy1})"
+
+                        # GUARD: annotation phải nằm TRONG vùng cap-crop.
+                        # Nếu detect nắp trượt (vd bắt nhầm băng tải sáng), bbox
+                        # sau khi offset sẽ mang toạ độ âm / ngoài patch. Trước
+                        # đây lỗi này bị nuốt im lặng → SuperPoint so nhầm vùng
+                        # → homography rác → bbox co về 0-1px → OCR bị skip mà
+                        # không có dấu vết nào ở tầng load recipe.
+                        _outside = self._annotations_outside_crop(
+                            template_bbox, other_bboxes, (cx1, cy1, cx2, cy2)
                         )
+                        if _outside:
+                            logger.error(
+                                f"[{serial_number}] Template {template_idx}: cap_crop "
+                                f"({cx1},{cy1})-({cx2},{cy2}) KHÔNG chứa annotation "
+                                f"{_outside} — detect nắp trên template nhiều khả năng "
+                                f"trượt (bắt nhầm nền sáng?). Bỏ cap_crop, dùng "
+                                f"crop_area thường để tránh template rác."
+                            )
+                        else:
+                            cap_crop_bbox = (cx1, cy1, cx2, cy2)
+                            # Save cap-cropped template as new template image
+                            cap_crop_path = template_path.parent / f"cap_crop_{template_path.name}"
+                            cv2.imwrite(str(cap_crop_path), cap_crop_img)
+                            # Adjust template_bbox + other_bboxes to cap-crop coords
+                            # (BoundingBox stores corners in `points: List[List[int]]`).
+                            # Use the dataclass `.offset()` helper to subtract (cx1, cy1).
+                            try:
+                                template_bbox = template_bbox.offset(cx1, cy1)
+                                other_bboxes = [ob.offset(cx1, cy1) for ob in (other_bboxes or [])]
+                            except Exception as e:
+                                logger.warning(
+                                    f"[{serial_number}] cap_crop bbox adjust failed: {e}"
+                                )
+                            # Use cap-cropped template path for SuperPoint
+                            template_path = cap_crop_path
+                            template_img = cap_crop_img
+                            # IMPORTANT: skip _apply_crop because template_img is
+                            # already cropped. Pipeline preprocess will detect cap
+                            # per-frame and crop frames the same way.
+                            crop_area = None
+                            logger.info(
+                                f"[{serial_number}] Template {template_idx}: cap_crop_method="
+                                f"{cap_crop_method} → cropped ({cx2-cx1}×{cy2-cy1}) at ({cx1},{cy1})"
+                            )
                 except Exception as e:
                     logger.warning(
                         f"[{serial_number}] Template {template_idx}: cap_crop failed: {e}; "

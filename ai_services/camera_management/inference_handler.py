@@ -440,6 +440,13 @@ class InferenceHandler:
         self.cv_rotation_service = CVRotationService(inverse_transform=False)
         logger.info(f"CVRotationService initialized (always available)")
 
+        # Cho MatcherFactory dùng CHUNG bộ detect nắp với pipeline runtime.
+        # Factory được tạo ở __init__ (trước các service này) nên phải gán ở đây.
+        # Không gán → factory rơi về HoughCircles không giới hạn và có thể cắt
+        # template trúng nền sáng thay vì nắp.
+        self._matcher_factory.obb_rotation_service = self.obb_rotation_service
+        self._matcher_factory.cv_rotation_service = self.cv_rotation_service
+
     def init_matchers(self, cameras: List['Camera']):
         """
         Initialize matchers for all cameras using MatcherFactory.
