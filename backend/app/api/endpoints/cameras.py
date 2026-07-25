@@ -33,7 +33,7 @@ from app.api.websocket.camera_ws import (
     send_discover_cameras,
     camera_ws_manager
 )
-from app.services.camera_service_supervisor import require_camera_service, handle_missing_frame
+from app.services.camera_service_supervisor import require_camera_service, handle_missing_frame, recover_stale_shm
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
@@ -474,6 +474,16 @@ async def get_camera_frame(
 
     frame_array, metadata = result
 
+    # frame_idx hasn't advanced for a while despite a "successful" read →
+    # cached handle is very likely pointing at an orphaned (unlink()ed) shm
+    # segment. Still serve this frame (better than a hard error), but kick
+    # off recovery in the background so subsequent calls get fresh frames.
+    if shared_memory_service.check_staleness(serial_number, metadata.get('frame_idx', 0)):
+        await recover_stale_shm(
+            serial_number,
+            f"Camera {serial_number} frame_idx stuck at {metadata.get('frame_idx', 0)} (stale shm)"
+        )
+
     # Save to disk if requested
     if save_to_disk and frame_array is not None:
         from app.utils.frame_saver import save_frame_to_disk
@@ -542,6 +552,13 @@ async def get_camera_frame_metadata(
         )
 
     _, metadata = result
+
+    if shared_memory_service.check_staleness(serial_number, metadata.get('frame_idx', 0)):
+        await recover_stale_shm(
+            serial_number,
+            f"Camera {serial_number} frame_idx stuck at {metadata.get('frame_idx', 0)} (stale shm)"
+        )
+
     return metadata
 
 
@@ -588,6 +605,14 @@ async def get_latest_frames(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No frames available for camera '{serial_number}'. Please ensure camera is connected and streaming."
+        )
+
+    # frames_data is ordered newest → oldest; check the newest frame_idx.
+    newest_frame_idx = frames_data[0][1].get('frame_idx', 0)
+    if shared_memory_service.check_staleness(serial_number, newest_frame_idx):
+        await recover_stale_shm(
+            serial_number,
+            f"Camera {serial_number} frame_idx stuck at {newest_frame_idx} (stale shm)"
         )
 
     # Encode frames to JPEG base64

@@ -6,6 +6,7 @@ Reads frames from shared memory created by Camera processes
 from multiprocessing import shared_memory
 import pickle
 import struct
+import time
 import numpy as np
 import cv2
 import logging
@@ -26,11 +27,51 @@ class SharedMemoryService:
     - Metadata extraction
     """
 
+    # The AI service writer overwrites ring-buffer slots with no cross-process
+    # lock. A slow reader can catch a slot mid-overwrite (torn read), which used
+    # to feed corrupted bytes straight into pickle.loads() — pickle's C decoder
+    # can hard-crash (native abort) on malformed input instead of raising a
+    # catchable Python exception. _read_frame_from_slot uses the slot's own
+    # frame_idx as a seqlock: read it before and after extracting the raw bytes,
+    # and only unpickle if it didn't change. These bound the retries.
+    _MAX_TORN_READ_RETRIES = 3
+    _TORN_READ_RETRY_DELAY = 0.002  # seconds
+
+    # unlink()-ing a POSIX shm segment does NOT invalidate an already-open
+    # handle elsewhere — it stays fully readable, frozen at its last content.
+    # When the AI writer recreates its segment (reconnect/restart), our cached
+    # handle in _connections keeps "successfully" reading the orphaned old one
+    # forever: frame_count stays >0, slots still parse, but frame_idx never
+    # advances. check_staleness() tracks frame_idx per camera so callers can
+    # detect this (frame present but stuck) and trigger recover_stale_shm() —
+    # a case handle_missing_frame() structurally can't catch since the read
+    # never returns None.
+    _STALE_FRAME_MAX_AGE = 5.0  # seconds
+
     def __init__(self):
         self._lock = threading.Lock()
         self._connections: Dict[str, shared_memory.SharedMemory] = {}
+        self._last_frame_seen: Dict[str, Tuple[int, float]] = {}  # serial -> (frame_idx, first_seen_monotonic)
 
         logger.info("SharedMemoryService initialized")
+
+    def check_staleness(self, serial_number: str, frame_idx: int) -> bool:
+        """
+        Track frame_idx progression for a camera. Returns True once the same
+        frame_idx has been observed for >= _STALE_FRAME_MAX_AGE seconds — a
+        strong signal the cached shm handle points at an orphaned segment.
+
+        Call this after every successful read_frame()/read_latest_frames()
+        with the newest frame's frame_idx; the caller decides what to do
+        (typically: still serve the frame, but fire recover_stale_shm()).
+        """
+        now = time.monotonic()
+        with self._lock:
+            prev = self._last_frame_seen.get(serial_number)
+            if prev is None or prev[0] != frame_idx:
+                self._last_frame_seen[serial_number] = (frame_idx, now)
+                return False
+            return (now - prev[1]) >= self._STALE_FRAME_MAX_AGE
 
     def _get_shm(self, serial_number: str) -> Optional[shared_memory.SharedMemory]:
         """
@@ -139,7 +180,35 @@ class SharedMemoryService:
         slot_size: int
     ) -> Optional[Tuple[np.ndarray, Dict[str, Any]]]:
         """
-        Read frame from specific ring buffer slot
+        Read frame from specific ring buffer slot, retrying on torn reads.
+
+        The writer (AI service) can be overwriting this exact slot while we
+        read it. Each attempt is validated by _read_frame_from_slot_once via
+        a seqlock check; a torn read returns None and we retry with a short
+        backoff instead of risking a corrupted unpickle.
+        """
+        for attempt in range(self._MAX_TORN_READ_RETRIES):
+            result = self._read_frame_from_slot_once(shm, slot_idx, header_size, slot_size)
+            if result is not None:
+                return result
+            if attempt < self._MAX_TORN_READ_RETRIES - 1:
+                time.sleep(self._TORN_READ_RETRY_DELAY)
+
+        logger.warning(
+            f"Slot {slot_idx}: torn/invalid read persisted after "
+            f"{self._MAX_TORN_READ_RETRIES} attempts, giving up"
+        )
+        return None
+
+    def _read_frame_from_slot_once(
+        self,
+        shm: shared_memory.SharedMemory,
+        slot_idx: int,
+        header_size: int,
+        slot_size: int
+    ) -> Optional[Tuple[np.ndarray, Dict[str, Any]]]:
+        """
+        Single read attempt of a ring buffer slot.
 
         Args:
             shm: Shared memory instance
@@ -153,6 +222,12 @@ class SharedMemoryService:
         Slot Format:
         [frame_idx (8B)] [timestamp (8B)] [metadata_len (4B)] [metadata_bytes]
         [frame_len (4B)] [frame_bytes]
+
+        Seqlock check: frame_idx is the slot's own version marker. We capture
+        all raw bytes first (cheap memoryview copies), re-read frame_idx, and
+        only then unpickle/reshape — if frame_idx changed, the writer touched
+        this slot mid-read and the bytes we captured are a torn mix of two
+        frames, so we bail out before pickle.loads ever sees them.
         """
         try:
             # Calculate slot offset using actual slot_size from header
@@ -160,7 +235,7 @@ class SharedMemoryService:
             offset = slot_offset
 
             # Read frame_idx (8 bytes)
-            frame_idx = struct.unpack_from("<Q", shm.buf, offset)[0]
+            frame_idx_before = struct.unpack_from("<Q", shm.buf, offset)[0]
             offset += 8
 
             # Read timestamp (8 bytes)
@@ -176,21 +251,33 @@ class SharedMemoryService:
                 logger.warning(f"Invalid metadata_len={metadata_len}, slot may be empty")
                 return None
 
-            # Read metadata bytes
+            # Read metadata bytes (raw copy only — do NOT unpickle yet)
             metadata_bytes = bytes(shm.buf[offset:offset+metadata_len])
-            metadata = pickle.loads(metadata_bytes)
             offset += metadata_len
-
-            # Add ring buffer specific metadata
-            metadata['frame_idx'] = frame_idx
-            metadata['timestamp_ns'] = timestamp_ns
 
             # Read frame length (4 bytes)
             frame_len = struct.unpack_from("<I", shm.buf, offset)[0]
             offset += 4
 
-            # Read frame bytes
+            # Read frame bytes (raw copy)
             frame_bytes = bytes(shm.buf[offset:offset+frame_len])
+
+            # Seqlock validation: bail before pickle.loads if the writer
+            # overwrote this slot while we were copying the bytes above.
+            frame_idx_after = struct.unpack_from("<Q", shm.buf, slot_offset)[0]
+            if frame_idx_after != frame_idx_before:
+                logger.debug(
+                    f"Torn read on slot {slot_idx}: frame_idx "
+                    f"{frame_idx_before} -> {frame_idx_after}"
+                )
+                return None
+
+            # Bytes are consistent — safe to unpickle now.
+            metadata = pickle.loads(metadata_bytes)
+
+            # Add ring buffer specific metadata
+            metadata['frame_idx'] = frame_idx_before
+            metadata['timestamp_ns'] = timestamp_ns
 
             # Reconstruct frame array
             shape = metadata.get("shape")
@@ -328,6 +415,10 @@ class SharedMemoryService:
                         logger.info(f"Closed shared memory connection: {shm_name}")
                     except Exception as e:
                         logger.error(f"Error closing shared memory {shm_name}: {e}")
+                # Drop staleness tracking too, so the next read after a fresh
+                # reattach starts clean instead of comparing against a
+                # frame_idx from the orphaned segment we just dropped.
+                self._last_frame_seen.pop(serial_number, None)
 
             else:
                 # Cleanup all connections
@@ -339,6 +430,7 @@ class SharedMemoryService:
                         logger.error(f"Error closing shared memory {shm_name}: {e}")
 
                 self._connections.clear()
+                self._last_frame_seen.clear()
 
 
 # Singleton instance

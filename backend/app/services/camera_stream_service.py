@@ -6,6 +6,7 @@ Reads frames from shared memory and streams via SocketIO
 import asyncio
 import logging
 import base64
+import time
 import cv2
 import numpy as np
 from multiprocessing import shared_memory
@@ -25,7 +26,18 @@ class CameraStreamService:
     - Read frames from /dev/shm/camera_{serial}
     - Downscale and encode as JPEG
     - Stream via SocketIO to subscribed clients
+
+    Same unsynchronized-writer caveats as SharedMemoryService (see its class
+    docstring): reads use a seqlock retry to avoid feeding torn bytes into
+    pickle.loads(), and _stream_loop tracks frame_idx progression to detect
+    an orphaned (unlink()ed + recreated) segment, since unlike SharedMemoryService
+    this class holds its own shm handle for the lifetime of the subscription
+    rather than re-fetching it from a shared cache.
     """
+
+    _MAX_TORN_READ_RETRIES = 3
+    _TORN_READ_RETRY_DELAY = 0.002  # seconds
+    _STALE_FRAME_MAX_AGE = 5.0  # seconds
 
     def __init__(self):
         """Initialize stream service"""
@@ -114,6 +126,8 @@ class CameraStreamService:
         interval = 1.0 / frame_rate
 
         shm = None
+        last_frame_idx: Optional[int] = None
+        last_advance_ts = time.monotonic()
 
         try:
             # Open shared memory
@@ -126,11 +140,46 @@ class CameraStreamService:
                     logger.info(f"No subscribers, stopping stream for {serial_number}")
                     break
 
+                # Reattach if a previous stale-shm recovery closed our handle.
+                if shm is None:
+                    try:
+                        shm = shared_memory.SharedMemory(name=shm_name)
+                        logger.info(f"Re-opened shared memory: {shm_name}")
+                        last_frame_idx = None
+                        last_advance_ts = time.monotonic()
+                    except FileNotFoundError:
+                        await asyncio.sleep(interval)
+                        continue
+
                 try:
                     # Read frame from shared memory
                     frame_data = self._read_frame_from_shm(shm)
 
                     if frame_data is not None:
+                        frame_idx = frame_data['metadata'].get('frame_idx', 0)
+                        now = time.monotonic()
+
+                        if frame_idx != last_frame_idx:
+                            last_frame_idx = frame_idx
+                            last_advance_ts = now
+                        elif (now - last_advance_ts) >= self._STALE_FRAME_MAX_AGE:
+                            # frame_idx hasn't moved despite successful reads —
+                            # this handle is very likely reading an orphaned
+                            # (unlink()ed + recreated elsewhere) segment.
+                            logger.warning(
+                                f"Stream {serial_number} stuck at frame_idx={frame_idx} for "
+                                f"{now - last_advance_ts:.0f}s — recovering stale shm"
+                            )
+                            await self._recover_stale_stream(serial_number)
+                            try:
+                                shm.close()
+                            except Exception:
+                                pass
+                            shm = None
+                            last_frame_idx = None
+                            await asyncio.sleep(interval)
+                            continue
+
                         # Save to disk if enabled
                         if self.save_enabled.get(serial_number, False):
                             from app.utils.frame_saver import save_frame_to_disk
@@ -145,7 +194,6 @@ class CameraStreamService:
                             # Emit to SocketIO
                             from app.services.socketio_service import emit_camera_frame
 
-                            frame_idx = frame_data['metadata'].get('frame_idx', 0)
                             await emit_camera_frame({
                                 'serial_number': serial_number,
                                 'frame_base64': frame_base64,
@@ -186,16 +234,42 @@ class CameraStreamService:
                 except Exception as e:
                     logger.error(f"Error closing shared memory: {e}")
 
+    async def _recover_stale_stream(self, serial_number: str):
+        """Trigger the shared stale-shm recovery path (drop cache + respawn camera)."""
+        try:
+            from app.services.camera_service_supervisor import recover_stale_shm
+            await recover_stale_shm(
+                serial_number,
+                f"Camera {serial_number} live stream frame_idx stuck (stale shm)"
+            )
+        except Exception as e:
+            logger.error(f"Failed to trigger stale-shm recovery for stream {serial_number}: {e}")
+
     def _read_frame_from_shm(self, shm: shared_memory.SharedMemory) -> Optional[Dict[str, Any]]:
         """
-        Read latest frame from ring buffer shared memory
+        Read latest frame from ring buffer shared memory, retrying on torn reads.
+        See SharedMemoryService._read_frame_from_slot for the seqlock rationale:
+        the AI writer can overwrite this exact slot mid-read with no lock.
+        """
+        for attempt in range(self._MAX_TORN_READ_RETRIES):
+            result = self._read_frame_from_shm_once(shm)
+            if result is not None:
+                return result
+            if attempt < self._MAX_TORN_READ_RETRIES - 1:
+                time.sleep(self._TORN_READ_RETRY_DELAY)
+        return None
+
+    def _read_frame_from_shm_once(self, shm: shared_memory.SharedMemory) -> Optional[Dict[str, Any]]:
+        """
+        Single read attempt of the latest ring buffer slot.
 
         Ring Buffer Format:
         - Header (64 bytes): [write_idx, frame_count, buffer_size, frame_counter, slot_size, ...]
         - Frame Slots (5 slots): Each slot contains one frame with metadata
 
         Returns:
-            Dict with 'image' (numpy array) and 'metadata'
+            Dict with 'image' (numpy array) and 'metadata', or None on failure
+            or a detected torn read (caller retries).
         """
         try:
             # Constants
@@ -219,7 +293,7 @@ class CameraStreamService:
             offset = slot_offset
 
             # Read frame_idx (8 bytes)
-            frame_idx = struct.unpack_from("<Q", shm.buf, offset)[0]
+            frame_idx_before = struct.unpack_from("<Q", shm.buf, offset)[0]
             offset += 8
 
             # Read timestamp (8 bytes)
@@ -235,21 +309,32 @@ class CameraStreamService:
                 logger.warning(f"Invalid metadata_len={metadata_len}, slot may be empty")
                 return None
 
-            # Read metadata bytes
+            # Read metadata bytes (raw copy only — do NOT unpickle yet)
             metadata_bytes = bytes(shm.buf[offset:offset+metadata_len])
-            metadata = pickle.loads(metadata_bytes)
             offset += metadata_len
-
-            # Add ring buffer specific metadata
-            metadata['frame_idx'] = frame_idx
-            metadata['timestamp_ns'] = timestamp_ns
 
             # Read frame length (4 bytes)
             frame_len = struct.unpack_from("<I", shm.buf, offset)[0]
             offset += 4
 
-            # Read frame bytes
+            # Read frame bytes (raw copy)
             frame_bytes = bytes(shm.buf[offset:offset+frame_len])
+
+            # Seqlock validation: bail before pickle.loads if the writer
+            # overwrote this slot while we were copying the bytes above.
+            frame_idx_after = struct.unpack_from("<Q", shm.buf, slot_offset)[0]
+            if frame_idx_after != frame_idx_before:
+                logger.debug(
+                    f"Torn read on latest slot: frame_idx {frame_idx_before} -> {frame_idx_after}"
+                )
+                return None
+
+            # Bytes are consistent — safe to unpickle now.
+            metadata = pickle.loads(metadata_bytes)
+
+            # Add ring buffer specific metadata
+            metadata['frame_idx'] = frame_idx_before
+            metadata['timestamp_ns'] = timestamp_ns
 
             # Reconstruct frame array
             shape = metadata.get("shape")
@@ -268,8 +353,6 @@ class CameraStreamService:
 
         except Exception as e:
             logger.warning(f"Error reading from ring buffer: {e}")
-            import traceback
-            traceback.print_exc()
             return None
 
     def _encode_frame(self, img_array: np.ndarray, quality: int = 65) -> Optional[str]:
