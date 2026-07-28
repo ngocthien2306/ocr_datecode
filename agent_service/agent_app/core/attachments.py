@@ -1,0 +1,205 @@
+"""
+Dựng ảnh + biểu đồ kèm câu trả lời.
+
+Nguyên tắc: suy TẤT ĐỊNH từ kết quả tool, không hỏi LLM. Nếu để LLM tự bịa số
+cho biểu đồ thì có nguy cơ hình vẽ một đằng, số trong văn bản một nẻo — mà biểu
+đồ lại là thứ người ta tin ngay bằng mắt, không kiểm lại.
+
+Hai loại:
+- images : ảnh visualize của frame fail, lấy từ `explain_failures`
+- charts : dữ liệu thô để FE vẽ (không render ảnh ở server)
+
+`chart` cố tình chỉ có một dạng — danh sách nhãn/giá trị — để FE chỉ phải viết
+một bộ render. So sánh hai kỳ thì LLM gọi tool hai lần, thành hai chart cạnh
+nhau, không cần kiểu chart riêng.
+"""
+
+from typing import Any, Dict, List, Optional
+
+_MAX_BARS = 12
+_MAX_IMAGES = 8
+
+# URL tương đối để trang tự resolve theo origin đang phục vụ — chạy đúng ở cả
+# localhost:8100 lẫn tunnel HTTPS. Hardcode host là hỏng một trong hai.
+_UPLOAD_PREFIX = "/api/uploads/"
+
+
+def _period_label(args: Dict[str, Any], result: Dict[str, Any]) -> str:
+    """
+    Nhãn kỳ dữ liệu, gắn vào tiêu đề biểu đồ.
+
+    BẮT BUỘC phải có: khi user bảo "so sánh hôm nay với hôm qua", LLM gọi tool
+    hai lần và ta sinh hai biểu đồ. Cùng tiêu đề thì người xem không phân biệt
+    được cái nào là ngày nào — biểu đồ mất sạch ý nghĩa.
+    """
+    start, end = args.get("start_date"), args.get("end_date")
+    if start or end:
+        # Có giờ thì hiện giờ, đó mới là thứ phân biệt hai khung trong cùng ngày.
+        def hm(v):
+            return v[11:16] if v and len(v) > 15 else (v or "")
+        day = (start or end or "")[:10]
+        span = f"{hm(start)}–{hm(end)}".strip("–")
+        return f"{day} {span}".strip() if span else day
+
+    if result.get("date"):
+        return str(result["date"])
+
+    period = result.get("period") or {}
+    if period.get("start"):
+        return str(period["start"])[:10]
+
+    return "hôm nay"
+
+
+def _bar(title: str, series: List[Dict[str, Any]], unit: str = "") -> Optional[Dict[str, Any]]:
+    series = [s for s in series if s.get("value") is not None][:_MAX_BARS]
+    if not series:
+        return None
+    return {"type": "bar", "title": title, "unit": unit, "series": series}
+
+
+def images_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, str]]:
+    """Ảnh minh hoạ frame fail."""
+    if tool_name != "explain_failures" or not isinstance(result, dict):
+        return []
+
+    out = []
+    for s in (result.get("samples") or [])[:_MAX_IMAGES]:
+        path = str(s.get("image_path") or "").lstrip("/")
+        if not path:
+            continue
+
+        bits = [f"Camera {s.get('camera')}"]
+        if s.get("timestamp"):
+            bits.append(str(s["timestamp"])[11:19])
+        if s.get("expected") is not None:
+            bits.append(f"mong '{s.get('expected')}' → đọc '{s.get('recognized') or '(rỗng)'}'")
+
+        out.append({
+            "url": _UPLOAD_PREFIX + path,
+            "caption": " · ".join(bits),
+            "recipe": s.get("recipe_name") or "",
+        })
+    return out
+
+
+def strip_for_llm(result: Any) -> Any:
+    """
+    Bản rút gọn của kết quả tool để đưa vào ToolMessage.
+
+    Bỏ `samples` (đường dẫn ảnh): LLM nhìn thấy đường dẫn là tự viết
+    `![Ảnh](inference_results/...)` vào câu trả lời — đường dẫn đó thiếu tiền tố
+    /api/uploads nên không phải URL hợp lệ, hiện ra dưới dạng ký tự thô. Ảnh đã
+    được hệ thống gắn tự động qua trường `images`, LLM không cần chạm vào.
+    Bỏ luôn cũng giúp mỗi ToolMessage nhẹ đi ~2.500 ký tự.
+    """
+    if not isinstance(result, dict) or "samples" not in result:
+        return result
+
+    out = dict(result)
+    out["samples"] = f"<{len(result.get('samples') or [])} ảnh minh hoạ đã được hệ thống đính kèm tự động>"
+    return out
+
+
+def charts_from_tool_result(tool_name: str, args: Dict[str, Any], result: Any) -> List[Dict[str, Any]]:
+    """Biểu đồ suy từ kết quả tool."""
+    if not isinstance(result, dict) or not result.get("success"):
+        return []
+
+    charts: List[Dict[str, Any]] = []
+
+    # Tổng quan gom nhóm → cột số sản phẩm fail của từng nhóm
+    if tool_name == "get_production_summary":
+        group = args.get("group_by", "recipe")
+        key = {"camera": "camera", "hour": "hour"}.get(group, "recipe")
+        rows = result.get("breakdown") or []
+        label = {"camera": "camera", "hour": "giờ", "recipe": "recipe"}[key]
+
+        c = _bar(
+            f"Sản phẩm FAIL theo {label} · {_period_label(args, result)}",
+            [
+                {
+                    "label": f"{r.get(key)}h" if key == "hour" else str(r.get(key)),
+                    "value": r.get("fail", 0),
+                    "sub": f"{r.get('pass_rate')}% pass · {r.get('total'):,} sp",
+                }
+                for r in rows
+            ],
+            "sp",
+        )
+        if c:
+            charts.append(c)
+
+    # Xu hướng → cột pass rate theo từng mốc thời gian
+    elif tool_name == "get_pass_fail_stats":
+        trend = result.get("trend") or {}
+        series = []
+        for when in sorted(trend):
+            v = trend[when]
+            total = (v.get("pass", 0) or 0) + (v.get("fail", 0) or 0)
+            if not total:
+                continue
+            series.append({
+                "label": when,
+                "value": round(v.get("pass", 0) / total * 100, 2),
+                "sub": f"{v.get('fail', 0):,} fail / {total:,} sp",
+            })
+        recipe = args.get("recipe_id")
+        if len(series) > 1:
+            title = "Pass rate theo thời gian" + (f" · {recipe}" if recipe else "")
+            c = _bar(title, series, "%")
+            if c:
+                charts.append(c)
+        else:
+            # Chỉ một mốc thời gian thì không vẽ được xu hướng, nhưng vẫn phải
+            # có hình: thiếu nó LLM tự chế biểu đồ bằng ký tự ███ trong văn bản.
+            summ = result.get("summary") or {}
+            if summ.get("total_products"):
+                title = f"PASS / FAIL · {_period_label(args, result)}"
+                if recipe:
+                    title += f" · {recipe}"
+                c = _bar(
+                    title,
+                    [
+                        {"label": "PASS", "value": summ.get("pass_count", 0),
+                         "sub": f"{summ.get('pass_rate')}%"},
+                        {"label": "FAIL", "value": summ.get("fail_count", 0),
+                         "sub": f"{summ.get('fail_rate')}%"},
+                    ],
+                    "sp",
+                )
+                if c:
+                    charts.append(c)
+
+    # Nguyên nhân fail → cột theo bước kiểm tra bị trượt
+    elif tool_name == "explain_failures":
+        nice = {
+            "text_verification": "OCR đọc sai chuỗi",
+            "char_verification": "Ký tự dưới ngưỡng",
+            "template_verification": "Không khớp template",
+            "product_verification": "Không nhận ra sản phẩm",
+            "unknown": "Chưa xác định",
+        }
+        causes = result.get("causes") or {}
+        c = _bar(
+            f"Nguyên nhân fail · {_period_label(args, result)}",
+            [
+                {"label": nice.get(k, k), "value": v, "sub": ""}
+                for k, v in sorted(causes.items(), key=lambda x: -x[1])
+            ],
+            "frame",
+        )
+        if c:
+            charts.append(c)
+
+        by_cam = result.get("failed_frames_by_camera") or {}
+        if len(by_cam) > 1:
+            c = _bar(
+                f"Frame fail theo camera · {_period_label(args, result)}",
+                [{"label": k, "value": v, "sub": ""} for k, v in by_cam.items()],
+                "frame",
+            )
+            if c:
+                charts.append(c)
+
+    return charts
