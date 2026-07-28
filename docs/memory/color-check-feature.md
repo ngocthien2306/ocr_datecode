@@ -1,25 +1,30 @@
 ---
 name: Check_Color feature — HSV color check pipeline
-description: End-to-end design of the bottle-color verification feature. Covers FE Setup Color modal, BE pydantic plumbing, AI service color_verifier + OR aggregation across color cameras. Independent of SuperPoint matching.
+description: End-to-end design of the bottle-color verification feature. Covers FE Setup Color modal, BE pydantic plumbing, AI service color_verifier + OR aggregation across color cameras. Supports both legacy image-proc ROI localization and SuperPoint-based product ROI localization.
 type: project
 ---
 # Check_Color (HSV color verification)
 
 ## Purpose
-Detect a wrong-color product entering the line by checking the HSV pixel histogram of the bottle against a per-template reference. Independent of OCR/SuperPoint — image-proc finds the bottle and `cv2.inRange` counts matching pixels.
+Detect a wrong-color product entering the line by checking HSV-matching pixels inside a per-template ROI. Localization now supports two modes:
+
+- `image_proc` (legacy): image-proc finds the bottle and `cv2.inRange` counts matching pixels there.
+- `superpoint`: SuperPoint transforms the user-drawn `product` polygon to frame coords, and `cv2.inRange` counts matching pixels inside that transformed polygon.
 
 ## Pipeline modes per (function_type, template annotations)
 
 | `camera.function_type` | Template has `product`? | Template has `text/datecode`? | Pipeline |
 |---|---|---|---|
-| `Check_Color` | ✅ | * | **color_check**: image-proc detect bottle + HSV pixel count. NO rotate, NO SuperPoint dependency. |
+| `Check_Color` | ✅ | * | **color_check**: ROI localization depends on `color_config.localization_method`. `image_proc` = legacy bottle detect, `superpoint` = use transformed `product` polygon from SuperPoint. |
 | `Check_Color` | ❌ | ✅ | **rotate_ocr** (legacy "Rotate Bottle"): OBB rotate cap → SuperPoint → OCR. |
 | `Check_Type_Product` | ✅ + has `label` | * | existing product_verifier (alignment + wrinkle) + OCR. |
 | `Check_Type_Product` | ❌ | ✅ | OCR-only (SuperPoint + OCR, no product verify). |
 
 ## Per-camera pass/fail rules
 
-- **Color cameras** (Check_Color + product): result depends ONLY on `color_verifier.match`. SuperPoint match success is irrelevant — image-proc handles localization.
+- **Color cameras** (Check_Color + product):
+  - `image_proc`: result depends only on `color_verifier.match`; SuperPoint match success is irrelevant.
+  - `superpoint`: result still depends only on `color_verifier.match`, but the ROI comes from the SuperPoint-transformed `product` polygon, so a usable SuperPoint match is now required upstream.
 - **Other cameras**: text AND char AND template AND product AND SuperPoint match — original AND logic.
 
 ## Cross-camera aggregation (multi_camera.py)
@@ -53,6 +58,7 @@ Single-camera pipeline doesn't have this promotion because OR-with-one-element i
   's_min': int, 's_max': int,   # 0–255
   'v_min': int, 'v_max': int,   # 0–255
   'pixel_threshold': int,        # PASS if matching pixels >= this
+  'localization_method': 'image_proc' | 'superpoint',  # default image_proc
   'roi_circle': {                # UI-only — persisted so user can re-edit
     'center': [x, y],            # in TEMPLATE pixel coords (already denormalized at save time)
     'radius': float,
@@ -62,7 +68,9 @@ Single-camera pipeline doesn't have this promotion because OR-with-one-element i
 
 Stored on `TemplateImage` Pydantic model in **both** `backend/app/models/recipe.py` and `backend/app/schemas/recipe.py` (BE models are duplicated — see [[recipe-system]]). Passes through to AI service via the normal camera_templates plumbing — no extra 19-step plumb required because it's a nested per-template field, not a top-level recipe field.
 
-## Bottle detection algorithm (color_verifier)
+## Localization modes
+
+### `localization_method='image_proc'` (legacy)
 
 Sharpness-based, ported from `tests/test_bottle_detect_compare.py:detect_bottle_cv`:
 
@@ -75,19 +83,33 @@ Sharpness-based, ported from `tests/test_bottle_detect_compare.py:detect_bottle_
 
 Works on ~280ms / 2MP frame on CPU. No GPU.
 
+### `localization_method='superpoint'`
+
+- `MatcherFactory` does **not** build `ColorCheckStubMatcher`; it builds a real SuperPoint matcher.
+- Color cameras in multi-camera mode are **not** excluded from the SuperPoint batch.
+- `ColorVerificationService` reads the transformed `product` polygon from `transformed_bboxes` and counts HSV pixels inside that polygon mask.
+- No bottle detection preview is used at inference.
+
 ## HSV match
 
-`cv2.cvtColor(roi, BGR2HSV)` + `cv2.inRange(hsv, (h_lo, s_lo, v_lo), (h_hi, s_hi, v_hi))` → `count_nonzero`. ROI = the bottle bbox detected in step 6 above.
+`cv2.cvtColor(roi, BGR2HSV)` + `cv2.inRange(hsv, (h_lo, s_lo, v_lo), (h_hi, s_hi, v_hi))` → `count_nonzero`.
+
+- `image_proc`: ROI = bottle bbox/polygon detected by image processing
+- `superpoint`: ROI = transformed `product` polygon from SuperPoint
 
 ## FE — ColorSetupModal
 
 - Opens from filmstrip "Setup Color" button (only visible when `function_type=Check_Color` + template has `product` annotation).
 - Inputs: template image, `productPolygons` (denormalized to template pixel coords by `RecipeFormModal.tsx` before passing in), `initialConfig` (for re-edit).
+- Includes a `Localization` selector:
+  - `Image processing` keeps the legacy bottle-detect ROI path
+  - `SuperPoint product region` uses the transformed `product` polygon at inference
 - Canvas overlays: image → product polygon outline (purple) → match-pixel yellow overlay (ONLY inside polygon mask) → ROI cyan circle.
 - **Yellow overlay strict**: pixel must satisfy `polyMask[i] && in HSV range`. If `productPolygons` is empty the mask is empty and NO yellow is drawn (do NOT fall back to "treat full image" — that was the original bug).
 - ROI drag: while dragging only the cyan circle moves. On **mouseup** we re-run `autoDetectFromRoi` so HSV range + yellow overlay refresh to the new sample location.
 - Histogram: 3 mini line charts (H red, S green, V blue), bg `#f3f4f6`.
 - Light-theme palette matches [[feedback-ui-theme]].
+- Bottle preview controls are disabled when `Localization = SuperPoint product region`.
 
 ## Key files
 

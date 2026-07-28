@@ -188,6 +188,19 @@ async def api_health():
     return {"status": "ok"}
 
 
+@router.get("/system/camera-ws-status", tags=["System"])
+async def camera_ws_status():
+    """
+    Trạng thái WebSocket của camera_management_service.
+
+    `camera_ws_manager` là singleton in-memory, chỉ tồn tại trong process
+    backend này — agent_service (:8100) chạy process riêng nên phải đọc qua
+    HTTP. Read-only, không secret, nên để không auth cho monitoring gọi được.
+    """
+    from app.api.websocket.camera_ws import camera_ws_manager
+    return {"connected": camera_ws_manager.is_connected()}
+
+
 @router.post("/inference/aux-toggle", tags=["System"])
 async def inference_aux_toggle():
     """
