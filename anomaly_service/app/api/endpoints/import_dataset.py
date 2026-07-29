@@ -71,7 +71,12 @@ async def import_candidates(
             errors.append({"inspection_id": sel.inspection_id, "reason": "invalid inspection_id"})
             continue
 
-        doc = await coll.find_one({"_id": ObjectId(sel.inspection_id)})
+        # inference_results._id is stored as a plain string by backend
+        # (inference_result_repository.py sets `_id = str(inserted_id)` and
+        # queries it back as a string too) -- NOT a real BSON ObjectId, even
+        # though it's 24 hex chars and looks like one. Querying with
+        # ObjectId(...) here would never match.
+        doc = await coll.find_one({"_id": sel.inspection_id})
         if not doc:
             errors.append({"inspection_id": sel.inspection_id, "reason": "inspection not found"})
             continue

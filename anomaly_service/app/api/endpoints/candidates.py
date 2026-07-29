@@ -54,6 +54,15 @@ async def get_candidates(
 
     query: Dict[str, Any] = {
         "camera_results.frames.detected_regions": {"$elemMatch": {"type": "label"}},
+        # Most frames never get an image saved to disk (only FAIL/ERROR, or
+        # PASS with save_pass_images on) and older saved images get pruned by
+        # storage_cleanup_scheduler while the Mongo record stays forever. Filter
+        # those out server-side, otherwise a flat `.limit(N)` on the raw cursor
+        # (sorted newest-first) can burn through hundreds of dangling-image
+        # docs before ever reaching one with a usable file, or a valid-image
+        # window further back in time -- yielding zero candidates even when
+        # plenty exist.
+        "camera_results.frames.image_path": {"$ne": None},
     }
     if recipe_id:
         query["recipe_id"] = recipe_id
@@ -66,13 +75,21 @@ async def get_candidates(
         query["timestamp"] = ts
 
     coll = db.get_collection("inference_results")
-    cursor = coll.find(query).sort("timestamp", -1).limit(500)
+    # No hard doc-count limit: keep scanning (newest-first) until we've
+    # collected `limit` candidates whose image file actually still exists.
+    # max_docs_scanned is just a safety valve for the case where the whole
+    # date range has zero resolvable images, so the request can't hang scanning
+    # the entire collection.
+    max_docs_scanned = max(limit * 50, 2000)
+    cursor = coll.find(query).sort("timestamp", -1).limit(max_docs_scanned)
 
     candidates: List[Dict[str, Any]] = []
 
+    docs_scanned = 0
     async for doc in cursor:
         if len(candidates) >= limit:
             break
+        docs_scanned += 1
         recipe_name = doc.get("recipe_name", "")
         rid = str(doc.get("recipe_id", ""))
         ts = doc.get("timestamp")
@@ -122,4 +139,4 @@ async def get_candidates(
                     "imported_split":  imported_split,
                 })
 
-    return {"candidates": candidates, "count": len(candidates)}
+    return {"candidates": candidates, "count": len(candidates), "docs_scanned": docs_scanned}
