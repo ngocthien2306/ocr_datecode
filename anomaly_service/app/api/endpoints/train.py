@@ -16,8 +16,9 @@ from app.db.mongodb import get_database
 from app.models.anomaly import AnomalyTrainRequest
 from app.repositories.anomaly_repository import AnomalyRepository
 from app.services import dataset_fs
-from app.services.anomaly_training import TrainingCancelled, train_model
+from app.services.anomaly_training import TrainingCancelled, export_onnx, train_model
 from app.services.train_logs import attach_handler, detach_handler, get_buffer
+from app.services.trt_export import build_engine_from_onnx, onnx_input_info
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,53 @@ async def _run_training_bg(repo: AnomalyRepository, project_id: str, model_id: s
         })
         await repo.set_status(project_id, "trained")
         log_buffer.push(model_id, f"[anomaly] Training completed (AUROC={metrics['image_auroc']:.3f})")
+
+        # Auto-export ONNX then TensorRT so Eval/Export/Test don't need any
+        # manual "Export" click first. Each step is best-effort and
+        # independent: a failed export doesn't fail the training itself
+        # (the checkpoint is already saved either way), and TensorRT only
+        # runs if the ONNX export it depends on succeeded.
+        export_dir = dataset_fs.models_dir(project_id) / "export" / model_id
+        onnx_path = None
+        try:
+            log_buffer.push(model_id, "[anomaly] Auto-exporting ONNX...")
+            onnx_path = await loop.run_in_executor(
+                None,
+                lambda: export_onnx(
+                    request.algorithm, Path(metrics["checkpoint_path"]), export_dir, request.image_size,
+                ),
+            )
+            await repo.update_model_record(model_id, {"onnx_path": str(onnx_path)})
+            log_buffer.push(model_id, f"[anomaly] ONNX export complete: {onnx_path}")
+        except Exception as e:
+            logger.exception(f"[anomaly train] Auto ONNX export failed for model {model_id}")
+            log_buffer.push(
+                model_id, f"[anomaly] ONNX auto-export failed (training itself still succeeded): {e}",
+                level="WARNING",
+            )
+
+        if onnx_path is not None:
+            try:
+                log_buffer.push(model_id, "[anomaly] Auto-exporting TensorRT engine...")
+                engine_path = export_dir / "model.engine"
+                input_name, _ = onnx_input_info(onnx_path)
+                image_size = request.image_size
+                await loop.run_in_executor(
+                    None,
+                    lambda: build_engine_from_onnx(
+                        onnx_path, engine_path, input_name,
+                        (1, 3, image_size, image_size), (1, 3, image_size, image_size),
+                        (8, 3, image_size, image_size), fp16=True,
+                    ),
+                )
+                await repo.update_model_record(model_id, {"engine_path": str(engine_path)})
+                log_buffer.push(model_id, f"[anomaly] TensorRT export complete: {engine_path}")
+            except Exception as e:
+                logger.exception(f"[anomaly train] Auto TensorRT export failed for model {model_id}")
+                log_buffer.push(
+                    model_id, f"[anomaly] TensorRT auto-export failed (ONNX export still succeeded): {e}",
+                    level="WARNING",
+                )
 
     except TrainingCancelled:
         log_buffer.push(model_id, "[anomaly] Training cancelled by user", level="WARNING")
