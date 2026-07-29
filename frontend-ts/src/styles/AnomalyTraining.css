@@ -348,6 +348,18 @@ body.dark-mode .at-test-dropzone.dragover { background: #1e3a8a22; }
 body.dark-mode .at-test-center { background: #0f172a; border-color: #334155; }
 body.dark-mode .at-test-json { background: #0f172a; color: #a5f3fc; border-color: #334155; }
 
+/* Train tab log console */
+.at-train-log {
+  flex: 1; background: #f8fafc; color: #1e293b; border: 1px solid #e2e8f0;
+  font-family: monospace; font-size: 12px; padding: 12px; border-radius: 8px;
+  overflow-y: auto; min-height: 200px;
+}
+body.dark-mode .at-train-log { background: #0f172a; color: #cbd5e1; border-color: #334155; }
+.at-log-error { color: #dc2626; }
+.at-log-warning { color: #b45309; }
+body.dark-mode .at-log-error { color: #f87171; }
+body.dark-mode .at-log-warning { color: #fbbf24; }
+
 /* ═══════════════════════════════════════════════════════════════════════════
    Dark mode
    ═══════════════════════════════════════════════════════════════════════════ */

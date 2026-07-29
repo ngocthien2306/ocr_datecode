@@ -336,13 +336,10 @@ export default function TrainTab({ projectId, models, onModelsChange, selectedMo
             </div>
           </div>
         )}
-        <div style={{
-          flex: 1, background: '#0f172a', color: '#cbd5e1', fontFamily: 'monospace', fontSize: 12,
-          padding: 12, borderRadius: 8, overflowY: 'auto', minHeight: 200,
-        }}>
+        <div className="at-train-log">
           {logs.length === 0 && <div style={{ opacity: .5 }}>No logs yet — start a training run.</div>}
           {logs.map((l) => (
-            <div key={l.idx} style={{ color: l.level === 'ERROR' ? '#f87171' : l.level === 'WARNING' ? '#fbbf24' : '#cbd5e1' }}>
+            <div key={l.idx} className={l.level === 'ERROR' ? 'at-log-error' : l.level === 'WARNING' ? 'at-log-warning' : undefined}>
               {l.msg}
             </div>
           ))}
