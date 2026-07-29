@@ -116,6 +116,7 @@ class AnomalyModelInDB(BaseModel):
     metrics: AnomalyModelMetrics = AnomalyModelMetrics()
     checkpoint_path: str = ""
     onnx_path: Optional[str] = None
+    engine_path: Optional[str] = None
     status: str = "pending"  # pending | training | completed | failed
     error: Optional[str] = None
     created_at: datetime

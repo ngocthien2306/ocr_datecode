@@ -24,6 +24,7 @@ Design notes:
     mid-epoch — good enough in practice, documented here so it isn't a
     surprise later.
 """
+import base64
 import json
 import logging
 import shutil
@@ -101,6 +102,23 @@ def _build_model(request: AnomalyTrainRequest):
     if algo == "padim":
         return Padim(backbone=request.backbone, layers=request.layers)
     raise ValueError(f"Unknown algorithm: {request.algorithm!r} (expected 'patchcore' or 'padim')")
+
+
+def encode_heatmap_overlay(img: np.ndarray, anomaly_map: np.ndarray, quality: int = 90) -> str:
+    """Per-pixel anomaly score map -> JPEG-encoded base64 heatmap blended
+    over the original crop (min-max normalized per-image, JET colormap,
+    resized to match img -- anomaly_map comes out at the model's
+    fixed training resolution, e.g. 256x256, not the crop's native size)."""
+    m = anomaly_map.astype(np.float32)
+    lo, hi = float(m.min()), float(m.max())
+    m = (m - lo) / (hi - lo) if hi > lo else np.zeros_like(m)
+    m_u8 = (m * 255).astype(np.uint8)
+    if m_u8.shape[:2] != img.shape[:2]:
+        m_u8 = cv.resize(m_u8, (img.shape[1], img.shape[0]))
+    colored = cv.applyColorMap(m_u8, cv.COLORMAP_JET)
+    overlay = cv.addWeighted(img, 0.55, colored, 0.45, 0)
+    ok, buf = cv.imencode(".jpg", overlay, [cv.IMWRITE_JPEG_QUALITY, quality])
+    return base64.b64encode(buf.tobytes()).decode("utf-8") if ok else ""
 
 
 def _compute_metrics(scores: List[float], labels: List[bool], threshold: float = 0.5) -> Dict[str, Any]:
@@ -192,10 +210,16 @@ def train_model(
     scores: List[float] = []
     labels: List[bool] = []
     paths: List[str] = []
+    anomaly_maps: List[Optional[np.ndarray]] = []
     for batch in predictions:
         scores.extend(float(s) for s in batch.pred_score.tolist())
         labels.extend(bool(g) for g in batch.gt_label.tolist())
         paths.extend(batch.image_path)
+        amap = batch.anomaly_map
+        if amap is not None:
+            anomaly_maps.extend(amap.detach().cpu().numpy())
+        else:
+            anomaly_maps.extend([None] * len(batch.pred_score))
 
     if not scores:
         raise ValueError("No test predictions produced — check dataset has normal+abnormal test images.")
@@ -205,12 +229,14 @@ def train_model(
 
     _emit("encoding_testset", 88)
     test_results = []
-    for score, label, path in zip(scores, labels, paths):
+    for score, label, path, amap in zip(scores, labels, paths, anomaly_maps):
         img = cv.imread(path)
         crop_b64 = img_to_b64(img) if img is not None else ""
+        heatmap_b64 = encode_heatmap_overlay(img, amap) if img is not None and amap is not None else ""
         test_results.append({
             "image_path": path,
             "crop_b64": crop_b64,
+            "heatmap_b64": heatmap_b64,
             "pred_score": round(score, 4),
             "gt_label": "abnormal" if label else "normal",
             "pred_label": "abnormal" if score >= 0.5 else "normal",
@@ -253,7 +279,12 @@ def load_model_from_checkpoint(algorithm: str, checkpoint_path: Path):
     cls = Patchcore if algo == "patchcore" else Padim if algo == "padim" else None
     if cls is None:
         raise ValueError(f"Unknown algorithm: {algorithm!r}")
-    return cls.load_from_checkpoint(str(checkpoint_path))
+    # PyTorch >=2.6 defaults torch.load to weights_only=True, which rejects
+    # anomalib/Lightning classes (e.g. anomalib.PrecisionType) baked into the
+    # checkpoint's hyperparameters -- not a security concern here since this
+    # checkpoint was produced by our own train_model() above, not loaded
+    # from an untrusted source.
+    return cls.load_from_checkpoint(str(checkpoint_path), weights_only=False)
 
 
 def export_onnx(algorithm: str, checkpoint_path: Path, export_dir: Path, image_size: int) -> Path:

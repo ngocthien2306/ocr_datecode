@@ -11,6 +11,8 @@ export default function EvalTab({ projectId, model }: Props) {
   const [result, setResult] = useState<TestResultsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [showHeatmap, setShowHeatmap] = useState(true);
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
 
   const load = useCallback(async (t: number) => {
     if (!model || model.status !== 'completed') { setResult(null); return; }
@@ -42,6 +44,11 @@ export default function EvalTab({ projectId, model }: Props) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1, overflowY: 'auto' }}>
+      <div className="at-hint">
+        Evaluating: <b>{model.algorithm}</b>, trained {new Date(model.created_at).toLocaleString()}
+        {' '}(pick a different version in the Train tab's model list)
+      </div>
+
       <div className="at-stats-row">
         <div className="at-stat-card">
           <div className="at-stat-value">{(result?.image_auroc ?? 0).toFixed(3)}</div>
@@ -103,21 +110,83 @@ export default function EvalTab({ projectId, model }: Props) {
           </div>
 
           <div>
-            <label className="at-label">Test images ({result.items.length})</label>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+              <label className="at-label" style={{ marginBottom: 0 }}>Test images ({result.items.length})</label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer' }}>
+                <input type="checkbox" checked={showHeatmap} onChange={(e) => setShowHeatmap(e.target.checked)} />
+                Show anomaly heatmap
+              </label>
+            </div>
             <div className="at-cand-grid">
-              {result.items.map((item, i) => (
-                <div key={i} className="at-cand-card" style={{ borderColor: item.correct ? '#22c55e' : '#ef4444', borderWidth: 2 }}>
-                  <img src={`data:image/jpeg;base64,${item.crop_b64}`} alt="" className="at-cand-card-img" />
-                  <div className="at-cand-card-meta">
-                    gt: {item.gt_label} · pred: {item.pred_label}
-                    <br />score: {item.pred_score.toFixed(3)}
+              {result.items.map((item, i) => {
+                const b64 = showHeatmap && item.heatmap_b64 ? item.heatmap_b64 : item.crop_b64;
+                return (
+                  <div key={i} className="at-cand-card" style={{ borderColor: item.correct ? '#22c55e' : '#ef4444', borderWidth: 2 }}>
+                    <img
+                      src={`data:image/jpeg;base64,${b64}`}
+                      alt=""
+                      className="at-cand-card-img"
+                      style={{ cursor: 'zoom-in' }}
+                      onClick={() => setLightboxIdx(i)}
+                    />
+                    <div className="at-cand-card-meta">
+                      gt: {item.gt_label} · pred: {item.pred_label}
+                      <br />score: {item.pred_score.toFixed(3)}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </>
       )}
+
+      {result && lightboxIdx !== null && (() => {
+        const item = result.items[lightboxIdx];
+        if (!item) return null;
+        const b64 = showHeatmap && item.heatmap_b64 ? item.heatmap_b64 : item.crop_b64;
+        return (
+          <div className="at-lightbox-overlay" onClick={() => setLightboxIdx(null)}>
+            <div className="at-lightbox-card" onClick={(e) => e.stopPropagation()}>
+              <div className="at-lightbox-card-header">
+                <span style={{ flex: 1, fontSize: 12 }}>
+                  gt: <b>{item.gt_label}</b> · pred: <b>{item.pred_label}</b> · score: <b>{item.pred_score.toFixed(3)}</b>
+                  {' '}· <span style={{ color: item.correct ? '#15803d' : '#b91c1c' }}>{item.correct ? 'correct' : 'incorrect'}</span>
+                </span>
+                {!!item.heatmap_b64 && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={showHeatmap} onChange={(e) => setShowHeatmap(e.target.checked)} />
+                    Heatmap
+                  </label>
+                )}
+                <button
+                  type="button"
+                  className="at-cand-card-delete"
+                  style={{ flex: '0 0 30px' }}
+                  disabled={lightboxIdx <= 0}
+                  onClick={() => setLightboxIdx((idx) => (idx !== null ? Math.max(0, idx - 1) : idx))}
+                  title="Previous"
+                >‹</button>
+                <button
+                  type="button"
+                  className="at-cand-card-delete"
+                  style={{ flex: '0 0 30px' }}
+                  disabled={lightboxIdx >= result.items.length - 1}
+                  onClick={() => setLightboxIdx((idx) => (idx !== null ? Math.min(result.items.length - 1, idx + 1) : idx))}
+                  title="Next"
+                >›</button>
+                <button className="at-lightbox-close" onClick={() => setLightboxIdx(null)}>×</button>
+              </div>
+              <div className="at-lightbox-card-body">
+                <img src={`data:image/jpeg;base64,${b64}`} alt="" className="at-lightbox-img" />
+              </div>
+              <div className="at-lightbox-card-footer">
+                {lightboxIdx + 1} / {result.items.length} · {item.image_path}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
