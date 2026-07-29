@@ -8,12 +8,13 @@ import DatasetGallery from './DatasetGallery';
 import TrainTab from './TrainTab';
 import EvalTab from './EvalTab';
 import ExportTab from './ExportTab';
+import TestTab from './TestTab';
 
 interface Props {
   onClose: () => void;
 }
 
-type TabId = 'dataset' | 'train' | 'eval' | 'export';
+type TabId = 'dataset' | 'train' | 'eval' | 'export' | 'test';
 
 export default function AnomalyTrainingPage({ onClose }: Props) {
   const [tab, setTab] = useState<TabId>('dataset');
@@ -125,7 +126,7 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
   const hasDataset = (stats?.normal_count ?? activeProject?.normal_count ?? 0) > 0;
 
   const TAB_LABELS: Record<TabId, string> = {
-    dataset: 'Dataset', train: 'Train', eval: 'Eval', export: 'Export',
+    dataset: 'Dataset', train: 'Train', eval: 'Eval', export: 'Export', test: 'Test',
   };
 
   return (
@@ -145,7 +146,7 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
 
       {activeProject && (
         <div className="at-tabs">
-          {(['dataset', 'train', 'eval', 'export'] as TabId[]).map((id) => (
+          {(['dataset', 'train', 'eval', 'export', 'test'] as TabId[]).map((id) => (
             <button
               key={id}
               className={`at-tab-btn ${tab === id ? 'active' : ''}`}
@@ -257,8 +258,10 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
             />
           ) : tab === 'eval' ? (
             <EvalTab projectId={activeProject.id} model={selectedModel} />
-          ) : (
+          ) : tab === 'export' ? (
             <ExportTab projectId={activeProject.id} model={selectedModel} onModelChange={loadModels} />
+          ) : (
+            <TestTab projectId={activeProject.id} model={selectedModel} />
           )}
         </div>
       </div>

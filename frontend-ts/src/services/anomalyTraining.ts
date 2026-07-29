@@ -187,6 +187,18 @@ export interface TestResultsResponse {
   items: TestResultItem[];
 }
 
+export type InferenceEngine = 'onnx' | 'tensorrt';
+
+export interface PredictResult {
+  pred_score: number;
+  crop_b64: string;
+  heatmap_b64: string;
+  image_size: number;
+  engine: InferenceEngine;
+  active_provider: string;
+  inference_ms: number;
+}
+
 export interface VerifyTensorRTResult {
   active_provider: string;
   engine_cache_hit: boolean;
@@ -322,6 +334,23 @@ export const anomalyTrainingAPI = {
   // Eval
   getTestResults: async (projectId: string, modelId: string, threshold = 0.5): Promise<TestResultsResponse> => {
     const res = await anomalyApi.get(`/projects/${projectId}/models/${modelId}/test-results`, { params: { threshold } });
+    return res.data;
+  },
+
+  // Test — live inference on a freshly uploaded image via the exported
+  // ONNX or standalone TensorRT engine (distinct from getTestResults
+  // above, which only re-reads the stored training-time test-set
+  // predictions). Sessions/engines are cached server-side per model, so
+  // inference_ms reflects steady-state speed, not load time.
+  predictImage: async (
+    projectId: string, modelId: string, file: File, engine: InferenceEngine = 'onnx',
+  ): Promise<PredictResult> => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await anomalyApi.post(`/projects/${projectId}/models/${modelId}/predict`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      params: { engine },
+    });
     return res.data;
   },
 
