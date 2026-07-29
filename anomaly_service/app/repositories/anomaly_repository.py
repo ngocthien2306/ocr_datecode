@@ -190,6 +190,10 @@ class AnomalyRepository:
         doc = await self.models.find_one({"_id": ObjectId(model_id)})
         return AnomalyModelInDB(**_to_str_id(doc)) if doc else None
 
+    async def delete_model(self, model_id: str) -> bool:
+        result = await self.models.delete_one({"_id": ObjectId(model_id)})
+        return result.deleted_count > 0
+
     async def create_indexes(self):
         await self.projects.create_index([("created_at", -1)])
         await self.import_items.create_index([("project_id", 1), ("created_at", -1)])

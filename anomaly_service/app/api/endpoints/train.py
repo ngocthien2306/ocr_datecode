@@ -5,6 +5,7 @@ Mirrors backend's ml_training.py training endpoints' shape (background task
 """
 import asyncio
 import logging
+import shutil
 from pathlib import Path
 from typing import Dict
 
@@ -38,11 +39,15 @@ async def start_training(
     project = await repo.get_project(project_id)
     if not project:
         raise HTTPException(404, "Project not found")
-    if project.normal_count == 0 or project.abnormal_count == 0:
+    if project.normal_count == 0:
         raise HTTPException(
             400,
-            "Need at least one 'normal' and one 'abnormal' image imported before training.",
+            "Need at least one 'normal' image imported before training.",
         )
+    # abnormal_count == 0 is fine -- PatchCore/Padim fit on normal images only.
+    # _build_datamodule/_compute_metrics already handle the no-abnormal case
+    # (image_auroc/image_f1 just report as 0.0 / not meaningful until you
+    # import some abnormal images to evaluate against).
 
     model_record = await repo.create_model_record(project_id, request.algorithm, request.model_dump())
     model_id = model_record.id
@@ -210,3 +215,31 @@ async def cancel_training(
     })
     await repo.set_status(project_id, "active")
     return {"ok": True, "model_id": model_id, "mode": "force_failed"}
+
+
+@router.delete("/projects/{project_id}/models/{model_id}", tags=["Anomaly Training"])
+async def delete_model(
+    project_id: str,
+    model_id: str,
+    repo: AnomalyRepository = Depends(get_repo),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Delete a trained model's DB record and every file it wrote to disk
+    (checkpoint, onnx/engine export, test-results sidecar) -- the whole
+    point being to actually reclaim disk space, not just hide the row."""
+    model = await repo.get_model(model_id)
+    if not model or model.project_id != project_id:
+        raise HTTPException(404, "Model not found")
+    if model.status in ("training", "pending"):
+        raise HTTPException(409, "Cancel training before deleting this model")
+
+    models_dir = dataset_fs.models_dir(project_id)
+    for p in [
+        models_dir / f"{model_id}.ckpt",
+        models_dir / f"{model_id}_test_results.json",
+    ]:
+        p.unlink(missing_ok=True)
+    shutil.rmtree(models_dir / "export" / model_id, ignore_errors=True)
+
+    await repo.delete_model(model_id)
+    return {"ok": True, "model_id": model_id}

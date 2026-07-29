@@ -4,6 +4,7 @@ import {
   anomalyTrainingAPI, AnomalyProject, DatasetStats, AnomalyImportResult, AnomalyModel,
 } from '@/services/anomalyTraining';
 import ImportFromRecipeModal from './ImportFromRecipeModal';
+import DatasetGallery from './DatasetGallery';
 import TrainTab from './TrainTab';
 import EvalTab from './EvalTab';
 import ExportTab from './ExportTab';
@@ -109,14 +110,19 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
     }
   };
 
+  const [galleryRefreshKey, setGalleryRefreshKey] = useState(0);
+
   const handleImported = (result: AnomalyImportResult) => {
     setLastImportResult(result);
     refreshStats();
+    setGalleryRefreshKey((k) => k + 1);
   };
 
   const selectedModel = models.find((m) => m.id === selectedModelId) || null;
-  const hasDataset = (stats?.normal_count ?? activeProject?.normal_count ?? 0) > 0
-    && (stats?.abnormal_count ?? activeProject?.abnormal_count ?? 0) > 0;
+  // PatchCore/Padim fit on normal images only -- abnormal is optional, only
+  // needed to get a meaningful AUROC/F1 out of eval (backend reports those
+  // as 0.0 / not-yet-meaningful when there's no abnormal test data).
+  const hasDataset = (stats?.normal_count ?? activeProject?.normal_count ?? 0) > 0;
 
   const TAB_LABELS: Record<TabId, string> = {
     dataset: 'Dataset', train: 'Train', eval: 'Eval', export: 'Export',
@@ -202,43 +208,44 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
             <div className="at-empty-state">Select or create a project to get started</div>
           ) : tab === 'dataset' ? (
             <>
-              <div className="at-stats-row">
-                <div className="at-stat-card normal">
-                  <div className="at-stat-value">{stats?.normal_count ?? activeProject.normal_count}</div>
-                  <div className="at-stat-label">Normal images</div>
+              <div className="at-dataset-toolbar">
+                <div className="at-dataset-toolbar-stats">
+                  <span className="at-stat-pill normal">
+                    <b>{stats?.normal_count ?? activeProject.normal_count}</b> normal
+                  </span>
+                  <span className="at-stat-pill abnormal">
+                    <b>{stats?.abnormal_count ?? activeProject.abnormal_count}</b> abnormal
+                  </span>
+                  {!!stats?.defect_types?.length && (
+                    <span className="at-dataset-toolbar-defects">
+                      {stats.defect_types.map((t) => <span key={t} className="at-defect-chip">{t}</span>)}
+                    </span>
+                  )}
                 </div>
-                <div className="at-stat-card abnormal">
-                  <div className="at-stat-value">{stats?.abnormal_count ?? activeProject.abnormal_count}</div>
-                  <div className="at-stat-label">Abnormal images</div>
-                </div>
+                <button className="at-btn at-btn-primary" onClick={() => setShowImportModal(true)}>
+                  + Import from Recipe
+                </button>
               </div>
 
-              {!!stats?.defect_types?.length && (
-                <div style={{ marginBottom: 20 }}>
-                  <label className="at-label">Defect types</label>
-                  <div>
-                    {stats.defect_types.map((t) => <span key={t} className="at-defect-chip">{t}</span>)}
-                  </div>
-                </div>
-              )}
-
-              <button className="at-btn at-btn-primary" style={{ alignSelf: 'flex-start' }}
-                      onClick={() => setShowImportModal(true)}>
-                Import from Recipe
-              </button>
-
               {lastImportResult && (
-                <div className="at-hint" style={{ marginTop: 10 }}>
+                <div className="at-hint" style={{ marginBottom: 8 }}>
                   Last import: {lastImportResult.imported} added, {lastImportResult.skipped} skipped
                   {lastImportResult.errors.length > 0 && `, ${lastImportResult.errors.length} error(s)`}.
                 </div>
               )}
 
               {!hasDataset && (
-                <div className="at-hint" style={{ marginTop: 24 }}>
-                  Import at least one normal and one abnormal image to unlock Train.
+                <div className="at-hint" style={{ marginBottom: 12 }}>
+                  Import at least one normal image to unlock Train (abnormal images are optional,
+                  only needed for a meaningful eval score).
                 </div>
               )}
+
+              <DatasetGallery
+                projectId={activeProject.id}
+                refreshKey={galleryRefreshKey}
+                onCountsChanged={refreshStats}
+              />
             </>
           ) : tab === 'train' ? (
             <TrainTab
