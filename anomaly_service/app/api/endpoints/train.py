@@ -66,7 +66,7 @@ _CANCEL_FLAGS: Dict[str, bool] = {}
 
 async def _run_training_bg(repo: AnomalyRepository, project_id: str, model_id: str, request: AnomalyTrainRequest):
     log_buffer = get_buffer()
-    log_buffer.register(model_id)
+    log_buffer.register(project_id, model_id)
     handler = attach_handler(model_id)
     log_buffer.push(model_id, f"[anomaly] Starting training for model {model_id} (algo={request.algorithm})")
 
@@ -223,6 +223,11 @@ async def get_training_logs(
     model = await repo.get_model(model_id)
     if not model or model.project_id != project_id:
         raise HTTPException(404, "Model not found")
+    # No-op if this model_id's log is already loaded in this process
+    # (e.g. the background training task already registered it); otherwise
+    # lazy-loads it from disk -- covers viewing a model trained before this
+    # process last restarted.
+    get_buffer().register(project_id, model_id)
     logs, next_since = get_buffer().get_since(model_id, since)
     return {
         "logs": logs,
@@ -288,6 +293,7 @@ async def delete_model(
     ]:
         p.unlink(missing_ok=True)
     shutil.rmtree(models_dir / "export" / model_id, ignore_errors=True)
+    get_buffer().drop(model_id)
 
     await repo.delete_model(model_id)
     return {"ok": True, "model_id": model_id}
