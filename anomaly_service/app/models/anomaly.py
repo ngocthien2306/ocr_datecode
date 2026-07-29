@@ -55,6 +55,21 @@ class AnomalyImportRequest(BaseModel):
     selections: List[AnomalyImportSelection]
 
 
+class AnomalyRelabelRequest(BaseModel):
+    label: str  # "normal" | "abnormal"
+    defect_type: Optional[str] = None  # required when label == "abnormal"
+
+
+class AnomalyBulkRelabelRequest(BaseModel):
+    ids: List[str]
+    label: str  # "normal" | "abnormal"
+    defect_type: Optional[str] = None  # required when label == "abnormal"
+
+
+class AnomalyBulkDeleteRequest(BaseModel):
+    ids: List[str]
+
+
 class AnomalyImportItemInDB(BaseModel):
     id: str = Field(alias="_id")
     project_id: str

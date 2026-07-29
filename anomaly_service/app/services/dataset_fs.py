@@ -75,10 +75,22 @@ def count_images(project_id: str) -> Dict[str, int]:
 
 
 def list_defect_types(project_id: str) -> list:
+    """Defect-type subfolders under test/ that actually contain images.
+
+    Relabeling/deleting can leave an empty test/<defect_type> dir behind
+    (last image moved/removed out of it). anomalib's Folder datamodule
+    hard-errors ("Found 0 abnormal images in ...") if handed a defect dir
+    with no images, so an empty folder must not be reported here -- it would
+    otherwise break training even though the dataset genuinely has zero
+    abnormal images.
+    """
     test_dir = dataset_dir(project_id) / "test"
     if not test_dir.exists():
         return []
-    return sorted(c.name for c in test_dir.iterdir() if c.is_dir() and c.name != "good")
+    return sorted(
+        c.name for c in test_dir.iterdir()
+        if c.is_dir() and c.name != "good" and has_images(c)
+    )
 
 
 def has_images(d: Path) -> bool:

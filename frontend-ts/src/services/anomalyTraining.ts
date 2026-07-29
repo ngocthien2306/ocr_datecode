@@ -81,6 +81,36 @@ export interface AnomalyImportResult {
   abnormal_count: number;
 }
 
+// ──────── Dataset gallery types ────────────────────────────────────────
+
+export interface DatasetImage {
+  id: string;
+  inspection_id: string;
+  camera_serial: string;
+  frame_idx: number;
+  recipe_name?: string;
+  label: 'normal' | 'abnormal';
+  defect_type: string | null;
+  split: 'train' | 'test';
+  created_at: string;
+  thumb_b64: string;
+}
+
+export interface DatasetImagesPage {
+  images: DatasetImage[];
+  count: number;
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface BulkActionResult {
+  errors: Array<{ id: string; reason: string }>;
+  normal: number;
+  abnormal: number;
+}
+
 // ──────── Train / Eval / Export types ────────────────────────────────────
 
 export type AnomalyAlgorithm = 'patchcore' | 'padim';
@@ -111,6 +141,7 @@ export interface AnomalyModel {
   metrics: AnomalyModelMetrics;
   checkpoint_path: string;
   onnx_path: string | null;
+  engine_path: string | null;
   status: 'pending' | 'training' | 'completed' | 'failed' | 'cancelled';
   error: string | null;
   created_at: string;
@@ -137,6 +168,9 @@ export interface TrainLogsResponse {
 export interface TestResultItem {
   image_path: string;
   crop_b64: string;
+  // Absent on models evaluated before heatmap export was added — re-train
+  // to get one.
+  heatmap_b64?: string;
   pred_score: number;
   gt_label: 'normal' | 'abnormal';
   pred_label: 'normal' | 'abnormal';
@@ -157,7 +191,9 @@ export interface VerifyTensorRTResult {
   active_provider: string;
   engine_cache_hit: boolean;
   build_or_load_ms: number;
-  inference_ms: number;
+  // null: build+deserialize only, no forward pass run (no pycuda in this
+  // service's env) -- still a real build+load on this machine's GPU.
+  inference_ms: number | null;
   output_shapes: number[][];
   cache_dir: string;
 }
@@ -209,6 +245,54 @@ export const anomalyTrainingAPI = {
     return res.data;
   },
 
+  // Dataset gallery
+  listDatasetImages: async (
+    projectId: string,
+    opts: { label?: 'normal' | 'abnormal'; page?: number; pageSize?: number } = {},
+  ): Promise<DatasetImagesPage> => {
+    const res = await anomalyApi.get(`/projects/${projectId}/dataset/images`, {
+      params: { label: opts.label, page: opts.page, page_size: opts.pageSize },
+    });
+    return res.data;
+  },
+  getDatasetImageFull: async (projectId: string, imageId: string): Promise<{ id: string; full_b64: string }> => {
+    const res = await anomalyApi.get(`/projects/${projectId}/dataset/images/${imageId}/full`);
+    return res.data;
+  },
+  relabelDatasetImage: async (
+    projectId: string,
+    imageId: string,
+    label: 'normal' | 'abnormal',
+    defectType?: string,
+  ): Promise<{ ok: boolean; normal: number; abnormal: number }> => {
+    const res = await anomalyApi.patch(`/projects/${projectId}/dataset/images/${imageId}`, {
+      label, defect_type: defectType,
+    });
+    return res.data;
+  },
+  deleteDatasetImage: async (projectId: string, imageId: string): Promise<{ ok: boolean; normal: number; abnormal: number }> => {
+    const res = await anomalyApi.delete(`/projects/${projectId}/dataset/images/${imageId}`);
+    return res.data;
+  },
+  bulkRelabelDatasetImages: async (
+    projectId: string,
+    ids: string[],
+    label: 'normal' | 'abnormal',
+    defectType?: string,
+  ): Promise<{ updated: number } & BulkActionResult> => {
+    const res = await anomalyApi.post(`/projects/${projectId}/dataset/images/bulk-relabel`, {
+      ids, label, defect_type: defectType,
+    });
+    return res.data;
+  },
+  bulkDeleteDatasetImages: async (
+    projectId: string,
+    ids: string[],
+  ): Promise<{ deleted: number } & BulkActionResult> => {
+    const res = await anomalyApi.post(`/projects/${projectId}/dataset/images/bulk-delete`, { ids });
+    return res.data;
+  },
+
   // Training
   startTraining: async (projectId: string, request: AnomalyTrainRequest): Promise<{ model_id: string; status: string }> => {
     const res = await anomalyApi.post(`/projects/${projectId}/train`, request);
@@ -230,6 +314,10 @@ export const anomalyTrainingAPI = {
     const res = await anomalyApi.post(`/projects/${projectId}/models/${modelId}/cancel`);
     return res.data;
   },
+  deleteModel: async (projectId: string, modelId: string): Promise<{ ok: boolean }> => {
+    const res = await anomalyApi.delete(`/projects/${projectId}/models/${modelId}`);
+    return res.data;
+  },
 
   // Eval
   getTestResults: async (projectId: string, modelId: string, threshold = 0.5): Promise<TestResultsResponse> => {
@@ -242,8 +330,22 @@ export const anomalyTrainingAPI = {
     const res = await anomalyApi.post(`/projects/${projectId}/models/${modelId}/export-onnx`);
     return res.data;
   },
+  // Builds (or reuses) the same standalone .engine as exportTensorRT below
+  // and confirms it deserializes correctly on this machine's GPU.
   verifyTensorRT: async (projectId: string, modelId: string): Promise<VerifyTensorRTResult> => {
     const res = await anomalyApi.post(`/projects/${projectId}/models/${modelId}/verify-tensorrt`);
+    return res.data;
+  },
+  // Build a standalone, downloadable .engine (dynamic batch 1..maxBatch,
+  // fixed HxW = training image_size).
+  exportTensorRT: async (
+    projectId: string,
+    modelId: string,
+    maxBatch = 8,
+  ): Promise<{ engine_path: string; input_name: string; min_shape: number[]; opt_shape: number[]; max_shape: number[] }> => {
+    const res = await anomalyApi.post(`/projects/${projectId}/models/${modelId}/export-tensorrt`, null, {
+      params: { max_batch: maxBatch },
+    });
     return res.data;
   },
   // Blob download (not a plain <a href> URL) — the export endpoint requires
@@ -257,6 +359,19 @@ export const anomalyTrainingAPI = {
     const a = document.createElement('a');
     a.href = url;
     a.download = `anomaly_${modelId}.onnx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  },
+  downloadEngine: async (projectId: string, modelId: string): Promise<void> => {
+    const res = await anomalyApi.get(`/projects/${projectId}/models/${modelId}/export/tensorrt`, {
+      responseType: 'blob',
+    });
+    const url = window.URL.createObjectURL(new Blob([res.data]));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `anomaly_${modelId}.engine`;
     document.body.appendChild(a);
     a.click();
     a.remove();

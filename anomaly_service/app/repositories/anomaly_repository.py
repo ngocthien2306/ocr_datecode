@@ -115,6 +115,40 @@ class AnomalyRepository:
         cursor = self.import_items.find({"project_id": project_id}).sort("created_at", -1)
         return [AnomalyImportItemInDB(**_to_str_id(doc)) async for doc in cursor]
 
+    async def list_import_items_page(
+        self, project_id: str, label: Optional[str], skip: int, limit: int,
+    ) -> tuple[List[AnomalyImportItemInDB], int]:
+        """One page of import items (newest first) + total matching count,
+        for the dataset gallery. Filters server-side so thumbnail generation
+        (disk reads) only happens for the page actually being shown."""
+        query: Dict[str, Any] = {"project_id": project_id}
+        if label:
+            query["label"] = label
+        total = await self.import_items.count_documents(query)
+        cursor = self.import_items.find(query).sort("created_at", -1).skip(skip).limit(limit)
+        items = [AnomalyImportItemInDB(**_to_str_id(doc)) async for doc in cursor]
+        return items, total
+
+    async def get_import_item(self, item_id: str) -> Optional[AnomalyImportItemInDB]:
+        if not ObjectId.is_valid(item_id):
+            return None
+        doc = await self.import_items.find_one({"_id": ObjectId(item_id)})
+        return AnomalyImportItemInDB(**_to_str_id(doc)) if doc else None
+
+    async def get_import_items(self, project_id: str, item_ids: List[str]) -> List[AnomalyImportItemInDB]:
+        valid_ids = [ObjectId(i) for i in item_ids if ObjectId.is_valid(i)]
+        if not valid_ids:
+            return []
+        cursor = self.import_items.find({"_id": {"$in": valid_ids}, "project_id": project_id})
+        return [AnomalyImportItemInDB(**_to_str_id(doc)) async for doc in cursor]
+
+    async def update_import_item(self, item_id: str, update: Dict[str, Any]) -> None:
+        await self.import_items.update_one({"_id": ObjectId(item_id)}, {"$set": update})
+
+    async def delete_import_item(self, item_id: str) -> bool:
+        result = await self.import_items.delete_one({"_id": ObjectId(item_id)})
+        return result.deleted_count > 0
+
     async def count_import_items(self, project_id: str) -> Dict[str, int]:
         pipeline = [
             {"$match": {"project_id": project_id}},
