@@ -12,6 +12,14 @@ USER_HOME="$HOME"
 BACKEND_DIR="${USER_HOME}/Source/ocr_datecode/backend"
 FRONTEND_DIR="${USER_HOME}/Source/ocr_datecode/frontend-ts"
 AI_SERVICES_DIR="${USER_HOME}/Source/ocr_datecode/ai_services"
+
+# Don't rely on ambient `python3`/`python` in PATH -- under systemd there's no
+# conda at all (resolves to bare /usr/bin/python3, missing fastapi/pypylon/etc),
+# and even in an interactive shell it silently breaks if you forgot to
+# `conda activate vision` first (e.g. still on `base`). Pin explicitly and run
+# through `conda activate` (not just the binary path) so the CUDA
+# LD_LIBRARY_PATH shim from vision's activate.d hook is also applied.
+CONDA_SH="${USER_HOME}/miniconda3/etc/profile.d/conda.sh"
 # Logs from this script (stdout/stderr of background processes) are ephemeral —
 # wiped on every start. Persistent app logs live under logs/{backend,...}/.
 LOGS_ROOT="${USER_HOME}/Source/ocr_datecode/logs"
@@ -22,7 +30,7 @@ rm -rf "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 
 # === STEP 0: Camera Check ===
-if [ "$USER_HOME" = "/home/suntech" ] || [ "$USER_HOME" = "/home/demo" ]; then
+if [ "$USER_HOME" = "/home/suntech" ] || [ "$USER_HOME" = "/home/msi" ]; then
     SCRIPT_DIR="${USER_HOME}/Source/ocr_datecode"
     TMPFILE=$(mktemp /tmp/cam_check_exit_XXXX)
 
@@ -30,7 +38,7 @@ if [ "$USER_HOME" = "/home/suntech" ] || [ "$USER_HOME" = "/home/demo" ]; then
     export DISPLAY="${DISPLAY:-:0}"
     export XAUTHORITY="${USER_HOME}/.Xauthority"
 
-    if [ "$USER_HOME" = "/home/demo" ]; then
+    if [ "$USER_HOME" = "/home/msi" ]; then
         CAM_SCRIPT="camera_check_all.py"
         CAM_TITLE="Camera Health Check - ALL"
         CAM_ARGS=""
@@ -39,7 +47,8 @@ if [ "$USER_HOME" = "/home/suntech" ] || [ "$USER_HOME" = "/home/demo" ]; then
         CAM_TITLE="Camera Health Check - eth1"
     fi
 
-    TERMINAL_CMD="python3 '${SCRIPT_DIR}/${CAM_SCRIPT}' ${CAM_ARGS}; \
+    TERMINAL_CMD="source '${CONDA_SH}' && conda activate vision; \
+python3 '${SCRIPT_DIR}/${CAM_SCRIPT}' ${CAM_ARGS}; \
 EXIT=\$?; echo \$EXIT > '${TMPFILE}'; \
 if [ \$EXIT -eq 0 ]; then \
     echo ''; echo '>>> Camera OK! Services will start in 3 seconds...'; sleep 3; \
@@ -73,7 +82,11 @@ fi"
         :  # popup ran; it wrote the exit code into TMPFILE
     else
         echo "⚠️  No usable GUI terminal — running camera check inline..."
-        if python3 "${SCRIPT_DIR}/${CAM_SCRIPT}" ${CAM_ARGS}; then echo 0 > "${TMPFILE}"; else echo $? > "${TMPFILE}"; fi
+        if bash -lc "source '${CONDA_SH}' && conda activate vision && exec python3 '${SCRIPT_DIR}/${CAM_SCRIPT}' ${CAM_ARGS}"; then
+            echo 0 > "${TMPFILE}"
+        else
+            echo $? > "${TMPFILE}"
+        fi
     fi
 
     CAMERA_EXIT=$(cat "${TMPFILE}" 2>/dev/null || echo "1")
@@ -163,7 +176,7 @@ if lsof -Pi :8000 -sTCP:LISTEN -t >/dev/null 2>&1; then
     echo "   Already listening on :8000 (systemd unit or prior run, PID: ${BACKEND_PID:-?})"
 else
     cd "$BACKEND_DIR"
-    nohup python3 -m uvicorn app.main:app --port 8000 --host 0.0.0.0 \
+    nohup bash -lc "source '${CONDA_SH}' && conda activate vision && exec python3 -m uvicorn app.main:app --port 8000 --host 0.0.0.0" \
         >> "$LOG_DIR/backend.log" 2>&1 &
     BACKEND_PID=$!
     echo "   Started inline (PID: $BACKEND_PID)"
@@ -234,12 +247,20 @@ done
 
 echo "🦊 Opening Firefox..."
 
-# Get the current display and xauthority
-CURRENT_DISPLAY=$(who | grep "$USER" | awk '{print $2}' | head -1)
-CURRENT_DISPLAY=":${CURRENT_DISPLAY##*:}"
-[ -z "$CURRENT_DISPLAY" ] && CURRENT_DISPLAY=":0"
+# Get the current display and xauthority. `who` lists the GDM greeter first
+# ("msi seat0 ... (login screen)") and only then the real session ("msi :0"),
+# so taking `head -1` blindly produced DISPLAY=":seat0" and Firefox died with
+# "Error: cannot open display: :seat0". Pick the first field that actually
+# looks like an X display (":N").
+CURRENT_DISPLAY=$(who | awk -v u="$USER" '$1 == u { for (i = 2; i <= NF; i++) if ($i ~ /^:[0-9]+$/) { print $i; exit } }')
+[ -z "$CURRENT_DISPLAY" ] && CURRENT_DISPLAY="${DISPLAY:-:0}"
 export DISPLAY="$CURRENT_DISPLAY"
-export XAUTHORITY="$HOME/.Xauthority"
+# Under GDM the cookie lives in /run/user/<uid>/gdm/, not ~/.Xauthority.
+if [ -f "$HOME/.Xauthority" ]; then
+    export XAUTHORITY="$HOME/.Xauthority"
+elif [ -f "/run/user/$(id -u)/gdm/Xauthority" ]; then
+    export XAUTHORITY="/run/user/$(id -u)/gdm/Xauthority"
+fi
 
 FIREFOX_PID=""
 if command -v firefox &> /dev/null; then

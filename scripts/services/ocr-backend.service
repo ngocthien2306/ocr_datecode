@@ -5,8 +5,8 @@ Wants=mongodb.service
 
 [Service]
 Type=simple
-User=demo
-Group=demo
+User=msi
+Group=msi
 WorkingDirectory=%h/Source/ocr_datecode/backend
 Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
 ExecStart=/usr/bin/python3 -m uvicorn app.main:app --port 8000 --host 0.0.0.0

@@ -36,7 +36,20 @@ echo "   ✅ Done"
 echo ""
 
 # ── Create ocr-all.service ───────────────────────────────────────────────────
-PYTHON3=$(which python3)
+# NOT `which python3` -- that bakes in whatever interpreter is active in the
+# shell you happen to run this setup script from (e.g. base conda env if you
+# forgot to `conda activate vision` first), which silently produces a
+# ModuleNotFoundError under systemd for fastapi/pypylon/torch/etc since those
+# only live in the `vision` env. Pin to the vision env explicitly, and run it
+# through `conda activate` (not just the raw binary path) so the CUDA
+# LD_LIBRARY_PATH shim from vision's activate.d hook is also applied --
+# invoking the binary path directly skips that hook entirely.
+CONDA_SH="${USER_HOME}/miniconda3/etc/profile.d/conda.sh"
+VISION_PY="${USER_HOME}/miniconda3/envs/vision/bin/python3"
+if [ ! -x "$VISION_PY" ]; then
+    echo "❌ vision conda env not found at ${VISION_PY} -- create it first (see ai_services setup docs)"
+    exit 1
+fi
 YARN=$(which yarn 2>/dev/null || echo "")
 
 # ── Create backend crash-recovery service ─────────────────────────────────────
@@ -55,7 +68,7 @@ Wants=mongod.service
 [Service]
 User=${USER_NAME}
 WorkingDirectory=${PROJECT_DIR}/backend
-ExecStart=${PYTHON3} -m uvicorn app.main:app --port 8000 --host 0.0.0.0
+ExecStart=/bin/bash -lc 'source ${CONDA_SH} && conda activate vision && exec python3 -m uvicorn app.main:app --port 8000 --host 0.0.0.0'
 Restart=always
 RestartSec=5
 StartLimitIntervalSec=600

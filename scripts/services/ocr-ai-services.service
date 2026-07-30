@@ -5,8 +5,8 @@ Wants=ocr-backend.service
 
 [Service]
 Type=simple
-User=demo
-Group=demo
+User=msi
+Group=msi
 WorkingDirectory=%h/Source/ocr_datecode/ai_services
 Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="CUDA_HOME=/usr/local/cuda"

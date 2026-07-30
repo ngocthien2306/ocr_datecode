@@ -5,8 +5,8 @@ Wants=ocr-backend.service ocr-frontend.service
 
 [Service]
 Type=simple
-User=demo
-Group=demo
+User=msi
+Group=msi
 ExecStart=/usr/bin/ngrok start --config %h/.config/ngrok/ngrok-ocr.yml --all
 Restart=always
 RestartSec=10

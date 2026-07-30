@@ -3,8 +3,8 @@
 
 set -e
 
-ONNX_PATH="/home/demo/Source/ocr_datecode/weights/superpoint_lightglue_pipeline.onnx"
-OUTPUT_PATH="/home/demo/Source/ocr_datecode/weights/pipeline_fp16_dynamic_480x640.engine"
+ONNX_PATH="/home/msi/Source/ocr_datecode/weights/superpoint_lightglue_pipeline.onnx"
+OUTPUT_PATH="/home/msi/Source/ocr_datecode/weights/pipeline_fp16_dynamic_480x640.engine"
 
 echo "🔨 Building TensorRT engine with dynamic batch size (2-8)..."
 echo "   ONNX: $ONNX_PATH"

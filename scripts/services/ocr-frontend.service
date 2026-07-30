@@ -5,8 +5,8 @@ Wants=ocr-backend.service
 
 [Service]
 Type=simple
-User=demo
-Group=demo
+User=msi
+Group=msi
 WorkingDirectory=%h/Source/ocr_datecode/frontend-ts
 Environment="PATH=/usr/local/bin:/usr/bin:/bin"
 ExecStart=/usr/bin/yarn dev --port 5000 --host 0.0.0.0
