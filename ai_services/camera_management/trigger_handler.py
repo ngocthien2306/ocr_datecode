@@ -20,6 +20,17 @@ logger = logging.getLogger(__name__)
 # Default nominal pulse width (ms) — overridden per-recipe via normal_pulse_ms field
 _DEFAULT_NORMAL_PULSE_MS = 100000.0  # Internal default: treated as "disabled" until recipe sets a real value
 
+# Sensor is wired into the PLC's own input (X0..X3), not the local ASUS DIO
+# card, so DI is polled over Modbus (FC02, read-only) by default rather than
+# read_di_value()/libapmi. Output/reject path is untouched either way — it
+# already goes through PLCController independently (reject_scheduler.py).
+# Set DI_SOURCE=gpio to fall back to the local DIO card (e.g. no PLC wired
+# up, bench testing).
+_DI_SOURCE_PLC = os.environ.get('DI_SOURCE', 'plc').strip().lower() != 'gpio'
+# Delta PLC Modbus map on this line: X0 = coil-space address 1024, X1..X3
+# follow consecutively (confirmed against the wired X0 sensor).
+_PLC_X_BASE_ADDRESS = 1024
+
 home = os.environ.get('HOME')
 
 class TriggerHandler:
@@ -151,12 +162,43 @@ class TriggerHandler:
                 logger.warning("Trigger polling already running")
                 return
 
+            # DIO_ENABLED=false: skip real DI polling entirely (e.g. dev machine
+            # without the physical DIO card — read_di_value() would otherwise
+            # spam-fail 100x/sec, flooding the log). simulate_trigger() still
+            # works fully since it doesn't go through this polling loop.
+            # Not checked when DI_SOURCE=plc — that path doesn't touch the DIO
+            # card at all, so it's unaffected by a missing DIO card.
+            dio_enabled = os.environ.get('DIO_ENABLED', 'true').lower() not in ('0', 'false', 'no')
+            if not _DI_SOURCE_PLC and not dio_enabled:
+                logger.info(
+                    "DIO_ENABLED=false — skipping DI polling "
+                    "(use simulate_trigger for testing without hardware)"
+                )
+                return
+
             # Check if any cameras need polling
             has_cameras = any(len(cams) > 0 for cams in self.di_camera_map.values())
 
             if not has_cameras:
                 logger.info("No cameras with Software Trigger mode, skipping polling")
                 return
+
+            if _DI_SOURCE_PLC:
+                plc = getattr(self.camera_manager, 'plc_controller', None)
+                if plc is None:
+                    logger.error(
+                        "DI_SOURCE=plc but plc_controller is not available — "
+                        "cannot poll DI, aborting start_polling()"
+                    )
+                    return
+                if not plc.is_connected():
+                    logger.info("DI_SOURCE=plc: connecting to PLC for DI polling...")
+                    if not plc.connect():
+                        logger.error(
+                            "DI_SOURCE=plc: PLC connection failed — cannot poll DI, "
+                            "aborting start_polling()"
+                        )
+                        return
 
             self._polling = True
             self._setup_pulse_logger()
@@ -358,6 +400,28 @@ class TriggerHandler:
             f"DI{di_number} | pulse_width={pulse_width_ms:.3f}ms | normal={self.normal_pulse_ms:.0f}ms{stuck_str}"
         )
 
+    def _read_di(self, di_number: int) -> int:
+        """
+        Read current DI pin value (0 or 1), from PLC (X0..X3 over Modbus) or
+        the local DIO card, depending on DI_SOURCE.
+
+        On a PLC read error, holds the last known value instead of falling
+        back to 0 — a transient Modbus hiccup must not look like a falling
+        edge and fire a spurious capture/reject.
+        """
+        if not _DI_SOURCE_PLC:
+            return read_di_value(di_number)
+
+        plc = getattr(self.camera_manager, 'plc_controller', None)
+        if plc is None:
+            return self.previous_di_values.get(di_number) or 0
+
+        value = plc.read_discrete_input(_PLC_X_BASE_ADDRESS + di_number)
+        if value is None:
+            held = self.previous_di_values.get(di_number)
+            return held if held is not None else 0
+        return int(value)
+
     def _polling_loop(self):
         """Main polling loop - runs at 100Hz"""
         poll_interval = 0.01  # 10ms = 100Hz
@@ -373,8 +437,8 @@ class TriggerHandler:
                     if not cameras:
                         continue
 
-                    # Read current DI value
-                    current_value = read_di_value(di_number)
+                    # Read current DI value (PLC X0..X3 or local DIO card, per DI_SOURCE)
+                    current_value = self._read_di(di_number)
 
                     # Get previous value
                     previous_value = self.previous_di_values[di_number]

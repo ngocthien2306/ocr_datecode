@@ -348,6 +348,40 @@ class PLCController:
                 self._connected = False
                 return None
 
+    def read_discrete_input(self, address: int) -> Optional[bool]:
+        """
+        Read single discrete input (X, physical read-only point) from PLC.
+        Used for DI polling when the trigger sensor is wired directly into
+        the PLC (e.g. X0) instead of the local DIO card.
+
+        X points are read-only over Modbus — function code 02
+        (read_discrete_inputs). FC01 (read_coils) returns ILLEGAL DATA
+        ADDRESS for this address range on the Delta PLC.
+
+        Args:
+            address: Discrete input address (X0=1024, X1=1025, ... on this
+                     Delta PLC's Modbus map).
+
+        Returns:
+            True/False on success. None on read error / not connected —
+            caller should hold the last known value rather than treat None
+            as 0, to avoid a false edge from a transient Modbus error.
+        """
+        with self._lock:
+            if not self.is_connected():
+                return None
+            try:
+                result = self._client.read_discrete_inputs(address, count=1)
+                if result.isError():
+                    logger.debug(f"PLC read_discrete_input error: X@{address} | {result}")
+                    return None
+                self._last_activity = time.time()
+                return bool(result.bits[0])
+            except Exception as e:
+                logger.debug(f"Exception reading PLC discrete input: {e}")
+                self._connected = False
+                return None
+
     def write_pulse(self, register_address: int, pulse_ms: float) -> Tuple[bool, float]:
         """
         Write pulse to PLC register
