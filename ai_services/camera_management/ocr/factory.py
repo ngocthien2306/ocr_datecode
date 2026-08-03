@@ -70,7 +70,7 @@ class TensorRTOCRBackend(OCRBackendStrategy):
         self._available = False
 
         try:
-            from ..text_recognizer_trt import TextRecognizerTRT, TENSORRT_AVAILABLE
+            from .backends.default_trt import TextRecognizerTRT, TENSORRT_AVAILABLE
 
             if not TENSORRT_AVAILABLE:
                 logger.warning("TensorRT not available")
@@ -226,7 +226,7 @@ class TensorRTOpenOCRBackend(OCRBackendStrategy):
 
         try:
             # Import from camera_management directory (new implementation)
-            from ..text_recognizer_openocr_trt import TextRecognizerOpenOCRTRT
+            from .backends.openocr_trt import TextRecognizerOpenOCRTRT
 
             if not os.path.exists(config.model_path):
                 raise FileNotFoundError(f"TensorRT engine not found: {config.model_path}")
@@ -307,7 +307,7 @@ class ONNXOpenOCRBackend(OCRBackendStrategy):
 
         try:
             # Import from camera_management directory (new implementation)
-            from ..text_recognizer_openocr_onnx import TextRecognizerOpenOCRONNX
+            from .backends.openocr_onnx import TextRecognizerOpenOCRONNX
 
             if not os.path.exists(config.model_path):
                 raise FileNotFoundError(f"ONNX model not found: {config.model_path}")
@@ -374,7 +374,7 @@ class SVTRv2ONNXBackend(OCRBackendStrategy):
         self._recognizer = None
         self._available = False
         try:
-            from ..text_recognizer_svtrv2_onnx import TextRecognizerSVTRv2ONNX
+            from .backends.svtrv2_onnx import TextRecognizerSVTRv2ONNX
             if not os.path.exists(config.model_path):
                 raise FileNotFoundError(f"ONNX model not found: {config.model_path}")
             if not os.path.exists(config.dict_path):
@@ -419,7 +419,7 @@ class SMTRONNXBackend(OCRBackendStrategy):
         self._recognizer = None
         self._available = False
         try:
-            from ..text_recognizer_smtr_onnx import TextRecognizerSMTRONNX
+            from .backends.smtr_onnx import TextRecognizerSMTRONNX
             if not os.path.exists(config.model_path):
                 raise FileNotFoundError(f"ONNX model not found: {config.model_path}")
             if not os.path.exists(config.dict_path):
@@ -464,7 +464,7 @@ class SMTRTRTBackend(OCRBackendStrategy):
         self._recognizer = None
         self._available = False
         try:
-            from ..text_recognizer_smtr_trt import TextRecognizerSMTRTRT, TENSORRT_AVAILABLE
+            from .backends.smtr_trt import TextRecognizerSMTRTRT, TENSORRT_AVAILABLE
             if not TENSORRT_AVAILABLE:
                 logger.warning("TensorRT not available for SMTR")
                 return
@@ -513,7 +513,7 @@ class SVTRv2TRTBackend(OCRBackendStrategy):
         self._recognizer = None
         self._available = False
         try:
-            from ..text_recognizer_svtrv2_trt import TextRecognizerSVTRv2TRT, TENSORRT_AVAILABLE
+            from .backends.svtrv2_trt import TextRecognizerSVTRv2TRT, TENSORRT_AVAILABLE
             if not TENSORRT_AVAILABLE:
                 logger.warning("TensorRT not available for SVTRv2")
                 return

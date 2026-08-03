@@ -13,7 +13,7 @@ from difflib import SequenceMatcher
 import cv2
 import numpy as np
 
-from ..ocr_utils import compare_texts
+from ..ocr.ocr_utils import compare_texts
 
 
 AUGMENT_SIMILARITY_THRESHOLD = 0.70

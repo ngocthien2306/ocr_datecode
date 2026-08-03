@@ -10,6 +10,11 @@ import time
 from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 
 from .base import InferencePipelineTemplate, PipelineContext
+from .frame_data import (
+    build_frame_verification_data,
+    get_color_localization_method,
+    is_color_check_frame,
+)
 
 from ..camera import Camera
 import numpy as np
@@ -17,14 +22,6 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-def _get_color_localization_method(template: Optional[Dict[str, Any]]) -> str:
-    color_cfg = (template or {}).get('color_config') or {}
-    method = (
-        (template or {}).get('color_localization_method')
-        or color_cfg.get('localization_method')
-        or 'image_proc'
-    )
-    return str(method).strip().lower()
 
 
 class MultiCameraPipeline(InferencePipelineTemplate):
@@ -392,7 +389,7 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                 return False
             if not any(a.get('type') == 'product' for a in (tmpls[0].get('annotations') or [])):
                 return False
-            return _get_color_localization_method(tmpls[0]) != 'superpoint'
+            return get_color_localization_method(tmpls[0]) != 'superpoint'
 
         # Shape-outline cameras (crop_match_method='shape_outline') also skip
         # SuperPoint — we run ECC affine alignment on Sobel gradient instead.
@@ -1068,62 +1065,15 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             result = transformed_results.get(serial_number, {})
             frames = context.results.get(serial_number, {}).get('frames', [])
 
-            # Get center_offset_threshold from first template (multi-camera uses first template only)
-            center_offset_threshold = None
-            center_offset_threshold_left = 50.0
-            center_offset_threshold_right = 50.0
-            center_offset_unit = 'px'
-            wrinkle_area = None
-            wrinkle_min_area = 0.0
-            wrinkle_max_area = 0.0
-            anomaly_config = None
-            if camera.templates and len(camera.templates) > 0:
-                template = camera.templates[0]
-                center_offset_threshold = template.get('center_offset_threshold', 50.0)
-                center_offset_threshold_left = template.get('center_offset_threshold_left', 50.0)
-                center_offset_threshold_right = template.get('center_offset_threshold_right', 50.0)
-                center_offset_unit = template.get('center_offset_unit', 'px') or 'px'
-                wrinkle_area = template.get('wrinkle_area', None)
-                wrinkle_min_area = template.get('wrinkle_min_area', 0.0) or 0.0
-                wrinkle_max_area = template.get('wrinkle_max_area', 0.0) or 0.0
-                anomaly_config = template.get('anomaly_config', None)
+            # Multi-camera uses the first template only.
+            template = camera.templates[0] if camera.templates else None
 
-            wrinkle_conf = getattr(camera, 'wrinkle_conf', 0.25)
-            wrinkle_show_when_pass = getattr(camera, 'wrinkle_show_when_pass', True)
-            mask_overlap_threshold = getattr(camera, 'mask_overlap_threshold', 0.6)
-            # Per-template color_config (only first template used in multi-camera)
-            template0 = camera.templates[0] if camera.templates else None
-            color_config = (
-                template0.get('color_config') if template0 else None
-            )
-            color_localization_method = _get_color_localization_method(template0)
-            # Color-check frames must run even if SuperPoint match failed.
-            is_color_check_frame = (
-                getattr(camera, 'function_type', '') == 'Check_Color'
-                and color_config is not None
-                and color_localization_method != 'superpoint'
-            )
-
-            if (result.get('success') or is_color_check_frame) and frames:
-                frames_data.append({
-                    'frame_img': frames[0],
-                    'transformed_bboxes': result.get('transformed_bboxes', []),
-                    'camera': camera,
-                    'template_idx': 0,
-                    'color_config': color_config,
-                    'color_localization_method': color_localization_method,
-                    'center_offset_threshold': center_offset_threshold,
-                    'center_offset_threshold_left': center_offset_threshold_left,
-                    'center_offset_threshold_right': center_offset_threshold_right,
-                    'center_offset_unit': center_offset_unit,
-                    'wrinkle_area': wrinkle_area,
-                    'wrinkle_min_area': wrinkle_min_area,
-                    'wrinkle_max_area': wrinkle_max_area,
-                    'wrinkle_conf': wrinkle_conf,
-                    'wrinkle_show_when_pass': wrinkle_show_when_pass,
-                    'mask_overlap_threshold': mask_overlap_threshold,
-                    'anomaly_config': anomaly_config,
-                })
+            if (result.get('success') or is_color_check_frame(camera, template)) and frames:
+                frames_data.append(build_frame_verification_data(
+                    camera, template, 0,
+                    frame_img=frames[0],
+                    transformed_bboxes=result.get('transformed_bboxes', []),
+                ))
                 serial_numbers.append(serial_number)
 
         if not frames_data:

@@ -25,6 +25,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
+from .char_quality import get_metric_method
+
 logger = logging.getLogger(__name__)
 
 # Minimum grayscale std-dev for a crop to be considered a real character.
@@ -1024,29 +1026,13 @@ class EmbeddingClassifierService:
                     tgt_gray = (cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
                                 if region.ndim == 3 else region)
 
-                    if cv_method == 'v3':
-                        from .char_quality_v3 import compute_char_quality_v3
-                        metrics = compute_char_quality_v3(tmpl_gray, tgt_gray)
+                    metric_fn = get_metric_method(cv_method)
+                    if metric_fn is not None:
+                        metrics = metric_fn(tmpl_gray, tgt_gray)
                         p_ok = float(metrics['confidence'])
-                        if metrics.get('defect_type'):
-                            p_ok = min(p_ok, max(0.0, conf_thr - 0.01))
-                    elif cv_method == 'v4':
-                        from .char_quality_v4 import compute_char_quality_v4
-                        metrics = compute_char_quality_v4(tmpl_gray, tgt_gray)
-                        p_ok = float(metrics['confidence'])
-                        # v4 defect_type → cap p_ok so NG verdict triggers
-                        if metrics.get('defect_type'):
-                            p_ok = min(p_ok, max(0.0, conf_thr - 0.01))
-                    elif cv_method == 'v5':
-                        from .char_quality_v5 import compute_char_quality_v5
-                        metrics = compute_char_quality_v5(tmpl_gray, tgt_gray)
-                        p_ok = float(metrics['confidence'])
-                        if metrics.get('defect_type'):
-                            p_ok = min(p_ok, max(0.0, conf_thr - 0.01))
-                    elif cv_method in ('v7', 'shape_v7'):
-                        from .char_quality_v7_shape import compute_char_quality_v7
-                        metrics = compute_char_quality_v7(tmpl_gray, tgt_gray)
-                        p_ok = float(metrics['confidence'])
+                        # Any reported defect caps p_ok just under the threshold
+                        # so the NG verdict triggers even when the raw
+                        # similarity score alone would have passed.
                         if metrics.get('defect_type'):
                             p_ok = min(p_ok, max(0.0, conf_thr - 0.01))
                     else:  # 'legacy' or unknown → original CV pipeline

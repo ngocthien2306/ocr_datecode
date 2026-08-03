@@ -27,7 +27,7 @@ except ImportError:
     logger.warning("TensorRT/PyCUDA not available. SVTRv2 TRT will be disabled.")
 
 # Reuse preprocessing and decode from ONNX module — no duplication
-from .text_recognizer_svtrv2_onnx import (
+from .svtrv2_onnx import (
     _load_charset,
     _preprocess_image,
     _ctc_greedy_decode,

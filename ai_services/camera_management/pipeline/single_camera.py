@@ -14,19 +14,16 @@ import cv2
 import numpy as np
 
 from .base import InferencePipelineTemplate, PipelineContext
+from .frame_data import (
+    build_frame_verification_data,
+    get_color_localization_method,
+    is_color_check_frame,
+)
 from ..camera import Camera
 
 logger = logging.getLogger(__name__)
 
 
-def _get_color_localization_method(template: Optional[Dict[str, Any]]) -> str:
-    color_cfg = (template or {}).get('color_config') or {}
-    method = (
-        (template or {}).get('color_localization_method')
-        or color_cfg.get('localization_method')
-        or 'image_proc'
-    )
-    return str(method).strip().lower()
 
 
 class SingleCameraPipeline(InferencePipelineTemplate):
@@ -1041,91 +1038,23 @@ class SingleCameraPipeline(InferencePipelineTemplate):
         if not context.product_verification_service:
             return [None] * len(frames)
 
-        # Prepare frames data for batch verification
+        # Prepare frames data for batch verification.
+        # Single-camera: template_idx == the frame index, one template per frame.
         frames_data = []
         for idx, result in enumerate(transformed_results):
-            # Get center_offset_threshold from template config
-            # In single camera scenario with multiple templates, idx corresponds to template_idx
-            center_offset_threshold = None
-            center_offset_threshold_left = 50.0
-            center_offset_threshold_right = 50.0
-            center_offset_unit = 'px'
-            wrinkle_area = None
-            wrinkle_min_area = 0.0
-            wrinkle_max_area = 0.0
-            template = None
-            anomaly_config = None
-            if camera.templates and idx < len(camera.templates):
-                template = camera.templates[idx]
-                center_offset_threshold = template.get('center_offset_threshold', 50.0)
-                center_offset_threshold_left = template.get('center_offset_threshold_left', 50.0)
-                center_offset_threshold_right = template.get('center_offset_threshold_right', 50.0)
-                center_offset_unit = template.get('center_offset_unit', 'px') or 'px'
-                wrinkle_area = template.get('wrinkle_area', None)
-                wrinkle_min_area = template.get('wrinkle_min_area', 0.0) or 0.0
-                wrinkle_max_area = template.get('wrinkle_max_area', 0.0) or 0.0
-                # When set + enabled, product_verifier's _batch_wrinkle_check
-                # routes this template's label-defect check to
-                # anomaly_inference.py instead of WrinkledSegmenterTRT.
-                anomaly_config = template.get('anomaly_config', None)
-
-            wrinkle_conf = getattr(camera, 'wrinkle_conf', 0.25)
-            wrinkle_show_when_pass = getattr(camera, 'wrinkle_show_when_pass', True)
-            mask_overlap_threshold = getattr(camera, 'mask_overlap_threshold', 0.6)
-            # Per-template color_config (Check_Color path). Pulled from the same
-            # template dict so color verifier doesn't need to look it up again.
-            color_config = (
-                template.get('color_config')
+            template = (
+                camera.templates[idx]
                 if camera.templates and idx < len(camera.templates)
                 else None
             )
-            color_localization_method = _get_color_localization_method(template)
-            # Color-check frames must run even if SuperPoint match failed —
-            # but only for the legacy image-proc localization path.
-            is_color_check_frame = (
-                getattr(camera, 'function_type', '') == 'Check_Color'
-                and color_config is not None
-                and color_localization_method != 'superpoint'
-            )
-
-            if (result.get('success') or is_color_check_frame) and idx < len(frames):
-                frames_data.append({
-                    'frame_img': frames[idx],
-                    'transformed_bboxes': result.get('transformed_bboxes', []),
-                    'camera': camera,
-                    'template_idx': idx,
-                    'color_config': color_config,
-                    'color_localization_method': color_localization_method,
-                    'center_offset_threshold': center_offset_threshold,
-                    'center_offset_threshold_left': center_offset_threshold_left,
-                    'center_offset_threshold_right': center_offset_threshold_right,
-                    'center_offset_unit': center_offset_unit,
-                    'wrinkle_area': wrinkle_area,
-                    'wrinkle_min_area': wrinkle_min_area,
-                    'wrinkle_max_area': wrinkle_max_area,
-                    'wrinkle_conf': wrinkle_conf,
-                    'wrinkle_show_when_pass': wrinkle_show_when_pass,
-                    'mask_overlap_threshold': mask_overlap_threshold,
-                    'anomaly_config': anomaly_config,
-                })
-            else:
-                frames_data.append({
-                    'frame_img': None,
-                    'transformed_bboxes': [],
-                    'camera': camera,
-                    'template_idx': idx,
-                    'color_config': color_config,
-                    'color_localization_method': color_localization_method,
-                    'center_offset_threshold': center_offset_threshold,
-                    'center_offset_unit': center_offset_unit,
-                    'wrinkle_area': wrinkle_area,
-                    'wrinkle_min_area': wrinkle_min_area,
-                    'wrinkle_max_area': wrinkle_max_area,
-                    'wrinkle_conf': wrinkle_conf,
-                    'wrinkle_show_when_pass': wrinkle_show_when_pass,
-                    'mask_overlap_threshold': mask_overlap_threshold,
-                    'anomaly_config': anomaly_config,
-                })
+            has_frame = (
+                result.get('success') or is_color_check_frame(camera, template)
+            ) and idx < len(frames)
+            frames_data.append(build_frame_verification_data(
+                camera, template, idx,
+                frame_img=frames[idx] if has_frame else None,
+                transformed_bboxes=result.get('transformed_bboxes', []) if has_frame else [],
+            ))
 
         # Filter valid frames for batch processing
         valid_frames = [

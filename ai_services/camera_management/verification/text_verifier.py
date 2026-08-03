@@ -19,8 +19,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field
 
-from ..ocr_utils import crop_text_region
-from ..smtr_utils import _to_candidates
+from ..ocr.ocr_utils import crop_text_region
+from ..ocr.smtr_utils import _to_candidates
 
 from .char_quality import (
     char_quality as compute_char_quality,

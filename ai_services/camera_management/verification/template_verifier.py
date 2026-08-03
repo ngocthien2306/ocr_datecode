@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from dataclasses import dataclass
 
-from ..ocr_utils import crop_text_region
+from ..ocr.ocr_utils import crop_text_region
 
 if TYPE_CHECKING:
     from ..camera import Camera

@@ -28,7 +28,7 @@ from typing import Dict, Tuple
 import cv2
 import numpy as np
 
-from .char_quality_v3 import (
+from .v3 import (
     _crop_resize,
     SIZE, PAD_Y_DEFAULT, PAD_X_DEFAULT,
 )

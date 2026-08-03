@@ -14,7 +14,7 @@ except ImportError:
     TENSORRT_AVAILABLE = False
     logger.warning("TensorRT/PyCUDA not available.")
 
-from .smtr_utils import build_postprocessors, preprocess, preprocess_batch, _decode_dual
+from ..smtr_utils import build_postprocessors, preprocess, preprocess_batch, _decode_dual
 
 
 class TextRecognizerSMTRTRT:

@@ -144,7 +144,7 @@ class TextRecognizerTRT:
         Returns:
             (inputs, outputs, bindings) tuple
         """
-        from .ocr_utils import HostDeviceMem
+        from ..ocr_utils import HostDeviceMem
 
         inputs = []
         outputs = []
@@ -211,7 +211,7 @@ class TextRecognizerTRT:
         Returns:
             Preprocessed tensor [1, 3, 48, W]
         """
-        from .ocr_utils import preprocess_text_image
+        from ..ocr_utils import preprocess_text_image
 
         return preprocess_text_image(
             image=image,

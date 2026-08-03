@@ -228,7 +228,7 @@ def test_onnx_vs_trt_comparison(batch_sizes=[1, 3, 5, 7]):
         if str(cm_path) not in sys.path:
             sys.path.insert(0, str(cm_path))
 
-        from camera_management.text_recognizer_trt import TextRecognizerTRT
+        from camera_management.ocr.backends.default_trt import TextRecognizerTRT
         trt_available = True
     except Exception as e:
         print(f"⚠️ TensorRT not available: {e}")

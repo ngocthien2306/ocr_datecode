@@ -18,7 +18,7 @@ from typing import Dict, Tuple, Optional
 import cv2
 import numpy as np
 
-from .char_quality_v3 import _binarize_norm, _crop_resize, PAD_Y_DEFAULT, PAD_X_DEFAULT  # reuse
+from .v3 import _binarize_norm, _crop_resize, PAD_Y_DEFAULT, PAD_X_DEFAULT  # reuse
 
 SIZE = 64
 DILATE_PX = 3

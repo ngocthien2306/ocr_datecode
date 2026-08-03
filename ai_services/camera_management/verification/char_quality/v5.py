@@ -26,7 +26,7 @@ import numpy as np
 
 # import sys (not needed in package)
 # (path injection removed — using relative imports below)
-from .char_quality_v4 import (
+from .v4 import (
     _crop_resize, _try_align, _decompose_affine, _stroke_width,
     SIZE, DILATE_PX, NOISE_FLOOR_OVER, NOISE_FLOOR_UNDER,
     MAX_PENALTY, TRANS_MAX_RATIO, PAD_Y_DEFAULT, PAD_X_DEFAULT,
