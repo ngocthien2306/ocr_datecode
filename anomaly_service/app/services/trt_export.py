@@ -57,7 +57,7 @@ def build_engine_from_onnx(
     min_shape: Tuple[int, ...],
     opt_shape: Tuple[int, ...],
     max_shape: Tuple[int, ...],
-    fp16: bool = True,
+    fp16: bool = False,
     workspace_gib: int = 4,
     max_fp32_retries: int = 25,
     log=None,

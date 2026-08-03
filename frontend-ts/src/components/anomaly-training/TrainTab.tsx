@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import {
-  anomalyTrainingAPI, AnomalyAlgorithm, AnomalyModel, AnomalyTrainRequest, TrainLogEntry,
+  anomalyTrainingAPI, AnomalyAlgorithm, AnomalyModel, AnomalyTrainRequest, TrainLogEntry, fmtMetric,
 } from '@/services/anomalyTraining';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 
@@ -290,7 +290,7 @@ export default function TrainTab({ projectId, models, onModelsChange, selectedMo
                   </div>
                   <div className="at-hint">{new Date(m.created_at).toLocaleString()}</div>
                   {m.status === 'completed' && (
-                    <div className="at-hint">AUROC {m.metrics.image_auroc.toFixed(3)} · F1 {m.metrics.image_f1.toFixed(3)}</div>
+                    <div className="at-hint">AUROC {fmtMetric(m.metrics.image_auroc)} · F1 {fmtMetric(m.metrics.image_f1)}</div>
                   )}
                   {selected && <div className="at-hint" style={{ color: '#2563eb', fontWeight: 600 }}>selected for Eval/Export</div>}
                 </div>

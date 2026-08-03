@@ -46,9 +46,12 @@ async def start_training(
             "Need at least one 'normal' image imported before training.",
         )
     # abnormal_count == 0 is fine -- PatchCore/Padim fit on normal images only.
-    # _build_datamodule/_compute_metrics already handle the no-abnormal case
-    # (image_auroc/image_f1 just report as 0.0 / not meaningful until you
-    # import some abnormal images to evaluate against).
+    # _build_datamodule/_compute_metrics already handle the no-abnormal case:
+    # image_auroc/image_f1 come back as None ("N/A" in the UI) until some
+    # abnormal images are imported to evaluate against. Note that with no
+    # abnormal images anomalib's adaptive threshold also degenerates to the
+    # highest score seen among normal images, so the resulting 0..1 pred_score
+    # scale is not yet a calibrated confidence.
 
     model_record = await repo.create_model_record(project_id, request.algorithm, request.model_dump())
     model_id = model_record.id
@@ -110,6 +113,7 @@ async def _run_training_bg(repo: AnomalyRepository, project_id: str, model_id: s
             "metrics": {
                 "image_auroc": metrics["image_auroc"],
                 "image_f1": metrics["image_f1"],
+                "metrics_available": metrics["metrics_available"],
                 "threshold": metrics["threshold"],
                 "n_normal_train": n_normal_train,
                 "n_normal_test": metrics["n_normal_test"],
@@ -120,7 +124,15 @@ async def _run_training_bg(repo: AnomalyRepository, project_id: str, model_id: s
             "progress": 100.0,
         })
         await repo.set_status(project_id, "trained")
-        log_buffer.push(model_id, f"[anomaly] Training completed (AUROC={metrics['image_auroc']:.3f})")
+        if metrics["metrics_available"]:
+            log_buffer.push(model_id, f"[anomaly] Training completed (AUROC={metrics['image_auroc']:.3f})")
+        else:
+            log_buffer.push(
+                model_id,
+                "[anomaly] Training completed (AUROC/F1 = N/A: the test set has no abnormal "
+                f"images, only {metrics['n_normal_test']} normal — import some abnormal crops "
+                "to get measurable metrics and a calibrated threshold)",
+            )
 
         # Auto-export ONNX then TensorRT so Eval/Export/Test don't need any
         # manual "Export" click first. Each step is best-effort and
@@ -150,14 +162,18 @@ async def _run_training_bg(repo: AnomalyRepository, project_id: str, model_id: s
             try:
                 log_buffer.push(model_id, "[anomaly] Auto-exporting TensorRT engine...")
                 engine_path = export_dir / "model.engine"
-                input_name, _ = onnx_input_info(onnx_path)
-                image_size = request.image_size
+                # Take HxW from the exported ONNX, not from request.image_size:
+                # export_onnx() falls back to the checkpoint's real training
+                # resolution if the two disagree, and the engine must match the
+                # graph it is built from.
+                input_name, onnx_dims = onnx_input_info(onnx_path)
+                image_size = int(onnx_dims[2])
                 await loop.run_in_executor(
                     None,
                     lambda: build_engine_from_onnx(
                         onnx_path, engine_path, input_name,
                         (1, 3, image_size, image_size), (1, 3, image_size, image_size),
-                        (8, 3, image_size, image_size), fp16=True,
+                        (8, 3, image_size, image_size), fp16=False,
                     ),
                 )
                 await repo.update_model_record(model_id, {"engine_path": str(engine_path)})

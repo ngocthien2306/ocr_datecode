@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { anomalyTrainingAPI, AnomalyProject, AnomalyModel } from '@/services/anomalyTraining';
+import { anomalyTrainingAPI, AnomalyProject, AnomalyModel, fmtMetric } from '@/services/anomalyTraining';
 import '@/styles/AnomalySetupModal.css';
 
 interface AnomalyConfig {
@@ -108,7 +108,7 @@ export default function AnomalySetupModal({ isOpen, templateName, initialConfig,
               <option value="">{loadingModels ? 'Loading...' : 'Select a model'}</option>
               {usableModels.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.algorithm} · AUROC {m.metrics.image_auroc.toFixed(3)} · {new Date(m.created_at).toLocaleDateString()}
+                  {m.algorithm} · AUROC {fmtMetric(m.metrics.image_auroc)} · {new Date(m.created_at).toLocaleDateString()}
                 </option>
               ))}
             </select>

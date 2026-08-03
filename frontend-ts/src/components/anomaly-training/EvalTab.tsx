@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { anomalyTrainingAPI, AnomalyModel, TestResultsResponse } from '@/services/anomalyTraining';
+import { anomalyTrainingAPI, AnomalyModel, TestResultsResponse, fmtMetric } from '@/services/anomalyTraining';
 
 interface Props {
   projectId: string;
@@ -49,13 +49,23 @@ export default function EvalTab({ projectId, model }: Props) {
         {' '}(pick a different version in the Train tab's model list)
       </div>
 
+      {result && !result.metrics_available && (
+        <div className="at-hint" style={{ color: '#b45309', fontWeight: 600 }}>
+          AUROC/F1 are not measurable for this model: its test set contains{' '}
+          {result.n_normal_test} normal and 0 abnormal images, and both metrics need
+          both classes. Import abnormal crops (Dataset tab) and re-train — that also
+          gives the threshold something real to calibrate against; right now it
+          degenerates to "worse than the worst normal image seen during training".
+        </div>
+      )}
+
       <div className="at-stats-row">
         <div className="at-stat-card">
-          <div className="at-stat-value">{(result?.image_auroc ?? 0).toFixed(3)}</div>
+          <div className="at-stat-value">{fmtMetric(result?.image_auroc)}</div>
           <div className="at-stat-label">Image AUROC</div>
         </div>
         <div className="at-stat-card">
-          <div className="at-stat-value">{(result?.image_f1 ?? 0).toFixed(3)}</div>
+          <div className="at-stat-value">{fmtMetric(result?.image_f1)}</div>
           <div className="at-stat-label">Image F1 @ threshold</div>
         </div>
         <div className="at-stat-card normal">

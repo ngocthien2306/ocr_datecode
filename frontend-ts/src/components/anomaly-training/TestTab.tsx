@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { anomalyTrainingAPI, AnomalyModel, InferenceEngine, PredictResult, TestResultItem } from '@/services/anomalyTraining';
+import { anomalyTrainingAPI, AnomalyModel, InferenceEngine, PredictResult, TestResultItem, fmtMetric } from '@/services/anomalyTraining';
 
 interface Props {
   projectId: string;
@@ -97,7 +97,7 @@ export default function TestTab({ projectId, model }: Props) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: 1, minHeight: 0 }}>
       <div className="at-hint">
         Testing: <b>{model.algorithm}</b>, trained {new Date(model.created_at).toLocaleString()}
-        {' '}· AUROC {model.metrics.image_auroc.toFixed(3)} · F1 {model.metrics.image_f1.toFixed(3)}
+        {' '}· AUROC {fmtMetric(model.metrics.image_auroc)} · F1 {fmtMetric(model.metrics.image_f1)}
         {' '}(pick a different version in the Train tab's model list)
       </div>
 

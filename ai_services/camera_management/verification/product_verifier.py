@@ -100,7 +100,7 @@ class ProductVerificationService:
                 self.obb_model = YOLOOBBTensorRT(
                     engine_path=engine_path,
                     class_names=['product', 'label', "wrinkled"],
-                    img_size=320
+                    img_size=640
                 )
                 logger.info(
                     f"YOLO OBB model loaded: {engine_path}, "

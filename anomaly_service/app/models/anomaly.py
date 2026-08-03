@@ -100,8 +100,12 @@ class AnomalyTrainRequest(BaseModel):
 
 
 class AnomalyModelMetrics(BaseModel):
-    image_auroc: float = 0.0
-    image_f1: float = 0.0
+    # None (not 0.0) when the test set is single-class -- i.e. no abnormal
+    # images imported yet, so AUROC/F1 are undefined rather than bad. The FE
+    # renders that as "N/A". See _compute_metrics.
+    image_auroc: Optional[float] = None
+    image_f1: Optional[float] = None
+    metrics_available: bool = False
     threshold: float = 0.5
     n_normal_train: int = 0
     n_normal_test: int = 0

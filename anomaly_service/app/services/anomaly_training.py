@@ -85,7 +85,14 @@ def _build_datamodule(project_id: str, request: AnomalyTrainRequest):
         val_split_mode=ValSplitMode.SAME_AS_TEST,
         train_batch_size=8,
         eval_batch_size=8,
-        num_workers=4,
+        # 0, not the anomalib default of 4: with num_workers>0 PyTorch spawns
+        # separate multiprocessing DataLoader worker processes, and at least
+        # one has been observed to survive after training finishes (idle,
+        # 0% CPU) holding onto several GB of RSS (torch/TensorRT libs +
+        # cached tensors) until manually killed. PatchCore/Padim run exactly
+        # 1 epoch on small datasets, so in-process loading isn't a
+        # bottleneck -- not worth the leak risk to parallelize it.
+        num_workers=0,
     )
 
 
@@ -93,25 +100,53 @@ def _build_model(request: AnomalyTrainRequest):
     from anomalib.models import Padim, Patchcore
 
     algo = request.algorithm.lower()
+    cls = Patchcore if algo == "patchcore" else Padim if algo == "padim" else None
+    if cls is None:
+        raise ValueError(f"Unknown algorithm: {request.algorithm!r} (expected 'patchcore' or 'padim')")
+
+    # request.image_size MUST be wired in here, not only at export time. In
+    # anomalib 2.x the training/eval resize lives in the model's PreProcessor
+    # (Resize + Normalize) -- the Folder datamodule has no image_size of its
+    # own -- so leaving it at the default silently trains at 256x256 no matter
+    # what the user picked, while export_onnx() still bakes input_size=512.
+    # That train/serve resolution mismatch is catastrophic for PatchCore/Padim:
+    # the memory bank / Gaussian is fitted on patch features at one scale, so
+    # feeding a different scale puts every patch far from every stored feature.
+    # Measured on a 512-export of a 256-trained model: raw score 0.58-0.69 ->
+    # 20.6-22.7 (~33x) on the model's own normal training images, saturating
+    # pred_score to exactly 1.0000 for every image in the Test tab while Eval
+    # (which runs at the training resolution) looked perfectly healthy.
+    size = (request.image_size, request.image_size)
+    kwargs: Dict[str, Any] = {
+        "backbone": request.backbone,
+        "layers": request.layers,
+        "pre_processor": cls.configure_pre_processor(image_size=size),
+    }
     if algo == "patchcore":
-        return Patchcore(
-            backbone=request.backbone,
-            layers=request.layers,
-            coreset_sampling_ratio=request.coreset_sampling_ratio,
-        )
-    if algo == "padim":
-        return Padim(backbone=request.backbone, layers=request.layers)
-    raise ValueError(f"Unknown algorithm: {request.algorithm!r} (expected 'patchcore' or 'padim')")
+        kwargs["coreset_sampling_ratio"] = request.coreset_sampling_ratio
+    return cls(**kwargs)
 
 
 def encode_heatmap_overlay(img: np.ndarray, anomaly_map: np.ndarray, quality: int = 90) -> str:
     """Per-pixel anomaly score map -> JPEG-encoded base64 heatmap blended
-    over the original crop (min-max normalized per-image, JET colormap,
-    resized to match img -- anomaly_map comes out at the model's
-    fixed training resolution, e.g. 256x256, not the crop's native size)."""
-    m = anomaly_map.astype(np.float32)
-    lo, hi = float(m.min()), float(m.max())
-    m = (m - lo) / (hi - lo) if hi > lo else np.zeros_like(m)
+    over the original crop (JET colormap, resized to match img -- anomaly_map
+    comes out at the model's fixed training resolution, e.g. 256x256, not the
+    crop's native size).
+
+    The map is rendered on its ABSOLUTE scale: anomalib's post-processor
+    already normalizes anomaly_map so that 0.5 is the decision threshold, so
+    0 -> cold, 0.5 -> at threshold, 1 -> clearly anomalous, and two crops are
+    directly comparable to each other.
+
+    Do NOT min-max stretch per image. That was the original implementation and
+    it made every crop look uniformly red-hot: a perfectly normal crop whose
+    map peaks at 0.12 had that 0.12 rescaled to 255, i.e. pure red in JET.
+    Measured on this project's own normal-only test split, per-image peaks ran
+    0.12-0.47 with 0.00% of pixels above the 0.5 threshold -- so every red
+    region in those heatmaps was an artifact of the rescale, and normal vs
+    defective crops were visually indistinguishable.
+    """
+    m = np.clip(anomaly_map.astype(np.float32), 0.0, 1.0)
     m_u8 = (m * 255).astype(np.uint8)
     if m_u8.shape[:2] != img.shape[:2]:
         m_u8 = cv.resize(m_u8, (img.shape[1], img.shape[0]))
@@ -128,13 +163,23 @@ def _compute_metrics(scores: List[float], labels: List[bool], threshold: float =
     y_score = np.asarray(scores, dtype=np.float32)
     y_pred = (y_score >= threshold).astype(np.int32)
 
-    auroc = float(roc_auc_score(y_true, y_score)) if len(np.unique(y_true)) > 1 else 0.0
-    f1 = float(f1_score(y_true, y_pred, zero_division=0))
+    # Both AUROC and F1 are undefined on a single-class test set -- which is
+    # exactly what you get before any abnormal images are imported (see
+    # _build_datamodule). Report them as None, not 0.0: a hard 0.0 is
+    # indistinguishable in the UI from a model that genuinely scores 0.0, so it
+    # reads as "completely broken" when the truth is "not measurable yet".
+    # (F1 would technically evaluate to 0.0 here -- zero true positives are
+    # possible when no sample is positive -- but that number carries no
+    # information about the model, so it's suppressed alongside AUROC.)
+    measurable = len(np.unique(y_true)) > 1
+    auroc = round(float(roc_auc_score(y_true, y_score)), 4) if measurable else None
+    f1 = round(float(f1_score(y_true, y_pred, zero_division=0)), 4) if measurable else None
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1]).tolist()
 
     return {
-        "image_auroc": round(auroc, 4),
-        "image_f1": round(f1, 4),
+        "image_auroc": auroc,
+        "image_f1": f1,
+        "metrics_available": measurable,
         "threshold": threshold,
         "confusion_matrix": cm,  # [[TN, FP], [FN, TP]], 0=normal 1=abnormal
         "n_normal_test": int((y_true == 0).sum()),
@@ -287,11 +332,37 @@ def load_model_from_checkpoint(algorithm: str, checkpoint_path: Path):
     return cls.load_from_checkpoint(str(checkpoint_path), weights_only=False)
 
 
+def _trained_image_size(model) -> Optional[int]:
+    """The square resize the model was actually TRAINED at, read back off the
+    checkpoint's PreProcessor, or None if it can't be determined."""
+    transform = getattr(getattr(model, "pre_processor", None), "transform", None)
+    for t in getattr(transform, "transforms", []) or []:
+        size = getattr(t, "size", None)
+        if size and len(size) == 2 and size[0] == size[1]:
+            return int(size[0])
+    return None
+
+
 def export_onnx(algorithm: str, checkpoint_path: Path, export_dir: Path, image_size: int) -> Path:
     import torch
     from anomalib.engine import Engine
 
     model = load_model_from_checkpoint(algorithm, checkpoint_path)
+
+    # Exporting at a different resolution than the model was trained at
+    # silently destroys accuracy (see _build_model) -- every image saturates to
+    # pred_score 1.0. Trust the checkpoint over the caller's argument, and say
+    # so loudly: a stale model record's image_size must not produce a
+    # confidently-wrong engine.
+    trained = _trained_image_size(model)
+    if trained is not None and trained != image_size:
+        logger.warning(
+            f"[anomaly export] image_size mismatch: checkpoint {checkpoint_path.name} was "
+            f"trained at {trained}x{trained} but export requested {image_size}x{image_size}. "
+            f"Exporting at {trained} instead — a mismatched export saturates every score to 1.0."
+        )
+        image_size = trained
+
     engine = Engine(
         default_root_dir=str(export_dir / "_engine_tmp"),
         accelerator="gpu" if torch.cuda.is_available() else "cpu",

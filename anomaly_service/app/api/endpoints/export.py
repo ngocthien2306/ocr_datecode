@@ -55,7 +55,10 @@ async def export_model_onnx(
         raise HTTPException(500, f"Export failed: {e}")
 
     await repo.update_model_record(model_id, {"onnx_path": str(onnx_path)})
-    return {"onnx_path": str(onnx_path), "image_size": image_size}
+    # Report the size the graph actually got, which export_onnx() overrides to
+    # the checkpoint's training resolution if model.params disagrees with it.
+    _, dims = onnx_input_info(onnx_path)
+    return {"onnx_path": str(onnx_path), "image_size": int(dims[2])}
 
 
 @router.get("/projects/{project_id}/models/{model_id}/export/onnx", tags=["Anomaly Export"])
@@ -82,6 +85,7 @@ async def export_model_tensorrt(
     project_id: str,
     model_id: str,
     max_batch: int = 8,
+    fp16: bool = False,
     repo: AnomalyRepository = Depends(get_repo),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -99,12 +103,16 @@ async def export_model_tensorrt(
     if max_batch < 1:
         raise HTTPException(400, "max_batch must be >= 1")
 
-    image_size = int(model.params.get("image_size", 256))
     onnx_path = Path(model.onnx_path)
     engine_path = _engine_path(project_id, model_id)
 
     try:
+        # HxW comes from the ONNX graph itself, never from model.params: the
+        # engine has to match the graph it's built from, and a params value that
+        # disagrees with the checkpoint's training resolution would produce an
+        # engine that saturates every score to 1.0 (see _build_model).
         input_name, dims = onnx_input_info(onnx_path)
+        image_size = int(dims[2])
         min_shape = (1, 3, image_size, image_size)
         opt_shape = (1, 3, image_size, image_size)
         max_shape = (max_batch, 3, image_size, image_size)
@@ -112,7 +120,7 @@ async def export_model_tensorrt(
         logs: list = []
         build_engine_from_onnx(
             onnx_path, engine_path, input_name, min_shape, opt_shape, max_shape,
-            fp16=True, log=logs.append,
+            fp16=fp16, log=logs.append,
         )
         for line in logs:
             logger.info(f"[export-tensorrt] {line}")
@@ -125,6 +133,7 @@ async def export_model_tensorrt(
         "engine_path": str(engine_path),
         "input_name": input_name,
         "min_shape": list(min_shape), "opt_shape": list(opt_shape), "max_shape": list(max_shape),
+        "fp16": fp16,
     }
 
 
@@ -170,18 +179,19 @@ async def verify_tensorrt(
     if not model.onnx_path or not Path(model.onnx_path).exists():
         raise HTTPException(400, "No ONNX export for this model yet — export it first")
 
-    image_size = int(model.params.get("image_size", 256))
     engine_path = _engine_path(project_id, model_id)
     cache_hit = engine_path.exists()
 
     try:
         t0 = time.perf_counter()
         if not cache_hit:
-            input_name, _ = onnx_input_info(Path(model.onnx_path))
+            # HxW from the graph, not model.params -- see export_model_tensorrt.
+            input_name, dims = onnx_input_info(Path(model.onnx_path))
+            image_size = int(dims[2])
             build_engine_from_onnx(
                 Path(model.onnx_path), engine_path, input_name,
                 (1, 3, image_size, image_size), (1, 3, image_size, image_size),
-                (max_batch, 3, image_size, image_size), fp16=True,
+                (max_batch, 3, image_size, image_size), fp16=False,
             )
             await repo.update_model_record(model_id, {"engine_path": str(engine_path)})
         build_ms = (time.perf_counter() - t0) * 1000

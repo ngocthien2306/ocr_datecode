@@ -27,6 +27,7 @@ import cv2 as cv
 import numpy as np
 import tensorrt as trt
 import torch
+import torchvision.transforms.v2.functional as tv_f
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
@@ -92,6 +93,29 @@ def _get_trt_state(model):
     return state
 
 
+def _graph_input_size(model, engine: str) -> int:
+    """The square HxW the exported graph actually expects, read off the graph
+    itself rather than model.params["image_size"].
+
+    Those two used to be able to disagree: image_size was only ever applied at
+    export time, so a model trained at anomalib's default 256 could be exported
+    at 512. Resizing to the params value then fed the network a scale its memory
+    bank was never fitted on, which saturated pred_score to exactly 1.0000 for
+    every image (measured: raw score 0.58-0.69 -> 20.6-22.7). _build_model now
+    wires image_size into training too, but reading the graph keeps this
+    endpoint correct for models exported before that fix.
+    """
+    if engine == "onnx":
+        shape = list(_get_onnx_session(model).get_inputs()[0].shape)
+    else:
+        state = _get_trt_state(model)
+        shape = list(state["engine"].get_tensor_shape(state["input_name"]))
+    h, w = shape[2], shape[3]
+    if not isinstance(h, int) or not isinstance(w, int) or h != w or h <= 0:
+        raise HTTPException(500, f"Unexpected graph input shape {shape} — expected a fixed square HxW")
+    return h
+
+
 def _run_onnx(model, x: np.ndarray) -> Dict[str, np.ndarray]:
     sess = _get_onnx_session(model)
     input_name = sess.get_inputs()[0].name
@@ -149,14 +173,34 @@ async def predict_image(
     if img is None:
         raise HTTPException(400, "Could not decode uploaded file as an image")
 
-    image_size = int(model.params.get("image_size", 256))
+    try:
+        image_size = _graph_input_size(model, engine)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"[test] Could not read input shape for model {model_id} (engine={engine})")
+        raise HTTPException(500, f"Could not load {engine} graph: {e}")
+
     img_rgb = cv.cvtColor(img, cv.COLOR_BGR2RGB)
-    resized = cv.resize(img_rgb, (image_size, image_size))
-    # NOTE: no ImageNet mean/std normalization here -- anomalib's export_transform
-    # (Resize + Normalize) is baked into the exported ONNX/TensorRT graph itself.
-    # Verified against a real train/good image: applying normalization again here
-    # flips a genuinely-normal image's pred_score from 0.0 to 1.0 (false abnormal).
-    x = (resized.astype(np.float32) / 255.0).transpose(2, 0, 1)[None]
+    # No ImageNet mean/std normalization here -- anomalib bakes Normalize into
+    # the exported ONNX/TensorRT graph (/pre_processor/export_transform/{Sub,Div}).
+    # Verified against a real train/good image: normalizing again here flips a
+    # genuinely-normal image's pred_score from 0.0 to 1.0 (false abnormal).
+    #
+    # Resize, however, is NOT in the exported graph (its input is a fixed
+    # 3x{image_size}x{image_size}), so we must do it here -- and it has to match
+    # anomalib's eval transform exactly: torchvision bilinear with antialias=True.
+    # cv.resize is NOT equivalent and must not be used: on these crops
+    # (~1600px -> 256px, a 6.3x downscale) the aliasing it leaves behind reads as
+    # texture anomaly to PatchCore, which tripled the raw score (5-7 -> 11-23) and
+    # saturated pred_score to 1.0000 on every image tested -- including the
+    # model's own training images. cv.INTER_AREA is not equivalent either
+    # (measured: also 1.0000); only the antialiased torchvision path reproduces
+    # the scores stored by train_model()'s eval pass.
+    t = torch.from_numpy(img_rgb).permute(2, 0, 1).float().div_(255.0)
+    x = np.ascontiguousarray(
+        tv_f.resize(t, [image_size, image_size], antialias=True).unsqueeze(0).numpy()
+    )
 
     run_fn = _run_onnx if engine == "onnx" else _run_tensorrt
     cache_key = (model_id, engine)

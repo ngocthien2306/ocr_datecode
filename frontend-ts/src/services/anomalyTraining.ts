@@ -125,12 +125,22 @@ export interface AnomalyTrainRequest {
 }
 
 export interface AnomalyModelMetrics {
-  image_auroc: number;
-  image_f1: number;
+  // null when the test set has no abnormal images: AUROC/F1 are undefined
+  // there, not zero. Render with fmtMetric(), never `?? 0`.
+  image_auroc: number | null;
+  image_f1: number | null;
+  metrics_available: boolean;
   threshold: number;
   n_normal_train: number;
   n_normal_test: number;
   n_abnormal_test: number;
+}
+
+/** Format an AUROC/F1 value, distinguishing "not measurable" from 0.000.
+ *  A single-class test set (no abnormal images imported yet) makes both
+ *  metrics undefined; showing 0.000 there reads as a broken model. */
+export function fmtMetric(v: number | null | undefined): string {
+  return v == null ? 'N/A' : v.toFixed(3);
 }
 
 export interface AnomalyModel {
@@ -178,8 +188,9 @@ export interface TestResultItem {
 }
 
 export interface TestResultsResponse {
-  image_auroc: number;
-  image_f1: number;
+  image_auroc: number | null;
+  image_f1: number | null;
+  metrics_available: boolean;
   threshold: number;
   confusion_matrix: number[][]; // [[TN, FP], [FN, TP]]
   n_normal_test: number;
