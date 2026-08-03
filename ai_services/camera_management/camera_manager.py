@@ -12,7 +12,7 @@ Refactored to use separate handlers for better organization:
 import logging
 import os
 import threading
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
 
 home = os.environ.get('HOME')
@@ -312,6 +312,13 @@ class CameraManager:
                     else:
                         logger.warning("⚠️ Failed to initialize inference matchers")
 
+                    # Same reason matchers are initialized here: the first use of a
+                    # TensorRT model costs seconds (engine deserialize + context and
+                    # buffer alloc), and paying it on the first trigger overshot
+                    # delay_reject so the first bottle after a restart was never
+                    # rejected. Do it now, while nothing is waiting on us.
+                    self._warmup_anomaly_models(cameras_with_recipe)
+
                 # Update normal_pulse_ms from recipe (for stuck bottle detection)
                 normal_pulse_ms = recipe_data.get('normal_pulse_ms', 0.0) or 100000.0
                 if float(normal_pulse_ms) < 1:
@@ -399,6 +406,56 @@ class CameraManager:
                     "success": False,
                     "error": str(e)
                 }
+
+    def _warmup_anomaly_models(self, cameras: List['Camera']) -> None:
+        """Pre-load every anomaly model this recipe's templates bind to.
+
+        Counts how many templates share each model so each one gets as many
+        execution contexts warmed as can run concurrently (two label cameras
+        on one model would otherwise still allocate the second context during
+        the first trigger). Warmup failures are logged, never fatal — the
+        model just falls back to loading lazily on its first real frame.
+        """
+        models: Dict[tuple, int] = {}
+        for camera in cameras:
+            for template in (camera.templates or []):
+                cfg = template.get('anomaly_config') or {}
+                if not cfg.get('enabled'):
+                    continue
+                key = (
+                    cfg.get('onnx_path'),
+                    cfg.get('engine_path'),
+                    int(cfg.get('image_size', 256)),
+                )
+                if not (key[0] or key[1]):
+                    continue
+                models[key] = models.get(key, 0) + 1
+
+        if not models:
+            return
+
+        # Timed separately: importing this module pulls in torch/torchvision +
+        # tensorrt/pycuda, and that import is itself part of what the first
+        # trigger used to pay for. Logging the two halves apart means the next
+        # restart shows exactly which one dominates.
+        import time
+        t0 = time.perf_counter()
+        try:
+            from .verification.anomaly_inference import warmup as anomaly_warmup
+        except Exception as e:
+            logger.warning(f"Anomaly warmup skipped (import failed): {e}")
+            return
+        logger.info(f"Anomaly module import: {(time.perf_counter() - t0) * 1000:.0f}ms")
+
+        logger.info(f"Warming up {len(models)} anomaly model(s)...")
+        for (onnx_path, engine_path, image_size), slots in models.items():
+            try:
+                anomaly_warmup(
+                    onnx_path=onnx_path, engine_path=engine_path,
+                    image_size=image_size, slots=slots,
+                )
+            except Exception as e:
+                logger.warning(f"Anomaly warmup raised for {engine_path or onnx_path}: {e}")
 
     def stop_recipe(self, recipe_id: str) -> Dict[str, Any]:
         """

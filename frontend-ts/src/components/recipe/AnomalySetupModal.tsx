@@ -7,8 +7,13 @@ interface AnomalyConfig {
   anomaly_project_id?: string | null;
   anomaly_model_id?: string | null;
   onnx_path?: string | null;
+  engine_path?: string | null;
   image_size?: number;
   threshold?: number;
+  min_area?: number;
+  min_region_area?: number;
+  max_region_area?: number;
+  pixel_threshold?: number | null;
 }
 
 interface Props {
@@ -35,6 +40,18 @@ export default function AnomalySetupModal({ isOpen, templateName, initialConfig,
   const [modelId, setModelId] = useState(initialConfig?.anomaly_model_id || '');
   const [threshold, setThreshold] = useState(initialConfig?.threshold ?? 0.5);
   const [enabled, setEnabled] = useState(initialConfig?.enabled ?? false);
+  const [minArea, setMinArea] = useState(initialConfig?.min_area ?? 0);
+  const [minRegionArea, setMinRegionArea] = useState(initialConfig?.min_region_area ?? 0);
+  const [maxRegionArea, setMaxRegionArea] = useState(initialConfig?.max_region_area ?? 0);
+  const [pixelThreshold, setPixelThreshold] = useState(initialConfig?.pixel_threshold ?? 0.5);
+  // Area-based logic is its own opt-in on top of `enabled` — off by default,
+  // and inferred from whatever was already saved so re-opening the modal
+  // shows the right state. Turning it off clears min_area/max_region_area/
+  // pixel_threshold on save (area logic fully off, pure image-level
+  // threshold — see backend AnomalyConfig docstring).
+  const [areaLogicOn, setAreaLogicOn] = useState(
+    !!(initialConfig && ((initialConfig.min_area ?? 0) > 0 || (initialConfig.max_region_area ?? 0) > 0))
+  );
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [loadingModels, setLoadingModels] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -68,13 +85,22 @@ export default function AnomalySetupModal({ isOpen, templateName, initialConfig,
       setErrorMsg('Pick a trained + exported model, or turn off "Enabled" to keep using the wrinkle check.');
       return;
     }
+    if (areaLogicOn && !(minArea > 0 || maxRegionArea > 0)) {
+      setErrorMsg('Area-based logic is on but both Min total area and Max region area are 0 — set at least one, or turn area logic off.');
+      return;
+    }
     onSave({
       enabled,
       anomaly_project_id: projectId || null,
       anomaly_model_id: modelId || null,
       onnx_path: selectedModel?.onnx_path || null,
+      engine_path: selectedModel?.engine_path || null,
       image_size: Number(selectedModel?.params?.image_size) || 256,
       threshold,
+      min_area: areaLogicOn ? minArea : 0,
+      min_region_area: areaLogicOn ? minRegionArea : 0,
+      max_region_area: areaLogicOn ? maxRegionArea : 0,
+      pixel_threshold: areaLogicOn ? pixelThreshold : null,
     });
   };
 
@@ -108,12 +134,18 @@ export default function AnomalySetupModal({ isOpen, templateName, initialConfig,
               <option value="">{loadingModels ? 'Loading...' : 'Select a model'}</option>
               {usableModels.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.algorithm} · AUROC {fmtMetric(m.metrics.image_auroc)} · {new Date(m.created_at).toLocaleDateString()}
+                  {/* Date AND time — several models get trained on the same day while
+                      tuning, so the date alone doesn't identify which one you just made.
+                      Same toLocaleString() the Train/Eval/Test/Export tabs use. */}
+                  {m.algorithm} · AUROC {fmtMetric(m.metrics.image_auroc)} · {new Date(m.created_at).toLocaleString()}
                 </option>
               ))}
             </select>
             {projectId && !loadingModels && usableModels.length === 0 && (
               <span className="anomaly-setup-hint">No exported model in this project yet — train + export ONNX in Anomaly Training Studio first.</span>
+            )}
+            {selectedModel && !selectedModel.engine_path && (
+              <span className="anomaly-setup-hint">No TensorRT engine exported for this version — inference will fall back to ONNX (slower). Export TensorRT in Anomaly Training Studio for production.</span>
             )}
           </div>
 
@@ -123,6 +155,47 @@ export default function AnomalySetupModal({ isOpen, templateName, initialConfig,
                    onChange={(e) => setThreshold(Number(e.target.value))} />
             <span className="anomaly-setup-hint">Anomaly score ≥ threshold → FAIL. Tune from the model's Eval tab first.</span>
           </div>
+
+          <label className="anomaly-setup-toggle">
+            <input type="checkbox" checked={areaLogicOn} onChange={(e) => setAreaLogicOn(e.target.checked)} />
+            <span>Area-based logic — like the old wrinkle check (min/max region area), on top of Threshold above</span>
+          </label>
+
+          {areaLogicOn && (
+            <div className="anomaly-setup-area-group">
+              <div className="anomaly-setup-row">
+                <label>Pixel threshold: {pixelThreshold.toFixed(2)}</label>
+                <input type="range" min={0} max={1} step={0.01} value={pixelThreshold}
+                       onChange={(e) => setPixelThreshold(Number(e.target.value))} />
+                <span className="anomaly-setup-hint">
+                  Required for area logic to do anything — the model's own built-in mask was found unreliable
+                  (never fires without labeled defect masks in training), so regions are found by thresholding
+                  the raw anomaly heatmap at this value instead. Same 0–1 scale as Threshold.
+                </span>
+              </div>
+
+              <div className="anomaly-setup-row">
+                <label>Min total area (px)</label>
+                <input type="number" min={0} step={100} value={minArea}
+                       onChange={(e) => setMinArea(Number(e.target.value))} />
+                <span className="anomaly-setup-hint">Sum of all valid regions ≥ this → FAIL. 0 = disabled.</span>
+              </div>
+
+              <div className="anomaly-setup-row">
+                <label>Min region area (px)</label>
+                <input type="number" min={0} step={10} value={minRegionArea}
+                       onChange={(e) => setMinRegionArea(Number(e.target.value))} />
+                <span className="anomaly-setup-hint">Regions smaller than this are ignored as noise.</span>
+              </div>
+
+              <div className="anomaly-setup-row">
+                <label>Max region area (px) — critical</label>
+                <input type="number" min={0} step={100} value={maxRegionArea}
+                       onChange={(e) => setMaxRegionArea(Number(e.target.value))} />
+                <span className="anomaly-setup-hint">Any single region ≥ this → immediate FAIL. 0 = disabled.</span>
+              </div>
+            </div>
+          )}
 
           {errorMsg && <div className="anomaly-setup-error">{errorMsg}</div>}
         </div>

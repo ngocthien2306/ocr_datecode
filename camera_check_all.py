@@ -10,15 +10,15 @@ import os
 from datetime import datetime
 import pypylon.pylon as py
 
-SUDO_PASSWORD = "1"
+SUDO_PASSWORD = "666666"
 MAX_ATTEMPTS = 10
 WAIT_AFTER_RESET = 20  # seconds
 GRAB_TIMEOUT_MS = 5000
 
 # Interface → subnet prefix mapping
 IFACE_SUBNETS = {
-    "eth1": "192.168.120",
-    "eth2": "192.168.100",
+    "enp5s0": "192.168.90",
+    "enp6s0": "192.168.100",
 }
 EXPECTED_COUNT = 2
 

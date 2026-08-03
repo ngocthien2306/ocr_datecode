@@ -18,6 +18,17 @@ aiohttp>=3.9.0
 onnxruntime>=1.16.0
 # onnxruntime-gpu>=1.16.0  # Uncomment for GPU support
 
+# Anomaly detection (camera_management/verification/anomaly_inference.py) --
+# PatchCore's score is extremely sensitive to the exact resize algorithm;
+# only torchvision's antialiased resize reproduces anomaly_service's
+# training-time scores (cv2/PIL resize saturate every score to ~1.0 -- see
+# module docstring). CPU-only build is enough: resize never touches the GPU,
+# the model itself still runs on TensorRT/onnxruntime-gpu.
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+# tensorrt + pycuda are required too (same as the wrinkle-segmentation model
+# already uses) but aren't pinned here, consistent with the rest of this
+# file's GPU deps -- install per this project's existing TensorRT setup docs.
+
 # PLC Communication (if using Modbus)
 pymodbus>=3.5.0
 

@@ -614,11 +614,22 @@ class ProductVerificationService:
 
         if product_box is None:
             logger.debug(f"[{serial_number}] image_proc: no product_box detected")
+            # Wall detection failing doesn't invalidate the wrinkle/anomaly result:
+            # that check crops off the SuperPoint-transformed 'label' polygon, not off
+            # this image_proc product_box, so it has already run and produced regions.
+            # Still hand them back as detected_boxes — otherwise the frame is saved with
+            # its mask missing while the UI's numbers say a region was found (the two
+            # disagreed on every 'both walls hidden' frame before this).
+            no_wall_boxes = {}
+            wrinkled_boxes_to_draw = wrinkled_check.get('wrinkled_boxes', [])
+            if wrinkled_boxes_to_draw and (wrinkled_check.get('has_wrinkled', False) or wrinkle_show_when_pass):
+                no_wall_boxes['wrinkled'] = wrinkled_boxes_to_draw
             return {
                 'match': False,
                 'skipped': False,
                 'reason': 'Image processing failed to detect bottle walls',
                 'wrinkled_check': wrinkled_check,
+                'detected_boxes': no_wall_boxes,
             }
 
         has_product = True
@@ -1100,21 +1111,13 @@ class ProductVerificationService:
         frame_indices: List[int],
         batch_results: List,
     ) -> Dict[int, Dict[str, Any]]:
-        """
-        Crop product region từ mỗi frame → build wrinkled_check.
-
-        Per-frame routing: if the frame's template has anomaly_config
-        enabled with an onnx_path, run anomaly_inference.py instead of
-        WrinkledSegmenterTRT — same crop, swap-in model, same result shape
-        (see anomaly_inference.build_anomaly_check). Frames without an
-        active anomaly_config are completely unaffected: same batched
-        wrinkle_seg.predict_batch() call as before.
-
-        Returns: {orig_idx: wrinkled_check}
-        """
+        """Crop product region from each frame, build wrinkled_check.
+        Templates with anomaly_config enabled route to anomaly_inference.py
+        instead of wrinkle_seg (same crop, same result shape — see
+        anomaly_inference.build_anomaly_check). Returns {orig_idx: wrinkled_check}."""
         wrinkled_checks: Dict[int, Dict[str, Any]] = {}
-        wrinkle_crops_info = []   # legacy path — batched through wrinkle_seg
-        anomaly_crops_info = []   # new path — one onnxruntime call per frame
+        wrinkle_crops_info = []
+        anomaly_crops_info = []
 
         for i, orig_idx in enumerate(frame_indices):
             boxes, scores, class_ids = batch_results[i]
@@ -1136,41 +1139,31 @@ class ProductVerificationService:
             if crop.size == 0:
                 continue
 
-            anomaly_config = data.get('anomaly_config') or {}
-            if anomaly_config.get('enabled') and anomaly_config.get('onnx_path'):
-                anomaly_crops_info.append((orig_idx, crop, anomaly_config))
-                continue
-
-            wrinkle_area = data.get('wrinkle_area')              # per-template total threshold
-            wrinkle_min_area = data.get('wrinkle_min_area', 0.0)  # per-template per-region min
-            wrinkle_max_area = data.get('wrinkle_max_area', 0.0)  # per-template per-region critical
-            wrinkle_conf = data.get('wrinkle_conf', 0.25)         # per-recipe conf threshold
             mask_overlap_threshold = data.get('mask_overlap_threshold', 0.6)
-            # Extract 'mask' polygons from transformed_bboxes (frame-space coords)
             mask_polygons = [
                 np.array(b['points'], dtype=np.float32)
                 for b in data['transformed_bboxes']
                 if b.get('type') == 'mask' and b.get('points')
             ]
+
+            anomaly_config = data.get('anomaly_config') or {}
+            if anomaly_config.get('enabled') and (anomaly_config.get('engine_path') or anomaly_config.get('onnx_path')):
+                anomaly_crops_info.append((
+                    orig_idx, crop, anomaly_config,
+                    cx, cy, angle, crop_offset, data['frame_img'].shape,
+                    mask_polygons, mask_overlap_threshold,
+                ))
+                continue
+
             wrinkle_crops_info.append((
-                orig_idx, crop, cx, cy, w, h, angle, crop_offset,
-                data['frame_img'], wrinkle_area, wrinkle_min_area, wrinkle_max_area, wrinkle_conf,
-                mask_polygons, mask_overlap_threshold
+                orig_idx, crop, cx, cy, w, h, angle, crop_offset, data['frame_img'],
+                data.get('wrinkle_area'), data.get('wrinkle_min_area', 0.0),
+                data.get('wrinkle_max_area', 0.0), data.get('wrinkle_conf', 0.25),
+                mask_polygons, mask_overlap_threshold,
             ))
 
-        # ── Anomaly path — one model call per frame (models can differ per
-        # template, so this isn't batchable the way a single shared wrinkle
-        # model is; frame counts per trigger are small enough this is fine) ──
         if anomaly_crops_info:
-            from .anomaly_inference import build_anomaly_check, predict as anomaly_predict
-            for orig_idx, crop, anomaly_config in anomaly_crops_info:
-                pred = anomaly_predict(
-                    anomaly_config['onnx_path'], crop,
-                    image_size=int(anomaly_config.get('image_size', 256)),
-                )
-                wrinkled_checks[orig_idx] = build_anomaly_check(
-                    pred, float(anomaly_config.get('threshold', 0.5)),
-                )
+            wrinkled_checks.update(self._run_anomaly_checks(anomaly_crops_info))
 
         if not wrinkle_crops_info:
             return wrinkled_checks
@@ -1220,6 +1213,35 @@ class ProductVerificationService:
             )
 
         return wrinkled_checks
+
+    def _run_anomaly_checks(self, anomaly_crops_info: List[tuple]) -> Dict[int, Dict[str, Any]]:
+        """PatchCore/Padim can't batch (the exported graph hard-errors on
+        batch>1), so run one prediction per frame — concurrently when
+        there's more than one, since separate TensorRT execution contexts
+        on the same engine are safe to drive from different threads."""
+        from concurrent.futures import ThreadPoolExecutor
+        from .anomaly_inference import build_anomaly_check, predict as anomaly_predict
+
+        def _process(info):
+            (orig_idx, crop, cfg, cx, cy, angle, crop_offset, frame_shape,
+             mask_polygons, mask_overlap_threshold) = info
+            pred = anomaly_predict(
+                crop, onnx_path=cfg.get('onnx_path'), engine_path=cfg.get('engine_path'),
+                image_size=int(cfg.get('image_size', 256)),
+            )
+            check = build_anomaly_check(
+                pred, float(cfg.get('threshold', 0.5)),
+                min_area=float(cfg.get('min_area', 0.0)),
+                min_region_area=float(cfg.get('min_region_area', 0.0)),
+                max_region_area=float(cfg.get('max_region_area', 0.0)),
+                pixel_threshold=cfg.get('pixel_threshold'),
+                mask_polygons=mask_polygons, mask_overlap_threshold=mask_overlap_threshold,
+                cx=cx, cy=cy, angle=angle, crop_offset=crop_offset, frame_shape=frame_shape,
+            )
+            return orig_idx, check
+
+        with ThreadPoolExecutor(max_workers=len(anomaly_crops_info)) as pool:
+            return dict(pool.map(_process, anomaly_crops_info))
 
     def _get_product_box(
         self,

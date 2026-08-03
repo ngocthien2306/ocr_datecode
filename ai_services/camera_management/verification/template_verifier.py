@@ -254,9 +254,13 @@ class TemplateVerificationService:
             crop_width = int(max_x - min_x)
             crop_height = int(max_y - min_y)
 
-            # Validate crop size (prevent huge allocations when template matching fails)
-            MAX_CROP_DIM = 1500  # Reasonable limit for template regions
-            if (crop_width > MAX_CROP_DIM or crop_height > MAX_CROP_DIM or
+            # Validate crop size (prevent huge allocations when template matching fails).
+            # Capped against the frame's own size, not a fixed magic number — a legitimate
+            # template region can never exceed the frame it was cropped from; one that does
+            # is the actual signal something upstream (the transform) produced a bogus bbox.
+            # A fixed 1500px cap used to reject legitimate large-but-valid template regions
+            # (e.g. a template annotated to cover most of a tall bottle) on every single frame.
+            if (crop_width > frame_w or crop_height > frame_h or
                 crop_width <= 0 or crop_height <= 0):
                 logger.error(
                     f"[{serial_number}] Invalid crop size: {crop_width}x{crop_height}. "

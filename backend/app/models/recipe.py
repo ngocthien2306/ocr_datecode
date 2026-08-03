@@ -84,16 +84,33 @@ class AnomalyConfig(BaseModel):
     selected so an operator can roll back to the legacy wrinkle check
     without losing their anomaly project/model selection.
 
-    `onnx_path` and `image_size` are captured by the recipe UI at selection
-    time (read from anomaly_service's model record) and stored directly on
-    the recipe — ai_services reads this path straight off disk and never
-    needs to call anomaly_service at inference time."""
+    `onnx_path`, `engine_path` and `image_size` are captured by the recipe UI
+    at selection time (read from anomaly_service's model record) and stored
+    directly on the recipe — ai_services reads these paths straight off disk
+    and never needs to call anomaly_service at inference time. ai_services
+    prefers `engine_path` (standalone TensorRT engine, run via pycuda —
+    faster and, as of the FP32-by-default export, numerically matches
+    onnxruntime) and falls back to `onnx_path` when no engine was exported
+    yet for this model version."""
     enabled: bool = Field(default=False, description="If False, falls back to WrinkledSegmenterTRT even if a model is selected below")
     anomaly_project_id: Optional[str] = Field(default=None, description="anomaly_service project id")
     anomaly_model_id: Optional[str] = Field(default=None, description="anomaly_service model id (specific trained version, not 'latest')")
     onnx_path: Optional[str] = Field(default=None, description="Absolute path to the exported ONNX file, resolved at selection time")
+    engine_path: Optional[str] = Field(default=None, description="Absolute path to the exported standalone TensorRT .engine, resolved at selection time. Preferred over onnx_path when present.")
     image_size: int = Field(default=256, ge=64, le=512, description="Must match the size the model was exported with")
     threshold: float = Field(default=0.5, ge=0.0, le=1.0, description="pred_score >= threshold => abnormal/FAIL")
+    # Optional per-region area logic (mirrors WrinkledSegmenterTRT's
+    # min_area/min_region_area/max_region_area) -- all default to 0/None,
+    # meaning area logic is OFF and only `threshold` (pure image-level
+    # score) decides pass/fail, unchanged from before these fields existed.
+    # Requires pixel_threshold to be set: anomalib's own baked-in pred_mask
+    # was found to never fire on this service's ungrounded-truth datasets
+    # (see ai_services/.../anomaly_inference.py's build_anomaly_check
+    # docstring), so region extraction thresholds anomaly_map directly.
+    min_area: float = Field(default=0.0, ge=0.0, description="Total area (px, sum of valid regions) >= this => FAIL. 0 = area logic off")
+    min_region_area: float = Field(default=0.0, ge=0.0, description="Per-region noise filter — regions smaller than this are ignored")
+    max_region_area: float = Field(default=0.0, ge=0.0, description="Any single region >= this => FAIL immediately (critical). 0 = disabled")
+    pixel_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Threshold anomaly_map at this value to build the region mask ourselves. Required for min_area/max_region_area to have any effect")
 
 
 class TemplateImage(BaseModel):
