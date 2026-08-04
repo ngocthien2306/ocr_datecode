@@ -392,3 +392,127 @@
   color: #92400e;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   Dark theme. The app toggles `dark-mode` on <body> (Dashboard.tsx), matching
+   RecipeFormModal.css's palette: surface #1f2937, raised #374151, borders
+   #4b5563, text #f3f4f6 / #d1d5db, muted #9ca3af.
+   The image overlay and the L/R profile charts are painted in JS — their colours
+   come from palette() in edgeProfileChart.ts, not from here.
+   ───────────────────────────────────────────────────────────────────────────*/
+body.dark-mode .edge-setup-modal {
+  background: #1f2937;
+  color: #f3f4f6;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+}
+
+body.dark-mode .edge-setup-header {
+  background: #111827;
+  border-bottom-color: #374151;
+}
+body.dark-mode .edge-setup-header h3 { color: #f9fafb; }
+
+body.dark-mode .edge-setup-header-actions .btn-secondary {
+  background: #374151;
+  color: #e5e7eb;
+}
+body.dark-mode .edge-setup-header-actions .btn-secondary:hover { background: #4b5563; }
+body.dark-mode .edge-setup-header-actions .btn-primary:disabled { background: #1e40af; color: #93c5fd; }
+
+body.dark-mode .edge-setup-frames-col { border-right-color: #374151; }
+body.dark-mode .edge-setup-canvas-wrap { background: #111827; }
+body.dark-mode .edge-setup-canvas-wrap canvas {
+  background: #111827;
+  border-color: #374151;
+}
+body.dark-mode .edge-setup-loading { color: #9ca3af; }
+
+body.dark-mode .edge-setup-hint {
+  background: #111827;
+  border-color: #374151;
+  color: #d1d5db;
+}
+body.dark-mode .edge-setup-statusline { color: #d1d5db; }
+body.dark-mode .edge-setup-profiles canvas { border-color: #374151; }
+
+body.dark-mode .es-section {
+  background: #111827;
+  border-color: #374151;
+}
+body.dark-mode .es-section-title { color: #e5e7eb; }
+
+body.dark-mode .es-mode-select,
+body.dark-mode .es-slider-num,
+body.dark-mode .es-max input {
+  background: #374151;
+  border-color: #4b5563;
+  color: #f3f4f6;
+}
+body.dark-mode .es-mode-select:focus,
+body.dark-mode .es-slider-num:focus { border-color: #60a5fa; }
+body.dark-mode .es-mode-select option { background: #374151; color: #f3f4f6; }
+
+body.dark-mode .es-slider { background: #4b5563; }
+body.dark-mode .es-slider-label { color: #9ca3af; }
+
+body.dark-mode .es-advanced-toggle { color: #9ca3af; }
+body.dark-mode .es-advanced-toggle:hover { color: #f3f4f6; }
+
+body.dark-mode .es-frames-toolbar {
+  background: #111827;
+  border-color: #374151;
+}
+body.dark-mode .es-frames-title { color: #e5e7eb; }
+body.dark-mode .es-frames-count { color: #9ca3af; }
+body.dark-mode .es-frames-toolbar select,
+body.dark-mode .es-frames-toolbar .btn-secondary {
+  background: #374151;
+  border-color: #4b5563;
+  color: #e5e7eb;
+}
+body.dark-mode .es-frames-toolbar select option { background: #374151; color: #f3f4f6; }
+body.dark-mode .es-max { color: #d1d5db; }
+
+body.dark-mode .es-thumb {
+  background: #111827;
+  border-color: #374151;
+}
+body.dark-mode .es-thumb.active { border-color: #60a5fa; }
+
+body.dark-mode .es-walls { color: #d1d5db; }
+body.dark-mode .es-walls b { color: #f9fafb; }
+body.dark-mode .es-walls-empty { color: #fcd34d; }
+
+body.dark-mode .es-show-search { color: #d1d5db; }
+
+/* Warning-ish surfaces: keep the amber semantic, invert the lightness */
+body.dark-mode .es-anchor-hint {
+  background: #111827;
+  border-color: #374151;
+  color: #d1d5db;
+}
+body.dark-mode .es-anchor-hint-warn,
+body.dark-mode .es-frames-error {
+  background: #78350f;
+  border-color: #b45309;
+  color: #fde68a;
+}
+
+/* Corrections: match the actual light-mode selectors/shape */
+body.dark-mode .edge-setup-hint {
+  background: none;      /* light mode has no box here — don't invent one */
+  border: none;
+  color: #9ca3af;
+}
+body.dark-mode .es-anchor-hint { background: #0b1220; }
+
+body.dark-mode .es-frames-toolbar { color: #d1d5db; background: none; border: none; }
+body.dark-mode .es-frames-toolbar .btn {
+  background: #374151;
+  border-color: #4b5563;
+  color: #e5e7eb;
+}
+body.dark-mode .es-frames-toolbar .btn:hover { background: #4b5563; }
+
+body.dark-mode .edge-setup-statusline .es-ok { color: #4ade80; }
+body.dark-mode .edge-setup-statusline .es-fail { color: #f87171; }
+body.dark-mode .es-thumb-badge.testing { background: #6b7280; }

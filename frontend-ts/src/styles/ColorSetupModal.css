@@ -308,3 +308,114 @@
   background: #f3f4f6;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   Dark theme. The app toggles `dark-mode` on <body> (Dashboard.tsx), matching
+   RecipeFormModal.css's palette: surface #1f2937, raised #374151, borders
+   #4b5563, text #f3f4f6 / #d1d5db, muted #9ca3af.
+   Canvas contents (image overlay, histogram, cap-edge profiles) are painted in
+   JS — see palette() in edgeProfileChart.ts and drawHistogram() here.
+   ───────────────────────────────────────────────────────────────────────────*/
+body.dark-mode .color-setup-modal {
+  background: #1f2937;
+  color: #f3f4f6;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+}
+
+body.dark-mode .color-setup-header {
+  background: #111827;
+  border-bottom-color: #374151;
+}
+body.dark-mode .color-setup-header h3 { color: #f9fafb; }
+
+body.dark-mode .color-setup-canvas-col,
+body.dark-mode .color-setup-controls {
+  background: #1f2937;
+  border-color: #374151;
+}
+
+body.dark-mode .color-setup-canvas-wrap { background: #111827; }
+body.dark-mode .color-setup-loading { color: #9ca3af; }
+
+body.dark-mode .color-setup-hint {
+  background: #111827;
+  border-color: #374151;
+  color: #d1d5db;
+}
+
+body.dark-mode .cs-section { border-color: #374151; }
+body.dark-mode .cs-section-title { color: #e5e7eb; }
+body.dark-mode .cs-row,
+body.dark-mode .cs-stats { color: #d1d5db; }
+body.dark-mode .cs-stats b { color: #f9fafb; }
+body.dark-mode .cs-slider-label { color: #9ca3af; }
+
+body.dark-mode .cs-num-input,
+body.dark-mode .cs-slider-num {
+  background: #374151;
+  border-color: #4b5563;
+  color: #f3f4f6;
+}
+body.dark-mode .cs-num-input:focus,
+body.dark-mode .cs-slider-num:focus { border-color: #60a5fa; }
+body.dark-mode .cs-num-input option { background: #374151; color: #f3f4f6; }
+
+body.dark-mode .cs-slider { background: #4b5563; }
+
+body.dark-mode .cs-advanced-toggle { color: #9ca3af; }
+body.dark-mode .cs-advanced-toggle:hover { color: #f3f4f6; }
+
+body.dark-mode .cs-roi-warn {
+  background: #7f1d1d;
+  border-color: #b91c1c;
+  color: #fecaca;
+}
+
+body.dark-mode .cs-histogram,
+body.dark-mode .cs-cap-profiles canvas {
+  border-color: #374151;
+}
+
+body.dark-mode .cs-section { background: #111827; }
+body.dark-mode .cs-row label { color: #e5e7eb; }
+
+body.dark-mode .color-setup-canvas-wrap canvas {
+  background: #111827;
+  border-color: #374151;
+}
+
+body.dark-mode .color-setup-header-actions .btn-secondary {
+  background: #374151;
+  color: #e5e7eb;
+}
+body.dark-mode .color-setup-header-actions .btn-secondary:hover { background: #4b5563; }
+body.dark-mode .color-setup-header-actions .btn-primary:disabled { background: #1e40af; color: #93c5fd; }
+
+body.dark-mode .cs-auto-btn {
+  background: #374151;
+  border-color: #4b5563;
+  color: #e5e7eb;
+}
+body.dark-mode .cs-auto-btn:hover {
+  background: #4b5563;
+  border-color: #6b7280;
+}
+
+body.dark-mode .cs-pass-badge.pass {
+  background: #14532d;
+  color: #bbf7d0;
+  border-color: #166534;
+}
+body.dark-mode .cs-pass-badge.fail {
+  background: #7f1d1d;
+  color: #fecaca;
+  border-color: #b91c1c;
+}
+
+/* Correction: light mode has no box behind the hint — don't invent one */
+body.dark-mode .color-setup-hint {
+  background: none;
+  border: none;
+  color: #9ca3af;
+}
+body.dark-mode .color-setup-canvas-col,
+body.dark-mode .color-setup-controls { background: none; border: none; }
