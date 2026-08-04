@@ -1219,16 +1219,19 @@ class ProductVerificationService:
         batch>1), so run one prediction per frame — concurrently when
         there's more than one, since separate TensorRT execution contexts
         on the same engine are safe to drive from different threads."""
+        import time
         from concurrent.futures import ThreadPoolExecutor
         from .anomaly_inference import build_anomaly_check, predict as anomaly_predict
 
         def _process(info):
             (orig_idx, crop, cfg, cx, cy, angle, crop_offset, frame_shape,
              mask_polygons, mask_overlap_threshold) = info
+            _t0 = time.perf_counter()
             pred = anomaly_predict(
                 crop, onnx_path=cfg.get('onnx_path'), engine_path=cfg.get('engine_path'),
                 image_size=int(cfg.get('image_size', 256)),
             )
+            _t1 = time.perf_counter()
             check = build_anomaly_check(
                 pred, float(cfg.get('threshold', 0.5)),
                 min_area=float(cfg.get('min_area', 0.0)),
@@ -1238,10 +1241,29 @@ class ProductVerificationService:
                 mask_polygons=mask_polygons, mask_overlap_threshold=mask_overlap_threshold,
                 cx=cx, cy=cy, angle=angle, crop_offset=crop_offset, frame_shape=frame_shape,
             )
-            return orig_idx, check
+            _t2 = time.perf_counter()
+            return (orig_idx, check, (_t1 - _t0) * 1000, (_t2 - _t1) * 1000,
+                    crop.shape[1], crop.shape[0], int(cfg.get('image_size', 256)))
 
+        # This block dominates the product-verification phase (~176ms/job measured
+        # on 2026-08-04) but, unlike WrinkledSegmenterTRT, it logged nothing — so
+        # the split between model inference and post-processing was invisible.
+        # Mirror [WrinkleSeg]'s breakdown so the cost is attributable.
+        _t_all = time.perf_counter()
         with ThreadPoolExecutor(max_workers=len(anomaly_crops_info)) as pool:
-            return dict(pool.map(_process, anomaly_crops_info))
+            rows = list(pool.map(_process, anomaly_crops_info))
+        _wall = (time.perf_counter() - _t_all) * 1000
+        if rows:
+            _pred_ms = [r[2] for r in rows]
+            _post_ms = [r[3] for r in rows]
+            _cw, _ch, _sz = rows[0][4], rows[0][5], rows[0][6]
+            logger.info(
+                f"[Anomaly] n={len(rows)} crop={_cw}x{_ch}→{_sz} | "
+                f"predict={max(_pred_ms):.1f}ms (avg {sum(_pred_ms)/len(_pred_ms):.1f}) "
+                f"post={max(_post_ms):.1f}ms (avg {sum(_post_ms)/len(_post_ms):.1f}) | "
+                f"wall={_wall:.1f}ms"
+            )
+        return {r[0]: r[1] for r in rows}
 
     def _get_product_box(
         self,
