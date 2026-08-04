@@ -56,6 +56,7 @@ export interface ColorCheck {
   matching_pixels: number;
   bottle_pixels: number;
   pixel_threshold: number;
+  pixel_max?: number;          // upper bound; > this = label missing. 0/absent = off
   detected: boolean;
   h_range?: [number, number];
   s_range?: [number, number];

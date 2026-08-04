@@ -9,7 +9,10 @@ Pipeline per frame (decoupled from SuperPoint match):
    label color.
 3. Convert detected bottle region to HSV, count pixels matching the template's
    color_config HSV range.
-4. PASS if matching_pixels >= color_config.pixel_threshold.
+4. PASS if pixel_threshold <= matching_pixels <= pixel_max (pixel_max=0 disables
+   the upper bound). The upper bound catches a MISSING label on products whose
+   own colour matches the label's — a bare bottle of turmeric matches as much
+   yellow as a yellow label would, so a lower bound alone cannot see it.
 
 Output dict matches ProductVerificationService.verify_batch shape so the
 existing visualizer / result_builder / FE all keep working.
@@ -153,8 +156,25 @@ class ColorVerificationService:
         ).strip().lower()
 
         threshold = int(color_config.get("pixel_threshold", 1000))
+        # Upper bound (0 = off): a bare product sharing the label's colour still
+        # matches lots of pixels, so "too much match" means the label is missing.
+        pixel_max = int(color_config.get("pixel_max", 0) or 0)
 
-        if localization_method == "superpoint":
+        def _ok(matching: int) -> bool:
+            if matching < threshold:
+                return False
+            return pixel_max <= 0 or matching <= pixel_max
+
+        def _why(matching: int) -> str:
+            """Short tag for the log so an operator can tell the two failures
+            apart without doing the arithmetic themselves."""
+            if matching < threshold:
+                return " [below min → wrong/absent colour]"
+            if 0 < pixel_max < matching:
+                return " [above max → label missing, bare product]"
+            return ""
+
+        if localization_method in ("superpoint", "edge_regions"):
             product_box = self._extract_transformed_product_box(
                 data.get("transformed_bboxes") or []
             )
@@ -167,35 +187,60 @@ class ColorVerificationService:
                         "matching_pixels": 0,
                         "bottle_pixels": 0,
                         "pixel_threshold": threshold,
+                        "pixel_max": pixel_max,
                         "detected": False,
-                        "localization_method": "superpoint",
+                        "localization_method": localization_method,
                     },
                 }
+
+            # ── Cap-axis regression (edge_regions) ───────────────────────────
+            # SuperPoint anchors on the cap, which fixes rotation + vertical but
+            # leaves the horizontal centre and apparent diameter jittery on a
+            # round bottle. Detect both cap edges and slide/scale the product
+            # polygon along the cap axis to match. Any failure degrades to the
+            # plain SuperPoint polygon — never worse than 'superpoint' mode.
+            axis_info: Optional[Dict[str, Any]] = None
+            if localization_method == "edge_regions":
+                product_box, axis_info = self._apply_cap_axis_correction(
+                    frame_img, data, product_box, color_config, camera,
+                    template_idx, serial,
+                )
 
             matching, bottle_pixels = self._count_hsv_match(
                 frame_img, product_box, color_config
             )
-            ok = matching >= threshold
+            ok = _ok(matching)
 
+            _axis_txt = ""
+            if localization_method == "edge_regions":
+                _axis_txt = (
+                    f" [cap shift={axis_info['shift_px']:+.1f}px scale={axis_info['scale']:.3f}]"
+                    if axis_info else " [cap regression UNAVAILABLE → raw SuperPoint ROI]"
+                )
             logger.info(
-                f"[{serial}] color(superpoint): matching={matching} / threshold={threshold} "
+                f"[{serial}] color({localization_method}): matching={matching} / min={threshold}"
+                f"{f' max={pixel_max}' if pixel_max > 0 else ''} "
                 f"(roi_px={bottle_pixels}, ratio={matching/max(1,bottle_pixels)*100:.1f}%) "
-                f"→ {'PASS' if ok else 'FAIL'}"
+                f"→ {'PASS' if ok else 'FAIL'}{_why(matching)}{_axis_txt}"
             )
 
+            color_check: Dict[str, Any] = {
+                "matching_pixels": int(matching),
+                "bottle_pixels": int(bottle_pixels),
+                "pixel_threshold": threshold,
+                "pixel_max": pixel_max,
+                "detected": True,
+                "localization_method": localization_method,
+                "h_range": [int(color_config.get("h_min", 0)), int(color_config.get("h_max", 180))],
+                "s_range": [int(color_config.get("s_min", 0)), int(color_config.get("s_max", 255))],
+                "v_range": [int(color_config.get("v_min", 0)), int(color_config.get("v_max", 255))],
+            }
+            if localization_method == "edge_regions":
+                color_check["cap_axis"] = axis_info      # None when it fell back
             return {
                 "match": bool(ok),
                 "skipped": False,
-                "color_check": {
-                    "matching_pixels": int(matching),
-                    "bottle_pixels": int(bottle_pixels),
-                    "pixel_threshold": threshold,
-                    "detected": True,
-                    "localization_method": "superpoint",
-                    "h_range": [int(color_config.get("h_min", 0)), int(color_config.get("h_max", 180))],
-                    "s_range": [int(color_config.get("s_min", 0)), int(color_config.get("s_max", 255))],
-                    "v_range": [int(color_config.get("v_min", 0)), int(color_config.get("v_max", 255))],
-                },
+                "color_check": color_check,
                 "detected_boxes": {
                     "product": product_box,
                 },
@@ -233,6 +278,7 @@ class ColorVerificationService:
                     "matching_pixels": 0,
                     "bottle_pixels": 0,
                     "pixel_threshold": threshold,
+                    "pixel_max": pixel_max,
                     "detected": False,
                     "localization_method": "image_proc",
                 },
@@ -241,12 +287,13 @@ class ColorVerificationService:
         matching, bottle_pixels = self._count_hsv_match(
             frame_img, bottle_box, color_config
         )
-        ok = matching >= threshold
+        ok = _ok(matching)
 
         logger.info(
-            f"[{serial}] color: matching={matching} / threshold={threshold} "
+            f"[{serial}] color: matching={matching} / min={threshold}"
+            f"{f' max={pixel_max}' if pixel_max > 0 else ''} "
             f"(bottle_px={bottle_pixels}, ratio={matching/max(1,bottle_pixels)*100:.1f}%) "
-            f"→ {'PASS' if ok else 'FAIL'}"
+            f"→ {'PASS' if ok else 'FAIL'}{_why(matching)}"
         )
 
         return {
@@ -256,6 +303,7 @@ class ColorVerificationService:
                 "matching_pixels": int(matching),
                 "bottle_pixels": int(bottle_pixels),
                 "pixel_threshold": threshold,
+                "pixel_max": pixel_max,
                 "detected": True,
                 "localization_method": "image_proc",
                 "h_range": [int(color_config.get("h_min", 0)), int(color_config.get("h_max", 180))],
@@ -378,6 +426,121 @@ class ColorVerificationService:
         if x2 <= x1 or y2 <= y1:
             return frame_img, (0, 0)
         return frame_img[y1:y2, x1:x2], (x1, y1)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Cap-axis regression (localization_method='edge_regions')
+    # ──────────────────────────────────────────────────────────────────────
+    def _load_cap_edge_ref(
+        self, serial_number: str, template_idx: int
+    ) -> Optional[Dict[str, float]]:
+        """Template cap-edge reference written by MatcherFactory at build time.
+        Cached per (serial, template_idx) — the miss is cached too, so a template
+        without the file doesn't hit the disk on every frame."""
+        if not hasattr(self, "_cap_ref_cache"):
+            self._cap_ref_cache: Dict[Tuple[str, int], Optional[Dict[str, float]]] = {}
+        key = (serial_number, template_idx)
+        if key in self._cap_ref_cache:
+            return self._cap_ref_cache[key]
+        ref: Optional[Dict[str, float]] = None
+        try:
+            import json
+            from pathlib import Path
+            home = os.environ.get("HOME", "")
+            suffix = f"_t{template_idx}" if template_idx > 0 else ""
+            p = (Path(home) / "Source" / "ocr_datecode" / "crop_samples"
+                 / serial_number / f"template{suffix}_cap_edges.json")
+            if p.exists():
+                ref = json.loads(p.read_text())
+        except Exception as e:
+            logger.error(f"[{serial_number}] Failed to load cap-edge reference: {e}")
+        self._cap_ref_cache[key] = ref
+        return ref
+
+    def _apply_cap_axis_correction(
+        self,
+        frame_img: np.ndarray,
+        data: Dict[str, Any],
+        product_box: Dict[str, Any],
+        color_config: Dict[str, Any],
+        camera: Optional["Camera"],
+        template_idx: int,
+        serial: str,
+    ) -> Tuple[Dict[str, Any], Optional[Dict[str, float]]]:
+        """Slide + scale the SuperPoint product polygon onto the detected cap axis.
+
+        Returns (product_box, axis_info). On ANY failure the ORIGINAL box comes
+        back with axis_info=None: a colour check on a slightly-off ROI is far
+        better than failing the frame, and it keeps this mode a strict
+        improvement over plain 'superpoint'.
+        """
+        try:
+            from .image_proc_detector import (
+                EdgeParams, detect_cap_axis_from_regions, correct_polygon_along_axis,
+            )
+        except Exception as e:
+            logger.warning(f"[{serial}] cap-axis import failed: {e}")
+            return product_box, None
+
+        bboxes = data.get("transformed_bboxes") or []
+        q_left = self._edge_region_pts(bboxes, "left")
+        q_right = self._edge_region_pts(bboxes, "right")
+        if q_left is None or q_right is None:
+            logger.warning(
+                f"[{serial}] localization_method='edge_regions' but the template has "
+                f"no edge_left/edge_right annotation — using the raw SuperPoint ROI"
+            )
+            return product_box, None
+
+        ref = self._load_cap_edge_ref(serial, template_idx)
+        if not ref:
+            logger.warning(
+                f"[{serial}] no cap-edge reference for template {template_idx} "
+                f"(crop_samples/.../template_cap_edges.json) — using the raw SuperPoint ROI"
+            )
+            return product_box, None
+
+        params = EdgeParams.from_config(color_config.get("edge_config") or {})
+        axis = detect_cap_axis_from_regions(
+            frame_img, q_left, q_right, ref_frac=ref,
+            params=params, serial_number=serial,
+        )
+        if axis is None or "exp_left_mid" not in axis:
+            return product_box, None
+
+        corrected = correct_polygon_along_axis(
+            product_box.get("corners") or [],
+            axis["left_mid"], axis["right_mid"],
+            axis["exp_left_mid"], axis["exp_right_mid"],
+            max_shift_px=float(color_config.get("cap_max_shift_px", 0) or 0),
+        )
+        if corrected is None:
+            logger.warning(
+                f"[{serial}] cap-axis correction rejected (out of bounds) "
+                f"— using the raw SuperPoint ROI"
+            )
+            return product_box, None
+
+        pts, info = corrected
+        new_box = dict(product_box)
+        new_box["corners"] = pts.tolist()
+        x1, y1 = float(pts[:, 0].min()), float(pts[:, 1].min())
+        x2, y2 = float(pts[:, 0].max()), float(pts[:, 1].max())
+        new_box["box"] = [(x1 + x2) / 2.0, (y1 + y2) / 2.0, x2 - x1, y2 - y1, 0.0]
+        new_box["source"] = "superpoint_product_cap_axis"
+        info = dict(info)
+        info.update({"col_L": axis["col_L"], "col_R": axis["col_R"]})
+        return new_box, info
+
+    @staticmethod
+    def _edge_region_pts(
+        transformed_bboxes: List[Dict[str, Any]], side: str
+    ) -> Optional[List[List[float]]]:
+        """SuperPoint-transformed 'edge_left'/'edge_right' quad, frame coords."""
+        want = f"edge_{side}"
+        for b in transformed_bboxes:
+            if b.get("type") == want and b.get("points") and len(b["points"]) >= 4:
+                return b["points"]
+        return None
 
     @staticmethod
     def _extract_transformed_product_box(

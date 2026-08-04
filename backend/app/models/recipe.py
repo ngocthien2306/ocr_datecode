@@ -32,8 +32,22 @@ class ColorConfig(BaseModel):
     s_max: int = Field(default=255, ge=0, le=255)
     v_min: int = Field(default=0, ge=0, le=255)
     v_max: int = Field(default=255, ge=0, le=255)
-    pixel_threshold: int = Field(default=1000, ge=0, description="Minimum matching HSV pixels (summed across product polygons) required to pass")
-    localization_method: Optional[str] = Field(default="image_proc", description="Color ROI localization: 'image_proc' (legacy bottle detect) | 'superpoint' (use SuperPoint-transformed product polygon)")
+    pixel_threshold: int = Field(default=1000, ge=0, description="Minimum matching HSV pixels required to pass — too few means the wrong label (or none of the expected colour)")
+    # Upper bound. Needed when the product itself shares the label's colour
+    # (yellow label over yellow turmeric): with only a lower bound, a bottle whose
+    # label fell off still matches plenty of yellow pixels and passes. A present
+    # label always breaks up the colour with print/graphics, so an unusually HIGH
+    # match means bare product, i.e. a missing label.
+    # NOTE: absolute px, like pixel_threshold. The ROI is warped (and in
+    # edge_regions mode scaled) per frame, so re-tune if the bottle's distance to
+    # the camera changes materially — color_check.bottle_pixels reports ROI area.
+    pixel_max: int = Field(default=0, ge=0, description="Maximum matching HSV pixels allowed; above this the label is considered missing (bare product showing). 0 = disabled")
+    localization_method: Optional[str] = Field(default="image_proc", description="Color ROI localization: 'image_proc' (legacy bottle detect) | 'superpoint' (use SuperPoint-transformed product polygon) | 'edge_regions' (superpoint + regress the cap axis from the drawn edge_left/edge_right regions — for round bottles matched on the cap)")
+    # Free-form dict rather than the EdgeConfig model: that class is declared
+    # further down this file, and ai_services rebuilds it via
+    # EdgeParams.from_config() which ignores unknown keys anyway.
+    edge_config: Optional[Dict[str, Any]] = Field(default=None, description="Edge-detection tuning for localization_method='edge_regions' (same field names as EdgeConfig; only the signal/peak fields are used)")
+    cap_max_shift_px: Optional[float] = Field(default=0.0, ge=0.0, description="Reject a cap-axis correction shifting the ROI more than this many px (0 = no limit). Guards against a mis-detected edge dragging the colour ROI off the bottle.")
     roi_circle: Optional[ColorRoiCircle] = Field(default=None, description="Persisted ROI used by ColorSetupModal so user can re-edit")
     # ── Bottle detection (image-proc) tuning, used by ColorVerificationService._detect_bottle ──
     bottle_sharp_threshold: Optional[float] = Field(default=0.30, ge=0.05, le=0.95, description="Sharpness mask threshold (fraction of max). Higher → stricter mask, fewer false positives but may miss low-contrast bottles.")

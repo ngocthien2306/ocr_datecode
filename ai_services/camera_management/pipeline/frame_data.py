@@ -14,6 +14,20 @@ field (anomaly_config was the last one) is a one-line change instead of three.
 from typing import Any, Dict, List, Optional
 
 
+# Colour-ROI localisations that need the SuperPoint homography. 'superpoint'
+# uses the transformed product polygon directly; 'edge_regions' additionally
+# needs the transformed edge_left/edge_right quads to regress the cap axis.
+# Anything else (image-proc bottle detect) localises from raw pixels and can run
+# even when matching failed — that's what lets us drop those cameras from the
+# match batch entirely.
+COLOR_METHODS_NEEDING_MATCH = ('superpoint', 'edge_regions')
+
+
+def color_localization_needs_match(template: Optional[Dict[str, Any]]) -> bool:
+    """True when this template's colour check cannot run without SuperPoint."""
+    return get_color_localization_method(template) in COLOR_METHODS_NEEDING_MATCH
+
+
 def get_color_localization_method(template: Optional[Dict[str, Any]]) -> str:
     """Which localization the Check_Color path should use for this template.
 
@@ -97,5 +111,5 @@ def is_color_check_frame(camera: Any, template: Optional[Dict[str, Any]]) -> boo
     return (
         getattr(camera, 'function_type', '') == 'Check_Color'
         and (template or {}).get('color_config') is not None
-        and get_color_localization_method(template) != 'superpoint'
+        and not color_localization_needs_match(template)
     )

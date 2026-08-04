@@ -273,7 +273,10 @@ class MatcherFactory:
                 getattr(camera, 'function_type', '') == 'Check_Color'
                 and any(a.get('type') == 'product' for a in annotations_raw)
             )
-            if is_color_camera and color_localization_method != 'superpoint':
+            # 'superpoint' needs the homography for the product polygon;
+            # 'edge_regions' needs it for the edge quads too. Both require a real
+            # matcher — only the image-proc localisation can use a stub.
+            if is_color_camera and color_localization_method not in ('superpoint', 'edge_regions'):
                 # Best-effort parse of crop_area (optional, may be missing).
                 # If template image dims unknown we skip crop_area; color_verifier
                 # falls back to using the full frame.
@@ -476,7 +479,8 @@ class MatcherFactory:
 
             # Save template crop + product bbox for analysis
             self._save_template_sample(
-                final_template_path, other_bboxes, serial_number, template_idx
+                final_template_path, other_bboxes, serial_number, template_idx,
+                template_data=template_data,
             )
 
             logger.info(f"[{serial_number}] Matcher {template_idx} created successfully")
@@ -649,8 +653,13 @@ class MatcherFactory:
         other_bboxes: List,
         serial_number: str,
         template_idx: int,
+        template_data: Optional[Dict[str, Any]] = None,
     ):
-        """Save template crop + product bbox coordinates to crop_samples dir for analysis."""
+        """Save template crop + product bbox coordinates to crop_samples dir for analysis.
+
+        `template_data` is only read for per-template tuning (color_config.edge_config
+        when measuring the cap-edge reference); everything else works without it.
+        """
         import os
         home = os.environ.get('HOME', '')
         sample_dir = Path(home) / 'Source' / 'ocr_datecode' / 'crop_samples' / serial_number
@@ -717,7 +726,55 @@ class MatcherFactory:
                             f"outer_L={walls['outer_L']} outer_R={walls['outer_R']}"
                         )
             except Exception as e:
-                logger.warning(
-                    f"[{serial_number}] Template walls detection failed (yolo_segment "
-                    f"mode may not work): {e}"
+                # Walls are only needed by anchor_mode='label_strip'. A template
+                # carrying edge_left/edge_right regions locates the walls from those
+                # instead, so failing here is not necessarily a problem.
+                has_edge_regions = any(
+                    b.type in ('edge_left', 'edge_right') for b in other_bboxes
                 )
+                logger.warning(
+                    f"[{serial_number}] Template walls detection failed: {e}"
+                    + (" — template has edge_left/edge_right regions, so this only "
+                       "matters if edge_config.anchor_mode is 'label_strip'"
+                       if has_edge_regions else
+                       " (yolo_segment mode may not work)")
+                )
+
+        # ── Cap-edge reference for Check_Color localization_method='edge_regions' ──
+        # Where the two edges sit inside their regions ON THE TEMPLATE, as a
+        # fraction of each region's width. At inference the same regions arrive
+        # SuperPoint-transformed; comparing detected-vs-this tells us how far the
+        # cap actually shifted/scaled, which is what moves the colour ROI.
+        # Independent of the 'label' block above — colour templates have no label.
+        edge_L = next((b for b in other_bboxes if b.type == 'edge_left'), None)
+        edge_R = next((b for b in other_bboxes if b.type == 'edge_right'), None)
+        if edge_L is not None and edge_R is not None:
+            try:
+                from ..verification.image_proc_detector import (
+                    EdgeParams, measure_template_cap_edges,
+                )
+                tmpl_img_e = cv2.imread(str(template_path))
+                if tmpl_img_e is not None:
+                    _cfg = (template_data or {}).get('color_config') or {}
+                    _params = EdgeParams.from_config(_cfg.get('edge_config') or {})
+                    ref = measure_template_cap_edges(
+                        tmpl_img_e, edge_L.points, edge_R.points, params=_params
+                    )
+                    if ref is not None:
+                        ref_path = sample_dir / f"template{suffix}_cap_edges.json"
+                        with open(str(ref_path), 'w') as f:
+                            json.dump(ref, f, indent=2)
+                        logger.info(
+                            f"[{serial_number}] Template cap-edge reference saved: "
+                            f"frac_L={ref['frac_L']:.3f} frac_R={ref['frac_R']:.3f}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[{serial_number}] Cap-edge reference NOT found on the "
+                            f"template — colour check with localization_method="
+                            f"'edge_regions' will fall back to the plain SuperPoint "
+                            f"product polygon. Widen the regions or lower "
+                            f"color_config.edge_config.outer_min_hratio."
+                        )
+            except Exception as e:
+                logger.warning(f"[{serial_number}] Cap-edge reference failed: {e}")

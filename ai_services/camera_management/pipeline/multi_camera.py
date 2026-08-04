@@ -12,6 +12,7 @@ from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 from .base import InferencePipelineTemplate, PipelineContext
 from .frame_data import (
     build_frame_verification_data,
+    color_localization_needs_match,
     get_color_localization_method,
     is_color_check_frame,
 )
@@ -381,15 +382,25 @@ class MultiCameraPipeline(InferencePipelineTemplate):
         cameras_by_serial = {c.serial_number: c for c in (context.cameras_to_process or [])}
 
         def _is_color_cam(sn: str) -> bool:
+            # Skipping SuperPoint is a per-CAMERA decision (the camera is dropped
+            # from sp_idx entirely) while localization is a per-TEMPLATE setting,
+            # so EVERY template must be able to localise without the match. One
+            # template on 'superpoint' — or without a 'product' annotation — means
+            # the camera still needs SuperPoint; skipping it there would leave
+            # transformed_bboxes empty and fail every frame of that template with
+            # "No transformed product region from SuperPoint".
             cam = cameras_by_serial.get(sn)
             if not cam or getattr(cam, 'function_type', '') != 'Check_Color':
                 return False
             tmpls = getattr(cam, 'templates', None) or []
             if not tmpls:
                 return False
-            if not any(a.get('type') == 'product' for a in (tmpls[0].get('annotations') or [])):
-                return False
-            return get_color_localization_method(tmpls[0]) != 'superpoint'
+            for _t in tmpls:
+                if not any(a.get('type') == 'product' for a in (_t.get('annotations') or [])):
+                    return False
+                if color_localization_needs_match(_t):
+                    return False
+            return True
 
         # Shape-outline cameras (crop_match_method='shape_outline') also skip
         # SuperPoint — we run ECC affine alignment on Sobel gradient instead.

@@ -585,8 +585,9 @@ def save_and_encode_frame(
                     img_to_save, color_check, detected_boxes
                 )
                 logger.info(
-                    f"Drew color-match overlay (matching={color_check.get('matching_pixels')}/"
-                    f"{color_check.get('pixel_threshold')}) on frame"
+                    f"Drew color-match overlay (matching={color_check.get('matching_pixels')}, "
+                    f"min={color_check.get('pixel_threshold')}, "
+                    f"max={color_check.get('pixel_max') or 'off'}) on frame"
                 )
 
             if detected_boxes:

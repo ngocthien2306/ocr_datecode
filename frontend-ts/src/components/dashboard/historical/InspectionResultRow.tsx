@@ -681,7 +681,11 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
                               {(() => {
                                 const cc: any = (frame.product_verification as any)?.color_check;
                                 if (!cc) return null;
-                                const ok = (cc.matching_pixels ?? 0) >= (cc.pixel_threshold ?? 0);
+                                // Two-sided: below min = wrong/absent colour,
+                                // above max = label missing (bare product showing).
+                                const capped = (cc.pixel_max ?? 0) > 0;
+                                const overMax = capped && (cc.matching_pixels ?? 0) > cc.pixel_max;
+                                const ok = (cc.matching_pixels ?? 0) >= (cc.pixel_threshold ?? 0) && !overMax;
                                 const pct = cc.bottle_pixels > 0 ? (cc.matching_pixels / cc.bottle_pixels) * 100 : 0;
                                 return (
                                   <>
@@ -690,7 +694,7 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
                                       <div className="alignment-item">
                                         <span className="alignment-label">Status</span>
                                         <span className={`alignment-value ${ok ? 'success' : 'error'}`}>
-                                          {ok ? '✓ PASS' : '✗ FAIL'}
+                                          {ok ? '✓ PASS' : overMax ? '✗ FAIL (label missing)' : '✗ FAIL'}
                                         </span>
                                       </div>
                                       <div className="alignment-item">
@@ -698,9 +702,17 @@ const InspectionResultRow: React.FC<InspectionResultRowProps> = ({
                                         <span className="alignment-value">{(cc.matching_pixels ?? 0).toLocaleString()} px</span>
                                       </div>
                                       <div className="alignment-item">
-                                        <span className="alignment-label">Threshold</span>
+                                        <span className="alignment-label">Min</span>
                                         <span className="alignment-value">{(cc.pixel_threshold ?? 0).toLocaleString()} px</span>
                                       </div>
+                                      {capped && (
+                                        <div className="alignment-item">
+                                          <span className="alignment-label">Max</span>
+                                          <span className={`alignment-value ${overMax ? 'error' : ''}`}>
+                                            {cc.pixel_max.toLocaleString()} px
+                                          </span>
+                                        </div>
+                                      )}
                                       <div className="alignment-item">
                                         <span className="alignment-label">Bottle Area</span>
                                         <span className="alignment-value">{(cc.bottle_pixels ?? 0).toLocaleString()} px</span>

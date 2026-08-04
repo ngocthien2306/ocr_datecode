@@ -1,6 +1,50 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import '@/styles/ColorSetupModal.css';
 import { API_BASE_URL } from '@/config/api';
+import { drawProfileChart, isDarkMode, useDarkMode, type Pt, type SideProfile } from './edgeProfileChart';
+
+// EdgeParams subset that matters for cap-edge detection. Field names must match
+// EdgeParams in ai_services/.../image_proc_detector.py — it rebuilds them via
+// EdgeParams.from_config() and silently ignores anything it doesn't know.
+export interface CapEdgeConfig {
+  detect_mode: 'gradient' | 'brightness';
+  edge_polarity: 'light_to_dark' | 'dark_to_light';
+  find_by: 'farthest' | 'nearest' | 'strongest';
+  outer_min_hratio: number;
+  specular_thr: number;
+  edge_width: number;
+  strong_thr: number;
+  peak_height: number;
+  peak_prom: number;
+  peak_dist: number;
+}
+
+export const DEFAULT_CAP_EDGE_CONFIG: CapEdgeConfig = {
+  detect_mode: 'gradient',
+  edge_polarity: 'light_to_dark',
+  find_by: 'farthest',
+  outer_min_hratio: 0.55,
+  specular_thr: 230,
+  edge_width: 3,
+  strong_thr: 0.15,
+  peak_height: 0.05,
+  peak_prom: 0.02,
+  peak_dist: 4,
+};
+
+interface CapEdgeResult {
+  detected: boolean;
+  frac_L: number | null;
+  frac_R: number | null;
+  col_L: number | null;
+  col_R: number | null;
+  region_w_L: number | null;
+  region_w_R: number | null;
+  left_line: Pt[] | null;
+  right_line: Pt[] | null;
+  profiles?: { left: SideProfile | null; right: SideProfile | null } | null;
+  reason: string | null;
+}
 
 export interface ColorConfig {
   h_min: number;
@@ -10,8 +54,17 @@ export interface ColorConfig {
   v_min: number;
   v_max: number;
   pixel_threshold: number;
-  localization_method?: 'image_proc' | 'superpoint';
+  // Upper bound, absolute px. Catches a MISSING label when the product itself
+  // shares the label's colour (yellow label over yellow turmeric): a bare bottle
+  // matches even MORE of the range than a printed label does, so a lower bound
+  // alone can't see it. 0 = disabled.
+  pixel_max: number;
+  localization_method?: 'image_proc' | 'superpoint' | 'edge_regions';
   roi_circle: { center: [number, number]; radius: number };
+  // edge_regions only: EdgeParams-shaped tuning for the cap-edge detector, and a
+  // guard rejecting corrections that would drag the ROI more than N px.
+  edge_config?: CapEdgeConfig | null;
+  cap_max_shift_px?: number;
   // Bottle detection (image-proc) tuning — passed to color_verifier._detect_bottle
   bottle_sharp_threshold?: number;
   bottle_min_height_ratio?: number;
@@ -25,6 +78,8 @@ interface ColorSetupModalProps {
   imageWidth: number;
   imageHeight: number;
   productPolygons: Array<Array<[number, number]>>;
+  edgeLeftPolygon?: Pt[] | null;      // 'edge_left' annotation, TEMPLATE pixel coords
+  edgeRightPolygon?: Pt[] | null;     // 'edge_right' annotation, TEMPLATE pixel coords
   cropArea?: { x1: number; y1: number; x2: number; y2: number } | null;
   initialConfig?: ColorConfig | null;
   templateName?: string;
@@ -73,6 +128,7 @@ const DEFAULT_CONFIG: ColorConfig = {
   s_min: 0, s_max: 255,
   v_min: 0, v_max: 255,
   pixel_threshold: 1000,
+  pixel_max: 0,
   localization_method: 'image_proc',
   roi_circle: { center: [0, 0], radius: 50 },
   bottle_sharp_threshold: 0.30,
@@ -87,6 +143,8 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
   imageWidth,
   imageHeight,
   productPolygons,
+  edgeLeftPolygon = null,
+  edgeRightPolygon = null,
   cropArea,
   initialConfig,
   templateName,
@@ -95,6 +153,11 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const histCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const capLeftProfRef = useRef<HTMLCanvasElement | null>(null);
+  const capRightProfRef = useRef<HTMLCanvasElement | null>(null);
+  // Last histograms, kept so the canvas can be repainted on a theme toggle
+  // (it is otherwise only drawn as a side effect of auto-detect).
+  const lastHistRef = useRef<{ h: number[]; s: number[]; v: number[] } | null>(null);
 
   // Caches built once per image load:
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -118,7 +181,26 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
   const [detectedBottle, setDetectedBottle] = useState<{ x: number; y: number; w: number; h: number; score: number } | null>(null);
   const [bottleDetecting, setBottleDetecting] = useState(false);
   const [bottleDetectError, setBottleDetectError] = useState<string | null>(null);
-  const isSuperPointLocalization = (config.localization_method || 'image_proc') === 'superpoint';
+  // Cap-edge tuning (localization_method='edge_regions')
+  const [capResult, setCapResult] = useState<CapEdgeResult | null>(null);
+  const [capDetecting, setCapDetecting] = useState(false);
+  const [capError, setCapError] = useState<string | null>(null);
+  const [showCapAdvanced, setShowCapAdvanced] = useState(false);
+  // Canvas is painted imperatively → must repaint when the theme toggles.
+  const darkMode = useDarkMode();
+
+  const method = config.localization_method || 'image_proc';
+  const isRegionMode = method === 'edge_regions';
+  // The image-proc bottle detector only runs on the legacy path; both SuperPoint
+  // modes localise from the match instead.
+  const isSuperPointLocalization = method === 'superpoint' || isRegionMode;
+  const capRegionsMissing = isRegionMode && (!edgeLeftPolygon || !edgeRightPolygon);
+  const capCfg: CapEdgeConfig = { ...DEFAULT_CAP_EDGE_CONFIG, ...(config.edge_config || {}) };
+  const setCap = (k: keyof CapEdgeConfig) => (v: number | string) =>
+    setConfig((p) => ({
+      ...p,
+      edge_config: { ...DEFAULT_CAP_EDGE_CONFIG, ...(p.edge_config || {}), [k]: v } as CapEdgeConfig,
+    }));
 
   // Init config from props (edit mode) when modal opens.
   useEffect(() => {
@@ -366,6 +448,44 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
       ctx.fillText(`bottle ${(detectedBottle.score * 100).toFixed(0)}%`, bx + 4, Math.max(14, by - 4));
     }
 
+    // Cap-edge regions (dashed) + the edge detected inside each (solid).
+    // The dashed box is what you drew; the solid line is what the detector found.
+    // If the solid line isn't on the cap edge, tune below — that is exactly the
+    // measurement inference will regress the colour ROI against.
+    if (isRegionMode) {
+      const dashPoly = (pts: Pt[] | null | undefined, color: string) => {
+        if (!pts || pts.length < 3) return;
+        ctx.save();
+        ctx.setLineDash([6, 4]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color + '22';
+        ctx.beginPath();
+        ctx.moveTo(pts[0]![0] * displayScale, pts[0]![1] * displayScale);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i]![0] * displayScale, pts[i]![1] * displayScale);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      };
+      dashPoly(edgeLeftPolygon, '#fb923c');
+      dashPoly(edgeRightPolygon, '#2dd4bf');
+
+      const edgeLine = (ln: Pt[] | null | undefined, color: string) => {
+        if (!ln || ln.length < 2) return;
+        ctx.save();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(ln[0]![0] * displayScale, ln[0]![1] * displayScale);
+        ctx.lineTo(ln[1]![0] * displayScale, ln[1]![1] * displayScale);
+        ctx.stroke();
+        ctx.restore();
+      };
+      edgeLine(capResult?.left_line, '#facc15');
+      edgeLine(capResult?.right_line, '#facc15');
+    }
+
     // Draw ROI circle (cyan)
     const { center, radius } = config.roi_circle;
     const cx0 = center[0]!;
@@ -384,7 +504,8 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
     ctx.moveTo(ccx, ccy - 5);
     ctx.lineTo(ccx, ccy + 5);
     ctx.stroke();
-  }, [config, displayScale, imageWidth, imageHeight, productPolygons, detectedBottle]);
+  }, [config, displayScale, imageWidth, imageHeight, productPolygons, detectedBottle,
+      isRegionMode, edgeLeftPolygon, edgeRightPolygon, capResult]);
 
   // Composite an overlay ImageData on top of current canvas content
   // (we already drew the image, then need to alpha-blend overlay on top).
@@ -409,13 +530,14 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
   }, [isReady, drawDisplay]);
 
   function drawHistogram(hHist: number[], sHist: number[], vHist: number[]) {
+    lastHistRef.current = { h: hHist, s: sHist, v: vHist };
     const canvas = histCanvasRef.current;
     if (!canvas) return;
     const w = canvas.width;
     const h = canvas.height;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    ctx.fillStyle = '#f3f4f6';
+    ctx.fillStyle = isDarkMode() ? '#111827' : '#f3f4f6';
     ctx.fillRect(0, 0, w, h);
 
     const drawLine = (hist: number[], color: string, yOff: number, hSlot: number) => {
@@ -433,10 +555,18 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
       ctx.stroke();
     };
     const slot = h / 3;
-    drawLine(hHist, '#ef4444', 0, slot);
-    drawLine(sHist, '#22c55e', slot, slot);
-    drawLine(vHist, '#3b82f6', slot * 2, slot);
+    const dark = isDarkMode();
+    drawLine(hHist, dark ? '#f87171' : '#ef4444', 0, slot);
+    drawLine(sHist, dark ? '#4ade80' : '#22c55e', slot, slot);
+    drawLine(vHist, dark ? '#60a5fa' : '#3b82f6', slot * 2, slot);
   }
+
+  // Repaint the histogram when the theme flips (canvas can't restyle itself).
+  useEffect(() => {
+    const last = lastHistRef.current;
+    if (last) drawHistogram(last.h, last.s, last.v);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [darkMode]);
 
   // Mouse handling for ROI center drag.
   const getCanvasCoords = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -537,6 +667,66 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
   }, [templateImageUrl, productPolygons, cropArea, config.bottle_sharp_threshold,
       config.bottle_min_height_ratio, config.bottle_min_aspect, isSuperPointLocalization]);
 
+  // Run BE /templates/detect-cap-edges-preview with the current tuning. This is
+  // the SAME measurement MatcherFactory runs at recipe-build time, so a success
+  // here is a `template_cap_edges.json` that will exist at inference.
+  const runDetectCapEdges = useCallback(async () => {
+    if (!templateImageUrl) {
+      setCapError('Save the template first to enable preview');
+      return;
+    }
+    if (!edgeLeftPolygon || !edgeRightPolygon) {
+      setCapError("This template has no 'edge_left' / 'edge_right' annotation");
+      setCapResult(null);
+      return;
+    }
+    setCapDetecting(true);
+    setCapError(null);
+    try {
+      const token = localStorage.getItem('access_token');
+      const res = await fetch(`${API_BASE_URL}/api/recipes/templates/detect-cap-edges-preview`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Bypass-Tunnel-Reminder': 'true',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          image_url: templateImageUrl,
+          edge_left_polygon: edgeLeftPolygon,
+          edge_right_polygon: edgeRightPolygon,
+          params: capCfg,
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      const data: CapEdgeResult = await res.json();
+      setCapResult(data);
+      if (!data.detected) setCapError(data.reason || 'Cap edge detection failed');
+    } catch (e: any) {
+      setCapError(String(e?.message || e));
+      setCapResult(null);
+    } finally {
+      setCapDetecting(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [templateImageUrl, edgeLeftPolygon, edgeRightPolygon, JSON.stringify(capCfg)]);
+
+  // Auto-detect when entering region mode, and whenever a discrete choice
+  // changes (the sliders stay manual — re-running on every drag would thrash).
+  useEffect(() => {
+    if (!isReady || !isRegionMode || capRegionsMissing) return;
+    void runDetectCapEdges();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isReady, isRegionMode, capCfg.detect_mode, capCfg.edge_polarity, capCfg.find_by]);
+
+  // Render the cap-edge profile charts whenever a result arrives.
+  useEffect(() => {
+    if (!isRegionMode) return;
+    const lbl = { chosen: 'EDGE', reference: 'ref' };
+    drawProfileChart(capLeftProfRef.current, capResult?.profiles?.left, 'LEFT cap edge', lbl);
+    drawProfileChart(capRightProfRef.current, capResult?.profiles?.right, 'RIGHT cap edge', lbl);
+  }, [capResult, isRegionMode, darkMode]);
+
   // Generic slider handler factory
   const setField = (k: keyof ColorConfig) => (val: number) => {
     setConfig((prev) => ({ ...prev, [k]: val } as ColorConfig));
@@ -554,7 +744,9 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
 
   const matchPct =
     polyPixelCountRef.current > 0 ? (matchCount / polyPixelCountRef.current) * 100 : 0;
-  const willPass = matchCount >= config.pixel_threshold;
+  const maxOn = (config.pixel_max ?? 0) > 0;
+  const overMax = maxOn && matchCount > config.pixel_max;
+  const willPass = matchCount >= config.pixel_threshold && !overMax;
 
   return (
     <div className="color-setup-backdrop" onClick={onClose}>
@@ -592,8 +784,14 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
               <div className="color-setup-hint">
                 <span style={{ color: '#22d3ee' }}>●</span> ROI &nbsp;
                 <span style={{ color: '#7513dd' }}>●</span> Product polygon &nbsp;
-                <span style={{ color: '#f59e0b' }}>●</span> Detected bottle &nbsp;
-                <span style={{ color: '#facc15' }}>●</span> HSV match pixels
+                {!isRegionMode && <><span style={{ color: '#f59e0b' }}>●</span> Detected bottle &nbsp;</>}
+                <span style={{ color: '#facc15' }}>●</span> {isRegionMode ? 'HSV match / detected cap edge' : 'HSV match pixels'}
+                {isRegionMode && (
+                  <>
+                    &nbsp; <span style={{ color: '#fb923c' }}>▢</span> Edge left &nbsp;
+                    <span style={{ color: '#2dd4bf' }}>▢</span> Edge right
+                  </>
+                )}
               </div>
             </div>
 
@@ -602,6 +800,17 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
               <div className="cs-section-title">Histogram (R=H, G=S, B=V)</div>
               <canvas ref={histCanvasRef} width={720} height={120} className="cs-histogram" />
             </div>
+
+            {/* Cap-edge profiles — amber peaks pass the coverage threshold */}
+            {isRegionMode && (
+              <div className="cs-section cs-histogram-section">
+                <div className="cs-section-title">Cap edge profile (columns = px outward)</div>
+                <div className="cs-cap-profiles">
+                  <canvas ref={capLeftProfRef} width={352} height={140} />
+                  <canvas ref={capRightProfRef} width={352} height={140} />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* RIGHT sidebar */}
@@ -614,7 +823,7 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
                   className="cs-num-input"
                   value={config.localization_method || 'image_proc'}
                   onChange={(e) => {
-                    const method = e.target.value as 'image_proc' | 'superpoint';
+                    const method = e.target.value as ColorConfig['localization_method'];
                     setConfig((prev) => ({ ...prev, localization_method: method }));
                     setDetectedBottle(null);
                     setBottleDetectError(null);
@@ -622,8 +831,28 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
                 >
                   <option value="image_proc">Image processing</option>
                   <option value="superpoint">SuperPoint product region</option>
+                  <option value="edge_regions">SuperPoint + cap edges (round bottle)</option>
                 </select>
               </div>
+              {isRegionMode && (
+                <div className={`cs-row cs-stats ${capRegionsMissing ? 'cs-roi-warn' : ''}`}>
+                  <span>
+                    {capRegionsMissing ? (
+                      <>
+                        This template has no <b>edge_left</b> / <b>edge_right</b> annotation.
+                        Add both over the cap edges in the template editor, save, then reopen.
+                      </>
+                    ) : (
+                      <>
+                        Match on the cap; the detected cap edges slide and scale this product
+                        polygon horizontally at inference. Draw the regions <b>at least twice
+                        as wide as the cap can drift</b> — if an edge leaves its region the
+                        plain SuperPoint polygon is used instead (never worse, just uncorrected).
+                      </>
+                    )}
+                  </span>
+                </div>
+              )}
               {/* <div className="cs-row cs-stats">
                 <span>
                   {isSuperPointLocalization
@@ -656,6 +885,103 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
                 Auto-detect HSV from ROI
               </button>
             </div>
+
+            {/* Cap-edge detection tuning (localization_method='edge_regions') */}
+            {isRegionMode && (
+              <div className="cs-section">
+                <div className="cs-section-title">Cap Edge Detection</div>
+                <select
+                  className="cs-num-input cs-full"
+                  value={capCfg.detect_mode}
+                  onChange={(e) => setCap('detect_mode')(e.target.value)}
+                  title="How the edge signal is built"
+                >
+                  <option value="gradient">Gradient — edge |Scharr| (default)</option>
+                  <option value="brightness">Brightness — signed edge by polarity</option>
+                </select>
+                {capCfg.detect_mode === 'brightness' && (
+                  <select
+                    className="cs-num-input cs-full"
+                    value={capCfg.edge_polarity}
+                    onChange={(e) => setCap('edge_polarity')(e.target.value)}
+                    title="Edge direction when scanning outward from the cap"
+                  >
+                    <option value="light_to_dark">Polarity — light → dark (bright cap, default)</option>
+                    <option value="dark_to_light">Polarity — dark → light (inverted contrast)</option>
+                  </select>
+                )}
+                <select
+                  className="cs-num-input cs-full"
+                  value={capCfg.find_by}
+                  onChange={(e) => setCap('find_by')(e.target.value)}
+                  title="Which qualifying peak becomes the cap edge"
+                >
+                  <option value="farthest">Find by — farthest peak (outermost, default)</option>
+                  <option value="nearest">Find by — nearest peak (innermost)</option>
+                  <option value="strongest">Find by — strongest peak</option>
+                </select>
+
+                <SliderRow label="Coverage" min={0} max={1}
+                  value={capCfg.outer_min_hratio} onChange={setCap('outer_min_hratio')} />
+                <SliderRow label="Specular" min={0} max={255}
+                  value={capCfg.specular_thr} onChange={setCap('specular_thr')} />
+                <SliderRow label="Edge width" min={1} max={15}
+                  value={capCfg.edge_width} onChange={setCap('edge_width')} />
+
+                <button
+                  type="button" className="cs-advanced-toggle"
+                  onClick={() => setShowCapAdvanced((v) => !v)}
+                  aria-expanded={showCapAdvanced}
+                >
+                  {showCapAdvanced ? '▾' : '▸'} Advanced
+                </button>
+                {showCapAdvanced && (
+                  <>
+                    <SliderRow label="Strong thr" min={0} max={1}
+                      value={capCfg.strong_thr} onChange={setCap('strong_thr')} />
+                    <SliderRow label="Peak height" min={0} max={1}
+                      value={capCfg.peak_height} onChange={setCap('peak_height')} />
+                    <SliderRow label="Peak prom" min={0} max={1}
+                      value={capCfg.peak_prom} onChange={setCap('peak_prom')} />
+                    <SliderRow label="Peak dist" min={1} max={50}
+                      value={capCfg.peak_dist} onChange={setCap('peak_dist')} />
+                    <SliderRow label="Max shift px" min={0} max={400}
+                      value={config.cap_max_shift_px ?? 0}
+                      onChange={(v) => setConfig((p) => ({ ...p, cap_max_shift_px: v }))} />
+                  </>
+                )}
+
+                <button
+                  type="button"
+                  className="btn btn-secondary cs-auto-btn"
+                  onClick={runDetectCapEdges}
+                  disabled={!isReady || capDetecting || !templateImageUrl || capRegionsMissing}
+                  title={!templateImageUrl ? 'Save template first to enable preview' : ''}
+                >
+                  {capDetecting ? 'Detecting…' : 'Detect cap edges'}
+                </button>
+
+                {capResult?.detected && (
+                  <div className="cs-row cs-stats">
+                    <span>
+                      ✓ Edge at <b>{capResult.col_L}</b>/<b>{capResult.col_R}</b> px of{' '}
+                      {capResult.region_w_L}/{capResult.region_w_R} px region<br />
+                      Saved reference: frac <b>{capResult.frac_L?.toFixed(3)}</b> /{' '}
+                      <b>{capResult.frac_R?.toFixed(3)}</b>
+                      {(capResult.frac_L != null && capResult.frac_R != null &&
+                        (Math.min(capResult.frac_L, capResult.frac_R) < 0.2 ||
+                         Math.max(capResult.frac_L, capResult.frac_R) > 0.8)) && (
+                        <><br /><span className="cs-roi-warn">
+                          An edge sits near a region border — little room for the cap to
+                          drift before it falls outside. Widen or recentre that region.
+                        </span></>
+                      )}
+                    </span>
+                  </div>
+                )}
+                {capError && <div className="cs-roi-warn" style={{ marginTop: 4 }}>{capError}</div>}
+              </div>
+            )}
 
             {/* Bottle Detection tuning (image-proc) */}
             <div className="cs-section" style={{ opacity: isSuperPointLocalization ? 0.5 : 1 }}>
@@ -725,7 +1051,7 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
             <div className="cs-section">
               <div className="cs-section-title">Pass criterion</div>
               <div className="cs-row">
-                <label>Pixel threshold:</label>
+                <label>Min pixels:</label>
                 <input
                   type="number"
                   min={0}
@@ -735,8 +1061,36 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
                     setField('pixel_threshold')(Math.max(0, parseInt(e.target.value) || 0))
                   }
                   className="cs-num-input"
+                  title="Below this = wrong label (not enough of the expected colour)"
                 />
               </div>
+              <div className="cs-row">
+                <label>Max pixels:</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={100}
+                  value={config.pixel_max ?? 0}
+                  onChange={(e) =>
+                    setField('pixel_max')(Math.max(0, parseInt(e.target.value) || 0))
+                  }
+                  className="cs-num-input"
+                  title="Above this = label missing (bare product showing). 0 = disabled"
+                />
+              </div>
+              <div className="cs-row cs-stats">
+                <span>
+                  {maxOn
+                    ? <>Above <b>{config.pixel_max.toLocaleString()}</b> px ⇒ label missing (bare product shows more of the colour than a printed label does). Set 0 to disable.</>
+                    : <>Max = 0 ⇒ upper bound off. Set it when the product itself shares the label's colour, otherwise a bottle with no label still passes.</>}
+                </span>
+              </div>
+              {maxOn && config.pixel_max <= config.pixel_threshold && (
+                <div className="cs-roi-warn">
+                  Max ({config.pixel_max.toLocaleString()}) is not above Min
+                  ({config.pixel_threshold.toLocaleString()}) — nothing can ever pass.
+                </div>
+              )}
               <div className="cs-row cs-stats">
                 <span>Matching: <b>{matchCount.toLocaleString()}</b> px ({matchPct.toFixed(1)}% of product area)</span>
               </div>
@@ -744,7 +1098,7 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
                 <span>Product area: {polyPixelCountRef.current.toLocaleString()} px</span>
               </div>
               <div className={`cs-pass-badge ${willPass ? 'pass' : 'fail'}`}>
-                Will: {willPass ? 'PASS' : 'FAIL'}
+                Will: {willPass ? 'PASS' : overMax ? 'FAIL — label missing' : 'FAIL'}
               </div>
             </div>
           </div>

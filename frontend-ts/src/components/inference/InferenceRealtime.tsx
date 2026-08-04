@@ -106,6 +106,7 @@ interface ColorCheck {
   matching_pixels: number;
   bottle_pixels: number;
   pixel_threshold: number;
+  pixel_max?: number;          // upper bound; > this = label missing. 0/absent = off
   detected: boolean;
   h_range?: [number, number];
   s_range?: [number, number];
@@ -2235,18 +2236,23 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                                   )}
                                   {frame.product_verification?.color_check && (() => {
                                     const cc = frame.product_verification.color_check;
-                                    const ok = cc.matching_pixels >= cc.pixel_threshold;
+                                    // Two-sided: below min = wrong/absent colour,
+                                    // above max = label missing (bare product showing).
+                                    const capped = (cc.pixel_max ?? 0) > 0;
+                                    const overMax = capped && cc.matching_pixels > cc.pixel_max!;
+                                    const ok = cc.matching_pixels >= cc.pixel_threshold && !overMax;
                                     const pct = cc.bottle_pixels > 0 ? (cc.matching_pixels / cc.bottle_pixels) * 100 : 0;
                                     return (
                                       <span
                                         className={`frame-offset-x ${ok ? 'color-pass' : 'color-fail'}`}
-                                        title={`HSV match: ${cc.matching_pixels}/${cc.bottle_pixels} px (${pct.toFixed(1)}%)\nThreshold: ${cc.pixel_threshold}\nH: ${cc.h_range?.[0]}-${cc.h_range?.[1]}, S: ${cc.s_range?.[0]}-${cc.s_range?.[1]}, V: ${cc.v_range?.[0]}-${cc.v_range?.[1]}`}
+                                        title={`HSV match: ${cc.matching_pixels}/${cc.bottle_pixels} px (${pct.toFixed(1)}%)\nMin: ${cc.pixel_threshold}${capped ? `\nMax: ${cc.pixel_max}` : ''}${overMax ? '\n→ Above max: label missing (bare product)' : ''}\nH: ${cc.h_range?.[0]}-${cc.h_range?.[1]}, S: ${cc.s_range?.[0]}-${cc.s_range?.[1]}, V: ${cc.v_range?.[0]}-${cc.v_range?.[1]}`}
                                         style={{
                                           background: ok ? 'rgba(34, 197, 94, 0.85)' : 'rgba(239, 68, 68, 0.85)',
                                           color: 'white',
                                         }}
                                       >
-                                        Color: {cc.matching_pixels.toLocaleString()}/{cc.pixel_threshold.toLocaleString()} ({pct.toFixed(0)}%) {ok ? '✓' : '✗'}
+                                        Color: {cc.matching_pixels.toLocaleString()}/{cc.pixel_threshold.toLocaleString()}
+                                        {capped ? `–${cc.pixel_max!.toLocaleString()}` : ''} ({pct.toFixed(0)}%) {ok ? '✓' : '✗'}
                                       </span>
                                     );
                                   })()}

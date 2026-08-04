@@ -1256,6 +1256,110 @@ async def detect_walls_preview(body: dict):
     }
 
 
+@router.post("/templates/detect-cap-edges-preview")
+async def detect_cap_edges_preview(body: dict):
+    """
+    Run the cap-edge detector on a template image, for ColorSetupModal's
+    localization_method='edge_regions' tuning.
+
+    This mirrors what MatcherFactory does at recipe-build time: it measures where
+    the two cap edges sit inside the drawn edge_left/edge_right regions and
+    returns those positions as a fraction of each region's width. Those exact
+    fractions become `template_cap_edges.json`, so a detection that succeeds here
+    with these params is a detection that will succeed at build time.
+
+    Body:
+        image_url:           str            (template image URL)
+        edge_left_polygon:   [[x,y]x4]      (TEMPLATE pixel coords)
+        edge_right_polygon:  [[x,y]x4]
+        params:              { ...EdgeParams fields... }  (optional)
+
+    Returns:
+        {
+          detected: bool,
+          frac_L/frac_R:   float | null,     # what gets persisted
+          col_L/col_R:     int | null,       # px from each region's inner side
+          region_w_L/R:    int | null,
+          left_line/right_line: [[x,y],[x,y]] | null,   # detected edge, frame coords
+          profiles:        {left, right} | null,        # curves for the charts
+          reason:          str | null,
+        }
+    """
+    import sys
+    import numpy as np
+    import cv2
+
+    image_url = body.get("image_url", "")
+    ql = body.get("edge_left_polygon")
+    qr = body.get("edge_right_polygon")
+    params_dict = body.get("params") or {}
+
+    if not image_url:
+        raise HTTPException(400, "image_url is required")
+    if not ql or not qr or len(ql) < 4 or len(qr) < 4:
+        return {
+            "detected": False, "frac_L": None, "frac_R": None,
+            "col_L": None, "col_R": None, "region_w_L": None, "region_w_R": None,
+            "left_line": None, "right_line": None, "profiles": None,
+            "reason": "Draw an 'edge_left' and an 'edge_right' region on the template first",
+        }
+
+    image_path = _resolve_preview_image_path(image_url)
+    if image_path is None or not image_path.exists():
+        raise HTTPException(404, f"Image not found: {image_url}")
+
+    home = os.environ.get("HOME", "")
+    ai_path = os.path.join(home, "Source", "ocr_datecode", "ai_services")
+    if ai_path not in sys.path:
+        sys.path.insert(0, ai_path)
+    try:
+        from camera_management.verification.image_proc_detector import (
+            EdgeParams, detect_cap_axis_from_regions,
+        )
+    except Exception as e:
+        raise HTTPException(503, f"image_proc_detector import failed: {e}")
+
+    img = cv2.imread(str(image_path))
+    if img is None:
+        raise HTTPException(500, "Failed to read image")
+
+    params = EdgeParams.from_config(params_dict)
+    res = detect_cap_axis_from_regions(
+        img,
+        np.array(ql, dtype=np.float32)[:4],
+        np.array(qr, dtype=np.float32)[:4],
+        params=params, serial_number="preview", return_profiles=True,
+    )
+    if res is None or res.get("failed"):
+        res = res or {}
+        cl, cr = res.get("col_L"), res.get("col_R")
+        side = ("both sides" if cl is None and cr is None
+                else "the left side" if cl is None else "the right side")
+        return {
+            "detected": False, "frac_L": None, "frac_R": None,
+            "col_L": cl, "col_R": cr,
+            "region_w_L": res.get("region_w_L"), "region_w_R": res.get("region_w_R"),
+            "left_line": None, "right_line": None,
+            "profiles": res.get("profiles"),
+            "reason": f"No qualifying edge on {side} — lower Edge coverage or widen the region",
+        }
+
+    def _line(v):
+        return [[float(v[0][0]), float(v[0][1])], [float(v[1][0]), float(v[1][1])]]
+
+    return {
+        "detected": True,
+        "frac_L": round(float(res["col_L"]) / float(max(1, res["region_w_L"])), 4),
+        "frac_R": round(float(res["col_R"]) / float(max(1, res["region_w_R"])), 4),
+        "col_L": int(res["col_L"]), "col_R": int(res["col_R"]),
+        "region_w_L": int(res["region_w_L"]), "region_w_R": int(res["region_w_R"]),
+        "left_line": _line(res["left_line"]),
+        "right_line": _line(res["right_line"]),
+        "profiles": res.get("profiles"),
+        "reason": None,
+    }
+
+
 @router.post("/templates/upload")
 async def upload_template_image(
     file: UploadFile = File(...),

@@ -3514,6 +3514,24 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
           })
           .filter((p): p is Array<[number, number]> => p !== null);
 
+        // Cap-edge search regions (localization_method='edge_regions'), same
+        // normalized→pixel story as the product polygons above.
+        const edgeQuad = (type: string): Array<[number, number]> | null => {
+          const a: any = (tmpl.annotations || []).find((x: any) => x.type === type);
+          if (!a) return null;
+          if (a.points && Array.isArray(a.points) && a.points.length >= 3) {
+            return a.points.map((p: any) => [(p.x ?? p[0]) * imgW, (p.y ?? p[1]) * imgH] as [number, number]);
+          }
+          if (a.x != null && a.y != null && a.width && a.height) {
+            const x1 = a.x * imgW, y1 = a.y * imgH;
+            const x2 = (a.x + a.width) * imgW, y2 = (a.y + a.height) * imgH;
+            return [[x1, y1], [x2, y1], [x2, y2], [x1, y2]];
+          }
+          return null;
+        };
+        const edgeLeftPx = edgeQuad('edge_left');
+        const edgeRightPx = edgeQuad('edge_right');
+
         // crop_area annotation → pixel bbox (same normalization story as polygons)
         let cropAreaPx: { x1: number; y1: number; x2: number; y2: number } | null = null;
         const ca = (tmpl.annotations || []).find((a: any) => a.type === 'crop_area');
@@ -3541,6 +3559,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
             imageWidth={tmpl.image_width ?? 0}
             imageHeight={tmpl.image_height ?? 0}
             productPolygons={productPolys}
+            edgeLeftPolygon={edgeLeftPx}
+            edgeRightPolygon={edgeRightPx}
             cropArea={cropAreaPx}
             initialConfig={tmpl.color_config ?? null}
             templateName={tmpl.name}
