@@ -159,13 +159,19 @@ def start_service(service_name: str) -> Dict[str, Any]:
             log_dir.mkdir(parents=True, exist_ok=True)
             log_file = log_dir / "camera_management.log"
 
+            # MEM_DIAG=0: the leak profiler holds the GIL for seconds on a
+            # multi-GB heap. The startup scripts set it, but this spawner
+            # inherits the backend's environment instead — see system.py's
+            # _spawn_ai_service, which needs the same guard.
+            env = os.environ.copy()
+            env.setdefault("MEM_DIAG", "0")
             process = subprocess.Popen(
                 ["python3", str(script_path)],
                 cwd=str(script_path.parent),
                 stdout=open(log_file, 'a'),
                 stderr=subprocess.STDOUT,
                 start_new_session=True,  # Detach from parent
-                env=os.environ.copy()
+                env=env,
             )
 
             logger.info(f"Started service with PID: {process.pid}")

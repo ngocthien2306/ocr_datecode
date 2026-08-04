@@ -110,13 +110,19 @@ def _spawn_ai_service() -> int:
     """Spawn detached AI service, returns new PID. Inherits current env."""
     AI_SERVICE_LOG.parent.mkdir(parents=True, exist_ok=True)
     log_fh = open(AI_SERVICE_LOG, "a")
+    env = os.environ.copy()             # inherits CUDA / LD_LIBRARY_PATH from BE env
+    # The leak profiler holds the GIL for seconds on a multi-GB heap, spiking any
+    # inference that lands in its window. start_services.sh / start_all.sh set
+    # this, but the backend has its own environment, so a service respawned from
+    # here would silently get the profiler back. See MEM_DIAG in mem_diag.py.
+    env.setdefault("MEM_DIAG", "0")
     process = subprocess.Popen(
         ["python3", AI_SERVICE_PROCESS_NAME],
         cwd=str(AI_SERVICE_DIR),
         stdout=log_fh,
         stderr=subprocess.STDOUT,
         start_new_session=True,         # detach — survives backend exit
-        env=os.environ.copy(),          # inherits CUDA / LD_LIBRARY_PATH from BE env
+        env=env,
     )
     return process.pid
 
