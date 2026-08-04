@@ -1472,9 +1472,10 @@ class InferenceHandler:
                     logger.info(f"[Group #{group_id}] Reject cancelled (result: PASS)")
 
         except Exception as e:
-            logger.error(f"[Group #{group_id}] Error handling reject decision: {e}")
-            import traceback
-            traceback.print_exc()
+            # logger.exception, not print_exc: this service's stderr goes to a
+            # terminal, so the traceback was being lost and a one-line NameError
+            # was all that survived — it took a static scan to locate the cause.
+            logger.exception(f"[Group #{group_id}] Error handling reject decision: {e}")
 
     def _build_inference_result(
         self,

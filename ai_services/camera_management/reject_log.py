@@ -6,6 +6,11 @@ the record of what was physically rejected stays readable and greppable.
 import logging
 from pathlib import Path
 
+# Service log. Distinct from `_reject_logger` below, which is the dedicated
+# audit trail — this one reports on the audit logger's own setup, and its
+# absence used to raise NameError at the end of _init_reject_logger().
+logger = logging.getLogger(__name__)
+
 # Dedicated logger for reject actions
 _reject_logger = None
 _reject_log_file = None
