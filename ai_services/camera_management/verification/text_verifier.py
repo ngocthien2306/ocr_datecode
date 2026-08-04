@@ -536,10 +536,46 @@ class TextVerificationService:
             t0 = time.perf_counter()
             ocr_results: List[Any] = []
             if has_batch_api:
-                for i in range(0, len(crops), max_batch):
-                    chunk = crops[i:i + max_batch]
-                    chunk_results = self.text_recognizer.recognize_batch(chunk)
-                    ocr_results.extend(chunk_results)
+                # Chunk crops of SIMILAR WIDTH together. recognize_batch pads every
+                # tensor with black to the widest one in its chunk (text_recognizer
+                # .py:169-177), and preprocess makes tensor width proportional to
+                # the crop's aspect ratio — so chunking in annotation order sits a
+                # 3-char region next to a 25-char one and buries the short one under
+                # hundreds of px of padding. That both wastes compute and corrupts
+                # the read: '30 OZ' came back as 'B0OZ' in the batch yet read
+                # correctly on the augment retry, which re-runs the SAME crop in a
+                # different batch (79 such retries on 2026-08-04, ~65ms/job wasted).
+                # Sorting cuts padded width by ~21% and removes the corruption.
+                order = sorted(
+                    range(len(crops)),
+                    key=lambda i: (crops[i].shape[1] / max(1, crops[i].shape[0])),
+                )
+                ocr_results = [None] * len(crops)
+                # Per-chunk timing: standalone this whole loop is ~9ms on the real
+                # crop sizes (67-273px after the h=32 resize), and even with every
+                # other verify-phase load running concurrently it only reaches
+                # ~22ms — yet production medians 112ms. Logging each chunk tells us
+                # whether ONE chunk stalls (an external wait) or all three are
+                # uniformly slow (contention/compute), which the aggregate can't.
+                _chunk_ms = []
+                for i in range(0, len(order), max_batch):
+                    idxs = order[i:i + max_batch]
+                    _tc = time.perf_counter()
+                    chunk_results = self.text_recognizer.recognize_batch(
+                        [crops[j] for j in idxs]
+                    )
+                    _chunk_ms.append((time.perf_counter() - _tc) * 1000)
+                    # Scatter back to annotation order — everything downstream
+                    # zips ocr_results with ocr_items positionally.
+                    for j, r in zip(idxs, chunk_results):
+                        ocr_results[j] = r
+                _widths = [int(crops[j].shape[1] * 32 / max(1, crops[j].shape[0]))
+                           for j in order]
+                logger.info(
+                    "OCR chunks: "
+                    + " | ".join(f"{m:.1f}ms(w≤{max(_widths[k:k + max_batch])})"
+                                 for k, m in zip(range(0, len(order), max_batch), _chunk_ms))
+                )
             else:
                 ocr_results = [
                     self.text_recognizer.recognize(img, return_confidence=True)
