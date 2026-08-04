@@ -1103,6 +1103,18 @@ async def detect_walls_preview(body: dict):
                          → when omitted, walls are computed from THIS image
                            (template-setup mode) and returned for persistence.
 
+    anchor_mode='edge_regions' (params.anchor_mode) instead scans two user-drawn
+    regions and ignores template_walls entirely:
+        edge_left_polygon / edge_right_polygon: [[x,y]x4] in TEMPLATE pixel coords
+        template_label_polygon:                 [[x,y]x4] label quad in TEMPLATE coords
+
+    When the preview runs on a recorded frame (label_polygon != template_label_polygon)
+    the regions are mapped template→frame through the label-quad homography. At
+    inference SuperPoint transports them directly; here it lets frames recorded
+    BEFORE this feature existed (whose detected_regions have no edge_* entries) be
+    tested straight away. The two agree wherever the label match is good, which is
+    exactly the regime where either is meaningful.
+
     Returns:
         {
           detected: bool,
@@ -1111,6 +1123,7 @@ async def detect_walls_preview(body: dict):
           corners:       [[x,y]x4] | null,   # chosen wall_type
           template_walls: {...} | null,      # computed walls (template mode) or echoed
           detection_info: {...} | null,
+          edge_regions: {left,right} | null, # regions actually scanned, frame coords
           reason: str | null,
         }
     """
@@ -1140,6 +1153,7 @@ async def detect_walls_preview(body: dict):
     try:
         from camera_management.verification.image_proc_detector import (
             EdgeParams, detect_template_walls, detect_product_box,
+            detect_product_box_from_regions,
         )
     except Exception as e:
         raise HTTPException(503, f"image_proc_detector import failed: {e}")
@@ -1150,6 +1164,58 @@ async def detect_walls_preview(body: dict):
 
     params = EdgeParams.from_config(params_dict)
     label_pts = np.array(label_polygon, dtype=np.float32)
+
+    # ── Edge-region anchoring: scan two user-drawn regions, no walls involved ──
+    if (params_dict.get("anchor_mode") or "label_strip").lower() == "edge_regions":
+        ql = body.get("edge_left_polygon")
+        qr = body.get("edge_right_polygon")
+        if not ql or not qr or len(ql) < 4 or len(qr) < 4:
+            return {
+                "detected": False, "inner_corners": None, "outer_corners": None,
+                "corners": None, "template_walls": None, "detection_info": None,
+                "profiles": None, "edge_regions": None,
+                "reason": "Draw an 'edge_left' and an 'edge_right' region on the template first",
+            }
+        ql = np.array(ql, dtype=np.float32)[:4]
+        qr = np.array(qr, dtype=np.float32)[:4]
+
+        tmpl_label = body.get("template_label_polygon")
+        if tmpl_label and len(tmpl_label) >= 4:
+            tl = np.array(tmpl_label, dtype=np.float32)[:4]
+            if not np.allclose(tl, label_pts[:4], atol=0.5):
+                H = cv2.getPerspectiveTransform(tl, label_pts[:4].astype(np.float32))
+                ql = cv2.perspectiveTransform(ql.reshape(-1, 1, 2), H).reshape(-1, 2)
+                qr = cv2.perspectiveTransform(qr.reshape(-1, 1, 2), H).reshape(-1, 2)
+
+        res = detect_product_box_from_regions(
+            img, ql, qr, label_pts=label_pts,
+            serial_number="preview", params=params, return_profiles=True,
+        )
+        regions = {"left": ql.tolist(), "right": qr.tolist()}
+        if res is None or res.get("failed"):
+            info = (res or {}).get("detection_info")
+            side = "both sides" if not info else (
+                "left" if info.get("col_L") is None and info.get("col_R") is not None
+                else "right" if info.get("col_R") is None and info.get("col_L") is not None
+                else "both sides"
+            )
+            return {
+                "detected": False, "inner_corners": None, "outer_corners": None,
+                "corners": None, "template_walls": None, "detection_info": info,
+                "profiles": (res or {}).get("profiles"), "edge_regions": regions,
+                "reason": f"No qualifying edge found on {side} — lower Outer coverage or widen the region",
+            }
+        return {
+            "detected": True,
+            "inner_corners": None,
+            "outer_corners": res["outer_corners"].tolist(),
+            "corners": res["corners"].tolist(),
+            "template_walls": None,
+            "detection_info": res.get("detection_info"),
+            "profiles": res.get("profiles"),
+            "edge_regions": regions,
+            "reason": None,
+        }
 
     # Compute walls from this image when not supplied (template-setup mode)
     walls = template_walls

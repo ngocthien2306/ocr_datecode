@@ -374,3 +374,21 @@
 }
 .es-walls b { color: #111827; }
 .es-walls-empty { color: #92400e; }
+
+/* Explains how the drawn edge regions behave (edge_regions anchor mode) */
+.es-anchor-hint {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #4b5563;
+}
+.es-anchor-hint-warn {
+  background: #fef3c7;
+  border-color: #fcd34d;
+  color: #92400e;
+}
+

@@ -396,6 +396,48 @@ class ProductVerificationService:
     # Image-processing path (recipe option product_detection_method='yolo_segment').
     # Tên 'yolo_segment' giữ cho UI consistency nhưng KHÔNG dùng YOLO model.
     # ──────────────────────────────────────────────────────────────────────────
+    @staticmethod
+    def _edge_config_for(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Per-template edge_config for one frame's data dict (tuned in EdgeSetupModal)."""
+        cam = data.get('camera')
+        templates = getattr(cam, 'templates', None) or []
+        idx = int(data.get('template_idx', 0) or 0)
+        if 0 <= idx < len(templates):
+            return (templates[idx] or {}).get('edge_config')
+        return None
+
+    @staticmethod
+    def _edge_region_pts(
+        transformed_bboxes: List[Dict[str, Any]], side: str
+    ) -> Optional[List[List[float]]]:
+        """SuperPoint-transformed 'edge_left'/'edge_right' quad, frame coords."""
+        want = f'edge_{side}'
+        for b in transformed_bboxes:
+            if b.get('type') == want and b.get('points') and len(b['points']) >= 4:
+                return b['points']
+        return None
+
+    def _should_verify_frame_image_proc(
+        self, transformed_bboxes: List[Dict[str, Any]], edge_cfg: Optional[Dict[str, Any]]
+    ) -> bool:
+        """Frame gate for the image-proc path.
+
+        edge_regions anchoring needs the two drawn regions + the label (which sets
+        the product box's vertical extent and is the center-alignment reference).
+        A 'product' annotation is NOT required there: the regions already declare
+        that this template is configured for wall detection, and nothing in this
+        path reads the product polygon. Everything else keeps the shared
+        product+label gate — the YOLO path must not change behaviour.
+        """
+        if (edge_cfg or {}).get('anchor_mode') == 'edge_regions':
+            has_label = any(b.get('type') == 'label' for b in transformed_bboxes)
+            return (
+                has_label
+                and self._edge_region_pts(transformed_bboxes, 'left') is not None
+                and self._edge_region_pts(transformed_bboxes, 'right') is not None
+            )
+        return self.should_verify_frame(transformed_bboxes)
+
     def _load_template_walls(self, serial_number: str) -> Optional[Dict[str, Any]]:
         """Load template_walls.json (saved by MatcherFactory) — cached per serial."""
         if not hasattr(self, '_template_walls_cache'):
@@ -424,16 +466,19 @@ class ProductVerificationService:
         """
         import time
         from .image_proc_detector import (
-            detect_product_box, label_box_from_pts, EdgeParams, DEFAULT_EDGE_PARAMS,
+            detect_product_box, detect_product_box_from_regions,
+            label_box_from_pts, EdgeParams, DEFAULT_EDGE_PARAMS,
         )
         t_start = time.perf_counter()
 
-        # Filter frames that need verification (cùng logic như YOLO path)
+        # Filter frames that need verification (gate phụ thuộc anchor_mode)
         t_filter_start = time.perf_counter()
         frames_to_check = []
         frame_indices = []
         for idx, data in enumerate(frames_data):
-            if self.should_verify_frame(data['transformed_bboxes']):
+            if self._should_verify_frame_image_proc(
+                data['transformed_bboxes'], self._edge_config_for(data)
+            ):
                 frames_to_check.append(data)
                 frame_indices.append(idx)
         t_filter = (time.perf_counter() - t_filter_start) * 1000
@@ -462,14 +507,30 @@ class ProductVerificationService:
 
             # Per-template edge_config (tuned in EdgeSetupModal). Falls back to
             # globals + factory-computed template_walls when not configured.
-            template_idx = int(data.get('template_idx', 0) or 0)
-            templates = getattr(cam, 'templates', None) or []
-            edge_cfg = None
-            if 0 <= template_idx < len(templates):
-                edge_cfg = (templates[template_idx] or {}).get('edge_config')
-
+            edge_cfg = self._edge_config_for(data)
             params = EdgeParams.from_config(edge_cfg) if edge_cfg else DEFAULT_EDGE_PARAMS
 
+            # ── Anchor: user-drawn edge regions (no template walls involved) ──
+            if (edge_cfg or {}).get('anchor_mode') == 'edge_regions':
+                q_left = self._edge_region_pts(data['transformed_bboxes'], 'left')
+                q_right = self._edge_region_pts(data['transformed_bboxes'], 'right')
+                if q_left is None or q_right is None:
+                    logger.warning(
+                        f"[{serial}] edge_regions configured but the template has no "
+                        f"edge_left/edge_right annotation — skipping frame"
+                    )
+                    return None
+                try:
+                    return detect_product_box_from_regions(
+                        data['frame_img'], q_left, q_right,
+                        label_pts=label_region['points'],
+                        serial_number=serial, params=params,
+                    )
+                except Exception as e:
+                    logger.warning(f"[{serial}] edge_regions detect failed: {e}")
+                    return None
+
+            # ── Anchor: strip beside the label (default) ──────────────────────
             # Walls: prefer the ones saved into edge_config at setup time; else
             # use the factory-computed template_walls.json for this camera.
             walls = (edge_cfg or {}).get('template_walls') if edge_cfg else None

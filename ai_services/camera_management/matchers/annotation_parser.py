@@ -65,7 +65,11 @@ class AnnotationParser:
                     ann, ann_idx, img_width, img_height, "template"
                 )
 
-            elif ann_type in ["product", "label", "mask"]:
+            elif ann_type in ["product", "label", "mask", "edge_left", "edge_right"]:
+                # edge_left/edge_right: bottle-wall search regions used when
+                # edge_config.anchor_mode='edge_regions'. Parsed like any other
+                # polygon so SuperPoint transports them into the frame; the
+                # image-proc verifier picks them up from transformed_bboxes.
                 bbox = AnnotationParser._parse_flexible_bbox(
                     ann, ann_idx, img_width, img_height, ann_type
                 )

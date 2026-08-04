@@ -155,60 +155,17 @@ def fill_label_black(
     return out
 
 
-def _compute_strip_profile(
-    gray: np.ndarray, label_pts, side: str,
-    search_w: Optional[float] = None,
-    inner_search: float = 0.0,
-    params: EdgeParams = DEFAULT_EDGE_PARAMS,
-) -> Optional[Dict[str, Any]]:
-    """Build search strip 2 bên label + Sobel profile.
+def _strip_to_profile(
+    strip: np.ndarray, params: EdgeParams = DEFAULT_EDGE_PARAMS,
+) -> Dict[str, Any]:
+    """Rectified strip → 1D edge profile + peaks + per-column height_ratio.
 
-    inner_search: px quét vào PHÍA TRONG mép label (gap âm). 0 = chỉ outward
-    (cột 0 bắt đầu ở +edge_margin, hành vi cũ). >0 → strip bắt đầu từ
-    gap = edge_margin - inner_search (âm). Peak→gap qua 'gap_offset':
-    gap = peak_col + gap_offset.
+    Columns MUST increase OUTWARD (away from the product) so the SIGNED Scharr X
+    encodes the dark/bright transition direction along the scan direction. Shared
+    by both anchoring modes (label-strip and user-drawn edge regions) so they
+    produce bit-identical signals for the same rectified pixels.
     """
-    if search_w is None:
-        search_w = params.outer_search_max
-    pts = np.asarray(label_pts, dtype=np.float32)
-    if side == 'left':
-        p_top, p_bot = pts[0], pts[3]
-    else:
-        p_top, p_bot = pts[1], pts[2]
-
-    edge = p_bot - p_top
-    elen = float(np.linalg.norm(edge)) or 1.0
-    edge_dir = edge / elen
-    if side == 'left':
-        perp = np.array([-edge_dir[1], edge_dir[0]], dtype=np.float32)
-    else:
-        perp = np.array([edge_dir[1], -edge_dir[0]], dtype=np.float32)
-
-    y_ext = params.y_extension * elen
-    p_top_ext = p_top - y_ext * edge_dir
-    p_bot_ext = p_bot + y_ext * edge_dir
-    h = int(round(elen * (1.0 + 2 * params.y_extension)))
-    near_edge = params.edge_margin - inner_search   # gap tại cột 0 (âm nếu inner_search>0)
-    far_edge  = search_w                     # gap tại cột w
-    w = int(far_edge - near_edge)            # 1px/cột → gap = col + near_edge
-    if h < 50 or w < 30:
-        return None
-
-    inner_top = p_top_ext + near_edge * perp
-    outer_top = p_top_ext + far_edge  * perp
-    outer_bot = p_bot_ext + far_edge  * perp
-    inner_bot = p_bot_ext + near_edge * perp
-    src = np.array([inner_top, outer_top, outer_bot, inner_bot], dtype=np.float32)
-    dst = np.array([[0, 0], [w, 0], [w, h], [0, h]], dtype=np.float32)
-    M = cv2.getPerspectiveTransform(src, dst)
-    strip = cv2.warpPerspective(
-        gray, M, (w, h),
-        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE,
-    )
-
-    # ── Build the 1D detection signal (2D map, columns = gap from label) ──────
-    # Columns increase OUTWARD (away from the label), so a SIGNED Scharr X gives
-    # the dark/bright transition direction along the search direction.
+    h = strip.shape[0]
     sobel = cv2.Scharr(strip.astype(np.float32), cv2.CV_32F, 1, 0)
     if (params.detect_mode or "gradient").lower() == "brightness":
         # Brightness mode (polarity-aware): keep only edges of the chosen
@@ -265,14 +222,74 @@ def _compute_strip_profile(
         'peaks': peaks,
         'height_ratio': height_ratio,
         'height_ratio_robust': height_ratio_robust,
+        'specular_mask': spec_mask,       # strip-space suppressed blobs (or None)
+    }
+
+
+def _compute_strip_profile(
+    gray: np.ndarray, label_pts, side: str,
+    search_w: Optional[float] = None,
+    inner_search: float = 0.0,
+    params: EdgeParams = DEFAULT_EDGE_PARAMS,
+) -> Optional[Dict[str, Any]]:
+    """Build search strip 2 bên label + Sobel profile.
+
+    inner_search: px quét vào PHÍA TRONG mép label (gap âm). 0 = chỉ outward
+    (cột 0 bắt đầu ở +edge_margin, hành vi cũ). >0 → strip bắt đầu từ
+    gap = edge_margin - inner_search (âm). Peak→gap qua 'gap_offset':
+    gap = peak_col + gap_offset.
+    """
+    if search_w is None:
+        search_w = params.outer_search_max
+    pts = np.asarray(label_pts, dtype=np.float32)
+    if side == 'left':
+        p_top, p_bot = pts[0], pts[3]
+    else:
+        p_top, p_bot = pts[1], pts[2]
+
+    edge = p_bot - p_top
+    elen = float(np.linalg.norm(edge)) or 1.0
+    edge_dir = edge / elen
+    if side == 'left':
+        perp = np.array([-edge_dir[1], edge_dir[0]], dtype=np.float32)
+    else:
+        perp = np.array([edge_dir[1], -edge_dir[0]], dtype=np.float32)
+
+    y_ext = params.y_extension * elen
+    p_top_ext = p_top - y_ext * edge_dir
+    p_bot_ext = p_bot + y_ext * edge_dir
+    h = int(round(elen * (1.0 + 2 * params.y_extension)))
+    near_edge = params.edge_margin - inner_search   # gap tại cột 0 (âm nếu inner_search>0)
+    far_edge  = search_w                     # gap tại cột w
+    w = int(far_edge - near_edge)            # 1px/cột → gap = col + near_edge
+    if h < 50 or w < 30:
+        return None
+
+    inner_top = p_top_ext + near_edge * perp
+    outer_top = p_top_ext + far_edge  * perp
+    outer_bot = p_bot_ext + far_edge  * perp
+    inner_bot = p_bot_ext + near_edge * perp
+    src = np.array([inner_top, outer_top, outer_bot, inner_bot], dtype=np.float32)
+    dst = np.array([[0, 0], [w, 0], [w, h], [0, h]], dtype=np.float32)
+    M = cv2.getPerspectiveTransform(src, dst)
+    strip = cv2.warpPerspective(
+        gray, M, (w, h),
+        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE,
+    )
+
+    # ── 1D detection signal (columns = gap from label, increasing OUTWARD).
+    #    Shared with the edge-region mode via _strip_to_profile.
+    pd = _strip_to_profile(strip, params)
+    pd.update({
         'p_top': p_top, 'p_bot': p_bot,
         'perp': perp,
         'edge_dir': edge_dir,
         'edge_len': elen,
         'gap_offset': float(near_edge),   # gap = peak_col + gap_offset (có thể âm)
         'M': M,                           # frame→strip perspective (for inverse map)
-        'specular_mask': spec_mask,       # strip-space suppressed blobs (or None)
-    }
+        'strip_h': h,
+    })
+    return pd
 
 
 def _find_outer_inner(
@@ -627,6 +644,446 @@ def detect_product_box(
         }
 
     return result
+
+
+# ─── Edge-region mode (anchor_mode='edge_regions') ───────────────────────────
+# Instead of deriving the search strip from the label quad, the user draws two
+# regions on the template ('edge_left' / 'edge_right'). SuperPoint transforms them
+# into the frame and the wall is the strongest qualifying peak INSIDE each region.
+# No template_walls / plastic thickness needed: the region already says where to
+# look. Everything after rectification is identical to the label-strip mode.
+def _canonical_quad(pts) -> np.ndarray:
+    """Order 4 points as [TL, TR, BR, BL] in image coords (y grows downward).
+
+    User-drawn polygons arrive in arbitrary winding, so sort by angle around the
+    centroid (clockwise on screen) then rotate the top-left-most point to front.
+    """
+    p = np.asarray(pts, dtype=np.float32).reshape(-1, 2)
+    if p.shape[0] < 4:
+        raise ValueError(f"edge region needs 4 points, got {p.shape[0]}")
+    p = p[:4]
+    c = p.mean(axis=0)
+    p = p[np.argsort(np.arctan2(p[:, 1] - c[1], p[:, 0] - c[0]))]
+    return np.roll(p, -int(np.argmin(p[:, 0] + p[:, 1])), axis=0)
+
+
+def _profile_from_quad(
+    gray: np.ndarray, quad, side: str, params: EdgeParams = DEFAULT_EDGE_PARAMS,
+) -> Optional[Dict[str, Any]]:
+    """Rectify a user-drawn edge region to a strip whose columns increase OUTWARD.
+
+    For 'right' the quad's left edge is the inner side, so it maps straight through.
+    For 'left' outward means -x, so the quad is mirrored horizontally — that keeps
+    `edge_polarity` meaning the same thing on both sides (bright→dark scanning away
+    from the bottle) instead of flipping sign per side.
+    """
+    q = _canonical_quad(quad)
+    src = np.array([q[1], q[0], q[3], q[2]], dtype=np.float32) if side == 'left' \
+        else q.astype(np.float32)
+    w = int(round((np.linalg.norm(src[1] - src[0]) + np.linalg.norm(src[2] - src[3])) / 2))
+    h = int(round((np.linalg.norm(src[3] - src[0]) + np.linalg.norm(src[2] - src[1])) / 2))
+    if h < 20 or w < 10:
+        return None
+    dst = np.array([[0, 0], [w, 0], [w, h], [0, h]], dtype=np.float32)
+    M = cv2.getPerspectiveTransform(src, dst)
+    strip = cv2.warpPerspective(
+        gray, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE,
+    )
+    pd = _strip_to_profile(strip, params)
+    # gap_offset 0: columns are px from the region's INNER edge, not from a label.
+    pd.update({'M': M, 'strip_w': w, 'strip_h': h, 'gap_offset': 0.0, 'side': side})
+    return pd
+
+
+def _pick_wall_col(
+    pd: Optional[Dict[str, Any]], params: EdgeParams = DEFAULT_EDGE_PARAMS,
+) -> Optional[int]:
+    """Qualifying peak inside a region → wall column. Same 2-pass height_ratio
+    gate and `find_by` strategy as the label-strip mode's outer wall."""
+    if pd is None:
+        return None
+    peaks, prof = pd['peaks'], pd['profile']
+    q = [int(p) for p in peaks if pd['height_ratio'][p] >= params.outer_min_hratio]
+    if not q:
+        q = [int(p) for p in peaks if pd['height_ratio_robust'][p] >= params.outer_min_hratio]
+    if not q:
+        return None
+    fb = (params.find_by or "farthest").lower()
+    if fb == "nearest":
+        return min(q)
+    if fb == "strongest":
+        return max(q, key=lambda p: prof[p])
+    return max(q)
+
+
+def _col_to_frame_line(pd: Dict[str, Any], col: float) -> Tuple[np.ndarray, np.ndarray]:
+    """Strip column → (top, bot) of that wall line in frame coords."""
+    pts = np.array([[[float(col), 0.0]], [[float(col), float(pd['strip_h'])]]], dtype=np.float32)
+    out = cv2.perspectiveTransform(pts, np.linalg.inv(pd['M'])).reshape(-1, 2)
+    return out[0], out[1]
+
+
+def _seg_on_line(
+    a: np.ndarray, b: np.ndarray, centre: np.ndarray, half_h: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Segment of line a→b centred on the projection of `centre`, length 2*half_h.
+
+    The wall line only carries horizontal information; its vertical extent is
+    whatever the user happened to draw. Re-centring on the label keeps the product
+    box the same height as in label-strip mode so downstream offset checks and the
+    drawn OBB stay comparable between the two anchoring modes.
+    """
+    d = b - a
+    n = float(np.linalg.norm(d)) or 1.0
+    d = d / n
+    m = a + float(np.dot(centre - a, d)) * d
+    return m - d * half_h, m + d * half_h
+
+
+def _specular_regions_in_frame(pd: Optional[Dict[str, Any]], fw: int, fh: int) -> List[List[List[int]]]:
+    """Strip-space suppressed mask → simplified polygons in frame coords, so the
+    UI can overlay exactly what `specular_thr` removed."""
+    if pd is None or pd.get('specular_mask') is None:
+        return []
+    back = cv2.warpPerspective(
+        pd['specular_mask'], pd['M'], (fw, fh),
+        flags=cv2.WARP_INVERSE_MAP | cv2.INTER_NEAREST,
+    )
+    cnts, _ = cv2.findContours(
+        (back > 0).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+    out = []
+    for c in cnts:
+        if cv2.contourArea(c) < 20:
+            continue
+        approx = cv2.approxPolyDP(c, 2.0, True).reshape(-1, 2)
+        out.append([[int(x), int(y)] for x, y in approx])
+    return out
+
+
+def detect_product_box_from_regions(
+    frame_img: np.ndarray,
+    edge_left_quad,
+    edge_right_quad,
+    label_pts: Optional[List[List[float]]] = None,
+    serial_number: str = "",
+    params: EdgeParams = DEFAULT_EDGE_PARAMS,
+    return_profiles: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Detect the product box from two user-drawn edge regions (frame coords).
+
+    Args:
+        frame_img:        BGR image
+        edge_left_quad:   4 points of the 'edge_left' region, frame coords
+        edge_right_quad:  4 points of the 'edge_right' region, frame coords
+        label_pts:        label quad — sets the box's vertical extent + centre.
+                          Falls back to the regions' own extent when absent.
+
+    Returns the same YOLO-OBB-compatible dict as detect_product_box (so callers
+    are interchangeable), with 'source'='image_proc_regions'. Both walls must be
+    found — there is no template thickness to predict a missing side from.
+    None nếu 1 trong 2 cạnh không detect được.
+    """
+    if frame_img is None or edge_left_quad is None or edge_right_quad is None:
+        return None
+    try:
+        qL = _canonical_quad(edge_left_quad)
+        qR = _canonical_quad(edge_right_quad)
+    except ValueError as e:
+        logger.warning(f"[{serial_number}] edge_regions: {e}")
+        return None
+
+    # ROI crop: both regions only (same bandwidth argument as detect_product_box).
+    fh, fw = frame_img.shape[:2]
+    allc = np.vstack([qL, qR])
+    x0 = max(0, int(allc[:, 0].min()) - 4)
+    y0 = max(0, int(allc[:, 1].min()) - 4)
+    x1 = min(fw, int(allc[:, 0].max()) + 5)
+    y1 = min(fh, int(allc[:, 1].max()) + 5)
+    if (x1 - x0) < 10 or (y1 - y0) < 20:
+        logger.warning(f"[{serial_number}] edge_regions: degenerate ROI {x1-x0}x{y1-y0}")
+        return None
+    roi_offset = np.array([x0, y0], dtype=np.float32)
+    gray = cv2.cvtColor(frame_img[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
+
+    pd_L = _profile_from_quad(gray, qL - roi_offset, 'left', params)
+    pd_R = _profile_from_quad(gray, qR - roi_offset, 'right', params)
+    # Bù ROI về frame coords (gap/peak là scalar nên không cần bù).
+    _T_roi = np.array([[1, 0, -x0], [0, 1, -y0], [0, 0, 1]], dtype=np.float64)
+    for _pd in (pd_L, pd_R):
+        if _pd is not None:
+            _pd['M'] = _pd['M'] @ _T_roi
+
+    col_L = _pick_wall_col(pd_L, params)
+    col_R = _pick_wall_col(pd_R, params)
+    if col_L is None or col_R is None:
+        logger.warning(
+            f"[{serial_number}] edge_regions: wall not found "
+            f"(left={col_L}, right={col_R}) — lower Outer coverage or widen the region"
+        )
+        if not return_profiles:
+            return None
+
+    L_top = L_bot = R_top = R_bot = None
+    if col_L is not None:
+        L_top, L_bot = _col_to_frame_line(pd_L, col_L)
+    if col_R is not None:
+        R_top, R_bot = _col_to_frame_line(pd_R, col_R)
+
+    result: Optional[Dict[str, Any]] = None
+    if col_L is not None and col_R is not None:
+        # Normalise the two walls onto a common vertical extent (label if known).
+        if label_pts is not None:
+            lp = np.asarray(label_pts, dtype=np.float32)
+            v = ((lp[3] - lp[0]) + (lp[2] - lp[1])) / 2.0    # TL→BL and TR→BR
+            box_h = float(np.linalg.norm(v)) or 1.0
+            centre = lp.mean(axis=0)
+        else:
+            box_h = float(np.linalg.norm(L_bot - L_top) + np.linalg.norm(R_bot - R_top)) / 2.0
+            centre = (L_top + L_bot + R_top + R_bot) / 4.0
+        L_top, L_bot = _seg_on_line(L_top, L_bot, centre, box_h / 2.0)
+        R_top, R_bot = _seg_on_line(R_top, R_bot, centre, box_h / 2.0)
+
+        corners = np.array([L_top, R_top, R_bot, L_bot], dtype=np.float32)
+        cx = float(corners[:, 0].mean())
+        cy = float(corners[:, 1].mean())
+        w = float(np.linalg.norm((R_top + R_bot) / 2 - (L_top + L_bot) / 2))
+        h = float(np.linalg.norm(L_bot - L_top))
+        edge = L_bot - L_top
+        result = {
+            'box': np.array([cx, cy, w, h, float(np.arctan2(edge[0], edge[1]))], dtype=np.float32),
+            'score': 1.0,
+            'class': 'product',
+            'corners': corners,
+            'inner_corners': None,          # no inner/outer split in this mode
+            'outer_corners': corners,
+            'wall_type_used': 'outer',
+            'source': 'image_proc_regions',
+            'detection_info': {
+                'col_L': int(col_L), 'col_R': int(col_R),
+                'region_w_L': pd_L.get('strip_w'), 'region_w_R': pd_R.get('strip_w'),
+                'anchor_mode': 'edge_regions',
+            },
+        }
+
+    if return_profiles:
+        def _side_payload(pd, col):
+            if pd is None:
+                return None
+            hr_max = np.maximum(pd['height_ratio'], pd['height_ratio_robust'])
+            return {
+                'profile': [round(float(x), 4) for x in pd['profile']],
+                'peaks': [int(p) for p in pd['peaks']],
+                'peak_hratio': [round(float(hr_max[int(p)]), 3) for p in pd['peaks']],
+                'gap_offset': 0.0,
+                'outer_col': (None if col is None else float(col)),
+                'inner_col': None,
+                'pred_col': None,
+                'outer_min_hratio': float(params.outer_min_hratio),
+                'inner_min_hratio': float(params.inner_min_hratio),
+                'detect_mode': (params.detect_mode or 'gradient'),
+                'specular_regions': _specular_regions_in_frame(pd, fw, fh),
+            }
+        profiles = {
+            'left':  _side_payload(pd_L, col_L),
+            'right': _side_payload(pd_R, col_R),
+        }
+        if result is None:
+            # Detection failed, but hand back the curves anyway so the UI can show
+            # WHY (peaks present but under the coverage threshold, glare eaten, …).
+            return {'failed': True, 'profiles': profiles, 'detection_info': {
+                'col_L': col_L, 'col_R': col_R, 'anchor_mode': 'edge_regions',
+            }}
+        result['profiles'] = profiles
+
+    return result
+
+
+# ─── Cap-axis regression (Check_Color, localization_method='edge_regions') ───
+# For a round bottle the label spins, so the template match is anchored on the
+# CAP. The cap is small and near-rotationally-symmetric, so SuperPoint pins its
+# orientation and vertical position well but its horizontal centre and apparent
+# diameter drift. The two drawn edge regions measure exactly those two: detect
+# both cap edges, compare against where they sat on the template, and slide +
+# scale the product polygon along the cap axis to match. Everything the edges
+# CANNOT observe (vertical placement, rotation) is left to SuperPoint.
+def measure_template_cap_edges(
+    template_bgr: np.ndarray,
+    edge_left_quad,
+    edge_right_quad,
+    params: EdgeParams = DEFAULT_EDGE_PARAMS,
+) -> Optional[Dict[str, float]]:
+    """Where the cap edges sit inside each region ON THE TEMPLATE, as a fraction
+    of that region's width. Fractions (not pixels) so the reference survives the
+    region being warped to a different scale in the frame.
+
+    Returns {'frac_L', 'frac_R'} or None when either edge isn't found.
+    """
+    if template_bgr is None or edge_left_quad is None or edge_right_quad is None:
+        return None
+    gray = cv2.cvtColor(template_bgr, cv2.COLOR_BGR2GRAY)
+    pd_L = _profile_from_quad(gray, edge_left_quad, 'left', params)
+    pd_R = _profile_from_quad(gray, edge_right_quad, 'right', params)
+    col_L = _pick_wall_col(pd_L, params)
+    col_R = _pick_wall_col(pd_R, params)
+    if col_L is None or col_R is None:
+        return None
+    return {
+        'frac_L': float(col_L) / float(max(1, pd_L['strip_w'])),
+        'frac_R': float(col_R) / float(max(1, pd_R['strip_w'])),
+    }
+
+
+def detect_cap_axis_from_regions(
+    frame_img: np.ndarray,
+    edge_left_quad,
+    edge_right_quad,
+    ref_frac: Optional[Dict[str, float]] = None,
+    params: EdgeParams = DEFAULT_EDGE_PARAMS,
+    serial_number: str = "",
+    return_profiles: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Detect both cap edges in the (already SuperPoint-transformed) regions.
+
+    `ref_frac` = {'frac_L','frac_R'} from measure_template_cap_edges. When given,
+    the EXPECTED edge positions are also mapped back to frame coords, so the
+    caller can compute the detected-vs-expected correction.
+
+    return_profiles: attach the 1D curves + peaks so the setup UI can chart them.
+    On failure it then returns {'failed': True, 'profiles': ...} instead of None,
+    so the UI can show WHY nothing qualified. Off by default (inference).
+
+    Returns None nếu 1 trong 2 cạnh không detect được.
+    """
+    if frame_img is None or edge_left_quad is None or edge_right_quad is None:
+        return None
+    try:
+        qL = _canonical_quad(edge_left_quad)
+        qR = _canonical_quad(edge_right_quad)
+    except ValueError as e:
+        logger.warning(f"[{serial_number}] cap_axis: {e}")
+        return None
+
+    fh, fw = frame_img.shape[:2]
+    allc = np.vstack([qL, qR])
+    x0 = max(0, int(allc[:, 0].min()) - 4)
+    y0 = max(0, int(allc[:, 1].min()) - 4)
+    x1 = min(fw, int(allc[:, 0].max()) + 5)
+    y1 = min(fh, int(allc[:, 1].max()) + 5)
+    if (x1 - x0) < 10 or (y1 - y0) < 20:
+        return None
+    roi_offset = np.array([x0, y0], dtype=np.float32)
+    gray = cv2.cvtColor(frame_img[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
+
+    pd_L = _profile_from_quad(gray, qL - roi_offset, 'left', params)
+    pd_R = _profile_from_quad(gray, qR - roi_offset, 'right', params)
+    _T_roi = np.array([[1, 0, -x0], [0, 1, -y0], [0, 0, 1]], dtype=np.float64)
+    for _pd in (pd_L, pd_R):
+        if _pd is not None:
+            _pd['M'] = _pd['M'] @ _T_roi
+
+    col_L = _pick_wall_col(pd_L, params)
+    col_R = _pick_wall_col(pd_R, params)
+
+    def _profiles_payload():
+        def _side(pd, col, exp_col):
+            if pd is None:
+                return None
+            hr_max = np.maximum(pd['height_ratio'], pd['height_ratio_robust'])
+            return {
+                'profile': [round(float(x), 4) for x in pd['profile']],
+                'peaks': [int(p) for p in pd['peaks']],
+                'peak_hratio': [round(float(hr_max[int(p)]), 3) for p in pd['peaks']],
+                'gap_offset': 0.0,
+                'outer_col': (None if col is None else float(col)),
+                'inner_col': None,
+                'pred_col': exp_col,          # reference position from the template
+                'outer_min_hratio': float(params.outer_min_hratio),
+                'inner_min_hratio': float(params.inner_min_hratio),
+                'detect_mode': (params.detect_mode or 'gradient'),
+                'specular_regions': _specular_regions_in_frame(pd, fw, fh),
+            }
+        _eL = (float(ref_frac['frac_L']) * pd_L['strip_w']) if (ref_frac and pd_L) else None
+        _eR = (float(ref_frac['frac_R']) * pd_R['strip_w']) if (ref_frac and pd_R) else None
+        return {'left': _side(pd_L, col_L, _eL), 'right': _side(pd_R, col_R, _eR)}
+
+    if col_L is None or col_R is None:
+        logger.debug(
+            f"[{serial_number}] cap_axis: edge not found (left={col_L}, right={col_R})"
+        )
+        if return_profiles:
+            return {'failed': True, 'profiles': _profiles_payload(),
+                    'col_L': col_L, 'col_R': col_R,
+                    'region_w_L': (pd_L['strip_w'] if pd_L else None),
+                    'region_w_R': (pd_R['strip_w'] if pd_R else None)}
+        return None
+
+    def _mid(pd, col):
+        a, b = _col_to_frame_line(pd, col)
+        return (a + b) / 2.0
+
+    out: Dict[str, Any] = {
+        'col_L': int(col_L), 'col_R': int(col_R),
+        'region_w_L': int(pd_L['strip_w']), 'region_w_R': int(pd_R['strip_w']),
+        'left_mid': _mid(pd_L, col_L),
+        'right_mid': _mid(pd_R, col_R),
+        'left_line': _col_to_frame_line(pd_L, col_L),
+        'right_line': _col_to_frame_line(pd_R, col_R),
+    }
+    if ref_frac:
+        exp_L = float(ref_frac.get('frac_L', 0.5)) * pd_L['strip_w']
+        exp_R = float(ref_frac.get('frac_R', 0.5)) * pd_R['strip_w']
+        out['exp_left_mid'] = _mid(pd_L, exp_L)
+        out['exp_right_mid'] = _mid(pd_R, exp_R)
+        out['exp_col_L'] = float(exp_L)
+        out['exp_col_R'] = float(exp_R)
+    if return_profiles:
+        out['profiles'] = _profiles_payload()
+    return out
+
+
+def correct_polygon_along_axis(
+    poly,
+    det_left: np.ndarray, det_right: np.ndarray,
+    exp_left: np.ndarray, exp_right: np.ndarray,
+    max_shift_px: float = 0.0,
+    scale_limits: Tuple[float, float] = (0.5, 2.0),
+) -> Optional[Tuple[np.ndarray, Dict[str, float]]]:
+    """Slide + scale `poly` along the cap axis so the expected edge pair lands on
+    the detected one. Only the component ALONG the axis changes.
+
+    max_shift_px > 0 rejects corrections larger than that (a wild edge detection
+    would otherwise drag the ROI off the bottle — better to fall back to the
+    plain SuperPoint polygon than to measure colour somewhere random).
+
+    Returns (corrected_poly, info) or None when the correction is out of bounds.
+    """
+    axis = np.asarray(exp_right, np.float32) - np.asarray(exp_left, np.float32)
+    n = float(np.linalg.norm(axis))
+    if n < 1e-3:
+        return None
+    e = axis / n
+    c_exp = float(np.dot((np.asarray(exp_left) + np.asarray(exp_right)) / 2.0, e))
+    c_det = float(np.dot((np.asarray(det_left) + np.asarray(det_right)) / 2.0, e))
+    w_exp = float(np.dot(np.asarray(exp_right) - np.asarray(exp_left), e))
+    w_det = float(np.dot(np.asarray(det_right) - np.asarray(det_left), e))
+    if abs(w_exp) < 1e-3:
+        return None
+    scale = w_det / w_exp
+    shift = c_det - c_exp
+    if not (scale_limits[0] <= scale <= scale_limits[1]):
+        return None
+    if max_shift_px > 0 and abs(shift) > max_shift_px:
+        return None
+
+    pts = np.asarray(poly, dtype=np.float32).reshape(-1, 2)
+    t = pts @ e                                  # projection of each point on the axis
+    t_new = c_det + (t - c_exp) * scale
+    corrected = pts + np.outer(t_new - t, e)
+    return corrected.astype(np.float32), {
+        'shift_px': shift, 'scale': scale,
+        'width_expected': w_exp, 'width_detected': w_det,
+    }
 
 
 def label_box_from_pts(label_pts: List[List[float]]) -> Dict[str, Any]:

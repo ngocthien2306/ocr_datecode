@@ -72,7 +72,8 @@ class EdgeConfig(BaseModel):
     edge_polarity: str = Field(default="light_to_dark", description="Brightness-mode edge direction when scanning outward: 'light_to_dark' (bright rim→dark bg, default) | 'dark_to_light' (inverted contrast). Ignored by gradient mode.")
     find_by: str = Field(default="farthest", description="Which qualifying peak becomes the OUTER wall: 'farthest' (outermost, default) | 'nearest' (closest to label) | 'strongest' (highest profile)")
     edge_width: float = Field(default=3.0, ge=1.0, le=15.0, description="Expected edge transition width in px; profile smoothing sigma = edge_width/2")
-    template_walls: Optional[EdgeWalls] = Field(default=None, description="Walls computed on the template image at setup; used directly at inference")
+    anchor_mode: str = Field(default="label_strip", description="Where the search strip comes from: 'label_strip' (derived from the label quad + outer/inner_search_max, default) | 'edge_regions' (the template's user-drawn 'edge_left'/'edge_right' annotations, transformed by SuperPoint). In edge_regions mode template_walls/plastic thickness are unused.")
+    template_walls: Optional[EdgeWalls] = Field(default=None, description="Walls computed on the template image at setup; used directly at inference. Not used when anchor_mode='edge_regions'")
 
 
 class AnomalyConfig(BaseModel):

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import '@/styles/EdgeSetupModal.css';
 import { API_BASE_URL } from '@/config/api';
+import { drawProfileChart, useDarkMode, type Pt, type SideProfile } from './edgeProfileChart';
 
 export interface EdgeWalls {
   inner_L: number; inner_R: number;
@@ -27,6 +28,9 @@ export interface EdgeConfig {
   edge_polarity: 'light_to_dark' | 'dark_to_light';
   find_by: 'farthest' | 'nearest' | 'strongest';
   edge_width: number;
+  // 'label_strip'  = search strip derived from the label quad (original behaviour)
+  // 'edge_regions' = scan the template's user-drawn edge_left/edge_right regions
+  anchor_mode: 'label_strip' | 'edge_regions';
   template_walls?: EdgeWalls | null;
 }
 
@@ -48,23 +52,9 @@ export const DEFAULT_EDGE_CONFIG: EdgeConfig = {
   edge_polarity: 'light_to_dark',
   find_by: 'farthest',
   edge_width: 3,
+  anchor_mode: 'label_strip',
   template_walls: null,
 };
-
-interface SideProfile {
-  profile: number[];
-  peaks: number[];
-  peak_hratio?: number[];          // height_ratio per peak (what outer_hratio filters on)
-  gap_offset: number;
-  outer_col: number | null;
-  inner_col: number | null;
-  pred_col: number | null;
-  outer_min_hratio?: number;       // current threshold → drawn for reference
-  detect_mode?: string;
-  specular_regions?: Pt[][];       // suppressed glare blobs in image pixel coords
-}
-
-type Pt = [number, number];
 
 interface FrameImage {
   image_path: string;
@@ -86,6 +76,8 @@ interface EdgeSetupModalProps {
   imageHeight: number;
   labelPolygon: Pt[] | null;          // template label quad, TEMPLATE pixel coords
   productPolygons?: Pt[][];           // template product polygons (display only)
+  edgeLeftPolygon?: Pt[] | null;      // 'edge_left' annotation, TEMPLATE pixel coords
+  edgeRightPolygon?: Pt[] | null;     // 'edge_right' annotation, TEMPLATE pixel coords
   wallType?: 'outer' | 'inner';
   initialConfig?: EdgeConfig | null;
   templateName?: string;
@@ -110,6 +102,7 @@ interface PreviewResult {
   template_walls: EdgeWalls | null;
   detection_info: any | null;
   profiles?: { left: SideProfile | null; right: SideProfile | null } | null;
+  edge_regions?: { left: Pt[]; right: Pt[] } | null;  // regions actually scanned, this image's coords
   reason: string | null;
 }
 
@@ -132,6 +125,8 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
   imageHeight,
   labelPolygon,
   productPolygons = [],
+  edgeLeftPolygon = null,
+  edgeRightPolygon = null,
   wallType = 'outer',
   initialConfig,
   templateName,
@@ -164,6 +159,8 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
   const [framesError, setFramesError] = useState<string | null>(null);
   const [badges, setBadges] = useState<Record<string, 'detected' | 'failed' | 'testing'>>({});
   const [testingAll, setTestingAll] = useState(false);
+  // Canvas is painted imperatively → must repaint when the theme toggles.
+  const darkMode = useDarkMode();
 
   // ── Init: config + the template as the active image ───────────────────────
   useEffect(() => {
@@ -232,9 +229,34 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
       ctx.stroke();
     };
 
+    // Edge-region mode: draw the regions actually scanned. Prefer the ones the BE
+    // echoed back (already mapped onto a recorded frame); fall back to the template
+    // annotations so the regions are visible before the first detect.
+    if (showSearch && config.anchor_mode === 'edge_regions') {
+      const shownL = preview?.edge_regions?.left || (active.isTemplate ? edgeLeftPolygon : null);
+      const shownR = preview?.edge_regions?.right || (active.isTemplate ? edgeRightPolygon : null);
+      const regionPoly = (pts: Pt[] | null | undefined, color: string) => {
+        if (!pts || pts.length < 3) return;
+        ctx.save();
+        ctx.setLineDash([6, 4]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color + '22';
+        ctx.beginPath();
+        ctx.moveTo(pts[0]![0] * displayScale, pts[0]![1] * displayScale);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i]![0] * displayScale, pts[i]![1] * displayScale);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      };
+      regionPoly(shownL, '#fb923c');
+      regionPoly(shownR, '#2dd4bf');
+    }
+
     // Search-range bands (dashed): outer search (blue) outward from label edge,
     // inner search (pink) inward into the label. Drawn first so walls sit on top.
-    if (showSearch && active.label && active.label.length >= 4) {
+    if (showSearch && config.anchor_mode !== 'edge_regions' && active.label && active.label.length >= 4) {
       const dashPoly = (pts: Pt[], color: string) => {
         ctx.save();
         ctx.setLineDash([6, 4]);
@@ -281,8 +303,8 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
     // Detected walls: outer (yellow), inner (orange)
     if (preview?.outer_corners) poly(preview.outer_corners, '#facc15', 3);
     if (preview?.inner_corners) poly(preview.inner_corners, '#f59e0b', 2);
-  }, [active, natW, natH, displayScale, preview, showSearch,
-      config.outer_search_max, config.inner_search_max, config.y_extension]);
+  }, [active, natW, natH, displayScale, preview, showSearch, edgeLeftPolygon, edgeRightPolygon,
+      config.anchor_mode, config.outer_search_max, config.inner_search_max, config.y_extension]);
 
   useEffect(() => {
     if (!imgReady) return;
@@ -291,9 +313,10 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
 
   // Render the L/R edge-profile charts whenever a detection result arrives.
   useEffect(() => {
-    drawProfileChart(leftProfRef.current, preview?.profiles?.left, 'LEFT profile');
-    drawProfileChart(rightProfRef.current, preview?.profiles?.right, 'RIGHT profile');
-  }, [preview]);
+    const lbl = { chosen: 'OUT', secondary: 'IN', reference: 'pred' };
+    drawProfileChart(leftProfRef.current, preview?.profiles?.left, 'LEFT profile', lbl);
+    drawProfileChart(rightProfRef.current, preview?.profiles?.right, 'RIGHT profile', lbl);
+  }, [preview, darkMode]);
 
   // ── Build the preview request body ────────────────────────────────────────
   const buildBody = (img: ActiveImage, walls?: EdgeWalls | null) => {
@@ -304,8 +327,19 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
       wall_type: wallType,
       params,
     };
+    if (config.anchor_mode === 'edge_regions') {
+      // Regions live in TEMPLATE coords; the BE maps them onto recorded frames
+      // through the label quad, so it needs the template label too.
+      body.edge_left_polygon = edgeLeftPolygon;
+      body.edge_right_polygon = edgeRightPolygon;
+      body.template_label_polygon = labelPolygon;
+      return body;   // walls are unused in this mode
+    }
     // For non-template frames we MUST supply walls (computed on the template).
-    const w = walls ?? (img.isTemplate ? config.template_walls : config.template_walls);
+    // Only reuse stored walls off-template: on the template itself, omitting them
+    // makes the BE recompute from the current params (otherwise the very first
+    // detect freezes plastic_L/R and later tuning silently has no effect).
+    const w = walls ?? (img.isTemplate ? null : config.template_walls);
     if (w) body.template_walls = w;
     return body;
   };
@@ -318,7 +352,12 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
     return res.json();
-  }, [config, wallType]);
+  }, [config, wallType, edgeLeftPolygon, edgeRightPolygon, labelPolygon]);
+
+  const regionMode = config.anchor_mode === 'edge_regions';
+  const regionsMissing = regionMode && (!edgeLeftPolygon || !edgeRightPolygon);
+  // Walls are only a prerequisite for saving/among-frames testing in label_strip mode.
+  const canSave = regionMode ? !regionsMissing : !!config.template_walls;
 
   // ── Detect on the CURRENT active image ────────────────────────────────────
   const runDetect = useCallback(async () => {
@@ -328,6 +367,11 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
     }
     if (!active.label || active.label.length < 4) {
       setPreviewError('This image has no label polygon to anchor edge detection.');
+      return;
+    }
+    if (config.anchor_mode === 'edge_regions' && (!edgeLeftPolygon || !edgeRightPolygon)) {
+      setPreviewError("Draw an 'edge_left' and an 'edge_right' region on the template first.");
+      setPreview(null);
       return;
     }
     setDetecting(true);
@@ -347,22 +391,21 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
     } finally {
       setDetecting(false);
     }
-  }, [active, callPreview]);
+  }, [active, callPreview, config.anchor_mode, edgeLeftPolygon, edgeRightPolygon]);
 
-  // Auto-detect on the template when it first becomes ready (no saved walls yet).
+  // Auto-detect on the template when it first becomes ready.
   useEffect(() => {
     if (!imgReady || !active?.isTemplate) return;
-    if (config.template_walls) { void runDetect(); return; }
     void runDetect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imgReady, active?.key]);
 
-  // Re-run detection when the user switches detection mode or edge polarity.
+  // Re-run detection when the user switches anchoring, detection mode or polarity.
   useEffect(() => {
     if (!imgReady || !active?.previewUrl) return;
     void runDetect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.detect_mode, config.edge_polarity]);
+  }, [config.anchor_mode, config.detect_mode, config.edge_polarity]);
 
   // ── Load recorded frames for this camera ──────────────────────────────────
   const loadFrames = useCallback(async () => {
@@ -419,7 +462,7 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
   // ── Test ALL loaded frames → badges (uses saved template_walls) ───────────
   const testAll = useCallback(async () => {
     if (frames.length === 0) return;
-    if (!config.template_walls) {
+    if (!regionMode && !config.template_walls) {
       setPreviewError('Detect on the template first to compute walls, then Test all.');
       return;
     }
@@ -445,7 +488,7 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
       setBadges({ ...next });
     }
     setTestingAll(false);
-  }, [frames, config.template_walls, callPreview]);
+  }, [frames, config.template_walls, callPreview, regionMode]);
 
   if (!isOpen) return null;
 
@@ -468,8 +511,10 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
               type="button"
               className="btn btn-primary"
               onClick={() => onSave(config)}
-              disabled={!config.template_walls}
-              title={!config.template_walls ? 'Detect on the template first to compute walls' : ''}
+              disabled={!canSave}
+              title={canSave ? '' : (regionMode
+                ? "Draw 'edge_left' and 'edge_right' regions on the template first"
+                : 'Detect on the template first to compute walls')}
             >
               Save
             </button>
@@ -499,8 +544,10 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
               <button
                 type="button" className="btn btn-secondary"
                 onClick={testAll}
-                disabled={frames.length === 0 || testingAll || !config.template_walls}
-                title={!config.template_walls ? 'Detect on the template first' : ''}
+                disabled={frames.length === 0 || testingAll || !canSave}
+                title={canSave ? '' : (regionMode
+                  ? "Draw the edge regions on the template first"
+                  : 'Detect on the template first')}
               >
                 {testingAll ? `Testing ${doneCount}/${frames.length}…` : 'Test all'}
               </button>
@@ -539,14 +586,23 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
               <div className="edge-setup-hint">
                 <span style={{ color: '#22d3ee' }}>●</span> Label &nbsp;
                 <span style={{ color: '#7513dd' }}>●</span> Product &nbsp;
-                <span style={{ color: '#facc15' }}>●</span> Outer wall &nbsp;
-                <span style={{ color: '#f59e0b' }}>●</span> Inner wall &nbsp;
-                <span style={{ color: '#3b82f6' }}>▢</span> Outer search &nbsp;
-                <span style={{ color: '#ec4899' }}>▢</span> Inner search &nbsp;
+                <span style={{ color: '#facc15' }}>●</span> {regionMode ? 'Detected wall' : 'Outer wall'} &nbsp;
+                {!regionMode && <><span style={{ color: '#f59e0b' }}>●</span> Inner wall &nbsp;</>}
+                {regionMode ? (
+                  <>
+                    <span style={{ color: '#fb923c' }}>▢</span> Edge left &nbsp;
+                    <span style={{ color: '#2dd4bf' }}>▢</span> Edge right &nbsp;
+                  </>
+                ) : (
+                  <>
+                    <span style={{ color: '#3b82f6' }}>▢</span> Outer search &nbsp;
+                    <span style={{ color: '#ec4899' }}>▢</span> Inner search &nbsp;
+                  </>
+                )}
                 <span style={{ color: '#ef4444' }}>▩</span> Specular cut &nbsp;
                 <label className="es-show-search">
                   <input type="checkbox" checked={showSearch} onChange={(e) => setShowSearch(e.target.checked)} />
-                  show search range
+                  {regionMode ? 'show regions' : 'show search range'}
                 </label>
                 <b style={{ marginLeft: 8 }}>
                   {active?.isTemplate ? 'Template' : 'Recorded frame'}
@@ -556,7 +612,13 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
 
             <div className="edge-setup-statusline">
               {detecting && <span>Detecting…</span>}
-              {!detecting && preview?.detected && di && (
+              {!detecting && preview?.detected && di && regionMode && (
+                <span>
+                  <b className="es-ok">✓ Detected</b> · edge at L/R={fmt(di.col_L)}/{fmt(di.col_R)}px
+                  from the inner side of each region (width {fmt(di.region_w_L)}/{fmt(di.region_w_R)}px)
+                </span>
+              )}
+              {!detecting && preview?.detected && di && !regionMode && (
                 <span>
                   <b className="es-ok">✓ Detected</b> · outer L/R={fmt(di.outer_L)}/{fmt(di.outer_R)} ·
                   inner L/R={fmt(di.eff_L)}/{fmt(di.eff_R)} ·
@@ -576,6 +638,26 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
 
           {/* RIGHT: param sliders */}
           <div className="edge-setup-controls">
+            <div className="es-section">
+              <div className="es-section-title">Search area</div>
+              <select
+                className="es-mode-select"
+                value={config.anchor_mode}
+                onChange={(e) => setConfig((p) => ({ ...p, anchor_mode: e.target.value as EdgeConfig['anchor_mode'] }))}
+                title="Where the edge is searched for"
+              >
+                <option value="label_strip">Anchor — strip beside the label (default)</option>
+                <option value="edge_regions">Anchor — drawn edge_left / edge_right regions</option>
+              </select>
+              {regionMode && (
+                <div className={`es-anchor-hint ${regionsMissing ? 'es-anchor-hint-warn' : ''}`}>
+                  {regionsMissing
+                    ? "This template has no 'edge_left' / 'edge_right' annotation. Add both in the template editor, save, then reopen."
+                    : 'Regions follow the LABEL, so draw them wide enough to cover how far the bottle can shift. "Outer coverage" is measured against the region height — keep the region within the straight part of the wall.'}
+                </div>
+              )}
+            </div>
+
             <div className="es-section">
               <div className="es-section-title">Detection mode</div>
               <select
@@ -618,7 +700,9 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
                 <option value="nearest">Find by — nearest peak (closest to label)</option>
                 <option value="strongest">Find by — strongest peak (highest profile)</option>
               </select>
-              <Slider label="Outer max" min={10} max={400} value={num('outer_search_max')} onChange={setNum('outer_search_max')} />
+              {!regionMode && (
+                <Slider label="Outer max" min={10} max={400} value={num('outer_search_max')} onChange={setNum('outer_search_max')} />
+              )}
               <Slider label="Outer coverage" min={0} max={1} value={num('outer_min_hratio')} onChange={setNum('outer_min_hratio')} />
               <Slider label="Specular" min={0} max={255} value={num('specular_thr')} onChange={setNum('specular_thr')} />
             </div>
@@ -634,16 +718,23 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
 
               {showAdvanced && (
                 <>
-                  <Slider label="Inner max" min={0} max={300} value={num('inner_search_max')} onChange={setNum('inner_search_max')} />
-                  <Slider label="Edge margin" min={0} max={30} value={num('edge_margin')} onChange={setNum('edge_margin')} />
-                  <Slider label="Y extension" min={0} max={1} value={num('y_extension')} onChange={setNum('y_extension')} />
+                  {/* Strip geometry — in edge_regions mode the drawn region IS the geometry. */}
+                  {!regionMode && (
+                    <>
+                      <Slider label="Inner max" min={0} max={300} value={num('inner_search_max')} onChange={setNum('inner_search_max')} />
+                      <Slider label="Edge margin" min={0} max={30} value={num('edge_margin')} onChange={setNum('edge_margin')} />
+                      <Slider label="Y extension" min={0} max={1} value={num('y_extension')} onChange={setNum('y_extension')} />
+                    </>
+                  )}
                   <Slider label="Strong thr" min={0} max={1} value={num('strong_thr')} onChange={setNum('strong_thr')} />
                   <Slider label="Peak height" min={0} max={1} value={num('peak_height')} onChange={setNum('peak_height')} />
                   <Slider label="Peak prom" min={0} max={1} value={num('peak_prom')} onChange={setNum('peak_prom')} />
                   <Slider label="Peak dist" min={1} max={50} value={num('peak_dist')} onChange={setNum('peak_dist')} />
-                  <Slider label="Fill keep" min={0} max={1} value={num('fill_keep_ratio')} onChange={setNum('fill_keep_ratio')} />
+                  {!regionMode && (
+                    <Slider label="Fill keep" min={0} max={1} value={num('fill_keep_ratio')} onChange={setNum('fill_keep_ratio')} />
+                  )}
                   <Slider label="Edge width" min={1} max={15} value={num('edge_width')} onChange={setNum('edge_width')} />
-                  {wallType === 'inner' && (
+                  {!regionMode && wallType === 'inner' && (
                     <>
                       <Slider label="Inner coverage" min={0} max={1} value={num('inner_min_hratio')} onChange={setNum('inner_min_hratio')} />
                       <Slider label="Inner tol px" min={0} max={60} value={num('inner_tol_px')} onChange={setNum('inner_tol_px')} />
@@ -655,7 +746,11 @@ const EdgeSetupModal: React.FC<EdgeSetupModalProps> = ({
 
             <div className="es-section">
               <div className="es-section-title">Template walls</div>
-              {config.template_walls ? (
+              {regionMode ? (
+                <div className="es-walls es-walls-empty">
+                  Not used in edge-region mode — the drawn regions locate the walls directly.
+                </div>
+              ) : config.template_walls ? (
                 <div className="es-walls">
                   inner L/R: <b>{fmt(config.template_walls.inner_L)}/{fmt(config.template_walls.inner_R)}</b><br />
                   outer L/R: <b>{fmt(config.template_walls.outer_L)}/{fmt(config.template_walls.outer_R)}</b><br />
@@ -699,90 +794,6 @@ function bandQuad(
   ];
 }
 
-// Render a 1D edge profile (light-theme) like the Python debug viz: profile
-// curve + all peaks (red) + chosen OUTER (amber) / INNER (green) + pred line.
-// Labels show the actual px gap from the label edge (= col + gap_offset).
-function drawProfileChart(canvas: HTMLCanvasElement | null, data: SideProfile | null | undefined, title: string) {
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  const W = canvas.width, H = canvas.height;
-  ctx.fillStyle = '#f3f4f6';
-  ctx.fillRect(0, 0, W, H);
-  ctx.font = '11px sans-serif';
-  ctx.fillStyle = '#6b7280';
-  ctx.fillText(title, 6, 13);
-  if (!data || !data.profile || data.profile.length < 2) {
-    ctx.fillStyle = '#9ca3af';
-    ctx.fillText('no data', 6, Math.round(H / 2));
-    return;
-  }
-  const prof = data.profile;
-  const n = prof.length;
-  const padT = 18, padB = 14;
-  const plotH = H - padT - padB;
-  const go = data.gap_offset || 0;
-  const xOf = (col: number) => (col / (n - 1)) * W;
-  const yOf = (v: number) => padT + plotH - v * plotH;
-
-  // profile curve
-  ctx.strokeStyle = '#374151';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  for (let i = 0; i < n; i++) {
-    const x = xOf(i), y = yOf(prof[i]!);
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-
-  // Candidate peaks coloured by whether their height_ratio passes outer_min_hratio
-  // — that is the quantity deciding if a peak can become the OUTER wall. Qualifying
-  // peaks are amber + labelled with their hr; rejected peaks are small grey.
-  const thr = data.outer_min_hratio ?? 0;
-  const hr = data.peak_hratio || [];
-  data.peaks.forEach((p, i) => {
-    if (p < 0 || p >= n) return;
-    const h = hr[i];
-    const pass = h != null && h >= thr;
-    ctx.fillStyle = pass ? '#f59e0b' : '#9ca3af';
-    ctx.beginPath(); ctx.arc(xOf(p), yOf(prof[p]!), pass ? 3.5 : 2.5, 0, Math.PI * 2); ctx.fill();
-    if (pass && h != null) {
-      ctx.font = '9px sans-serif';
-      ctx.fillStyle = '#b45309';
-      ctx.fillText(h.toFixed(2), Math.min(xOf(p) + 4, W - 20), Math.max(10, yOf(prof[p]!) - 8));
-      ctx.font = '11px sans-serif';
-    }
-  });
-  // threshold reference (top-right): peaks with hr ≥ this become wall candidates
-  ctx.font = '10px sans-serif';
-  ctx.fillStyle = '#b45309';
-  const thrTxt = `coverage ≥ ${thr.toFixed(2)} = wall`;
-  ctx.fillText(thrTxt, Math.max(6, W - ctx.measureText(thrTxt).width - 6), 13);
-  ctx.font = '11px sans-serif';
-
-  // predicted inner (pink dashed vertical line)
-  if (data.pred_col != null && data.pred_col >= 0 && data.pred_col < n) {
-    ctx.save();
-    ctx.setLineDash([4, 3]);
-    ctx.strokeStyle = '#ec4899';
-    ctx.lineWidth = 1;
-    const px = xOf(data.pred_col);
-    ctx.beginPath(); ctx.moveTo(px, padT); ctx.lineTo(px, H - padB); ctx.stroke();
-    ctx.restore();
-    ctx.fillStyle = '#ec4899';
-    ctx.fillText(`pred ${Math.round(data.pred_col + go)}`, 6, H - 3);
-  }
-
-  const bigDot = (col: number | null, color: string, label: string) => {
-    if (col == null || col < 0 || col >= n) return;
-    const x = xOf(col), y = yOf(prof[Math.round(col)] ?? 0);
-    ctx.fillStyle = color;
-    ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
-    ctx.fillText(label, Math.min(x + 7, W - 44), Math.max(12, y - 6));
-  };
-  bigDot(data.outer_col, '#f59e0b', data.outer_col != null ? `OUT ${Math.round(data.outer_col + go)}` : 'OUT');
-  bigDot(data.inner_col, '#16a34a', data.inner_col != null ? `IN ${Math.round(data.inner_col + go)}` : 'IN');
-}
 
 function fmt(v: any): string {
   if (v === null || v === undefined) return '–';

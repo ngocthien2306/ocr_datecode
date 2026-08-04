@@ -32,6 +32,8 @@ export const ANNOTATION_TYPES = {
   LABEL: 'label',
   CHAR: 'char',
   MASK: 'mask',
+  EDGE_LEFT: 'edge_left',
+  EDGE_RIGHT: 'edge_right',
 };
 
 export const SHAPE_TYPES = {
@@ -49,4 +51,9 @@ export const TYPE_CONFIGS = [
   { value: 'label', label: 'Label', color: '#ad6df1', needsText: false },
   { value: 'char', label: 'Character (ML)', color: '#fbbf24', needsText: true },
   { value: 'mask', label: 'Mask', color: '#94a3b8', needsText: false },
+  // Edge-detection search regions (product_detection_method='yolo_segment' with
+  // edge_config.anchor_mode='edge_regions'). Draw one over each bottle wall,
+  // wide enough to cover how far the bottle can shift relative to the label.
+  { value: 'edge_left', label: 'Edge Left', color: '#fb923c', needsText: false },
+  { value: 'edge_right', label: 'Edge Right', color: '#2dd4bf', needsText: false },
 ];

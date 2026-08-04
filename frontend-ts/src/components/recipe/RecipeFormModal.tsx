@@ -3583,6 +3583,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
         const labelAnn = (tmpl.annotations || []).find((a: any) => a.type === 'label');
         const labelPolygon = labelAnn ? toPixels(labelAnn) : null;
+        const edgeLeftAnn = (tmpl.annotations || []).find((a: any) => a.type === 'edge_left');
+        const edgeRightAnn = (tmpl.annotations || []).find((a: any) => a.type === 'edge_right');
         const productPolys = (tmpl.annotations || [])
           .filter((a: any) => a.type === 'product')
           .map(toPixels)
@@ -3602,6 +3604,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
             imageHeight={imgH}
             labelPolygon={labelPolygon}
             productPolygons={productPolys}
+            edgeLeftPolygon={edgeLeftAnn ? toPixels(edgeLeftAnn) : null}
+            edgeRightPolygon={edgeRightAnn ? toPixels(edgeRightAnn) : null}
             wallType={(formData.product_box_wall_type as 'outer' | 'inner') || 'outer'}
             initialConfig={tmpl.edge_config ?? null}
             templateName={tmpl.name}

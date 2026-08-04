@@ -37,7 +37,9 @@ def draw_inference_bboxes(
         'barcode': (255, 0, 255),      # Magenta
         'datecode': (255, 255, 0),     # Cyan
         'product': (255, 128, 0),      # Blue (for product region)
-        'label': (128, 0, 255)         # Purple (for label region)
+        'label': (128, 0, 255),        # Purple (for label region)
+        'edge_left': (60, 145, 250),   # Orange  (edge search region, left)
+        'edge_right': (200, 190, 45),  # Teal    (edge search region, right)
     }
     logger.debug(f"Drawing {len(transformed_bboxes)} bboxes")
 
