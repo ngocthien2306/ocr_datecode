@@ -92,8 +92,35 @@ async def dataset_stats(
         raise HTTPException(404, "Project not found")
     counts = dataset_fs.count_images(project_id)
     await repo.set_counts(project_id, counts["normal"], counts["abnormal"])
+
+    # Broken out per pool so the Train tab can show what a run will actually
+    # see. train/good and test/good are counted separately because they are
+    # used differently: everything in train/good fits the model, while
+    # test/good only ever evaluates it (and is auto-filled from train/good by
+    # test_split when empty).
+    def _n(d) -> int:
+        return sum(1 for f in d.glob("*")
+                   if f.is_file() and f.suffix.lower() in dataset_fs.ALLOWED_EXTS) if d.exists() else 0
+
+    train_normal = _n(dataset_fs.train_good_dir(project_id))
+    test_normal = _n(dataset_fs.test_good_dir(project_id))
+
+    # Excluded images are bucketed by which pool they'd otherwise land in, so
+    # the projection can subtract from the right one.
+    excluded = await repo.list_excluded_image_paths(project_id)
+    excluded_train_normal = sum(1 for p in excluded if p.startswith("dataset/train/good/"))
+    excluded_test_normal = sum(1 for p in excluded if p.startswith("dataset/test/good/"))
+    excluded_abnormal = len(excluded) - excluded_train_normal - excluded_test_normal
+
     return {
         "normal_count": counts["normal"],
         "abnormal_count": counts["abnormal"],
         "defect_types": dataset_fs.list_defect_types(project_id),
+        "train_normal": train_normal,
+        "test_normal": test_normal,
+        "synthetic_count": await repo.count_synthetic(project_id),
+        "excluded_count": len(excluded),
+        "excluded_train_normal": excluded_train_normal,
+        "excluded_test_normal": excluded_test_normal,
+        "excluded_abnormal": excluded_abnormal,
     }

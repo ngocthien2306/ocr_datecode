@@ -73,12 +73,51 @@ export default function DatasetGallery({ projectId, refreshKey, onCountsChanged 
   useEffect(() => { load(); }, [projectId, filter, page, refreshKey]);
   useEffect(() => { setPage(1); setSelected(new Set()); }, [filter, projectId]);
 
+  const pageIds = images.map((i) => i.id);
+  const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+
+  const toggleSelectPage = () => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allOnPageSelected) pageIds.forEach((id) => next.delete(id));
+      else pageIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+
+  // Distinct from the page toggle on purpose: with 60 images per page, a single
+  // "select all" that quietly meant only the visible ones would make a bulk
+  // delete look like it had missed most of the dataset.
+  const selectAllMatching = async () => {
+    setBulkBusy(true);
+    setErrorMsg(null);
+    try {
+      const res = await anomalyTrainingAPI.listDatasetImageIds(
+        projectId, filter === 'all' ? undefined : filter,
+      );
+      setSelected(new Set(res.ids));
+    } catch (e: any) {
+      setErrorMsg(e?.response?.data?.detail || 'Could not select every image');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
   const toggleSelected = (id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
+  };
+
+  const lightboxIndex = images.findIndex((i) => i.id === lightboxId);
+  const canPrev = lightboxIndex > 0;
+  const canNext = lightboxIndex >= 0 && lightboxIndex < images.length - 1;
+
+  const stepLightbox = (delta: number) => {
+    const next = images[lightboxIndex + delta];
+    if (next) openLightbox(next);
   };
 
   const openLightbox = async (img: DatasetImage) => {
@@ -126,6 +165,17 @@ export default function DatasetGallery({ projectId, refreshKey, onCountsChanged 
       setBusyId(null);
     }
   };
+
+  useEffect(() => {
+    if (!lightboxId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft') stepLightbox(-1);
+      else if (e.key === 'ArrowRight') stepLightbox(1);
+      else if (e.key === 'Escape') setLightboxId(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightboxId, lightboxIndex, images]);
 
   const doDelete = async (img: DatasetImage, closeLightboxAfter: boolean) => {
     setBusyId(img.id);
@@ -193,6 +243,20 @@ export default function DatasetGallery({ projectId, refreshKey, onCountsChanged 
     }
   };
 
+  const handleBulkExclude = async (excluded: boolean) => {
+    setBulkBusy(true);
+    setErrorMsg(null);
+    try {
+      await anomalyTrainingAPI.bulkExcludeFromTraining(projectId, [...selected], excluded);
+      setSelected(new Set());
+      await load();
+    } catch (e: any) {
+      setErrorMsg(e?.response?.data?.detail || 'Could not change training selection');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
   const handleBulkDelete = () => {
     if (selected.size === 0) return;
     setConfirmDialog({
@@ -217,11 +281,34 @@ export default function DatasetGallery({ projectId, refreshKey, onCountsChanged 
           >{f === 'all' ? 'All' : f === 'normal' ? 'Normal' : 'Abnormal'}</button>
         ))}
         {!loading && <span className="at-hint" style={{ marginLeft: 8, alignSelf: 'center' }}>{total} image(s)</span>}
+
+        <div className="at-gallery-select-actions">
+          <button type="button" className="at-btn at-btn-secondary at-btn-sm"
+                  disabled={loading || !images.length}
+                  onClick={toggleSelectPage}>
+            {allOnPageSelected ? 'Deselect page' : `Select page (${images.length})`}
+          </button>
+          {total > images.length && (
+            <button type="button" className="at-btn at-btn-secondary at-btn-sm"
+                    disabled={loading || bulkBusy}
+                    title="Spans every page of the current filter, not just what is visible"
+                    onClick={selectAllMatching}>
+              Select all {total}
+            </button>
+          )}
+          {selected.size > 0 && (
+            <button type="button" className="at-btn at-btn-secondary at-btn-sm"
+                    onClick={() => setSelected(new Set())}>Clear</button>
+          )}
+        </div>
       </div>
 
       {selected.size > 0 && (
         <div className="at-bulk-bar">
           <b>{selected.size} selected</b>
+          {selected.size > images.length && (
+            <span className="at-hint">across all pages</span>
+          )}
           <button className="at-btn at-btn-secondary at-btn-sm" disabled={bulkBusy}
                   onClick={() => handleBulkRelabel('normal')}>Set Normal</button>
           <button className="at-btn at-btn-secondary at-btn-sm" disabled={bulkBusy}
@@ -232,6 +319,11 @@ export default function DatasetGallery({ projectId, refreshKey, onCountsChanged 
             placeholder="defect type"
             onChange={(e) => setBulkDefectType(e.target.value)}
           />
+          <button className="at-btn at-btn-secondary at-btn-sm" disabled={bulkBusy}
+                  title="Hold these out of the next training run. The files are not moved or deleted."
+                  onClick={() => handleBulkExclude(true)}>Exclude from training</button>
+          <button className="at-btn at-btn-secondary at-btn-sm" disabled={bulkBusy}
+                  onClick={() => handleBulkExclude(false)}>Include again</button>
           <button className="at-btn at-btn-secondary at-btn-sm" disabled={bulkBusy} onClick={handleBulkDelete}
                   style={{ color: '#b91c1c' }}>Delete</button>
           <button className="at-btn at-btn-secondary at-btn-sm" disabled={bulkBusy}
@@ -275,6 +367,17 @@ export default function DatasetGallery({ projectId, refreshKey, onCountsChanged 
                   <span className="at-cand-badge">
                     {img.label === 'abnormal' ? `abnormal (${img.defect_type})` : 'normal'}
                   </span>
+                  {img.source === 'synthetic' && (
+                    <span className="at-syn-badge" title="Drawn, not a real defect">SYN</span>
+                  )}
+                  {img.exclude_from_training && (
+                    <span
+                      className={`at-excluded-badge ${img.source === 'synthetic' ? '' : 'no-syn'}`}
+                      title="Held out of the next training run"
+                    >
+                      EXCLUDED
+                    </span>
+                  )}
                   <div className="at-gallery-card-footer">
                     <div className="at-cand-card-meta">{img.camera_serial} · f{img.frame_idx}</div>
                     <div className="at-cand-card-actions">
@@ -365,6 +468,13 @@ export default function DatasetGallery({ projectId, refreshKey, onCountsChanged 
               <button className="at-lightbox-close" onClick={() => setLightboxId(null)}>×</button>
             </div>
             <div className="at-lightbox-card-body">
+              <button
+                type="button"
+                className="at-lightbox-nav prev"
+                disabled={!canPrev}
+                title="Previous image (←)"
+                onClick={() => stepLightbox(-1)}
+              >‹</button>
               {lightboxLoading || !lightboxSrc ? (
                 <div className="at-lightbox-loading">Loading…</div>
               ) : (
@@ -374,11 +484,21 @@ export default function DatasetGallery({ projectId, refreshKey, onCountsChanged 
                   className="at-lightbox-img"
                 />
               )}
+              <button
+                type="button"
+                className="at-lightbox-nav next"
+                disabled={!canNext}
+                title="Next image (→)"
+                onClick={() => stepLightbox(1)}
+              >›</button>
             </div>
             <div className="at-lightbox-card-footer">
               {lightboxImg.recipe_name && <span>{lightboxImg.recipe_name} · </span>}
               {lightboxImg.camera_serial} · frame {lightboxImg.frame_idx} ·{' '}
               {new Date(lightboxImg.created_at).toLocaleString()}
+              <span className="at-lightbox-pos">
+                {lightboxIndex + 1} / {images.length} on this page
+              </span>
             </div>
           </div>
         </div>

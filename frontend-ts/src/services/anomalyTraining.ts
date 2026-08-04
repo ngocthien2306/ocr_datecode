@@ -51,6 +51,15 @@ export interface DatasetStats {
   normal_count: number;
   abnormal_count: number;
   defect_types: string[];
+  /** Broken out per pool so the Train tab can project what a run will see.
+   *  train/good fits the model; test/good only ever evaluates it. */
+  train_normal?: number;
+  test_normal?: number;
+  synthetic_count?: number;
+  excluded_count?: number;
+  excluded_train_normal?: number;
+  excluded_test_normal?: number;
+  excluded_abnormal?: number;
 }
 
 export interface AnomalyCandidate {
@@ -94,6 +103,10 @@ export interface DatasetImage {
   split: 'train' | 'test';
   created_at: string;
   thumb_b64: string;
+  /** "import" (real inspection crop) | "synthetic" (drawn by the Studio/Synthetic tab). */
+  source?: string;
+  /** Held out of the next training run. Non-destructive — the file stays put. */
+  exclude_from_training?: boolean;
 }
 
 export interface DatasetImagesPage {
@@ -210,6 +223,105 @@ export interface PredictResult {
   inference_ms: number;
 }
 
+export type DefectEdge = 'hard' | 'soft' | 'wrinkle' | 'bubble';
+
+/** Pools each generated mark draws from at random — NOT a cartesian sweep.
+ *  Ticking everything widens the variety instead of multiplying the count. */
+export interface SyntheticOptions {
+  deltas: number[];
+  widths: number[];
+  edges: DefectEdge[];
+  polarities: ('dark' | 'bright')[];
+  /** One image can carry several marks; the count is random in this range. */
+  marks_min: number;
+  marks_max: number;
+}
+
+export interface SyntheticSample {
+  n_marks: number;
+  edges: string[];
+  deltas: number[];
+  widths: number[];
+  image_b64: string;
+}
+
+export interface SyntheticPreviewResult {
+  total_to_generate: number;
+  base_images: number;
+  multiplier: number;
+  over_limit: boolean;
+  max_generate: number;
+  samples: SyntheticSample[];
+}
+
+export interface SyntheticGenerateResult {
+  generated: number;
+  requested: number;
+  batch_id: string;
+  defect_type: string;
+  errors: string[];
+  normal: number;
+  abnormal: number;
+}
+
+/** One synthetic defect mark. Coordinates are in SOURCE IMAGE pixels — the
+ *  canvas scales its own display coords back up before sending. */
+export interface DefectStroke {
+  points: number[][];
+  width: number;
+  /** Grey offset against the local background under the stroke, not absolute grey. */
+  delta: number;
+  polarity: 'dark' | 'bright';
+  /** 'wrinkle' and 'bubble' light both sides themselves and ignore polarity. */
+  edge: DefectEdge;
+  curvature: number;
+}
+
+export interface MaskPolygon {
+  points: number[][];
+  /** Exact pixel count of the region, in mask space. */
+  area: number;
+  area_pct: number;
+  /** Confidence read from the heatmap inside this region. A large weak region
+   *  and a small intense one are very different findings. */
+  score_mean?: number;
+  score_max?: number;
+  /** Fraction of this region that sits on the drawn mark — low means the model
+   *  raised it somewhere else. */
+  stroke_overlap?: number;
+  bbox: number[];
+}
+
+export interface SimulateDefectResult {
+  /** Set when save_to_dataset was requested — the new dataset item's id. */
+  saved_item_id?: string | null;
+  pred_score: number;
+  threshold: number;
+  /** Image-level score crossed the threshold. */
+  caught_by_score: boolean;
+  /** Predicted mask actually landed on the drawn mark — the stronger signal. */
+  caught_by_mask: boolean;
+  stroke_overlap: number;
+  stroke_pixels: number;
+  defect_b64: string;
+  heatmap_b64: string;
+  mask_polygons: MaskPolygon[];
+  mask_source: string;
+  region_count: number;
+  total_area: number;
+  total_area_pct: number;
+  /** Polygons are in mask space; scale by rendered size / these. */
+  mask_width: number;
+  mask_height: number;
+  source_width: number;
+  source_height: number;
+  anomaly_map_max: number | null;
+  image_size: number;
+  engine: InferenceEngine;
+  active_provider: string;
+  inference_ms: number;
+}
+
 export interface VerifyTensorRTResult {
   active_provider: string;
   engine_cache_hit: boolean;
@@ -278,6 +390,17 @@ export const anomalyTrainingAPI = {
     });
     return res.data;
   },
+  /** Ids only, no thumbnails — lets "select all" span pages without pulling
+   *  every page's base64 images. */
+  listDatasetImageIds: async (
+    projectId: string, label?: 'normal' | 'abnormal',
+  ): Promise<{ ids: string[]; total: number }> => {
+    const res = await anomalyApi.get(`/projects/${projectId}/dataset/image-ids`, {
+      params: { label },
+    });
+    return res.data;
+  },
+
   getDatasetImageFull: async (projectId: string, imageId: string): Promise<{ id: string; full_b64: string }> => {
     const res = await anomalyApi.get(`/projects/${projectId}/dataset/images/${imageId}/full`);
     return res.data;
@@ -416,6 +539,64 @@ export const anomalyTrainingAPI = {
     a.click();
     a.remove();
     window.URL.revokeObjectURL(url);
+  },
+
+  /** Render a sample of the synthetic grid WITHOUT writing anything. */
+  previewSynthetic: async (
+    projectId: string,
+    body: {
+      base_item_ids: string[]; options: SyntheticOptions;
+      multiplier: number; defect_type: string; seed?: number;
+    },
+  ): Promise<SyntheticPreviewResult> => {
+    const res = await anomalyApi.post(`/projects/${projectId}/synthetic/preview`, body);
+    return res.data;
+  },
+
+  /** Generate synthetic NG images and add them to the dataset as abnormal
+   *  test samples. They calibrate the threshold; they never train the model. */
+  generateSynthetic: async (
+    projectId: string,
+    body: {
+      base_item_ids: string[]; options: SyntheticOptions;
+      multiplier: number; defect_type: string; seed?: number;
+    },
+  ): Promise<SyntheticGenerateResult> => {
+    const res = await anomalyApi.post(`/projects/${projectId}/synthetic/generate`, body);
+    return res.data;
+  },
+
+  /** Flag images in/out of the next training run (non-destructive). */
+  bulkExcludeFromTraining: async (
+    projectId: string, ids: string[], excluded: boolean,
+  ): Promise<{ ok: boolean; modified: number; excluded: boolean }> => {
+    const res = await anomalyApi.post(
+      `/projects/${projectId}/dataset/images/bulk-exclude`, { ids, excluded },
+    );
+    return res.data;
+  },
+
+  /** Draw synthetic defects onto a clean label and run the model on the result.
+   *  Marks are rendered server-side so they match the offline POD study. */
+  simulateDefect: async (
+    projectId: string,
+    modelId: string,
+    body: {
+      strokes: DefectStroke[];
+      engine?: InferenceEngine;
+      item_id?: string | null;
+      image_b64?: string | null;
+      threshold?: number;
+      pixel_threshold?: number | null;
+      min_region_area?: number;
+      save_to_dataset?: boolean;
+      save_defect_type?: string;
+    },
+  ): Promise<SimulateDefectResult> => {
+    const res = await anomalyApi.post(
+      `/projects/${projectId}/models/${modelId}/simulate-defect`, body,
+    );
+    return res.data;
   },
 };
 

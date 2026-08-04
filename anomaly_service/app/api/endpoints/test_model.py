@@ -19,7 +19,9 @@ env (its build needs nvcc; torch is already here and already proven to
 share a CUDA context fine with TensorRT and onnxruntime in this service).
 """
 import logging
+import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Dict
 
@@ -33,7 +35,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from app.api.dependencies.auth import CurrentUser, get_current_user
 from app.db.mongodb import get_database
 from app.repositories.anomaly_repository import AnomalyRepository
-from app.services.anomaly_training import encode_heatmap_overlay
+from app.services.anomaly_training import encode_heatmap_overlay, release_torch_cuda_cache
 from app.services.inspection_crop import img_to_b64
 
 logger = logging.getLogger(__name__)
@@ -48,9 +50,72 @@ _TRT_TORCH_DTYPE = {
     trt.DataType.INT64: torch.int64,
 }
 
-_onnx_sessions: Dict[str, "object"] = {}
-_trt_state: Dict[str, dict] = {}
-_warmed_up: set = set()  # {(model_id, engine)}
+# Sessions/engines are cached, but NOT kept forever: measured on the 512x512
+# PatchCore export, one resident TensorRT model costs ~482 MB of engine weights
+# plus ~1.07 GB of activation memory, and an onnxruntime CUDA-EP session costs
+# ~2.2 GB. With seven models exported in this project, testing each one in turn
+# would pin >10 GB on a 16 GB card and starve the production inference service
+# sharing it. So keep the most recently used few and evict the rest — a re-load
+# costs a few hundred ms, an OOM costs the whole service.
+#
+# ONE cache keyed by (model_id, engine), not one per backend. Two independent
+# caches leaked orphans: measured, testing m1 on both backends then m2 and m3 on
+# onnx left `onnx=[m2, m3]` but `trt=[m1]` — m1's engine stayed pinned on the
+# GPU although m1 was no longer reachable from any cache the UI could hit, and
+# would only leave once two *other* models were tested on TensorRT specifically.
+# Keying on the pair makes the backend toggle in the Test/Studio tabs evict
+# normally instead of accumulating.
+_MAX_RESIDENT_SESSIONS = 2
+
+_CacheKey = tuple  # (model_id, engine)
+_sessions: "OrderedDict[_CacheKey, dict]" = OrderedDict()  # key -> {"payload": ..., "warm": bool}
+_cache_lock = threading.Lock()
+
+
+def _evict_lru() -> None:
+    """Drop least-recently-used entries beyond the cap.
+
+    Dropping the reference is what frees the GPU memory — the TensorRT context
+    and engine, and the onnxruntime session, release on garbage collection — so
+    the entry must not be referenced anywhere else once evicted. The torch-side
+    IO buffers those runs allocated sit in torch's caching allocator, which
+    holds them past the free, so hand that back too.
+    """
+    evicted = False
+    while len(_sessions) > _MAX_RESIDENT_SESSIONS:
+        (model_id, engine), _ = _sessions.popitem(last=False)
+        evicted = True
+        logger.info(f"[test] evicted {engine} session for model {model_id} (cache cap {_MAX_RESIDENT_SESSIONS})")
+    if evicted:
+        release_torch_cuda_cache("session eviction")
+
+
+def _cached(model_id: str, engine: str):
+    """Look up an entry and mark it most-recently-used."""
+    with _cache_lock:
+        entry = _sessions.get((model_id, engine))
+        if entry is not None:
+            _sessions.move_to_end((model_id, engine))
+        return entry
+
+
+def _store(model_id: str, engine: str, payload) -> dict:
+    with _cache_lock:
+        entry = {"payload": payload, "warm": False}
+        _sessions[(model_id, engine)] = entry
+        _evict_lru()
+        return entry
+
+
+def release_model(model_id: str) -> None:
+    """Free everything held for one model — call after deleting/re-exporting it
+    so a stale engine doesn't sit on the GPU."""
+    with _cache_lock:
+        dropped = [k for k in _sessions if k[0] == model_id]
+        for k in dropped:
+            _sessions.pop(k, None)
+    if dropped:
+        release_torch_cuda_cache(f"release of model {model_id}")
 
 
 def get_repo(db=Depends(get_database)) -> AnomalyRepository:
@@ -60,36 +125,38 @@ def get_repo(db=Depends(get_database)) -> AnomalyRepository:
 def _get_onnx_session(model):
     import onnxruntime as ort
 
-    sess = _onnx_sessions.get(model.id)
-    if sess is None:
-        sess = ort.InferenceSession(
-            model.onnx_path, providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
-        )
-        _onnx_sessions[model.id] = sess
+    entry = _cached(model.id, "onnx")
+    if entry is not None:
+        return entry["payload"]
+    sess = ort.InferenceSession(
+        model.onnx_path, providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+    )
+    _store(model.id, "onnx", sess)
     return sess
 
 
 def _get_trt_state(model):
-    state = _trt_state.get(model.id)
-    if state is None:
-        trt_logger = trt.Logger(trt.Logger.WARNING)
-        with open(model.engine_path, "rb") as f:
-            engine = trt.Runtime(trt_logger).deserialize_cuda_engine(f.read())
-        context = engine.create_execution_context()
-        input_name = None
-        output_names = []
-        for i in range(engine.num_io_tensors):
-            name = engine.get_tensor_name(i)
-            if engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
-                input_name = name
-            else:
-                output_names.append(name)
-        state = {
-            "engine": engine, "context": context,
-            "input_name": input_name, "output_names": output_names,
-            "stream": torch.cuda.Stream(),
-        }
-        _trt_state[model.id] = state
+    entry = _cached(model.id, "tensorrt")
+    if entry is not None:
+        return entry["payload"]
+    trt_logger = trt.Logger(trt.Logger.WARNING)
+    with open(model.engine_path, "rb") as f:
+        engine = trt.Runtime(trt_logger).deserialize_cuda_engine(f.read())
+    context = engine.create_execution_context()
+    input_name = None
+    output_names = []
+    for i in range(engine.num_io_tensors):
+        name = engine.get_tensor_name(i)
+        if engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
+            input_name = name
+        else:
+            output_names.append(name)
+    state = {
+        "engine": engine, "context": context,
+        "input_name": input_name, "output_names": output_names,
+        "stream": torch.cuda.Stream(),
+    }
+    _store(model.id, "tensorrt", state)
     return state
 
 
@@ -147,41 +214,28 @@ def _run_tensorrt(model, x: np.ndarray) -> Dict[str, np.ndarray]:
     return {k: v.cpu().numpy() for k, v in out_tensors.items()}, "TensorRT (standalone .engine)"
 
 
-@router.post("/projects/{project_id}/models/{model_id}/predict", tags=["Anomaly Test"])
-async def predict_image(
-    project_id: str,
-    model_id: str,
-    engine: str = "onnx",
-    file: UploadFile = File(...),
-    repo: AnomalyRepository = Depends(get_repo),
-    current_user: CurrentUser = Depends(get_current_user),
-):
+def validate_export(model, engine: str) -> None:
+    """Raise the right 400 if the requested backend hasn't been exported."""
     if engine not in ("onnx", "tensorrt"):
         raise HTTPException(400, "engine must be 'onnx' or 'tensorrt'")
-
-    model = await repo.get_model(model_id)
-    if not model or model.project_id != project_id:
-        raise HTTPException(404, "Model not found")
     if engine == "onnx" and (not model.onnx_path or not Path(model.onnx_path).exists()):
         raise HTTPException(400, "No ONNX export for this model yet — export it first")
     if engine == "tensorrt" and (not model.engine_path or not Path(model.engine_path).exists()):
         raise HTTPException(400, "No TensorRT export for this model yet — export it first (Export tab, step 3)")
 
-    raw = await file.read()
-    arr = np.frombuffer(raw, dtype=np.uint8)
-    img = cv.imdecode(arr, cv.IMREAD_COLOR)
-    if img is None:
-        raise HTTPException(400, "Could not decode uploaded file as an image")
 
-    try:
-        image_size = _graph_input_size(model, engine)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"[test] Could not read input shape for model {model_id} (engine={engine})")
-        raise HTTPException(500, f"Could not load {engine} graph: {e}")
+def run_model_inference(model, img_bgr: np.ndarray, engine: str):
+    """Preprocess + run one image through the exported graph.
 
-    img_rgb = cv.cvtColor(img, cv.COLOR_BGR2RGB)
+    Shared by the Test tab and the defect Studio so both go through exactly the
+    same preprocessing — the resize below is the fragile part and must not be
+    reimplemented per caller.
+
+    Returns (out_map, active_provider, image_size, inference_ms).
+    """
+    image_size = _graph_input_size(model, engine)
+
+    img_rgb = cv.cvtColor(img_bgr, cv.COLOR_BGR2RGB)
     # No ImageNet mean/std normalization here -- anomalib bakes Normalize into
     # the exported ONNX/TensorRT graph (/pre_processor/export_transform/{Sub,Div}).
     # Verified against a real train/good image: normalizing again here flips a
@@ -203,15 +257,45 @@ async def predict_image(
     )
 
     run_fn = _run_onnx if engine == "onnx" else _run_tensorrt
-    cache_key = (model_id, engine)
-    try:
-        if cache_key not in _warmed_up:
-            run_fn(model, x)  # untimed warmup: first CUDA kernel launch / TRT context alloc is much slower
-            _warmed_up.add(cache_key)
+    # The warm flag lives on the cache entry itself, so an evicted-then-reloaded
+    # session is correctly warmed again rather than being timed cold.
+    entry = _cached(model.id, engine)
+    if entry is None or not entry["warm"]:
+        run_fn(model, x)  # untimed warmup: first CUDA kernel launch / TRT context alloc is much slower
+        entry = _cached(model.id, engine)  # run_fn populated the cache if it wasn't there
+        if entry is not None:
+            entry["warm"] = True
 
-        t0 = time.perf_counter()
-        out_map, active_provider = run_fn(model, x)
-        inference_ms = (time.perf_counter() - t0) * 1000
+    t0 = time.perf_counter()
+    out_map, active_provider = run_fn(model, x)
+    inference_ms = (time.perf_counter() - t0) * 1000
+    return out_map, active_provider, image_size, inference_ms
+
+
+@router.post("/projects/{project_id}/models/{model_id}/predict", tags=["Anomaly Test"])
+async def predict_image(
+    project_id: str,
+    model_id: str,
+    engine: str = "onnx",
+    file: UploadFile = File(...),
+    repo: AnomalyRepository = Depends(get_repo),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    model = await repo.get_model(model_id)
+    if not model or model.project_id != project_id:
+        raise HTTPException(404, "Model not found")
+    validate_export(model, engine)
+
+    raw = await file.read()
+    arr = np.frombuffer(raw, dtype=np.uint8)
+    img = cv.imdecode(arr, cv.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(400, "Could not decode uploaded file as an image")
+
+    try:
+        out_map, active_provider, image_size, inference_ms = run_model_inference(model, img, engine)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception(f"[test] Predict failed for model {model_id} (engine={engine})")
         raise HTTPException(500, f"Inference failed: {e}")

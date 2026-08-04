@@ -45,7 +45,56 @@ class TrainingCancelled(Exception):
     pass
 
 
-def _build_datamodule(project_id: str, request: AnomalyTrainRequest):
+def _stage_dataset(project_id: str, excluded_paths: List[str], staging_root: Path) -> Path:
+    """Mirror the dataset into `staging_root` as symlinks, omitting excluded files.
+
+    Training reads the filesystem (anomalib's Folder globs directories), so an
+    "excluded" flag in the database is invisible to it. Rather than moving or
+    deleting the user's images, build a throwaway tree of links to the ones that
+    should take part and point Folder at that. Nothing in the real dataset is
+    touched, so an interrupted run cannot lose data.
+
+    Returns the staged dataset root.
+    """
+    src_root = dataset_fs.dataset_dir(project_id)
+    proj_dir = dataset_fs.project_dir(project_id)
+    # Excluded paths are stored project-relative (they include the leading
+    # "dataset/"); resolve to absolute so they can be compared to what we walk.
+    excluded_abs = {str((proj_dir / p).resolve()) for p in excluded_paths}
+
+    if staging_root.exists():
+        shutil.rmtree(staging_root, ignore_errors=True)
+
+    # train/good, test/good, plus every test/<defect_type> folder.
+    src_dirs = [src_root / "train" / "good", src_root / "test" / "good"]
+    test_root = src_root / "test"
+    if test_root.exists():
+        src_dirs += [d for d in sorted(test_root.iterdir()) if d.is_dir() and d.name != "good"]
+
+    n_linked = n_skipped = 0
+    for src_dir in src_dirs:
+        if not src_dir.exists():
+            continue
+        rel_dir = src_dir.relative_to(src_root)
+        dst_dir = staging_root / rel_dir
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        for f in sorted(src_dir.glob("*")):
+            if not f.is_file() or f.suffix.lower() not in dataset_fs.ALLOWED_EXTS:
+                continue
+            if str(f.resolve()) in excluded_abs:
+                n_skipped += 1
+                continue
+            (dst_dir / f.name).symlink_to(f.resolve())
+            n_linked += 1
+
+    logger.info(
+        f"[anomaly train] staged dataset for {project_id}: "
+        f"{n_linked} image(s) linked, {n_skipped} excluded -> {staging_root}"
+    )
+    return staging_root
+
+
+def _build_datamodule(project_id: str, request: AnomalyTrainRequest, staging_root: Optional[Path] = None):
     from anomalib.data import Folder
     from anomalib.data.utils.split import ValSplitMode
 
@@ -58,15 +107,31 @@ def _build_datamodule(project_id: str, request: AnomalyTrainRequest):
     # you may only have normal crops yet; train anyway and let evaluating
     # against test_unlabeled-style data guide which images to label abnormal
     # next. train_model() reports metrics as unavailable when this is empty.
-    defect_types = dataset_fs.list_defect_types(project_id)
+    # When images are excluded, everything below is resolved against the staged
+    # symlink tree instead of the real dataset — otherwise a defect type whose
+    # every image was excluded would still be listed, and anomalib hard-errors
+    # on an empty abnormal_dir.
+    root = staging_root or dataset_fs.dataset_dir(project_id)
+    test_root = root / "test"
+
+    if staging_root is None:
+        defect_types = dataset_fs.list_defect_types(project_id)
+        has_normal_test = dataset_fs.has_images(dataset_fs.test_good_dir(project_id))
+    else:
+        defect_types = sorted(
+            d.name for d in test_root.iterdir()
+            if d.is_dir() and d.name != "good" and dataset_fs.has_images(d)
+        ) if test_root.exists() else []
+        has_normal_test = dataset_fs.has_images(test_root / "good")
+        if not dataset_fs.has_images(root / "train" / "good"):
+            raise ValueError("Every normal training image was excluded — nothing left to train on.")
+
     abnormal_dirs = [f"test/{d}" for d in defect_types] if defect_types else None
-    normal_test_dir = (
-        "test/good" if dataset_fs.has_images(dataset_fs.test_good_dir(project_id)) else None
-    )
+    normal_test_dir = "test/good" if has_normal_test else None
 
     return Folder(
         name=project_id,
-        root=dataset_fs.dataset_dir(project_id),
+        root=root,
         normal_dir="train/good",
         abnormal_dir=abnormal_dirs,
         normal_test_dir=normal_test_dir,
@@ -202,6 +267,35 @@ def recompute_metrics_at_threshold(test_results_path: Path, threshold: float) ->
     return metrics
 
 
+def release_torch_cuda_cache(where: str) -> None:
+    """Hand torch's cached-but-unused GPU blocks back to the driver.
+
+    torch's caching allocator never releases freed blocks on its own: after a
+    training run its reserved pool stays at the training peak even though
+    memory_allocated() reads 0. TensorRT and onnxruntime cudaMalloc *outside*
+    that pool, so everything torch retains is memory they simply cannot have.
+
+    Measured: freeing a 3 GB tensor left torch.reserved at 2864 MiB with
+    nvidia-smi unchanged, and a TensorRT context needing 3.9 GB then failed to
+    allocate — until empty_cache() ran. Training, ONNX export and the Test/
+    Studio tabs all share this one process (train.py runs train_model through
+    run_in_executor, not a subprocess), so the pool has to be handed back at
+    the end of every torch-side job or the next TensorRT load starves.
+    """
+    import gc
+
+    import torch
+
+    if not torch.cuda.is_available():
+        return
+    reserved_before = torch.cuda.memory_reserved()
+    gc.collect()
+    torch.cuda.empty_cache()
+    freed = (reserved_before - torch.cuda.memory_reserved()) / 2**20
+    if freed >= 1:
+        logger.info(f"[anomaly] released {freed:.0f} MiB of torch CUDA cache after {where}")
+
+
 def train_model(
     project_id: str,
     model_id: str,
@@ -209,6 +303,7 @@ def train_model(
     checkpoint_dir: Path,
     progress_cb: Optional[Callable[[str, float], None]] = None,
     cancel_check: Optional[Callable[[], bool]] = None,
+    excluded_paths: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Train + evaluate one PatchCore/Padim model. Saves:
@@ -216,7 +311,30 @@ def train_model(
       {checkpoint_dir}/{model_id}_test_results.json — per-image eval sidecar
 
     Returns the metrics dict (see _compute_metrics), plus checkpoint_path.
+
+    Thin wrapper over _train_model so the GPU pool is handed back on *every*
+    exit path — including TrainingCancelled and the mid-run raises — since a
+    failed run holds just as much memory as a successful one.
     """
+    try:
+        return _train_model(
+            project_id, model_id, request, checkpoint_dir,
+            progress_cb=progress_cb, cancel_check=cancel_check,
+            excluded_paths=excluded_paths,
+        )
+    finally:
+        release_torch_cuda_cache("training")
+
+
+def _train_model(
+    project_id: str,
+    model_id: str,
+    request: AnomalyTrainRequest,
+    checkpoint_dir: Path,
+    progress_cb: Optional[Callable[[str, float], None]] = None,
+    cancel_check: Optional[Callable[[], bool]] = None,
+    excluded_paths: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     import torch
     from anomalib.engine import Engine
 
@@ -233,7 +351,13 @@ def train_model(
                 logger.exception("[anomaly train] progress_cb failed")
 
     _emit("preparing", 5)
-    datamodule = _build_datamodule(project_id, request)
+    # Only stage when something is actually excluded — the common case keeps
+    # pointing straight at the dataset, so this adds no cost or risk to it.
+    staging_root = None
+    if excluded_paths:
+        staging_root = dataset_fs.dataset_dir(project_id).parent / "_staging" / model_id
+        _stage_dataset(project_id, excluded_paths, staging_root)
+    datamodule = _build_datamodule(project_id, request, staging_root=staging_root)
     model = _build_model(request)
 
     run_dir = checkpoint_dir / "runs"
@@ -308,6 +432,11 @@ def train_model(
     except Exception:
         logger.warning(f"[anomaly train] failed to clean run dir {run_dir}")
 
+    # The staging tree is symlinks only, so removing it never touches a real
+    # image — but leaving it behind would confuse the next run's dataset counts.
+    if staging_root is not None:
+        shutil.rmtree(staging_root, ignore_errors=True)
+
     _emit("completed", 100)
 
     metrics["checkpoint_path"] = str(ckpt_dst)
@@ -344,6 +473,20 @@ def _trained_image_size(model) -> Optional[int]:
 
 
 def export_onnx(algorithm: str, checkpoint_path: Path, export_dir: Path, image_size: int) -> Path:
+    """Export one checkpoint to ONNX.
+
+    Wrapped so the backbone this loads onto the GPU doesn't stay parked in
+    torch's caching allocator — export is normally followed immediately by a
+    TensorRT build, which is exactly the allocation that fails when it does
+    (see release_torch_cuda_cache).
+    """
+    try:
+        return _export_onnx(algorithm, checkpoint_path, export_dir, image_size)
+    finally:
+        release_torch_cuda_cache("onnx export")
+
+
+def _export_onnx(algorithm: str, checkpoint_path: Path, export_dir: Path, image_size: int) -> Path:
     import torch
     from anomalib.engine import Engine
 

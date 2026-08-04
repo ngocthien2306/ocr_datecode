@@ -73,16 +73,32 @@ class AnomalyBulkDeleteRequest(BaseModel):
 class AnomalyImportItemInDB(BaseModel):
     id: str = Field(alias="_id")
     project_id: str
-    inspection_id: str
-    camera_serial: str
-    frame_idx: int
+    # Provenance of the inspection frame this crop came from. Optional because
+    # synthetically generated images have no inspection behind them.
+    inspection_id: Optional[str] = None
+    camera_serial: Optional[str] = None
+    frame_idx: Optional[int] = None
     recipe_id: Optional[str] = None
     recipe_name: Optional[str] = None
     label: str  # "normal" | "abnormal"
     defect_type: Optional[str] = None
     split: str  # "train" | "test"
-    image_path: str  # relative to this project's dataset dir
+    # Relative to the PROJECT dir (i.e. it includes the leading "dataset/"),
+    # not the dataset dir — every reader joins it against dataset_fs.project_dir().
+    image_path: str
     created_at: datetime
+
+    # "import" (cropped from a real inspection) | "synthetic" (drawn by
+    # defect_sim). Synthetic images are kept distinguishable so a model can be
+    # evaluated with and without them — calibrating a threshold purely on drawn
+    # marks and never checking against real defects is the failure mode here.
+    source: str = "import"
+    # Everything needed to reproduce a synthetic image: base item, stroke
+    # geometry and parameters, seed.
+    synthetic_params: Optional[Dict[str, Any]] = None
+    # Soft exclusion — training builds a staging tree from the included set
+    # rather than deleting anything (see anomaly_training._build_datamodule).
+    exclude_from_training: bool = False
 
     model_config = {"populate_by_name": True}
 
@@ -97,6 +113,10 @@ class AnomalyTrainRequest(BaseModel):
     coreset_sampling_ratio: float = 0.1  # patchcore only
     image_size: int = 256
     test_split: float = 0.2  # held-out slice of normal images added to test/good
+    # Dataset images to leave out of this run. Training reads the filesystem,
+    # so a non-empty list makes _build_datamodule stage a symlink tree of the
+    # remaining images instead of pointing at the dataset directly.
+    exclude_item_ids: List[str] = []
 
 
 class AnomalyModelMetrics(BaseModel):

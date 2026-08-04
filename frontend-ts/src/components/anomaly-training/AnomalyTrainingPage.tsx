@@ -9,12 +9,14 @@ import TrainTab from './TrainTab';
 import EvalTab from './EvalTab';
 import ExportTab from './ExportTab';
 import TestTab from './TestTab';
+import StudioTab from './StudioTab';
+import SyntheticTab from './SyntheticTab';
 
 interface Props {
   onClose: () => void;
 }
 
-type TabId = 'dataset' | 'train' | 'eval' | 'export' | 'test';
+type TabId = 'dataset' | 'synthetic' | 'train' | 'eval' | 'export' | 'test' | 'studio';
 
 export default function AnomalyTrainingPage({ onClose }: Props) {
   const [tab, setTab] = useState<TabId>('dataset');
@@ -126,7 +128,8 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
   const hasDataset = (stats?.normal_count ?? activeProject?.normal_count ?? 0) > 0;
 
   const TAB_LABELS: Record<TabId, string> = {
-    dataset: 'Dataset', train: 'Train', eval: 'Eval', export: 'Export', test: 'Test',
+    dataset: 'Dataset', synthetic: 'Synthetic NG', train: 'Train', eval: 'Eval',
+    export: 'Export', test: 'Test', studio: 'Studio',
   };
 
   return (
@@ -146,7 +149,7 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
 
       {activeProject && (
         <div className="at-tabs">
-          {(['dataset', 'train', 'eval', 'export', 'test'] as TabId[]).map((id) => (
+          {(['dataset', 'synthetic', 'train', 'eval', 'export', 'test', 'studio'] as TabId[]).map((id) => (
             <button
               key={id}
               className={`at-tab-btn ${tab === id ? 'active' : ''}`}
@@ -248,6 +251,11 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
                 onCountsChanged={refreshStats}
               />
             </>
+          ) : tab === 'synthetic' ? (
+            <SyntheticTab
+              projectId={activeProject.id}
+              onGenerated={() => { setGalleryRefreshKey((k) => k + 1); refreshStats(); }}
+            />
           ) : tab === 'train' ? (
             <TrainTab
               projectId={activeProject.id}
@@ -260,8 +268,10 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
             <EvalTab projectId={activeProject.id} model={selectedModel} />
           ) : tab === 'export' ? (
             <ExportTab projectId={activeProject.id} model={selectedModel} onModelChange={loadModels} />
-          ) : (
+          ) : tab === 'test' ? (
             <TestTab projectId={activeProject.id} model={selectedModel} />
+          ) : (
+            <StudioTab projectId={activeProject.id} model={selectedModel} />
           )}
         </div>
       </div>

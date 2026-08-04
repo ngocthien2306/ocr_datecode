@@ -16,6 +16,7 @@ from app.db.mongodb import get_database
 from app.models.anomaly import AnomalyTrainRequest
 from app.repositories.anomaly_repository import AnomalyRepository
 from app.services import dataset_fs
+from app.api.endpoints.test_model import release_model
 from app.services.anomaly_training import TrainingCancelled, export_onnx, train_model
 from app.services.train_logs import attach_handler, detach_handler, get_buffer
 from app.services.trt_export import build_engine_from_onnx, onnx_input_info
@@ -98,12 +99,26 @@ async def _run_training_bg(repo: AnomalyRepository, project_id: str, model_id: s
 
     checkpoint_dir = dataset_fs.models_dir(project_id)
 
+    # Images the operator flagged out of training, plus anything named
+    # explicitly on this request. Resolved here (async Mongo) and handed to
+    # train_model, which runs in a thread and has no DB access.
+    excluded_paths = await repo.list_excluded_image_paths(project_id)
+    if request.exclude_item_ids:
+        extra = await repo.get_import_items(project_id, request.exclude_item_ids)
+        excluded_paths = list({*excluded_paths, *(it.image_path for it in extra)})
+    if excluded_paths:
+        log_buffer.push(
+            model_id,
+            f"[anomaly] {len(excluded_paths)} image(s) excluded from this run",
+        )
+
     try:
         metrics = await loop.run_in_executor(
             None,
             lambda: train_model(
                 project_id, model_id, request, checkpoint_dir,
                 progress_cb=_progress_cb, cancel_check=_is_cancelled,
+                excluded_paths=excluded_paths,
             ),
         )
         project = await repo.get_project(project_id)
@@ -310,6 +325,10 @@ async def delete_model(
         p.unlink(missing_ok=True)
     shutil.rmtree(models_dir / "export" / model_id, ignore_errors=True)
     get_buffer().drop(model_id)
+    # The Test/Studio tabs keep the engine resident on the GPU; without this the
+    # deleted model's ~1.5 GB would stay pinned until the service restarts, and
+    # a later re-export under the same id would keep serving the stale engine.
+    release_model(model_id)
 
     await repo.delete_model(model_id)
     return {"ok": True, "model_id": model_id}

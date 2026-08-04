@@ -431,6 +431,18 @@ class CameraManager:
                     continue
                 models[key] = models.get(key, 0) + 1
 
+        # Drop anomaly models the *previous* recipe used and this one doesn't,
+        # before warming the new ones — otherwise a recipe swap stacks the old
+        # engine's contexts on top of the new one's and the new allocation is
+        # the one that fails. Done even when this recipe has no anomaly models
+        # at all, which is precisely when the old ones should all go.
+        keep_paths = {p for key in models for p in key[:2] if p}
+        try:
+            from .verification.anomaly_inference import release_models
+            release_models(keep_paths=keep_paths)
+        except Exception as e:
+            logger.warning(f"Anomaly model release skipped: {e}")
+
         if not models:
             return
 
@@ -482,6 +494,13 @@ class CameraManager:
                 # Clear inference matchers when recipe is stopped
                 if stopped_cameras:
                     self.inference_handler.clear_matchers()
+                    # Same for the anomaly engines: a stopped recipe has no
+                    # reason to keep ~1.6 GB per model resident on the GPU.
+                    try:
+                        from .verification.anomaly_inference import release_models
+                        release_models(keep_paths=None)
+                    except Exception as e:
+                        logger.warning(f"Anomaly model release on stop skipped: {e}")
 
                 # Rebuild DI map (remove stopped cameras)
                 self.trigger_handler.build_di_camera_map()

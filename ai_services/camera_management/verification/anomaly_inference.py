@@ -1,9 +1,10 @@
+import gc
 import logging
 import queue
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import cv2
 import numpy as np
@@ -30,12 +31,29 @@ except ImportError:
         "(no way to reproduce the training-time resize; see module docstring)"
     )
 
-_MAX_SLOTS_PER_ENGINE = 4  # concurrent-inference cap per engine_path; bounds GPU buffer growth
+# Concurrent-inference cap per engine_path. Each slot is a full TensorRT
+# execution context, and a context is NOT cheap: measured 1.07 GB of activation
+# memory for the 512x512 PatchCore engine (on top of ~482 MB of shared weights),
+# and the size is driven by the memory-bank distance matrix, not by the batch
+# profile — rebuilding at max_batch=1 gave byte-identical activation. Four slots
+# would therefore reserve ~4.8 GB for a single model, which OOM'd this 16 GB card
+# during testing. Concurrency here is bounded by how many cameras share one
+# model (two, for front/back label), so two is the working ceiling; anything
+# beyond that queues rather than allocating.
+_MAX_SLOTS_PER_ENGINE = 2
+
+# How long _acquire_trt_slot waits on the pool before re-reading it. Only there
+# so a pool dropped by release_models() can't strand a waiter forever; a normal
+# wait is the length of one inference (~30 ms), far under this.
+_SLOT_WAIT_TIMEOUT_S = 2.0
 
 # A recipe change that swaps the anomaly model requires restarting ai_services
 # to take effect — same as a newly trained char-classifier model today (see
 # backend's _trigger_restart_all) — so in practice each of these holds at
 # most a few entries per process lifetime.
+_primary_ctx = None          # single retained primary-context handle, see _get_primary_context
+_primary_ctx_lock = threading.Lock()
+
 _onnx_sessions: Dict[str, Any] = {}
 _trt_engines: Dict[str, Any] = {}                   # engine_path -> deserialized ICudaEngine (shared, read-only)
 _trt_slot_pools: Dict[str, "queue.Queue"] = {}       # engine_path -> pool of free _TRTSlot
@@ -76,6 +94,40 @@ class _TRTSlot:
             self.h_outs[name] = h
             self.d_outs[name] = cuda.mem_alloc(h.nbytes)
 
+    def close(self) -> None:
+        """Free this slot's CUDA allocations explicitly. Caller must have the
+        primary context pushed.
+
+        Dropping the last Python reference is NOT enough. pycuda's GC-time
+        cleanup remembers the thread that allocated, and every slot is
+        allocated on an ephemeral pool worker — warmup() and
+        product_verifier._run_anomaly_checks() both build a per-call
+        ThreadPoolExecutor — so by teardown that thread is long gone and
+        pycuda logs "device_allocation in out-of-thread context could not be
+        cleaned up" and leaks the buffer. Freeing by hand under the pushed
+        primary context is the path that actually returns the memory.
+        """
+        for buf in (self.d_input, *self.d_outs.values()):
+            try:
+                buf.free()
+            except Exception:
+                pass
+        self.d_outs.clear()
+        # pagelocked_empty returns an ndarray whose .base owns the pinned
+        # allocation; that is what has to be freed, not the array.
+        for host in (self.h_input, *self.h_outs.values()):
+            base = getattr(host, "base", None)
+            if base is not None and hasattr(base, "free"):
+                try:
+                    base.free()
+                except Exception:
+                    pass
+        self.h_outs.clear()
+        # Releasing the execution context here (rather than at GC) keeps its
+        # ~1 GB of activation memory from outliving the buffers above.
+        self.context = None
+        self.stream = None
+
     def infer(self, x: np.ndarray) -> Dict[str, np.ndarray]:
         """x: (3, image_size, image_size) float32, already preprocessed."""
         self.context.set_input_shape(self.input_name, (1, 3, self.image_size, self.image_size))
@@ -114,20 +166,142 @@ def _get_trt_engine(engine_path: str):
 def _acquire_trt_slot(engine_path: str) -> _TRTSlot:
     """Must be called with the calling thread's pycuda context already
     pushed."""
-    with _trt_pool_lock:
-        pool = _trt_slot_pools.setdefault(engine_path, queue.Queue())
-        created = _trt_slot_counts.get(engine_path, 0)
-        if pool.empty() and created < _MAX_SLOTS_PER_ENGINE:
-            _trt_slot_counts[engine_path] = created + 1
-            return _TRTSlot(_get_trt_engine(engine_path))
-    # Either a free slot is sitting in the pool, or we're at the concurrency
-    # cap — block until one is returned rather than growing GPU memory
-    # unbounded.
-    return pool.get()
+    while True:
+        with _trt_pool_lock:
+            pool = _trt_slot_pools.setdefault(engine_path, queue.Queue())
+            created = _trt_slot_counts.get(engine_path, 0)
+            if pool.empty() and created < _MAX_SLOTS_PER_ENGINE:
+                _trt_slot_counts[engine_path] = created + 1
+                return _TRTSlot(_get_trt_engine(engine_path))
+        # Either a free slot is sitting in the pool, or we're at the
+        # concurrency cap — wait for one to come back rather than growing GPU
+        # memory unbounded. The wait is bounded and retried because
+        # release_models() can drop this pool while we hold a reference to it:
+        # the slot we were queued behind is then torn down instead of returned,
+        # and an unbounded get() on the orphaned queue would never wake. Looping
+        # re-reads the live pool and, finding it empty, allocates a fresh slot.
+        try:
+            return pool.get(timeout=_SLOT_WAIT_TIMEOUT_S)
+        except queue.Empty:
+            continue
 
 
 def _release_trt_slot(engine_path: str, slot: _TRTSlot) -> None:
-    _trt_slot_pools[engine_path].put(slot)
+    """Return a slot to its pool, or tear it down if the pool is gone.
+
+    release_models() can drop the pool mid-inference — a recipe change while a
+    trigger is in flight. Before this, that raced into
+    `KeyError: <engine_path>` inside the finally-block of _predict_trt, which
+    surfaced as a skipped frame (verified with two threads inferring against a
+    model being released in a loop). A slot whose pool has vanished belongs to
+    a model nobody will ask for again, so free it rather than resurrecting the
+    pool — resurrecting would silently re-pin the very engine the release was
+    meant to drop. _predict_trt still has the primary context pushed here,
+    which is what close() requires.
+    """
+    with _trt_pool_lock:
+        pool = _trt_slot_pools.get(engine_path)
+        if pool is not None:
+            pool.put(slot)
+            return
+    slot.close()
+
+
+def _get_primary_context():
+    """One retained handle to device 0's primary context, shared by every
+    thread, created once.
+
+    Calling cuda.Device(0).retain_primary_context() per thread returns a
+    *different Python Context object* each time, and pycuda records on each one
+    the thread that built it. Any allocation made under such an object can then
+    only be cleaned up from that same thread — and every slot here is allocated
+    on an ephemeral pool worker, so by teardown time that thread no longer
+    exists. The result was pycuda skipping the free and warning
+    "device_allocation in out-of-thread context could not be cleaned up",
+    leaking ~8 MiB per recipe change (measured over 6 swap cycles).
+
+    Sharing one handle fixes it: measured 0 warnings freeing from the main
+    thread *or* an unrelated thread, versus 1 per allocation with per-thread
+    handles. The underlying CUDA primary context is the same one
+    pycuda.autoinit set up at import, so pushing it stays safe to nest.
+    """
+    global _primary_ctx
+    if _primary_ctx is None:
+        with _primary_ctx_lock:
+            if _primary_ctx is None:
+                _primary_ctx = cuda.Device(0).retain_primary_context()
+    return _primary_ctx
+
+
+def release_models(keep_paths: Optional[Set[str]] = None) -> int:
+    """Drop cached engines/sessions that the current recipe no longer uses.
+
+    ``keep_paths`` is the set of onnx_path/engine_path values the newly loaded
+    recipe binds to; anything cached outside it is freed. Pass ``None`` to
+    release everything (recipe stopped).
+
+    Why this has to exist: the caches below are plain dicts with no eviction,
+    so before this a recipe change that swapped the anomaly model left the old
+    engine pinned for the life of the process — measured ~1.6 GB for one
+    512x512 model, times two execution contexts. The module docstring used to
+    say a restart made that moot, but nothing guarantees the restart actually
+    happens, and a stale 3 GB is exactly what makes the *new* model's contexts
+    fail to allocate.
+
+    Returns the number of cached models dropped.
+
+    Freeing is not just dropping references: _TRTSlot owns pycuda
+    pagelocked/device allocations, and pycuda frees those against the CUDA
+    context that was current at allocation time. So the primary context is
+    pushed for the teardown, exactly as _predict_trt does for inference.
+    """
+    with _trt_pool_lock:
+        stale_engines = [p for p in _trt_engines if keep_paths is None or p not in keep_paths]
+        stale_onnx = [p for p in _onnx_sessions if keep_paths is None or p not in keep_paths]
+        if not stale_engines and not stale_onnx:
+            return 0
+
+        slots_to_free = []
+        for path in stale_engines:
+            pool = _trt_slot_pools.pop(path, None)
+            _trt_slot_counts.pop(path, None)
+            while pool is not None and not pool.empty():
+                # A slot still checked out by an in-flight inference is NOT in
+                # the pool, so it stays alive until its thread returns it — at
+                # which point put() lands in a pool nobody holds and it is
+                # collected. Never yank a context out from under a running
+                # execute_async_v3.
+                slots_to_free.append(pool.get_nowait())
+            _trt_engines.pop(path, None)
+
+        for path in stale_onnx:
+            _onnx_sessions.pop(path, None)
+
+    if slots_to_free and TRT_AVAILABLE:
+        ctx = None
+        try:
+            ctx = _get_primary_context()
+            ctx.push()
+            for slot in slots_to_free:
+                slot.close()
+            slots_to_free.clear()
+            gc.collect()
+        except Exception as e:
+            logger.warning(f"[AnomalyInference] CUDA teardown warning while releasing models: {e}")
+        finally:
+            if ctx is not None:
+                try:
+                    ctx.pop()
+                except Exception:
+                    pass
+    else:
+        slots_to_free.clear()
+        gc.collect()
+
+    dropped = len(stale_engines) + len(stale_onnx)
+    kept = "all" if keep_paths is None else f"{len(keep_paths)} still in use"
+    logger.info(f"[AnomalyInference] released {dropped} cached model(s) ({kept} kept)")
+    return dropped
 
 
 def _get_onnx_session(onnx_path: str):
@@ -251,10 +425,11 @@ def _predict_trt(engine_path: str, crop_bgr: np.ndarray) -> Dict[str, Any]:
     # ThreadPoolExecutors (torn down right after each trigger) — verified
     # empirically that a thread dying with a pushed-but-unpopped context
     # makes pycuda hard-abort the *entire process* on pool shutdown, not
-    # just warn. retain_primary_context() is the same shared context
+    # just warn. _get_primary_context() hands back the same shared context
     # `pycuda.autoinit` already created on the main thread at import time,
-    # so this is safe to nest with it.
-    ctx = cuda.Device(0).retain_primary_context()
+    # so this is safe to nest with it — and sharing one handle is what lets
+    # release_models() free these slots later (see _get_primary_context).
+    ctx = _get_primary_context()
     ctx.push()
     try:
         slot = _acquire_trt_slot(engine_path)

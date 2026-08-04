@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
-  anomalyTrainingAPI, AnomalyAlgorithm, AnomalyModel, AnomalyTrainRequest, TrainLogEntry, fmtMetric,
+  anomalyTrainingAPI, AnomalyAlgorithm, AnomalyModel, AnomalyTrainRequest, DatasetStats,
+  TrainLogEntry, fmtMetric,
 } from '@/services/anomalyTraining';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 
@@ -71,6 +72,7 @@ const PHASES = [
 ] as const;
 
 export default function TrainTab({ projectId, models, onModelsChange, selectedModelId, onSelectModel }: Props) {
+  const [stats, setStats] = useState<DatasetStats | null>(null);
   const [algorithm, setAlgorithm] = useState<AnomalyAlgorithm>('patchcore');
   const [backbone, setBackbone] = useState(BACKBONE_PRESETS.patchcore.backbone);
   const [layersText, setLayersText] = useState(BACKBONE_PRESETS.patchcore.layers.join(','));
@@ -133,6 +135,31 @@ export default function TrainTab({ projectId, models, onModelsChange, selectedMo
     pollRef.current = setInterval(poll, 2000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [pollTargetId, projectId]);
+
+  // Refresh whenever the tab mounts — images can be excluded or generated on
+  // other tabs, and a stale count here would misstate what is about to run.
+  useEffect(() => {
+    anomalyTrainingAPI.datasetStats(projectId).then(setStats).catch(() => setStats(null));
+  }, [projectId]);
+
+  // Mirrors _build_datamodule: every image in train/good fits the model;
+  // test/good only evaluates it, and when test/good is empty anomalib holds
+  // out `test_split` of train/good to stand in for it.
+  const projection = useMemo(() => {
+    if (!stats) return null;
+    const trainPool = Math.max(0, (stats.train_normal ?? 0) - (stats.excluded_train_normal ?? 0));
+    const testNormalPool = Math.max(0, (stats.test_normal ?? 0) - (stats.excluded_test_normal ?? 0));
+    const abnormal = Math.max(0, stats.abnormal_count - (stats.excluded_abnormal ?? 0));
+    const heldOut = testNormalPool > 0 ? 0 : Math.round(trainPool * testSplit);
+    return {
+      fit: trainPool - heldOut,
+      evalNormal: testNormalPool > 0 ? testNormalPool : heldOut,
+      evalAbnormal: abnormal,
+      synthetic: stats.synthetic_count ?? 0,
+      excluded: stats.excluded_count ?? 0,
+      autoHeldOut: testNormalPool === 0,
+    };
+  }, [stats, testSplit]);
 
   const handleStart = async () => {
     setStarting(true);
@@ -239,6 +266,43 @@ export default function TrainTab({ projectId, models, onModelsChange, selectedMo
           <input className="at-form-input" type="number" min={0.05} max={0.5} step={0.05}
                  value={testSplit} onChange={(e) => setTestSplit(Number(e.target.value))} disabled={!!trainingModel} />
         </div>
+
+        {projection && (
+          <div className="at-train-projection">
+            <div className="at-train-projection-line">
+              Fits the model on <b>{projection.fit}</b> normal image(s)
+              {projection.autoHeldOut && projection.evalNormal > 0 && (
+                <> · <b>{projection.evalNormal}</b> auto-held-out for evaluation</>
+              )}
+            </div>
+            <div className="at-train-projection-line">
+              Evaluates on <b>{projection.evalNormal}</b> normal + <b>{projection.evalAbnormal}</b> abnormal
+              {projection.synthetic > 0 && <> (of which <b>{projection.synthetic}</b> synthetic)</>}
+            </div>
+            {projection.excluded > 0 && (
+              <div className="at-train-projection-line muted">
+                {projection.excluded} image(s) excluded from this run
+              </div>
+            )}
+            {projection.evalAbnormal === 0 ? (
+              <div className="at-train-projection-warn">
+                No abnormal images — AUROC/F1 will be N/A and the threshold degenerates to the
+                highest normal score. Generate some on the Synthetic NG tab first.
+              </div>
+            ) : projection.evalAbnormal < 5 ? (
+              <div className="at-train-projection-warn">
+                Only {projection.evalAbnormal} abnormal image(s) — the threshold is being fitted to
+                very few points, so it will sit almost on top of them.
+              </div>
+            ) : null}
+            {projection.synthetic > 0 && (
+              <div className="at-train-projection-line muted">
+                Synthetic images calibrate the threshold; they never train the model. Every score is
+                re-normalised after training, so recipe thresholds need re-checking.
+              </div>
+            )}
+          </div>
+        )}
 
         {errorMsg && <div className="at-alert-error">{errorMsg}</div>}
 

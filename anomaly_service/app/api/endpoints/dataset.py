@@ -144,6 +144,10 @@ async def list_dataset_images(
             "split": it.split,
             "created_at": it.created_at.isoformat(),
             "thumb_b64": _thumb_b64(abs_path),
+            # Lets the gallery mark synthetic samples and images held out of
+            # training, so neither is silently mistaken for a real one.
+            "source": it.source,
+            "exclude_from_training": it.exclude_from_training,
         })
     return {
         "images": out,
@@ -153,6 +157,32 @@ async def list_dataset_images(
         "page_size": page_size,
         "total_pages": max(1, -(-total // page_size)),  # ceil div
     }
+
+
+@router.get("/projects/{project_id}/dataset/image-ids", tags=["Anomaly Dataset"])
+async def list_dataset_image_ids(
+    project_id: str,
+    label: Optional[str] = None,
+    repo: AnomalyRepository = Depends(get_repo),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Every id matching the filter, with no thumbnails.
+
+    The gallery pages 60 images at a time, so "select all" across the whole
+    filter would otherwise mean fetching every page — and every page carries
+    base64 thumbnails. This returns just the ids so a bulk action can span
+    pages without moving image data.
+    """
+    project = await repo.get_project(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    query: Dict[str, Any] = {"project_id": project_id}
+    if label:
+        query["label"] = label
+    cursor = repo.import_items.find(query, {"_id": 1}).sort("created_at", -1)
+    ids = [str(doc["_id"]) async for doc in cursor]
+    return {"ids": ids, "total": len(ids)}
 
 
 @router.get("/projects/{project_id}/dataset/images/{item_id}/full", tags=["Anomaly Dataset"])

@@ -145,6 +145,38 @@ class AnomalyRepository:
     async def update_import_item(self, item_id: str, update: Dict[str, Any]) -> None:
         await self.import_items.update_one({"_id": ObjectId(item_id)}, {"$set": update})
 
+    async def set_exclude_from_training(
+        self, project_id: str, item_ids: List[str], excluded: bool,
+    ) -> int:
+        """Flag/unflag images so the next training run leaves them out.
+        Returns how many docs changed."""
+        valid_ids = [ObjectId(i) for i in item_ids if ObjectId.is_valid(i)]
+        if not valid_ids:
+            return 0
+        result = await self.import_items.update_many(
+            {"_id": {"$in": valid_ids}, "project_id": project_id},
+            {"$set": {"exclude_from_training": excluded}},
+        )
+        return result.modified_count
+
+    async def count_synthetic(self, project_id: str) -> int:
+        """How many dataset images were drawn rather than captured."""
+        return await self.import_items.count_documents(
+            {"project_id": project_id, "source": "synthetic"}
+        )
+
+    async def list_excluded_image_paths(self, project_id: str) -> List[str]:
+        """image_path of every image flagged out of training, project-relative.
+
+        Training reads the filesystem rather than Mongo, so this is what lets
+        _build_datamodule know which files to leave out of the staging tree.
+        """
+        cursor = self.import_items.find(
+            {"project_id": project_id, "exclude_from_training": True},
+            {"image_path": 1},
+        )
+        return [doc["image_path"] async for doc in cursor if doc.get("image_path")]
+
     async def delete_import_item(self, item_id: str) -> bool:
         result = await self.import_items.delete_one({"_id": ObjectId(item_id)})
         return result.deleted_count > 0
