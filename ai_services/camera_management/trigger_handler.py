@@ -1330,8 +1330,14 @@ class TriggerHandler:
 
     def _restart_service(self, trigger_camera: str):
         """
-        Execute 'sudo systemctl restart ocr-all' with auto password input.
-        Called in a background thread.
+        Execute 'sudo systemctl restart ocr-all'. Called in a background thread.
+
+        Relies on /etc/sudoers.d/ocr-restart granting NOPASSWD for exactly this
+        unit + action. This used to pipe a hardcoded password on stdin, which had
+        gone stale — every auto-restart failed with "Sorry, try again" (see
+        2026-08-05 00:27:10), so the recovery path was dead while looking alive.
+        A password in source would also be committed to git; the sudoers rule
+        keeps the privilege narrow and the secret out of the repo entirely.
         """
         import subprocess
         service = "ocr-all"
@@ -1341,8 +1347,9 @@ class TriggerHandler:
         )
         try:
             result = subprocess.run(
-                ['sudo', '-S', 'systemctl', 'restart', service],
-                input='1\n',
+                # -n: never prompt. Without the sudoers rule this fails fast and
+                # loudly instead of hanging 30s on an invisible password prompt.
+                ['sudo', '-n', 'systemctl', 'restart', service],
                 capture_output=True,
                 text=True,
                 timeout=30
