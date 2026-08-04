@@ -20,7 +20,10 @@ sleep 2
 
 # 3. Start AI Services (Camera Management)
 echo "📷 Starting AI Camera Services..."
-gnome-terminal --title="AI Camera Services" --window -- bash -c "cd ${USER_HOME}/Source/ocr_datecode/ai_services && python camera_management_service.py; exec bash"
+# MEM_DIAG=0: the leak profiler walks the whole heap twice per cycle in pure
+# Python, holding the GIL for ~8s on a 4GB heap. Same reason as in
+# start_services.sh — set it here too, since this script is the other entry point.
+gnome-terminal --title="AI Camera Services" --window -- bash -c "cd ${USER_HOME}/Source/ocr_datecode/ai_services && MEM_DIAG=0 python camera_management_service.py; exec bash"
 sleep 2
 
 # 4. Start ngrok for Backend API

@@ -197,6 +197,13 @@ sleep 3
 # backend supervisor (kill + respawn via app/services/camera_service_supervisor.py).
 echo "📷 Starting AI Camera Services..."
 cd "$AI_SERVICES_DIR"
+# mem_diag walks the whole heap twice per cycle (gc.get_objects + a 2-level deep
+# container scan). That is pure-Python bytecode, so it holds the GIL for seconds
+# on end — on a 4GB heap every inference landing in the ~8s after a scan took
+# 0.7-2.2s instead of 0.15s (5/5 spikes in-window, 0/38 out, logs 2026-08-05).
+# Extra cores don't help: the contention is the interpreter lock, not the CPU.
+# Set MEM_DIAG=1 to re-enable when actually chasing the leak, ideally off-shift.
+export MEM_DIAG=0
 nohup python camera_management_service.py >> "$LOG_DIR/ai_camera.log" 2>&1 &
 AI_PID=$!
 echo "   PID: $AI_PID"
