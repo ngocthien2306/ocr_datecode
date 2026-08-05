@@ -303,37 +303,42 @@ class SuperPointMatcherTRT:
         outputs = self._infer(batch_input)
         batch_timings['trt_inference'] = (time.time() - t0) * 1000
 
-        # Post-process each pair
+        # Post-process each pair. This ran sequentially and cost ~7ms per camera
+        # (21ms for 3) on the critical path, even though the pairs are completely
+        # independent: _postprocess_pair writes no shared state and calls nothing
+        # on self, and its two heavy steps — cv2.findHomography's RANSAC and
+        # perspectiveTransform — both release the GIL, so threads actually overlap.
         t0 = time.time()
-        results = []
-        per_camera_postprocess = []
-
         kpts_raw = outputs[0]
         matches_raw = outputs[1]
         mscores_raw = outputs[2]
 
-        for idx, matcher in enumerate(templates):
+        def _one(idx_matcher):
+            idx, matcher = idx_matcher
             t_post = time.time()
-
-            # Extract this pair's data from batch outputs
-            template_idx = idx * 2
-            target_idx = idx * 2 + 1
-
             result = self._postprocess_pair(
                 kpts_raw=kpts_raw,
                 matches_raw=matches_raw,
                 mscores_raw=mscores_raw,
-                template_idx=template_idx,
-                target_idx=target_idx,
+                template_idx=idx * 2,
+                target_idx=idx * 2 + 1,
                 matcher=matcher,
                 target_img_full=target_imgs[idx],
                 score_threshold=score_threshold,
                 ransac_threshold=ransac_threshold,
                 min_confidence=min_confidence,
             )
+            return result, (time.time() - t_post) * 1000
 
-            per_camera_postprocess.append((time.time() - t_post) * 1000)
-            results.append(result)
+        if len(templates) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=min(len(templates), 4)) as pool:
+                pairs = list(pool.map(_one, enumerate(templates)))
+        else:
+            pairs = [_one(it) for it in enumerate(templates)]
+
+        results = [p[0] for p in pairs]
+        per_camera_postprocess = [p[1] for p in pairs]
 
         batch_timings['postprocess'] = (time.time() - t0) * 1000
         batch_timings['total'] = (time.time() - t_total) * 1000
