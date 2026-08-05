@@ -100,6 +100,15 @@ interface WrinkledCheck {
   total_area?: number;
   min_area?: number | { source?: string; parsedValue?: number };
   wrinkled_boxes?: WrinkleBox[];
+  // Thresholds actually applied to this frame, echoed back by the detector so
+  // the operator can see what the verdict was measured against.
+  triggered_by?: 'critical' | 'total' | null;
+  min_region_area?: number;
+  max_region_area?: number;
+  conf_threshold?: number;    // WrinkledSegmenterTRT only — detection score filter
+  anomaly_score?: number;     // anomaly path only — reported, no longer votes
+  excluded_by_mask?: number;
+  backend?: string;
 }
 
 interface ColorCheck {
@@ -1712,16 +1721,55 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                         {wc.total_area != null ? `${wc.total_area}px²` : '-'}
                       </span>
                     </div>
-                    {/* <div className="wrinkle-chip">
+                    {/* Total Area is judged against Min Area — showing one without
+                        the other leaves the verdict unexplained. */}
+                    <div className="wrinkle-chip">
                       <span className="wrinkle-chip-label">Min Area</span>
                       <span className="wrinkle-chip-value">
                         {`${parseMinArea(wc.min_area)}px²`}
                       </span>
-                    </div> */}
+                    </div>
+                    {(wc.max_region_area ?? 0) > 0 && (
+                      <div className="wrinkle-chip">
+                        <span className="wrinkle-chip-label">Max Region</span>
+                        <span className="wrinkle-chip-value">{`${wc.max_region_area}px²`}</span>
+                      </div>
+                    )}
+                    {(wc.min_region_area ?? 0) > 0 && (
+                      <div className="wrinkle-chip">
+                        <span className="wrinkle-chip-label">Min Region</span>
+                        <span className="wrinkle-chip-value">{`${wc.min_region_area}px²`}</span>
+                      </div>
+                    )}
+                    {wc.conf_threshold != null && (
+                      <div className="wrinkle-chip">
+                        <span className="wrinkle-chip-label">Conf</span>
+                        <span className="wrinkle-chip-value">{wc.conf_threshold.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {wc.anomaly_score != null && (
+                      <div className="wrinkle-chip">
+                        <span className="wrinkle-chip-label" title="Reported only — the verdict is decided by area, not by this score">
+                          Score
+                        </span>
+                        <span className="wrinkle-chip-value muted">{wc.anomaly_score.toFixed(3)}</span>
+                      </div>
+                    )}
+                    {(wc.excluded_by_mask ?? 0) > 0 && (
+                      <div className="wrinkle-chip">
+                        <span className="wrinkle-chip-label">Masked out</span>
+                        <span className="wrinkle-chip-value">{wc.excluded_by_mask}</span>
+                      </div>
+                    )}
                     <div className="wrinkle-chip">
                       <span className="wrinkle-chip-label">Has Wrinkle</span>
                       <span className={`wrinkle-chip-value ${wc.has_wrinkled ? 'bad' : 'good'}`}>
                         {wc.has_wrinkled ? 'Yes' : 'No'}
+                        {wc.has_wrinkled && wc.triggered_by && (
+                          <span className="wrinkle-trigger-tag">
+                            {wc.triggered_by === 'critical' ? ' · one region ≥ max' : ' · total ≥ min'}
+                          </span>
+                        )}
                       </span>
                     </div>
                   </div>

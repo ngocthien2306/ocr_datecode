@@ -153,12 +153,16 @@ export default function AnomalySetupModal({ isOpen, templateName, initialConfig,
             <label>Threshold: {threshold.toFixed(2)}</label>
             <input type="range" min={0} max={1} step={0.01} value={threshold}
                    onChange={(e) => setThreshold(Number(e.target.value))} />
-            <span className="anomaly-setup-hint">Anomaly score ≥ threshold → FAIL. Tune from the model's Eval tab first.</span>
+            <span className="anomaly-setup-hint">
+              {areaLogicOn
+                ? 'Not used while area logic is on — area decides the verdict. The score is still recorded on each frame for debugging.'
+                : 'Anomaly score ≥ threshold → FAIL. Tune from the model\'s Eval tab first.'}
+            </span>
           </div>
 
           <label className="anomaly-setup-toggle">
             <input type="checkbox" checked={areaLogicOn} onChange={(e) => setAreaLogicOn(e.target.checked)} />
-            <span>Area-based logic — like the old wrinkle check (min/max region area), on top of Threshold above</span>
+            <span>Area-based logic — total/max abnormal area decides FAIL, <b>replacing</b> the Threshold above</span>
           </label>
 
           {areaLogicOn && (

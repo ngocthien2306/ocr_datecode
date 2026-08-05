@@ -1990,6 +1990,19 @@
 .wrinkle-chip-value.good { color: #059669; }
 .wrinkle-chip-value.bad  { color: #dc2626; }
 
+/* Reported-but-not-used values (the anomaly score no longer decides the
+   verdict — area does). Dimmed so it doesn't read as a pass/fail number. */
+.wrinkle-chip-value.muted { color: #9ca3af; font-weight: 500; }
+
+/* Which threshold actually tripped, appended to the Has Wrinkle verdict */
+.wrinkle-trigger-tag {
+  font-size: 10px;
+  font-weight: 500;
+  color: #9ca3af;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .wrinkle-toggle-btn {
   margin-top: 4px;
   padding: 4px 10px;
@@ -2675,6 +2688,8 @@ body.dark-mode .wrinkle-chip-label { color: #9ca3af; }
 body.dark-mode .wrinkle-chip-value { color: #e5e7eb; }
 body.dark-mode .wrinkle-chip-value.good { color: #4ade80; }
 body.dark-mode .wrinkle-chip-value.bad  { color: #f87171; }
+body.dark-mode .wrinkle-chip-value.muted { color: #6b7280; }
+body.dark-mode .wrinkle-trigger-tag { color: #6b7280; }
 
 body.dark-mode .wrinkle-toggle-btn {
   background: #1f2937;
