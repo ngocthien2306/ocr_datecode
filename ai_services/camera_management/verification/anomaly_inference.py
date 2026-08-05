@@ -587,9 +587,16 @@ def build_anomaly_check(
     total_area = sum(r["area"] for r in wrinkled_boxes)
     has_critical = max_region_area > 0 and any(r["area"] >= max_region_area for r in wrinkled_boxes)
     total_exceeded = min_area > 0 and total_area >= min_area
-    score_exceeded = score >= threshold
-    has_wrinkled = has_critical or total_exceeded or score_exceeded
-    triggered_by = "critical" if has_critical else ("total" if total_exceeded else ("score" if score_exceeded else None))
+    # AREA DECIDES once area logic is configured. The image-level pred_score used
+    # to OR into this, which made a frame fail on a high score even when the
+    # defect area was well under min_area — the operator tunes areas they can see
+    # and measure on the frame, not an opaque 0-1 score. The score is still
+    # reported below for debugging; it just no longer votes.
+    # With area logic OFF (min_area == 0 and max_region_area == 0) the early
+    # `not region_logic_on` return above still decides purely on the score, so
+    # templates that were never given area thresholds are unaffected.
+    has_wrinkled = has_critical or total_exceeded
+    triggered_by = "critical" if has_critical else ("total" if total_exceeded else None)
 
     return {
         "ok": not has_wrinkled,
