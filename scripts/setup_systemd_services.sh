@@ -24,13 +24,19 @@ mkdir -p "$LOG_DIR"
 # are harmful — set MTU/buffers by hand per-machine if ever needed.
 
 # ── Remove old units ─────────────────────────────────────────────────────────
+# NOTE: ocr-ai-services MUST be in this list. An older install shipped it with a
+# hardcoded `User=demo`; on a `suntech` machine systemd fails at step USER
+# (217/USER) before python even starts, and Restart=always turns that into a
+# fork-and-die loop every 5s (seen at 35k+ restarts). It never actually ran the
+# camera service — that one is launched by start_services.sh as a plain process.
 echo "Removing old service units..."
-for svc in ocr-all ocr-backend ocr-ai ocr-frontend ocr-camera-check ocr-firefox; do
+for svc in ocr-all ocr-backend ocr-ai ocr-ai-services ocr-frontend ocr-camera-check ocr-firefox; do
     sudo systemctl stop    "${svc}.service" 2>/dev/null || true
     sudo systemctl stop    "${svc}.target"  2>/dev/null || true
     sudo systemctl disable "${svc}.service" 2>/dev/null || true
     sudo systemctl disable "${svc}.target"  2>/dev/null || true
     sudo rm -f "/etc/systemd/system/${svc}.service" "/etc/systemd/system/${svc}.target"
+    sudo systemctl reset-failed "${svc}.service" 2>/dev/null || true
 done
 echo "   ✅ Done"
 echo ""
@@ -58,6 +64,13 @@ WorkingDirectory=${PROJECT_DIR}/backend
 ExecStart=${PYTHON3} -m uvicorn app.main:app --port 8000 --host 0.0.0.0
 Restart=always
 RestartSec=5
+# The backend respawns the AI camera service via subprocess.Popen
+# (camera_service_supervisor → service_tools.start_service). start_new_session=True
+# detaches the session but NOT the cgroup, so the default KillMode=control-group
+# would SIGKILL that camera process every time this unit stops — meaning every
+# backend restart dragged the AI service down with it. `mixed` signals only the
+# main process, leaving the respawned camera alive.
+KillMode=mixed
 StartLimitIntervalSec=600
 StartLimitBurst=10
 StandardOutput=append:${LOG_DIR}/backend.log
