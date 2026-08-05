@@ -312,6 +312,8 @@ class SuperPointMatcherTRT:
         kpts_raw = outputs[0]
         matches_raw = outputs[1]
         mscores_raw = outputs[2]
+        # Decode once for the whole batch instead of once per camera.
+        decoded = self._decode_batch_outputs(kpts_raw, matches_raw, mscores_raw)
 
         def _one(idx_matcher):
             idx, matcher = idx_matcher
@@ -327,6 +329,7 @@ class SuperPointMatcherTRT:
                 score_threshold=score_threshold,
                 ransac_threshold=ransac_threshold,
                 min_confidence=min_confidence,
+                decoded=decoded,
             )
             return result, (time.time() - t_post) * 1000
 
@@ -360,6 +363,36 @@ class SuperPointMatcherTRT:
             'results': results
         }
 
+    @staticmethod
+    def _decode_batch_outputs(
+        kpts_raw: np.ndarray,
+        matches_raw: np.ndarray,
+        mscores_raw: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Reshape the three raw TRT outputs into (kpts, matches, mscores).
+
+        The engine writes into a fixed 100MB buffer, so the true keypoint count
+        has to be recovered by trying the plausible shapes in order — that is why
+        this is a loop rather than a single reshape.
+        """
+        kpts_flat = kpts_raw.ravel()
+        n = kpts_raw.shape[0]
+        for num_kpts in [4096, 2048, 1024, 512]:
+            try:
+                kpts = kpts_flat[:n * num_kpts * 2].reshape(n, num_kpts, 2)
+                break
+            except Exception:
+                continue
+        else:
+            kpts = kpts_flat[:n * 1024 * 2].reshape(n, 1024, 2)
+
+        matches_flat = matches_raw.ravel()
+        mscores_flat = mscores_raw.ravel()
+        num_matches = int(np.count_nonzero(mscores_flat > 1e-6)) or len(mscores_flat)
+        matches = matches_flat[:num_matches * 3].reshape(num_matches, 3).astype(np.int32)
+        mscores = mscores_flat[:num_matches]
+        return kpts, matches, mscores
+
     def _postprocess_pair(
         self,
         kpts_raw: np.ndarray,
@@ -372,6 +405,7 @@ class SuperPointMatcherTRT:
         score_threshold: float,
         ransac_threshold: float,
         min_confidence: float = 0.20,
+        decoded: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None,
     ) -> Dict:
         """
         Post-process a single template-target pair from batch outputs
@@ -390,21 +424,21 @@ class SuperPointMatcherTRT:
         Returns:
             Result dict with success, homography, confidence, transformed_bboxes, etc.
         """
-        # Reshape keypoints
-        kpts_flat = kpts_raw.ravel()
+        # Decoding the raw TRT tensors is BATCH-wide work: it does not depend on
+        # which pair we are post-processing. This function runs once per camera,
+        # so it used to redo the whole decode N times — including
+        # matches.astype(int32), which copies the entire match array. `decoded`
+        # lets the batch caller hoist it out of the loop; when it isn't supplied
+        # (the single-pair caller further down) we decode here as before.
         try:
-            for num_kpts in [4096, 2048, 1024, 512]:
-                try:
-                    kpts = kpts_flat[:kpts_raw.shape[0]*num_kpts*2].reshape(kpts_raw.shape[0], num_kpts, 2)
-                    break
-                except:
-                    continue
-            else:
-                kpts = kpts_flat[:kpts_raw.shape[0]*1024*2].reshape(kpts_raw.shape[0], 1024, 2)
+            kpts, matches, mscores = (
+                decoded if decoded is not None
+                else self._decode_batch_outputs(kpts_raw, matches_raw, mscores_raw)
+            )
         except Exception as e:
             return {
                 'success': False,
-                'error': f'Failed to reshape keypoints: {e}',
+                'error': f'Failed to decode batch outputs: {e}',
                 'homography': None,
                 'confidence': 0.0,
                 'inliers': 0,
@@ -416,31 +450,6 @@ class SuperPointMatcherTRT:
         # Get keypoints for this pair
         kpts0 = kpts[template_idx].astype(np.float32)
         kpts1 = kpts[target_idx].astype(np.float32)
-
-        # Find valid matches for this pair
-        matches_flat = matches_raw.ravel()
-        mscores_flat = mscores_raw.ravel()
-
-        valid_mask = mscores_flat > 1e-6
-        num_matches = np.sum(valid_mask)
-
-        if num_matches == 0:
-            num_matches = len(mscores_flat)
-
-        try:
-            matches = matches_flat[:num_matches*3].reshape(num_matches, 3).astype(np.int32)
-            mscores = mscores_flat[:num_matches]
-        except Exception as e:
-            return {
-                'success': False,
-                'error': f'Failed to reshape matches: {e}',
-                'homography': None,
-                'confidence': 0.0,
-                'inliers': 0,
-                'total_matches': 0,
-                'transformed_bboxes': [],
-                'target_img': target_img_full
-            }
 
         # Filter by batch index (template_idx -> target_idx pair)
         # Match format: [batch_idx, kpt0_idx, kpt1_idx]
