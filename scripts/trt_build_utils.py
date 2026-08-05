@@ -91,14 +91,33 @@ def _parse_network(onnx_path, drop_outputs, fp16, node_block_list, builder):
     return ok, network, errors
 
 
+def seed_block_list(onnx_path, patterns):
+    """
+    Node names in onnx_path matching any of `patterns` (regexes, fullmatch).
+
+    The retry loop below only learns one bad node per parse attempt, and each
+    attempt re-loads + re-converts the whole graph -- fine for a handful of
+    nodes, far too slow for a deep transformer where the same dtype mismatch
+    repeats in every layer (the 9-layer LightGlue needs ~58 nodes forced to
+    fp32). Pre-seeding the known families collapses that to a single parse.
+    """
+    model = onnx.load(onnx_path, load_external_data=False)
+    res = [re.compile(p) for p in patterns]
+    return {n.name for n in model.graph.node if n.name and any(r.fullmatch(n.name) for r in res)}
+
+
 def build_engine(onnx_path, engine_path, input_name, min_shape, opt_shape, max_shape,
-                  fp16=True, workspace_gib=4, drop_outputs=None, max_fp32_retries=25):
+                  fp16=True, workspace_gib=4, drop_outputs=None, max_fp32_retries=25,
+                  fp32_node_patterns=None):
     if not os.path.isfile(onnx_path):
         raise FileNotFoundError(onnx_path)
 
     # TensorRT 10+ removed the EXPLICIT_BATCH flag -- explicit batch is now
     # the only supported network mode, so create_network() takes no flags.
     node_block_list = set()
+    if fp16 and fp32_node_patterns:
+        node_block_list = seed_block_list(onnx_path, fp32_node_patterns)
+        print(f"  pre-seeded {len(node_block_list)} nodes as fp32 from {len(fp32_node_patterns)} pattern(s)")
     network = None
     for attempt in range(max_fp32_retries + 1):
         builder = trt.Builder(TRT_LOGGER)
@@ -157,4 +176,5 @@ def run_spec(name, spec, base_dir):
         onnx_path, engine_path, spec["input_name"],
         spec["min"], spec["opt"], spec["max"], fp16=spec.get("fp16", True),
         drop_outputs=spec.get("drop_outputs"),
+        fp32_node_patterns=spec.get("fp32_node_patterns"),
     )

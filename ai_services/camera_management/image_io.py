@@ -10,7 +10,9 @@ socket emit).
 import atexit
 import base64
 import logging
+import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +29,47 @@ from .visualization import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Per-phase encode timings. The pipeline's `postprocess` stage is mostly this
+# file (draw overlays → resize → JPEG → base64), so when that stage looks slow
+# these lines say which part it actually was. On by default; set
+# ENCODE_TIMING=0 to silence.
+_ENCODE_TIMING = os.environ.get('ENCODE_TIMING', '1').lower() not in ('0', 'false', 'no')
+
+# The two saved JPEGs serve different masters:
+#   *_org.jpg  — untouched capture, kept full resolution because it feeds
+#                dataset collection / retraining. Never downscale this one.
+#   *_viz.jpg  — the same frame with overlays, only ever looked at by a human
+#                reviewing a result, so it can be stored smaller.
+# Downscaling viz cuts both disk usage and the background JPEG encode (which
+# competes for CPU with the synchronous display encode). VIZ_SAVE_SCALE=1
+# restores full-resolution viz.
+_VIZ_SAVE_SCALE = max(1, int(os.environ.get('VIZ_SAVE_SCALE', '2')))
+_VIZ_SAVE_QUALITY = int(os.environ.get('VIZ_SAVE_QUALITY', '90'))
+
+
+class _PhaseTimer:
+    """Accumulates named phase durations (ms) for a single encode call."""
+
+    def __init__(self):
+        self.phases: List[Tuple[str, float]] = []
+        self._t = time.perf_counter()
+        self._start = self._t
+
+    def mark(self, name: str) -> None:
+        now = time.perf_counter()
+        self.phases.append((name, (now - self._t) * 1000))
+        self._t = now
+
+    @property
+    def total_ms(self) -> float:
+        return (time.perf_counter() - self._start) * 1000
+
+    def log(self, tag: str, extra: str = "") -> None:
+        if not _ENCODE_TIMING:
+            return
+        parts = " ".join(f"{n}={ms:.1f}ms" for n, ms in self.phases if ms >= 0.05)
+        logger.info(f"[{tag}] {parts} total={self.total_ms:.1f}ms{(' ' + extra) if extra else ''}")
 
 # ============= Image Processing Utilities =============
 
@@ -74,8 +117,12 @@ def encode_frame_for_display(
     quality: int = 70
 ) -> Optional[str]:
     try:
+        timer = _PhaseTimer()
+        n_overlays = 0
+
         # Draw bboxes if provided
         img_to_encode = frame_img.copy()
+        timer.mark('copy')
         if transformed_bboxes and len(transformed_bboxes) > 0:
             img_to_encode = draw_inference_bboxes(
                 img_to_encode,
@@ -98,6 +145,7 @@ def encode_frame_for_display(
                 img_to_encode = draw_color_match_overlay(
                     img_to_encode, color_check, detected_boxes
                 )
+                n_overlays += 1
 
             if detected_boxes:
                 try:
@@ -106,6 +154,7 @@ def encode_frame_for_display(
                         detected_boxes,
                         show_details=True
                     )
+                    n_overlays += 1
                 except Exception as draw_err:
                     logger.warning(f"draw_detected_obb_boxes failed, skipping overlay: {draw_err}", exc_info=True)
 
@@ -116,12 +165,25 @@ def encode_frame_for_display(
                     img_to_encode,
                     center_alignment_check
                 )
+                n_overlays += 1
+
+        timer.mark('draw')
 
         # Resize for display
         display_img = resize_for_display(img_to_encode, scale_factor=scale_factor)
+        timer.mark('resize')
 
         # Encode to base64
         image_base64 = encode_image_to_base64(display_img, quality=quality)
+        timer.mark('jpeg+b64')
+
+        h, w = frame_img.shape[:2]
+        timer.log(
+            'ENCODE-DISPLAY',
+            f"{w}x{h}->{display_img.shape[1]}x{display_img.shape[0]} "
+            f"bbox={len(transformed_bboxes or [])} overlays={n_overlays} "
+            f"b64={len(image_base64) / 1024:.0f}KB"
+        )
 
         return image_base64
 
@@ -188,21 +250,25 @@ class AsyncImageSaver:
         img_org: np.ndarray,
         path_viz: Path,
         path_org: Path,
-        quality: int = 95
+        quality: int = 95,
+        viz_scale: int = 1,
+        viz_quality: Optional[int] = None
     ) -> None:
         """
         Submit image save task to background thread.
 
         Args:
             img_viz: Visualization image (with bboxes)
-            img_org: Original image (no bboxes)
+            img_org: Original image (no bboxes) — always written full-res
             path_viz: Path for visualization image
             path_org: Path for original image
-            quality: JPEG quality (1-100)
+            quality: JPEG quality (1-100) for the original
+            viz_scale: divide viz dimensions by this before writing (1 = full)
+            viz_quality: JPEG quality for viz (defaults to `quality`)
         """
         if self._shutdown:
             logger.warning("AsyncImageSaver is shutdown, saving synchronously")
-            self._do_save(img_viz, img_org, path_viz, path_org, quality)
+            self._do_save(img_viz, img_org, path_viz, path_org, quality, viz_scale, viz_quality)
             return
 
         with self._count_lock:
@@ -210,7 +276,7 @@ class AsyncImageSaver:
 
         self.executor.submit(
             self._do_save,
-            img_viz, img_org, path_viz, path_org, quality
+            img_viz, img_org, path_viz, path_org, quality, viz_scale, viz_quality
         )
 
     def _do_save(
@@ -219,7 +285,9 @@ class AsyncImageSaver:
         img_org: np.ndarray,
         path_viz: Path,
         path_org: Path,
-        quality: int
+        quality: int,
+        viz_scale: int = 1,
+        viz_quality: Optional[int] = None
     ) -> None:
         """
         Actually save images to disk (runs in background thread).
@@ -231,13 +299,23 @@ class AsyncImageSaver:
             path_org: Path for org image
             quality: JPEG quality
         """
-        import time
         t_start = time.perf_counter()
         try:
-            cv2.imwrite(str(path_viz), img_viz, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            # Downscale happens here, on the background thread, so the
+            # inference path never pays for it.
+            if viz_scale > 1:
+                img_viz = resize_for_display(img_viz, scale_factor=viz_scale)
+            cv2.imwrite(str(path_viz), img_viz,
+                        [cv2.IMWRITE_JPEG_QUALITY, viz_quality if viz_quality else quality])
+            # Original stays untouched — it is the dataset-collection copy.
             cv2.imwrite(str(path_org), img_org, [cv2.IMWRITE_JPEG_QUALITY, quality])
             t_elapsed = (time.perf_counter() - t_start) * 1000
-            logger.debug(f"AsyncImageSaver: saved {path_viz.name} in {t_elapsed:.1f}ms (pending: {self._pending_count - 1})")
+            logger.debug(
+                f"AsyncImageSaver: saved {path_viz.name} "
+                f"(viz {img_viz.shape[1]}x{img_viz.shape[0]}, "
+                f"org {img_org.shape[1]}x{img_org.shape[0]}) "
+                f"in {t_elapsed:.1f}ms (pending: {self._pending_count - 1})"
+            )
         except Exception as e:
             logger.error(f"AsyncImageSaver error saving images: {e}")
         finally:
@@ -559,8 +637,11 @@ def save_and_encode_frame(
         - image_base64: Base64 encoded resized image for display
     """
     try:
+        timer = _PhaseTimer()
+
         # Draw bboxes if provided (for inference frames)
         img_to_save = frame_img.copy()
+        timer.mark('copy')
         if transformed_bboxes and len(transformed_bboxes) > 0:
             img_to_save = draw_inference_bboxes(
                 img_to_save,
@@ -607,6 +688,8 @@ def save_and_encode_frame(
                 )
                 logger.info(f"Drew center points (template + product) on frame")
 
+        timer.mark('draw')
+
         # Create directory structure: base_dir/{recipe_id}/{YYYY-MM-DD}/{camera_serial}/
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         storage_dir = Path(base_dir) / recipe_id / today / serial_number
@@ -625,10 +708,14 @@ def save_and_encode_frame(
         # Relative path for DB and API (from uploads/)
         relative_path = f"inference_results/{recipe_id}/{today}/{serial_number}/{filename_viz}"
 
+        timer.mark('mkdir')
+
         # Create RESIZED + COMPRESSED version for realtime display (divide by 3)
         # This is SYNCHRONOUS because we need base64 for immediate response
         display_img = resize_for_display(img_to_save, scale_factor=3)
+        timer.mark('resize')
         image_base64 = encode_image_to_base64(display_img, quality=70)
+        timer.mark('jpeg+b64')
 
         # Save FULL resolution to permanent storage ASYNCHRONOUSLY
         # This runs in background thread, doesn't block the pipeline
@@ -638,12 +725,26 @@ def save_and_encode_frame(
             img_org=frame_img,
             path_viz=full_path_viz,
             path_org=full_path_org,
-            quality=95
+            quality=95,
+            viz_scale=_VIZ_SAVE_SCALE,
+            viz_quality=_VIZ_SAVE_QUALITY,
         )
+
+        timer.mark('queue_save')
 
         logger.info(
             f"Queued {pass_fail} frame for async save: {relative_path} "
-            f"(full: {w}x{h}, display: {display_img.shape[1]}x{display_img.shape[0]})"
+            f"(org: {w}x{h} q95, viz: {w // _VIZ_SAVE_SCALE}x{h // _VIZ_SAVE_SCALE} "
+            f"q{_VIZ_SAVE_QUALITY}, display: {display_img.shape[1]}x{display_img.shape[0]})"
+        )
+        # save_pending = disk-write backlog. The full-res q95 encodes happen on
+        # AsyncImageSaver threads, so a growing backlog means they're competing
+        # for CPU with this (synchronous) display encode.
+        timer.log(
+            'ENCODE-SAVE',
+            f"{w}x{h}->{display_img.shape[1]}x{display_img.shape[0]} "
+            f"bbox={len(transformed_bboxes or [])} b64={len(image_base64) / 1024:.0f}KB "
+            f"save_pending={async_saver.get_pending_count()}"
         )
 
         return relative_path, image_base64

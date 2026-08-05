@@ -163,6 +163,49 @@ class TemplateConfig:
         )
 
 
+class _OutputAllocator(trt.IOutputAllocator):
+    """
+    Runtime output buffer manager for the matcher engine.
+
+    `matches`/`mscores` are data-dependent outputs (their length comes from a
+    NonZero), so TensorRT can't size them ahead of execution. The previous
+    approach — a fixed 100MB device buffer per output, copied back in full
+    because the shape read -1 — cost ~58ms of D2H per inference against ~4ms
+    of actual GPU work. TensorRT calls into this allocator instead: it grows
+    the buffer only when needed and reports the real shape, so the copy is the
+    few KB of matches actually produced.
+
+    Buffers are kept and reused across calls; they're freed with the engine.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._buffers = {}   # name -> (DeviceAllocation, nbytes)
+        self.shapes = {}     # name -> tuple, as reported by notify_shape
+
+    def reallocate_output(self, tensor_name, memory, size, alignment):
+        allocation, capacity = self._buffers.get(tensor_name, (None, 0))
+        if allocation is not None and capacity >= size:
+            return int(allocation)
+        if allocation is not None:
+            allocation.free()
+        allocation = cuda.mem_alloc(max(int(size), 1))
+        self._buffers[tensor_name] = (allocation, max(int(size), 1))
+        return int(allocation)
+
+    def reallocate_output_async(self, tensor_name, memory, size, alignment, stream):
+        # TensorRT 10+ prefers the async variant; same policy, allocation is
+        # cheap and only happens when the buffer has to grow.
+        return self.reallocate_output(tensor_name, memory, size, alignment)
+
+    def notify_shape(self, tensor_name, shape):
+        self.shapes[tensor_name] = tuple(shape)
+        return True
+
+    def device(self, tensor_name):
+        return self._buffers[tensor_name][0]
+
+
 class SuperPointEngineTRT:
     """
     Singleton TensorRT engine for SuperPoint+LightGlue inference.
@@ -219,6 +262,7 @@ class SuperPointEngineTRT:
         logger.info(f"✅ SuperPointEngineTRT initialized ({(time.time()-t_start)*1000:.1f}ms)")
         logger.info(f"   Engine: {Path(engine_path).name}")
         logger.info(f"   Input shape: {self.input_shape}")
+        logger.info(f"   Keypoints/image: {self.num_keypoints}")
 
     @classmethod
     def get_instance(cls, engine_path: str, verbose: bool = False) -> 'SuperPointEngineTRT':
@@ -266,7 +310,7 @@ class SuperPointEngineTRT:
         # Allocate buffers
         self.inputs = []
         self.outputs = []
-        self.bindings = []
+        self._output_allocator = _OutputAllocator()
 
         for i in range(self.engine.num_io_tensors):
             tensor_name = self.engine.get_tensor_name(i)
@@ -285,7 +329,6 @@ class SuperPointEngineTRT:
                 host_mem = np.empty(size, dtype=dtype)
                 device_mem = cuda.mem_alloc(host_mem.nbytes)
 
-                self.bindings.append(int(device_mem))
                 self.inputs.append({
                     'host': host_mem,
                     'device': device_mem,
@@ -295,19 +338,30 @@ class SuperPointEngineTRT:
                 })
                 self.input_shape = shape
             else:
-                # Output: handle dynamic shapes (100MB buffer)
-                max_size = 100 * 1024 * 1024 // np.dtype(dtype).itemsize
-                device_mem = cuda.mem_alloc(max_size * np.dtype(dtype).itemsize)
-
-                self.bindings.append(int(device_mem))
+                # Output: sized by TensorRT at run time via _OutputAllocator.
+                # `matches`/`mscores` are data-dependent (NonZero), so their
+                # extent is only known after execution -- the allocator both
+                # sizes the device buffer and reports the true shape, which is
+                # what keeps the D2H copy down to the few KB actually produced.
+                self.context.set_output_allocator(tensor_name, self._output_allocator)
                 self.outputs.append({
                     'host': None,
-                    'device': device_mem,
+                    'device': None,
                     'shape': shape,
                     'name': tensor_name,
                     'dtype': dtype,
-                    'max_size': max_size
                 })
+
+        # Keypoint count is baked into the engine (the extractor's TopK k) and
+        # is NOT data-dependent -- only the batch dim of `keypoints` is -1.
+        # It's 512 for engines built from superpoint_lightglue_small.onnx and
+        # 1024 for superpoint_lightglue_pipeline.onnx (9-layer LightGlue), so
+        # read it here instead of hardcoding: postprocess must reshape with the
+        # right K or it silently pairs the wrong keypoints together.
+        self.num_keypoints = None
+        for out in self.outputs:
+            if out['name'] == 'keypoints' and len(out['shape']) == 3 and out['shape'][1] > 0:
+                self.num_keypoints = int(out['shape'][1])
 
     def _infer(self, input_data: np.ndarray) -> List[np.ndarray]:
         """Run TensorRT inference"""
@@ -321,9 +375,7 @@ class SuperPointEngineTRT:
             self.stream
         )
 
-        for i in range(self.engine.num_io_tensors):
-            tensor_name = self.engine.get_tensor_name(i)
-            self.context.set_tensor_address(tensor_name, self.bindings[i])
+        self.context.set_tensor_address(self.inputs[0]['name'], int(self.inputs[0]['device']))
 
         success = self.context.execute_async_v3(stream_handle=self.stream.handle)
         if not success:
@@ -333,23 +385,21 @@ class SuperPointEngineTRT:
 
         results = []
         for output in self.outputs:
-            actual_shape = self.context.get_tensor_shape(output['name'])
-
+            name = output['name']
+            # Shape reported by the allocator (exact, incl. the data-dependent
+            # extents); fall back to the context for anything it didn't touch.
+            actual_shape = self._output_allocator.shapes.get(name)
+            if actual_shape is None or -1 in actual_shape:
+                actual_shape = tuple(self.context.get_tensor_shape(name))
             if -1 in actual_shape:
-                host_mem = np.empty(output['max_size'], dtype=output['dtype'])
-                cuda.memcpy_dtoh_async(host_mem, output['device'], self.stream)
-                self.stream.synchronize()
-                results.append(host_mem)
-            else:
-                actual_size = trt.volume(actual_shape)
-                if actual_size <= 0:
-                    raise ValueError(f"Invalid output size {actual_size}")
+                raise RuntimeError(f"Unresolved output shape for '{name}': {actual_shape}")
 
-                host_mem = np.empty(actual_size, dtype=output['dtype'])
-                cuda.memcpy_dtoh_async(host_mem, output['device'], self.stream)
-                self.stream.synchronize()
-                results.append(host_mem.reshape(actual_shape))
+            host_mem = np.empty(actual_shape, dtype=output['dtype'])
+            if host_mem.size:
+                cuda.memcpy_dtoh_async(host_mem, self._output_allocator.device(name), self.stream)
+            results.append(host_mem)
 
+        self.stream.synchronize()
         return results
 
     def _resize_to_engine_size(self, img: np.ndarray) -> Tuple[np.ndarray, Tuple[float, float]]:
@@ -592,12 +642,22 @@ class SuperPointEngineTRT:
     ) -> Dict:
         """Post-process a single template-target pair from batch outputs"""
 
-        # ⭐ OPTIMIZATION: Hardcode num_kpts=512 (engine output shape is fixed)
-        # Engine: pipeline_fp16_dynamic_480_640.engine outputs (batch, 512, 2)
-        kpts_flat = kpts_raw.ravel()
+        # `keypoints` is the one output TensorRT can shape ahead of time, so
+        # _infer already hands it back as (batch, K, 2) -- use it as is. K
+        # differs per engine (512 for the small pipeline, 1024 for the 9-layer
+        # sp_lg_pipeline one), hence self.num_keypoints from the engine rather
+        # than a hardcoded 512; reshaping 1024-keypoint output as 512 splices
+        # image N's second half onto image N+1 and blows up the match indices.
         try:
-            num_kpts = 512  # Fixed output from engine
-            kpts = kpts_flat[:kpts_raw.shape[0]*num_kpts*2].reshape(kpts_raw.shape[0], num_kpts, 2)
+            if kpts_raw.ndim == 3:
+                kpts = kpts_raw
+            else:
+                num_kpts = self.num_keypoints
+                if not num_kpts:
+                    raise ValueError("engine reports no static keypoint count")
+                kpts_flat = kpts_raw.ravel()
+                usable = (kpts_flat.size // (num_kpts * 2)) * num_kpts * 2
+                kpts = kpts_flat[:usable].reshape(-1, num_kpts, 2)
         except Exception as e:
             return {
                 'success': False,
@@ -613,19 +673,15 @@ class SuperPointEngineTRT:
         kpts0 = kpts[template_idx].astype(np.float32)
         kpts1 = kpts[target_idx].astype(np.float32)
 
-        # Find valid matches
-        matches_flat = matches_raw.ravel()
-        mscores_flat = mscores_raw.ravel()
-
-        valid_mask = mscores_flat > 1e-6
-        num_matches = np.sum(valid_mask)
-
-        if num_matches == 0:
-            num_matches = len(mscores_flat)
-
+        # matches/mscores now come back exactly sized from the output allocator
+        # (they used to be a 100MB buffer whose tail was uninitialized, hence
+        # the old "count scores > 1e-6 to guess the length" heuristic).
         try:
-            matches = matches_flat[:num_matches*3].reshape(num_matches, 3).astype(np.int32)
-            mscores = mscores_flat[:num_matches]
+            matches = matches_raw.reshape(-1, 3).astype(np.int32)
+            mscores = mscores_raw.ravel()
+            num_matches = len(matches)
+            if len(mscores) != num_matches:
+                raise ValueError(f"matches/mscores length mismatch: {num_matches} vs {len(mscores)}")
         except Exception as e:
             return {
                 'success': False,

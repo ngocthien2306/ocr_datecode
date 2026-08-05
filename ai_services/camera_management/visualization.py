@@ -410,15 +410,23 @@ def draw_detected_obb_boxes(
             contour = single_box.get('contour')
             if box_type == 'wrinkled' and contour is not None:
                 contour_arr = np.array(contour, dtype=np.int32)
-                # Semi-transparent filled mask
-                overlay = result_img.copy()
-                cv2.fillPoly(overlay, [contour_arr], color)
-                cv2.addWeighted(overlay, 0.35, result_img, 0.65, 0, result_img)
+                # Semi-transparent filled mask, blended inside the contour's
+                # bounding rect only. Blending the whole frame per region cost
+                # a full copy + addWeighted over ~15MB each time (12ms for one
+                # region, 25ms for five); outside the polygon the blend is the
+                # identity anyway, so the ROI form is pixel-identical.
+                x_b, y_b, bw_b, bh_b = cv2.boundingRect(contour_arr)
+                rx0, ry0 = max(x_b, 0), max(y_b, 0)
+                rx1, ry1 = min(x_b + bw_b, width), min(y_b + bh_b, height)
+                if rx1 > rx0 and ry1 > ry0:
+                    roi = result_img[ry0:ry1, rx0:rx1]
+                    overlay = roi.copy()
+                    cv2.fillPoly(overlay, [contour_arr - np.array([[rx0, ry0]], dtype=np.int32)], color)
+                    cv2.addWeighted(overlay, 0.35, roi, 0.65, 0, roi)
                 # Outline
                 cv2.polylines(result_img, [contour_arr], True, color, line_thickness + 1, cv2.LINE_AA)
                 # Derive corners from contour bounding rect when not provided — label anchor needs it
                 if corners is None:
-                    x_b, y_b, bw_b, bh_b = cv2.boundingRect(contour_arr)
                     corners = np.array(
                         [[x_b, y_b], [x_b + bw_b, y_b], [x_b + bw_b, y_b + bh_b], [x_b, y_b + bh_b]],
                         dtype=np.int32,

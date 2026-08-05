@@ -5,8 +5,11 @@ Handles inference for multiple cameras with batch processing.
 All cameras are processed in a single batch inference call.
 """
 
+import atexit
 import logging
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 
 from .base import InferencePipelineTemplate, PipelineContext
@@ -21,6 +24,22 @@ from ..camera import Camera
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Process-wide pool for the 3 parallel verify phases (OCR / product / template).
+_verify_pool: Optional[ThreadPoolExecutor] = None
+_verify_pool_lock = threading.Lock()
+
+
+def _get_verify_pool() -> ThreadPoolExecutor:
+    global _verify_pool
+    if _verify_pool is None:
+        with _verify_pool_lock:
+            if _verify_pool is None:
+                _verify_pool = ThreadPoolExecutor(
+                    max_workers=3, thread_name_prefix="verify_phase"
+                )
+                atexit.register(_verify_pool.shutdown, wait=False)
+    return _verify_pool
 
 
 
@@ -369,6 +388,19 @@ class MultiCameraPipeline(InferencePipelineTemplate):
         preprocessed: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """Run batch inference for all cameras"""
+        # Sub-stage timings — run_inference is more than the SuperPoint match
+        # (camera classification, bbox transform, dual-candidate resolve,
+        # shape-outline ECC, color-only localisation), so split them out to see
+        # which part of the stage total is actually moving.
+        _t_stage = time.perf_counter()
+        _sub: Dict[str, float] = {}
+
+        def _lap(name: str) -> None:
+            nonlocal _t_stage
+            _now = time.perf_counter()
+            _sub[name] = (_now - _t_stage) * 1000
+            _t_stage = _now
+
         target_imgs = preprocessed['target_imgs']
         matchers = preprocessed['matchers']
         serial_numbers = preprocessed['serial_numbers']
@@ -426,6 +458,8 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             batch_timings: Dict[str, Any] = {}
             batch_result: Optional[Dict[str, Any]] = None
 
+            _lap('classify')
+
             # ── Run SuperPoint match ONLY for non-color, non-shape cameras ───
             if sp_idx:
                 cameras_in_batch = context.cameras_to_process or []
@@ -451,6 +485,7 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     logger.error(f"Batch inference failed: {batch_result.get('error')}")
                     return None
 
+                _lap('match_batch')
                 batch_timings = batch_result.get('batch_timings', {})
                 logger.info(
                     f"Batch inference complete: "
@@ -521,6 +556,8 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     f"{len(serial_numbers)} (color={len(color_idx)}, "
                     f"shape_outline={len(shape_idx)})"
                 )
+
+            _lap('transform+dual')
 
             # ── Shape-outline match for cameras with crop_match_method='shape_outline' ──
             if shape_idx:
@@ -656,6 +693,13 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     'timings': {'method': 'color_check_no_match'},
                 }
 
+            _lap('shape+color')
+            logger.info(
+                f"[Job #{context.job_id}] RUN-INFERENCE "
+                + " ".join(f"{k}={v:.1f}ms" for k, v in _sub.items() if v >= 0.05)
+                + f" | sp={len(sp_idx)} color={len(color_idx)} shape={len(shape_idx)}"
+            )
+
             return {
                 'batch_result': batch_result,
                 'transformed_results': transformed_results,
@@ -749,7 +793,6 @@ class MultiCameraPipeline(InferencePipelineTemplate):
         # → khác workload, có thể concurrent. Sequential ~390ms → parallel ~160ms.
         # Note: GPU TRT calls trên các engine khác nhau dùng CUDA streams nên ko
         # block lẫn nhau; CPU-bound ops release GIL nên thread parallelism hiệu quả.
-        from concurrent.futures import ThreadPoolExecutor
         batch_ocr_results = {}
         ocr_serial_numbers = set()
         t_phases_start = time.perf_counter()
@@ -771,27 +814,32 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             )
             return out
 
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            ocr_future = None
-            if ocr_tasks and context.text_verification_service:
-                ocr_serial_numbers = {task['serial_number'] for task in ocr_tasks}
-                ocr_future = pool.submit(
-                    _timed_phase, "ocr",
-                    context.text_verification_service.batch_verify_multi_camera,
-                    ocr_tasks,
-                )
-            product_future = pool.submit(
-                _timed_phase, "product",
-                self._batch_verify_products, context, transformed_results
+        # Shared pool, not a per-call one: a fresh ThreadPoolExecutor starts its
+        # workers cold right as they begin touching multi-MB frames, which
+        # measured 3x slower than reusing threads on the encode path. Same
+        # reasoning here — a pipeline object is built per job, so the pool has
+        # to outlive it (see result_builder.builder._get_encode_pool).
+        pool = _get_verify_pool()
+        ocr_future = None
+        if ocr_tasks and context.text_verification_service:
+            ocr_serial_numbers = {task['serial_number'] for task in ocr_tasks}
+            ocr_future = pool.submit(
+                _timed_phase, "ocr",
+                context.text_verification_service.batch_verify_multi_camera,
+                ocr_tasks,
             )
-            template_future = pool.submit(
-                _timed_phase, "template",
-                self._batch_verify_templates, context, transformed_results
-            )
+        product_future = pool.submit(
+            _timed_phase, "product",
+            self._batch_verify_products, context, transformed_results
+        )
+        template_future = pool.submit(
+            _timed_phase, "template",
+            self._batch_verify_templates, context, transformed_results
+        )
 
-            batch_product_results  = product_future.result()
-            batch_template_results = template_future.result()
-            batch_ocr_results      = ocr_future.result() if ocr_future else {}
+        batch_product_results  = product_future.result()
+        batch_template_results = template_future.result()
+        batch_ocr_results      = ocr_future.result() if ocr_future else {}
 
         # ── Dual_rotation OCR-based winner pick ──
         # Count text-only matches (char ML can false-positive). Strict

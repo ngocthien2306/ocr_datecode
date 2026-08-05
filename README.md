@@ -1,4 +1,7 @@
 # OCR Datecode - Template-Based Text Recognition System
+ssh -N -L 5173:localhost:5173 -L 8000:localhost:8000 -L 8001:localhost:8001 msi@100.116.14.127
+
+❯ sau đó bạn hãy check xem logic mới khác với logic cũ như nào, lúc đầu tôi dùng yolo để segment sau đó dùng min/max để loại trừ các vùng, vậy cái này có làm được không? dùng predict mask để tính toán?
 
 🔍 **Hệ thống OCR tự động sử dụng Template Matching + Deep Learning Recognition**
 

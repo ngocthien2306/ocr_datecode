@@ -445,6 +445,18 @@ class SingleCameraPipeline(InferencePipelineTemplate):
         preprocessed: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """Run batch inference"""
+        # Sub-stage timings — mirrors MultiCameraPipeline.run_inference so the
+        # RUN-INFERENCE line reads the same whichever pipeline ran. Splits the
+        # SuperPoint match from the setup and the bbox transform / dual resolve.
+        _t_stage = time.perf_counter()
+        _sub: Dict[str, float] = {}
+
+        def _lap(name: str) -> None:
+            nonlocal _t_stage
+            _now = time.perf_counter()
+            _sub[name] = (_now - _t_stage) * 1000
+            _t_stage = _now
+
         matchers = preprocessed['matchers']            # parallel to target_imgs
         template_matchers = preprocessed.get('template_matchers', matchers)  # length N
         target_imgs = preprocessed['target_imgs']
@@ -535,6 +547,8 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     'timings': {'total': 0.0}
                 }
 
+            _lap('setup')
+
             # ── shape_outline path: skip SuperPoint, run ECC affine ─────────
             if getattr(camera, 'crop_match_method', 'superpoint') == 'shape_outline':
                 from ..matchers.shape_outline import match_shape_outline
@@ -577,6 +591,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                         ))
                 batch_result = {'success': True, 'results': synthetic_results,
                                  'batch_timings': {'total': 0.0, 'trt_inference': 0.0}}
+                _lap('shape_outline')
             else:
                 # Batch SuperPoint match (matchers parallel to target_imgs)
                 batch_result = matchers[0].match_batch(
@@ -588,6 +603,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 )
                 # Log breakdown thực tế của match_batch để đo cost post-SuperPoint.
                 # batch_timings có: preprocess, concat, trt_inference, postprocess, total.
+                _lap('match_batch')
                 _bt = batch_result.get('batch_timings', {}) or {}
                 if _bt:
                     logger.info(
@@ -683,6 +699,13 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                     f"sp_alt={c_a:.3f}, primary_match={r_primary.get('success')}, "
                     f"alt_match={r_alt.get('success')})"
                 )
+
+            _lap('transform+dual')
+            logger.info(
+                f"[Job #{context.job_id}] RUN-INFERENCE "
+                + " ".join(f"{k}={v:.1f}ms" for k, v in _sub.items() if v >= 0.05)
+                + f" | entries={len(target_imgs)} templates={num_templates}"
+            )
 
             return {
                 'batch_result': batch_result,

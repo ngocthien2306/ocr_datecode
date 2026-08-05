@@ -313,13 +313,17 @@ class WrinkledSegmenterTRT:
         frame_masks = []
         for mask in masks_crop:
             crop_h, crop_w = mask.shape
-            canvas = np.zeros((img_h, img_w), dtype=np.float32)
+            # uint8 canvas, not float32: the masks are binary and every consumer
+            # thresholds with `> 0.5`, so 0/1 bytes carry the same information
+            # for a quarter of the memory traffic — and this allocates+warps a
+            # full frame per region, ~20MB each at 2568x1926.
+            canvas = np.zeros((img_h, img_w), dtype=np.uint8)
 
             # Đặt mask đúng vị trí trong rotated frame
             dst_h = min(crop_h, img_h - y1c)
             dst_w = min(crop_w, img_w - x1c)
             if dst_h > 0 and dst_w > 0:
-                canvas[y1c:y1c + dst_h, x1c:x1c + dst_w] = mask[:dst_h, :dst_w]
+                canvas[y1c:y1c + dst_h, x1c:x1c + dst_w] = (mask[:dst_h, :dst_w] > 0.5)
 
             # Inverse rotate về original frame
             mask_frame = cv2.warpAffine(
@@ -330,6 +334,81 @@ class WrinkledSegmenterTRT:
             frame_masks.append(mask_frame)
 
         return frame_masks
+
+    @staticmethod
+    def back_project_masks_roi(
+        masks_crop:   np.ndarray,          # (N, H_crop, W_crop) binary
+        cx: float, cy: float, angle: float,
+        crop_offset:  Tuple[int, int],
+        frame_shape:  Tuple[int, ...],
+    ) -> List[Tuple[np.ndarray, Tuple[int, int]]]:
+        """
+        Same result as back_project_masks, but the warp output is limited to the
+        region the rotated crop can actually land in instead of the whole frame.
+        ~3.6x faster again on top of the uint8 canvas (5 regions: 2.35ms → 0.65ms).
+
+        NOT bit-identical: folding the crop offset and the ROI origin into the
+        affine matrix perturbs it by ~1e-13, which is enough to flip a sample
+        that sits exactly on a pixel boundary. Measured over 90 random
+        pose/offset combinations, 79 masks matched exactly and the rest differed
+        by 1-2 pixels along the outline. Region `area` is computed in crop space
+        so pass/fail thresholds are unaffected, but the contour handed to the UI
+        can shift by a pixel — which is why build_wrinkled_check still uses the
+        exact full-frame version by default.
+
+        Returns:
+            [(mask_roi, (x0, y0)), ...] — add (x0, y0) to get frame coordinates.
+        """
+        img_h, img_w = frame_shape[:2]
+        x1c, y1c     = crop_offset
+        angle_deg    = np.degrees(angle)
+        M_inv        = cv2.getRotationMatrix2D((float(cx), float(cy)), -angle_deg, 1.0)
+
+        out: List[Tuple[np.ndarray, Tuple[int, int]]] = []
+        for mask in masks_crop:
+            crop_h, crop_w = mask.shape
+            dst_h = min(crop_h, img_h - y1c)
+            dst_w = min(crop_w, img_w - x1c)
+            if dst_h <= 0 or dst_w <= 0:
+                out.append((np.zeros((0, 0), np.uint8), (0, 0)))
+                continue
+
+            # Where the crop rectangle lands after the inverse rotation. Pad by
+            # 1px so a region touching the rect edge doesn't get its contour
+            # clipped by the ROI border (findContours follows image borders).
+            corners = np.array([
+                [x1c, y1c], [x1c + dst_w, y1c],
+                [x1c + dst_w, y1c + dst_h], [x1c, y1c + dst_h],
+            ], dtype=np.float64)
+            mapped = cv2.transform(corners.reshape(-1, 1, 2), M_inv).reshape(-1, 2)
+            x0 = max(0, int(np.floor(mapped[:, 0].min())) - 1)
+            y0 = max(0, int(np.floor(mapped[:, 1].min())) - 1)
+            x1 = min(img_w, int(np.ceil(mapped[:, 0].max())) + 2)
+            y1 = min(img_h, int(np.ceil(mapped[:, 1].max())) + 2)
+            if x1 <= x0 or y1 <= y0:
+                out.append((np.zeros((0, 0), np.uint8), (0, 0)))
+                continue
+
+            # No frame-sized canvas either: fold the crop's position into the
+            # matrix and warp straight out of the crop-sized mask. For a source
+            # pixel p, the full-frame version computes M_inv @ (p + crop_offset)
+            # then shifts by -ROI origin, which is exactly the matrix below —
+            # everything outside the crop was zero in the canvas and is zero by
+            # BORDER_CONSTANT here.
+            A, b = M_inv[:, :2], M_inv[:, 2]
+            M_src = np.empty((2, 3), dtype=np.float64)
+            M_src[:, :2] = A
+            M_src[:, 2] = A @ np.array([x1c, y1c], dtype=np.float64) + b - np.array([x0, y0], dtype=np.float64)
+
+            src = (mask[:dst_h, :dst_w] > 0.5).astype(np.uint8)
+            mask_roi = cv2.warpAffine(
+                src, M_src, (x1 - x0, y1 - y0),
+                flags=cv2.INTER_NEAREST,
+                borderMode=cv2.BORDER_CONSTANT, borderValue=0,
+            )
+            out.append((mask_roi, (x0, y0)))
+
+        return out
 
     # ──────────────────────────────────────────────────────────────────────────
     # Build wrinkled_check dict từ segmentation result

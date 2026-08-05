@@ -69,6 +69,60 @@ MODEL_SPECS = {
         min=(2, 1, 512, 512), opt=(6, 1, 512, 512), max=(8, 1, 512, 512),
         fp16=True,
     ),
+
+    # --- A/B pair: same profile, two different ONNX matchers -----------------
+    # The fp16 converter downcasts the positional-encoding / attention-scaling
+    # Mul/Div operands but not the explicit Cast(float32) feeding them, so
+    # every LightGlue layer trips "must have same input types" at parse time.
+    # The one-node-per-retry fallback can't cover 9 layers (~58 nodes) within
+    # max_fp32_retries, so name the families up front -- same set the small
+    # model's build discovered on its own for layers 0-1.
+    # superpoint_lightglue_pipeline.onnx is the full 9-layer LightGlue with
+    # 1024 keypoints; superpoint_lightglue_small.onnx is the same checkpoint
+    # truncated to 2 layers with 512 keypoints (identical SuperPoint weights,
+    # bit-identical transformer layers 0-1). Engines get sp_lg_{pipeline,small}
+    # names so they never collide with the production pipeline_fp16_dynamic_*
+    # engines that inference_handler.py loads.
+    "sp_lg_pipeline_300": dict(
+        onnx="superpoint_lightglue_pipeline.onnx",
+        engine="sp_lg_pipeline_fp16_dynamic_300_300.engine",
+        input_name="images",
+        min=(2, 1, 300, 300), opt=(6, 1, 300, 300), max=(8, 1, 300, 300),
+        fp16=True,
+        fp32_node_patterns=[
+            r"/Sub",
+            r"/extractor/(Sub|Sub_2|Div_2)",
+            r"/matcher/transformers\.\d+/self_attn/(Div_1|Mul_2|Mul_3)",
+            r"/matcher/transformers\.\d+/cross_attn/(Div_2|Mul_1|Mul_2)",
+        ],
+    ),
+    "sp_lg_pipeline_480_640": dict(
+        onnx="superpoint_lightglue_pipeline.onnx",
+        engine="sp_lg_pipeline_fp16_dynamic_480_640.engine",
+        input_name="images",
+        min=(2, 1, 480, 640), opt=(6, 1, 480, 640), max=(8, 1, 480, 640),
+        fp16=True,
+        fp32_node_patterns=[
+            r"/Sub",
+            r"/extractor/(Sub|Sub_2|Div_2)",
+            r"/matcher/transformers\.\d+/self_attn/(Div_1|Mul_2|Mul_3)",
+            r"/matcher/transformers\.\d+/cross_attn/(Div_2|Mul_1|Mul_2)",
+        ],
+    ),
+    "sp_lg_small_300": dict(
+        onnx="superpoint_lightglue_small.onnx",
+        engine="sp_lg_small_fp16_dynamic_300_300.engine",
+        input_name="images",
+        min=(2, 1, 300, 300), opt=(6, 1, 300, 300), max=(8, 1, 300, 300),
+        fp16=True,
+    ),
+    "sp_lg_small_480_640": dict(
+        onnx="superpoint_lightglue_small.onnx",
+        engine="sp_lg_small_fp16_dynamic_480_640.engine",
+        input_name="images",
+        min=(2, 1, 480, 640), opt=(6, 1, 480, 640), max=(8, 1, 480, 640),
+        fp16=True,
+    ),
 }
 
 

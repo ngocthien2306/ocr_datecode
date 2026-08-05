@@ -5,8 +5,10 @@ Builder pattern for constructing inference results.
 Provides fluent interface for building complex result structures.
 """
 
+import atexit
 import os
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
@@ -17,6 +19,29 @@ if TYPE_CHECKING:
     import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Frame encoding runs on a process-wide pool, NOT a per-call one. Spinning up
+# fresh threads for every result build is disastrous here: each worker starts
+# cold and immediately streams a ~15MB frame (copy → draw → resize → JPEG), so
+# thread startup lands right on top of a page-fault/cache-miss storm. Measured
+# on 4 cameras x 2568x1926: fresh pool per call 33.0ms, shared pool 11.7ms —
+# the per-call pool was even slower than encoding the four frames sequentially
+# (15.8ms). A pipeline object is constructed per job, so the pool has to live at
+# module scope to actually be reused.
+_encode_pool: Optional[ThreadPoolExecutor] = None
+_encode_pool_lock = threading.Lock()
+
+
+def _get_encode_pool(max_workers: int = 4) -> ThreadPoolExecutor:
+    global _encode_pool
+    if _encode_pool is None:
+        with _encode_pool_lock:
+            if _encode_pool is None:
+                _encode_pool = ThreadPoolExecutor(
+                    max_workers=max_workers, thread_name_prefix="frame_encode"
+                )
+                atexit.register(_encode_pool.shutdown, wait=False)
+    return _encode_pool
 
 home = os.environ.get('HOME')
 
@@ -594,6 +619,7 @@ class InferenceResultBuilder:
 
         # Encode images (parallel or sequential)
         t_encode_start = time.perf_counter()
+        t_build_ms = (t_encode_start - t_start) * 1000
 
         if parallel_encode and len(all_encode_tasks) > 1:
             encoded_results = cls._encode_parallel(
@@ -640,9 +666,13 @@ class InferenceResultBuilder:
 
         t_total = (time.perf_counter() - t_start) * 1000
         mode = "parallel" if parallel_encode and len(all_encode_tasks) > 1 else "sequential"
+        # build = walking cameras/frames to assemble tasks, encode = the image
+        # work (see [ENCODE-FRAME]/[ENCODE-DISPLAY]/[ENCODE-SAVE] lines),
+        # apply = writing results back + per-camera stats.
         logger.info(
-            f"Result builder ({mode}): {len(all_encode_tasks)} frames encoded in {t_encode:.1f}ms, "
-            f"total={t_total:.1f}ms"
+            f"Result builder ({mode}): {len(all_encode_tasks)} frames | "
+            f"build={t_build_ms:.1f}ms encode={t_encode:.1f}ms "
+            f"apply={t_total - t_build_ms - t_encode:.1f}ms total={t_total:.1f}ms"
         )
 
         return builder.build()
@@ -669,24 +699,24 @@ class InferenceResultBuilder:
         encode_display_func,
         max_workers: int = 4
     ) -> List[tuple]:
-        """Encode frames in parallel using ThreadPoolExecutor"""
+        """Encode frames in parallel using a shared ThreadPoolExecutor"""
         results = [None] * len(encode_tasks)
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(
-                    cls._encode_single_frame, task, save_and_encode_func, encode_display_func
-                ): idx
-                for idx, task in enumerate(encode_tasks)
-            }
+        executor = _get_encode_pool(max_workers)
+        futures = {
+            executor.submit(
+                cls._encode_single_frame, task, save_and_encode_func, encode_display_func
+            ): idx
+            for idx, task in enumerate(encode_tasks)
+        }
 
-            for future in as_completed(futures):
-                idx = futures[future]
-                try:
-                    results[idx] = future.result()
-                except Exception as e:
-                    logger.error(f"Encode error for task {idx}: {e}")
-                    results[idx] = (None, None)
+        for future in as_completed(futures):
+            idx = futures[future]
+            try:
+                results[idx] = future.result()
+            except Exception as e:
+                logger.error(f"Encode error for task {idx}: {e}")
+                results[idx] = (None, None)
 
         return results
 
@@ -698,6 +728,11 @@ class InferenceResultBuilder:
         encode_display_func
     ) -> tuple:
         """Encode a single frame"""
+        # Per-frame wall time. _encode_parallel runs these on a thread pool, so
+        # comparing the sum of these against the caller's encode window shows
+        # how much parallelism is actually being achieved (vs GIL/CPU contention
+        # with AsyncImageSaver's background full-res encodes).
+        t_frame = time.perf_counter()
         pass_fail = task.get('pass_fail', 'PASS')
         save_pass = bool(task.get('save_pass_images', False))
 
@@ -719,6 +754,10 @@ class InferenceResultBuilder:
                 crop_area=task.get('crop_area'),
                 product_verification=task.get('product_verification')
             )
+            logger.info(
+                f"[ENCODE-FRAME] {task.get('serial_number')} f{task.get('frame_idx')} "
+                f"{pass_fail} path=save+display {(time.perf_counter() - t_frame) * 1000:.1f}ms"
+            )
             # Ring-buffer PASS images so disk usage stays bounded per camera.
             if pass_fail == 'PASS' and result and result[0]:
                 try:
@@ -738,5 +777,9 @@ class InferenceResultBuilder:
                 total_matches=task.get('total_matches', 0),
                 crop_area=task.get('crop_area'),
                 product_verification=task.get('product_verification')
+            )
+            logger.info(
+                f"[ENCODE-FRAME] {task.get('serial_number')} f{task.get('frame_idx')} "
+                f"{pass_fail} path=display-only {(time.perf_counter() - t_frame) * 1000:.1f}ms"
             )
             return (None, image_base64)
