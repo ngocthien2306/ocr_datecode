@@ -250,8 +250,73 @@ recipe. Trước đó backend chạy nhiều giờ hoàn toàn bình thường.
 | 2 | `ocr-backend.service` dùng `KillMode` mặc định (`control-group`) → mỗi lần BE restart là SIGKILL luôn camera service do BE spawn (`start_new_session=True` tách session nhưng **không thoát cgroup**) | Thêm`KillMode=mixed`                                                                                                        |
 | 3 | `ocr-ai-services.service` hardcode `User=demo` trên máy user `suntech` → `217/USER` → loop fork-rồi-chết mỗi 5s, **35.515 lần**, ngập journal                                                             | Thêm vào vòng gỡ unit trong`setup_systemd_services.sh` + `reset-failed`                                                |
 
-⚠️ **Còn tồn**: `scripts/install_services.sh:35` vẫn cp `ocr-ai-services.service` vào
-`/etc/systemd/system/`. Chạy script đó (hoặc `setup_all.sh` / `install.sh`) sẽ dựng lại unit hỏng.
+~~⚠️ **Còn tồn**: `scripts/install_services.sh:35` vẫn cp `ocr-ai-services.service` vào
+`/etc/systemd/system/`.~~ → **Đã xử lý 2026-08-06**: gỡ khỏi mảng `SERVICES`, kèm comment cảnh báo
+không thêm lại. Text hướng dẫn trong `install_services.sh` / `setup_all.sh` / `install.sh` cũng đã
+bỏ các lệnh `systemctl start|stop ocr-ai-services` (chúng trỏ tới unit không còn tồn tại).
+
+---
+
+## 5b. Áp dụng cho `release_v2` — 2026-08-06
+
+`release_v2` là nhánh máy dev (`/home/msi`, conda env `vision`), **chưa từng nhận** các commit fix
+của `release_v1`, nên vẫn dính nguyên lỗi. Đã port sang, nhưng **cách xử lý khác v1 ở một điểm**.
+
+### Vì sao khác
+
+`release_v1` xoá sạch mọi endpoint có import `ai_services`. `release_v2` có thêm 3 endpoint mà v1
+**chưa từng có** — chúng phục vụ ColorSetupModal / EdgeSetupModal (tinh chỉnh `color_config` /
+`edge_config`), là tính năng đang dùng:
+
+| Endpoint | Module cần | Có CUDA không |
+| --- | --- | --- |
+| `POST /templates/detect-bottle-preview` | `color_verifier.py` | **Không** — chỉ cv2 + numpy |
+| `POST /templates/detect-walls-preview` | `image_proc_detector.py` | **Không** — cv2 + numpy + scipy |
+| `POST /templates/detect-cap-edges-preview` | `image_proc_detector.py` | **Không** |
+
+Điểm mấu chốt: **hai module này chưa bao giờ cần CUDA**. PyCUDA lọt vào chỉ vì Python phải chạy
+`camera_management/__init__.py` → `verification/__init__.py` → `wrinkle_segmenter.py` trên đường
+import. Tức là "giữ preview" và "backend sạch CUDA" **không hề mâu thuẫn**.
+
+### Cách làm — nạp thẳng file, không đụng package
+
+`backend/app/services/cv_detectors.py` đăng ký một **package tổng hợp** (`_ocr_cv_detectors`) có
+`__path__` trỏ vào thư mục `verification/`, rồi nạp 2 file bằng `spec_from_file_location`.
+Không `__init__.py` nào được chạy.
+
+Vì sao phải là package tổng hợp chứ không phải `spec_from_file_location` trần:
+`color_verifier.py:477` có `from .image_proc_detector import ...` **chạy lúc runtime** — relative
+import cần một package cha. Không có `__path__` thì nó ném lỗi, và đáng sợ hơn: chỗ đó nằm trong
+`try/except` chỉ `logger.warning` rồi bỏ qua, nên sẽ **hỏng âm thầm** (mất cap-axis correction) chứ
+không báo gì. Đã test đúng câu import đó chạy được.
+
+(`color_verifier.py:30` có `from ..camera import Camera` nhưng nằm dưới `if TYPE_CHECKING:` → không
+chạy lúc runtime, không cần xử lý.)
+
+### Những gì đã đổi trên `release_v2`
+
+| # | Thay đổi | File |
+| - | --- | --- |
+| 1 | Xoá hẳn `POST /cv-preview` + panel FE + CSS (giống v1; dropdown CV Method khoá ở v4 nên panel vô dụng) | `recipes.py`, `RecipeFormModal.tsx`, `RecipeFormModal.css` |
+| 2 | 3 endpoint preview còn lại: bỏ `sys.path.insert` + `from camera_management...`, chuyển sang loader | `recipes.py`, `cv_detectors.py` (mới) |
+| 3 | Char OCR trong backend ép **CPU-only** (bỏ `CUDAExecutionProvider`) — chạy trên thread của `run_in_executor`, đúng loại thread gây abort | `ml_char_ocr_service.py` |
+| 4 | Thêm `KillMode=mixed` + đưa `ocr-ai-services` vào vòng gỡ unit + `reset-failed` (port từ v1, **giữ nguyên** phần conda `vision` riêng của v2) | `setup_systemd_services.sh` |
+| 5 | Gỡ `ocr-ai-services.service` khỏi `install_services.sh` | `install_services.sh`, `setup_all.sh`, `install.sh` |
+
+### Kiểm chứng đã chạy
+
+```bash
+cd backend && python3 -c "
+import sys; sys.path.insert(0,'.')
+from app.main import app
+bad=[m for m in sys.modules if m.split('.')[0] in ('pycuda','tensorrt','camera_management','ai_services')]
+print('CUDA/ai_services modules:', bad or 'NONE')"
+# -> NONE   (172 routes đăng ký)
+```
+
+Ngoài ra: gọi thẳng cả 3 endpoint với ảnh template thật → chạy hết code detector, trả JSON đúng
+shape, `cuda_modules_present()` vẫn rỗng. FE `tsc --noEmit`: 30 lỗi trước và 30 lỗi sau, **trùng
+khớp từng dòng** (đều là lỗi có sẵn của nhánh, không phải do sửa lần này).
 
 ---
 
@@ -259,9 +324,15 @@ recipe. Trước đó backend chạy nhiều giờ hoàn toàn bình thường.
 
 1. **Backend TUYỆT ĐỐI không import package `ai_services.*`.** `__init__.py` của
    `camera_management` và `verification` đều eager-import TensorRT/PyCUDA. Cần dùng chung thuật toán
-   thì copy file thuần `cv2`/`numpy` sang `backend/app/services/`.
+   thì có 2 đường:
+   - File thuần `cv2`/`numpy` → **nạp thẳng file** qua `app/services/cv_detectors.py` (xem §5b).
+     Không copy, không lệch bản, không chạy `__init__.py` nào.
+   - Nếu buộc phải copy sang `backend/app/services/` thì nhớ nó sẽ trôi khỏi bản gốc theo thời gian.
 2. **Không để thư viện CUDA vào tiến trình có threadpool động.** PyCUDA + thread ngắn hạn = abort.
+   Áp dụng cho **cả `onnxruntime` với `CUDAExecutionProvider`**, không riêng PyCUDA — đó là lý do
+   `ml_char_ocr_service.py` bị ép CPU-only.
 3. **Kiểm tra định kỳ**: `sudo grep -c pycuda /proc/$(pgrep -f "uvicorn app.main")/maps` phải bằng `0`.
+   Trong Python: `from app.services.cv_detectors import cuda_modules_present` → phải trả về `[]`.
 4. **Đừng ghi core dump khổng lồ trên máy production.** 635 MB = thêm ~90 giây downtime mỗi lần
    crash. Sau khi mổ xong thì tắt apport.
 5. **Đừng để unit hỏng loop** — nó ngập journal và làm mất log crash thật.
@@ -316,6 +387,7 @@ echo "→ $OUT"
 
 | Vị trí                                                     | Nội dung                                                                                   |
 | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `backend/app/services/cv_detectors.py`                     | Nạp `image_proc_detector.py` / `color_verifier.py` **không kéo CUDA** (§5b)                |
 | `backend/app/services/camera_service_supervisor.py`        | Watchdog 8s, grace 15s, debounce 60s, kill+respawn, stale-shm recovery                      |
 | `backend/app/agent/tools/service_tools.py:162`             | `subprocess.Popen(start_new_session=True)` — chỗ spawn camera (liên quan `KillMode`) |
 | `backend/app/services/shared_memory_service.py`            | Đọc ring buffer + seqlock chống torn read +`check_staleness`                           |

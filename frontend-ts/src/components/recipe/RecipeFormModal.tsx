@@ -255,29 +255,6 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   const [loading, setLoading] = useState(false);
   const [segmenting, setSegmenting] = useState(false);
 
-  // ── CV-method preview state ──
-  type CvPair = {
-    char_idx: number;
-    folder?: string;
-    logged_label?: string;
-    logged_p?: number;
-    tmpl_b64: string;
-    tgt_b64: string;
-    result_b64?: string | null;
-    conf: number;
-    label: 'OK' | 'NG';
-    defect_type: string | null;
-    extra?: Record<string, number>;
-  };
-  type CvPairKey = { folder: string; char_idx: number };
-  const [cvPreviewPairs, setCvPreviewPairs] = useState<CvPair[]>([]);
-  const [cvPreviewLoading, setCvPreviewLoading] = useState(false);
-  const [cvPreviewError, setCvPreviewError] = useState<string | null>(null);
-  const [cvPreviewFolder, setCvPreviewFolder] = useState<string | null>(null);
-  // Locked pair selection — keeps the same 5 cards across method changes so
-  // user can compare scores fairly. Refresh button clears this to re-shuffle.
-  const [cvPreviewKeys, setCvPreviewKeys] = useState<CvPairKey[] | null>(null);
-  
   // Camera management states
   const [availableCameras, setAvailableCameras] = useState<Camera[]>([]);
   const [loadingCameras, setLoadingCameras] = useState(false);
@@ -570,51 +547,6 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       loadMlProjects();
     }
   }, [isOpen]);
-
-  // CV-method preview: fetch 5 sample pair scores.
-  // When `keys` is provided → reuse same pairs (compare across methods).
-  // When `keys` is null → BE picks random pairs from latest folder.
-  const fetchCvPreview = async (method: string, keys: CvPairKey[] | null = null) => {
-    setCvPreviewLoading(true);
-    setCvPreviewError(null);
-    try {
-      const body: Record<string, unknown> = { cv_method: method, count: 5, threshold: 0.80 };
-      if (keys && keys.length) body.pair_keys = keys;
-      const resp = await fetch(`${API_BASE_URL}/api/recipes/cv-preview`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      if (data.error) {
-        setCvPreviewError(data.error);
-        setCvPreviewPairs([]);
-      } else {
-        const pairs: CvPair[] = data.pairs || [];
-        setCvPreviewPairs(pairs);
-        setCvPreviewFolder(data.folder || null);
-        // Cache keys so subsequent method changes reuse the same pairs
-        const nextKeys: CvPairKey[] = pairs
-          .filter((p) => p.folder)
-          .map((p) => ({ folder: p.folder as string, char_idx: p.char_idx }));
-        if (nextKeys.length) setCvPreviewKeys(nextKeys);
-      }
-    } catch (e) {
-      setCvPreviewError((e as Error).message);
-      setCvPreviewPairs([]);
-    } finally {
-      setCvPreviewLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (isOpen && activeTab === 'model' && formData.classifier_backend === 'embedding') {
-      // Method change → reuse cached pairs to enable fair score comparison
-      fetchCvPreview(formData.cv_method || 'legacy', cvPreviewKeys);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, activeTab, formData.cv_method, formData.classifier_backend]);
 
   // Load ML models whenever ml_project_id changes
   useEffect(() => {
@@ -2353,84 +2285,6 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         <b>Shape Outline Match</b>: compares gradient orientation (LineMOD/Halcon style) — lighting-robust, shape-focused.
                       </small> */}
 
-                      {/* Preview: 5 cặp char gần nhất với conf tính bằng method đang chọn */}
-                      {formData.classifier_backend === 'embedding' && (
-                        <div className="cv-preview">
-                          <div className="cv-preview__header">
-                            <span className="cv-preview__title">
-                              Preview latest 5 pairs
-                              {cvPreviewFolder && (
-                                <span className="cv-preview__folder">— {cvPreviewFolder}</span>
-                              )}
-                            </span>
-                            <button
-                              type="button"
-                              className="cv-preview__refresh"
-                              onClick={() => {
-                                setCvPreviewKeys(null);   // drop locked pairs → BE re-shuffles
-                                fetchCvPreview(formData.cv_method || 'legacy', null);
-                              }}
-                              disabled={cvPreviewLoading}
-                              title="Pick a new random set of pairs"
-                            >
-                              {cvPreviewLoading ? '...' : 'New pairs'}
-                            </button>
-                          </div>
-                          {cvPreviewError && (
-                            <div className="cv-preview__error">{cvPreviewError}</div>
-                          )}
-                          <div className="cv-preview__cards">
-                            {cvPreviewPairs.length === 0 && !cvPreviewLoading && !cvPreviewError && (
-                              <div className="cv-preview__empty">(no data)</div>
-                            )}
-                            {cvPreviewPairs.map((p) => {
-                              const isOK = p.label === 'OK';
-                              const extraStr = p.extra
-                                ? Object.entries(p.extra).map(([k, v]) => `${k}=${v}`).join(' ')
-                                : '';
-                              return (
-                                <div
-                                  key={p.char_idx}
-                                  className={`cv-preview__card ${isOK ? 'is-ok' : 'is-ng'}`}
-                                  title={extraStr}
-                                >
-                                  <div className="cv-preview__thumbs">
-                                    <img
-                                      className="cv-preview__thumb"
-                                      src={`data:image/png;base64,${p.tmpl_b64}`}
-                                      alt="tmpl"
-                                      title="Template"
-                                    />
-                                    <img
-                                      className="cv-preview__thumb"
-                                      src={`data:image/png;base64,${p.tgt_b64}`}
-                                      alt="tgt"
-                                      title="Target"
-                                    />
-                                    {p.result_b64 && (
-                                      <img
-                                        className="cv-preview__thumb"
-                                        src={`data:image/png;base64,${p.result_b64}`}
-                                        alt="diff"
-                                        title="Diff / Result"
-                                      />
-                                    )}
-                                  </div>
-                                  <div className="cv-preview__meta">
-                                    char{p.char_idx.toString().padStart(2, '0')}
-                                  </div>
-                                  <div className={`cv-preview__score ${isOK ? 'is-ok' : 'is-ng'}`}>
-                                    {p.label} {p.conf.toFixed(2)}
-                                  </div>
-                                  {p.defect_type && (
-                                    <div className="cv-preview__defect">{p.defect_type}</div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
                     </div>
 
                     {/* ── Char Denoise — largest-CC filter (embedding mode only) ── */}

@@ -41,7 +41,16 @@ def _load_dict(path: Path) -> List[str]:
 
 
 def _get_session():
-    """Lazy-initialize ONNX session (CUDA → CPU fallback)."""
+    """Lazy-initialize ONNX session (CPU only — deliberately).
+
+    This runs inside the BACKEND process, and it is driven from
+    `run_in_executor` threadpool threads (see recipes `/templates/segment` and
+    ml_training_service). The backend must not hold a CUDA context: a CUDA
+    runtime plus threads that come and go is what aborted the service on
+    2026-08-05 — see docs/DEBUG_SERVICE_CRASH_RUNBOOK.md §6.2. Char OCR here is
+    a handful of small crops at recipe-setup time, so CPU is fast enough; GPU
+    inference belongs in the ai_services process, which owns its own context.
+    """
     global _session, _char_list, _input_name, _output_name
     if _session is not None:
         return _session
@@ -49,7 +58,7 @@ def _get_session():
         if _session is not None:
             return _session
 
-        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        providers = ["CPUExecutionProvider"]
         sess = ort.InferenceSession(str(_MODEL_PATH), providers=providers)
 
         char_dict = _load_dict(_DICT_PATH)
