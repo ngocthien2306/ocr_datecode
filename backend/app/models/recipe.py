@@ -248,7 +248,13 @@ class RecipeBase(BaseModel):
     is_active: bool = True
 
     # OCR / ML model selection
-    ocr_model_type: Optional[str] = Field(default=None, description="OCR model type: SMTR, SVTRV2_CTC, OPENOCR_REPSVTR, PADDLEV5")
+    ocr_model_type: Optional[str] = Field(default=None, description="OCR model type: SMTR, SVTRV2_CTC, OPENOCR_REPSVTR, PADDLEV5, or CUSTOM (a model trained in the OCR Training Studio — see ocr_project_id/ocr_model_id)")
+    # Set together, and only when ocr_model_type == 'CUSTOM'. They point at an
+    # ocr_models record owned by ocr_service (:8002). The engine and dict PATHS
+    # are resolved backend-side at recipe-load time and injected into the
+    # payload ai_services receives, so ai_services never queries ocr_service.
+    ocr_project_id: Optional[str] = Field(default=None, description="OCR Training project ID (only with ocr_model_type='CUSTOM')")
+    ocr_model_id: Optional[str] = Field(default=None, description="Trained OCR model ID within the OCR project (only with ocr_model_type='CUSTOM')")
     ml_project_id: Optional[str] = Field(default=None, description="ML Training project ID for quality inspection")
     ml_model_id: Optional[str] = Field(default=None, description="Trained ML model ID within the ML project")
     defect_model: Optional[str] = Field(default="arcface", description="Embedding model used for defect detection: arcface | supcon")
@@ -329,6 +335,8 @@ class RecipeUpdate(BaseModel):
     roi_config: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = None
     ocr_model_type: Optional[str] = None
+    ocr_project_id: Optional[str] = None
+    ocr_model_id: Optional[str] = None
     ml_project_id: Optional[str] = None
     ml_model_id: Optional[str] = None
     defect_model: Optional[str] = None

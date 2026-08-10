@@ -187,6 +187,64 @@ async def get_receipt_load_repository(db=Depends(get_database)) -> ReceiptLoadRe
     return ReceiptLoadRepository(db)
 
 
+
+async def _resolve_custom_ocr_paths(recipe) -> Dict[str, Optional[str]]:
+    """Turn ocr_model_id into the engine/dict PATHS ai_services needs.
+
+    ai_services has no MongoDB connection for recipes — everything reaches it
+    through the WebSocket payload — so resolving the paths here keeps that
+    boundary intact instead of teaching the camera service about ocr_service's
+    collections.
+
+    Reads `ocr_models`, owned by ocr_service (:8002) in the same database. On
+    anything missing (no CUSTOM selection, model deleted, files gone) it returns
+    empty paths and logs; ai_services then falls back to its default OCR model.
+    A recipe load must not fail because a trained model was cleaned up.
+    """
+    empty = {'ocr_custom_engine_path': None, 'ocr_custom_dict_path': None}
+    if getattr(recipe, 'ocr_model_type', None) != 'CUSTOM':
+        return empty
+
+    model_id = getattr(recipe, 'ocr_model_id', None)
+    if not model_id:
+        logger.warning("[recipe] ocr_model_type='CUSTOM' but ocr_model_id is empty — "
+                       "ai_services will use its default OCR model")
+        return empty
+
+    from bson import ObjectId
+    if not ObjectId.is_valid(model_id):
+        # Malformed id is bad input, not an internal fault — a warning, not a
+        # traceback, or the log fills with noise every time a recipe load runs.
+        logger.warning(f"[recipe] ocr_model_id {model_id!r} is not a valid ObjectId — "
+                       f"falling back to the default OCR model")
+        return empty
+    try:
+        doc = await get_database().get_collection('ocr_models').find_one({'_id': ObjectId(model_id)})
+    except Exception:
+        logger.exception(f"[recipe] failed to look up ocr_models/{model_id}")
+        return empty
+
+    if not doc:
+        logger.warning(f"[recipe] ocr model {model_id} not found — falling back to the default OCR model")
+        return empty
+
+    engine_path = doc.get('engine_path')
+    dict_path = doc.get('dict_path')
+    if not engine_path or not os.path.isfile(engine_path):
+        logger.warning(f"[recipe] ocr model {model_id} has no engine on disk "
+                       f"({engine_path!r}) — falling back to the default OCR model")
+        return empty
+    if not dict_path or not os.path.isfile(dict_path):
+        # The dict decides every character index, so a missing one is worse than
+        # no custom model: it would decode into garbage rather than fail.
+        logger.warning(f"[recipe] ocr model {model_id} has no character dict on disk "
+                       f"({dict_path!r}) — falling back to the default OCR model")
+        return empty
+
+    logger.info(f"[recipe] custom OCR model {model_id} -> {engine_path}")
+    return {'ocr_custom_engine_path': engine_path, 'ocr_custom_dict_path': dict_path}
+
+
 async def get_user_repository(db=Depends(get_database)) -> UserRepository:
     """Dependency to get user repository"""
     return UserRepository(db)
@@ -250,6 +308,8 @@ def recipe_to_response(recipe: RecipeInDB, user_names_map: dict = None) -> Recip
         roi_config=recipe.roi_config,
         is_active=recipe.is_active,
         ocr_model_type=getattr(recipe, 'ocr_model_type', None),
+        ocr_project_id=getattr(recipe, 'ocr_project_id', None),
+        ocr_model_id=getattr(recipe, 'ocr_model_id', None),
         ml_project_id=getattr(recipe, 'ml_project_id', None),
         ml_model_id=getattr(recipe, 'ml_model_id', None),
         defect_model=getattr(recipe, 'defect_model', None),
@@ -1455,6 +1515,8 @@ async def clone_recipe(
         roi_config=original_recipe.roi_config,
         is_active=original_recipe.is_active,
         ocr_model_type=getattr(original_recipe, 'ocr_model_type', None),
+        ocr_project_id=getattr(original_recipe, 'ocr_project_id', None),
+        ocr_model_id=getattr(original_recipe, 'ocr_model_id', None),
         ml_project_id=getattr(original_recipe, 'ml_project_id', None),
         ml_model_id=getattr(original_recipe, 'ml_model_id', None),
         defect_model=getattr(original_recipe, 'defect_model', None),
@@ -1625,6 +1687,9 @@ async def load_recipe(
         'model_thresholds': _to_primitive(getattr(recipe, 'model_thresholds', None)),
         'cameras': enriched_cameras,  # Use enriched cameras with function_type
         'ocr_model_type': getattr(recipe, 'ocr_model_type', None),
+        'ocr_project_id': getattr(recipe, 'ocr_project_id', None),
+        'ocr_model_id': getattr(recipe, 'ocr_model_id', None),
+        **(await _resolve_custom_ocr_paths(recipe)),
         'ml_project_id': getattr(recipe, 'ml_project_id', None),
         'ml_model_id': getattr(recipe, 'ml_model_id', None),
         'defect_model': getattr(recipe, 'defect_model', None),
@@ -1681,6 +1746,9 @@ async def load_recipe(
         'template_config': _to_primitive(getattr(recipe, 'template_config', None)),
         'roi_config': _to_primitive(getattr(recipe, 'roi_config', None)),
         'ocr_model_type': getattr(recipe, 'ocr_model_type', None),
+        'ocr_project_id': getattr(recipe, 'ocr_project_id', None),
+        'ocr_model_id': getattr(recipe, 'ocr_model_id', None),
+        **(await _resolve_custom_ocr_paths(recipe)),
         'ml_project_id': getattr(recipe, 'ml_project_id', None),
         'ml_model_id': getattr(recipe, 'ml_model_id', None),
         'defect_model': getattr(recipe, 'defect_model', None),
@@ -2009,6 +2077,9 @@ async def update_recipe_realtime(
         'template_config': _to_primitive(getattr(recipe, 'template_config', None)),
         'roi_config': _to_primitive(getattr(recipe, 'roi_config', None)),
         'ocr_model_type': getattr(recipe, 'ocr_model_type', None),
+        'ocr_project_id': getattr(recipe, 'ocr_project_id', None),
+        'ocr_model_id': getattr(recipe, 'ocr_model_id', None),
+        **(await _resolve_custom_ocr_paths(recipe)),
         'ml_project_id': getattr(recipe, 'ml_project_id', None),
         'ml_model_id': getattr(recipe, 'ml_model_id', None),
         'defect_model': getattr(recipe, 'defect_model', None),

@@ -10,6 +10,7 @@ import AnomalySetupModal from './AnomalySetupModal';
 import { camerasAPI } from '@/services/api';
 import recipesAPI from '@/services/recipes';
 import { mlTrainingAPI, MLProject, MLModel } from '@/services/mlTraining';
+import { ocrTrainingModelAPI, OCRBaseCheckpoints } from '@/services/ocrTraining';
 import { useToast } from '@/contexts/ToastContext';
 import { useUser } from '@/contexts/UserContext';
 import { API_BASE_URL } from '@/config/api';
@@ -69,6 +70,8 @@ interface FormDataType {
   template_config: any;
   roi_config: any;
   ocr_model_type: string;
+  ocr_project_id: string;
+  ocr_model_id: string;
   ml_project_id: string;
   ml_model_id: string;
   defect_model: string;
@@ -224,6 +227,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     template_config: null,
     roi_config: null,
     ocr_model_type: '',
+    ocr_project_id: '',
+    ocr_model_id: '',
     ml_project_id: '',
     ml_model_id: '',
     defect_model: 'arcface',
@@ -261,6 +266,10 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   const [selectedCameraForAdd, setSelectedCameraForAdd] = useState<string>('');
 
   // ML project / model states
+  // Trained OCR models, grouped by project, from ocr_service (:8002). Optional
+  // by design: if that service is down the dropdown still offers the four
+  // built-in backbones, which is what every existing recipe already uses.
+  const [ocrTrained, setOcrTrained] = useState<OCRBaseCheckpoints | null>(null);
   const [mlProjects, setMlProjects] = useState<MLProject[]>([]);
   const [mlModels, setMlModels] = useState<MLModel[]>([]);
   const [loadingMlProjects, setLoadingMlProjects] = useState(false);
@@ -424,6 +433,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         template_config: recipeAny.template_config || null,
         roi_config: recipeAny.roi_config || null,
         ocr_model_type: recipeAny.ocr_model_type || '',
+        ocr_project_id: recipeAny.ocr_project_id || '',
+        ocr_model_id: recipeAny.ocr_model_id || '',
         ml_project_id: recipeAny.ml_project_id || '',
         ml_model_id: recipeAny.ml_model_id || '',
         defect_model: recipeAny.defect_model || 'arcface',
@@ -508,6 +519,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         template_config: null,
         roi_config: null,
         ocr_model_type: '',
+        ocr_project_id: '',
+        ocr_model_id: '',
         ml_project_id: '',
         ml_model_id: '',
         defect_model: 'arcface',
@@ -540,11 +553,40 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     }
   }, [recipe, mode, isOpen]);
 
+  // The dropdown carries one value; a CUSTOM pick has to fan out into the three
+  // recipe fields. Encoded as CUSTOM:{project_id}:{model_id} so the <option>
+  // stays a plain string.
+  const ocrIsCustom = formData.ocr_model_type === 'CUSTOM';
+  const ocrSelectValue = ocrIsCustom
+    ? `CUSTOM:${formData.ocr_project_id}:${formData.ocr_model_id}`
+    : formData.ocr_model_type;
+  const ocrSelectedTrained = ocrIsCustom
+    ? (ocrTrained?.projects ?? [])
+        .flatMap(g => g.models)
+        .find(m => m.model_id === formData.ocr_model_id) ?? null
+    : null;
+
+  const handleOcrModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const v = e.target.value;
+    if (v.startsWith('CUSTOM:')) {
+      const [, projectId, modelId] = v.split(':');
+      setFormData(prev => ({
+        ...prev, ocr_model_type: 'CUSTOM',
+        ocr_project_id: projectId || '', ocr_model_id: modelId || '',
+      }));
+    } else {
+      // Clearing both ids matters: a stale pair left behind would make the BE
+      // resolve an engine for a recipe that no longer asks for a custom model.
+      setFormData(prev => ({ ...prev, ocr_model_type: v, ocr_project_id: '', ocr_model_id: '' }));
+    }
+  };
+
   // Load available cameras
   useEffect(() => {
     if (isOpen) {
       loadAvailableCameras();
       loadMlProjects();
+      loadOcrTrainedModels();
     }
   }, [isOpen]);
 
@@ -616,6 +658,26 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       console.error('Failed to load cameras:', error);
     } finally {
       setLoadingCameras(false);
+    }
+  };
+
+  const loadOcrTrainedModels = async () => {
+    try {
+      const data = await ocrTrainingModelAPI.listBaseCheckpoints();
+      // Only models with an engine are selectable — a checkpoint alone is not
+      // something ai_services can load, and the picker must not offer one.
+      setOcrTrained({
+        ...data,
+        projects: data.projects
+          .map(g => ({ ...g, models: g.models }))
+          .filter(g => g.models.length > 0),
+      });
+    } catch (error) {
+      // Not surfaced to the user: an unreachable OCR studio is a normal state
+      // on a machine that never trains, and the built-in options still work.
+      console.warn('[RecipeFormModal] OCR training service unreachable, '
+                 + 'showing built-in OCR models only', error);
+      setOcrTrained(null);
     }
   };
 
@@ -868,6 +930,8 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         } : formData.template_config,
         // Normalize empty-string sentinels to null so BE clears the field.
         // Empty strings come from "-- None --" <option value="">.
+        ocr_project_id: formData.ocr_project_id || null,
+        ocr_model_id:   formData.ocr_model_id   || null,
         ml_project_id: formData.ml_project_id || null,
         ml_model_id:   formData.ml_model_id   || null,
         defect_model:  formData.defect_model  || 'arcface',
@@ -2235,15 +2299,45 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       <label>OCR Model Type</label>
                       <select
                         name="ocr_model_type"
-                        value={formData.ocr_model_type}
-                        onChange={(e) => setFormData(prev => ({ ...prev, ocr_model_type: e.target.value }))}
+                        value={ocrSelectValue}
+                        onChange={handleOcrModelChange}
                       >
                         <option value="">-- Default --</option>
                         <option value="SMTR">SMTR (large-x)</option>
                         <option value="SVTRV2_CTC">SVTRV2_CTC (large)</option>
                         <option value="OPENOCR_REPSVTR">OPENOCR_REPSVTR (medium)</option>
                         <option value="PADDLEV5">PADDLEV5 (small)</option>
+                        {/* Trained models come after the built-ins, grouped per
+                            OCR project. Absent entirely when nothing has been
+                            trained or the OCR service is unreachable, so the
+                            dropdown degrades to exactly what it was before. */}
+                        {(ocrTrained?.projects ?? []).map(g => (
+                          <optgroup key={g.project_id} label={`Trained · ${g.project_name}`}>
+                            {g.models.map(m => (
+                              <option key={m.model_id} value={`CUSTOM:${g.project_id}:${m.model_id}`}>
+                                {m.label}{m.use_space_char ? ' · space' : ''}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
                       </select>
+                      {ocrIsCustom && !ocrSelectedTrained && (
+                        <small className="field-description" style={{ color: 'var(--color-warning, #f59e0b)' }}>
+                          ⚠️ This recipe points at a trained OCR model that is no longer
+                          available (deleted, or its engine is missing). Inference falls back
+                          to the default model until you pick another one.
+                        </small>
+                      )}
+                      {ocrSelectedTrained && (
+                        <small className="field-description">
+                          Trained model · vocab {ocrSelectedTrained.vocab_size}
+                          {ocrSelectedTrained.use_space_char ? ' (reads spaces)' : ' (no space class)'}
+                          {ocrSelectedTrained.min_acc != null
+                            && ` · min_acc ${(ocrSelectedTrained.min_acc * 100).toFixed(1)}%`}
+                          . Changing this takes effect on the next recipe load — the OCR
+                          backend is swapped per recipe, no ai_services restart needed.
+                        </small>
+                      )}
                       {/* <small className="field-description">OCR recognition backbone used for text reading</small> */}
                     </div>
                     <div className="form-group">

@@ -190,6 +190,9 @@ export interface Recipe {
   roi_config?: ROIConfig;
   is_active: boolean;
   ocr_model_type?: string;
+  /** Set together, and only when ocr_model_type === 'CUSTOM'. */
+  ocr_project_id?: string;
+  ocr_model_id?: string;
   ml_project_id?: string;
   ml_model_id?: string;
   defect_model?: string;
@@ -320,6 +323,9 @@ export interface Receipt {
   roi_config?: ROIConfig;
   is_active: boolean;
   ocr_model_type?: string;
+  /** Set together, and only when ocr_model_type === 'CUSTOM'. */
+  ocr_project_id?: string;
+  ocr_model_id?: string;
   ml_project_id?: string;
   ml_model_id?: string;
   defect_model?: string;
