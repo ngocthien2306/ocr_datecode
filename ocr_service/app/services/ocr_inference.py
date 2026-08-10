@@ -15,8 +15,9 @@ should be run after touching either side.
 """
 import logging
 import string
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, TypeVar
 
 import cv2 as cv
 
@@ -25,6 +26,27 @@ from app.core.config import CHARACTER_DICT_PATH
 logger = logging.getLogger(__name__)
 
 _RECOGNIZER_CACHE: Dict[str, object] = {}
+
+_T = TypeVar("_T")
+
+# Every TensorRT call must happen on ONE thread, always the same one.
+# pycuda.autoinit creates the CUDA context on whichever thread imports it, and
+# that context is not current on any other thread — so a recognizer built on
+# asyncio's default executor works only until a later call lands on a different
+# pool thread, then fails with "explicit_context_dependent failed: invalid
+# device context - no currently active context". It is intermittent, which makes
+# it far worse than a hard failure. ai_services hit the same wall and solved it
+# the same way (inference_handler's max_workers=1 "InferenceWorker").
+_GPU_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="OcrGpu")
+
+
+def run_on_gpu_thread(fn: Callable[[], _T]) -> _T:
+    """Run fn on the single CUDA-owning thread and wait for it.
+
+    Call this from inside another executor thread (or anywhere non-async): it
+    blocks, so it must not be called on the event loop itself.
+    """
+    return _GPU_EXECUTOR.submit(fn).result()
 
 
 def load_recognizer(model_path: Path, engine: str, dict_path: Optional[Path] = None):

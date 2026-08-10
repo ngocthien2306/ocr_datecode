@@ -68,11 +68,15 @@ def evaluate_sync(project_id: str, model, items, engine: str) -> dict:
     artifact = _artifact_for(model, engine)
     dict_path = Path(model.dict_path) if model.dict_path else None
 
-    with gpu_lock.gpu_lock(f"ocr-eval:{model.id}"):
+    def _score():
         rec = ocr_inference.load_recognizer(artifact, engine, dict_path)
         t0 = time.perf_counter()
         preds = ocr_inference.recognize_paths(rec, paths, batch=1)
-        elapsed_ms = (time.perf_counter() - t0) * 1000
+        return preds, (time.perf_counter() - t0) * 1000
+
+    with gpu_lock.gpu_lock(f"ocr-eval:{model.id}"):
+        # On the single CUDA-owning thread — see ocr_inference.run_on_gpu_thread.
+        preds, elapsed_ms = ocr_inference.run_on_gpu_thread(_score)
 
     scores = ocr_inference.score_against_labels(preds, labels)
     per_image = []
@@ -188,12 +192,14 @@ async def predict_image(
     dict_path = Path(model.dict_path) if model.dict_path else None
     loop = asyncio.get_event_loop()
 
+    def _infer():
+        rec = ocr_inference.load_recognizer(artifact, engine, dict_path)
+        t0 = time.perf_counter()
+        return rec.recognize(img), (time.perf_counter() - t0) * 1000
+
     def _run():
         with gpu_lock.gpu_lock(f"ocr-predict:{model_id}"):
-            rec = ocr_inference.load_recognizer(artifact, engine, dict_path)
-            t0 = time.perf_counter()
-            result = rec.recognize(img)
-            return result, (time.perf_counter() - t0) * 1000
+            return ocr_inference.run_on_gpu_thread(_infer)
 
     try:
         (gtc, ctc), ms = await loop.run_in_executor(None, _run)
