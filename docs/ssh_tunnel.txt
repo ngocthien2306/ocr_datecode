@@ -1,0 +1,79 @@
+SSH TUNNEL — truy cap he thong tu may Mac
+=========================================
+Chay lenh nay TREN MAY MAC (khong phai tren workstation).
+100.116.14.127 la IP Tailscale cua workstation (msi-MS-7E06).
+
+
+### Lenh chinh (copy dong nay)
+
+ssh -N -L 5173:localhost:5173 -L 8000:localhost:8000 -L 8001:localhost:8001 -L 8002:localhost:8002 msi@100.116.14.127
+
+
+### Ban co keepalive (dung khi tunnel bi treo neu de lau)
+
+ssh -N -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+    -L 5173:localhost:5173 \
+    -L 8000:localhost:8000 \
+    -L 8001:localhost:8001 \
+    -L 8002:localhost:8002 \
+    msi@100.116.14.127
+
+
+### Sau khi tunnel len, mo tren Mac
+
+http://localhost:5173          Frontend
+http://localhost:8000/docs     Backend API
+http://localhost:8001/docs     Anomaly Training API
+http://localhost:8002/docs     OCR Training API
+
+
+### Cac port
+
+5173  frontend (vite dev)
+8000  backend            (FastAPI)
+8001  anomaly_service    (FastAPI)
+8002  ocr_service        (FastAPI)   <-- OCR Training Studio, thieu port nay
+                                         thi tab OCR Training bao
+                                         "Cannot reach ocr_service on :8002"
+
+
+### Khoi dong tung service TREN WORKSTATION
+
+# backend
+cd ~/Source/ocr_datecode/backend
+conda activate vision
+python3 -m uvicorn app.main:app --port 8000 --host 0.0.0.0
+
+# frontend
+cd ~/Source/ocr_datecode/frontend-ts
+npm run dev
+
+# ai_services (camera)
+cd ~/Source/ocr_datecode/ai_services
+conda activate vision
+python3 camera_management_service.py
+
+# anomaly_service
+cd ~/Source/ocr_datecode/anomaly_service
+conda activate anomaly_service
+python -m app.main
+
+# ocr_service
+cd ~/Source/ocr_datecode/ocr_service
+conda activate ocr_train
+python -m app.main
+
+
+### Luu y
+
+- Doi model OCR tren recipe la hot-swap, KHONG can restart ai_services.
+  Nhung lan dau tien sau khi cap nhat code thi phai restart mot lan de nap
+  OCRModelType.CUSTOM.
+
+- SECRET_KEY trong ocr_service/.env va anomaly_service/.env phai GIONG
+  backend/.env. Lech thi moi endpoint tra 401 hang loat (khong phai loi
+  dang nhap, la loi token khong verify duoc).
+
+- Train OCR khong can tat ai_services: do thuc te 2.6 GB (batch 32) + 3.5 GB
+  cua ai_services tren card 16 GB. Cai khong chay song song duoc la HAI run
+  train cung luc — ocr_service tu xep hang bang flock.
