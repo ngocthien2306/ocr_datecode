@@ -31,8 +31,12 @@ from .ocr.factory import OCRModelType, OCRConfig
 # OCRModelType.PADDLEV5        → PaddleV5 (legacy)
 DEFAULT_OCR_MODEL_TYPE = OCRModelType.OPENOCR_REPSVTR
 
-# Map recipe string → enum (used by set_ocr_model_type)
+# Map recipe string → enum (used by set_ocr_model)
 _OCR_MODEL_MAP: Dict[str, OCRModelType] = {
+    # 'CUSTOM' means "a model trained in the OCR Training Studio"; the recipe
+    # payload carries ocr_custom_engine_path + ocr_custom_dict_path alongside it
+    # (resolved backend-side in recipes.py::_resolve_custom_ocr_paths).
+    'CUSTOM': OCRModelType.CUSTOM,
     'SMTR': OCRModelType.SMTR,
     'SVTRV2_CTC': OCRModelType.SVTRV2_CTC,
     'OPENOCR_REPSVTR': OCRModelType.OPENOCR_REPSVTR,
@@ -87,6 +91,15 @@ except Exception as e:
     USING_OPTIMIZED_ENGINE = False
     SuperPointMatcherTRT = None
 
+
+def _custom_model_label(engine_path: Optional[str]) -> str:
+    """'{model_id}/{filename}' — the model id is the export directory name."""
+    if not engine_path:
+        return '<none>'
+    parent = os.path.basename(os.path.dirname(engine_path))
+    return f"{parent}/{os.path.basename(engine_path)}"
+
+
 home = os.environ.get('HOME')
 
 class InferenceHandler:
@@ -112,6 +125,9 @@ class InferenceHandler:
 
         # OCR model type (dynamic, set from recipe)
         self._ocr_model_type: OCRModelType = DEFAULT_OCR_MODEL_TYPE
+        # Only set when _ocr_model_type is CUSTOM — the per-recipe engine/dict.
+        self._ocr_custom_engine_path: Optional[str] = None
+        self._ocr_custom_dict_path: Optional[str] = None
 
         # Text recognizer for Check_Type_Product function
         self.text_recognizer = None
@@ -169,15 +185,55 @@ class InferenceHandler:
             self.text_verification_service.set_bypass_enabled(self.text_bypass_enabled)
         return self.text_bypass_enabled
 
-    def set_ocr_model_type(self, model_type_str: Optional[str]) -> bool:
-        """Set OCR model type from recipe string. Returns True if changed (needs reinit)."""
+    def set_ocr_model(
+        self,
+        model_type_str: Optional[str],
+        custom_engine_path: Optional[str] = None,
+        custom_dict_path: Optional[str] = None,
+    ) -> bool:
+        """Set the OCR model from a recipe. Returns True if a reinit is needed.
+
+        The paths only matter for 'CUSTOM'. Note the comparison: switching
+        between two DIFFERENT trained models leaves model_type as CUSTOM both
+        times, so comparing the enum alone would report "unchanged" and keep
+        serving the previous recipe's weights.
+        """
         if not model_type_str:
             return False  # keep current
+
         new_type = _OCR_MODEL_MAP.get(model_type_str, DEFAULT_OCR_MODEL_TYPE)
-        if new_type == self._ocr_model_type:
+
+        if new_type == OCRModelType.CUSTOM and not custom_engine_path:
+            # Backend resolves the path and leaves it empty when the model is
+            # gone from disk. Fall back rather than fail the recipe load — but
+            # loudly, because the recipe asked for a specific model.
+            logger.warning(
+                "⚠️ Recipe selects a trained OCR model but no engine path was "
+                f"provided — falling back to {DEFAULT_OCR_MODEL_TYPE.name}"
+            )
+            new_type = DEFAULT_OCR_MODEL_TYPE
+            custom_engine_path = custom_dict_path = None
+
+        changed = (
+            new_type != self._ocr_model_type
+            or (new_type == OCRModelType.CUSTOM
+                and (custom_engine_path != self._ocr_custom_engine_path
+                     or custom_dict_path != self._ocr_custom_dict_path))
+        )
+        if not changed:
             return False
-        logger.info(f"🔄 OCR model type changed: {self._ocr_model_type.name} → {new_type.name}")
+
+        if new_type == OCRModelType.CUSTOM:
+            # Every trained model exports to the same filename, so the basename
+            # alone identifies nothing — the parent directory is the model id.
+            logger.info(f"🔄 OCR model changed: {self._ocr_model_type.name} → CUSTOM "
+                        f"({_custom_model_label(custom_engine_path)})")
+        else:
+            logger.info(f"🔄 OCR model type changed: {self._ocr_model_type.name} → {new_type.name}")
+
         self._ocr_model_type = new_type
+        self._ocr_custom_engine_path = custom_engine_path
+        self._ocr_custom_dict_path = custom_dict_path
         return True
 
     def _reinit_ocr_backend(self):
@@ -212,10 +268,37 @@ class InferenceHandler:
             # AUTO selection with fixed TensorRT (no more CUDA context conflict!)
             # Priority: OpenOCR TensorRT > OpenOCR ONNX > PaddleV5 TensorRT > PaddleV5 ONNX
             # Note: TensorRT OpenOCR now uses pre-allocated buffers (like YOLO OBB) - NO CONFLICT!
+            config = None
+            backend_type = OCR_BACKEND_TYPE
+            if self._ocr_model_type == OCRModelType.CUSTOM:
+                # AUTO cannot help here: check_availability() only knows the
+                # built-in paths. The factory picks TRT vs ONNX from the
+                # extension instead.
+                config = OCRConfig(
+                    model_path=self._ocr_custom_engine_path or '',
+                    dict_path=self._ocr_custom_dict_path or '',
+                    model_type=OCRModelType.CUSTOM,
+                )
+
             self._ocr_backend_instance = OCRBackendFactory.create(
-                backend_type=OCR_BACKEND_TYPE,
+                backend_type=backend_type,
+                config=config,
                 model_type=self._ocr_model_type,
             )
+
+            if self._ocr_backend_instance is None and self._ocr_model_type == OCRModelType.CUSTOM:
+                # A recipe's trained model failing to load must not leave the
+                # line with no OCR at all — retry on the default backbone.
+                logger.error(
+                    f"❌ Custom OCR model failed to load "
+                    f"({_custom_model_label(self._ocr_custom_engine_path)}); "
+                    f"falling back to {DEFAULT_OCR_MODEL_TYPE.name}"
+                )
+                self._ocr_model_type = DEFAULT_OCR_MODEL_TYPE
+                self._ocr_custom_engine_path = self._ocr_custom_dict_path = None
+                self._ocr_backend_instance = OCRBackendFactory.create(
+                    backend_type=OCR_BACKEND_TYPE, model_type=self._ocr_model_type,
+                )
 
             if self._ocr_backend_instance is not None:
                 self.text_recognizer = self._ocr_backend_instance
@@ -1294,10 +1377,10 @@ class InferenceHandler:
                     fail_count = sum(1 for f in frames_list if f.get('result') == 'FAIL')
                     error_count = sum(1 for f in frames_list if f.get('result') == 'ERROR')
 
-                    logger.info(
-                        f"[Job #{job_id}] Camera {serial_number}: "
-                        f"pass={pass_count}, fail={fail_count}, error={error_count}"
-                    )
+                    # logger.info(
+                    #     f"[Job #{job_id}] Camera {serial_number}: "
+                    #     f"pass={pass_count}, fail={fail_count}, error={error_count}"
+                    # )
 
                     if pass_count > 0 or fail_count > 0 or error_count > 0:
                         # Update session stats (InferenceHandler)

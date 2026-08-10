@@ -295,9 +295,16 @@ class CameraManager:
                 if success and loaded_cameras:
                     cameras_with_recipe = [self.cameras[sn] for sn in loaded_cameras]
 
-                    # Set OCR model type from recipe before initializing matchers
+                    # Set OCR model from recipe before initializing matchers.
+                    # ocr_custom_* are resolved backend-side (recipes.py
+                    # ::_resolve_custom_ocr_paths) so this service never has to
+                    # query ocr_service's collections.
                     ocr_model_type = recipe_data.get('ocr_model_type')
-                    model_changed = self.inference_handler.set_ocr_model_type(ocr_model_type)
+                    model_changed = self.inference_handler.set_ocr_model(
+                        ocr_model_type,
+                        recipe_data.get('ocr_custom_engine_path'),
+                        recipe_data.get('ocr_custom_dict_path'),
+                    )
                     if model_changed and self.inference_handler._models_initialized:
                         # OCR already loaded but recipe wants a different model → reinit on worker thread
                         self.inference_handler._inference_executor.submit(

@@ -1,6 +1,6 @@
 # OCR Training Plan — SVTRv2/SMTR fine-tune service + FE + Recipe binding
 
-> Trạng thái: **PLAN** (chưa code). Viết ngày 2026-08-10.
+> Trạng thái: **B0–B9 XONG** (2026-08-10). Còn B10 (memory). Xem bảng ở mục 7.
 > Anh chị em cùng loại: `docs/anomaly_training_plan.md`, `docs/memory/anomaly-training.md`,
 > `docs/memory/ml-training.md`, `docs/memory/recipe-system.md`.
 
@@ -693,15 +693,15 @@ custom khác sẽ rebuild backend trên worker thread, **không cần restart `a
 | Bước | Nội dung | Output |
 |---|---|---|
 | ~~**B0**~~ | ✅ Phase 0: env + train thử + export + verify | xong 2026-08-10, xem mục 2 |
-| **B1** | Scaffold `ocr_service/app` (config/db/auth/main/models/repository) + projects CRUD | service lên được `:8002/health` |
-| **B2** | `candidates` + `import` + `import-folder` (seed `data_ocr_merged`) + `dataset` list | có data trong project |
-| **B3** | `label` endpoints + `dataset_fs.materialize_dataset` | `rec_gt_*.txt` sinh đúng |
-| **B4** | `ocr_training.py` + `train.py` endpoints + `train_logs` | train được từ API, có log/cancel |
-| **B5** | `onnx_export` + `trt_export` + auto-export + `eval` + `predict` | có `.engine` + acc_trt |
-| **B6** | FE `ocrTraining.ts` + `ocr-training/` (Projects/Dataset/Label) | label được trên UI |
-| **B7** | FE Train/Eval/Export/Test tabs + Dashboard section | train được từ UI |
-| **B8** | Recipe: 19-step checklist ×2 field + dropdown optgroup | recipe lưu được model custom |
-| **B9** | `ai_services`: `OCRModelType.CUSTOM` + resolve path + hot-swap | chạy inference bằng model mới |
+| ~~**B1**~~ | ✅ scaffold + projects CRUD (8dc5bc8) | service lên được `:8002/health` |
+| ~~**B2**~~ | ✅ candidates + import + dataset API (a2e2189) | có data trong project |
+| ~~**B3**~~ | ✅ prepare: validate + rec_gt files (bacbc24) | `rec_gt_*.txt` sinh đúng |
+| ~~**B4**~~ | ✅ subprocess trainer + GPU lock + logs (0af7f71) | train được từ API, có log/cancel |
+| ~~**B5**~~ | ✅ ONNX + TensorRT + engine scoring (4e600cd) | có `.engine` + acc_trt |
+| ~~**B6**~~ | ✅ FE studio: projects/dataset/label (9f092d1) | label được trên UI |
+| ~~**B7**~~ | ✅ FE Train/Eval/Export/Test (83ae063) | train được từ UI |
+| ~~**B8**~~ | ✅ recipe fields + dropdown (b0b2983) | recipe lưu được model custom |
+| ~~**B9**~~ | ✅ OCRModelType.CUSTOM + hot-swap (this commit) | chạy inference bằng model mới |
 | **B10** | Ghi `docs/memory/ocr-training.md` + cập nhật `MEMORY.md` | memory cho session sau |
 
 ---

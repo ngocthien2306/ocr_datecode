@@ -1,6 +1,6 @@
 ---
 name: OCR Training (SVTRv2/SMTR fine-tune) — service + export + recipe binding
-description: New ocr_service (fine-tune SVTRv2+SMTR on recipe crops, export ONNX/TensorRT) + how a trained model gets selected on a recipe. Phase 0 verified; service/FE not built yet.
+description: ocr_service (fine-tune SVTRv2+SMTR on recipe crops -> ONNX -> TensorRT), its studio UI, and how a trained model is selected on a recipe. B0-B9 built and verified; the traps found along the way are the point of this file.
 type: project
 ---
 # OCR Training
@@ -11,8 +11,25 @@ tiết implementation mà session sau sẽ gặp.
 
 ## Trạng thái (2026-08-10)
 
-**Phase 0 (verify pipeline train→ONNX→TensorRT) — XONG, đạt.** Service, FE, và
-recipe binding **chưa làm**.
+**B0–B9 xong.** Toàn bộ đường đi hoạt động end-to-end: recipe → crop → label →
+train → ONNX → TensorRT → chọn trên recipe → inference. Commit:
+
+| | |
+|---|---|
+| `ae60249` | Phase 0: verify chain train→ONNX→TRT |
+| `8dc5bc8` | scaffold `ocr_service/app` :8002 + projects CRUD |
+| `a2e2189` | candidates + import + dataset/label API |
+| `bacbc24` | `prepare`: validate nhãn + sinh `rec_gt_*.txt` |
+| `0af7f71` | subprocess trainer + GPU flock + live log |
+| `4e600cd` | ONNX + TensorRT export + đo accuracy engine |
+| `bb472ca` | vendor SMTR runtime (bỏ import chéo ai_services) |
+| `9f092d1` | FE studio: projects / dataset / label |
+| `83ae063` | FE Train / Eval / Export / Test |
+| `b0b2983` | recipe: 2 field + dropdown optgroup |
+| `5ef8c02` | fix CUDA context: dồn mọi việc GPU về 1 thread |
+
+Chưa làm: đo trên camera thật (chưa có dịp chạy dây chuyền), và anomaly_service
+vẫn chưa lấy GPU lock (xem mục VRAM).
 
 | Runtime | acc normalized (batch=1) | Ghi chú |
 |---|---|---|
@@ -23,7 +40,9 @@ recipe binding **chưa làm**.
 ## Kiến trúc
 
 ```
-ocr_service/            ← sẽ thành FastAPI :8002 /api/ocr (mirror anomaly_service)
+ocr_service/            ← FastAPI :8002 /api/ocr (mirror anomaly_service)
+    app/                ← service (endpoints/services/repositories/models)
+    app/services/smtr_runtime/  ← BẢN COPY decode path cua ai_services (xem duoi)
     OpenOCR/            ← vendored fork (ngocthien2306/OpenOCR), ĐÃ PATCH, dùng để train
     weights/base/       ← 2 base checkpoint built-in
     Mongo dùng chung DB với backend; collections mới: ocr_projects /
@@ -52,6 +71,20 @@ Ngoài 2 base đó, base có thể là **bất kỳ `ocr_models` nào `status='c
 kể cả của project KHÁC** — cross-project là chủ ý (project "datecode chung" làm
 base cho project hẹp; operator hay muốn "train tiếp từ model tuần trước").
 Endpoint `GET /api/ocr/base-checkpoints` trả built-in + model group theo project.
+
+## Runtime decode path là BẢN COPY, không import chéo
+
+`ocr_service/app/services/smtr_runtime/` = copy của
+`ai_services/camera_management/ocr/{smtr_utils.py, backends/smtr_{trt,onnx}.py}`
+(416 dòng, giống byte-for-byte trừ 1 dòng relative import).
+
+Lý do **không** import chéo: phải chạy `camera_management/__init__.py` (kéo theo
+pypylon) hoặc stub package để bỏ qua nó — mà stub bypass `__init__` sẽ vỡ âm thầm
+ngay khi `ai_services` đổi layout hoặc thêm import.
+
+Giá phải trả là **drift**: accuracy service báo ra chỉ có nghĩa nếu nó decode
+đúng như dây chuyền. `python ocr_service/check_runtime_parity.py` so 2 bản, exit 1
+nếu lệch, `--diff` để xem chỗ lệch. **Chạy nó sau khi sửa bất kỳ bên nào.**
 
 ## Files đã tạo/sửa ở Phase 0
 
@@ -206,13 +239,36 @@ allocator PyTorch giữ block đã reserve, process khác không xin được.
   `min 1x3x32x32 / opt 4x3x32x320 / max 16x3x32x2000`, fp16. Build ~40s.
 - Engine **phải đúng 2 output** — `smtr_trt.py:44` assert `len(out_names)==2`.
 
-## Recipe binding (chưa làm)
+## Recipe binding (đã làm — b0b2983 + B9)
 
-Thêm 2 field recipe-level `ocr_project_id` + `ocr_model_id`, `ocr_model_type='CUSTOM'`.
-**Phải chạy đủ CHECKLIST 19 bước** trong `recipe-system.md` cho cả 2 field.
-Backend resolve `engine_path`/`dict_path` từ `ocr_models` rồi bơm vào
-`load_recipe.metadata` + `recipe_dict` + `update_realtime.recipe_dict`, để
-`ai_services` không cần query Mongo.
+2 field recipe-level `ocr_project_id` + `ocr_model_id`, `ocr_model_type='CUSTOM'`.
+Đã chạy đủ CHECKLIST 19 bước trong `recipe-system.md` cho cả 2 field.
+
+⚠️ **`Receipts.tsx` chỉ còn 2 block transform, không phải 3** như `recipe-system.md`
+ghi — `handleSearch` giờ chỉ `setActiveSearch` và search phía server, không còn
+mapping riêng. Sửa lại con số đó khi có dịp.
+
+Backend resolve `engine_path`/`dict_path` từ `ocr_models` (`recipes.py
+::_resolve_custom_ocr_paths`) rồi bơm vào cả 3 dict, để `ai_services` không cần
+query Mongo. Mọi ca lỗi → path rỗng + warning, **không raise**: model bị xoá,
+engine mất, dict mất, id sai format đều fallback về `DEFAULT_OCR_MODEL_TYPE`.
+Dict được check nghiêm như engine — decoder dựng từ dict sai sẽ lệch toàn bộ
+index ký tự và **decode ra rác thay vì báo lỗi**.
+
+### Runtime: `OCRModelType.CUSTOM`
+
+- `factory.create()` **bắt buộc có `config`** khi `model_type=CUSTOM`, và bỏ qua
+  AUTO: `check_availability()` chỉ biết path built-in nên không thể biết engine
+  của recipe có tồn tại. Backend TRT/ONNX chọn theo phần mở rộng file.
+- CUSTOM dùng lại chính `SMTRTRTBackend`/`SMTRONNXBackend` — chỉ khác weights+dict.
+- `inference_handler.set_ocr_model(type, engine_path, dict_path)` (đổi tên từ
+  `set_ocr_model_type`). **Điểm dễ sai nhất**: đổi giữa 2 model custom thì
+  `model_type` vẫn là `CUSTOM` cả 2 lần, nên so enum thôi sẽ báo "không đổi" và
+  tiếp tục dùng weights của recipe trước → phải so **path** nữa.
+- Log in `{model_id}/{filename}`, không phải basename: mọi model export ra cùng
+  tên `rec_smtr_fp16.engine` nên basename không định danh được gì.
+- Custom load fail → tự fallback về default backbone. Dây chuyền không bao giờ
+  mất OCR vì một model đã bị dọn.
 
 **OCR model là hot-swappable, KHÁC anomaly/char-classifier**: `camera_manager.py:299`
 gọi `set_ocr_model_type()` rồi submit `_reinit_ocr_backend()` lên worker thread khi

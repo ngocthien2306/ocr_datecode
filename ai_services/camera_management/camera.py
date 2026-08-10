@@ -1605,6 +1605,10 @@ class Camera:
             self.matching_threshold = model_thresholds.get("matching_threshold", 0.85)
             self.recognition_threshold = model_thresholds.get("recognition_threshold", 0.5)
             self.ocr_model_type = recipe_data.get("ocr_model_type")
+            # Recorded for logs/debug only — the OCR backend is process-wide
+            # (InferenceHandler), not per-camera, so nothing here drives it.
+            self.ocr_project_id = recipe_data.get("ocr_project_id")
+            self.ocr_model_id = recipe_data.get("ocr_model_id")
             self.ml_project_id = recipe_data.get("ml_project_id")
             self.ml_model_id = recipe_data.get("ml_model_id")
             self.defect_model = recipe_data.get("defect_model") or "arcface"

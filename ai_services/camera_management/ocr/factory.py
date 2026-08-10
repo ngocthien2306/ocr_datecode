@@ -32,6 +32,11 @@ class OCRModelType(Enum):
     OPENOCR_REPSVTR = "openocr"     # OpenOCR RepSVTR
     SVTRV2_CTC = "svtrv2"           # SVTRv2 CTC (6625 classes, width=320)
     SMTR = "smtr"                   # SMTR dual-head (GTC + CTC, dynamic width)
+    # A model fine-tuned in the OCR Training Studio (ocr_service). Same SMTR
+    # architecture and the same backends as SMTR — only the weights and the dict
+    # come from somewhere else, so there are no default paths for it: the recipe
+    # supplies engine_path + dict_path and create() REQUIRES a config.
+    CUSTOM = "custom"
 
 
 @dataclass
@@ -603,6 +608,11 @@ class OCRBackendFactory:
             cls._REGISTRY = {
                 (OCRModelType.SMTR,            OCRBackendType.TENSORRT): (SMTRTRTBackend,    cls.SMTR_TRT_ENGINE,    cls.SMTR_DICT_PATH,    {}),
                 (OCRModelType.SMTR,            OCRBackendType.ONNX):     (SMTRONNXBackend,   cls.SMTR_ONNX_MODEL,    cls.SMTR_DICT_PATH,    {"device": "cuda"}),
+                # CUSTOM reuses the SMTR adapters. The paths here are only
+                # placeholders — create() rejects CUSTOM without a config, so
+                # they are never the ones actually loaded.
+                (OCRModelType.CUSTOM,          OCRBackendType.TENSORRT): (SMTRTRTBackend,    cls.SMTR_TRT_ENGINE,    cls.SMTR_DICT_PATH,    {}),
+                (OCRModelType.CUSTOM,          OCRBackendType.ONNX):     (SMTRONNXBackend,   cls.SMTR_ONNX_MODEL,    cls.SMTR_DICT_PATH,    {"device": "cuda"}),
                 (OCRModelType.SVTRV2_CTC,      OCRBackendType.TENSORRT): (SVTRv2TRTBackend,  cls.SVTRV2_TRT_ENGINE,  cls.SVTRV2_DICT_PATH,  {}),
                 (OCRModelType.SVTRV2_CTC,      OCRBackendType.ONNX):     (SVTRv2ONNXBackend, cls.SVTRV2_ONNX_MODEL,  cls.SVTRV2_DICT_PATH,  {"device": "cuda"}),
                 (OCRModelType.OPENOCR_REPSVTR, OCRBackendType.TENSORRT): (TensorRTOpenOCRBackend, cls.DEFAULT_TRT_ENGINE, cls.DEFAULT_DICT_PATH, {}),
@@ -684,6 +694,38 @@ class OCRBackendFactory:
 
         registry = cls._get_registry()
 
+        # ── CUSTOM: paths come from the recipe, so a config is mandatory ─────
+        # It also bypasses AUTO: check_availability() only knows the built-in
+        # paths, so it cannot tell whether a per-recipe engine exists. The
+        # extension decides the backend instead, which is unambiguous.
+        if model_type == OCRModelType.CUSTOM:
+            if config is None or not config.model_path:
+                logger.error(
+                    "OCRModelType.CUSTOM requires an OCRConfig with model_path "
+                    "(the recipe's engine/onnx) — refusing to fall back to the "
+                    "built-in SMTR weights, which would silently read with the "
+                    "wrong model"
+                )
+                return None
+            if not os.path.exists(config.model_path):
+                logger.error(f"Custom OCR model not found on disk: {config.model_path}")
+                return None
+            if not os.path.exists(config.dict_path):
+                # The dict decides every character index; a wrong one decodes
+                # into garbage rather than failing, so this must not be lenient.
+                logger.error(f"Custom OCR dict not found on disk: {config.dict_path}")
+                return None
+            resolved = (OCRBackendType.ONNX if config.model_path.endswith(".onnx")
+                        else OCRBackendType.TENSORRT)
+            AdapterCls = registry[(OCRModelType.CUSTOM, resolved)][0]
+            backend = AdapterCls(config)
+            if backend.is_available:
+                logger.info(f"✅ OCR backend (custom): {backend.backend_name} "
+                            f"← {os.path.basename(config.model_path)}")
+                return backend
+            logger.error(f"❌ Failed to init custom OCR backend from {config.model_path}")
+            return None
+
         # ── Manual selection ────────────────────────────────────────────────
         if backend_type != OCRBackendType.AUTO:
             key = (model_type, backend_type)
@@ -712,6 +754,7 @@ class OCRBackendFactory:
         # Priority order per model type
         _auto_priority = {
             OCRModelType.SMTR:            [OCRBackendType.TENSORRT, OCRBackendType.ONNX],
+            # CUSTOM never reaches here — it returns above, before AUTO.
             OCRModelType.SVTRV2_CTC:      [OCRBackendType.TENSORRT, OCRBackendType.ONNX],
             OCRModelType.OPENOCR_REPSVTR: [OCRBackendType.TENSORRT, OCRBackendType.ONNX],
             OCRModelType.PADDLEV5:        [OCRBackendType.TENSORRT, OCRBackendType.ONNX],
