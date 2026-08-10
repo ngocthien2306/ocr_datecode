@@ -1,0 +1,53 @@
+# ── Web framework (mirrors backend/ and anomaly_service/ pins) ─────────────
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-jose[cryptography]==3.3.0
+python-multipart==0.0.6
+pydantic>=2.5.0,<3.0.0
+pydantic-settings==2.1.0
+
+# ── Database (same MongoDB cluster as backend) ─────────────────────────────
+motor>=3.3.0
+pymongo>=4.5.0
+
+# ── Image IO ───────────────────────────────────────────────────────────────
+opencv-python>=4.8.0
+
+# numpy MUST stay below 2. imgaug 0.4.0 — which OpenOCR's PARSeqAugPIL
+# transform imports — calls np.sctypes, removed in numpy 2.0. opencv and torch
+# both run fine against 1.26 despite pip metadata asking for >=2.
+numpy==1.26.4
+
+# ── Training (OpenOCR) ─────────────────────────────────────────────────────
+# torch/torchvision: install the CUDA build matching this machine's driver
+# FIRST, separately. This is an RTX 5060 Ti (Blackwell, sm_120), which needs
+# cu130 — cu121 wheels report cuda.is_available() True and then crash with
+# "no kernel image is available for execution on the device":
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+# Easiest path on this machine is to clone the env that already has it:
+#   conda create -n ocr_train --clone anomaly_service -y
+imgaug
+albumentations
+lmdb
+pyclipper
+rapidfuzz
+tqdm
+pyyaml
+
+# ── Export ─────────────────────────────────────────────────────────────────
+onnx==1.22.0
+onnxconverter-common
+# torch>=2.9 imports onnxscript unconditionally from torch.onnx.export, even
+# with dynamo=False (which this repo's export path requires).
+onnxscript
+
+# ── ONNX Runtime + TensorRT (verify exported models, build .engine) ────────
+# onnxruntime-gpu's providers are built against CUDA 12 / cuDNN 9 independently
+# of the torch CUDA version above — install alongside, not instead.
+onnxruntime-gpu
+# tensorrt 11.1.0.106: same pin as anomaly_service and scripts/trt_build_utils.py.
+# Engines built by 8.x/9.x/10.x are NOT forward compatible with this runtime.
+tensorrt==11.1.0.106
+# pycuda: needed by ai_services' TextRecognizerSMTRTRT, which verify_export.py
+# reuses so scoring runs through the real runtime rather than a second copy.
+pycuda

@@ -45,6 +45,38 @@ Base checkpoints go in `weights/base/` (gitignored, 81 MB each):
 | `datecode_2406` | `svtrv2_datecode_2406.pth` | already fine-tuned on factory datecodes — **default** |
 | `general` | `svtrv2_smtr_gtc_rctc.pth` | upstream pretrained (114.5k steps), has not seen factory data |
 
+## Run the service
+
+```bash
+cp .env.sample .env      # then set SECRET_KEY to MATCH backend/.env exactly
+pip install -r requirements.txt
+python -m app.main       # or: uvicorn app.main:app --port 8002 --reload
+```
+
+`GET /health` for a liveness check. Auth is the same Bearer token backend's
+`/api/auth/login` issues — this service verifies it against the same
+`SECRET_KEY` and the same `users` collection, and issues none of its own. A
+mismatched `SECRET_KEY` shows up as a blanket 401 on every endpoint.
+
+Ports: 8000 backend, 8001 `anomaly_service`, 8002 here.
+
+Startup logs a warning (not an error) if `OpenOCR/` or the base checkpoints are
+missing: the project, dataset and label endpoints work fine without them, and
+refusing to boot would block label review on any machine that isn't the
+training box. The train endpoint checks again and fails loudly there.
+
+### Endpoints so far
+
+| Method | Path |
+|---|---|
+| GET | `/health` |
+| POST · GET | `/api/ocr/projects` |
+| GET · PATCH · DELETE | `/api/ocr/projects/{id}` |
+| GET | `/api/ocr/projects/{id}/dataset-stats` |
+
+Collections owned here: `ocr_projects`, `ocr_dataset_items`, `ocr_models`.
+`recipes`, `inference_results` and `users` are read-only shared with backend.
+
 ## Train → export → verify
 
 ```bash
