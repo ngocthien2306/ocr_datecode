@@ -82,6 +82,7 @@ training box. The train endpoint checks again and fails loudly there.
 | GET | `/api/ocr/projects/{id}/dataset/items/{iid}/full` | full-res crop |
 | PATCH | `/api/ocr/projects/{id}/dataset/items/{iid}` | edit `gt_text` / `status` / `split` |
 | POST | `.../dataset/items/bulk-status` · `bulk-split` · `bulk-exclude` · `bulk-delete` | |
+| POST | `/api/ocr/projects/{id}/dataset/prepare` | validate + write `rec_gt_*.txt`; `dry_run=true` by default |
 
 Collections owned here: `ocr_projects`, `ocr_dataset_items`, `ocr_models`.
 `recipes`, `inference_results` and `users` are read-only shared with backend.
@@ -105,6 +106,49 @@ promoted in one `bulk-status` call, leaving only the failures to read by hand.
 An item with an empty `gt_text` cannot be verified (400). OpenOCR's label
 encoder returns None for an empty string and drops the sample, so allowing it
 would shrink the training set invisibly instead of erroring.
+
+### Preparing a run — and the silent-substitution trap
+
+`POST .../dataset/prepare` validates the verified items and writes the two label
+files. Call it with `dry_run=true` to see what a run would train on without
+touching disk.
+
+It exists mainly to catch one thing. `BaseRecLabelEncode.encode` returns None
+when `len(text) > max_text_length` (measured on the raw text, before unknown
+characters are stripped), and `SimpleDataSet.__getitem__` answers None by
+fetching a **different sample** — a random one while training, `idx + 1` while
+evaluating (`simple_dataset.py:163`). So an over-long label does not shrink the
+dataset, it duplicates another image into its slot:
+
+* the dataset size is unchanged, so nothing looks wrong;
+* some other image is silently over-represented in training;
+* during eval, the reported accuracy is computed over a set that is no longer
+  your test set.
+
+`data_ocr_merged` contains 12 such labels (e.g. `'Manufactured date:  MFG
+2026/02'`, 31 characters), 10 in train and 2 in test — so every Phase 0 number
+was measured on 154 distinct test images with 2 duplicated, not 156. Well inside
+the noise band there, but the same defect on a dataset full of long labels would
+be invisible and unbounded. `prepare` drops them and says so.
+
+Unknown characters are reported but kept: `encode()` skips characters outside
+the 94-entry dict, so the model learns the image as the stripped text. That is
+usually a stray character worth fixing rather than a reason to drop the sample.
+
+### Train/test split
+
+An item's stored `split` wins — a folder seed carries its own meaningful split,
+and `bulk-split` exists so an operator can pin hard crops into eval.
+`test_split` only carves a slice when nothing is assigned to test at all, which
+is the state a fresh inspection-import leaves.
+
+The carve hashes the item id rather than slicing an ordered list, so an item's
+assignment never changes as the dataset grows. With an index-based slice,
+importing 100 more images reshuffles which images are held out, and the accuracy
+difference between two runs would partly reflect a different eval set rather
+than a better model. The cost is that the ratio is approximate on small
+datasets (60 items at `test_split=0.2` gave 17, not 12); the response reports
+the actual counts.
 
 ### Degenerate regions
 

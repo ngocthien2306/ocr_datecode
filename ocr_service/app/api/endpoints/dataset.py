@@ -25,6 +25,7 @@ from app.models.ocr import (
 )
 from app.repositories.ocr_repository import OCRRepository
 from app.services import dataset_fs
+from app.services.dataset_builder import blocking_reason, build_dataset
 from app.services.inspection_crop import img_to_b64
 
 logger = logging.getLogger(__name__)
@@ -236,6 +237,42 @@ async def bulk_exclude(
         project_id, request.ids, {"exclude_from_training": request.excluded},
     )
     return {"modified": modified, "excluded": request.excluded}
+
+
+@router.post("/projects/{project_id}/dataset/prepare")
+async def prepare_dataset(
+    project_id: str,
+    test_split: float = Query(0.2, ge=0.0, lt=1.0),
+    use_space_char: bool = Query(True),
+    max_text_length: int = Query(25, ge=1),
+    dry_run: bool = Query(True),
+    repo: OCRRepository = Depends(get_repo),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Validate the verified items and write the two rec_gt label files.
+
+    `dry_run=true` (the default) validates and reports without touching disk —
+    that is what the Train tab calls to show what a run will see before the
+    operator commits to it. Training calls it for real.
+
+    The report exists because every failure mode here is silent otherwise:
+    an over-long label makes OpenOCR substitute a different image, an unknown
+    character is stripped without complaint, and a dataset that is 95% one
+    recipe trains a model that only reads that recipe's font.
+    """
+    if not await repo.get_project(project_id):
+        raise HTTPException(404, "Project not found")
+
+    items = await repo.list_trainable_items(project_id)
+    report = build_dataset(
+        project_id, items,
+        test_split=test_split,
+        use_space_char=use_space_char,
+        max_text_length=max_text_length,
+        dry_run=dry_run,
+    )
+    report["blocking_reason"] = blocking_reason(report)
+    return report
 
 
 @router.post("/projects/{project_id}/dataset/items/bulk-delete")
