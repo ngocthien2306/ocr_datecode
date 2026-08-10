@@ -1,0 +1,149 @@
+diff --git a/openrec/metrics/rec_metric_gtc.py b/openrec/metrics/rec_metric_gtc.py
+index f023513..e17a931 100644
+--- a/openrec/metrics/rec_metric_gtc.py
++++ b/openrec/metrics/rec_metric_gtc.py
+@@ -42,6 +42,7 @@ class RecGTCMetric(object):
+         gtc_metric = self.gtc_metric(pred_label[0], batch, training=training)
+         ctc_metric['gtc_acc'] = gtc_metric['acc']
+         ctc_metric['gtc_norm_edit_dis'] = gtc_metric['norm_edit_dis']
++        ctc_metric['min_acc'] = min(ctc_metric['acc'], gtc_metric['acc'])
+         return ctc_metric
+ 
+     def get_metric(self):
+@@ -55,4 +56,12 @@ class RecGTCMetric(object):
+         gtc_metric = self.gtc_metric.get_metric()
+         ctc_metric['gtc_acc'] = gtc_metric['acc']
+         ctc_metric['gtc_norm_edit_dis'] = gtc_metric['norm_edit_dis']
++        # 'acc' is the CTC head alone, so best-checkpoint selection with
++        # main_indicator='acc' is blind to the SMTR/GTC head. That matters
++        # whenever the two heads recover at different rates -- e.g. after a
++        # vocab expansion for use_space_char, where CTC is back to ~0.97 by
++        # epoch 2 while the autoregressive GTC head is still at ~0.52. Picking
++        # on 'acc' there saves a best.pth whose GTC head is unusable.
++        # main_indicator='min_acc' requires both heads to be good.
++        ctc_metric['min_acc'] = min(ctc_metric['acc'], gtc_metric['acc'])
+         return ctc_metric
+diff --git a/openrec/modeling/decoders/__init__.py b/openrec/modeling/decoders/__init__.py
+index dbd0c44..56a3bf0 100644
+--- a/openrec/modeling/decoders/__init__.py
++++ b/openrec/modeling/decoders/__init__.py
+@@ -84,6 +84,18 @@ class GTCDecoder(nn.Module):
+         else:
+             return ctc_pred
+ 
++    def forward_onnx(self, x):
++        """Both heads as a plain tuple, for ONNX export.
++
++        forward() returns a dict in infer_gtc mode; torch.onnx.export flattens
++        that by key order, which is fragile to reorder. Returning the tuple
++        pins the output order the .engine's two bindings are read in
++        (gtc_logits, ctc_logits).
++        """
++        ctc_pred = self.ctc_decoder(x)
++        gtc_pred = self.gtc_decoder.forward_onnx(x.flatten(2).transpose(1, 2))
++        return gtc_pred, ctc_pred
++
+ 
+ class GTCDecoderTwo(nn.Module):
+ 
+diff --git a/openrec/modeling/decoders/smtr_decoder.py b/openrec/modeling/decoders/smtr_decoder.py
+index 4ee1d55..c7a19a4 100644
+--- a/openrec/modeling/decoders/smtr_decoder.py
++++ b/openrec/modeling/decoders/smtr_decoder.py
+@@ -612,6 +612,66 @@ class SMTRDecoder(nn.Module):
+                 )
+             return torch.concat(logits_all, 1)
+ 
++    def forward_onnx(self, x):
++        """forward_test without the data-dependent early exit — for ONNX export.
++
++        forward_test breaks out of the decode loop as soon as every batch
++        element has emitted <eos>. torch.onnx.export traces that condition on
++        the dummy input, so the exported graph would be frozen at however many
++        steps that one random tensor happened to need. Here the loop always
++        runs the full max_len-1 steps, giving a fixed [B, max_len-1, V] output
++        the runtime post-processor already knows how to truncate at <eos>.
++
++        Also drops the self.attn_maps bookkeeping: the exported graph has two
++        outputs (gtc_logits, ctc_logits) to match what
++        TextRecognizerSMTRTRT asserts, so per-step attention maps would be
++        dead weight in the graph.
++        """
++        if not self.ds:
++            visual_f = x + self.vis_pos_embed
++        elif self.pos2d:
++            visual_f = x + self.vis_pos_embed[:, :, :x.shape[2], :x.shape[3]]
++            visual_f = x.flatten(2).transpose(1, 2)
++        else:
++            visual_f = x
++        bs = x.shape[0]
++
++        if self.next_mode:
++            ques = self.next_token.tile([bs, 1, 1, 1]).squeeze(1)
++            prompt_embed = self.prompt_next_embed.tile([bs, 1, 1, 1]).squeeze(1)
++            bos = self.bos_next
++        else:
++            ques = self.pre_token.tile([bs, 1, 1, 1]).squeeze(1)
++            prompt_embed = self.prompt_pre_embed.tile([bs, 1, 1, 1]).squeeze(1)
++            bos = self.bos_pre
++
++        prompt_id = torch.full([bs, self.sub_str_len],
++                               bos,
++                               dtype=torch.long,
++                               device=x.device)
++        mask_pad = torch.zeros([bs, 1], dtype=torch.float32, device=x.device)
++        logits_all = []
++
++        for _ in range(0, self.max_len - 1):
++            prompt = torch.concat([
++                prompt_embed[:, :1, :],
++                prompt_embed[:, 1:, :] + self.char_embed(prompt_id)
++            ], 1)
++            mask_next = torch.where(prompt_id == bos, float('-inf'), 0)
++            mask = torch.concat([mask_pad, mask_next], 1)
++            ques_i = ques
++            for layer in self.cmff_decoder:
++                ques_i = layer(ques_i, prompt, visual_f, mask.unsqueeze(1))
++            logits = F.softmax(self.ques1_head(self.norm_pred(ques_i)), -1)
++            pred_id_i = logits.argmax(-1)
++            logits_all.append(logits)
++            if self.next_mode:
++                prompt_id = torch.concat([prompt_id[:, 1:, ], pred_id_i], 1)
++            else:
++                prompt_id = torch.concat([pred_id_i, prompt_id[:, :-1, ]], 1)
++
++        return torch.concat(logits_all, 1)
++
+     def forward_train(self, x, targets=None):
+         bs = x.shape[0]
+ 
+diff --git a/openrec/postprocess/ctc_postprocess.py b/openrec/postprocess/ctc_postprocess.py
+index 8c164cd..e47ad78 100644
+--- a/openrec/postprocess/ctc_postprocess.py
++++ b/openrec/postprocess/ctc_postprocess.py
+@@ -104,7 +104,9 @@ class CTCLabelDecode(BaseRecLabelDecode):
+     def __call__(self, preds, batch=None, **kwargs):
+         # preds = preds['res']
+         if kwargs.get('torch_tensor', True):
+-            preds = preds.detach().cpu().numpy()
++            # .float() before .numpy(): with Global.use_amp the head emits
++            # bf16/fp16, which numpy has no dtype for.
++            preds = preds.detach().cpu().float().numpy()
+         preds_idx = preds.argmax(axis=2)
+         preds_prob = preds.max(axis=2)
+         text = self.decode(preds_idx, preds_prob, is_remove_duplicate=True)
+diff --git a/openrec/postprocess/smtr_postprocess.py b/openrec/postprocess/smtr_postprocess.py
+index 5ead0be..99bd176 100644
+--- a/openrec/postprocess/smtr_postprocess.py
++++ b/openrec/postprocess/smtr_postprocess.py
+@@ -26,7 +26,9 @@ class SMTRLabelDecode(BaseRecLabelDecode):
+         if isinstance(preds, list):
+             preds = preds[-1]
+         if isinstance(preds, torch.Tensor):
+-            preds = preds.detach().cpu().numpy()
++            # .float() before .numpy(): with Global.use_amp the head emits
++            # bf16/fp16, which numpy has no dtype for.
++            preds = preds.detach().cpu().float().numpy()
+         preds_idx = preds.argmax(axis=2)
+         preds_prob = preds.max(axis=2)
+         text = self.decode(preds_idx, preds_prob, is_remove_duplicate=False)

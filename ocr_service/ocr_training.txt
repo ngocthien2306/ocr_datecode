@@ -1,0 +1,51 @@
+đầu tiên hãy đọc fine jupyter này để hiểu cách train model này 
+/home/msi/Source/ocr_datecode/ocr_service/finetune_colab_2.ipynb
+sau đó tìm hiểu bước export sang onnx và sau đó là tensorrt giống model hiện tại 
+
+/home/msi/Source/ocr_datecode/ocr_service/export_smtr_onnx_attn.py
+/home/msi/Source/ocr_datecode/ocr_service/infer_rec_onnx_attn.py
+
+giống như tôi đã convert model này 
+/home/msi/Source/ocr_datecode/languages/english/rec_smtr_attn_fp16.onnx
+/home/msi/Source/ocr_datecode/languages/english/rec_smtr_attn_fp16.engine
+
+sau khi verify training được xong hết rồi thì tôi muốn design code training cho service này giống như 
+/home/msi/Source/ocr_datecode/anomaly_service
+
+lấy data từ recipe sau đó crop các vùng có type là text/datecode để training, data mẫu có thể lấy từ /home/msi/Source/ocr_datecode/ocr_service/data_ocr_merged để có data nhanh cho training 
+
+
+bước tiếp theo là tạo UI cho chức năng này trên FE 
+/home/msi/Source/ocr_datecode/frontend-ts/src/components
+cuối cùng sau khi train xong và export sang tensorrt thì cho người dùng select model trên recipe 
+/home/msi/Source/ocr_datecode/docs/memory check lại những tiêu chí trong này để dev cho đúng 
+
+tuy nhiên /home/msi/Source/ocr_datecode/frontend-ts/src/components/recipe/RecipeFormModal.tsx:2228
+            {activeTab === 'model' && (
+tab model này tôi có cho chọn model ocr, bây giờ đổi logic. Sẽ cho select model đã train bên kìa và mặc định kèm thêm các model cũ 
+                      <select
+                        name="ocr_model_type"
+                        value={formData.ocr_model_type}
+                        onChange={(e) => setFormData(prev => ({ ...prev, ocr_model_type: e.target.value }))}
+                      >
+                        <option value="">-- Default --</option>
+                        <option value="SMTR">SMTR (large-x)</option>
+                        <option value="SVTRV2_CTC">SVTRV2_CTC (large)</option>
+                        <option value="OPENOCR_REPSVTR">OPENOCR_REPSVTR (medium)</option>
+                        <option value="PADDLEV5">PADDLEV5 (small)</option>
+                      </select>
+
+                      người dùng có thể select model cũ hoặc chọn model mới
+                      hiển thị như sau 
+                      SMRT
+                      SVTRV2_CTC
+                      OPENOCR_REPSVTR
+                      PADDLEV5
+                      Model mới 
+                      model mới 
+                      Nếu ko có model mới thì cứ default các model này 
+
+                      Nghĩa là show các default trước, rồi show các project ocr để họ chọn 
+
+Hãy lên plan chi tiết và viết thành file md cho tôi, sau đó tôi sẽ yêu cầu làm từng bước.
+CHÚ Ý: Những cái nào còn mơ hồ chưa rõ thì phải hỏi lại ngay, tránh làm lan mang
