@@ -2,10 +2,10 @@
 Cross-check a fine-tuned SMTR model across the three runtimes it passes
 through: PyTorch checkpoint -> ONNX -> TensorRT .engine.
 
-Decoding is deliberately done with ai_services' own classes
-(TextRecognizerSMTRONNX / TextRecognizerSMTRTRT + smtr_utils), not a local
-re-implementation, so a mismatch here is a real production mismatch rather
-than a difference between two copies of the post-processing.
+Decoding goes through app/services/smtr_runtime/ — the vendored copy of
+ai_services' recognizer classes — so a mismatch here is a decode mismatch, not a
+difference between two re-implementations. Run check_runtime_parity.py to confirm
+the copy still matches what production uses.
 
 Usage:
     python verify_export.py \
@@ -18,29 +18,13 @@ import os
 import string
 import sys
 import time
-import types
 
 import cv2
 
 __dir__ = os.path.dirname(os.path.abspath(__file__))
-_AI_SERVICES = os.path.join(__dir__, '..', 'ai_services')
-sys.path.insert(0, _AI_SERVICES)
+sys.path.insert(0, __dir__)
 
 DEFAULT_DICT = os.path.join(__dir__, 'OpenOCR', 'tools', 'utils', 'EN_symbol_dict.txt')
-
-
-def _stub_camera_management_package():
-    """Make camera_management.ocr.* importable without running the package
-    __init__, which pulls in pypylon (Basler SDK — not installed outside the
-    machine that talks to the cameras). Only the recognizer classes are
-    wanted here; the stub keeps __path__ so submodule imports still resolve."""
-    for name, rel in (('camera_management', 'camera_management'),
-                      ('camera_management.ocr', 'camera_management/ocr')):
-        if name in sys.modules:
-            continue
-        mod = types.ModuleType(name)
-        mod.__path__ = [os.path.join(_AI_SERVICES, *rel.split('/'))]
-        sys.modules[name] = mod
 
 
 def load_gt(data_dir, gt_file):
@@ -104,9 +88,8 @@ def main():
     items = load_gt(args.data, args.gt)
     print(f'{len(items)} test images from {args.gt}\n')
 
-    _stub_camera_management_package()
-    from camera_management.ocr.backends.smtr_onnx import TextRecognizerSMTRONNX
-    from camera_management.ocr.backends.smtr_trt import TextRecognizerSMTRTRT
+    from app.services.smtr_runtime.smtr_onnx import TextRecognizerSMTRONNX
+    from app.services.smtr_runtime.smtr_trt import TextRecognizerSMTRTRT
 
     onnx_rec = TextRecognizerSMTRONNX(args.onnx, args.dict, device='cpu')
     onnx_preds, onnx_ms = run_backend(onnx_rec, items, args.batch)

@@ -228,6 +228,29 @@ the engine accuracy check have all finished. Flipping it at the end of training
 made a model look ready while its engine was still building, so the export
 endpoints would 400 on something the UI showed as done.
 
+### The vendored SMTR runtime
+
+`app/services/smtr_runtime/` is a copy of ai_services'
+`camera_management/ocr/{smtr_utils.py, backends/smtr_{trt,onnx}.py}` — 416 lines,
+byte-identical apart from one relative import. Accuracy is measured through it,
+so the number reflects the same decode path the line uses.
+
+Copied rather than imported: reaching into ai_services means either executing
+`camera_management/__init__.py`, which imports pypylon (the Basler camera SDK),
+or stubbing the package to skip it — and a stub that bypasses `__init__` breaks
+silently the moment ai_services changes its layout or adds an import. The three
+files depend on nothing outside themselves, so a copy is the cheaper risk.
+
+The risk it does carry is drift, since both copies keep working while diverging:
+
+```bash
+python check_runtime_parity.py          # exits 1 on any difference
+python check_runtime_parity.py --diff   # show what changed
+```
+
+Run it after touching either side. Verified both ways: it reports OK on a clean
+tree and exits 1 on a one-line change.
+
 ### Scoring the export, not the checkpoint
 
 The number that matters for putting a model on a recipe is the **engine's**

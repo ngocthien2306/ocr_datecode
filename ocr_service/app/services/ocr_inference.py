@@ -1,48 +1,30 @@
 """
-Score exported artifacts using ai_services' OWN recognizer classes.
+Score exported artifacts with the same decode path production uses.
 
-This module deliberately imports from ../ai_services rather than shipping a
-second copy of the SMTR pre/post-processing. anomaly_service made the opposite
-call for its TensorRT helper (ship a copy, stay independently deployable), and
-that is right for a build utility — but not here. A second copy of the decode
-path is exactly how a model scores 0.96 in the studio and 0.43 in production:
-the numbers this service reports are only meaningful if they come from the code
-that will actually read the labels on the line. Both services run on the same
-workstation by design, the same way anomaly_service reads backend/uploads
-directly.
+The recognizer classes live in app/services/smtr_runtime/, a vendored copy of
+ai_services' originals — not an import across service trees. Importing them
+would mean either executing camera_management/__init__.py (which pulls in
+pypylon, the Basler camera SDK) or stubbing the package to skip it, and a stub
+that bypasses __init__ breaks silently as soon as ai_services changes its layout
+or adds an import.
 
-Consequence to keep in mind: changing smtr_utils or the backends in ai_services
-changes this service's reported accuracy. That is the intent.
+The tradeoff that comes with copying is drift: an accuracy number is only
+meaningful if this service decodes exactly the way the line does.
+`python check_runtime_parity.py` compares the copies against the originals and
+should be run after touching either side.
 """
 import logging
 import string
-import sys
-import types
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import cv2 as cv
 
-from app.core.config import AI_SERVICES_DIR, CHARACTER_DICT_PATH
+from app.core.config import CHARACTER_DICT_PATH
 
 logger = logging.getLogger(__name__)
 
 _RECOGNIZER_CACHE: Dict[str, object] = {}
-
-
-def _stub_camera_management_package() -> None:
-    """Make camera_management.ocr.* importable without executing the package
-    __init__, which imports pypylon (the Basler SDK — present only where the
-    cameras are). The stub keeps __path__ so submodule imports still resolve."""
-    if str(AI_SERVICES_DIR) not in sys.path:
-        sys.path.insert(0, str(AI_SERVICES_DIR))
-    for name, rel in (("camera_management", ("camera_management",)),
-                      ("camera_management.ocr", ("camera_management", "ocr"))):
-        if name in sys.modules:
-            continue
-        mod = types.ModuleType(name)
-        mod.__path__ = [str(AI_SERVICES_DIR.joinpath(*rel))]
-        sys.modules[name] = mod
 
 
 def load_recognizer(model_path: Path, engine: str, dict_path: Optional[Path] = None):
@@ -56,14 +38,15 @@ def load_recognizer(model_path: Path, engine: str, dict_path: Optional[Path] = N
     if key in _RECOGNIZER_CACHE:
         return _RECOGNIZER_CACHE[key]
 
-    _stub_camera_management_package()
     dict_str = str(dict_path or CHARACTER_DICT_PATH)
 
+    # Imported lazily: tensorrt+pycuda and onnxruntime are heavy, and a machine
+    # that only reviews labels should not need either installed.
     if engine == "tensorrt":
-        from camera_management.ocr.backends.smtr_trt import TextRecognizerSMTRTRT
+        from app.services.smtr_runtime.smtr_trt import TextRecognizerSMTRTRT
         rec = TextRecognizerSMTRTRT(str(model_path), dict_str)
     elif engine == "onnx":
-        from camera_management.ocr.backends.smtr_onnx import TextRecognizerSMTRONNX
+        from app.services.smtr_runtime.smtr_onnx import TextRecognizerSMTRONNX
         rec = TextRecognizerSMTRONNX(str(model_path), dict_str, device="cuda")
     else:
         raise ValueError(f"engine must be 'onnx' or 'tensorrt', got {engine!r}")
