@@ -1,0 +1,162 @@
+/* OCR Training Studio.
+ *
+ * The studio chrome (overlay, header, tabs, sidebar, buttons, modal, gallery
+ * cards) is shared with the Anomaly studio — those .at-* rules are generic
+ * studio layout, nothing anomaly-specific — so this file imports them rather
+ * than restating 600 lines under a different prefix. Editing AnomalyTraining.css
+ * therefore changes both studios, which is the point: they should look the same.
+ *
+ * Only the OCR-specific pieces live here, all prefixed .ot-. They exist because
+ * OCR crops are single lines of text with extreme aspect ratios (a 500x40 label
+ * is normal), so the square-ish cards the anomaly gallery uses make the
+ * characters unreadable.
+ */
+@import './AnomalyTraining.css';
+
+/* ── Label review grid ────────────────────────────────────────────────── */
+
+.ot-label-row {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  margin-bottom: 8px;
+}
+
+.ot-label-row.is-verified { border-left: 3px solid #22c55e; }
+.ot-label-row.is-need_review { border-left: 3px solid #f59e0b; }
+.ot-label-row.is-rejected { border-left: 3px solid #ef4444; opacity: 0.6; }
+.ot-label-row.is-focused { box-shadow: 0 0 0 2px #3b82f6; }
+
+/* Crops keep their aspect ratio and are free to be wide; the row scrolls
+ * horizontally rather than squashing them, because a squashed datecode is
+ * exactly what an operator cannot read. */
+.ot-crop-wrap {
+  overflow-x: auto;
+  background: #f8fafc;
+  border-radius: 4px;
+  padding: 4px;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+}
+
+.ot-crop-img {
+  height: 48px;
+  width: auto;
+  max-width: none;
+  image-rendering: crisp-edges;
+  cursor: zoom-in;
+}
+
+.ot-crop-img.ot-crop-lg { height: 96px; }
+
+.ot-label-fields { display: flex; flex-direction: column; gap: 6px; }
+
+.ot-gt-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+.ot-gt-input:focus { outline: 2px solid #3b82f6; outline-offset: -1px; }
+.ot-gt-input.ot-dirty { border-color: #f59e0b; background: #fffbeb; }
+
+/* expected vs recognized, so the operator can see which one the prefill came
+ * from and why they disagree. */
+.ot-hint-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: #64748b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.ot-hint-row b { color: #334155; font-weight: 600; }
+.ot-hint-exp { color: #0f766e; }
+.ot-hint-rec { color: #b45309; }
+
+.ot-row-actions { display: flex; gap: 6px; align-items: center; }
+
+.ot-meta-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+
+.ot-chip-sm {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: #f1f5f9;
+  color: #475569;
+  white-space: nowrap;
+}
+
+.ot-chip-sm.ot-pass { background: rgba(34, 197, 94, 0.14); color: #15803d; }
+.ot-chip-sm.ot-fail { background: rgba(239, 68, 68, 0.14); color: #b91c1c; }
+.ot-chip-sm.ot-test { background: rgba(59, 130, 246, 0.14); color: #1d4ed8; }
+
+/* ── Toolbar / counts ─────────────────────────────────────────────────── */
+
+.ot-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 0 12px;
+}
+
+.ot-spacer { flex: 1; }
+
+.ot-kbd-hint {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.ot-kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 10px;
+}
+
+/* ── Candidate grid (import modal) ────────────────────────────────────── */
+
+.ot-cand-row {
+  display: grid;
+  grid-template-columns: 28px 1fr 260px;
+  gap: 10px;
+  align-items: center;
+  padding: 8px;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.ot-cand-row.is-imported { opacity: 0.45; }
+
+.ot-prepare-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.ot-stat-box {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.ot-stat-box .ot-stat-num { font-size: 20px; font-weight: 700; color: #0f172a; }
+.ot-stat-box .ot-stat-label { font-size: 11px; color: #64748b; text-transform: uppercase; }
+.ot-stat-box.ot-warn { border-color: #f59e0b; background: #fffbeb; }
+.ot-stat-box.ot-bad { border-color: #ef4444; background: #fef2f2; }
