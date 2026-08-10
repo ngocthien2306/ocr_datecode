@@ -14,6 +14,7 @@ from pymongo.errors import DuplicateKeyError
 
 from app.models.ocr import (
     OCRDatasetItemInDB,
+    OCRModelInDB,
     OCRProjectCreate,
     OCRProjectInDB,
     OCRProjectUpdate,
@@ -242,6 +243,78 @@ class OCRRepository:
             }},
         )
         return counts
+
+    # ─────────────────────────────── Models ──────────────────────────────
+
+    async def create_model_record(self, project_id: str, params: Dict[str, Any], base_label: str,
+                                  use_space_char: bool) -> OCRModelInDB:
+        now = datetime.utcnow()
+        doc = {
+            "project_id": project_id,
+            "params": params,
+            "base_label": base_label,
+            "use_space_char": use_space_char,
+            # Provisional: the real value is read back off the trained
+            # checkpoint, since a vocab expansion can change it mid-run.
+            "vocab_size": 100 if use_space_char else 99,
+            "metrics": {},
+            "checkpoint_path": "",
+            "status": "pending",
+            "error": None,
+            "phase": None,
+            "progress": 0.0,
+            "created_at": now,
+        }
+        result = await self.models.insert_one(doc)
+        doc["_id"] = str(result.inserted_id)
+        return OCRModelInDB(**doc)
+
+    async def update_model_record(self, model_id: str, update: Dict[str, Any]) -> None:
+        await self.models.update_one({"_id": ObjectId(model_id)}, {"$set": update})
+
+    async def list_models(self, project_id: str) -> List[OCRModelInDB]:
+        cursor = self.models.find({"project_id": project_id}).sort("created_at", -1)
+        return [OCRModelInDB(**_to_str_id(doc)) async for doc in cursor]
+
+    async def get_model(self, model_id: str) -> Optional[OCRModelInDB]:
+        if not ObjectId.is_valid(model_id):
+            return None
+        doc = await self.models.find_one({"_id": ObjectId(model_id)})
+        return OCRModelInDB(**_to_str_id(doc)) if doc else None
+
+    async def delete_model(self, model_id: str) -> bool:
+        if not ObjectId.is_valid(model_id):
+            return False
+        result = await self.models.delete_one({"_id": ObjectId(model_id)})
+        return result.deleted_count > 0
+
+    async def list_completed_models(self) -> List[OCRModelInDB]:
+        """Every completed model across ALL projects — feeds the base-checkpoint
+        picker (a broad project's model can seed a narrow one) and, later, the
+        recipe model dropdown."""
+        cursor = self.models.find({"status": "completed"}).sort("created_at", -1)
+        return [OCRModelInDB(**_to_str_id(doc)) async for doc in cursor]
+
+    async def reset_stuck_training(self) -> int:
+        """Fail any model left in training/pending by a service restart.
+
+        Training runs in a background task, so a restart mid-run orphans the
+        record: nothing will ever move it off 'training' and the project stays
+        stuck showing a run that no longer exists.
+        """
+        result = await self.models.update_many(
+            {"status": {"$in": ("training", "pending")}},
+            {"$set": {
+                "status": "failed",
+                "error": "Interrupted by an ocr_service restart",
+                "phase": "failed",
+            }},
+        )
+        if result.modified_count:
+            await self.projects.update_many(
+                {"status": "training"}, {"$set": {"status": "active"}},
+            )
+        return result.modified_count
 
     # ─────────────────────────────── Indexes ─────────────────────────────
 

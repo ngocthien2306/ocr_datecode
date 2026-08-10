@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.endpoints import candidates, dataset, import_dataset, projects
+from app.api.endpoints import candidates, dataset, import_dataset, projects, train
 from app.core.config import (
     BASE_CKPT_DIR,
     BUILTIN_BASES,
@@ -47,7 +47,13 @@ def _check_training_prerequisites() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await connect_to_mongo()
-    await OCRRepository(get_database()).create_indexes()
+    repo = OCRRepository(get_database())
+    await repo.create_indexes()
+    # Training runs in a background task, so a restart mid-run orphans the
+    # record — nothing left alive will ever move it off 'training'.
+    stuck = await repo.reset_stuck_training()
+    if stuck:
+        logger.warning(f"⚠️  Reset {stuck} training run(s) orphaned by a restart")
     _check_training_prerequisites()
     yield
     await close_mongo_connection()
@@ -71,6 +77,7 @@ app.include_router(projects.router, prefix="/api/ocr", tags=["OCR Projects"])
 app.include_router(candidates.router, prefix="/api/ocr", tags=["OCR Candidates"])
 app.include_router(import_dataset.router, prefix="/api/ocr", tags=["OCR Candidates"])
 app.include_router(dataset.router, prefix="/api/ocr", tags=["OCR Dataset"])
+app.include_router(train.router, prefix="/api/ocr", tags=["OCR Training"])
 
 
 @app.get("/")

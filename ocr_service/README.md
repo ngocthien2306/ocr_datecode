@@ -83,6 +83,12 @@ training box. The train endpoint checks again and fails loudly there.
 | PATCH | `/api/ocr/projects/{id}/dataset/items/{iid}` | edit `gt_text` / `status` / `split` |
 | POST | `.../dataset/items/bulk-status` · `bulk-split` · `bulk-exclude` · `bulk-delete` | |
 | POST | `/api/ocr/projects/{id}/dataset/prepare` | validate + write `rec_gt_*.txt`; `dry_run=true` by default |
+| GET | `/api/ocr/base-checkpoints` | built-in bases + every completed model, grouped by project |
+| POST | `/api/ocr/projects/{id}/train` | start a run |
+| GET | `/api/ocr/projects/{id}/models` · `.../{mid}/status` | |
+| GET | `/api/ocr/projects/{id}/models/{mid}/logs?since=` | live log, `since` cursor |
+| POST | `/api/ocr/projects/{id}/models/{mid}/cancel` | |
+| DELETE | `/api/ocr/projects/{id}/models/{mid}` | drops the record and every file the run wrote |
 
 Collections owned here: `ocr_projects`, `ocr_dataset_items`, `ocr_models`.
 `recipes`, `inference_results` and `users` are read-only shared with backend.
@@ -192,6 +198,42 @@ Measure the engine's accuracy at **batch=1**: `preprocess_batch` pads every crop
 in a batch to the widest one with −1, which costs real accuracy (0.968 → 0.917 at
 batch 8 on the same engine). That's pre-existing production behaviour, not an
 export problem, but it makes batched numbers useless for gating a model.
+
+## Training through the API
+
+`POST /projects/{id}/train` renders a config, widens the base checkpoint if the
+run needs the space class, and drives `tools/train_rec.py` as a **subprocess**.
+Not in-process: train_rec.py configures the root logger, claims a CUDA device
+globally and initialises torch.distributed, so hosting it inside uvicorn would
+pollute the API process and leave nothing clean to kill on cancel. A subprocess
+gives a real `terminate()` and takes its CUDA context with it.
+
+Phases reported on the model record: `queued` → `waiting_for_gpu` → `preparing`
+→ `training` (0–85%) → `trained` → `completed`. Export owns the last 15%, so the
+bar doesn't sit at 100% through a 40-second engine build.
+
+Everything the run writes is under `data/projects/{id}/models/`. The generated
+config sets `save_epoch_step: [100000, 100000]`, which suppresses `epoch_N.pth`
+— each is 252 MB and the defaults wrote **2.7 GB per run**. `latest.pth` and the
+run directory are removed on success too; only `{model_id}.pth` (84 MB), the
+config and the JSONL log survive.
+
+### GPU arbitration
+
+Runs take a `flock` (`/tmp/ocr_datecode_gpu.lock`, override with
+`OCR_GPU_LOCK_PATH`) and **queue** rather than fail — an operator starts a run
+and walks away, so waiting beats erroring thirty seconds after they stopped
+watching. A queued run sits in `waiting_for_gpu` and the start response reports
+the current holder.
+
+OCR training does not need `ai_services` stopped: 2.6 GB alongside its 3.5 GB
+fits comfortably (see the VRAM table). What does not fit is two training runs at
+once, which is what this lock prevents.
+
+**Scope limit:** only `ocr_service` takes this lock today. `anomaly_service` has
+no GPU arbitration of its own, so two operators training in the two studios
+simultaneously can still OOM both runs. Fixing that means calling the same
+context manager on anomaly's training path, pointed at the same file.
 
 ## Training with spaces
 
