@@ -7,11 +7,17 @@ project + counting methods are filled in at this step; dataset-item and model
 methods land with the endpoints that use them (see docs/ocr_training_plan.md §7).
 """
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from bson import ObjectId
+from pymongo.errors import DuplicateKeyError
 
-from app.models.ocr import OCRProjectCreate, OCRProjectInDB, OCRProjectUpdate
+from app.models.ocr import (
+    OCRDatasetItemInDB,
+    OCRProjectCreate,
+    OCRProjectInDB,
+    OCRProjectUpdate,
+)
 
 
 def _to_str_id(doc: dict) -> dict:
@@ -80,6 +86,130 @@ class OCRRepository:
             {"_id": ObjectId(project_id)},
             {"$set": {"status": status, "updated_at": datetime.utcnow()}},
         )
+
+    # ─────────────────────────────── Dataset items ───────────────────────
+
+    async def get_imported_provenance_keys(self, project_id: str) -> Dict[str, str]:
+        """{composite_key: status} for every item imported from an inspection.
+
+        composite_key = "{inspection_id}:{camera_serial}:{frame_idx}:{annotation_index}"
+        — annotation_index included because one frame can hold several OCR
+        regions. Lets the candidates grid grey out what is already imported
+        without a query per row.
+        """
+        out: Dict[str, str] = {}
+        cursor = self.items.find(
+            {"project_id": project_id, "inspection_id": {"$type": "string"}},
+            {"inspection_id": 1, "camera_serial": 1, "frame_idx": 1,
+             "annotation_index": 1, "status": 1},
+        )
+        async for doc in cursor:
+            key = (f"{doc.get('inspection_id')}:{doc.get('camera_serial', '')}"
+                   f":{doc.get('frame_idx', 0)}:{doc.get('annotation_index', 0)}")
+            out[key] = doc.get("status", "")
+        return out
+
+    async def insert_item(self, doc: Dict[str, Any]) -> Optional[str]:
+        """Insert one dataset item. Returns None when the unique import_dedup
+        index rejects it as a duplicate, so callers can count it as skipped
+        rather than failing the whole batch."""
+        try:
+            result = await self.items.insert_one(doc)
+        except DuplicateKeyError:
+            return None
+        return str(result.inserted_id)
+
+    async def list_items_page(
+        self,
+        project_id: str,
+        status: Optional[str],
+        split: Optional[str],
+        skip: int,
+        limit: int,
+    ) -> Tuple[List[OCRDatasetItemInDB], int]:
+        """One page of items (newest first) + the total matching count.
+        Filtered server-side so thumbnail generation only reads the images on
+        the page actually being shown."""
+        query = self._item_query(project_id, status, split)
+        total = await self.items.count_documents(query)
+        cursor = self.items.find(query).sort("created_at", -1).skip(skip).limit(limit)
+        items = [OCRDatasetItemInDB(**_to_str_id(doc)) async for doc in cursor]
+        return items, total
+
+    async def list_item_ids(
+        self, project_id: str, status: Optional[str], split: Optional[str],
+    ) -> List[str]:
+        """Ids only — lets "select all" in the Label tab span pages without
+        pulling every page's base64 thumbnails."""
+        cursor = self.items.find(
+            self._item_query(project_id, status, split), {"_id": 1}
+        ).sort("created_at", -1)
+        return [str(doc["_id"]) async for doc in cursor]
+
+    @staticmethod
+    def _item_query(project_id: str, status: Optional[str], split: Optional[str]) -> Dict[str, Any]:
+        query: Dict[str, Any] = {"project_id": project_id}
+        if status:
+            query["status"] = status
+        if split:
+            query["split"] = split
+        return query
+
+    async def get_item(self, item_id: str) -> Optional[OCRDatasetItemInDB]:
+        if not ObjectId.is_valid(item_id):
+            return None
+        doc = await self.items.find_one({"_id": ObjectId(item_id)})
+        return OCRDatasetItemInDB(**_to_str_id(doc)) if doc else None
+
+    async def update_item(self, item_id: str, update: Dict[str, Any]) -> bool:
+        if not ObjectId.is_valid(item_id):
+            return False
+        update["updated_at"] = datetime.utcnow()
+        result = await self.items.update_one({"_id": ObjectId(item_id)}, {"$set": update})
+        return result.matched_count > 0
+
+    async def update_items(
+        self, project_id: str, item_ids: List[str], update: Dict[str, Any],
+    ) -> int:
+        valid = [ObjectId(i) for i in item_ids if ObjectId.is_valid(i)]
+        if not valid:
+            return 0
+        update["updated_at"] = datetime.utcnow()
+        result = await self.items.update_many(
+            {"_id": {"$in": valid}, "project_id": project_id}, {"$set": update},
+        )
+        return result.modified_count
+
+    async def get_items(self, project_id: str, item_ids: List[str]) -> List[OCRDatasetItemInDB]:
+        valid = [ObjectId(i) for i in item_ids if ObjectId.is_valid(i)]
+        if not valid:
+            return []
+        cursor = self.items.find({"_id": {"$in": valid}, "project_id": project_id})
+        return [OCRDatasetItemInDB(**_to_str_id(doc)) async for doc in cursor]
+
+    async def delete_items(self, project_id: str, item_ids: List[str]) -> List[OCRDatasetItemInDB]:
+        """Delete rows and return what was deleted, so the caller can remove
+        the image files too (the row is the only pointer to them)."""
+        items = await self.get_items(project_id, item_ids)
+        if items:
+            await self.items.delete_many(
+                {"_id": {"$in": [ObjectId(i.id) for i in items]}, "project_id": project_id}
+            )
+        return items
+
+    async def list_trainable_items(self, project_id: str) -> List[OCRDatasetItemInDB]:
+        """Items a run will actually see: verified and not excluded.
+
+        Ordered by _id so the train/test split derived from this list is stable
+        across runs — a shuffled order would silently reshuffle the eval set
+        between two runs on the same data and make their metrics incomparable.
+        """
+        cursor = self.items.find({
+            "project_id": project_id,
+            "status": "verified",
+            "exclude_from_training": {"$ne": True},
+        }).sort("_id", 1)
+        return [OCRDatasetItemInDB(**_to_str_id(doc)) async for doc in cursor]
 
     # ─────────────────────────────── Counts ──────────────────────────────
 

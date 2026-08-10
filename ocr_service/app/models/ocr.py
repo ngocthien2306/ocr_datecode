@@ -53,6 +53,61 @@ LABEL_STATUSES = ("need_review", "verified", "rejected")
 REGION_TYPES = ("text", "datecode")
 
 
+class OCRImportSelection(BaseModel):
+    inspection_id: str
+    camera_serial: str
+    frame_idx: int
+    annotation_index: int
+    # Optional override — the FE can send a label the operator already fixed in
+    # the candidates grid, skipping a round-trip through the Label tab.
+    gt_text: Optional[str] = None
+
+
+class OCRImportRequest(BaseModel):
+    selections: List[OCRImportSelection]
+    # 'test' puts the imports straight into the eval split. Default 'train':
+    # the split is re-derived per run from test_split anyway, so this only
+    # matters for pinning specific images to eval.
+    split: str = "train"
+
+
+class OCRImportFolderRequest(BaseModel):
+    """Seed a project from an on-disk OpenOCR-format dataset — a folder with
+    rec_gt_train.txt / rec_gt_test.txt and the images they reference.
+
+    Meant for data_ocr_merged, so a project has trainable data in seconds
+    without trawling inference_results. These arrive as `verified` because the
+    label files are already reviewed ground truth."""
+    # Relative to ocr_service/, or absolute. Defaults to the bundled sample.
+    folder: str = "data_ocr_merged"
+    mark_verified: bool = True
+
+
+class OCRRelabelRequest(BaseModel):
+    gt_text: Optional[str] = None
+    status: Optional[str] = None  # need_review | verified | rejected
+    split: Optional[str] = None   # train | test
+
+
+class OCRBulkIdsRequest(BaseModel):
+    ids: List[str]
+
+
+class OCRBulkStatusRequest(BaseModel):
+    ids: List[str]
+    status: str
+
+
+class OCRBulkSplitRequest(BaseModel):
+    ids: List[str]
+    split: str
+
+
+class OCRBulkExcludeRequest(BaseModel):
+    ids: List[str]
+    excluded: bool
+
+
 class OCRDatasetItemInDB(BaseModel):
     id: str = Field(alias="_id")
     project_id: str

@@ -3,7 +3,8 @@ from typing import List
 
 from pydantic_settings import BaseSettings
 
-_SERVICE_ROOT = Path(__file__).parent.parent.parent  # ocr_service/
+SERVICE_ROOT = Path(__file__).parent.parent.parent  # ocr_service/
+
 
 
 class Settings(BaseSettings):
@@ -38,23 +39,23 @@ class Settings(BaseSettings):
 settings = Settings()
 
 # Absolute, resolved once at import time.
-BACKEND_UPLOADS_PATH: Path = (_SERVICE_ROOT / settings.BACKEND_UPLOADS_DIR).resolve()
+BACKEND_UPLOADS_PATH: Path = (SERVICE_ROOT / settings.BACKEND_UPLOADS_DIR).resolve()
 
 # Per-project datasets + model artifacts. Gitignored — 15 GB of run output is
 # normal here, see .gitignore.
-DATA_DIR: Path = (_SERVICE_ROOT / "data").resolve()
+DATA_DIR: Path = (SERVICE_ROOT / "data").resolve()
 PROJECTS_DIR: Path = DATA_DIR / "projects"
 PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Vendored OpenOCR checkout. train_rec.py must be launched with this as cwd:
 # training configs carry a relative character_dict_path
 # ('./tools/utils/EN_symbol_dict.txt') that only resolves from here.
-OPENOCR_DIR: Path = (_SERVICE_ROOT / "OpenOCR").resolve()
+OPENOCR_DIR: Path = (SERVICE_ROOT / "OpenOCR").resolve()
 CHARACTER_DICT_PATH: Path = OPENOCR_DIR / "tools" / "utils" / "EN_symbol_dict.txt"
 
 # Built-in base checkpoints to fine-tune from. Shipped by the installer, not
 # git (81 MB each). Keys are the `builtin` ids in OCRBaseRef.
-BASE_CKPT_DIR: Path = (_SERVICE_ROOT / "weights" / "base").resolve()
+BASE_CKPT_DIR: Path = (SERVICE_ROOT / "weights" / "base").resolve()
 BUILTIN_BASES = {
     # Already fine-tuned on factory datecodes — converges in ~4 epochs.
     "datecode_2406": "svtrv2_datecode_2406.pth",

@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.endpoints import projects
+from app.api.endpoints import candidates, dataset, import_dataset, projects
 from app.core.config import (
     BASE_CKPT_DIR,
     BUILTIN_BASES,
@@ -68,6 +68,9 @@ app.add_middleware(
 )
 
 app.include_router(projects.router, prefix="/api/ocr", tags=["OCR Projects"])
+app.include_router(candidates.router, prefix="/api/ocr", tags=["OCR Candidates"])
+app.include_router(import_dataset.router, prefix="/api/ocr", tags=["OCR Candidates"])
+app.include_router(dataset.router, prefix="/api/ocr", tags=["OCR Dataset"])
 
 
 @app.get("/")

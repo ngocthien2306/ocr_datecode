@@ -67,15 +67,53 @@ training box. The train endpoint checks again and fails loudly there.
 
 ### Endpoints so far
 
-| Method | Path |
-|---|---|
-| GET | `/health` |
-| POST · GET | `/api/ocr/projects` |
-| GET · PATCH · DELETE | `/api/ocr/projects/{id}` |
-| GET | `/api/ocr/projects/{id}/dataset-stats` |
+| Method | Path | |
+|---|---|---|
+| GET | `/health` | |
+| POST · GET | `/api/ocr/projects` | |
+| GET · PATCH · DELETE | `/api/ocr/projects/{id}` | |
+| GET | `/api/ocr/projects/{id}/dataset-stats` | `trainable_count` is what the Train tab gates on |
+| GET | `/api/ocr/candidates/recipes` | recipes that actually have OCR regions on record |
+| GET | `/api/ocr/candidates` | crop candidates; `match_filter=all\|pass\|fail` |
+| POST | `/api/ocr/projects/{id}/import` | selected regions → `need_review` |
+| POST | `/api/ocr/projects/{id}/import-folder` | seed from an OpenOCR dataset dir → `verified` |
+| GET | `/api/ocr/projects/{id}/dataset/items` | paged, with thumbnails |
+| GET | `/api/ocr/projects/{id}/dataset/item-ids` | ids only, for select-all across pages |
+| GET | `/api/ocr/projects/{id}/dataset/items/{iid}/full` | full-res crop |
+| PATCH | `/api/ocr/projects/{id}/dataset/items/{iid}` | edit `gt_text` / `status` / `split` |
+| POST | `.../dataset/items/bulk-status` · `bulk-split` · `bulk-exclude` · `bulk-delete` | |
 
 Collections owned here: `ocr_projects`, `ocr_dataset_items`, `ocr_models`.
 `recipes`, `inference_results` and `users` are read-only shared with backend.
+
+### Label lifecycle
+
+```
+import   → status=need_review   gt_text = prefill guess
+label    → status=verified      operator confirmed or fixed the text
+train    → reads verified only, and only where exclude_from_training is false
+```
+
+The prefill guess comes from the recipe's own verification result: a region that
+matched read exactly what the recipe expected, so `expected` IS the ground
+truth; a region that failed gets `recognized`, because on a real misprint what
+OCR saw is closer to what is printed than what the recipe wanted. Neither is
+good enough to train on unreviewed, which is why nothing is imported as
+`verified`. In practice most of an import is `verify_match: true` and can be
+promoted in one `bulk-status` call, leaving only the failures to read by hand.
+
+An item with an empty `gt_text` cannot be verified (400). OpenOCR's label
+encoder returns None for an empty string and drops the sample, so allowing it
+would shrink the training set invisibly instead of erroring.
+
+### Degenerate regions
+
+~19% of text/datecode regions on FAIL frames are unusable: when template
+alignment fails, the recipe's annotation quad still gets projected — to
+coordinates like `x=-38418` on a 2448px frame. `quad_is_sane` rejects those, and
+`/candidates` reports how many it dropped as `skipped_degenerate` so "this
+recipe has little data" stays distinguishable from "this recipe's alignment is
+failing".
 
 ## Train → export → verify
 
