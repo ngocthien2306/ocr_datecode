@@ -272,6 +272,10 @@ async def prepare_dataset(
         dry_run=dry_run,
     )
     report["blocking_reason"] = blocking_reason(report)
+    # The item objects are for in-process callers (eval); the HTTP shape stays
+    # counts + samples.
+    report.pop("train_items", None)
+    report.pop("test_items", None)
     return report
 
 

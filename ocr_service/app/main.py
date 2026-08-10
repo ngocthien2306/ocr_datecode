@@ -4,7 +4,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.endpoints import candidates, dataset, import_dataset, projects, train
+from app.api.endpoints import (
+    candidates, dataset, eval as eval_endpoints, export, import_dataset, projects, train,
+)
 from app.core.config import (
     BASE_CKPT_DIR,
     BUILTIN_BASES,
@@ -78,6 +80,8 @@ app.include_router(candidates.router, prefix="/api/ocr", tags=["OCR Candidates"]
 app.include_router(import_dataset.router, prefix="/api/ocr", tags=["OCR Candidates"])
 app.include_router(dataset.router, prefix="/api/ocr", tags=["OCR Dataset"])
 app.include_router(train.router, prefix="/api/ocr", tags=["OCR Training"])
+app.include_router(export.router, prefix="/api/ocr", tags=["OCR Export"])
+app.include_router(eval_endpoints.router, prefix="/api/ocr", tags=["OCR Eval"])
 
 
 @app.get("/")

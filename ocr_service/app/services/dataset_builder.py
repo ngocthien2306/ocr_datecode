@@ -159,6 +159,12 @@ def build_dataset(
         return out
 
     return {
+        # The actual item objects for each pool. Evaluation must score the SAME
+        # test set training was measured against: filtering ocr_dataset_items by
+        # split alone would re-include the over-long labels dropped above, which
+        # training never saw and which no model can match.
+        "train_items": train,
+        "test_items": test,
         "dry_run": dry_run,
         "n_candidates": len(items),
         "n_train": len(train),

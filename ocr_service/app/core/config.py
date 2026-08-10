@@ -53,6 +53,11 @@ PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
 OPENOCR_DIR: Path = (SERVICE_ROOT / "OpenOCR").resolve()
 CHARACTER_DICT_PATH: Path = OPENOCR_DIR / "tools" / "utils" / "EN_symbol_dict.txt"
 
+# ai_services checkout, for importing its OWN SMTR recognizer classes when
+# scoring exported models. See ocr_inference.py for why a second copy of the
+# decode path would defeat the purpose of the measurement.
+AI_SERVICES_DIR: Path = (SERVICE_ROOT / ".." / "ai_services").resolve()
+
 # Built-in base checkpoints to fine-tune from. Shipped by the installer, not
 # git (81 MB each). Keys are the `builtin` ids in OCRBaseRef.
 BASE_CKPT_DIR: Path = (SERVICE_ROOT / "weights" / "base").resolve()

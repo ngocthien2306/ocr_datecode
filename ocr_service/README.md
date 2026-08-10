@@ -89,6 +89,11 @@ training box. The train endpoint checks again and fails loudly there.
 | GET | `/api/ocr/projects/{id}/models/{mid}/logs?since=` | live log, `since` cursor |
 | POST | `/api/ocr/projects/{id}/models/{mid}/cancel` | |
 | DELETE | `/api/ocr/projects/{id}/models/{mid}` | drops the record and every file the run wrote |
+| POST | `.../models/{mid}/export-onnx` · `export-tensorrt` | re-export (both run automatically after training) |
+| GET | `.../models/{mid}/export/inspect` | engine bindings + profile; `runtime_compatible` |
+| GET | `.../models/{mid}/export/{onnx\|onnx_fp16\|engine\|dict\|checkpoint}` | download |
+| POST | `.../models/{mid}/evaluate?engine=tensorrt\|onnx` | score the export against the test split |
+| POST | `.../models/{mid}/predict?engine=…` | read one uploaded crop |
 
 Collections owned here: `ocr_projects`, `ocr_dataset_items`, `ocr_models`.
 `recipes`, `inference_results` and `users` are read-only shared with backend.
@@ -217,6 +222,39 @@ config sets `save_epoch_step: [100000, 100000]`, which suppresses `epoch_N.pth`
 — each is 252 MB and the defaults wrote **2.7 GB per run**. `latest.pth` and the
 run directory are removed on success too; only `{model_id}.pth` (84 MB), the
 config and the JSONL log survive.
+
+A run only reaches `status: completed` after ONNX export, the TensorRT build and
+the engine accuracy check have all finished. Flipping it at the end of training
+made a model look ready while its engine was still building, so the export
+endpoints would 400 on something the UI showed as done.
+
+### Scoring the export, not the checkpoint
+
+The number that matters for putting a model on a recipe is the **engine's**
+accuracy, not the checkpoint's: fp16 conversion and the export path can both
+lose something. Auto-export measures it at batch=1 and stores `metrics.acc_trt`
+(normalised) and `metrics.acc_exact_trt`, and warns in the log when the engine
+falls more than 2pp below the checkpoint.
+
+Evaluation derives its test set by re-running the same validation and split the
+training run used, from the run's own recorded params — **not** by filtering
+`ocr_dataset_items` on `split`. Filtering by split re-includes the labels
+validation dropped, which training never saw and no model can reproduce; that
+bug showed up first as an eval over 156 images against a training log that said
+154.
+
+Measured on a 20-epoch space-enabled run over 154 test images:
+
+| | normalized (either head) | exact | ms/img |
+|---|---|---|---|
+| checkpoint (`min_acc`) | 0.9481 | — | — |
+| ONNX fp16 | 0.9610 | 0.9416 | 49.7 |
+| TensorRT fp16 | 0.9610 | 0.9416 | **2.6** |
+
+ONNX and the engine agree exactly, which is the check that the export is
+faithful. The engine reads slightly above the checkpoint's `min_acc` because
+`min_acc` is the *worse* of the two heads while `either` is the better — they are
+different questions, not a contradiction.
 
 ### GPU arbitration
 

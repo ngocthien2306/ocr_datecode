@@ -11,7 +11,7 @@ import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
@@ -20,7 +20,9 @@ from app.core.config import BASE_CKPT_DIR, BUILTIN_BASES, DEFAULT_BASE
 from app.db.mongodb import get_database
 from app.models.ocr import OCRTrainRequest
 from app.repositories.ocr_repository import OCRRepository
-from app.services import dataset_fs, gpu_lock, ocr_training
+from app.api.endpoints.eval import eval_items_for, evaluate_sync
+from app.api.endpoints.export import build_engine_sync, export_onnx_sync
+from app.services import dataset_fs, gpu_lock, ocr_inference, ocr_training
 from app.services.dataset_builder import blocking_reason, build_dataset
 from app.services.train_logs import attach_handler, detach_handler, get_buffer
 
@@ -32,6 +34,9 @@ router = APIRouter()
 # a cancel only means anything while the task that reads it is alive, and a
 # restart is handled by reset_stuck_training instead.
 _CANCEL_FLAGS: Dict[str, bool] = {}
+
+# Where the bar sits when the checkpoint exists but export has not run.
+TRAIN_DONE_PROGRESS = 85.0
 
 
 def get_repo(db=Depends(get_database)) -> OCRRepository:
@@ -244,10 +249,14 @@ async def _run_training_bg(
         result = await loop.run_in_executor(None, _blocking_run)
 
         metrics = result["metrics"]
+        # NOT 'completed' yet: export still has to run, and the FE treats
+        # status=='completed' as "the run is finished, artifacts are ready".
+        # Flipping it here made a model look done while its engine was still
+        # building, so the export endpoints would 400 on a model the UI showed
+        # as ready.
         await repo.update_model_record(model_id, {
-            "status": "completed",
-            "phase": "completed",
-            "progress": 100.0,
+            "phase": "trained",
+            "progress": TRAIN_DONE_PROGRESS,
             "checkpoint_path": result["checkpoint_path"],
             "config_path": result["config_path"],
             "vocab_size": result["vocab_size"],
@@ -261,14 +270,25 @@ async def _run_training_bg(
                 "n_train": report["n_train"],
                 "n_test": report["n_test"],
             },
+        })
+        buf.push(
+            model_id,
+            f"[ocr] trained — min_acc={metrics.get('min_acc')} acc={metrics.get('acc')} "
+            f"gtc_acc={metrics.get('gtc_acc')} best_epoch={metrics.get('best_epoch')}",
+        )
+
+        # Auto-export so Eval/Export/Test need no manual step. Each stage is
+        # best-effort and independent: the checkpoint is already saved and the
+        # run counts as completed either way, and TensorRT only runs if the ONNX
+        # it depends on succeeded.
+        await _auto_export(repo, project_id, model_id, result, buf)
+
+        await repo.update_model_record(model_id, {
+            "status": "completed", "phase": "completed", "progress": 100.0,
             "completed_at": datetime.utcnow(),
         })
         await repo.set_status(project_id, "trained")
-        buf.push(
-            model_id,
-            f"[ocr] done — min_acc={metrics.get('min_acc')} acc={metrics.get('acc')} "
-            f"gtc_acc={metrics.get('gtc_acc')} best_epoch={metrics.get('best_epoch')}",
-        )
+        buf.push(model_id, "[ocr] run complete")
 
     except ocr_training.TrainingCancelled:
         buf.push(model_id, "[ocr] cancelled by user", level="WARNING")
@@ -288,6 +308,92 @@ async def _run_training_bg(
     finally:
         detach_handler(handler)
         _CANCEL_FLAGS.pop(model_id, None)
+
+
+async def _auto_export(repo: OCRRepository, project_id: str, model_id: str, result: Dict, buf) -> None:
+    """ONNX → TensorRT → measure acc_trt, after a successful run.
+
+    Progress runs 85→100% here so the bar doesn't sit at 100% through a
+    40-second engine build.
+    """
+    loop = asyncio.get_event_loop()
+    onnx_fp16: Optional[str] = None
+
+    try:
+        await repo.update_model_record(model_id, {"phase": "exporting_onnx", "progress": 88.0})
+        buf.push(model_id, "[ocr] exporting ONNX...")
+        exported = await loop.run_in_executor(
+            None,
+            lambda: export_onnx_sync(
+                project_id, model_id,
+                Path(result["config_path"]), Path(result["checkpoint_path"]),
+            ),
+        )
+        onnx_fp16 = exported["onnx_fp16_path"]
+        await repo.update_model_record(model_id, {
+            "onnx_path": exported["onnx_path"], "onnx_fp16_path": onnx_fp16,
+        })
+        buf.push(model_id, f"[ocr] ONNX ok — gtc {exported['gtc_shape']} ctc {exported['ctc_shape']}")
+    except Exception as e:
+        logger.exception(f"[ocr train] ONNX export failed for {model_id}")
+        buf.push(model_id, f"[ocr] ONNX export failed (training still succeeded): {e}",
+                 level="WARNING")
+        return
+
+    if not onnx_fp16:
+        return
+    try:
+        await repo.update_model_record(model_id, {"phase": "exporting_tensorrt", "progress": 92.0})
+        buf.push(model_id, "[ocr] building TensorRT engine...")
+        built = await loop.run_in_executor(
+            None, lambda: build_engine_sync(project_id, model_id, Path(onnx_fp16), True),
+        )
+        await repo.update_model_record(model_id, {
+            "engine_path": built["engine_path"], "dict_path": built["dict_path"],
+        })
+        buf.push(model_id, f"[ocr] engine ok — {built['size_mb']} MB, "
+                           f"outputs={[o['name'] for o in built['outputs']]}")
+    except Exception as e:
+        logger.exception(f"[ocr train] TensorRT build failed for {model_id}")
+        buf.push(model_id, f"[ocr] TensorRT build failed (ONNX still exported): {e}",
+                 level="WARNING")
+        return
+
+    # Score the engine, because the checkpoint's accuracy is not the engine's.
+    # fp16 conversion and the export path can both lose something, and this is
+    # the number the recipe picker gates on.
+    try:
+        await repo.update_model_record(model_id, {"phase": "measuring_engine", "progress": 96.0})
+        model = await repo.get_model(model_id)
+        items = await eval_items_for(repo, project_id, model)
+        if not items:
+            buf.push(model_id, "[ocr] no test split — skipping engine accuracy", level="WARNING")
+            return
+        evaluated = await loop.run_in_executor(
+            None, lambda: evaluate_sync(project_id, model, items, "tensorrt"),
+        )
+        s = evaluated["scores"]
+        await repo.update_model_record(model_id, {
+            "metrics.acc_trt": s["norm_either"],
+            "metrics.acc_exact_trt": s["exact_either"],
+        })
+        buf.push(
+            model_id,
+            f"[ocr] engine accuracy (batch=1): normalized {s['norm_either']:.4f} "
+            f"exact {s['exact_either']:.4f} over {s['n']} test images, "
+            f"{evaluated['ms_per_image']} ms/img",
+        )
+        train_acc = (model.metrics.min_acc or 0.0)
+        if train_acc and s["norm_either"] < train_acc - 0.02:
+            buf.push(
+                model_id,
+                f"[ocr] WARNING: engine is {(train_acc - s['norm_either']) * 100:.1f}pp below the "
+                f"checkpoint ({train_acc:.4f}) — export may have lost accuracy",
+                level="WARNING",
+            )
+    except Exception as e:
+        logger.exception(f"[ocr train] engine evaluation failed for {model_id}")
+        buf.push(model_id, f"[ocr] engine accuracy check failed: {e}", level="WARNING")
 
 
 @router.get("/projects/{project_id}/models")
@@ -393,6 +499,10 @@ async def delete_model(
     shutil.rmtree(models_dir / f"{model_id}_run", ignore_errors=True)
     shutil.rmtree(dataset_fs.export_dir(project_id, model_id), ignore_errors=True)
     get_buffer().drop(project_id, model_id)
+    # Without this the deleted model's engine stays resident on the GPU until
+    # the service restarts, and a re-export under the same id would keep
+    # serving the stale one.
+    ocr_inference.release_model(model_id)
 
     await repo.delete_model(model_id)
     return {"ok": True, "model_id": model_id}
