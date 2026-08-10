@@ -236,3 +236,17 @@ ocr_check_data/
 ocr_training_data/
 data_ocr_merged/
 logs/
+# ── ocr_service — OCR training (docs/ocr_training_plan.md) ──────────────────
+# Training artifacts: checkpoints, ONNX/engine exports, per-run logs. 15+ GB.
+ocr_service/output/
+# Base checkpoints, 81 MB each — shipped by the installer, not by git.
+ocr_service/weights/
+ocr_service/svtrv2_finetune_output_24_6/
+ocr_service/svtrv2_smtr_gtc_rctc.pth
+ocr_service/**/*.pth
+# Vendored OpenOCR is its own git clone (ngocthien2306/OpenOCR). The repo tracks
+# the pinned commit + our patches in ocr_service/patches/ instead of the tree,
+# so a nested .git doesn't end up half-committed as an embedded repo.
+ocr_service/OpenOCR/
+# Sample dataset (the extracted data_ocr_merged/ dir is already ignored above).
+ocr_service/data_ocr_merged.zip
