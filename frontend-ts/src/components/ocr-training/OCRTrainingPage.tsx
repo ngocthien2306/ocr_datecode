@@ -1,19 +1,27 @@
 import { useCallback, useEffect, useState } from 'react';
 import '@/styles/OCRTraining.css';
 import {
-  ocrTrainingAPI, OCRDatasetStats, OCRImportResult, OCRProject,
+  ocrTrainingAPI, ocrTrainingModelAPI, OCRDatasetStats, OCRImportResult, OCRModel, OCRProject,
 } from '@/services/ocrTraining';
 import DatasetTab from './DatasetTab';
 import LabelTab from './LabelTab';
+import TrainTab from './TrainTab';
+import EvalTab from './EvalTab';
+import ExportTab from './ExportTab';
+import TestTab from './TestTab';
 import ImportFromRecipeModal from './ImportFromRecipeModal';
 
 interface Props {
   onClose: () => void;
 }
 
-type TabId = 'dataset' | 'label';
+type TabId = 'dataset' | 'label' | 'train' | 'eval' | 'export' | 'test';
 
-const TAB_LABELS: Record<TabId, string> = { dataset: 'Dataset', label: 'Label' };
+const TAB_IDS: TabId[] = ['dataset', 'label', 'train', 'eval', 'export', 'test'];
+const TAB_LABELS: Record<TabId, string> = {
+  dataset: 'Dataset', label: 'Label', train: 'Train',
+  eval: 'Eval', export: 'Export', test: 'Test',
+};
 
 export default function OCRTrainingPage({ onClose }: Props) {
   const [tab, setTab] = useState<TabId>('dataset');
@@ -31,6 +39,8 @@ export default function OCRTrainingPage({ onClose }: Props) {
   const [showImportModal, setShowImportModal] = useState(false);
   const [lastImportResult, setLastImportResult] = useState<OCRImportResult | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [models, setModels] = useState<OCRModel[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
 
   const loadProjects = useCallback(async () => {
     setLoadingProjects(true);
@@ -68,7 +78,28 @@ export default function OCRTrainingPage({ onClose }: Props) {
     }
   }, [activeProject]);
 
-  useEffect(() => { refreshStats(); }, [activeProject?.id]);
+  const loadModels = useCallback(async () => {
+    if (!activeProject) { setModels([]); return; }
+    try {
+      const list = await ocrTrainingModelAPI.listModels(activeProject.id);
+      setModels(list);
+      // Default to the newest run so Eval/Export/Test have something to show
+      // without the operator having to click back into Train first.
+      setSelectedModelId((cur) => (cur && list.some((m) => m.id === cur)) ? cur : (list[0]?.id ?? null));
+    } catch (e) {
+      console.error('[OCRTraining] Failed to load models', e);
+    }
+  }, [activeProject]);
+
+  useEffect(() => { refreshStats(); loadModels(); }, [activeProject?.id]);
+
+  // A live run's status/metrics change without any user action, so the run list
+  // has to keep up while the Train tab streams its log.
+  useEffect(() => {
+    if (!models.some((m) => m.status === 'training' || m.status === 'pending')) return;
+    const t = setInterval(loadModels, 4000);
+    return () => clearInterval(t);
+  }, [models, loadModels]);
 
   const handleCreateProject = async () => {
     if (!newProjectName.trim()) return;
@@ -110,6 +141,7 @@ export default function OCRTrainingPage({ onClose }: Props) {
   const verified = stats?.verified_count ?? activeProject?.verified_count ?? 0;
   const needReview = stats?.need_review_count ?? activeProject?.need_review_count ?? 0;
   const total = stats?.total_count ?? activeProject?.total_count ?? 0;
+  const selectedModel = models.find((m) => m.id === selectedModelId) ?? null;
 
   return (
     <div className="at-overlay">
@@ -130,15 +162,27 @@ export default function OCRTrainingPage({ onClose }: Props) {
 
       {activeProject && (
         <div className="at-tabs">
-          {(['dataset', 'label'] as TabId[]).map((id) => (
-            <button key={id} className={`at-tab-btn ${tab === id ? 'active' : ''}`}
-                    onClick={() => setTab(id)}>
-              {TAB_LABELS[id]}
-              {id === 'label' && needReview > 0 && (
-                <span className="at-chip" style={{ marginLeft: 6 }}>{needReview}</span>
-              )}
-            </button>
-          ))}
+          {TAB_IDS.map((id) => {
+            // Train needs verified labels; the three after it need a run to exist.
+            const needsData = id === 'train' && verified === 0;
+            const needsModel = (id === 'eval' || id === 'export' || id === 'test') && models.length === 0;
+            const disabled = needsData || needsModel;
+            return (
+              <button key={id} className={`at-tab-btn ${tab === id ? 'active' : ''}`}
+                      disabled={disabled}
+                      title={needsData ? 'Verify some labels first — training only reads verified items'
+                           : needsModel ? 'Train a model first' : undefined}
+                      onClick={() => setTab(id)}>
+                {TAB_LABELS[id]}
+                {id === 'label' && needReview > 0 && (
+                  <span className="at-chip" style={{ marginLeft: 6 }}>{needReview}</span>
+                )}
+                {id === 'train' && models.some((m) => m.status === 'training' || m.status === 'pending') && (
+                  <span className="at-chip" style={{ marginLeft: 6 }}>running</span>
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -232,13 +276,24 @@ export default function OCRTrainingPage({ onClose }: Props) {
                 <DatasetTab projectId={activeProject.id} refreshKey={refreshKey}
                             onCountsChanged={() => { refreshStats(); }}
                             onOpenImport={() => setShowImportModal(true)} />
-              ) : (
+              ) : tab === 'label' ? (
                 /* onCountsChanged refreshes the counts only. Bumping refreshKey
                    here would refetch the page after every save, undoing
                    LabelTab's patch-in-place and reshuffling rows out from under
                    the cursor mid-review. */
                 <LabelTab projectId={activeProject.id} refreshKey={refreshKey}
                           onCountsChanged={refreshStats} />
+              ) : tab === 'train' ? (
+                <TrainTab projectId={activeProject.id} models={models}
+                          onModelsChange={loadModels}
+                          selectedModelId={selectedModelId} onSelectModel={setSelectedModelId} />
+              ) : tab === 'eval' ? (
+                <EvalTab projectId={activeProject.id} model={selectedModel} />
+              ) : tab === 'export' ? (
+                <ExportTab projectId={activeProject.id} model={selectedModel}
+                           onModelChange={loadModels} />
+              ) : (
+                <TestTab projectId={activeProject.id} model={selectedModel} />
               )}
             </>
           )}

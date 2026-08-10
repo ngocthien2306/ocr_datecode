@@ -279,3 +279,255 @@ export const ocrTrainingAPI = {
 };
 
 export default ocrApi;
+
+// ──────── Train / Eval / Export types ───────────────────────────────────
+
+/** Which checkpoint a run fine-tunes from. There is no from-scratch option:
+ *  a few thousand factory crops cannot train SVTRv2 from random init. */
+export interface OCRBaseRef {
+  kind: 'builtin' | 'model';
+  builtin?: string;
+  /** For kind='model'. May point at a DIFFERENT project — deliberately, so a
+   *  broad project's model can seed a narrower one. */
+  project_id?: string;
+  model_id?: string;
+}
+
+export interface OCRTrainRequest {
+  base: OCRBaseRef;
+  use_space_char: boolean;
+  epoch_num: number;
+  batch_size: number;
+  lr: number;
+  test_split: number;
+  image_h: number;
+  image_w: number;
+  max_text_length: number;
+}
+
+export interface OCRBuiltinBase {
+  id: string;
+  filename: string;
+  available: boolean;
+  recommended: boolean;
+  use_space_char: boolean;
+  vocab_size: number;
+}
+
+export interface OCRModelBaseOption {
+  model_id: string;
+  label: string;
+  use_space_char: boolean;
+  vocab_size: number;
+  created_at: string;
+  min_acc: number | null;
+}
+
+export interface OCRBaseCheckpoints {
+  builtin: OCRBuiltinBase[];
+  projects: Array<{ project_id: string; project_name: string; models: OCRModelBaseOption[] }>;
+}
+
+export interface OCRModelMetrics {
+  /** CTC head. */
+  acc: number | null;
+  /** SMTR/GTC head. */
+  gtc_acc: number | null;
+  /** min(acc, gtc_acc) — what best-checkpoint selection tracks. Selecting on
+   *  `acc` alone is blind to the SMTR head and can save a run whose GTC head is
+   *  unusable while every log line looks healthy. */
+  min_acc: number | null;
+  norm_edit_dis: number | null;
+  best_epoch: number | null;
+  n_train: number;
+  n_test: number;
+  /** Accuracy of the exported artifacts, measured at batch=1. Batched inference
+   *  pads crops with -1 and costs real accuracy, so a batched number cannot gate
+   *  a model. */
+  acc_onnx: number | null;
+  acc_trt: number | null;
+  acc_exact_trt: number | null;
+}
+
+export type OCRModelStatus = 'pending' | 'training' | 'completed' | 'failed' | 'cancelled';
+
+export interface OCRModel {
+  id: string;
+  project_id: string;
+  params: Record<string, any>;
+  base_label: string;
+  use_space_char: boolean;
+  /** 99 without the space class, 100 with it. Two models with different vocab
+   *  sizes cannot share an engine or a post-processor. */
+  vocab_size: number;
+  metrics: OCRModelMetrics;
+  checkpoint_path: string;
+  config_path: string | null;
+  onnx_path: string | null;
+  onnx_fp16_path: string | null;
+  engine_path: string | null;
+  dict_path: string | null;
+  status: OCRModelStatus;
+  error: string | null;
+  phase: string | null;
+  progress: number;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface OCRStartTrainResult {
+  model_id: string;
+  status: string;
+  n_train: number;
+  n_test: number;
+  dropped_count: number;
+  /** Non-null when another job holds the GPU — this run will queue behind it. */
+  gpu_holder: string | null;
+}
+
+export interface OCRTrainLogEntry { idx: number; ts: number; level: string; msg: string }
+
+export interface OCRTrainLogsResponse {
+  logs: OCRTrainLogEntry[];
+  next_since: number;
+  phase: string | null;
+  progress: number;
+  status: OCRModelStatus;
+  error: string | null;
+}
+
+export type InferenceEngine = 'tensorrt' | 'onnx';
+
+export interface OCREvalScores {
+  norm_gtc: number; norm_ctc: number; norm_either: number;
+  exact_gtc: number; exact_ctc: number; exact_either: number;
+  n: number;
+}
+
+export interface OCREvalItem {
+  id: string;
+  gt_text: string;
+  gtc_text: string;
+  gtc_conf: number;
+  ctc_text: string;
+  ctc_conf: number;
+  correct_norm: boolean;
+  correct_exact: boolean;
+  image_path: string;
+  thumb_b64?: string;
+}
+
+export interface OCREvalResult {
+  engine: InferenceEngine;
+  scores: OCREvalScores;
+  ms_per_image: number;
+  items: OCREvalItem[];
+  train_metrics: { min_acc: number | null; acc: number | null; gtc_acc: number | null };
+}
+
+export interface OCRPredictResult {
+  engine: InferenceEngine;
+  gtc_text: string;
+  gtc_conf: number;
+  ctc_text: string;
+  ctc_conf: number;
+  inference_ms: number;
+  image_b64: string;
+  size: [number, number];
+}
+
+export interface OCREngineInfo {
+  inputs: Array<{ name: string; shape: number[]; profile?: number[][] }>;
+  outputs: Array<{ name: string; shape: number[] }>;
+  size_mb: number;
+  /** False when the engine has anything other than two outputs — the assert
+   *  ai_services' TextRecognizerSMTRTRT would hit at load time instead. */
+  runtime_compatible: boolean;
+}
+
+export interface OCROnnxExportResult {
+  onnx_path: string;
+  onnx_fp16_path: string | null;
+  gtc_shape: number[];
+  ctc_shape: number[];
+}
+
+export type OCRArtifact = 'onnx' | 'onnx_fp16' | 'engine' | 'dict' | 'checkpoint';
+
+// ──────── Train / Eval / Export API ─────────────────────────────────────
+
+export const ocrTrainingModelAPI = {
+  listBaseCheckpoints: async (): Promise<OCRBaseCheckpoints> =>
+    (await ocrApi.get('/base-checkpoints')).data,
+
+  startTraining: async (
+    projectId: string, request: Partial<OCRTrainRequest>,
+  ): Promise<OCRStartTrainResult> =>
+    (await ocrApi.post(`/projects/${projectId}/train`, request)).data,
+
+  listModels: async (projectId: string): Promise<OCRModel[]> =>
+    (await ocrApi.get(`/projects/${projectId}/models`)).data,
+
+  getModelStatus: async (projectId: string, modelId: string): Promise<OCRModel> =>
+    (await ocrApi.get(`/projects/${projectId}/models/${modelId}/status`)).data,
+
+  getTrainLogs: async (
+    projectId: string, modelId: string, since = 0,
+  ): Promise<OCRTrainLogsResponse> =>
+    (await ocrApi.get(`/projects/${projectId}/models/${modelId}/logs`, { params: { since } })).data,
+
+  cancelTraining: async (
+    projectId: string, modelId: string,
+  ): Promise<{ ok: boolean; mode: string }> =>
+    (await ocrApi.post(`/projects/${projectId}/models/${modelId}/cancel`)).data,
+
+  deleteModel: async (projectId: string, modelId: string): Promise<{ ok: boolean }> =>
+    (await ocrApi.delete(`/projects/${projectId}/models/${modelId}`)).data,
+
+  exportOnnx: async (projectId: string, modelId: string): Promise<OCROnnxExportResult> =>
+    (await ocrApi.post(`/projects/${projectId}/models/${modelId}/export-onnx`)).data,
+
+  exportTensorRT: async (
+    projectId: string, modelId: string, fp16 = true,
+  ): Promise<OCREngineInfo & { engine_path: string; dict_path: string }> =>
+    (await ocrApi.post(`/projects/${projectId}/models/${modelId}/export-tensorrt`, null,
+      { params: { fp16 } })).data,
+
+  inspectExport: async (projectId: string, modelId: string): Promise<OCREngineInfo> =>
+    (await ocrApi.get(`/projects/${projectId}/models/${modelId}/export/inspect`)).data,
+
+  evaluate: async (
+    projectId: string, modelId: string, engine: InferenceEngine = 'tensorrt', withThumbs = true,
+  ): Promise<OCREvalResult> =>
+    (await ocrApi.post(`/projects/${projectId}/models/${modelId}/evaluate`, null,
+      { params: { engine, with_thumbs: withThumbs } })).data,
+
+  predict: async (
+    projectId: string, modelId: string, file: File, engine: InferenceEngine = 'tensorrt',
+  ): Promise<OCRPredictResult> => {
+    const form = new FormData();
+    form.append('file', file);
+    return (await ocrApi.post(`/projects/${projectId}/models/${modelId}/predict`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      params: { engine },
+    })).data;
+  },
+
+  /** Blob download, not an <a href>: every endpoint here needs the Bearer
+   *  header and anchor navigation cannot set one. */
+  download: async (projectId: string, modelId: string, artifact: OCRArtifact): Promise<void> => {
+    const res = await ocrApi.get(
+      `/projects/${projectId}/models/${modelId}/export/${artifact}`, { responseType: 'blob' });
+    const ext: Record<OCRArtifact, string> = {
+      onnx: 'onnx', onnx_fp16: 'fp16.onnx', engine: 'engine', dict: 'txt', checkpoint: 'pth',
+    };
+    const url = window.URL.createObjectURL(new Blob([res.data]));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ocr_${modelId}.${ext[artifact]}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  },
+};
