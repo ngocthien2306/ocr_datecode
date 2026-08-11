@@ -56,6 +56,41 @@ class TemplateConfig:
     # Original annotations for reference
     annotations: List[Dict[str, Any]] = field(default_factory=list)
 
+    # Cache scale_matrix + inverse — chỉ phụ thuộc `scale`, không đổi giữa
+    # các frame. Tính 1 lần khi __post_init__ thay vì mỗi call _postprocess_pair.
+    _scale_matrix: Optional[np.ndarray] = field(default=None, init=False, repr=False)
+    _scale_matrix_inv: Optional[np.ndarray] = field(default=None, init=False, repr=False)
+    # Cache pre-formatted bbox points arrays — không đổi giữa các frame.
+    # _template_pts_arr: shape (-1, 1, 2) float32 sẵn sàng cho perspectiveTransform
+    # _other_pts_arrs:   list các array tương ứng với template.other_bboxes
+    _template_pts_arr: Optional[np.ndarray] = field(default=None, init=False, repr=False)
+    _other_pts_arrs: Optional[List[np.ndarray]] = field(default=None, init=False, repr=False)
+
+    def __post_init__(self):
+        inv_s = 1.0 / float(self.scale)
+        self._scale_matrix = np.array([
+            [inv_s, 0.0,   0.0],
+            [0.0,   inv_s, 0.0],
+            [0.0,   0.0,   1.0],
+        ], dtype=np.float64)
+        # inverse is just element-wise reciprocal cho ma trận diagonal
+        self._scale_matrix_inv = np.array([
+            [self.scale, 0.0,        0.0],
+            [0.0,        self.scale, 0.0],
+            [0.0,        0.0,        1.0],
+        ], dtype=np.float64)
+        # Pre-format bbox points cho cv2.perspectiveTransform (shape -1,1,2 float32).
+        # Tránh tạo numpy array mỗi frame.
+        if self.template_bbox and 'points' in self.template_bbox:
+            self._template_pts_arr = np.array(
+                self.template_bbox['points'], dtype=np.float32
+            ).reshape(-1, 1, 2)
+        self._other_pts_arrs = [
+            np.array(bbox['points'], dtype=np.float32).reshape(-1, 1, 2)
+            if bbox.get('points') else None
+            for bbox in (self.other_bboxes or [])
+        ]
+
     @classmethod
     def from_json(cls, json_path: str, scale: float = 1.0) -> 'TemplateConfig':
         """
@@ -128,6 +163,49 @@ class TemplateConfig:
         )
 
 
+class _OutputAllocator(trt.IOutputAllocator):
+    """
+    Runtime output buffer manager for the matcher engine.
+
+    `matches`/`mscores` are data-dependent outputs (their length comes from a
+    NonZero), so TensorRT can't size them ahead of execution. The previous
+    approach — a fixed 100MB device buffer per output, copied back in full
+    because the shape read -1 — cost ~58ms of D2H per inference against ~4ms
+    of actual GPU work. TensorRT calls into this allocator instead: it grows
+    the buffer only when needed and reports the real shape, so the copy is the
+    few KB of matches actually produced.
+
+    Buffers are kept and reused across calls; they're freed with the engine.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._buffers = {}   # name -> (DeviceAllocation, nbytes)
+        self.shapes = {}     # name -> tuple, as reported by notify_shape
+
+    def reallocate_output(self, tensor_name, memory, size, alignment):
+        allocation, capacity = self._buffers.get(tensor_name, (None, 0))
+        if allocation is not None and capacity >= size:
+            return int(allocation)
+        if allocation is not None:
+            allocation.free()
+        allocation = cuda.mem_alloc(max(int(size), 1))
+        self._buffers[tensor_name] = (allocation, max(int(size), 1))
+        return int(allocation)
+
+    def reallocate_output_async(self, tensor_name, memory, size, alignment, stream):
+        # TensorRT 10+ prefers the async variant; same policy, allocation is
+        # cheap and only happens when the buffer has to grow.
+        return self.reallocate_output(tensor_name, memory, size, alignment)
+
+    def notify_shape(self, tensor_name, shape):
+        self.shapes[tensor_name] = tuple(shape)
+        return True
+
+    def device(self, tensor_name):
+        return self._buffers[tensor_name][0]
+
+
 class SuperPointEngineTRT:
     """
     Singleton TensorRT engine for SuperPoint+LightGlue inference.
@@ -174,9 +252,17 @@ class SuperPointEngineTRT:
         if verbose:
             logger.info(f"   Warm-up done: {(time.time()-t0)*1000:.1f}ms")
 
+        # Persistent thread pool for postprocess parallelism — tránh recreate
+        # ThreadPoolExecutor mỗi call match_batch (overhead ~25-35ms / call).
+        # Tối đa 4 worker — đủ cover batch size lớn nhất hiện tại.
+        self._postproc_pool = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="sp_postproc"
+        )
+
         logger.info(f"✅ SuperPointEngineTRT initialized ({(time.time()-t_start)*1000:.1f}ms)")
         logger.info(f"   Engine: {Path(engine_path).name}")
         logger.info(f"   Input shape: {self.input_shape}")
+        logger.info(f"   Keypoints/image: {self.num_keypoints}")
 
     @classmethod
     def get_instance(cls, engine_path: str, verbose: bool = False) -> 'SuperPointEngineTRT':
@@ -224,7 +310,7 @@ class SuperPointEngineTRT:
         # Allocate buffers
         self.inputs = []
         self.outputs = []
-        self.bindings = []
+        self._output_allocator = _OutputAllocator()
 
         for i in range(self.engine.num_io_tensors):
             tensor_name = self.engine.get_tensor_name(i)
@@ -243,7 +329,6 @@ class SuperPointEngineTRT:
                 host_mem = np.empty(size, dtype=dtype)
                 device_mem = cuda.mem_alloc(host_mem.nbytes)
 
-                self.bindings.append(int(device_mem))
                 self.inputs.append({
                     'host': host_mem,
                     'device': device_mem,
@@ -253,19 +338,30 @@ class SuperPointEngineTRT:
                 })
                 self.input_shape = shape
             else:
-                # Output: handle dynamic shapes (100MB buffer)
-                max_size = 100 * 1024 * 1024 // np.dtype(dtype).itemsize
-                device_mem = cuda.mem_alloc(max_size * np.dtype(dtype).itemsize)
-
-                self.bindings.append(int(device_mem))
+                # Output: sized by TensorRT at run time via _OutputAllocator.
+                # `matches`/`mscores` are data-dependent (NonZero), so their
+                # extent is only known after execution -- the allocator both
+                # sizes the device buffer and reports the true shape, which is
+                # what keeps the D2H copy down to the few KB actually produced.
+                self.context.set_output_allocator(tensor_name, self._output_allocator)
                 self.outputs.append({
                     'host': None,
-                    'device': device_mem,
+                    'device': None,
                     'shape': shape,
                     'name': tensor_name,
                     'dtype': dtype,
-                    'max_size': max_size
                 })
+
+        # Keypoint count is baked into the engine (the extractor's TopK k) and
+        # is NOT data-dependent -- only the batch dim of `keypoints` is -1.
+        # It's 512 for engines built from superpoint_lightglue_small.onnx and
+        # 1024 for superpoint_lightglue_pipeline.onnx (9-layer LightGlue), so
+        # read it here instead of hardcoding: postprocess must reshape with the
+        # right K or it silently pairs the wrong keypoints together.
+        self.num_keypoints = None
+        for out in self.outputs:
+            if out['name'] == 'keypoints' and len(out['shape']) == 3 and out['shape'][1] > 0:
+                self.num_keypoints = int(out['shape'][1])
 
     def _infer(self, input_data: np.ndarray) -> List[np.ndarray]:
         """Run TensorRT inference"""
@@ -279,9 +375,7 @@ class SuperPointEngineTRT:
             self.stream
         )
 
-        for i in range(self.engine.num_io_tensors):
-            tensor_name = self.engine.get_tensor_name(i)
-            self.context.set_tensor_address(tensor_name, self.bindings[i])
+        self.context.set_tensor_address(self.inputs[0]['name'], int(self.inputs[0]['device']))
 
         success = self.context.execute_async_v3(stream_handle=self.stream.handle)
         if not success:
@@ -291,23 +385,21 @@ class SuperPointEngineTRT:
 
         results = []
         for output in self.outputs:
-            actual_shape = self.context.get_tensor_shape(output['name'])
-
+            name = output['name']
+            # Shape reported by the allocator (exact, incl. the data-dependent
+            # extents); fall back to the context for anything it didn't touch.
+            actual_shape = self._output_allocator.shapes.get(name)
+            if actual_shape is None or -1 in actual_shape:
+                actual_shape = tuple(self.context.get_tensor_shape(name))
             if -1 in actual_shape:
-                host_mem = np.empty(output['max_size'], dtype=output['dtype'])
-                cuda.memcpy_dtoh_async(host_mem, output['device'], self.stream)
-                self.stream.synchronize()
-                results.append(host_mem)
-            else:
-                actual_size = trt.volume(actual_shape)
-                if actual_size <= 0:
-                    raise ValueError(f"Invalid output size {actual_size}")
+                raise RuntimeError(f"Unresolved output shape for '{name}': {actual_shape}")
 
-                host_mem = np.empty(actual_size, dtype=output['dtype'])
-                cuda.memcpy_dtoh_async(host_mem, output['device'], self.stream)
-                self.stream.synchronize()
-                results.append(host_mem.reshape(actual_shape))
+            host_mem = np.empty(actual_shape, dtype=output['dtype'])
+            if host_mem.size:
+                cuda.memcpy_dtoh_async(host_mem, self._output_allocator.device(name), self.stream)
+            results.append(host_mem)
 
+        self.stream.synchronize()
         return results
 
     def _resize_to_engine_size(self, img: np.ndarray) -> Tuple[np.ndarray, Tuple[float, float]]:
@@ -446,15 +538,39 @@ class SuperPointEngineTRT:
         results = [None] * num_pairs
         per_pair_postprocess = [0.0] * num_pairs
 
-        # Parallel postprocessing with ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=min(num_pairs, 4)) as executor:
+        # Postprocess:
+        #  - batch=1 → chạy inline (threading overhead ~30ms > compute ~15ms → lỗ).
+        #  - batch>1 → submit vào persistent pool để chạy song song.
+        if num_pairs == 1:
+            try:
+                idx, result, postprocess_time = self._postprocess_pair_wrapper(
+                    0, kpts_raw, matches_raw, mscores_raw,
+                    0, 1, templates[0], target_imgs[0],
+                    score_threshold, ransac_threshold, min_confidence,
+                )
+                results[idx] = result
+                per_pair_postprocess[idx] = postprocess_time
+            except Exception as e:
+                logger.error(f"Postprocess failed for pair 0: {e}")
+                results[0] = {
+                    'success': False,
+                    'error': f'Postprocess exception: {e}',
+                    'homography': None,
+                    'confidence': 0.0,
+                    'inliers': 0,
+                    'total_matches': 0,
+                    'transformed_bboxes': [],
+                    'target_img': target_imgs[0] if target_imgs else None,
+                }
+                per_pair_postprocess[0] = 0.0
+        else:
+            # Parallel postprocessing — reuse persistent thread pool (created at
+            # service init) thay vì recreate mỗi call. Tiết kiệm ~25-35ms / call.
             futures = []
-
             for idx, template in enumerate(templates):
                 template_idx = idx * 2
                 target_idx = idx * 2 + 1
-
-                future = executor.submit(
+                future = self._postproc_pool.submit(
                     self._postprocess_pair_wrapper,
                     idx,
                     kpts_raw,
@@ -526,12 +642,22 @@ class SuperPointEngineTRT:
     ) -> Dict:
         """Post-process a single template-target pair from batch outputs"""
 
-        # ⭐ OPTIMIZATION: Hardcode num_kpts=512 (engine output shape is fixed)
-        # Engine: pipeline_fp16_dynamic_480_640.engine outputs (batch, 512, 2)
-        kpts_flat = kpts_raw.ravel()
+        # `keypoints` is the one output TensorRT can shape ahead of time, so
+        # _infer already hands it back as (batch, K, 2) -- use it as is. K
+        # differs per engine (512 for the small pipeline, 1024 for the 9-layer
+        # sp_lg_pipeline one), hence self.num_keypoints from the engine rather
+        # than a hardcoded 512; reshaping 1024-keypoint output as 512 splices
+        # image N's second half onto image N+1 and blows up the match indices.
         try:
-            num_kpts = 512  # Fixed output from engine
-            kpts = kpts_flat[:kpts_raw.shape[0]*num_kpts*2].reshape(kpts_raw.shape[0], num_kpts, 2)
+            if kpts_raw.ndim == 3:
+                kpts = kpts_raw
+            else:
+                num_kpts = self.num_keypoints
+                if not num_kpts:
+                    raise ValueError("engine reports no static keypoint count")
+                kpts_flat = kpts_raw.ravel()
+                usable = (kpts_flat.size // (num_kpts * 2)) * num_kpts * 2
+                kpts = kpts_flat[:usable].reshape(-1, num_kpts, 2)
         except Exception as e:
             return {
                 'success': False,
@@ -547,19 +673,15 @@ class SuperPointEngineTRT:
         kpts0 = kpts[template_idx].astype(np.float32)
         kpts1 = kpts[target_idx].astype(np.float32)
 
-        # Find valid matches
-        matches_flat = matches_raw.ravel()
-        mscores_flat = mscores_raw.ravel()
-
-        valid_mask = mscores_flat > 1e-6
-        num_matches = np.sum(valid_mask)
-
-        if num_matches == 0:
-            num_matches = len(mscores_flat)
-
+        # matches/mscores now come back exactly sized from the output allocator
+        # (they used to be a 100MB buffer whose tail was uninitialized, hence
+        # the old "count scores > 1e-6 to guess the length" heuristic).
         try:
-            matches = matches_flat[:num_matches*3].reshape(num_matches, 3).astype(np.int32)
-            mscores = mscores_flat[:num_matches]
+            matches = matches_raw.reshape(-1, 3).astype(np.int32)
+            mscores = mscores_raw.ravel()
+            num_matches = len(matches)
+            if len(mscores) != num_matches:
+                raise ValueError(f"matches/mscores length mismatch: {num_matches} vs {len(mscores)}")
         except Exception as e:
             return {
                 'success': False,
@@ -594,19 +716,25 @@ class SuperPointEngineTRT:
                 'target_img': target_img_full
             }
 
-        m_kpts0 = kpts0[valid_matches[:, 1]].copy()
-        m_kpts1 = kpts1[valid_matches[:, 2]].copy()
+        # Fancy indexing (advanced indexing với integer array) đã trả về copy
+        # độc lập theo numpy spec — bỏ .copy() dư. In-place multiply bên dưới
+        # an toàn, không ảnh hưởng kpts0/kpts1.
+        m_kpts0 = kpts0[valid_matches[:, 1]]
+        m_kpts1 = kpts1[valid_matches[:, 2]]
 
         # Scale keypoints back
         template_h, template_w = template.template_gray.shape[:2]
         engine_h, engine_w = self.input_shape[2:]
         template_scale = (template_w / engine_w, template_h / engine_h)
 
-        target_scaled = target_img_full
+        # Target dimensions chỉ cần tính ratio — không cần resize + cvtColor
+        # lại (đã thực hiện trong preprocess step trước đó). Trước đây gọi
+        # cv2.resize + cv2.cvtColor trên ảnh 1200×1600 chỉ để lấy shape → phí
+        # ~5-10ms / pair.
+        target_h, target_w = target_img_full.shape[:2]
         if template.scale != 1.0:
-            target_scaled = cv2.resize(target_img_full, None, fx=template.scale, fy=template.scale)
-        target_gray = cv2.cvtColor(target_scaled, cv2.COLOR_BGR2GRAY)
-        target_h, target_w = target_gray.shape[:2]
+            target_h = int(round(target_h * template.scale))
+            target_w = int(round(target_w * template.scale))
         target_scale = (target_w / engine_w, target_h / engine_h)
 
         m_kpts0[:, 0] *= template_scale[0]
@@ -614,8 +742,14 @@ class SuperPointEngineTRT:
         m_kpts1[:, 0] *= target_scale[0]
         m_kpts1[:, 1] *= target_scale[1]
 
-        # RANSAC homography
-        H, mask = cv2.findHomography(m_kpts0, m_kpts1, cv2.RANSAC, ransac_threshold)
+        # RANSAC homography — cap maxIters=500 (default 2000) để bound
+        # worst-case khi matches toàn nhiễu (FAIL frame). RANSAC trên noisy
+        # matches iterate gần hết maxIters → tốn 20-30ms. Cap 500 giảm xuống
+        # ~5-8ms mà vẫn đủ cho ca thật (good matches converge sau ~50-200 iter).
+        H, mask = cv2.findHomography(
+            m_kpts0, m_kpts1, cv2.RANSAC, ransac_threshold,
+            maxIters=500,
+        )
 
         if H is None:
             return {
@@ -653,30 +787,28 @@ class SuperPointEngineTRT:
                 'target_img': target_img_full,
             }
 
-        # Transform bboxes
-        scale_matrix = np.array([
-            [1/template.scale, 0, 0],
-            [0, 1/template.scale, 0],
-            [0, 0, 1]
-        ])
-
-        H_full = scale_matrix @ H @ np.linalg.inv(scale_matrix)
+        # Transform bboxes — reuse cached scale_matrix + inverse từ TemplateConfig
+        # (không phụ thuộc frame, chỉ phụ thuộc template.scale).
+        H_full = template._scale_matrix @ H @ template._scale_matrix_inv
 
         transformed_bboxes = []
 
-        # Transform template bbox
-        template_pts = np.array(template.template_bbox['points'], dtype=np.float32).reshape(-1, 1, 2)
-        template_transformed = cv2.perspectiveTransform(template_pts, H_full)
-        transformed_bboxes.append({
-            'type': 'template',
-            'points': template_transformed.reshape(-1, 2).tolist(),
-            'conf': template.template_bbox.get('conf', 0.8)
-        })
+        # Transform template bbox — reuse cached np.array (pre-built in
+        # TemplateConfig.__post_init__, không thay đổi giữa frames).
+        if template._template_pts_arr is not None:
+            template_transformed = cv2.perspectiveTransform(template._template_pts_arr, H_full)
+            transformed_bboxes.append({
+                'type': 'template',
+                'points': template_transformed.reshape(-1, 2).tolist(),
+                'conf': template.template_bbox.get('conf', 0.8)
+            })
 
-        # Transform other bboxes
-        for bbox in template.other_bboxes:
-            pts = np.array(bbox['points'], dtype=np.float32).reshape(-1, 1, 2)
-            pts_transformed = cv2.perspectiveTransform(pts, H_full)
+        # Transform other bboxes — dùng cached arrays parallel với other_bboxes
+        cached_pts_list = template._other_pts_arrs or []
+        for bbox, pts_arr in zip(template.other_bboxes, cached_pts_list):
+            if pts_arr is None:
+                continue
+            pts_transformed = cv2.perspectiveTransform(pts_arr, H_full)
             transformed_bboxes.append({
                 'type': bbox['type'],
                 'points': pts_transformed.reshape(-1, 2).tolist(),
