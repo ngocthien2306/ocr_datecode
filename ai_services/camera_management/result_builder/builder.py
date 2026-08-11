@@ -5,8 +5,10 @@ Builder pattern for constructing inference results.
 Provides fluent interface for building complex result structures.
 """
 
+import atexit
 import os
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
@@ -17,6 +19,29 @@ if TYPE_CHECKING:
     import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Frame encoding runs on a process-wide pool, NOT a per-call one. Spinning up
+# fresh threads for every result build is disastrous here: each worker starts
+# cold and immediately streams a multi-MB frame (copy → draw → resize → JPEG),
+# so thread startup lands right on top of a page-fault/cache-miss storm.
+# Measured on 2568x1926 frames: fresh pool per call 33.0ms, shared pool 11.7ms —
+# the per-call pool was even slower than encoding the frames sequentially
+# (15.8ms). A pipeline object is constructed per job, so the pool has to live at
+# module scope to actually be reused.
+_encode_pool: Optional[ThreadPoolExecutor] = None
+_encode_pool_lock = threading.Lock()
+
+
+def _get_encode_pool(max_workers: int = 4) -> ThreadPoolExecutor:
+    global _encode_pool
+    if _encode_pool is None:
+        with _encode_pool_lock:
+            if _encode_pool is None:
+                _encode_pool = ThreadPoolExecutor(
+                    max_workers=max_workers, thread_name_prefix="frame_encode"
+                )
+                atexit.register(_encode_pool.shutdown, wait=False)
+    return _encode_pool
 
 home = os.environ.get('HOME')
 
@@ -666,24 +691,24 @@ class InferenceResultBuilder:
         encode_display_func,
         max_workers: int = 4
     ) -> List[tuple]:
-        """Encode frames in parallel using ThreadPoolExecutor"""
+        """Encode frames in parallel using a shared ThreadPoolExecutor"""
         results = [None] * len(encode_tasks)
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(
-                    cls._encode_single_frame, task, save_and_encode_func, encode_display_func
-                ): idx
-                for idx, task in enumerate(encode_tasks)
-            }
+        executor = _get_encode_pool(max_workers)
+        futures = {
+            executor.submit(
+                cls._encode_single_frame, task, save_and_encode_func, encode_display_func
+            ): idx
+            for idx, task in enumerate(encode_tasks)
+        }
 
-            for future in as_completed(futures):
-                idx = futures[future]
-                try:
-                    results[idx] = future.result()
-                except Exception as e:
-                    logger.error(f"Encode error for task {idx}: {e}")
-                    results[idx] = (None, None)
+        for future in as_completed(futures):
+            idx = futures[future]
+            try:
+                results[idx] = future.result()
+            except Exception as e:
+                logger.error(f"Encode error for task {idx}: {e}")
+                results[idx] = (None, None)
 
         return results
 
