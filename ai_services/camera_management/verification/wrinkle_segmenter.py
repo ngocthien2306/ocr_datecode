@@ -313,13 +313,17 @@ class WrinkledSegmenterTRT:
         frame_masks = []
         for mask in masks_crop:
             crop_h, crop_w = mask.shape
-            canvas = np.zeros((img_h, img_w), dtype=np.float32)
+            # uint8 canvas, not float32: the masks are binary and every consumer
+            # thresholds with `> 0.5`, so 0/1 bytes carry the same information
+            # for a quarter of the memory traffic — and this allocates+warps a
+            # full frame per region, ~20MB each at 2568x1926.
+            canvas = np.zeros((img_h, img_w), dtype=np.uint8)
 
             # Đặt mask đúng vị trí trong rotated frame
             dst_h = min(crop_h, img_h - y1c)
             dst_w = min(crop_w, img_w - x1c)
             if dst_h > 0 and dst_w > 0:
-                canvas[y1c:y1c + dst_h, x1c:x1c + dst_w] = mask[:dst_h, :dst_w]
+                canvas[y1c:y1c + dst_h, x1c:x1c + dst_w] = (mask[:dst_h, :dst_w] > 0.5)
 
             # Inverse rotate về original frame
             mask_frame = cv2.warpAffine(

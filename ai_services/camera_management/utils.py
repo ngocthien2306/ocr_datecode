@@ -5,6 +5,7 @@ Pure functions without state dependencies
 
 import cv2
 import ctypes
+import os
 import subprocess
 import logging
 import base64
@@ -21,6 +22,17 @@ from datetime import datetime, timezone
 
 
 logger = logging.getLogger(__name__)
+
+# The two saved JPEGs serve different masters:
+#   *_org.jpg  — untouched capture, kept full resolution because it feeds
+#                dataset collection / retraining. Never downscale this one.
+#   *_viz.jpg  — the same frame with overlays, only ever looked at by a human
+#                reviewing a result, so it can be stored smaller.
+# Downscaling viz cuts both disk usage and the background JPEG encode (which
+# competes for CPU with the synchronous display encode). VIZ_SAVE_SCALE=1
+# restores full-resolution viz.
+_VIZ_SAVE_SCALE = max(1, int(os.environ.get('VIZ_SAVE_SCALE', '2')))
+_VIZ_SAVE_QUALITY = int(os.environ.get('VIZ_SAVE_QUALITY', '90'))
 
 
 # ============= GPIO/DI/DO Utilities =============
@@ -873,15 +885,23 @@ def draw_detected_obb_boxes(
             contour = single_box.get('contour')
             if box_type == 'wrinkled' and contour is not None:
                 contour_arr = np.array(contour, dtype=np.int32)
-                # Semi-transparent filled mask
-                overlay = result_img.copy()
-                cv2.fillPoly(overlay, [contour_arr], color)
-                cv2.addWeighted(overlay, 0.35, result_img, 0.65, 0, result_img)
+                # Semi-transparent filled mask, blended inside the contour's
+                # bounding rect only. Blending the whole frame per region cost
+                # a full copy + addWeighted over ~15MB each time (12ms for one
+                # region, 25ms for five); outside the polygon the blend is the
+                # identity anyway, so the ROI form is pixel-identical.
+                x_b, y_b, bw_b, bh_b = cv2.boundingRect(contour_arr)
+                rx0, ry0 = max(x_b, 0), max(y_b, 0)
+                rx1, ry1 = min(x_b + bw_b, width), min(y_b + bh_b, height)
+                if rx1 > rx0 and ry1 > ry0:
+                    roi = result_img[ry0:ry1, rx0:rx1]
+                    overlay = roi.copy()
+                    cv2.fillPoly(overlay, [contour_arr - np.array([[rx0, ry0]], dtype=np.int32)], color)
+                    cv2.addWeighted(overlay, 0.35, roi, 0.65, 0, roi)
                 # Outline
                 cv2.polylines(result_img, [contour_arr], True, color, line_thickness + 1, cv2.LINE_AA)
                 # Derive corners from contour bounding rect when not provided — label anchor needs it
                 if corners is None:
-                    x_b, y_b, bw_b, bh_b = cv2.boundingRect(contour_arr)
                     corners = np.array(
                         [[x_b, y_b], [x_b + bw_b, y_b], [x_b + bw_b, y_b + bh_b], [x_b, y_b + bh_b]],
                         dtype=np.int32,
@@ -1073,7 +1093,9 @@ class AsyncImageSaver:
         img_org: np.ndarray,
         path_viz: Path,
         path_org: Path,
-        quality: int = 95
+        quality: int = 95,
+        viz_scale: int = 1,
+        viz_quality: Optional[int] = None
     ) -> None:
         """
         Submit image save task to background thread.
@@ -1087,7 +1109,7 @@ class AsyncImageSaver:
         """
         if self._shutdown:
             logger.warning("AsyncImageSaver is shutdown, saving synchronously")
-            self._do_save(img_viz, img_org, path_viz, path_org, quality)
+            self._do_save(img_viz, img_org, path_viz, path_org, quality, viz_scale, viz_quality)
             return
 
         with self._count_lock:
@@ -1095,7 +1117,7 @@ class AsyncImageSaver:
 
         self.executor.submit(
             self._do_save,
-            img_viz, img_org, path_viz, path_org, quality
+            img_viz, img_org, path_viz, path_org, quality, viz_scale, viz_quality
         )
 
     def _do_save(
@@ -1104,7 +1126,9 @@ class AsyncImageSaver:
         img_org: np.ndarray,
         path_viz: Path,
         path_org: Path,
-        quality: int
+        quality: int,
+        viz_scale: int = 1,
+        viz_quality: Optional[int] = None
     ) -> None:
         """
         Actually save images to disk (runs in background thread).
@@ -1116,13 +1140,23 @@ class AsyncImageSaver:
             path_org: Path for org image
             quality: JPEG quality
         """
-        import time
         t_start = time.perf_counter()
         try:
-            cv2.imwrite(str(path_viz), img_viz, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            # Downscale happens here, on the background thread, so the
+            # inference path never pays for it.
+            if viz_scale > 1:
+                img_viz = resize_for_display(img_viz, scale_factor=viz_scale)
+            cv2.imwrite(str(path_viz), img_viz,
+                        [cv2.IMWRITE_JPEG_QUALITY, viz_quality if viz_quality else quality])
+            # Original stays untouched — it is the dataset-collection copy.
             cv2.imwrite(str(path_org), img_org, [cv2.IMWRITE_JPEG_QUALITY, quality])
             t_elapsed = (time.perf_counter() - t_start) * 1000
-            logger.debug(f"AsyncImageSaver: saved {path_viz.name} in {t_elapsed:.1f}ms (pending: {self._pending_count - 1})")
+            logger.debug(
+                f"AsyncImageSaver: saved {path_viz.name} "
+                f"(viz {img_viz.shape[1]}x{img_viz.shape[0]}, "
+                f"org {img_org.shape[1]}x{img_org.shape[0]}) "
+                f"in {t_elapsed:.1f}ms (pending: {self._pending_count - 1})"
+            )
         except Exception as e:
             logger.error(f"AsyncImageSaver error saving images: {e}")
         finally:
@@ -1507,7 +1541,9 @@ def save_and_encode_frame(
             img_org=frame_img,
             path_viz=full_path_viz,
             path_org=full_path_org,
-            quality=95
+            quality=95,
+            viz_scale=_VIZ_SAVE_SCALE,
+            viz_quality=_VIZ_SAVE_QUALITY,
         )
 
         logger.info(
