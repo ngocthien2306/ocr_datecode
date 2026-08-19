@@ -277,7 +277,7 @@ def strip_for_llm(result: Any) -> Any:
     if not isinstance(result, dict):
         return result
     if not any(k in result for k in ("samples", "download_url", "people", "by_recipe",
-                                     "sample_covers_all")):
+                                     "sample_covers_all", "equipment_alerts")):
         return result
 
     out = dict(result)
@@ -309,6 +309,42 @@ def strip_for_llm(result: Any) -> Any:
                 f"(`percent_of_sample`), đừng đưa số đếm — đặt một con số của mẫu cạnh "
                 f"tổng số fail của kỳ sẽ bị đọc thành số của cả kỳ>"
             )
+
+    # Bản giao ca: bỏ bốn con số mà ô KPI đã hiện.
+    #
+    # Ba lần trước bảo prompt "đừng đọc lại ô KPI" đều không giữ được, và bản giao
+    # ca cũng vậy — nó liệt kê đủ tổng/pass/uptime/số phút dừng ngay trên bốn ô hiện
+    # đúng bốn số đó. Bỏ số đi thì phần văn xuôi buộc phải làm việc của nó: kết luận
+    # và việc ca sau cần để ý. Giữ `fail_causes` và `recipe_changes` vì đó là thứ ô
+    # KPI không nói được.
+    if "equipment_alerts" in result and "production" in result:
+        pr = dict(result.get("production") or {})
+        # GIỮ sản lượng ca, dù ô KPI đã hiện.
+        #
+        # Bỏ nó đi thì mô hình lấy `target.actual_day` — sản lượng CẢ NGÀY — và gọi
+        # đó là sản lượng của ca: KPI ghi ca 2.828 còn câu văn ghi 10.171. Gán sai
+        # phạm vi tệ hơn trùng lặp nhiều, vì trưởng ca có thể lấy con số đó báo cáo
+        # lên trên. Phần ồn nhất (uptime, số phút dừng) vẫn được bỏ.
+        out["production"] = {
+            "total_this_shift": pr.get("total"),
+            "pass_rate": pr.get("pass_rate"),
+            "by_recipe": pr.get("by_recipe"),
+        }
+        dt = dict(result.get("downtime") or {})
+        out["downtime"] = {"stop_count": dt.get("stop_count"),
+                           "stops": dt.get("stops")} if dt else None
+        # Đổi tên khoá của chỉ tiêu cho không thể lẫn phạm vi.
+        if out.get("target"):
+            t = dict(out["target"])
+            out["target"] = {
+                "target_whole_day": t.get("target"),
+                "actual_whole_day": t.get("actual_day"),
+                "achieved_percent_whole_day": t.get("achieved_percent"),
+                "projected_whole_day": t.get("projected_end_of_day"),
+            }
+        out["_numbers"] = ("<ô KPI đã hiện uptime và số phút dừng — đừng liệt kê lại. "
+                           "`total_this_shift` là sản lượng CA NÀY; các khoá "
+                           "`*_whole_day` là của CẢ NGÀY, đừng dùng chúng làm số của ca>")
 
     if "samples" in result:
         out["samples"] = f"<{len(result.get('samples') or [])} ảnh minh hoạ đã được hệ thống đính kèm tự động>"
@@ -352,6 +388,19 @@ def strip_for_llm(result: Any) -> Any:
             # Một con số được phép: chênh lệch pass rate là kết luận chất lượng,
             # và nói "tăng 1,15 điểm" mới cụ thể hơn "tăng nhẹ".
             out["pass_rate_diff_points"] = pr["diff"]
+        # Bỏ hai mảng ngày thô — biểu đồ đã vẽ chúng. Giữ lại kết luận về dạng thay
+        # đổi và ba ngày lệch nhất, vì đó là thứ văn xuôi cần nói.
+        pt = result.get("pattern") or {}
+        if pt:
+            out["pattern"] = {
+                "shape": pt.get("shape"),
+                "biggest_day": pt.get("biggest_day"),
+                "biggest_day_share_pct": pt.get("biggest_day_share_pct"),
+                "top_day_diffs": sorted(pt.get("per_day_diff") or [],
+                                        key=lambda x: -abs(x["diff"]))[:3],
+            }
+        out.pop("by_day", None)
+        out["per_working_day"] = result.get("per_working_day")
         out["per_day_direction"] = (
             "tăng" if (result.get("per_day") or {}).get("current", 0)
             > (result.get("per_day") or {}).get("previous", 0) else "giảm"
@@ -835,7 +884,26 @@ def charts_from_tool_result(tool_name: str, args: Dict[str, Any], result: Any) -
             if c:
                 charts.append(c)
 
-        # Cột thứ hai: pass rate của các recipe chạy CẢ HAI kỳ, để nhìn ra chất
+        # Cột thứ hai: sản lượng theo NGÀY, kèm ngày đối chiếu ở dòng phụ.
+        #
+        # Vẽ giá trị TUYỆT ĐỐI chứ không vẽ chênh lệch: renderer tính bề rộng theo
+        # tỷ lệ giá trị/max, nên một cột âm ra bề rộng âm và biến mất hoàn toàn —
+        # đúng ngày tụt mạnh nhất sẽ không hiện.
+        by_day = ((result.get("by_day") or {}).get("current")) or []
+        prev_day = ((result.get("by_day") or {}).get("previous")) or []
+        if len(by_day) > 1:
+            series = []
+            for i, d in enumerate(by_day):
+                p0 = prev_day[i] if i < len(prev_day) else None
+                sub = (f"{p0['date'][5:]}: {p0['total']:,}" if p0 else "kỳ trước: không có")
+                if p0:
+                    sub += f"  ({d['total'] - p0['total']:+,})"
+                series.append({"label": d["date"][5:], "value": d["total"], "sub": sub})
+            c = _bar(f"Sản lượng theo ngày · {pa.get('label')}", series, "sp", ordered=True)
+            if c:
+                charts.append(c)
+
+        # Cột thứ ba: pass rate của các recipe chạy CẢ HAI kỳ, để nhìn ra chất
         # lượng đổi chiều. Recipe một kỳ không có gì để so nên loại khỏi biểu đồ
         # này thay vì vẽ một cột trơ.
         both = [r for r in (result.get("by_recipe") or [])

@@ -1281,6 +1281,72 @@ def compare_periods(
         a = build_summary(start_a, end_a, recipe_ids)
         b = build_summary(start_b, end_b, recipe_ids)
 
+        # Sản lượng theo NGÀY của cả hai kỳ.
+        #
+        # "7 ngày giảm 38%" không nói được là MỘT ngày hỏng hay tụt dần cả tuần —
+        # mà hai chuyện đó cần hành động khác nhau hoàn toàn. Đây cũng là câu hỏi
+        # tiếp theo ngay lập tức của người vận hành.
+        def _daily(s: datetime, e: datetime) -> List[Dict[str, Any]]:
+            rows = list(get_sync_database()["inference_results"].aggregate([
+                {"$match": {_TIME_FIELD: {"$gte": s, "$lte": e},
+                            **({"recipe_id": {"$in": recipe_ids}} if recipe_ids else {})}},
+                {"$group": {
+                    "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": f"${_TIME_FIELD}",
+                                              "timezone": settings.TIMEZONE}},
+                    "total": {"$sum": 1},
+                    "pass": {"$sum": {"$cond": [{"$eq": ["$product_pass_fail", "PASS"]}, 1, 0]}},
+                }},
+                {"$sort": {"_id": 1}},
+            ]))
+            return [{"date": r["_id"], "total": r["total"],
+                     "pass_rate": round(r["pass"] / r["total"] * 100, 2) if r["total"] else 0.0}
+                    for r in rows]
+
+        days_list_a, days_list_b = _daily(start_a, end_a), _daily(start_b, end_b)
+
+        # Ngày LÀM VIỆC = ngày thực sự có sản phẩm.
+        #
+        # Chuẩn hoá theo số ngày này chứ không theo độ dài lịch: một tuần chạy 5
+        # ngày so với một tuần chạy 7 ngày sẽ đọc thành sụt 28% trong khi nhịp mỗi
+        # ngày làm việc không đổi. Đó là kết luận sai về dây chuyền, rút ra từ lịch
+        # nghỉ.
+        wd_a, wd_b = len(days_list_a), len(days_list_b)
+        per_wd = {
+            "current": round(a["total"] / wd_a, 1) if wd_a else None,
+            "previous": round(b["total"] / wd_b, 1) if wd_b else None,
+            "working_days_current": wd_a,
+            "working_days_previous": wd_b,
+        }
+        if per_wd["current"] is not None and per_wd["previous"]:
+            per_wd["change_pct"] = round(
+                (per_wd["current"] - per_wd["previous"]) / per_wd["previous"] * 100, 2)
+
+        # Thay đổi TẬP TRUNG hay TRẢI ĐỀU.
+        #
+        # Ghép ngày theo VỊ TRÍ trong kỳ (ngày 1 của A với ngày 1 của B), vì hai kỳ
+        # cùng độ dài thì vị trí mới so được — ghép theo thứ trong tuần thì lệch khi
+        # có ngày nghỉ.
+        pattern = None
+        if wd_a and wd_b and a["total"] != b["total"]:
+            pairs = []
+            for i in range(min(wd_a, wd_b)):
+                da, dbb = days_list_a[i], days_list_b[i]
+                pairs.append({"day": da["date"], "vs_day": dbb["date"],
+                              "diff": da["total"] - dbb["total"]})
+            total_diff = a["total"] - b["total"]
+            worst = max(pairs, key=lambda x: abs(x["diff"])) if pairs else None
+            share = (abs(worst["diff"]) / abs(total_diff) * 100) if worst and total_diff else 0
+            pattern = {
+                "total_diff": total_diff,
+                "biggest_day": worst,
+                "biggest_day_share_pct": round(share, 1),
+                # Một ngày chiếm quá nửa mức thay đổi thì đó là một sự kiện, không
+                # phải một xu hướng — và người vận hành cần biết ngày nào.
+                "shape": ("tập trung vào một ngày" if share >= 50
+                          else "trải trên nhiều ngày"),
+                "per_day_diff": pairs,
+            }
+
         if a["total"] == 0 and b["total"] == 0:
             return {"success": False,
                     "error": f"Cả hai kỳ đều không có dữ liệu ({label_a} và {label_b})"}
@@ -1348,6 +1414,9 @@ def compare_periods(
                 "current": round(a["total"] / days_a, 1),
                 "previous": round(b["total"] / days_b, 1),
             },
+            "per_working_day": per_wd,
+            "pattern": pattern,
+            "by_day": {"current": days_list_a, "previous": days_list_b},
             "baseline_usable": baseline_ok,
             "baseline_note": baseline_note,
             "recipe_scope": recipe_id or "tất cả recipe",
@@ -1370,6 +1439,13 @@ def compare_periods(
                 "kiện kinh doanh mà dữ liệu không nói. "
                 "`same_length` bằng false thì PHẢI nêu rõ hai kỳ dài khác nhau và dùng "
                 "`per_day` để so, đừng so tổng. "
+                "`per_working_day` chuẩn hoá theo số ngày THỰC SỰ CÓ SẢN XUẤT: nếu "
+                "`working_days_current` khác `working_days_previous` thì so tổng là sai — "
+                "một tuần chạy 5 ngày so tuần chạy 7 ngày đọc thành sụt 28% trong khi nhịp "
+                "mỗi ngày không đổi. Dùng `per_working_day.change_pct` khi số ngày lệch. "
+                "`pattern.shape` trả lời câu hỏi quan trọng nhất: thay đổi TẬP TRUNG vào "
+                "một ngày hay TRẢI ĐỀU. Tập trung thì nêu đích danh ngày đó và phần trăm nó "
+                "chiếm — đó là một sự kiện cần tìm nguyên nhân, không phải một xu hướng. "
                 "`all_failed` là sự cố thật: recipe có sản lượng mà pass rate bằng 0. "
                 "Ô KPI và bảng so sánh đã được hệ thống gắn sẵn — nêu KẾT LUẬN và nguyên "
                 "nhân, đừng đọc lại các con số đó."

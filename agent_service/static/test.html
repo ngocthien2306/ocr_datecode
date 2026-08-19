@@ -233,8 +233,11 @@
      hẹp hơn bề rộng cửa sổ (cột trái chiếm 300px + gap). */
   .tbl-cards{display:none}
   @media(max-width:720px){
-    .tbl-wrap .tbl-scroll{display:none}
-    .tbl-wrap .tbl-cards{display:flex;flex-direction:column;gap:8px}
+    /* Chỉ ẩn bảng khi CÓ bản thẻ thay thế. Ẩn vô điều kiện thì bảng dưới 5 cột —
+       như "các lần dừng" (Từ / Đến / Số phút) — không có gì thay thế và biến mất
+       hoàn toàn trên điện thoại. */
+    .tbl-wrap.has-cards .tbl-scroll{display:none}
+    .tbl-wrap.has-cards .tbl-cards{display:flex;flex-direction:column;gap:8px}
   }
   .tbl-card{border:1px solid var(--border);border-radius:10px;background:var(--card);overflow:hidden}
   .tbl-card-h{font-size:13px;font-weight:600;color:var(--text);padding:8px 11px;
@@ -532,6 +535,7 @@ function drawTable(t){
           `<div class="tbl-card-r"><span>${S(cols[i+1])}</span><b>${S(v)}</b></div>`).join('')}
       </div>`).join('')}</div>` : '';
 
+  if (stacked) wrap.classList.add('has-cards');
   wrap.innerHTML = head + `
     <div class="tbl-scroll"><table class="tbl">
       <thead><tr>${cols.map((c,i)=>`<th style="text-align:${al(i)}">${S(c)}</th>`).join('')}</tr></thead>
