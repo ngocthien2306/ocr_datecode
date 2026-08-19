@@ -70,6 +70,23 @@ CATEGORIES = [
     "start_services",
 ]
 
+#: Nhóm field hồ sơ nhân sự trên document `users`.
+#:
+#: Không nằm trong pydantic model của backend — được ghi trực tiếp vào MongoDB.
+#: Cố ý như vậy để không phải sửa `backend/app/models/user.py`: hai codebase đang
+#: được giữ tách rời, và `update_user` của backend dùng `$set` với đúng các field
+#: nó biết, nên field lạ vẫn sống sót qua mọi lần sửa user trên UI.
+#:
+#: Hệ quả cần biết: UI của backend chưa hiển thị/sửa được nhóm này.
+PROFILE_FIELDS = (
+    "employee_code",    # mã nhân viên
+    "department",       # bộ phận
+    "job_title",        # chức vụ
+    "shift",            # ca làm việc
+    "production_line",  # dây chuyền phụ trách
+    "hire_date",        # ngày vào làm
+)
+
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _LEVEL_RE = re.compile(r"\b(CRITICAL|FATAL|ERROR|WARNING|WARN|INFO|DEBUG)\b")
 
@@ -710,8 +727,10 @@ def get_audit_logs(
                 u["username"]: u
                 for u in db["users"].find(
                     {"username": {"$in": names}},
-                    {"username": 1, "full_name": 1, "role": 1, "avatar_url": 1,
-                     "email": 1, "phone_number": 1, "is_active": 1},
+                    # Ngoài các field của backend còn có nhóm hồ sơ nhân sự
+                    # (employee_code, department, job_title, shift, hire_date,
+                    # production_line) — xem ghi chú ở `PROFILE_FIELDS` bên dưới.
+                    {"_id": 0, "password": 0, "hashed_password": 0},
                 )
             }
             for name, count in users.most_common():
@@ -728,6 +747,7 @@ def get_audit_logs(
                     "email": prof.get("email"),
                     "phone_number": prof.get("phone_number"),
                     "is_active": prof.get("is_active"),
+                    **{f: prof.get(f) for f in PROFILE_FIELDS},
                     "account_exists": bool(prof),
                     "action_count": count,
                     "actions": dict(Counter(e["action_type"] for e in mine).most_common()),

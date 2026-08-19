@@ -153,20 +153,36 @@ def cards_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]:
     cards = []
     for p in (result.get("people") or [])[:12]:
         acts = p.get("actions") or {}
+
+        # Dòng ngay dưới tên: chức vụ — bộ phận. Đây là thứ người vận hành đọc
+        # đầu tiên để biết "ai đây", còn `role` chỉ là quyền trong hệ thống.
+        role_line = " · ".join(x for x in (p.get("job_title"), p.get("department")) if x)
+
+        window = None
+        if p.get("first_seen") and p.get("last_seen"):
+            a, b = p["first_seen"][11:19], p["last_seen"][11:19]
+            window = a if a == b else f"{a} → {b}"
+
         cards.append({
             "title": p.get("full_name") or p.get("username"),
-            "subtitle": f"@{p.get('username')}",
+            "role_line": role_line or None,
+            "subtitle": (f"@{p.get('username')}"
+                         + (f" · {p['employee_code']}" if p.get("employee_code") else "")),
             "badge": p.get("role") or "unknown",
             "avatar": _avatar_url(p.get("avatar_url")),
             "inactive": p.get("account_exists") is False or p.get("is_active") is False,
             "stat": p.get("action_count"),
             "stat_label": "thao tác",
+            # Chỉ giữ dòng có giá trị: user chưa khai bộ phận thì đừng hiện một
+            # hàng "Bộ phận —" trống, thẻ trông như dữ liệu bị lỗi.
             "rows": [r for r in (
-                (f"Hoạt động", f"{p['first_seen'][11:19]} → {p['last_seen'][11:19]}"
-                 if p.get("first_seen") and p.get("last_seen") else None),
-                ("Thao tác", ", ".join(f"{k} ×{v}" for k, v in acts.items()) or None),
+                ("Ca làm việc", p.get("shift")),
+                ("Dây chuyền", p.get("production_line")),
                 ("Email", p.get("email")),
                 ("Điện thoại", p.get("phone_number")),
+                ("Vào làm", p.get("hire_date")),
+                ("Hoạt động", window),
+                ("Thao tác", ", ".join(f"{k} ×{v}" for k, v in acts.items()) or None),
             ) if r[1]],
         })
     return cards
@@ -211,7 +227,8 @@ def strip_for_llm(result: Any) -> Any:
     if "people" in result:
         out["people"] = [
             {"username": p.get("username"), "full_name": p.get("full_name"),
-             "role": p.get("role"), "action_count": p.get("action_count")}
+             "role": p.get("role"), "department": p.get("department"),
+             "job_title": p.get("job_title"), "action_count": p.get("action_count")}
             for p in (result.get("people") or [])
         ]
         out["_cards"] = "<thẻ thông tin người thao tác đã được hệ thống đính kèm tự động>"
