@@ -17,23 +17,27 @@ def options_from_tool_result(tool_name: str, result: Any) -> Optional[List[Dict[
     """
     Trả danh sách option nếu tool này có gì đó cần user chọn, ngược lại None.
 
-    Ba nguồn:
+    Bốn nguồn:
     - tool nào trả `needs_disambiguation` (tên recipe khớp nhiều recipe)
+    - tool nào trả `needs_period_choice` (chưa biết báo cáo kỳ nào)
     - tool nào trả `needs_format_choice` (chưa biết xuất báo cáo định dạng nào)
     - `list_recipes` (user chưa nêu recipe nào)
     """
     if not isinstance(result, dict):
         return None
 
-    # Định dạng file có sẵn `value` do tool dựng — nó đã nhét ngày cụ thể vào
-    # câu, nên không tái tạo lại ở đây.
-    if result.get("needs_format_choice"):
-        formats = [
-            {"label": f["label"], "value": f["value"], "hint": f.get("hint", "")}
-            for f in (result.get("formats") or [])[:_MAX_OPTIONS]
-            if f.get("label") and f.get("value")
+    # Hai loại này đã có `value` do tool dựng sẵn — tool nhét ngày cụ thể và mốc
+    # gom số liệu vào câu, nên không tái tạo lại ở đây.
+    for key, field in (("needs_period_choice", "periods"),
+                       ("needs_format_choice", "formats")):
+        if not result.get(key):
+            continue
+        rows = [
+            {"label": r["label"], "value": r["value"], "hint": r.get("hint", "")}
+            for r in (result.get(field) or [])[:_MAX_OPTIONS]
+            if r.get("label") and r.get("value")
         ]
-        return formats or None
+        return rows or None
 
     if result.get("needs_disambiguation"):
         rows = result.get("matches") or []

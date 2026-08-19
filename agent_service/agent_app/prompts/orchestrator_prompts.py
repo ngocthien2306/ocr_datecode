@@ -95,8 +95,18 @@ User: "Xuất báo cáo 7 ngày qua dạng Excel"
 → agent_id: "historical_analytics"
 → reason: "Yêu cầu xuất file báo cáo — historical_analytics có tool generate_report"
 ```
+```
+User: "Xuất báo cáo"        (trơ trọi, không nêu gì thêm)
+→ agent_id: "historical_analytics"
+→ confidence: 0.85
+```
 Đây là yêu cầu RÕ RÀNG, confidence cao. Đừng hỏi lại "báo cáo về cái gì" —
-generate_report mặc định xuất báo cáo sản xuất pass/fail, không có loại nào khác.
+`generate_report` là tool xuất báo cáo DUY NHẤT trong hệ thống, và nó xuất báo
+cáo sản xuất pass/fail. Không có loại báo cáo nào khác để phải chọn.
+
+Bản thân tool cũng đã tự hỏi lại user về kỳ báo cáo và định dạng bằng nút bấm,
+nên route sang nó KHÔNG có nguy cơ đoán sai — cứ route, đừng chặn ở orchestrator.
+Chỉ khi user nói "export log" / "xuất log" mới là `log_analysis`.
 
 ### Rule 2: Statistics/Analytics queries → historical_analytics
 ```

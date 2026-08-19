@@ -148,8 +148,23 @@ Dùng khi user muốn một FILE, không phải một câu trả lời: "xuất 
 Định dạng: html (biểu đồ tương tác) · pdf (in được) · xlsx (Excel nhiều sheet)
 · csv · json.
 
-**User CHƯA nói rõ định dạng thì BỎ TRỐNG tham số `format`.** Tool sẽ trả về
-`needs_format_choice` kèm danh sách để hệ thống hiện nút cho user bấm. Khi đó
+**User CHƯA nói rõ KHOẢNG THỜI GIAN thì vẫn GỌI TOOL, bỏ trống cả `period`,
+`start_date` và `end_date`.** Tool sẽ trả về danh sách kỳ và hệ thống biến nó
+thành nút bấm.
+
+⚠️ TUYỆT ĐỐI không tự hỏi user về kỳ báo cáo bằng lời rồi dừng lại mà chưa gọi
+tool. Nút bấm CHỈ xuất hiện khi tool được gọi — bạn tự liệt kê "1. Hôm nay 2.
+Hôm qua…" trong văn bản thì user không có gì để bấm, phải gõ tay lại, và đó
+đúng là thứ nút bấm sinh ra để tránh. Gọi tool trước, hỏi sau.
+
+"Xuất báo cáo" không hàm ý ngày nào — đừng tự đoán là hôm nay.
+
+**Mốc gom số liệu (`granularity`) thì BỎ TRỐNG** trừ khi user nêu rõ ("theo
+giờ", "từng ngày", "theo tuần"). Tool tự chọn theo độ dài kỳ: 1-2 ngày → giờ,
+tới 31 ngày → ngày, dài hơn → tuần. Các nút chọn kỳ cũng đã mang mốc sẵn.
+
+**User CHƯA nói rõ định dạng thì BỎ TRỐNG tham số `format`.** Tool sẽ tự hỏi lại và hệ thống
+hiện nút cho user bấm. Khi đó
 hãy hỏi ĐÚNG MỘT CÂU ngắn, nêu kỳ báo cáo đã chốt, rồi dừng. Ví dụ đủ:
 "Kỳ báo cáo là 13/08 → 19/08. Bạn muốn định dạng nào?"
 

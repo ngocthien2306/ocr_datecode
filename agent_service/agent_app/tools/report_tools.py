@@ -44,6 +44,25 @@ REPORTS_URL_PREFIX = "/api/reports"
 
 FORMATS = ("html", "pdf", "xlsx", "csv", "json")
 
+#: Kỳ báo cáo đề xuất khi user chỉ nói "xuất báo cáo" mà không nêu thời gian.
+#:
+#: Mỗi lựa chọn mang luôn mốc gom số liệu hợp lý cho độ dài của nó, và nói ra
+#: trong nhãn. Gộp hai câu hỏi thành một: hỏi riêng "kỳ nào" rồi "theo giờ hay
+#: theo ngày" là bắt user bấm ba lần cho một việc, mà mốc thời gian thì gần như
+#: luôn suy được từ độ dài kỳ.
+PERIOD_CHOICES = [
+    {"period": "today",     "granularity": "hour", "label": "Hôm nay",      "hint": "chia theo từng giờ"},
+    {"period": "yesterday", "granularity": "hour", "label": "Hôm qua",      "hint": "chia theo từng giờ"},
+    {"period": "thisweek",  "granularity": "day",  "label": "Tuần này",     "hint": "chia theo từng ngày"},
+    {"period": "7days",     "granularity": "day",  "label": "7 ngày qua",   "hint": "chia theo từng ngày"},
+    {"period": "thismonth", "granularity": "day",  "label": "Tháng này",    "hint": "chia theo từng ngày"},
+    # 30 ngày để 'day' cho khớp quy tắc tự suy bên dưới (≤31 ngày → day). Nhãn
+    # nút và mốc thực tế phải nói cùng một điều, không thì user bấm "chia theo
+    # tuần" rồi mở file ra thấy chia theo ngày. 'week' vẫn dùng cho khoảng tuỳ ý
+    # dài hơn một tháng.
+    {"period": "30days",    "granularity": "day",  "label": "30 ngày qua",  "hint": "chia theo từng ngày"},
+]
+
 #: Nhãn hiển thị trên nút bấm khi phải hỏi lại user muốn định dạng nào.
 FORMAT_CHOICES = [
     {"format": "html",  "label": "HTML",  "hint": "biểu đồ tương tác, mở bằng trình duyệt"},
@@ -70,11 +89,18 @@ class GenerateReportArgs(BaseModel):
     period: Optional[str] = Field(
         default=None,
         description="Kỳ báo cáo có sẵn: today, yesterday, thisweek, lastweek, 7days, "
-                    "thismonth, lastmonth, 30days. Bỏ trống và không đưa ngày = hôm nay.",
+                    "thismonth, lastmonth, 30days. ĐỂ TRỐNG (và không đưa start_date/"
+                    "end_date) nếu user chưa nói rõ khoảng thời gian — tool sẽ hỏi lại. "
+                    "Đừng tự đoán là 'hôm nay'.",
     )
     start_date: Optional[str] = Field(default=None, description="Ngày bắt đầu YYYY-MM-DD (ưu tiên hơn `period`)")
     end_date: Optional[str] = Field(default=None, description="Ngày kết thúc YYYY-MM-DD")
-    granularity: str = Field(default="day", description="Mốc gom số liệu: hour, day, week")
+    granularity: Optional[str] = Field(
+        default=None,
+        description="Mốc gom số liệu: hour, day, week. ĐỂ TRỐNG để tool tự chọn theo độ dài "
+                    "kỳ báo cáo (1-2 ngày → hour, tới 31 ngày → day, dài hơn → week). "
+                    "Chỉ điền khi user nêu rõ ('theo giờ', 'từng ngày', 'theo tuần').",
+    )
     recipe: Optional[str] = Field(
         default=None,
         description="Chỉ lấy một recipe (tên hoặc ObjectId). Bỏ trống = tất cả recipe.",
@@ -107,6 +133,9 @@ def _prune_old_reports() -> int:
     return removed
 
 
+_GRAN_WORD = {"hour": "giờ", "day": "ngày", "week": "tuần"}
+
+
 def _local_dates(start_dt: datetime, end_dt: datetime) -> tuple[str, str]:
     """
     Hai mốc naive-UTC → chuỗi 'YYYY-MM-DD' theo giờ địa phương.
@@ -128,17 +157,46 @@ def generate_report(
     period: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    granularity: str = "day",
+    granularity: Optional[str] = None,
     recipe: Optional[str] = None,
     format: Optional[str] = None,
     theme: str = "industrial",
     include_charts: bool = True,
     include_per_recipe: bool = True,
+    **_ignored: Any,
 ) -> Dict[str, Any]:
-    """Xuất báo cáo sản xuất ra file và trả về đường dẫn tải."""
+    """
+    Xuất báo cáo sản xuất ra file và trả về đường dẫn tải.
+
+    `**_ignored` để bỏ qua tham số lạ. Đã gặp thật: phần mô tả tool nhắc tới các
+    key trong kết quả trả về (`needs_period_choice`) và LLM tưởng đó là tham số
+    nên truyền vào, làm cả lượt chat sập với "unexpected keyword argument". Một
+    tham số bịa ra không được phép giết cả câu trả lời.
+    """
     try:
-        gran = (granularity or "day").lower()
-        if gran not in ("hour", "day", "week"):
+        # Chưa biết kỳ báo cáo thì hỏi, đừng lặng lẽ lấy hôm nay. "Xuất báo cáo"
+        # không hàm ý ngày nào cả, mà một file của hôm nay và một file của tháng
+        # này là hai thứ hoàn toàn khác nhau.
+        if not period and not start_date and not end_date:
+            return {
+                "success": False,
+                "needs_period_choice": True,
+                "message": (
+                    "Chưa biết user muốn báo cáo kỳ nào. Hãy hỏi họ chọn, KHÔNG tự "
+                    "mặc định là hôm nay. Mỗi lựa chọn đã kèm mốc chia số liệu phù hợp."
+                ),
+                "periods": [
+                    {
+                        **c,
+                        "value": (f"Xuất báo cáo {c['label'].lower()} "
+                                  f"gom theo {_GRAN_WORD[c['granularity']]}"),
+                    }
+                    for c in PERIOD_CHOICES
+                ],
+            }
+
+        gran_raw = (granularity or "").strip().lower()
+        if gran_raw and gran_raw not in ("hour", "day", "week"):
             return {"success": False, "error": "granularity phải là hour, day hoặc week"}
 
         th = (theme or "industrial").lower()
@@ -206,6 +264,11 @@ def generate_report(
         fmt = raw_fmt
 
         span_days = (end_dt - start_dt).days + 1
+        # Mốc gom số liệu suy từ độ dài kỳ nếu user không nêu. Để cứng 'day' như
+        # trước thì báo cáo một ngày chỉ có đúng MỘT cột — biểu đồ vô nghĩa; còn
+        # kỳ ba tháng chia theo ngày thì ra gần trăm cột chen chúc.
+        gran = gran_raw or ("hour" if span_days <= 2 else "day" if span_days <= 31 else "week")
+
         summary = build_summary(
             start_dt, end_dt, recipe_ids or None,
             include_camera=(fmt in ("xlsx", "csv", "json") and span_days <= CAMERA_BREAKDOWN_MAX_DAYS),
@@ -271,6 +334,7 @@ def generate_report(
             "render_seconds": render_s,
             "period": {"label": label, "start": start_dt.isoformat(), "end": end_dt.isoformat()},
             "granularity": gran,
+            "granularity_auto": not gran_raw,
             "recipe_scope": (summary["by_recipe"][0]["recipe_name"]
                              if recipe_ids and summary["by_recipe"] else "Tất cả recipe"),
             "summary": {
@@ -307,10 +371,14 @@ generate_report_tool = BaseTool.create_tool(
             "Xuất BÁO CÁO SẢN XUẤT ra file tải về. Dùng khi user nói 'xuất báo cáo', "
             "'tạo report', 'xuất Excel', 'làm báo cáo PDF', 'gửi tôi file báo cáo'. "
             "Định dạng: html (biểu đồ tương tác), pdf (in được), xlsx (Excel nhiều "
-            "sheet), csv, json. Nếu user CHƯA nói rõ định dạng thì BỎ TRỐNG `format` — "
-            "tool trả về `needs_format_choice` để hỏi lại, đừng tự mặc định. "
-            "Khi tạo được file, trả về `download_url` — BẮT BUỘC đưa liên kết đó cho "
-            "user, không có nó thì họ không lấy được file. "
+            "sheet), csv, json. "
+            "User chưa nói rõ KHOẢNG THỜI GIAN thì BỎ TRỐNG period/start_date/end_date; "
+            "chưa nói rõ ĐỊNH DẠNG thì BỎ TRỐNG format. Tool sẽ tự hỏi lại user bằng "
+            "nút bấm — đừng tự mặc định là hôm nay hay HTML. Để trống cả granularity, "
+            "tool tự chọn theo độ dài kỳ. "
+            "CHỈ truyền đúng các tham số có trong schema, không thêm tham số nào khác. "
+            "Khi file đã tạo xong, nút tải được hệ thống gắn tự động — ĐỪNG tự viết "
+            "link hay markdown, chỉ nói 'bấm nút bên dưới để tải'. "
             "KHÁC với get_pass_fail_stats/get_production_summary: những tool đó trả số "
             "liệu để trả lời trong chat, tool này tạo FILE. User chỉ hỏi số thì đừng "
             "gọi tool này."
