@@ -15,7 +15,7 @@ from agent_app.core.config import settings
 from agent_app.core.registry import AgentRegistry
 from agent_app.base.base_agent import AgentState
 from agent_app.api.deps import get_current_user
-from agent_app.core import tool_cache
+from agent_app.core import collector, tool_cache
 from agent_app.core.i18n import set_lang
 from agent_app.core.reroute import build_reroute
 from agent_app.core.suggestions import (
@@ -221,6 +221,10 @@ async def chat(
         # nhãn UI do code sinh (ô KPI, cột bảng, gợi ý) đều đọc ContextVar này.
         # Mỗi request là một task asyncio riêng nên không rò sang request khác.
         lang = set_lang(request.language, request.message)
+        # Mở chỗ hứng attachment cho lượt này. Cần vì một câu hỏi giờ có thể chạy
+        # nhiều agent con, mỗi agent trả `context` riêng; gộp bằng {**a, **b} thì
+        # cái sau ghi đè cái trước và biểu đồ của agent đầu mất im lặng.
+        collector.start()
         logger.info(
             "User %s chatting with agent: %s (lang=%s)",
             current_user["username"], request.agent_id, lang
@@ -292,19 +296,37 @@ async def chat(
         # Agent đặt ui_options vào context khi có thứ cần user chọn
         # (tên recipe mơ hồ, hoặc user chưa nêu recipe nào).
         result_context = result_state.get("context") if isinstance(result_state, dict) else result_state.context
-        options = (result_context or {}).get("ui_options")
-        images = (result_context or {}).get("ui_images")
-        charts = (result_context or {}).get("ui_charts")
-        files = (result_context or {}).get("ui_files")
-        cards = (result_context or {}).get("ui_cards")
-        kpis = (result_context or {}).get("ui_kpis")
-        tables = (result_context or {}).get("ui_tables")
+
+        # Ưu tiên chỗ hứng: nó gom attachment của MỌI agent con đã chạy, theo thứ
+        # tự được gọi. `result_context` chỉ còn dùng cho đường gọi agent trực tiếp
+        # (agent_id != orchestrator), khi không có agent con nào và chỗ hứng rỗng.
+        bucket = collector.collected()
+
+        def _attach(key: str):
+            got = bucket.get(key) or []
+            return got or (result_context or {}).get(key)
+
+        options = _attach("ui_options")
+        images = _attach("ui_images")
+        charts = _attach("ui_charts")
+        files = _attach("ui_files")
+        cards = _attach("ui_cards")
+        kpis = _attach("ui_kpis")
+        tables = _attach("ui_tables")
 
         # Gỡ khối [SUGGESTIONS] khỏi text hiển thị, tách thành chip riêng.
         # Ba nguồn theo thứ tự ưu tiên: LLM tự sinh → agent đặt sẵn trong
         # context (vd orchestrator không hiểu ý, gợi ý câu vào bài) → suy từ
         # tool vừa chạy.
+        # Tool call/kết quả THẬT gồm cả của các agent con. Orchestrator chỉ thấy
+        # `ask_production_data(...)`; tool đã thực sự chạy dữ liệu nằm bên trong
+        # agent con, và gợi ý lẫn nút hỏi-lại đều dựa vào chúng.
+        inner_calls = collector.inner_tool_calls()
+        if inner_calls:
+            tool_calls = (tool_calls or []) + inner_calls
+
         tool_results = extract_tool_results(result_state, skip=len(historical_messages))
+        tool_results.update(collector.inner_tool_results())
 
         response_text, llm_suggestions = extract_suggestions(response_text)
 
@@ -322,7 +344,7 @@ async def chat(
             if extra not in suggestions:
                 suggestions.append(extra)
         if not suggestions:
-            suggestions = (result_context or {}).get("ui_suggestions") or []
+            suggestions = (_attach("ui_suggestions") or [])
         # Lấp cho đủ ít nhất 3 chip. Nhóm grounded rất đúng nhưng thường chỉ ra
         # một câu; dừng ở một chip thì mất chỗ để đi tiếp, mà chip là cách chính
         # người vận hành khám phá agent — họ không biết agent trả lời được gì cho

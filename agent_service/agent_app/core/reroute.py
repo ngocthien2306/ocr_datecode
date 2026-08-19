@@ -20,6 +20,7 @@ chỉ là đường ra khi nó sai.
 from typing import Any, Dict, List, Optional
 
 from agent_app.core.i18n import t
+from agent_app.core.intent import match as intent_match
 
 # Tool nào thuộc agent nào. Dùng để biết câu vừa rồi đã đi đường nào, và để đề
 # nghị đường còn lại.
@@ -80,41 +81,21 @@ _EMPTY_REDIRECT = {
 }
 
 
-# Cụm từ chỉ RÕ ý định, kèm agent đáng lẽ phải xử lý. Chỉ đưa vào đây những cụm
-# gần như không thể hiểu theo nghĩa khác — bảng này càng rộng thì càng dễ hiện nút
-# sai chỗ, và một nút "không đúng ý?" sau một câu trả lời đúng thì gieo nghi ngờ
-# vào chính thứ đang đúng.
-_INTENT = [
-    # Sản phẩm fail: nằm trong database, KHÔNG nằm trong file log. Đây là chỗ đã
-    # nhầm thật — hỏi "show 5 sản phẩm lỗi" mà bị đưa sang tìm trong log.
-    ("historical_analytics", (
-        "sản phẩm lỗi", "sản phẩm fail", "hàng lỗi", "sản phẩm không đạt",
-        "ảnh sản phẩm", "ảnh fail", "frame fail", "sản phẩm bị lỗi",
-        "failed unit", "failed product", "faulty unit", "reject image",
-    )),
-    ("log_analysis", (
-        "dòng log", "trong log", "traceback", "log báo", "file log",
-        "ai đăng nhập", "ai thao tác", "audit",
-        "log line", "in the log", "who logged in",
-    )),
-]
-
-
 def _intent_agent(message: str) -> Optional[str]:
     """
     Agent mà câu hỏi RÕ RÀNG thuộc về, hoặc None nếu không chắc.
 
-    Cần thêm lớp này vì phép dò "tool trả về rỗng" không đủ: hỏi "show 5 sản phẩm
-    lỗi" mà rơi vào `log_analysis`, tool `summarize_log_errors` vẫn tìm được vài
-    cảnh báo trong log và trả về CÓ dữ liệu. Kết quả rỗng thì mới đáng ngờ, còn ở
-    đây câu trả lời trông hoàn chỉnh — chỉ là trả lời sai câu hỏi. Không có lớp
-    này thì đúng tình huống tệ nhất lại là tình huống không có nút hỏi lại.
+    Dùng CHUNG bảng cụm với đường tắt của orchestrator (`core/intent.py`). Trước đây
+    hai chỗ có hai bảng riêng, và để vậy thì chúng sẽ lệch nhau theo cách tệ nhất:
+    đường tắt gửi câu hỏi tới agent A trong khi reroute khẳng định câu đó thuộc agent
+    B, nên người dùng nhận câu trả lời kèm luôn một nút nói rằng nó sai chỗ.
+
+    Cần lớp này vì phép dò "tool trả về rỗng" không đủ: hỏi "show 5 sản phẩm lỗi" mà
+    rơi vào `log_analysis` thì `summarize_log_errors` vẫn tìm được vài cảnh báo và
+    trả về CÓ dữ liệu. Kết quả rỗng thì mới đáng ngờ, còn ở đây câu trả lời trông
+    hoàn chỉnh — chỉ là trả lời sai câu hỏi.
     """
-    low = (message or "").lower()
-    for agent, phrases in _INTENT:
-        if any(ph in low for ph in phrases):
-            return agent
-    return None
+    return intent_match(message or "")
 
 
 def _is_empty(name: str, result: Any) -> bool:
