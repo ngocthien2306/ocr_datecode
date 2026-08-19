@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 from langchain_core.tools import StructuredTool
 import logging
 
+from agent_app.core import tool_cache
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,10 +67,19 @@ class BaseTool:
         """
         logger.debug(f"Creating tool: {metadata.name}")
 
+        # Cache đặt ở ĐÂY vì đây là chỗ duy nhất mọi tool đi qua — bọc ở từng
+        # tool thì chắc chắn bỏ sót cái này cái kia. `should_cache` liệt kê CÓ
+        # thay vì loại trừ, nên category mới mặc định không cache: bỏ sót một
+        # tool đọc thì chỉ chậm, còn cache lỡ một tool ghi thì trả kết quả sai.
+        run = func
+        if tool_cache.should_cache(metadata.name, metadata.category,
+                                   metadata.requires_approval):
+            run = tool_cache.wrap(func, metadata.name)
+
         return StructuredTool(
             name=metadata.name,
             description=metadata.description,
-            func=func,
+            func=run,
             args_schema=args_schema,
             metadata={
                 "category": metadata.category,

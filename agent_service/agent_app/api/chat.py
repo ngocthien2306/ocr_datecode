@@ -15,6 +15,7 @@ from agent_app.core.config import settings
 from agent_app.core.registry import AgentRegistry
 from agent_app.base.base_agent import AgentState
 from agent_app.api.deps import get_current_user
+from agent_app.core import tool_cache
 from agent_app.core.i18n import set_lang
 from agent_app.core.reroute import build_reroute
 from agent_app.core.suggestions import (
@@ -521,3 +522,19 @@ async def chat_stream(
     except Exception as e:
         logger.error("Error in streaming chat: %s", e)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@router.get("/tool-cache", summary="Tình trạng cache kết quả tool")
+async def tool_cache_stats(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    Số liệu cache. Có endpoint này để khi ai đó báo "số liệu không đổi dù dây
+    chuyền đang chạy" thì kiểm tra được ngay là do cache hay do truy vấn, thay vì
+    phải đoán.
+    """
+    return tool_cache.stats()
+
+
+@router.delete("/tool-cache", summary="Xoá cache kết quả tool")
+async def tool_cache_clear(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Xoá sạch cache. Dùng khi cần đọc lại số liệu ngay, không chờ TTL."""
+    return {"cleared": tool_cache.clear()}
