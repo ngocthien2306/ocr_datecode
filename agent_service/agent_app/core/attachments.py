@@ -128,11 +128,28 @@ def strip_for_llm(result: Any) -> Any:
     được hệ thống gắn tự động qua trường `images`, LLM không cần chạm vào.
     Bỏ luôn cũng giúp mỗi ToolMessage nhẹ đi ~2.500 ký tự.
     """
-    if not isinstance(result, dict) or "samples" not in result:
+    if not isinstance(result, dict):
+        return result
+    if "samples" not in result and "download_url" not in result:
         return result
 
     out = dict(result)
-    out["samples"] = f"<{len(result.get('samples') or [])} ảnh minh hoạ đã được hệ thống đính kèm tự động>"
+    if "samples" in result:
+        out["samples"] = f"<{len(result.get('samples') or [])} ảnh minh hoạ đã được hệ thống đính kèm tự động>"
+
+    # Cùng lý do, và đã quan sát thấy thật: nhìn thấy `download_url` là LLM tự
+    # viết markdown link — có lần nó bịa ra cả hostname
+    # `https://example.com/api/reports/...`, một liên kết chết mà user bấm vào
+    # không hiểu tại sao lỗi. Nút tải đã được dựng tất định ở trường `files`, nên
+    # LLM không cần và không nên chạm vào URL.
+    if "download_url" in result:
+        # Bỏ HẲN các key này, không thay bằng chuỗi mô tả: thử để lại một
+        # placeholder thì LLM đem đúng chuỗi đó nhét vào markdown, ra
+        # `![Tải báo cáo](<nút tải file đã được hệ thống đính kèm...>)`. Không
+        # còn key nào để bám thì nó mới chịu chỉ nói bằng lời. `success`,
+        # `format` và `size_kb` vẫn ở lại nên nó biết file đã tạo xong.
+        for k in ("download_url", "filename"):
+            out.pop(k, None)
     return out
 
 

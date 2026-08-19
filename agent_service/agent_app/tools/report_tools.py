@@ -44,6 +44,15 @@ REPORTS_URL_PREFIX = "/api/reports"
 
 FORMATS = ("html", "pdf", "xlsx", "csv", "json")
 
+#: Nhãn hiển thị trên nút bấm khi phải hỏi lại user muốn định dạng nào.
+FORMAT_CHOICES = [
+    {"format": "html",  "label": "HTML",  "hint": "biểu đồ tương tác, mở bằng trình duyệt"},
+    {"format": "pdf",   "label": "PDF",   "hint": "in được, gửi kèm email"},
+    {"format": "xlsx",  "label": "Excel", "hint": "nhiều sheet, tự tính toán thêm được"},
+    {"format": "csv",   "label": "CSV",   "hint": "bảng phẳng, nhập vào hệ thống khác"},
+    {"format": "json",  "label": "JSON",  "hint": "dữ liệu thô cho lập trình"},
+]
+
 #: Giữ tối đa bấy nhiêu file, xoá dần từ cũ nhất.
 #:
 #: Có giới hạn ngay từ đầu là cố ý: thư mục `logs/` của chính dự án này đã phình
@@ -70,10 +79,11 @@ class GenerateReportArgs(BaseModel):
         default=None,
         description="Chỉ lấy một recipe (tên hoặc ObjectId). Bỏ trống = tất cả recipe.",
     )
-    format: str = Field(
-        default="html",
-        description="Định dạng file: html (có biểu đồ tương tác), pdf (in được), "
-                    "xlsx (Excel nhiều sheet), csv, json",
+    format: Optional[str] = Field(
+        default=None,
+        description="Định dạng file: html, pdf, xlsx, csv, json. "
+                    "ĐỂ TRỐNG nếu user chưa nói rõ muốn định dạng nào — tool sẽ hỏi lại. "
+                    "Chỉ điền khi user đã nêu đích danh ('dạng Excel', 'file PDF', 'xuất csv').",
     )
     theme: str = Field(default="industrial", description="Giao diện báo cáo: industrial, dark, executive")
     include_charts: bool = Field(default=True, description="Có kèm biểu đồ hay không (chỉ ảnh hưởng html/pdf)")
@@ -97,6 +107,18 @@ def _prune_old_reports() -> int:
     return removed
 
 
+def _local_dates(start_dt: datetime, end_dt: datetime) -> tuple[str, str]:
+    """
+    Hai mốc naive-UTC → chuỗi 'YYYY-MM-DD' theo giờ địa phương.
+
+    Nút bấm phải ghi ngày mà người dùng nhìn thấy. In thẳng mốc UTC ra sẽ lệch
+    một ngày ở đầu kỳ (00:00 giờ VN là 17:00 hôm trước theo UTC).
+    """
+    from agent_app.reports.html_report import _to_local
+    return (_to_local(start_dt).strftime("%Y-%m-%d"),
+            _to_local(end_dt).strftime("%Y-%m-%d"))
+
+
 def _slug(text: str) -> str:
     s = re.sub(r"[^\w]+", "_", text, flags=re.UNICODE).strip("_").lower()
     return s[:48] or "report"
@@ -108,20 +130,13 @@ def generate_report(
     end_date: Optional[str] = None,
     granularity: str = "day",
     recipe: Optional[str] = None,
-    format: str = "html",
+    format: Optional[str] = None,
     theme: str = "industrial",
     include_charts: bool = True,
     include_per_recipe: bool = True,
 ) -> Dict[str, Any]:
     """Xuất báo cáo sản xuất ra file và trả về đường dẫn tải."""
     try:
-        fmt = (format or "html").lower().lstrip(".")
-        if fmt in ("excel", "xls"):
-            fmt = "xlsx"
-        if fmt not in FORMATS:
-            return {"success": False,
-                    "error": f"Định dạng '{format}' không hỗ trợ. Hợp lệ: {', '.join(FORMATS)}"}
-
         gran = (granularity or "day").lower()
         if gran not in ("hour", "day", "week"):
             return {"success": False, "error": "granularity phải là hour, day hoặc week"}
@@ -152,6 +167,43 @@ def generate_report(
                     "success": False,
                     "error": f"Không có recipe nào khớp '{recipe}' trong kỳ {label}",
                 }
+
+        # Chưa biết định dạng thì DỪNG và hỏi, thay vì lặng lẽ xuất HTML.
+        # Định dạng đổi hẳn thứ người dùng nhận được — file để in khác file để
+        # tính toán tiếp — nên đây là lựa chọn của họ, không phải mặc định của
+        # ta. Hỏi ở đây (sau khi đã chốt kỳ và recipe) để nút bấm mang theo đủ
+        # ngữ cảnh, user không phải nhắc lại kỳ báo cáo lần thứ hai.
+        raw_fmt = (format or "").strip().lower().lstrip(".")
+        if raw_fmt in ("excel", "xls"):
+            raw_fmt = "xlsx"
+        if not raw_fmt:
+            local = _local_dates(start_dt, end_dt)
+            scope = f" cho recipe {recipe}" if recipe else ""
+            return {
+                "success": False,
+                "needs_format_choice": True,
+                "message": (
+                    f"Chưa biết user muốn định dạng nào. Hãy hỏi họ chọn, "
+                    f"KHÔNG được tự mặc định. Kỳ báo cáo đã chốt: {label} "
+                    f"({local[0]} → {local[1]}){scope}."
+                ),
+                "period": {"label": label, "start": local[0], "end": local[1]},
+                "formats": [
+                    {
+                        **c,
+                        # `value` là nguyên văn câu sẽ gửi lại khi user bấm nút —
+                        # kèm ngày cụ thể để lượt sau không phải suy luận lại
+                        # "7 ngày qua" và ra một kỳ khác.
+                        "value": (f"Xuất báo cáo từ {local[0]} đến {local[1]}{scope} "
+                                  f"dạng {c['format']}"),
+                    }
+                    for c in FORMAT_CHOICES
+                ],
+            }
+        if raw_fmt not in FORMATS:
+            return {"success": False,
+                    "error": f"Định dạng '{format}' không hỗ trợ. Hợp lệ: {', '.join(FORMATS)}"}
+        fmt = raw_fmt
 
         span_days = (end_dt - start_dt).days + 1
         summary = build_summary(
@@ -230,9 +282,10 @@ def generate_report(
             "camera_breakdown_included": bool(summary.get("by_camera")),
             "old_reports_pruned": pruned,
             "note": (
-                f"Đã tạo file. Hãy đưa `download_url` cho user dưới dạng liên kết tải về "
-                f"và nói ngắn gọn số liệu chính ({summary['total']:,} sản phẩm, "
-                f"tỷ lệ pass {summary['pass_rate']}%). "
+                f"Đã tạo file xong. Nút tải đã được hệ thống gắn sẵn dưới câu trả lời — "
+                f"ĐỪNG viết link, đừng dùng markdown ảnh hay liên kết. Chỉ cần nói "
+                f"'bấm nút bên dưới để tải' kèm số liệu chính "
+                f"({summary['total']:,} sản phẩm, tỷ lệ pass {summary['pass_rate']}%). "
                 + ("Bảng tách theo camera bị bỏ vì kỳ báo cáo dài hơn "
                    f"{CAMERA_BREAKDOWN_MAX_DAYS} ngày — phần đó phải nạp trọn document nên rất chậm. "
                    if fmt in ("xlsx", "csv", "json") and not summary.get("by_camera") else "")
@@ -254,7 +307,9 @@ generate_report_tool = BaseTool.create_tool(
             "Xuất BÁO CÁO SẢN XUẤT ra file tải về. Dùng khi user nói 'xuất báo cáo', "
             "'tạo report', 'xuất Excel', 'làm báo cáo PDF', 'gửi tôi file báo cáo'. "
             "Định dạng: html (biểu đồ tương tác), pdf (in được), xlsx (Excel nhiều "
-            "sheet), csv, json. Trả về `download_url` — BẮT BUỘC đưa liên kết đó cho "
+            "sheet), csv, json. Nếu user CHƯA nói rõ định dạng thì BỎ TRỐNG `format` — "
+            "tool trả về `needs_format_choice` để hỏi lại, đừng tự mặc định. "
+            "Khi tạo được file, trả về `download_url` — BẮT BUỘC đưa liên kết đó cho "
             "user, không có nó thì họ không lấy được file. "
             "KHÁC với get_pass_fail_stats/get_production_summary: những tool đó trả số "
             "liệu để trả lời trong chat, tool này tạo FILE. User chỉ hỏi số thì đừng "
