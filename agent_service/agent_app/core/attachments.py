@@ -17,7 +17,14 @@ nhau, không cần kiểu chart riêng.
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-_MAX_BARS = 12
+#: Số cột tối đa của một biểu đồ.
+#:
+#: Đặt 26 để phủ trọn một ngày theo giờ (24) và một tháng theo tuần. Giá trị cũ là
+#: 12, và `_bar` cắt bằng `[:12]` — tức lấy 12 cột ĐẦU rồi bỏ im lặng phần còn
+#: lại. Trên dữ liệu thật, biểu đồ "fail theo giờ" chỉ vẽ 0h–11h và bỏ 12h–19h,
+#: trong đó có đúng giờ fail nhiều nhất trong ngày (14h, 32 fail, pass 93,94%).
+#: Người xem thấy nửa ngày êm ả và kết luận cả ngày không có gì.
+_MAX_BARS = 26
 _MAX_IMAGES = 8
 
 # URL tương đối để trang tự resolve theo origin đang phục vụ — chạy đúng ở cả
@@ -57,10 +64,31 @@ def _period_label(args: Dict[str, Any], result: Dict[str, Any]) -> str:
     return "hôm nay"
 
 
-def _bar(title: str, series: List[Dict[str, Any]], unit: str = "") -> Optional[Dict[str, Any]]:
-    series = [s for s in series if s.get("value") is not None][:_MAX_BARS]
+def _bar(title: str, series: List[Dict[str, Any]], unit: str = "",
+         ordered: bool = False) -> Optional[Dict[str, Any]]:
+    """
+    Một biểu đồ cột.
+
+    Quá `_MAX_BARS` thì KHÔNG cắt bừa phần đuôi. Dãy có thứ tự thời gian
+    (`ordered=True`) thì giữ phần MỚI NHẤT, vì đó là phần người ta cần; dãy phân
+    loại thì giữ các cột LỚN NHẤT, vì cột lớn là cột đáng xem. Và cả hai trường hợp
+    đều ghi vào tiêu đề là đã gộp bao nhiêu cột — một biểu đồ thiếu cột mà không
+    nói gì thì đọc thành "phần đó không có dữ liệu".
+    """
+    series = [s for s in series if s.get("value") is not None]
     if not series:
         return None
+
+    dropped = 0
+    if len(series) > _MAX_BARS:
+        dropped = len(series) - _MAX_BARS
+        if ordered:
+            series = series[-_MAX_BARS:]
+            title += f" · {dropped} mốc đầu không hiện"
+        else:
+            series = sorted(series, key=lambda s: -(s.get("value") or 0))[:_MAX_BARS]
+            title += f" · {dropped} mục nhỏ hơn không hiện"
+
     return {"type": "bar", "title": title, "unit": unit, "series": series}
 
 
@@ -651,6 +679,7 @@ def charts_from_tool_result(tool_name: str, args: Dict[str, Any], result: Any) -
                 for r in rows
             ],
             "sp",
+            ordered=(key == "hour"),
         )
         if c:
             charts.append(c)
@@ -672,7 +701,7 @@ def charts_from_tool_result(tool_name: str, args: Dict[str, Any], result: Any) -
         recipe = args.get("recipe_id")
         if len(series) > 1:
             title = "Pass rate theo thời gian" + (f" · {recipe}" if recipe else "")
-            c = _bar(title, series, "%")
+            c = _bar(title, series, "%", ordered=True)
             if c:
                 charts.append(c)
         else:

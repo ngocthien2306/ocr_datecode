@@ -822,9 +822,12 @@ def explain_failures(
         mismatch_kinds: Dict[str, int] = {}
         sims: List[float] = []
         samples: List[Dict[str, Any]] = []
+        sample_times: List[datetime] = []
         examined = 0
 
         for doc in docs:
+            if doc.get(_TIME_FIELD):
+                sample_times.append(doc[_TIME_FIELD])
             for cam in doc.get("camera_results") or []:
                 serial = str(cam.get("serial_number"))
                 if camera and serial != str(camera):
@@ -910,6 +913,19 @@ def explain_failures(
             for (e, r), n in sorted(mismatches.items(), key=lambda x: -x[1])[:10]
         ]
 
+        # Khoảng thời gian THỰC của mẫu đã mổ.
+        #
+        # `sample_limit` lấy N sản phẩm fail GẦN NHẤT, nên hỏi 7 ngày mà tổng fail
+        # vượt trần thì mẫu chỉ nằm trong một hai ngày cuối — trong khi tỷ lệ
+        # nguyên nhân lại được đọc như của cả tuần. Note có ghi "gần nhất", nhưng
+        # một dòng chữ trong note yếu hơn nhiều so với việc nêu thẳng mẫu trải từ
+        # lúc nào tới lúc nào.
+        sample_span = None
+        if sample_times:
+            lo, hi = min(sample_times), max(sample_times)
+            sample_span = {"from": _to_local_str(lo), "to": _to_local_str(hi),
+                           "days": max(1, (hi - lo).days + 1)}
+
         mismatch_summary = [
             {"kind": k, "label": _MISMATCH_LABELS.get(k, k), "count": n}
             for k, n in sorted(mismatch_kinds.items(), key=lambda x: -x[1])
@@ -921,6 +937,8 @@ def explain_failures(
             "filters": {"recipe_id": recipe_id or "all", "camera": camera or "all"},
             "total_failed_products": total_fail,
             "examined_products": min(total_fail, sample_limit),
+            "sample_span": sample_span,
+            "sample_covers_all": total_fail <= sample_limit,
             "failed_camera_frames_examined": examined,
             # Một sản phẩm có nhiều frame và một frame trượt được nhiều bước, nên
             # hai cách đếm ra hai con số khác nhau (113 frame nhưng 112 sản phẩm).
@@ -944,8 +962,13 @@ def explain_failures(
             "template_similarity_avg": round(sum(sims) / len(sims), 4) if sims else None,
             "samples": samples,
             "note": (
-                f"Mổ {min(total_fail, sample_limit)} sản phẩm fail gần nhất trên tổng "
-                f"{total_fail}. Mỗi hàng trong `causes` có hai con số: `products` "
+                f"Mổ {min(total_fail, sample_limit)} sản phẩm fail GẦN NHẤT trên tổng "
+                f"{total_fail}. "
+                f"`sample_covers_all` là false nghĩa là mẫu KHÔNG phủ hết kỳ được hỏi — "
+                f"xem `sample_span` để biết mẫu thực sự trải từ lúc nào tới lúc nào, và "
+                f"PHẢI nói rõ điều đó khi trả lời. Ví dụ: hỏi 7 ngày mà mẫu chỉ nằm trong "
+                f"2 ngày cuối thì tỷ lệ nguyên nhân là của 2 ngày đó, không phải của tuần. "
+                f"Muốn phủ rộng hơn thì gọi lại với `sample_limit` lớn hơn. Mỗi hàng trong `causes` có hai con số: `products` "
                 f"là số SẢN PHẨM, `frames` là số FRAME — khi trả lời user hãy dùng "
                 f"`products`. Tổng các hàng lớn hơn tổng sản phẩm fail là bình "
                 f"thường: một sản phẩm trượt được nhiều bước cùng lúc. "
