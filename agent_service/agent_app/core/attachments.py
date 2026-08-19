@@ -34,10 +34,15 @@ def _period_label(args: Dict[str, Any], result: Dict[str, Any]) -> str:
     """
     start, end = args.get("start_date"), args.get("end_date")
     if start or end:
-        # Có giờ thì hiện giờ, đó mới là thứ phân biệt hai khung trong cùng ngày.
+        # Chỉ phần GIỜ mới đáng ghép thêm vào sau ngày. Nhánh else cũ trả về cả
+        # chuỗi ngày khi tham số không có giờ, nên 'explain_failures' với
+        # start=end='2026-08-19' sinh ra tiêu đề lặp ba lần:
+        # "2026-08-19 2026-08-19–2026-08-19".
         def hm(v):
-            return v[11:16] if v and len(v) > 15 else (v or "")
-        day = (start or end or "")[:10]
+            return v[11:16] if v and len(v) > 15 else ""
+
+        first, last = (start or end or "")[:10], (end or start or "")[:10]
+        day = first if first == last else f"{first}→{last}"
         span = f"{hm(start)}–{hm(end)}".strip("–")
         return f"{day} {span}".strip() if span else day
 
