@@ -406,6 +406,27 @@ def kpis_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]:
                   _rate_accent(rate), delta_kind="pp"),
         ]
 
+    if tool_name == "get_shift_handover":
+        pr = result.get("production") or {}
+        if not pr.get("total"):
+            return []
+        dt = result.get("downtime") or {}
+        alerts = len(result.get("equipment_alerts") or [])
+        rate = pr.get("pass_rate")
+        return [
+            _tile("Sản lượng ca", fmt(pr.get("total")),
+                  result.get("shift") + (" · đang chạy" if result.get("in_progress") else "")),
+            _tile("Pass rate", f"{rate}%", None, None, _rate_accent(rate)),
+            _tile("Uptime", f"{dt.get('uptime_percent')}%" if dt.get("uptime_percent") is not None else "—",
+                  f"dừng {dt.get('minutes', 0):.0f} phút" if dt else None,
+                  None, _rate_accent(dt.get("uptime_percent"))),
+            # Ô cảnh báo tô đỏ khi có việc trong ca. 0 thì để trung tính — một ô
+            # đỏ thường trực là tiếng ồn, đúng lỗi đã sửa ở ô Fail.
+            _tile("Cảnh báo trong ca", str(alerts),
+                  "không có gì bất thường" if not alerts else "cần xem",
+                  None, "" if not alerts else "bad"),
+        ]
+
     if tool_name == "get_target_progress":
         pct = result.get("achieved_percent")
         tgt, act = result.get("target"), result.get("actual")
@@ -510,6 +531,28 @@ def tables_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]
     """
     if not isinstance(result, dict) or not result.get("success"):
         return []
+
+    if tool_name == "get_shift_handover":
+        out = []
+        ch = result.get("recipe_changes") or []
+        if ch:
+            out.append({
+                "title": f"Thay đổi recipe trong ca · {result.get('shift')}",
+                "columns": ["Giờ", "Người", "Thao tác", "Nội dung"],
+                "align": ["l", "l", "l", "l"],
+                "rows": [[c["time"], c["username"], c["action"], c["description"][:70]]
+                         for c in ch[:12]],
+                "caption": "Đổi recipe thường đi kèm dừng máy và một cú vọt fail ngay sau.",
+            })
+        st = ((result.get("downtime") or {}).get("stops")) or []
+        if st:
+            out.append({
+                "title": f"Các lần dừng trong ca · {result.get('shift')}",
+                "columns": ["Từ", "Đến", "Số phút"],
+                "align": ["l", "l", "r"],
+                "rows": [[s["from"][11:16], s["to"][11:16], f"{s['minutes']:,.0f}"] for s in st],
+            })
+        return out
 
     if tool_name == "get_downtime":
         stops = result.get("stops") or []

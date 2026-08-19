@@ -38,6 +38,7 @@ class OrchestratorAgent(BaseAgent):
     - service_management: Service status, start/stop
     - historical_analytics: Statistics, trends, history
     - log_analysis: System logs, error diagnosis, audit trail
+    - equipment_health: Reject timing, trigger reliability, sensors, subsystem init
     - (future agents...)
     """
 
@@ -70,7 +71,7 @@ class OrchestratorAgent(BaseAgent):
 
             Returns routing decision as JSON:
             {
-                "agent_id": "service_management" | "historical_analytics" | "log_analysis" | null,
+                "agent_id": "service_management" | "historical_analytics" | "log_analysis" | "equipment_health" | null,
                 "confidence": 0.95,
                 "reason": "Explanation",
                 "clarification": null | "Question to ask user"
@@ -96,7 +97,7 @@ User query: "{last_user_msg}"
 
 Analyze this query and return routing decision in JSON format:
 {{
-  "agent_id": "service_management" | "historical_analytics" | "log_analysis" | null,
+  "agent_id": "service_management" | "historical_analytics" | "log_analysis" | "equipment_health" | null,
   "confidence": 0.0-1.0,
   "reason": "explanation",
   "clarification": null | "question if needed"
@@ -159,7 +160,8 @@ Analyze this query and return routing decision in JSON format:
                 # Danh sách này phải khớp với các agent đã đăng ký trong
                 # AgentRegistry; thiếu một cái là câu hỏi đúng vẫn bị trả lời
                 # "không xử lý được" dù agent tồn tại và prompt đã route đúng.
-                if agent_id in ["service_management", "historical_analytics", "log_analysis"]:
+                if agent_id in ["service_management", "historical_analytics", "log_analysis",
+                                "equipment_health"]:
                     updated_context["next_action"] = "route_to_agent"
                     return {"context": updated_context}
 

@@ -193,6 +193,28 @@ nhân quả. Nói "trùng thời điểm" hoặc "rất có thể do", đừng k
 khi chỉ có sự trùng hợp. Không có gì trong `evidence` thì nói thẳng là log không
 ghi gì trong khung đó.
 
+### 2d. get_shift_handover — BẢN GIAO CA
+
+Dùng khi user nói "giao ca", "nhận ca", "báo cáo ca", "ca vừa rồi thế nào",
+"tình hình chung", "tổng hợp hôm nay".
+
+→ get_shift_handover()                      # ca đang chạy
+→ get_shift_handover(shift='previous')      # ca vừa kết thúc
+→ get_shift_handover(shift='C', date='2026-08-18')
+
+Gọi MỘT tool này thay vì gọi lần lượt sáu bảy tool khác — nó đã gộp sẵn.
+
+Viết như một bản giao ca thật, KHÔNG như một báo cáo số liệu:
+- Mở đầu: ca này ổn hay có việc cần xử lý.
+- Việc ca sau cần để ý, xếp theo mức cần làm ngay.
+- Ghép mốc thời gian lại: đổi recipe lúc 10:16 → dừng máy → fail vọt lên ngay sau
+  là MỘT sự kiện, đừng kể thành ba chuyện rời.
+- `in_progress` là true thì nói rõ ca chưa xong, số liệu chỉ tính tới hiện tại.
+- `day_wide_alerts` phải ghi rõ là "cả ngày" — trưởng ca nhận bản giao ca mà thấy
+  một sự cố của ca khác sẽ đi tìm cái không thuộc ca mình.
+- `target` là chỉ tiêu CẢ NGÀY, không phải của riêng ca.
+- Ô KPI và bảng đã hiện số; văn xuôi lo phần kết luận và việc cần làm.
+
 ### 3a. compare_periods — SO SÁNH HAI KỲ
 
 Dùng khi user muốn biết "hơn/kém thế nào": "so sánh với hôm qua", "tuần này so

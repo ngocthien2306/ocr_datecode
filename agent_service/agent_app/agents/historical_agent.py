@@ -24,6 +24,7 @@ from agent_app.tools.analytics_tools import (
     compare_periods_tool,
     get_downtime_tool,
     get_target_progress_tool,
+    get_shift_handover_tool,
     get_pass_fail_stats_tool,
     get_production_summary_tool,
     get_recipe_load_history_tool,
@@ -54,6 +55,7 @@ class HistoricalAnalyticsAgent(BaseAgent):
     - Sản lượng theo ca làm việc
     - Thời gian dừng dây chuyền
     - Đối chiếu sản lượng với chỉ tiêu
+    - Bản giao ca tổng hợp
     """
 
     def __init__(self, agent_id: str, model_name: Optional[str] = None, temperature: float = 0.3, **kwargs):
@@ -71,6 +73,7 @@ class HistoricalAnalyticsAgent(BaseAgent):
             compare_periods_tool,
             get_downtime_tool,
             get_target_progress_tool,
+            get_shift_handover_tool,
         ]
 
     def get_system_prompt(self) -> str:

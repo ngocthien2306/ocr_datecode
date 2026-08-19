@@ -48,6 +48,7 @@ async def lifespan(app: FastAPI):
     from agent_app.agents.service_agent import ServiceManagementAgent  # noqa: F401
     from agent_app.agents.historical_agent import HistoricalAnalyticsAgent  # noqa: F401
     from agent_app.agents.log_agent import LogAnalysisAgent  # noqa: F401
+    from agent_app.agents.equipment_agent import EquipmentHealthAgent  # noqa: F401
 
     from agent_app.core.registry import AgentRegistry
 

@@ -1704,3 +1704,240 @@ get_target_progress_tool = BaseTool.create_tool(
 )
 
 logger.info("✅ Target tool registered")
+
+
+# ── Bản giao ca ──────────────────────────────────────────────────────────────
+#
+# Một câu hỏi, ra đủ thứ trưởng ca cần khi nhận ca. Hiện tại họ phải hỏi bảy câu
+# rời rạc rồi tự ghép, và thứ dễ rơi nhất là mối liên hệ giữa chúng — dừng máy lúc
+# 04:58 và cú vọt fail lúc 05:00 là MỘT sự kiện, nhưng hỏi tách ra thì trông như
+# hai chuyện.
+#
+# Tool này GỌI LẠI các tool đã có bằng lời gọi Python, không qua LLM: đi qua LLM
+# bảy lần thì mỗi lần có cơ hội diễn giải sai, và tốn bảy lượt gọi mô hình.
+
+def _shift_bounds(date_str: str, shift_name: str) -> tuple:
+    """(start, end) naive-UTC của một ca trong ngày, theo giờ địa phương.
+
+    Ca đêm vắt qua nửa đêm nên mốc cuối rơi sang ngày sau — phải cộng ngày, nếu
+    không cửa sổ sẽ ra âm và ca C luôn rỗng."""
+    sh = next((s for s in SHIFTS if s["name"].upper().endswith(shift_name.upper())), None)
+    if sh is None:
+        raise ValueError(f"Ca '{shift_name}' không có. Hợp lệ: " +
+                         ", ".join(s["name"] for s in SHIFTS))
+    base = datetime.fromisoformat(date_str)
+    start = base.replace(hour=sh["start"], minute=0, second=0, microsecond=0)
+    end = base.replace(hour=sh["end"], minute=0, second=0, microsecond=0)
+    if sh["end"] <= sh["start"]:
+        end += timedelta(days=1)
+    return _to_utc(start), _to_utc(end - timedelta(microseconds=1)), sh["label"]
+
+
+def _current_shift(now_local: datetime) -> Dict[str, Any]:
+    h = now_local.hour
+    for sh in SHIFTS:
+        if sh["start"] < sh["end"]:
+            if sh["start"] <= h < sh["end"]:
+                return sh
+        elif h >= sh["start"] or h < sh["end"]:
+            return sh
+    return SHIFTS[0]
+
+
+class ShiftHandoverArgs(BaseModel):
+    """Arguments for get_shift_handover"""
+    shift: str = Field(
+        default="current",
+        description="'current' (ca đang chạy), 'previous' (ca vừa kết thúc), "
+                    "hoặc tên ca: 'A', 'B', 'C'.",
+    )
+    date: Optional[str] = Field(
+        default=None,
+        description="Ngày YYYY-MM-DD của ca. Bỏ trống = suy từ ca đang chọn.",
+    )
+
+
+def get_shift_handover(
+    shift: str = "current",
+    date: Optional[str] = None,
+    **_ignored: Any,
+) -> Dict[str, Any]:
+    """Tổng hợp mọi thứ trưởng ca cần khi giao/nhận ca."""
+    try:
+        from agent_app.reports.data import build_summary
+        from agent_app.tools.equipment_tools import (
+            check_subsystem_health as _subsys,
+            check_trigger_health as _trig,
+        )
+        from agent_app.tools.log_tools import get_audit_logs as _audit
+
+        now_local = datetime.now(_TZ).replace(tzinfo=None)
+        pick = (shift or "current").strip().lower()
+
+        if pick in ("current", "previous"):
+            cur = _current_shift(now_local)
+            if pick == "current":
+                sh = cur
+                day = now_local
+                # Ca đêm bắt đầu hôm trước: 01:00 sáng vẫn đang trong ca C của
+                # ngày hôm qua, nên phải lùi ngày lại.
+                if sh["end"] <= sh["start"] and now_local.hour < sh["end"]:
+                    day = now_local - timedelta(days=1)
+            else:
+                idx = SHIFTS.index(cur)
+                sh = SHIFTS[idx - 1]
+                day = now_local
+                if SHIFTS.index(sh) > idx:      # lùi vòng qua đầu danh sách
+                    day = now_local - timedelta(days=1)
+                if sh["end"] <= sh["start"] and now_local.hour < sh["end"]:
+                    day = now_local - timedelta(days=1)
+            date_str = date or day.strftime("%Y-%m-%d")
+            name = sh["name"][-1]
+        else:
+            name = pick.upper().replace("CA", "").strip()
+            date_str = date or now_local.strftime("%Y-%m-%d")
+
+        start_dt, end_dt, label = _shift_bounds(date_str, name)
+        in_progress = end_dt > _to_utc(now_local)
+        cutoff = min(end_dt, _to_utc(now_local))
+
+        summ = build_summary(start_dt, cutoff)
+        lo_clock, hi_clock = _to_local_str(start_dt)[11:16], _to_local_str(cutoff)[11:16]
+
+        # Dừng máy trong ca, kèm bằng chứng — đây là thứ trưởng ca mới cần biết
+        # nhất, và cũng là thứ dễ bị bỏ sót nhất khi hỏi rời rạc.
+        stops = get_downtime(start_date=_to_local_str(start_dt)[:19],
+                            end_date=_to_local_str(cutoff)[:19], explain=True)
+
+        fails = explain_failures(start_date=_to_local_str(start_dt)[:19],
+                                end_date=_to_local_str(cutoff)[:19], sample_limit=200)
+
+        target = get_target_progress(date=date_str)
+        trig = _trig(date=date_str)
+        subsys = _subsys(date=date_str)
+        who = _audit(start_date=_to_local_str(start_dt)[:19],
+                     end_date=_to_local_str(cutoff)[:19], limit=60)
+
+        # Chỉ giữ điều đáng chú ý, không nhồi cả kết quả bảy tool vào một chỗ:
+        # bản giao ca dài bằng bảy báo cáo thì không ai đọc.
+        # Cảnh báo phải TÁCH theo phạm vi.
+        #
+        # `check_trigger_health` và `check_subsystem_health` chỉ nhận tham số NGÀY,
+        # nên kết quả của chúng là của cả ngày. Đưa thẳng vào bản giao ca Ca B thì
+        # nó báo "service restart 2 lần" cho hai lần restart xảy ra lúc 10:10 —
+        # tức trong Ca A. Trưởng ca B nhận bản giao ca sẽ đi tìm một sự cố không
+        # thuộc ca mình.
+        #
+        # Cái nào có mốc giờ thì lọc theo cửa sổ ca. Cái nào không có (bộ đếm cộng
+        # dồn như capture_failures) thì vẫn báo, nhưng ghi rõ là cả ngày.
+        def _in_shift(clock: Optional[str]) -> bool:
+            if not clock:
+                return False
+            return lo_clock <= clock[:5] <= hi_clock if lo_clock <= hi_clock \
+                else (clock[:5] >= lo_clock or clock[:5] <= hi_clock)
+
+        alerts: List[str] = []
+        day_alerts: List[str] = []
+
+        for pr in (subsys.get("problems") or [])[:3]:
+            txt = (f"Hệ thống con '{pr['category']}' lỗi khởi tạo "
+                   f"({pr['count']} lần, {pr['first_seen']}→{pr['last_seen']})")
+            (alerts if _in_shift(pr.get("first_seen")) else day_alerts).append(txt)
+
+        for t in (trig.get("restart_times") or []):
+            txt = f"Service restart lúc {t}"
+            (alerts if _in_shift(t) else day_alerts).append(txt)
+
+        if trig.get("capture_failures"):
+            day_alerts.append(f"{trig['capture_failures']} lần chụp ảnh thất bại cả ngày — "
+                              f"sản phẩm đi qua mà không được kiểm")
+        if trig.get("groups_timeout"):
+            day_alerts.append(f"{trig['groups_timeout']} nhóm trigger timeout cả ngày — "
+                              f"sản phẩm không được kiểm")
+
+        # Dừng máy đã được lọc theo cửa sổ ca ngay từ lúc gọi, nên thuộc ca.
+        if stops.get("success") and stops.get("stop_count"):
+            alerts.append(f"Dừng {stops['stop_count']} lần, tổng "
+                          f"{stops['downtime_minutes']:.0f} phút")
+
+        return {
+            "success": True,
+            "shift": label,
+            "date": date_str,
+            "window": f"{lo_clock} → {hi_clock}",
+            "in_progress": in_progress,
+            "production": {
+                "total": summ["total"], "pass": summ["pass"], "fail": summ["fail"],
+                "pass_rate": summ["pass_rate"],
+                "by_recipe": [{"recipe_name": r["recipe_name"], "total": r["total"],
+                               "pass_rate": r["pass_rate"]} for r in summ["by_recipe"]],
+            },
+            "target": None if target.get("not_configured") else {
+                "target": target.get("target"), "actual_day": target.get("actual"),
+                "achieved_percent": target.get("achieved_percent"),
+                "projected_end_of_day": target.get("projected_end_of_day"),
+            },
+            "downtime": None if not stops.get("success") else {
+                "stop_count": stops["stop_count"],
+                "minutes": stops["downtime_minutes"],
+                "uptime_percent": stops["uptime_percent"],
+                "stops": stops.get("stops") or [],
+            },
+            "fail_causes": None if not fails.get("success") else {
+                "total_failed": fails.get("total_failed_products"),
+                "causes": fails.get("causes") or [],
+                "mismatch_kinds": fails.get("text_mismatch_kinds") or [],
+            },
+            "equipment_alerts": alerts,
+            "day_wide_alerts": day_alerts,
+            "people": [{"username": p["username"], "full_name": p.get("full_name"),
+                        "job_title": p.get("job_title"),
+                        "active_hours": p.get("active_hours"),
+                        "actions": p.get("action_count")}
+                       for p in (who.get("people") or [])],
+            "recipe_changes": [
+                {"time": e["time"][11:19], "username": e["username"],
+                 "action": e["action_type"], "description": e["description"]}
+                for e in (who.get("entries") or [])
+                if e["action_type"] in ("load_recipe", "stop_recipe", "update_recipe")
+            ],
+            "note": (
+                "Bản giao ca. `in_progress` là true nghĩa là ca CHƯA kết thúc — mọi con số "
+                "chỉ tính tới hiện tại, đừng trình bày như kết quả cả ca. "
+                "`equipment_alerts` là việc xảy ra TRONG ca này. `day_wide_alerts` là việc "
+                "của cả ngày, không chắc thuộc ca này — khi nhắc tới phải nói rõ 'cả ngày', "
+                "đừng để trưởng ca đi tìm một sự cố của ca khác. Cả hai rỗng nghĩa là không "
+                "có gì bất thường, hãy nói thẳng như vậy. "
+                "`target` là chỉ tiêu của CẢ NGÀY, không phải của riêng ca này — nói rõ khi "
+                "nhắc tới. `recipe_changes` giúp giải thích thay đổi giữa ca: đổi recipe "
+                "thường đi kèm dừng máy và một cú vọt fail ngay sau đó. "
+                "Viết như một bản giao ca thật: ngắn, xếp theo việc cần làm, nêu rõ ca sau "
+                "cần để ý gì."
+            ),
+        }
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        logger.error(f"get_shift_handover lỗi: {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e), "message": "Không tạo được bản giao ca"}
+
+
+get_shift_handover_tool = BaseTool.create_tool(
+    func=get_shift_handover,
+    metadata=ToolMetadata(
+        name="get_shift_handover",
+        description=(
+            "BẢN GIAO CA — tổng hợp một lượt mọi thứ trưởng ca cần: sản lượng và pass rate "
+            "của ca, tiến độ chỉ tiêu, các lần dừng máy kèm nguyên nhân, nguyên nhân fail, "
+            "cảnh báo thiết bị, ai làm trong ca, và các lần đổi recipe. "
+            "Dùng khi user nói 'giao ca', 'nhận ca', 'báo cáo ca', 'tổng hợp ca này', "
+            "'ca vừa rồi thế nào', 'tình hình chung', 'báo cáo đầu ca'. "
+            "Gọi MỘT tool này thay vì gọi lần lượt sáu bảy tool khác."
+        ),
+        category="analytics",
+    ),
+    args_schema=ShiftHandoverArgs,
+)
+
+logger.info("✅ Shift handover tool registered")

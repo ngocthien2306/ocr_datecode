@@ -58,6 +58,29 @@ _FALLBACK: Dict[str, List[str]] = {
     ],
     # list_recipes đã sinh `options` rồi, thêm gợi ý nữa chỉ gây nhiễu.
     "list_recipes": [],
+    "get_shift_handover": [
+        "Vì sao dừng máy lúc đó?",
+        "So sánh với ca trước",
+        "Kiểm tra thiết bị",
+    ],
+    "check_reject_timing": [
+        "Trigger có ổn không?",
+        "Có module nào lỗi không?",
+        "Hôm qua thế nào?",
+    ],
+    "check_trigger_health": [
+        "Có sản phẩm nào bị bỏ sót?",
+        "Cảm biến có ổn không?",
+        "Vì sao service restart?",
+    ],
+    "check_sensor_pulse": [
+        "Xung reject có đúng không?",
+        "Nhịp dây chuyền hôm qua thế nào?",
+    ],
+    "check_subsystem_health": [
+        "Log của module đó báo gì?",
+        "Kiểm tra trigger và cảm biến",
+    ],
     "get_target_progress": [
         "Còn thiếu bao nhiêu?",
         "So sánh với hôm qua",

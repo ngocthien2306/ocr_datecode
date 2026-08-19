@@ -51,6 +51,11 @@ trong log", "ai đã thao tác gì" đều thuộc `log_analysis`.
 - **User hỏi theo CA LÀM VIỆC** ("ca nào", "sản lượng theo ca", "ca đêm thế nào")
 - **User hỏi về CHỈ TIÊU / KẾ HOẠCH** ("đạt chỉ tiêu chưa", "còn thiếu bao nhiêu",
   "có kịp không") — agent này có `get_target_progress`
+- **User muốn BẢN GIAO CA / tổng hợp** ("giao ca", "nhận ca", "báo cáo ca", "ca vừa
+  rồi thế nào", "tình hình chung", "tổng hợp hôm nay") — agent này có
+  `get_shift_handover`, gộp sản lượng + chỉ tiêu + dừng máy + nguyên nhân fail +
+  cảnh báo thiết bị + người trong ca vào MỘT lần gọi. Đừng route sang
+  equipment_health: bản giao ca cần cả số sản xuất, không chỉ số đo thiết bị.
 - Keywords: "thống kê", "bao nhiêu sản phẩm", "pass", "fail", "rate", "trend", "xu hướng", "load recipe", "xuất báo cáo", "tạo report", "xuất Excel", "báo cáo PDF", "export", "file báo cáo", "tải báo cáo"
 
 **KHÔNG dùng cho câu hỏi về NGƯỜI DÙNG.** Agent này không có tool nào về đăng
@@ -70,6 +75,8 @@ nằm trong audit log. Mọi câu về người dùng → `log_analysis`.
 - "Máy dừng bao lâu hôm nay?"
 - "Vì sao hôm nay dây chuyền bị dừng?"
 - "Hôm nay đạt chỉ tiêu chưa?"
+- "Báo cáo giao ca đi"
+- "Ca vừa rồi thế nào?"
 - "Ca nào có tỷ lệ fail cao nhất?"
 - "Xuất báo cáo 7 ngày qua dạng Excel"
 - "Tạo report PDF cho tháng này"
@@ -121,6 +128,35 @@ HỆ THỐNG (máy báo lỗi gì, module nào, lúc mấy giờ).
 đọc collection `receipt_loads`, `log_analysis` đọc `action_logs`. Ưu tiên
 `log_analysis` khi user hỏi theo hướng audit ("ai đã", "ai sửa", "ai đăng nhập"),
 ưu tiên `historical_analytics` khi hỏi theo hướng sản xuất ("recipe nào chạy lúc nào").
+
+### 4. equipment_health
+**Khi nào dùng:**
+- User hỏi về CƠ CẤU ĐẨY PHÔI / reject: "reject có chính xác không", "xung reject
+  bao nhiêu", "thời gian đẩy phôi", "cơ cấu đẩy có đúng không"
+- User hỏi về TRIGGER: "trigger có ổn không", "có sản phẩm nào bị bỏ sót không",
+  "có mất ảnh không", "service có restart không"
+- User hỏi về CẢM BIẾN: "cảm biến có ổn không", "nhịp dây chuyền có đều không",
+  "tốc độ băng tải"
+- User hỏi về MODULE / HỆ THỐNG CON: "có module nào lỗi không", "kiểm tra sức khoẻ
+  hệ thống", "phần nào không chạy"
+- Câu chung về THIẾT BỊ: "máy móc có vấn đề gì không", "kiểm tra thiết bị"
+- Keywords: "reject", "đẩy phôi", "xung", "pulse", "trigger", "cảm biến", "sensor",
+  "băng tải", "module", "thiết bị", "cơ cấu", "DI0", "timeout", "mất ảnh"
+
+**Examples:**
+- "Xung reject có đúng cấu hình không?"
+- "Hôm nay có sản phẩm nào bị bỏ sót không kiểm?"
+- "Có module nào đang lỗi không?"
+- "Kiểm tra thiết bị hôm nay xem có gì bất thường"
+
+**Phân biệt với ba agent kia:**
+- `historical_analytics` = SỐ SẢN PHẨM (pass/fail, sản lượng, chỉ tiêu, dừng máy)
+- `log_analysis` = CHỮ TRONG LOG (ERROR/WARNING, audit ai làm gì)
+- `equipment_health` = SỐ ĐO THIẾT BỊ (xung, trigger, cảm biến, init module)
+
+"Hôm nay có lỗi gì không?" → `log_analysis` (lỗi trong log).
+"Hôm nay thiết bị có vấn đề gì không?" → `equipment_health` (số đo thiết bị).
+"Máy dừng bao lâu?" → `historical_analytics` (suy từ khe hở sản phẩm).
 
 ## Routing Logic:
 
@@ -188,7 +224,7 @@ Bạn PHẢI trả về JSON với format sau:
 
 ```json
 {
-  "agent_id": "service_management" | "historical_analytics" | "log_analysis" | null,
+  "agent_id": "service_management" | "historical_analytics" | "log_analysis" | "equipment_health" | null,
   "confidence": 0.95,
   "reason": "User hỏi về service status",
   "clarification": null | "Câu hỏi làm rõ nếu cần"
