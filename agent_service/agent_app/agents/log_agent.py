@@ -17,6 +17,7 @@ from agent_app.tools.log_tools import (
     search_logs_tool,
     summarize_log_errors_tool,
     get_audit_logs_tool,
+    get_log_storage_report_tool,
 )
 from agent_app.prompts.log_prompts import LOG_ANALYSIS_SYSTEM_PROMPT
 from agent_app.prompts.historical_prompts import build_date_context
@@ -36,6 +37,7 @@ class LogAnalysisAgent(BaseAgent):
     - Tìm kiếm xuyên nhiều ngày và nhiều nhóm log
     - Gom ERROR/WARNING thành nhóm vấn đề và giải thích nguyên nhân
     - Tra audit log: ai đã thao tác gì trên hệ thống
+    - Báo cáo dung lượng log và chỉ ra file nằm ngoài chính sách dọn dẹp
     """
 
     def __init__(self, agent_id: str, model_name: Optional[str] = None, temperature: float = 0.2, **kwargs):
@@ -50,6 +52,7 @@ class LogAnalysisAgent(BaseAgent):
             search_logs_tool,
             summarize_log_errors_tool,
             get_audit_logs_tool,
+            get_log_storage_report_tool,
         ]
 
     def get_system_prompt(self) -> str:

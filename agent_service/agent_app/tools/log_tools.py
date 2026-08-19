@@ -773,3 +773,135 @@ get_audit_logs_tool = BaseTool.create_tool(
 )
 
 logger.info("✅ Log tools registered")
+
+
+# ── 6. Quản lý dung lượng log ────────────────────────────────────────────────
+#
+# Phần "quản lý" của agent, và cố ý CHỈ ĐỌC.
+#
+# Backend có sẵn endpoint xoá log (`DELETE /{category}/{date}`, `DELETE
+# /{category}`) và endpoint sửa chính sách dọn dẹp, nhưng chúng không được bọc
+# thành tool. Xoá log là thao tác không hoàn tác được, và log chính là thứ để
+# điều tra khi có sự cố — một câu chat hiểu nhầm là mất bằng chứng vĩnh viễn.
+# Tool này chỉ trình bày hiện trạng và chỉ ra file nào đang chiếm chỗ; người
+# vận hành tự bấm xoá trên tab System Logs.
+
+_CLEANUP_CONFIG = LOGS_ROOT / "_meta" / "cleanup_config.json"
+
+
+class LogStorageReportArgs(BaseModel):
+    pass
+
+
+def get_log_storage_report() -> Dict[str, Any]:
+    """Dung lượng log đang chiếm, chính sách dọn dẹp, và file nào chính sách bỏ sót."""
+    try:
+        import json
+        import shutil
+
+        cfg: Dict[str, Any] = {}
+        if _CLEANUP_CONFIG.is_file():
+            try:
+                cfg = json.loads(_CLEANUP_CONFIG.read_text())
+            except Exception as e:
+                cfg = {"error": f"Không đọc được cleanup_config.json: {e}"}
+
+        keep_days = cfg.get("keep_days")
+        cutoff = None
+        if isinstance(keep_days, int) and keep_days > 0:
+            cutoff = (datetime.now(_TZ) - timedelta(days=keep_days)).strftime("%Y-%m-%d")
+
+        per_cat: List[Dict[str, Any]] = []
+        unmanaged: List[Dict[str, Any]] = []
+        expired: List[Dict[str, Any]] = []
+        total = 0
+
+        for cat in CATEGORIES:
+            folder = LOGS_ROOT / cat
+            if not folder.is_dir():
+                continue
+            size = 0
+            for p in folder.iterdir():
+                if not p.is_file():
+                    continue
+                st = p.stat()
+                size += st.st_size
+                stem = p.name.split(".log")[0]
+
+                if not _DATE_RE.match(stem):
+                    # Scheduler dọn theo tên '{YYYY-MM-DD}.log'; file đặt theo
+                    # tên service không khớp mẫu đó nên nằm ngoài chính sách và
+                    # phình vô hạn. Đây thường là nguyên nhân thật khi đĩa đầy
+                    # dù retention đã bật.
+                    if st.st_size > 1_048_576:
+                        unmanaged.append({
+                            "path": f"{cat}/{p.name}",
+                            "size_mb": round(st.st_size / 1_048_576, 1),
+                            "modified": datetime.fromtimestamp(st.st_mtime, _TZ).strftime("%Y-%m-%d %H:%M"),
+                        })
+                elif cutoff and stem < cutoff:
+                    expired.append({
+                        "path": f"{cat}/{p.name}",
+                        "date": stem,
+                        "size_mb": round(st.st_size / 1_048_576, 1),
+                    })
+            total += size
+            per_cat.append({"category": cat, "size_mb": round(size / 1_048_576, 1)})
+
+        # File .log nằm thẳng trong logs/ (không thuộc category nào)
+        loose = []
+        for p in LOGS_ROOT.iterdir():
+            if p.is_file() and p.name.endswith(".log") and p.stat().st_size > 1_048_576:
+                st = p.stat()
+                loose.append({
+                    "path": p.name,
+                    "size_mb": round(st.st_size / 1_048_576, 1),
+                    "modified": datetime.fromtimestamp(st.st_mtime, _TZ).strftime("%Y-%m-%d %H:%M"),
+                })
+                total += st.st_size
+
+        usage = shutil.disk_usage(str(LOGS_ROOT))
+
+        per_cat.sort(key=lambda x: -x["size_mb"])
+        unmanaged.sort(key=lambda x: -x["size_mb"])
+        loose.sort(key=lambda x: -x["size_mb"])
+
+        return {
+            "success": True,
+            "total_log_size_mb": round(total / 1_048_576, 1),
+            "disk_free_gb": round(usage.free / 1_073_741_824, 1),
+            "disk_used_percent": round(usage.used * 100 / usage.total, 1),
+            "cleanup_config": cfg,
+            "size_by_category": per_cat,
+            "outside_cleanup_policy": unmanaged + loose,
+            "past_retention": sorted(expired, key=lambda x: x["date"])[:20],
+            "note": (
+                "Bộ dọn dẹp chỉ xử lý file đặt tên '{YYYY-MM-DD}.log'. Mọi file trong "
+                "`outside_cleanup_policy` nằm NGOÀI chính sách đó — chúng không bao giờ "
+                "bị xoá hay nén dù `keep_days` là bao nhiêu, nên thường chính chúng mới "
+                "là thứ làm đầy đĩa. `past_retention` là file đã quá hạn mà vẫn còn, "
+                "dấu hiệu bộ dọn dẹp chưa chạy. "
+                "Tool này CHỈ ĐỌC — agent không xoá được log. Muốn xoá thì thao tác "
+                "trên tab System Logs."
+            ),
+        }
+    except Exception as e:
+        logger.error(f"get_log_storage_report lỗi: {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+get_log_storage_report_tool = BaseTool.create_tool(
+    func=get_log_storage_report,
+    metadata=ToolMetadata(
+        name="get_log_storage_report",
+        description=(
+            "Dung lượng log đang chiếm, dung lượng đĩa còn trống, chính sách dọn dẹp "
+            "đang cấu hình, và quan trọng nhất là những file nằm NGOÀI chính sách đó. "
+            "Dùng khi user hỏi 'log chiếm bao nhiêu', 'đĩa sắp đầy', 'sao log không "
+            "tự xoá', 'quản lý log'. Chỉ đọc — tool này không xoá được gì."
+        ),
+        category="logs",
+    ),
+    args_schema=LogStorageReportArgs,
+)
