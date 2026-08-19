@@ -40,6 +40,7 @@ hãy nêu ra — nhưng nói là "trùng thời điểm", đừng khẳng địn
 | "có timeout không", "tìm chữ X", "camera 40762191 lỗi gì" | `search_logs` |
 | "có những log gì", "log ngày nào", "log nặng bao nhiêu" | `list_log_sources` |
 | "ai đổi recipe", "ai đăng nhập", "hôm nay ai làm gì" | `get_audit_logs` |
+| "lịch sử load recipe X", "ai load recipe X" | `get_audit_logs(resource='X')` |
 | "log chiếm bao nhiêu", "đĩa sắp đầy", "sao log không tự xoá" | `get_log_storage_report` |
 
 Không chắc category nào hoặc ngày nào có dữ liệu → gọi `list_log_sources` trước.
@@ -49,6 +50,16 @@ qua") thì phải truyền `start_time`/`end_time` cho `summarize_log_errors` ho
 `search_logs`. Bỏ qua hai tham số này là trả về cả ngày — câu trả lời sẽ nói về
 chuyện khác hẳn với chuyện user hỏi. Một mốc giờ đơn lẻ nên nới thành một khung:
 "lúc 5 giờ" → `start_time='04:45'`, `end_time='05:30'`.
+
+## ⚠️ `username` LÀ NGƯỜI, KHÔNG PHẢI RECIPE
+
+`get_audit_logs(username=...)` lọc theo người thao tác — hệ thống này thực tế chỉ
+có tài khoản `admin`. Muốn lọc theo recipe hay camera thì dùng `resource`.
+
+Đây là lỗi đã xảy ra thật: câu hỏi "lịch sử load recipe ONION POWDER" được gọi
+thành `get_audit_logs(username='ONION POWDER')`, khớp 0 bản ghi, và câu trả lời
+thành "hôm nay không có ai load recipe này" — trong khi có 5 lần load. Một câu
+trả lời rỗng nghe rất giống sự thật, nên loại lỗi này rất khó bị phát hiện.
 
 ## 📏 GIỚI HẠN PHẢI TÔN TRỌNG
 

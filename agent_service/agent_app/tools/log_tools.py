@@ -618,6 +618,12 @@ class GetAuditLogsArgs(BaseModel):
                     "reset_user_password, create_camera, update_camera, delete_camera",
     )
     resource_type: Optional[str] = Field(default=None, description="Loại đối tượng: user, recipe, camera, auth")
+    resource: Optional[str] = Field(
+        default=None,
+        description="Lọc theo ĐỐI TƯỢNG bị tác động — tên recipe (vd 'ONION POWDER'), "
+                    "tên camera, hoặc ObjectId 24 ký tự. Dùng ô này khi user hỏi "
+                    "'ai load recipe X', TUYỆT ĐỐI không nhét tên recipe vào `username`.",
+    )
     start_date: Optional[str] = Field(default=None, description="Từ ngày YYYY-MM-DD (giờ địa phương)")
     end_date: Optional[str] = Field(default=None, description="Đến ngày YYYY-MM-DD (giờ địa phương)")
     limit: int = Field(default=40, description="Số bản ghi tối đa (tối đa 200)")
@@ -627,6 +633,7 @@ def get_audit_logs(
     username: Optional[str] = None,
     action_type: Optional[str] = None,
     resource_type: Optional[str] = None,
+    resource: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     limit: int = 40,
@@ -639,11 +646,34 @@ def get_audit_logs(
                           "$lte": _local_bound(end_date, end=True)},
         }
         if username:
+            # Tên recipe bị nhét vào ô `username` là lỗi đã xảy ra thật: LLM muốn
+            # lọc theo recipe, thấy `username` là ô chữ tự do gần nghĩa nhất nên
+            # truyền 'ONION POWDER' vào đây. Khớp 0 bản ghi, và câu trả lời thành
+            # "hôm nay không ai load recipe" — sai hẳn, trong khi có 5 lần load.
+            # Nên phải chặn thay vì trả về rỗng một cách tự tin.
+            known = db["action_logs"].distinct("username")
+            if username not in known:
+                return {
+                    "success": False,
+                    "error": (f"Không có người dùng nào tên '{username}' trong audit log. "
+                              f"Nếu đây là TÊN RECIPE hoặc tên camera thì truyền vào tham "
+                              f"số `resource`, không phải `username`."),
+                    "known_usernames": known,
+                }
             query["username"] = username
         if action_type:
             query["action_type"] = action_type
         if resource_type:
             query["resource_type"] = resource_type
+        if resource:
+            # ObjectId thì khớp thẳng `resource_id`; còn lại tìm trong
+            # `description` — nơi duy nhất lưu TÊN đối tượng
+            # ("Loaded recipe 'ONION POWDER' with product code ...").
+            if re.fullmatch(r"[0-9a-fA-F]{24}", resource.strip()):
+                query["resource_id"] = resource.strip()
+            else:
+                query["description"] = {"$regex": re.escape(resource.strip()),
+                                        "$options": "i"}
 
         cap = max(1, min(int(limit), 200))
         total = db["action_logs"].count_documents(query)
@@ -672,7 +702,7 @@ def get_audit_logs(
             "success": True,
             "filters": {
                 "username": username or "all", "action_type": action_type or "all",
-                "resource_type": resource_type or "all",
+                "resource_type": resource_type or "all", "resource": resource or "all",
                 "start": _to_local_str(query["timestamp"]["$gte"]),
                 "end": _to_local_str(query["timestamp"]["$lte"]),
             },
@@ -764,8 +794,12 @@ get_audit_logs_tool = BaseTool.create_tool(
         description=(
             "Lịch sử thao tác của người dùng lấy từ MongoDB: đăng nhập, tạo/sửa/xoá "
             "recipe, load recipe, đổi camera, quản lý user. Dùng khi user hỏi 'ai đã "
-            "làm gì', 'ai đổi recipe', 'ai đăng nhập lúc nào'. Đây là nguồn KHÁC với "
-            "log file — log file ghi hoạt động của máy, còn đây ghi hành động của con người."
+            "làm gì', 'ai đổi recipe', 'ai đăng nhập lúc nào', 'lịch sử load recipe X'. "
+            "Đây là nguồn KHÁC với log file — log file ghi hoạt động của máy, còn đây "
+            "ghi hành động của con người. "
+            "QUAN TRỌNG: `username` là NGƯỜI thao tác (vd 'admin'). Tên recipe hoặc tên "
+            "camera phải truyền vào `resource`. Nhét tên recipe vào `username` sẽ khớp "
+            "0 bản ghi và cho ra câu trả lời sai là 'không có ai làm gì'."
         ),
         category="logs",
     ),
