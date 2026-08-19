@@ -58,6 +58,27 @@ _FALLBACK: Dict[str, List[str]] = {
     ],
     # list_recipes đã sinh `options` rồi, thêm gợi ý nữa chỉ gây nhiễu.
     "list_recipes": [],
+    "summarize_log_errors": [
+        "Xem log gốc của lỗi này",
+        "Hôm qua có lỗi tương tự không?",
+        "Ai thao tác gì lúc đó?",
+    ],
+    "read_log_tail": [
+        "Chỉ hiện dòng ERROR",
+        "Gom nhóm lỗi trong ngày",
+    ],
+    "search_logs": [
+        "Tìm trong 7 ngày qua",
+        "Gom nhóm lỗi trong ngày",
+    ],
+    "get_audit_logs": [
+        "Ai load recipe hôm nay?",
+        "Lúc đó hệ thống báo lỗi gì?",
+    ],
+    "list_log_sources": [
+        "Hôm nay có lỗi gì không?",
+        "Xem log backend mới nhất",
+    ],
 }
 
 
