@@ -6,6 +6,8 @@ Log Analysis Agent
 from typing import List, Any, Optional
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import SystemMessage
+
+from agent_app.core.i18n import apply_language
 from agent_app.core.llm import make_llm
 
 from agent_app.base.base_agent import BaseAgent, AgentState
@@ -70,7 +72,8 @@ class LogAnalysisAgent(BaseAgent):
             # System prompt dựng riêng cho lời gọi, KHÔNG ghi vào state — xem
             # ghi chú dài trong historical_agent.py về lý do.
             llm_input = [
-                SystemMessage(content=self.system_prompt + build_date_context())
+                SystemMessage(content=apply_language(
+                    self.system_prompt + build_date_context()))
             ] + [m for m in messages if not isinstance(m, SystemMessage)]
 
             response = llm_with_tools.invoke(llm_input)

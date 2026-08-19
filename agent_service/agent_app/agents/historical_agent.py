@@ -6,6 +6,8 @@ Specializes in analyzing production data, trends, and recipe history
 from typing import Any, Dict, List, Optional
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+
+from agent_app.core.i18n import apply_language
 from agent_app.core.llm import make_llm
 
 from agent_app.base.base_agent import BaseAgent, AgentState
@@ -103,7 +105,8 @@ class HistoricalAnalyticsAgent(BaseAgent):
             # Ngày tháng phải tính tại đây chứ không phải trong __init__ —
             # agent instance bị AgentRegistry cache vĩnh viễn.
             llm_input = [
-                SystemMessage(content=self.system_prompt + build_date_context())
+                SystemMessage(content=apply_language(
+                    self.system_prompt + build_date_context()))
             ] + [m for m in messages if not isinstance(m, SystemMessage)]
 
             response = llm_with_tools.invoke(llm_input)

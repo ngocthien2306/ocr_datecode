@@ -17,6 +17,7 @@ from agent_app.tools.service_tools import (
 )
 import logging
 
+from agent_app.core.i18n import apply_language
 from agent_app.prompts.camera_service_prompts import CAMERA_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,9 @@ class ServiceManagementAgent(BaseAgent):
 
             # Add system prompt if not present
             if not any(isinstance(m, SystemMessage) for m in messages):
-                messages = [SystemMessage(content=self.get_system_prompt())] + messages
+                messages = [SystemMessage(
+                    content=apply_language(self.get_system_prompt())
+                )] + messages
 
             # Call LLM
             response = llm_with_tools.invoke(messages)

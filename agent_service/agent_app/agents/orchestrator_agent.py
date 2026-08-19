@@ -12,6 +12,7 @@ import logging
 
 from agent_app.base.base_agent import BaseAgent, AgentState
 from agent_app.core.registry import AgentRegistry
+from agent_app.core.i18n import apply_language, t
 from agent_app.prompts.orchestrator_prompts import ORCHESTRATOR_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -81,7 +82,12 @@ class OrchestratorAgent(BaseAgent):
 
             # Add system prompt
             if not any(isinstance(msg, SystemMessage) for msg in messages):
-                messages = [SystemMessage(content=self.system_prompt)] + messages
+                # Dòng ngôn ngữ phải nối theo LƯỢT, không nối vào self.system_prompt:
+                # instance được AgentRegistry cache vĩnh viễn, nối một lần thì
+                # request sau vẫn dùng ngôn ngữ của request đầu tiên.
+                messages = [SystemMessage(
+                    content=apply_language(self.system_prompt)
+                )] + messages
 
             # Add instruction to return JSON
             last_user_msg = None
@@ -241,7 +247,8 @@ Analyze this query and return routing decision in JSON format:
 
             return {
                 "messages": state.messages + [clarification_msg],
-                "context": {**state.context, "ui_suggestions": ENTRY_QUESTIONS},
+                "context": {**state.context,
+                            "ui_suggestions": [t(q) for q in ENTRY_QUESTIONS]},
             }
 
         def decide_next_step(state: AgentState) -> str:

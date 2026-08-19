@@ -17,6 +17,8 @@ nhau, không cần kiểu chart riêng.
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from agent_app.core.i18n import t, tcols, tseg
+
 #: Số cột tối đa của một biểu đồ.
 #:
 #: Đặt 26 để phủ trọn một ngày theo giờ (24) và một tháng theo tuần. Giá trị cũ là
@@ -85,12 +87,15 @@ def _bar(title: str, series: List[Dict[str, Any]], unit: str = "",
         dropped = len(series) - _MAX_BARS
         if ordered:
             series = series[-_MAX_BARS:]
-            title += f" · {dropped} mốc đầu không hiện"
+            title += f" · {dropped} {t('mốc đầu không hiện')}"
         else:
             series = sorted(series, key=lambda s: -(s.get("value") or 0))[:_MAX_BARS]
-            title += f" · {dropped} mục nhỏ hơn không hiện"
+            title += f" · {dropped} {t('mục nhỏ hơn không hiện')}"
 
-    out: Dict[str, Any] = {"type": "bar", "title": title, "unit": unit, "series": series}
+    # tseg() dịch từng đoạn của tiêu đề ghép: phần chữ được dịch, phần dữ liệu
+    # (tên recipe, ngày, tên ca) không khớp bảng nên giữ nguyên.
+    out: Dict[str, Any] = {"type": "bar", "title": tseg(title),
+                           "unit": t(unit), "series": series}
     if scale_max:
         # Thang đo cố định để cột đo được so với một MỐC, không phải so với cột lớn
         # nhất trong chính nó. Với tiến độ chỉ tiêu, track đầy = đạt chỉ tiêu; để
@@ -237,8 +242,10 @@ def cards_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]:
             ("Số giờ có mặt", f"{p['active_hours']}h" if p.get("active_hours") else None),
             ("Thao tác", ", ".join(f"{k} ×{v}" for k, v in acts.items()) or None),
         )
-        rows = [(k, v if v else "—") for k, v in fields] if exists else [
-            (k, v) for k, v in fields if v
+        # Nhãn dòng dịch tại đây; giá trị là dữ liệu thật (email, số điện thoại,
+        # tên ca) nên tuyệt đối không đưa qua bảng dịch.
+        rows = [(t(k), v if v else "—") for k, v in fields] if exists else [
+            (t(k), v) for k, v in fields if v
         ]
 
         cards.append({
@@ -253,12 +260,12 @@ def cards_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]:
             # cạnh nhau không nhãn thì thẻ đọc như hai chức danh đá nhau:
             # "Maintenance Technician" mà badge lại ghi "operator", hay
             # "Quality Inspector" mà badge ghi "supervisor".
-            "badge": f"Quyền: {p.get('role') or 'không rõ'}",
+            "badge": f"{t('Quyền')}: {p.get('role') or t('không rõ')}",
             "badge_role": p.get("role") or "unknown",
             "avatar": _avatar_url(p.get("avatar_url")),
             "inactive": not exists or p.get("is_active") is False,
             "stat": p.get("action_count"),
-            "stat_label": "thao tác",
+            "stat_label": t("thao tác"),
             "rows": rows,
         })
     return cards
@@ -335,12 +342,12 @@ def strip_for_llm(result: Any) -> Any:
                            "stops": dt.get("stops")} if dt else None
         # Đổi tên khoá của chỉ tiêu cho không thể lẫn phạm vi.
         if out.get("target"):
-            t = dict(out["target"])
+            tg = dict(out["target"])
             out["target"] = {
-                "target_whole_day": t.get("target"),
-                "actual_whole_day": t.get("actual_day"),
-                "achieved_percent_whole_day": t.get("achieved_percent"),
-                "projected_whole_day": t.get("projected_end_of_day"),
+                "target_whole_day": tg.get("target"),
+                "actual_whole_day": tg.get("actual_day"),
+                "achieved_percent_whole_day": tg.get("achieved_percent"),
+                "projected_whole_day": tg.get("projected_end_of_day"),
             }
         out["_numbers"] = ("<ô KPI đã hiện uptime và số phút dừng — đừng liệt kê lại. "
                            "`total_this_shift` là sản lượng CA NÀY; các khoá "
@@ -473,16 +480,20 @@ def _tile(label: str, value: Any, sub: Optional[str] = None,
     trị phần trăm, đọc thành điểm phần trăm. Vì pass rate luôn quanh 98%, hai con
     số chỉ lệch nhau chút ít nên sai mà không ai phát hiện.
     """
-    out: Dict[str, Any] = {"label": label, "value": value, "accent": accent}
+    # Dịch ở ĐÂY, không ở chỗ gọi: có hơn 30 lời gọi _tile() rải khắp file, bọc
+    # t() vào từng cái vừa dài vừa dễ bỏ sót một ô. Nhãn nào chưa có trong bảng
+    # dịch thì t() trả về nguyên văn nên không có ô nào bị trống.
+    out: Dict[str, Any] = {"label": t(label), "value": value, "accent": accent}
     if sub:
-        out["sub"] = sub
+        out["sub"] = tseg(sub)
     if delta and delta.get("diff") is not None:
         d = delta["diff"]
         out["delta"] = {
             # Con số người vận hành cần là chênh lệch tuyệt đối; phần trăm tương
             # đối là phụ. Bỏ tuyệt đối đi thì "▲ +21,6%" không nói của bao nhiêu,
             # và văn xuôi buộc phải nhắc lại — chính là chỗ trùng lặp phải dẹp.
-            "text": (f"{d:+.2f} điểm" if delta_kind == "pp" else delta_fmt.format(d)),
+            "text": (f"{d:+.2f} {t('điểm')}" if delta_kind == "pp"
+                     else delta_fmt.format(d)),
             "rel": (f"{delta['change_pct']:+.1f}%"
                     if delta.get("change_pct") is not None
                     and abs(delta["change_pct"]) < 1000 else None),
@@ -684,7 +695,7 @@ def tables_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]
         if ch:
             out.append({
                 "title": f"Thay đổi recipe trong ca · {result.get('shift')}",
-                "columns": ["Giờ", "Người", "Thao tác", "Nội dung"],
+                "columns": tcols(["Giờ", "Người", "Thao tác", "Nội dung"]),
                 "align": ["l", "l", "l", "l"],
                 "rows": [[c["time"], c["username"], c["action"], c["description"][:70]]
                          for c in ch[:12]],
@@ -694,7 +705,7 @@ def tables_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]
         if st:
             out.append({
                 "title": f"Các lần dừng trong ca · {result.get('shift')}",
-                "columns": ["Từ", "Đến", "Số phút"],
+                "columns": tcols(["Từ", "Đến", "Số phút"]),
                 "align": ["l", "l", "r"],
                 "rows": [[s["from"][11:16], s["to"][11:16], f"{s['minutes']:,.0f}"] for s in st],
             })
@@ -706,7 +717,7 @@ def tables_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]
             return []
         return [{
             "title": f"Các lần dừng dây chuyền · {str(result.get('period',{}).get('start',''))[:10]}",
-            "columns": ["Từ", "Đến", "Số phút"],
+            "columns": tcols(["Từ", "Đến", "Số phút"]),
             "align": ["l", "l", "r"],
             "rows": [[s["from"][:16].replace("T", " "), s["to"][11:16], f"{s['minutes']:,.0f}"]
                      for s in stops],
@@ -726,31 +737,31 @@ def tables_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]
 
         body = []
         for r in rows:
-            t, pr = r["total"], r["pass_rate"]
+            tot, pr = r["total"], r["pass_rate"]
             if r.get("only_in"):
                 note = f"chỉ chạy ở {r['only_in']}"
             elif r.get("baseline_too_small"):
-                note = f"nền quá ít ({_num(pr['previous'] and t['previous'])} sp)"
+                note = f"nền quá ít ({_num(pr['previous'] and tot['previous'])} sp)"
             else:
                 note = ""
             if r.get("all_failed"):
                 note = ("⚠ fail toàn bộ" + (f" · {note}" if note else ""))
             body.append([
                 r["recipe_name"],
-                _num(t["previous"]), _num(t["current"]),
-                f"{t['change_pct']:+.1f}%" if t.get("change_pct") is not None else "—",
+                _num(tot["previous"]), _num(tot["current"]),
+                f"{tot['change_pct']:+.1f}%" if tot.get("change_pct") is not None else "—",
                 _num(pr["previous"], "%"), _num(pr["current"], "%"),
                 # "đ" là ký hiệu đồng ở Việt Nam — "+1.36đ" đọc thành "1,36 đồng"
                 # trong một cột về chất lượng. Viết đủ chữ "điểm".
-                f"{pr['diff']:+.2f} điểm" if pr.get("diff") is not None else "—",
+                f"{pr['diff']:+.2f} {t('điểm')}" if pr.get("diff") is not None else "—",
                 note,
             ])
         return [{
             "title": title,
             # Tiêu đề ngắn: nhãn kỳ đầy đủ đã nằm ở title, nhồi thêm vào từng cột
             # làm bảng rộng ra tới 1.300px và cột quyết định bị đẩy khỏi màn hình.
-            "columns": ["Recipe", "SL trước", "SL nay", "Thay đổi SL",
-                        "Pass trước", "Pass nay", "Chênh lệch (điểm %)", "Ghi chú"],
+            "columns": tcols(["Recipe", "SL trước", "SL nay", "Thay đổi SL",
+                        "Pass trước", "Pass nay", "Chênh lệch (điểm %)", "Ghi chú"]),
             "align": ["l", "r", "r", "r", "r", "r", "r", "l"],
             "rows": body,
             "caption": " · ".join(_period_caption(p) for p in (pa, pb)),
@@ -772,9 +783,12 @@ def charts_from_tool_result(tool_name: str, args: Dict[str, Any], result: Any) -
         key = {"camera": "camera", "hour": "hour", "shift": "shift"}.get(group, "recipe")
         rows = result.get("breakdown") or []
         label = {"camera": "camera", "hour": "giờ", "recipe": "recipe", "shift": "ca"}[key]
+        # Dịch CẢ CỤM chứ không riêng chữ "camera"/"giờ": tiếng Anh đảo trật tự
+        # ("FAIL units by hour"), ghép từng từ sẽ ra câu sai ngữ pháp.
+        head = t(f"Sản phẩm FAIL theo {label}")
 
         c = _bar(
-            f"Sản phẩm FAIL theo {label} · {_period_label(args, result)}",
+            f"{head} · {_period_label(args, result)}",
             [
                 {
                     "label": f"{r.get(key)}h" if key == "hour" else str(r.get(key)),

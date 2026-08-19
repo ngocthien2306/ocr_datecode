@@ -21,6 +21,8 @@ bảng thống kê) nên parse kiểu đó sẽ cắt nhầm.
 import re
 from typing import Any, Dict, List, Optional
 
+from agent_app.core.i18n import t
+
 _MAX_SUGGESTIONS = 4
 
 # Bắt cả trường hợp LLM quên thẻ đóng (khớp tới hết chuỗi).
@@ -182,4 +184,8 @@ def fallback_suggestions(tool_calls: Optional[List[Dict[str, Any]]]) -> List[str
             if value not in items:
                 items.append(value)
 
-    return items[:_MAX_SUGGESTIONS]
+    # Dịch ở cuối, sau khi đã loại trùng: `_FALLBACK` là bảng tra theo tên tool
+    # nên phải giữ nguyên khoá tiếng Việt, còn chip hiện ra thì theo ngôn ngữ
+    # đang chọn. Bấm vào chip là gửi chính chuỗi đó làm câu hỏi, và mô hình hiểu
+    # cả hai thứ tiếng nên chip tiếng Anh vẫn chạy đúng tool.
+    return [t(x) for x in items[:_MAX_SUGGESTIONS]]

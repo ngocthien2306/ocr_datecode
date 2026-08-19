@@ -15,6 +15,7 @@ from agent_app.core.config import settings
 from agent_app.core.registry import AgentRegistry
 from agent_app.base.base_agent import AgentState
 from agent_app.api.deps import get_current_user
+from agent_app.core.i18n import set_lang
 from agent_app.core.suggestions import extract_suggestions, fallback_suggestions
 from agent_app.memory.conversation_service import ConversationService
 from langchain_core.messages import HumanMessage, AIMessage
@@ -34,6 +35,10 @@ class ChatRequest(BaseModel):
     agent_id: str = "orchestrator"
     session_id: Optional[str] = None
     stream: bool = False
+    # Ngôn ngữ hiển thị. "vi" | "en" | "auto" ("auto" = trả lời theo đúng ngôn
+    # ngữ user vừa gõ). Bỏ trống thì mặc định tiếng Việt, nên client cũ không
+    # cần sửa gì.
+    language: Optional[str] = None
 
 
 class ChatOption(BaseModel):
@@ -166,7 +171,14 @@ async def chat(
     - `historical_analytics`: thống kê pass-fail, sản lượng, lịch sử recipe
     """
     try:
-        logger.info("User %s chatting with agent: %s", current_user["username"], request.agent_id)
+        # Đặt ngôn ngữ TRƯỚC mọi thứ khác: từ đây trở đi cả prompt của mô hình và
+        # nhãn UI do code sinh (ô KPI, cột bảng, gợi ý) đều đọc ContextVar này.
+        # Mỗi request là một task asyncio riêng nên không rò sang request khác.
+        lang = set_lang(request.language, request.message)
+        logger.info(
+            "User %s chatting with agent: %s (lang=%s)",
+            current_user["username"], request.agent_id, lang
+        )
 
         try:
             agent = AgentRegistry.get_agent(request.agent_id)
@@ -407,6 +419,7 @@ async def chat_stream(
     gọi là một lượt độc lập. Giữ nguyên trạng từ bản backend cũ.
     """
     try:
+        set_lang(request.language, request.message)
         agent = AgentRegistry.get_agent(request.agent_id)
         session_id = request.session_id or f"session_{current_user['id']}_{datetime.now().timestamp()}"
 
