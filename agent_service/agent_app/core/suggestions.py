@@ -58,6 +58,11 @@ _FALLBACK: Dict[str, List[str]] = {
     ],
     # list_recipes đã sinh `options` rồi, thêm gợi ý nữa chỉ gây nhiễu.
     "list_recipes": [],
+    "get_target_progress": [
+        "Còn thiếu bao nhiêu?",
+        "So sánh với hôm qua",
+        "Ca nào đóng góp nhiều nhất?",
+    ],
     "get_downtime": [
         "Lúc đó log báo gì?",
         "Ca nào dừng nhiều nhất?",

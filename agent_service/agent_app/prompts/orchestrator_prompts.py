@@ -42,7 +42,15 @@ trong log", "ai đã thao tác gì" đều thuộc `log_analysis`.
   nay có dừng máy không", "dây chuyền chạy liên tục không") — agent này có tool
   `get_downtime`. Đây KHÔNG phải câu hỏi về service, đừng đưa sang
   service_management: "máy" ở đây là dây chuyền sản xuất.
+- **Kể cả khi hỏi "VÌ SAO dừng"** ("vì sao dây chuyền bị dừng", "nguyên nhân dừng
+  máy", "lúc 4h58 sao lại dừng") → vẫn là `historical_analytics`, KHÔNG phải
+  log_analysis. `get_downtime(explain=True)` tự đi lấy log và audit log quanh đúng
+  từng lần dừng. Route sang log_analysis thì nó chỉ thấy toàn bộ log của cả ngày,
+  không biết dây chuyền dừng lúc nào, và sẽ gán bừa các cảnh báo rải rác cả ngày
+  thành nguyên nhân của một lần dừng 51 phút.
 - **User hỏi theo CA LÀM VIỆC** ("ca nào", "sản lượng theo ca", "ca đêm thế nào")
+- **User hỏi về CHỈ TIÊU / KẾ HOẠCH** ("đạt chỉ tiêu chưa", "còn thiếu bao nhiêu",
+  "có kịp không") — agent này có `get_target_progress`
 - Keywords: "thống kê", "bao nhiêu sản phẩm", "pass", "fail", "rate", "trend", "xu hướng", "load recipe", "xuất báo cáo", "tạo report", "xuất Excel", "báo cáo PDF", "export", "file báo cáo", "tải báo cáo"
 
 **KHÔNG dùng cho câu hỏi về NGƯỜI DÙNG.** Agent này không có tool nào về đăng
@@ -60,6 +68,8 @@ nằm trong audit log. Mọi câu về người dùng → `log_analysis`.
 - "So sánh sản lượng tuần này với tuần trước"
 - "Hôm nay có tốt hơn hôm qua không?"
 - "Máy dừng bao lâu hôm nay?"
+- "Vì sao hôm nay dây chuyền bị dừng?"
+- "Hôm nay đạt chỉ tiêu chưa?"
 - "Ca nào có tỷ lệ fail cao nhất?"
 - "Xuất báo cáo 7 ngày qua dạng Excel"
 - "Tạo report PDF cho tháng này"
@@ -86,6 +96,12 @@ nằm trong audit log. Mọi câu về người dùng → `log_analysis`.
 - "Tìm trong log xem có timeout không"
 - "Ai đã đổi recipe hôm nay?"
 - "Vì sao lúc 10 giờ máy bị khựng?"
+
+**KHÔNG nhận câu hỏi "vì sao DÂY CHUYỀN DỪNG" / "vì sao dừng máy".** Đó là
+`historical_analytics`: nó biết dây chuyền dừng lúc nào và tự khoanh log đúng
+khung giờ đó. Agent này chỉ thấy log cả ngày nên sẽ nhặt các cảnh báo rải rác gán
+thành nguyên nhân. Câu "vì sao SERVICE lỗi" hay "vì sao có nhiều ERROR" thì vẫn
+là của agent này.
 - "Hôm nay có bao nhiêu người đăng nhập vào hệ thống?"
 - "Hôm nay những nhân viên nào làm việc trên hệ thống?"
 - "Log chiếm bao nhiêu dung lượng?"

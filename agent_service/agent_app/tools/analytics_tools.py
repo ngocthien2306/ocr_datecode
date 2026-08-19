@@ -5,6 +5,7 @@ Provides tools for querying and analyzing production data
 
 import re
 import traceback
+from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -1366,6 +1367,19 @@ logger.info("✅ Compare tool registered")
 # phân biệt được máy hỏng, đổi lô, hay hết ca. Trình bày nó như "downtime do sự
 # cố" là suy diễn quá xa.
 
+def _shift_clock(hhmmss: str, minutes: int) -> str:
+    """'HH:MM:SS' cộng/trừ số phút, kẹp trong cùng một ngày.
+
+    Kẹp lại thay vì để tràn sang ngày khác: cửa sổ bằng chứng chỉ dùng để tra log
+    trong đúng ngày đó, tràn qua nửa đêm sẽ tra sai file."""
+    try:
+        h, m, sec = (int(x) for x in hhmmss.split(":"))
+    except (ValueError, AttributeError):
+        return hhmmss
+    total = max(0, min(24 * 60 - 1, h * 60 + m + minutes))
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
 class DowntimeArgs(BaseModel):
     """Arguments for get_downtime"""
     date: Optional[str] = Field(default=None, description="Ngày YYYY-MM-DD, bỏ trống = hôm nay")
@@ -1376,6 +1390,12 @@ class DowntimeArgs(BaseModel):
         description="Khe hở từ bao nhiêu phút mới tính là dừng (mặc định 5). "
                     "Đặt thấp hơn sẽ bắt cả các nhịp nghỉ ngắn bình thường.",
     )
+    explain: bool = Field(
+        default=False,
+        description="True để lấy luôn log và audit log quanh MỖI lần dừng, trả về "
+                    "trong `stops[].evidence`. Dùng khi user hỏi 'vì sao dừng', "
+                    "'nguyên nhân dừng máy', hoặc hỏi về một lần dừng cụ thể.",
+    )
 
 
 def get_downtime(
@@ -1383,6 +1403,7 @@ def get_downtime(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     min_minutes: int = 5,
+    explain: bool = False,
     **_ignored: Any,
 ) -> Dict[str, Any]:
     """Các khoảng dây chuyền không ra sản phẩm, suy từ khe hở giữa các bản ghi."""
@@ -1426,6 +1447,46 @@ def get_downtime(
         down_min = sum(g["minutes"] for g in gaps)
         gaps.sort(key=lambda g: -g["minutes"])
 
+        if explain and gaps:
+            # Tự đi lấy bằng chứng quanh mỗi lần dừng, thay vì bảo user hỏi lại.
+            #
+            # Trước đây tool chỉ nói "muốn biết nguyên nhân thì xem log" — đúng
+            # nhưng đẩy việc sang người dùng, mà họ lại phải tự đoán khung giờ và
+            # tự biết có agent log. Ba nguồn cùng chỉ vào một mốc mới là câu trả
+            # lời: log hệ thống nói máy báo gì, audit log nói có ai thao tác gì.
+            from agent_app.tools.log_tools import (
+                get_audit_logs as _audit,
+                summarize_log_errors as _errs,
+            )
+            for g in gaps[:5]:          # chỉ 5 lần dừng dài nhất, tránh phình
+                d = g["from"][:10]
+                # Nới hai đầu 10 phút: nguyên nhân thường xuất hiện TRƯỚC khi
+                # sản phẩm cuối cùng đi qua, và dấu vết khắc phục nằm sau đó.
+                lo = _shift_clock(g["from"][11:19], -10)
+                hi = _shift_clock(g["to"][11:19], +10)
+                ev: Dict[str, Any] = {"window": f"{lo} → {hi}"}
+                try:
+                    er = _errs(date=d, start_time=lo, end_time=hi, top=5)
+                    if er.get("success"):
+                        ev["log_problems"] = [
+                            {"level": p["level"], "count": p["count"],
+                             "signature": p["signature"][:150]}
+                            for p in (er.get("problems") or [])[:5]
+                        ]
+                except Exception as e:      # noqa: BLE001
+                    ev["log_error"] = str(e)
+                try:
+                    au = _audit(start_date=f"{d}T{lo}", end_date=f"{d}T{hi}", limit=10)
+                    if au.get("success"):
+                        ev["human_actions"] = [
+                            {"time": e["time"][11:19], "username": e["username"],
+                             "action": e["action_type"], "description": e["description"]}
+                            for e in (au.get("entries") or [])
+                        ]
+                except Exception as e:      # noqa: BLE001
+                    ev["audit_error"] = str(e)
+                g["evidence"] = ev
+
         return {
             "success": True,
             "period": {"start": _to_local_str(start_dt), "end": _to_local_str(end_dt)},
@@ -1446,9 +1507,10 @@ def get_downtime(
                 f"tính là một lần dừng. Đây là dấu hiệu KHÔNG CÓ SẢN PHẨM đi qua — nó "
                 f"KHÔNG cho biết vì sao: có thể máy hỏng, đổi lô, giao ca, hay nghỉ theo "
                 f"kế hoạch. Đừng gọi đó là 'sự cố' nếu chưa đối chiếu. Muốn biết nguyên "
-                f"nhân thì xem log quanh mốc đó (agent log_analysis) hoặc audit log xem "
-                f"có ai load recipe khác. Tỷ lệ uptime tính trên khoảng từ sản phẩm đầu "
-                f"tới sản phẩm cuối, không phải trên 24 giờ."
+                f"nhân thì gọi lại tool này với `explain=true` — nó tự lấy log hệ thống "
+                f"và audit log quanh từng lần dừng, trả về ở `stops[].evidence`. "
+                f"Tỷ lệ uptime tính trên khoảng từ sản phẩm đầu tới sản phẩm cuối, không "
+                f"phải trên 24 giờ."
             ),
         }
     except Exception as e:
@@ -1465,8 +1527,10 @@ get_downtime_tool = BaseTool.create_tool(
             "Các khoảng dây chuyền KHÔNG ra sản phẩm, kèm tổng thời gian dừng và tỷ lệ "
             "uptime. Dùng khi user hỏi 'máy dừng bao lâu', 'hôm nay có dừng máy không', "
             "'dây chuyền chạy liên tục không', 'mất bao nhiêu thời gian'. "
-            "Suy từ khe hở giữa các bản ghi inference, nên nó cho biết KHÔNG CÓ SẢN PHẨM "
-            "chứ không cho biết NGUYÊN NHÂN — đừng gọi là sự cố khi chưa đối chiếu log."
+            "Suy từ khe hở giữa các bản ghi inference, nên tự nó chỉ cho biết KHÔNG CÓ "
+            "SẢN PHẨM. User hỏi VÌ SAO dừng thì truyền `explain=true`: tool tự lấy log hệ "
+            "thống và audit log quanh từng lần dừng và trả về ở `stops[].evidence`, khỏi "
+            "phải bảo user hỏi lại."
         ),
         category="analytics",
     ),
@@ -1474,3 +1538,169 @@ get_downtime_tool = BaseTool.create_tool(
 )
 
 logger.info("✅ Downtime tool registered")
+
+
+# ── Chỉ tiêu sản xuất ────────────────────────────────────────────────────────
+#
+# Trước đây câu "hôm nay đạt mục tiêu chưa?" được trả lời "đã đạt được mục tiêu"
+# trong khi hệ thống không lưu chỉ tiêu ở bất cứ đâu — một phán quyết bịa ra mà
+# trưởng ca có thể lấy báo cáo lên trên. Nay chỉ tiêu nằm ở một file cấu hình
+# khách hàng tự sửa được; chưa cấu hình thì tool nói rõ là chưa, không phán xét.
+
+#: File chỉ tiêu. Đọc lại mỗi lần gọi để khách sửa xong là có hiệu lực ngay,
+#: không phải restart service — người đặt chỉ tiêu là quản lý sản xuất, không
+#: phải người vận hành server.
+TARGETS_FILE = Path(__file__).resolve().parents[2] / "config" / "production_targets.json"
+
+
+def _load_targets() -> Dict[str, Any]:
+    import json as _json
+    if not TARGETS_FILE.is_file():
+        return {}
+    try:
+        cfg = _json.loads(TARGETS_FILE.read_text(encoding="utf-8"))
+        return cfg if isinstance(cfg, dict) else {}
+    except Exception as e:
+        logger.warning("Không đọc được %s: %s", TARGETS_FILE.name, e)
+        return {}
+
+
+class TargetProgressArgs(BaseModel):
+    """Arguments for get_target_progress"""
+    date: Optional[str] = Field(default=None, description="Ngày YYYY-MM-DD, bỏ trống = hôm nay")
+    recipe_id: Optional[str] = Field(
+        default=None,
+        description="Đối chiếu chỉ tiêu của MỘT recipe (tên hoặc ObjectId). "
+                    "Bỏ trống = chỉ tiêu tổng của cả ngày.",
+    )
+
+
+def get_target_progress(
+    date: Optional[str] = None,
+    recipe_id: Optional[str] = None,
+    **_ignored: Any,
+) -> Dict[str, Any]:
+    """Sản lượng thực tế so với chỉ tiêu, kèm dự phóng theo nhịp hiện tại."""
+    try:
+        from agent_app.reports.data import build_summary
+
+        cfg = _load_targets()
+        if not cfg:
+            return {
+                "success": False,
+                "not_configured": True,
+                "error": (f"Chưa cấu hình chỉ tiêu sản xuất. Tạo file "
+                          f"{TARGETS_FILE.name} với `daily_total` và `min_pass_rate` "
+                          f"để đối chiếu được."),
+            }
+
+        start_dt = _local_bound(date, end=False)
+        end_dt = _local_bound(date, end=True)
+
+        recipe_ids, recipe_name = None, None
+        if recipe_id:
+            matches = _matching_recipes(recipe_id, start_dt, end_dt)
+            if len(matches) > 1:
+                return _disambiguation(recipe_id, matches)
+            if not matches:
+                return {"success": False, "error": f"Không có recipe nào khớp '{recipe_id}'"}
+            recipe_ids = [matches[0]["recipe_id"]]
+            recipe_name = matches[0]["recipe_name"]
+
+        summ = build_summary(start_dt, end_dt, recipe_ids)
+        actual = summ["total"]
+
+        target = (cfg.get("per_recipe") or {}).get(recipe_name) if recipe_name \
+            else cfg.get("daily_total")
+        min_rate = cfg.get("min_pass_rate")
+
+        if target is None:
+            return {
+                "success": False,
+                "not_configured": True,
+                "error": (f"Chưa có chỉ tiêu cho {recipe_name or 'cả ngày'}. "
+                          f"Thêm vào {TARGETS_FILE.name} rồi hỏi lại."),
+                "actual": actual,
+                "configured_recipes": sorted((cfg.get("per_recipe") or {}).keys()),
+            }
+
+        # Dự phóng theo nhịp ĐANG chạy.
+        #
+        # Chỉ tính khi kỳ đang xem là hôm nay và dây chuyền còn đang chạy: chiếu
+        # nhịp của một ngày đã kết thúc là vô nghĩa. Và phải nói rõ đây là phép
+        # ngoại suy tuyến tính từ nhịp hiện tại, KHÔNG phải dự báo — nhịp có thể
+        # đổi, dây chuyền có thể dừng.
+        projected = None
+        elapsed_h = None
+        now_local = datetime.now(_TZ).replace(tzinfo=None)
+        is_today = _local_bound(None, end=False) == start_dt
+        if is_today and actual > 0:
+            first = db_first = get_sync_database()["inference_results"].find_one(
+                {_TIME_FIELD: {"$gte": start_dt, "$lte": end_dt}},
+                {_TIME_FIELD: 1}, sort=[(_TIME_FIELD, 1)])
+            if first:
+                start_local = _to_utc_naive_to_local(first[_TIME_FIELD])
+                elapsed_h = round((now_local - start_local).total_seconds() / 3600, 2)
+                if elapsed_h and elapsed_h > 0.5:
+                    # Ngoại suy tới hết ngày làm việc, mặc định 24h kể từ 00:00.
+                    remain_h = max(0.0, 24 - (start_local.hour + start_local.minute / 60) - elapsed_h)
+                    projected = int(actual + actual / elapsed_h * remain_h)
+
+        pct = round(actual / target * 100, 1) if target else None
+        rate = summ["pass_rate"]
+
+        return {
+            "success": True,
+            "date": _to_local_str(start_dt)[:10],
+            "scope": recipe_name or "tất cả recipe",
+            "target": target,
+            "actual": actual,
+            "achieved_percent": pct,
+            "gap": target - actual,
+            "reached": actual >= target,
+            "elapsed_hours": elapsed_h,
+            "projected_end_of_day": projected,
+            "projection_note": (
+                "Ngoại suy tuyến tính từ nhịp hiện tại, KHÔNG phải dự báo — nhịp có "
+                "thể đổi và dây chuyền có thể dừng." if projected else None
+            ),
+            "pass_rate": rate,
+            "min_pass_rate": min_rate,
+            "quality_ok": (rate >= min_rate) if min_rate is not None else None,
+            "config_file": TARGETS_FILE.name,
+            "note": (
+                f"Chỉ tiêu đọc từ {TARGETS_FILE.name}, khách hàng tự sửa được. "
+                f"`reached` là kết luận về SẢN LƯỢNG, `quality_ok` là về CHẤT LƯỢNG — "
+                f"đạt sản lượng mà pass rate dưới ngưỡng thì KHÔNG được nói là đạt chỉ "
+                f"tiêu. Nếu có `projected_end_of_day` thì phải nêu kèm là ngoại suy theo "
+                f"nhịp hiện tại, đừng trình bày như dự báo chắc chắn."
+            ),
+        }
+    except Exception as e:
+        logger.error(f"get_target_progress lỗi: {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e), "message": "Không đối chiếu được chỉ tiêu"}
+
+
+def _to_utc_naive_to_local(dt_utc: datetime) -> datetime:
+    """naive-UTC → naive giờ địa phương, để so với `datetime.now(_TZ)`."""
+    return dt_utc + timedelta(seconds=_TZ.utcoffset(dt_utc).total_seconds())
+
+
+get_target_progress_tool = BaseTool.create_tool(
+    func=get_target_progress,
+    metadata=ToolMetadata(
+        name="get_target_progress",
+        description=(
+            "Sản lượng thực tế so với CHỈ TIÊU, kèm phần trăm hoàn thành và dự phóng "
+            "theo nhịp hiện tại. Dùng khi user hỏi 'hôm nay đạt chỉ tiêu chưa', 'còn "
+            "thiếu bao nhiêu', 'có kịp không', 'so với kế hoạch thế nào'. "
+            "Chỉ tiêu đọc từ file cấu hình; chưa cấu hình thì tool trả về "
+            "`not_configured` — khi đó TUYỆT ĐỐI không tự phán là đạt hay chưa đạt."
+        ),
+        category="analytics",
+    ),
+    args_schema=TargetProgressArgs,
+)
+
+logger.info("✅ Target tool registered")

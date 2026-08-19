@@ -228,6 +228,23 @@
   .tbl-scroll.more::after{content:'';position:sticky;right:0;top:0;float:right;width:26px;height:100%;
     background:linear-gradient(to right,transparent,var(--card));pointer-events:none}
   .tbl td:first-child{white-space:normal;max-width:190px}
+
+  /* Dạng thẻ thay cho bảng rộng khi khung hẹp. Ngưỡng 720px vì khung chat còn
+     hẹp hơn bề rộng cửa sổ (cột trái chiếm 300px + gap). */
+  .tbl-cards{display:none}
+  @media(max-width:720px){
+    .tbl-wrap .tbl-scroll{display:none}
+    .tbl-wrap .tbl-cards{display:flex;flex-direction:column;gap:8px}
+  }
+  .tbl-card{border:1px solid var(--border);border-radius:10px;background:var(--card);overflow:hidden}
+  .tbl-card-h{font-size:13px;font-weight:600;color:var(--text);padding:8px 11px;
+              background:var(--bg);border-bottom:1px solid var(--border)}
+  .tbl-card-r{display:flex;justify-content:space-between;gap:12px;font-size:12px;
+              padding:4px 11px;line-height:1.45}
+  .tbl-card-r:last-child{padding-bottom:8px}
+  .tbl-card-r span{color:var(--muted);flex-shrink:0}
+  .tbl-card-r b{color:var(--text-2);font-weight:500;text-align:right;
+                font-variant-numeric:tabular-nums;word-break:break-word}
 </style>
 </head>
 <body>
@@ -492,20 +509,36 @@ function drawTable(t){
   const al = i => ({l:'left',r:'right',c:'center'}[(t.align||[])[i]] || 'left');
   // esc() gọi String() ở mọi chỗ: nó dùng s.replace nên một tiêu đề cột dạng số
   // sẽ ném TypeError, và lỗi đó thoát ra khỏi send() làm mất luôn phần vẽ còn
-  // lại của cả câu trả lời. Hiện Python luôn trả chuỗi, nên đây là gia cố.
+  // lại của cả câu trả lời.
   const S = v => esc(String(v==null?'':v));
-  wrap.innerHTML = `
-    ${t.title?`<div class="tbl-t">${S(t.title)}</div>`:''}
-    ${t.caption?`<div class="tbl-c">${S(t.caption)}</div>`:''}
+  const cols = t.columns || [], rows = t.rows || [];
+
+  const head = `${t.title?`<div class="tbl-t">${S(t.title)}</div>`:''}
+                ${t.caption?`<div class="tbl-c">${S(t.caption)}</div>`:''}`;
+
+  // Bảng rộng (từ 5 cột) đổi sang dạng THẺ khi khung hẹp.
+  //
+  // Bảng 8 cột đo được 760–1295px; trong khung chat ~688px trên màn hình lớn và
+  // ~300px trên điện thoại thì chỉ hiện 1-2 cột đầu — tức toàn số của KỲ TRƯỚC —
+  // mà không có dấu hiệu nào cho biết còn cột nữa. Người xem đọc số kỳ trước
+  // thành số kỳ này. Cuộn ngang không cứu được: thứ bị che lại là cột quyết định.
+  const stacked = cols.length >= 5 ? `
+    <div class="tbl-cards">${rows.map(r=>`
+      <div class="tbl-card">
+        <div class="tbl-card-h">${S(r[0])}</div>
+        ${r.slice(1).map((v,i)=> String(v??'').trim()==='' ? '' :
+          `<div class="tbl-card-r"><span>${S(cols[i+1])}</span><b>${S(v)}</b></div>`).join('')}
+      </div>`).join('')}</div>` : '';
+
+  wrap.innerHTML = head + `
     <div class="tbl-scroll"><table class="tbl">
-      <thead><tr>${(t.columns||[]).map((c,i)=>`<th style="text-align:${al(i)}">${S(c)}</th>`).join('')}</tr></thead>
-      <tbody>${(t.rows||[]).map(r=>`<tr>${r.map((v,i)=>
+      <thead><tr>${cols.map((c,i)=>`<th style="text-align:${al(i)}">${S(c)}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(r=>`<tr>${r.map((v,i)=>
         `<td style="text-align:${al(i)}">${S(v)}</td>`).join('')}</tr>`).join('')}</tbody>
-    </table></div>`;
+    </table></div>` + stacked;
   $('log').appendChild(wrap);
-  // Còn cuộn được thì bật gợi ý ở rìa phải. Bảng 8 cột trên màn hình hẹp chỉ
-  // hiện 1-2 cột đầu — tức toàn số của KỲ TRƯỚC — mà không có dấu hiệu nào cho
-  // biết còn cột nữa, nên người xem đọc số kỳ trước thành số kỳ này.
+
+  // Bảng hẹp (dưới 5 cột) vẫn dùng cuộn ngang; bật vệt mờ khi còn cột chưa thấy.
   const sc = wrap.querySelector('.tbl-scroll');
   const sync = () => sc.classList.toggle('more', sc.scrollWidth - sc.clientWidth - sc.scrollLeft > 4);
   sc.addEventListener('scroll', sync); requestAnimationFrame(sync);

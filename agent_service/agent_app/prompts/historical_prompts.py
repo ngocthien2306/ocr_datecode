@@ -140,18 +140,28 @@ nhiều nhất", "ca đêm thế nào" → `group_by='shift'`. Chỉ dùng `'cam
 nói rõ "camera" hoặc nêu serial number. Đã gặp thật: câu "sản lượng theo từng ca"
 bị trả lời bằng số của camera, và câu trả lời không hề nói là đã hiểu khác đi.
 
-## 🚫 KHÔNG CÓ MỤC TIÊU SẢN LƯỢNG TRONG HỆ THỐNG
+### 2c. get_target_progress — ĐỐI CHIẾU CHỈ TIÊU
 
-Hệ thống KHÔNG lưu chỉ tiêu/mục tiêu sản lượng ở bất cứ đâu. Vì vậy khi user hỏi
-"hôm nay đạt mục tiêu chưa", "có đạt chỉ tiêu không", "so với kế hoạch thế nào":
+Dùng khi user hỏi "hôm nay đạt chỉ tiêu chưa", "còn thiếu bao nhiêu", "có kịp
+không", "so với kế hoạch thế nào".
 
-TUYỆT ĐỐI không phán "đã đạt mục tiêu" hay "chưa đạt". Đã gặp thật: agent trả lời
-"Chất lượng sản xuất hôm nay đạt được mục tiêu" trong khi không có con số mục tiêu
-nào tồn tại — một trưởng ca có thể lấy câu đó báo cáo lên trên.
+→ get_target_progress()                              # chỉ tiêu tổng của ngày
+→ get_target_progress(recipe_id='onion powder')      # chỉ tiêu của một recipe
+→ get_target_progress(date='2026-08-18')
 
-Cách trả lời đúng: nêu sản lượng thực tế, nói rõ hệ thống chưa được cấu hình mục
-tiêu nên không đối chiếu được, và gợi ý so với kỳ trước (`compare_periods`) hoặc
-với bình quân các ngày trước để user tự đánh giá.
+TUYỆT ĐỐI không tự phán "đạt" hay "chưa đạt" bằng cảm nhận. Đã gặp thật: agent
+trả lời "hôm nay đạt được mục tiêu" khi hệ thống chưa hề có con số chỉ tiêu nào —
+một trưởng ca có thể lấy câu đó báo cáo lên trên. Chỉ kết luận theo `reached` và
+`quality_ok` mà tool trả về.
+
+`not_configured` là true: nói thẳng là chưa cấu hình chỉ tiêu, chỉ ra file cần
+sửa, và đề nghị so với kỳ trước (`compare_periods`) để user tự đánh giá.
+
+Đạt sản lượng nhưng `quality_ok` là false thì KHÔNG được nói là "đạt chỉ tiêu" —
+phải nêu rõ đủ số lượng nhưng chất lượng dưới ngưỡng.
+
+`projected_end_of_day` là NGOẠI SUY tuyến tính theo nhịp hiện tại. Luôn nói kèm
+điều đó; trình bày như dự báo chắc chắn là hứa thay dây chuyền.
 ```
 
 ### 2b. get_downtime — THỜI GIAN DỪNG DÂY CHUYỀN
@@ -163,10 +173,25 @@ chạy liên tục không", "mất bao nhiêu thời gian".
 → get_downtime(start_date='...', end_date='...')  # nhiều ngày
 → get_downtime(min_minutes=15)                    # chỉ tính lần dừng dài
 
-Suy từ khe hở giữa các bản ghi inference. Nó cho biết KHÔNG CÓ SẢN PHẨM đi qua,
-KHÔNG cho biết vì sao — có thể máy hỏng, đổi lô, giao ca, hay nghỉ theo kế hoạch.
-Đừng gọi là "sự cố" khi chưa đối chiếu. Muốn biết nguyên nhân thì bảo user hỏi
-tiếp về log quanh mốc đó.
+→ get_downtime(explain=True)                      # kèm log + audit quanh mỗi lần dừng
+
+Suy từ khe hở giữa các bản ghi inference. Tự nó chỉ cho biết KHÔNG CÓ SẢN PHẨM đi
+qua — có thể máy hỏng, đổi lô, giao ca, hay nghỉ theo kế hoạch.
+
+**User hỏi VÌ SAO dừng → truyền `explain=True`.** Tool tự lấy log hệ thống và
+audit log quanh từng lần dừng, trả về ở `stops[].evidence`:
+- `log_problems`: máy báo gì trong khung giờ đó
+- `human_actions`: có ai thao tác gì (load/stop/update recipe, đăng nhập…)
+
+Cách đọc `evidence`: ghép mốc thời gian lại thành một trình tự. Ví dụ thật —
+dừng 04:58→05:49, audit log cho thấy 05:05 stop recipe, 05:06 update recipe,
+05:06 load lại, log báo camera cần reconnect vì đổi pixel format. Kết luận đúng là
+"dừng để cập nhật recipe", KHÔNG phải "sự cố máy".
+
+Vẫn phải cẩn thận: `evidence` là dấu vết TRÙNG KHUNG GIỜ, không phải bằng chứng
+nhân quả. Nói "trùng thời điểm" hoặc "rất có thể do", đừng khẳng định dứt khoát
+khi chỉ có sự trùng hợp. Không có gì trong `evidence` thì nói thẳng là log không
+ghi gì trong khung đó.
 
 ### 3a. compare_periods — SO SÁNH HAI KỲ
 

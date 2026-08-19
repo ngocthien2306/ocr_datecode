@@ -406,6 +406,43 @@ def kpis_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]:
                   _rate_accent(rate), delta_kind="pp"),
         ]
 
+    if tool_name == "get_target_progress":
+        pct = result.get("achieved_percent")
+        tgt, act = result.get("target"), result.get("actual")
+        gap = result.get("gap") or 0
+        proj = result.get("projected_end_of_day")
+        rate, minr = result.get("pass_rate"), result.get("min_pass_rate")
+        # Màu của ô sản lượng theo DỰ PHÓNG khi ngày còn đang chạy, không theo %
+        # đã đạt. Giữa ngày mới xong 70% là bình thường; tô đỏ ở đó là báo động
+        # sai, mà dự phóng lại đang cho thấy sẽ vượt chỉ tiêu.
+        if result.get("reached"):
+            vol_accent = "ok"
+        elif proj is not None:
+            vol_accent = "ok" if proj >= (tgt or 0) else "bad"
+        else:
+            vol_accent = "warn" if (pct or 0) >= 80 else "bad"
+        tiles = [
+            _tile("Sản lượng", f"{fmt(act)} / {fmt(tgt)}",
+                  result.get("scope"), None, vol_accent),
+            _tile("Hoàn thành", f"{pct}%" if pct is not None else "—",
+                  # Nói rõ còn thiếu / đã vượt, thay vì để người đọc tự trừ.
+                  ("đã vượt " + fmt(-gap)) if gap < 0 else f"còn thiếu {fmt(gap)}"),
+        ]
+        if proj:
+            tiles.append(_tile(
+                "Dự phóng cuối ngày", fmt(proj),
+                # Nhãn phải nằm ngay trên ô: một con số tròn trịa không có nhãn sẽ
+                # được đọc như cam kết, chứ không như phép ngoại suy.
+                "ngoại suy theo nhịp hiện tại",
+                None, "ok" if proj >= (tgt or 0) else "bad"))
+        if rate is not None:
+            tiles.append(_tile(
+                "Pass rate", f"{rate}%",
+                f"ngưỡng {minr}%" if minr is not None else None, None,
+                ("ok" if result.get("quality_ok") else "bad")
+                if result.get("quality_ok") is not None else _rate_accent(rate)))
+        return tiles
+
     if tool_name == "get_downtime":
         up = result.get("uptime_percent")
         down = result.get("downtime_minutes") or 0
@@ -602,6 +639,59 @@ def charts_from_tool_result(tool_name: str, args: Dict[str, Any], result: Any) -
                 )
                 if c:
                     charts.append(c)
+
+    # So sánh hai kỳ → cột kép sản lượng theo recipe
+    #
+    # Luồng so sánh trước đây không có hình nào: `charts_from_tool_result` chỉ
+    # biết ba tool cũ, mà đây lại đúng là câu hỏi cần một cái nhìn nhất.
+    elif tool_name == "compare_periods":
+        pa, pb = result.get("period_a") or {}, result.get("period_b") or {}
+        # Chỉ recipe CÓ sản lượng kỳ này. Recipe chỉ chạy kỳ trước sẽ ra cột bằng
+        # 0 nằm cạnh các cột lớn — đọc thành "sụt về 0" chứ không phải "không
+        # chạy". Chúng vẫn có mặt trong bảng, nơi cột Ghi chú nói rõ.
+        rows = [r for r in (result.get("by_recipe") or []) if (r["total"]["current"] or 0)]
+        dropped = [r["recipe_name"] for r in (result.get("by_recipe") or [])
+                   if not (r["total"]["current"] or 0)]
+        if rows:
+            series = []
+            for r in rows[:_MAX_BARS]:
+                cur = r["total"]["current"] or 0
+                prev = r["total"]["previous"] or 0
+                # Vẽ theo sản lượng KỲ NÀY, phần kỳ trước đưa vào `sub`. Biểu đồ
+                # cột đơn không diễn tả được hai giá trị, mà ghép hai cột cạnh
+                # nhau thì recipe chỉ chạy một kỳ sẽ có một cột bằng 0 trông như
+                # "sụt về 0" — đúng thứ bảng đang cố tránh.
+                note = f"kỳ trước: {prev:,}" if prev else "kỳ trước: không có"
+                if r.get("only_in"):
+                    note = f"chỉ chạy ở {r['only_in']}"
+                series.append({"label": r["recipe_name"], "value": cur, "sub": note})
+            title = f"Sản lượng theo recipe · {pa.get('label')}"
+            if dropped:
+                # Nói ra recipe bị loại khỏi hình, không để nó lặng lẽ mất: một
+                # biểu đồ thiếu recipe mà không giải thích đọc thành recipe đó
+                # không tồn tại.
+                title += f" (không gồm {len(dropped)} recipe không chạy kỳ này)"
+            c = _bar(title, series, "sp")
+            if c:
+                charts.append(c)
+
+        # Cột thứ hai: pass rate của các recipe chạy CẢ HAI kỳ, để nhìn ra chất
+        # lượng đổi chiều. Recipe một kỳ không có gì để so nên loại khỏi biểu đồ
+        # này thay vì vẽ một cột trơ.
+        both = [r for r in (result.get("by_recipe") or [])
+                if not r.get("only_in") and r["pass_rate"]["diff"] is not None]
+        if both:
+            c = _bar(
+                f"Thay đổi pass rate · {pa.get('label')} so với {pb.get('label')}",
+                [{"label": r["recipe_name"], "value": r["pass_rate"]["diff"],
+                  "sub": f"{r['pass_rate']['previous']}% → {r['pass_rate']['current']}%"}
+                 for r in both[:_MAX_BARS]],
+                "điểm",
+            )
+            if c:
+                charts.append(c)
+
+    # Sản lượng theo ca / dừng máy đã có KPI và bảng riêng, không vẽ thêm.
 
     # Nguyên nhân fail → cột theo bước kiểm tra bị trượt
     elif tool_name == "explain_failures":
