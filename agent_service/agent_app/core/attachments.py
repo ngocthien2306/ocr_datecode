@@ -407,6 +407,15 @@ def kpis_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]:
         ]
 
     if tool_name == "get_shift_handover":
+        # Ca chưa bắt đầu: vẽ ô KPI của LẦN GẦN NHẤT, nhãn ghi rõ ngày.
+        # Không vẽ gì thì câu trả lời "chưa bắt đầu" trơ trọi không có số nào,
+        # mà số của ca đêm hôm trước lại đúng là thứ người hỏi cần.
+        if result.get("not_started"):
+            prev = result.get("previous_occurrence")
+            if not prev:
+                return []
+            result = {**prev, "shift": f"{prev['shift']} · {prev['date']}",
+                      "in_progress": False}
         pr = result.get("production") or {}
         if not pr.get("total"):
             return []
@@ -533,6 +542,10 @@ def tables_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]
         return []
 
     if tool_name == "get_shift_handover":
+        if result.get("not_started"):
+            result = result.get("previous_occurrence") or {}
+            if not result:
+                return []
         out = []
         ch = result.get("recipe_changes") or []
         if ch:

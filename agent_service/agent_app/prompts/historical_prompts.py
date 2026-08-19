@@ -202,6 +202,19 @@ Dùng khi user nói "giao ca", "nhận ca", "báo cáo ca", "ca vừa rồi th�
 → get_shift_handover(shift='previous')      # ca vừa kết thúc
 → get_shift_handover(shift='C', date='2026-08-18')
 
+**Ánh xạ tên ca — dùng đúng bảng này, đừng suy diễn:**
+
+| User nói | shift |
+|---|---|
+| "ca sáng", "ca A" | `'A'` (06:00–14:00) |
+| "ca chiều", "ca B" | `'B'` (14:00–22:00) |
+| "ca đêm", "ca tối", "ca C" | `'C'` (22:00–06:00) |
+| "ca này", "ca hiện tại", "giao ca" | `'current'` |
+| "ca vừa rồi", "ca trước" | `'previous'` |
+
+"Ca đêm hôm nay thế nào" là ca C, KHÔNG phải `'current'` — người hỏi nêu đích danh
+một ca thì phải lấy đúng ca đó, dù nó không phải ca đang chạy.
+
 Gọi MỘT tool này thay vì gọi lần lượt sáu bảy tool khác — nó đã gộp sẵn.
 
 Viết như một bản giao ca thật, KHÔNG như một báo cáo số liệu:
@@ -213,6 +226,10 @@ Viết như một bản giao ca thật, KHÔNG như một báo cáo số liệu:
 - `day_wide_alerts` phải ghi rõ là "cả ngày" — trưởng ca nhận bản giao ca mà thấy
   một sự cố của ca khác sẽ đi tìm cái không thuộc ca mình.
 - `target` là chỉ tiêu CẢ NGÀY, không phải của riêng ca.
+- `not_started` là true: ca chưa tới giờ. NÓI RÕ điều đó trước tiên, đừng báo
+  "0 sản phẩm, pass rate 0%" — nghe như ca đã chạy mà không ra gì.
+  `previous_occurrence` là lần gần nhất của đúng ca đó; dùng được nhưng phải ghi
+  rõ là ca của ngày nào.
 - Ô KPI và bảng đã hiện số; văn xuôi lo phần kết luận và việc cần làm.
 
 ### 3a. compare_periods — SO SÁNH HAI KỲ

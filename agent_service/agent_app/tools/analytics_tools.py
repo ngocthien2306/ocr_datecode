@@ -1798,8 +1798,39 @@ def get_shift_handover(
             date_str = date or now_local.strftime("%Y-%m-%d")
 
         start_dt, end_dt, label = _shift_bounds(date_str, name)
-        in_progress = end_dt > _to_utc(now_local)
-        cutoff = min(end_dt, _to_utc(now_local))
+        now_utc = _to_utc(now_local)
+
+        # Ca CHƯA BẮT ĐẦU thì không được báo cáo như một ca đã chạy.
+        #
+        # Trước đây `cutoff = min(end, now)` với `now` còn trước `start` cho ra cửa
+        # sổ ngược (22:00 → 19:18), sản lượng 0, và câu trả lời thành "Ca C: 0 sản
+        # phẩm, pass rate 0%" — nghe như ca chạy mà không ra gì, chứ không phải ca
+        # chưa tới giờ. Kèm luôn lần gần nhất của ĐÚNG ca đó để câu hỏi "ca đêm thế
+        # nào" vẫn có câu trả lời dùng được, nhưng ghi rõ là của ngày nào — không
+        # âm thầm đổi ngày rồi trả lời như thể đó là ca hỏi.
+        if start_dt > now_utc:
+            prev_day = (datetime.fromisoformat(date_str) - timedelta(days=1)).strftime("%Y-%m-%d")
+            prev = None
+            if not _ignored.get("_no_recurse"):
+                prev = get_shift_handover(shift=name, date=prev_day, _no_recurse=True)
+            return {
+                "success": True,
+                "shift": label,
+                "date": date_str,
+                "not_started": True,
+                "starts_at": _to_local_str(start_dt)[11:16],
+                "previous_occurrence": prev if (prev or {}).get("success") else None,
+                "note": (
+                    f"Ca {label} ngày {date_str} CHƯA BẮT ĐẦU (bắt đầu {_to_local_str(start_dt)[11:16]}, "
+                    f"hiện tại {now_local.strftime('%H:%M')}). Nói rõ điều đó trước — đừng "
+                    f"báo cáo sản lượng 0 như thể ca đã chạy mà không ra sản phẩm. "
+                    f"`previous_occurrence` là lần gần nhất của ĐÚNG ca này, ngày {prev_day}; "
+                    f"dùng được nhưng phải ghi rõ đó là ca của ngày đó, không phải ca hỏi."
+                ),
+            }
+
+        in_progress = end_dt > now_utc
+        cutoff = min(end_dt, now_utc)
 
         summ = build_summary(start_dt, cutoff)
         lo_clock, hi_clock = _to_local_str(start_dt)[11:16], _to_local_str(cutoff)[11:16]
