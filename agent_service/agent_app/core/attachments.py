@@ -178,16 +178,22 @@ def charts_from_tool_result(tool_name: str, args: Dict[str, Any], result: Any) -
             "char_verification": "Ký tự dưới ngưỡng",
             "template_verification": "Không khớp template",
             "product_verification": "Không nhận ra sản phẩm",
+            "no_detection": "Không thấy nhãn trong khung",
             "unknown": "Chưa xác định",
         }
-        causes = result.get("causes") or {}
+        # Đếm theo sản phẩm chứ không theo frame: cột trước đây gắn nhãn "frame"
+        # nhưng người đọc vẫn hiểu là số sản phẩm, mà tổng các cột lại vượt xa
+        # tổng sản phẩm fail (328 so với 167) nên biểu đồ trông như sai số liệu.
+        # `causes` giờ là list (mỗi hàng có products + frames); chỉ
+        # `causes_by_product` mới là dict {nguyên_nhân: số sản phẩm} mà _bar cần.
+        causes = result.get("causes_by_product") or {}
         c = _bar(
             f"Nguyên nhân fail · {_period_label(args, result)}",
             [
                 {"label": nice.get(k, k), "value": v, "sub": ""}
                 for k, v in sorted(causes.items(), key=lambda x: -x[1])
             ],
-            "frame",
+            "sản phẩm",
         )
         if c:
             charts.append(c)

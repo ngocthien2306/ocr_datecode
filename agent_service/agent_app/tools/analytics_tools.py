@@ -648,6 +648,74 @@ def get_recipe_load_history(
         }
 
 
+# ============================================================================
+# Phân loại một cặp expected → recognized
+#
+# Đo trên 101 cặp sai của ngày 19/08: 85% là chuỗi đọc được nằm gọn bên trong
+# chuỗi mong đợi (cắt đầu 60, cắt đuôi 16, rỗng hẳn 9) — tức camera chỉ nhìn
+# thấy một phần nhãn, không phải OCR đọc nhầm ký tự. Nhóm này đi kèm template
+# similarity trung bình 0,08–0,44 (ngưỡng đạt là 0,50), xác nhận thùng bị lệch
+# khỏi khung. Nhóm sai ký tự thật chỉ có 5 cặp và similarity trung bình 0,53,
+# tức thùng nằm đúng chỗ.
+#
+# Tách được hai nhóm này thì câu trả lời mới đúng việc cần làm: chỉnh cơ khí /
+# trigger, hay chỉnh model OCR.
+# ============================================================================
+
+def _levenshtein(a: str, b: str) -> int:
+    if a == b:
+        return 0
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def _mismatch_kind(expected: str, recognized: str) -> str:
+    """Nhãn ngắn gọn cho một cặp sai, dùng để gộp nhóm trong báo cáo."""
+    if not recognized:
+        return "khong_doc_duoc"
+    if recognized == expected:
+        return "khop"
+    # Bỏ khoảng trắng rồi mới so: OCR hay chèn/bỏ space giữa các từ
+    # ('BESTifUsedbyAUG182028' → 'BEST if Used by AUG'), đó là chuyện tách từ
+    # chứ không phải nhìn thiếu nhãn.
+    e_c, r_c = expected.replace(" ", ""), recognized.replace(" ", "")
+    if r_c and r_c in e_c and r_c != e_c:
+        return "doc_thieu_dau_cuoi"
+    if e_c == r_c:
+        return "chi_khac_khoang_trang"
+    if e_c in r_c:
+        return "doc_thua_ky_tu"
+    d = _levenshtein(expected, recognized)
+    if d <= 2:
+        return "sai_it_ky_tu"
+    return "khac_han"
+
+
+_CAUSE_LABELS = {
+    "text_verification": "OCR đọc sai chuỗi",
+    "char_verification": "Ký tự dưới ngưỡng tin cậy",
+    "template_verification": "Ảnh không khớp template",
+    "product_verification": "Không nhận ra sản phẩm",
+    "no_detection": "Detector không thấy vùng nào trong khung",
+    "unknown": "Chưa xác định",
+}
+
+
+_MISMATCH_LABELS = {
+    "khong_doc_duoc": "không đọc được ký tự nào (nhãn ngoài khung hoặc bị che)",
+    "doc_thieu_dau_cuoi": "chỉ đọc được một phần nhãn (thùng lệch / vào khung chưa đủ)",
+    "chi_khac_khoang_trang": "đúng chữ, chỉ khác khoảng trắng (lỗi tách từ của OCR)",
+    "doc_thua_ky_tu": "đọc dư ký tự so với nhãn",
+    "sai_it_ky_tu": "sai 1–2 ký tự — lỗi nhận dạng thật",
+    "khac_han": "khác hẳn nhãn mong đợi (kiểm tra xem có đang chạy lô khác không)",
+}
+
+
 def explain_failures(
     recipe_id: Optional[str] = None,
     camera: Optional[str] = None,
@@ -726,36 +794,55 @@ def explain_failures(
                 for frame in cam.get("frames") or []:
                     if frame.get("pass_fail") != "FAIL":
                         continue
+                    def _mark(key: str) -> None:
+                        causes[key] += 1
+                        causes_products[key].add(doc["_id"])
+
                     hit = False
 
                     tv = frame.get("text_verification") or {}
                     if tv.get("all_match") is False:
-                        causes["text_verification"] += 1
+                        _mark("text_verification")
                         hit = True
                         for r in tv.get("results") or []:
                             if not r.get("match"):
-                                key = (str(r.get("expected")), str(r.get("recognized")))
+                                expected = str(r.get("expected"))
+                                recognized = str(r.get("recognized"))
+                                key = (expected, recognized)
                                 mismatches[key] = mismatches.get(key, 0) + 1
+                                kind = _mismatch_kind(expected, recognized)
+                                mismatch_kinds[kind] = mismatch_kinds.get(kind, 0) + 1
 
                     cv = frame.get("char_verification") or {}
                     if cv.get("all_match") is False:
-                        causes["char_verification"] += 1
+                        _mark("char_verification")
                         hit = True
 
                     tpl = frame.get("template_verification") or {}
                     if tpl.get("match") is False:
-                        causes["template_verification"] += 1
+                        _mark("template_verification")
                         hit = True
                         if isinstance(tpl.get("similarity"), (int, float)):
                             sims.append(tpl["similarity"])
 
                     pv = frame.get("product_verification") or {}
                     if pv.get("match") is False and not pv.get("skipped"):
-                        causes["product_verification"] += 1
+                        _mark("product_verification")
                         hit = True
 
                     if not hit:
-                        causes["unknown"] += 1
+                        # Frame FAIL mà không bước kiểm tra nào báo sai: detector
+                        # không tìm thấy vùng nào nên pipeline dừng ngay sau khi
+                        # detect — cả 4 block verification đều null và `timings`
+                        # không có `ocr_ms`. Đây KHÔNG phải "chưa rõ nguyên nhân",
+                        # mà là "camera không nhìn thấy nhãn": thùng lệch, che
+                        # khuất, hoặc trigger sai thời điểm. Gộp chung vào
+                        # `unknown` như trước khiến nguyên nhân phổ biến thứ nhì
+                        # bị giấu sau một cái nhãn vô nghĩa.
+                        if not (frame.get("detected_regions") or []):
+                            _mark("no_detection")
+                        else:
+                            _mark("unknown")
 
                     # Ảnh visualize của frame fail — để FE hiện kèm câu trả lời.
                     # Giữ tối đa 8 cái, đủ để nhìn ra quy luật mà không nặng UI.
@@ -779,6 +866,11 @@ def explain_failures(
             for (e, r), n in sorted(mismatches.items(), key=lambda x: -x[1])[:10]
         ]
 
+        mismatch_summary = [
+            {"kind": k, "label": _MISMATCH_LABELS.get(k, k), "count": n}
+            for k, n in sorted(mismatch_kinds.items(), key=lambda x: -x[1])
+        ]
+
         return {
             "success": True,
             "period": {"start": _to_local_str(start_dt), "end": _to_local_str(end_dt)},
@@ -786,15 +878,37 @@ def explain_failures(
             "total_failed_products": total_fail,
             "examined_products": min(total_fail, sample_limit),
             "failed_camera_frames_examined": examined,
-            "causes": {k: v for k, v in causes.items() if v},
+            # Một sản phẩm có nhiều frame và một frame trượt được nhiều bước, nên
+            # hai cách đếm ra hai con số khác nhau (113 frame nhưng 112 sản phẩm).
+            # Để hai con số cạnh nhau trong CÙNG một hàng, kèm tên trường nói rõ
+            # đơn vị: tách thành hai dict riêng thì LLM vẫn bốc nhầm số frame rồi
+            # gọi là "sản phẩm", vì ở chỗ đó không còn gì nhắc nó đơn vị nào.
+            "causes": [
+                {
+                    "cause": k,
+                    "label": _CAUSE_LABELS.get(k, k),
+                    "products": len(causes_products[k]),
+                    "frames": causes[k],
+                }
+                for k in sorted(causes, key=lambda x: -len(causes_products[x]))
+                if causes[k]
+            ],
+            "causes_by_product": {k: len(v) for k, v in causes_products.items() if v},
             "failed_frames_by_camera": dict(sorted(per_camera.items(), key=lambda x: -x[1])),
             "top_text_mismatches": top_mismatch,
+            "text_mismatch_kinds": mismatch_summary,
             "template_similarity_avg": round(sum(sims) / len(sims), 4) if sims else None,
             "samples": samples,
             "note": (
-                f"Mổ {min(total_fail, sample_limit)} sản phẩm fail gần nhất "
-                f"trên tổng {total_fail}. Một frame có thể trượt nhiều bước "
-                f"nên tổng các nguyên nhân có thể lớn hơn số frame."
+                f"Mổ {min(total_fail, sample_limit)} sản phẩm fail gần nhất trên tổng "
+                f"{total_fail}. Mỗi hàng trong `causes` có hai con số: `products` "
+                f"là số SẢN PHẨM, `frames` là số FRAME — khi trả lời user hãy dùng "
+                f"`products`. Tổng các hàng lớn hơn tổng sản phẩm fail là bình "
+                f"thường: một sản phẩm trượt được nhiều bước cùng lúc. "
+                f"`no_detection` = detector không tìm thấy vùng nào trong frame "
+                f"(thùng lệch/che khuất/trigger sai), khác với `unknown`. "
+                f"Xem `text_mismatch_kinds` để biết lỗi OCR là do nhìn thiếu nhãn "
+                f"hay do nhận dạng sai thật."
             ),
         }
 
@@ -862,8 +976,16 @@ explain_failures_tool = BaseTool.create_tool(
             "Phân tích NGUYÊN NHÂN sản phẩm bị fail — dùng khi user hỏi 'tại sao', "
             "'vì sao fail', 'lỗi gì', 'nguyên nhân'. Trả về số fail theo từng bước "
             "kiểm tra (OCR đọc sai chuỗi / ký tự dưới ngưỡng / ảnh không khớp "
-            "template / không nhận ra sản phẩm), kèm các cặp expected-recognized "
-            "sai nhiều nhất. Lọc được theo recipe, camera và khung giờ."
+            "template / không nhận ra sản phẩm / không thấy nhãn trong khung), "
+            "kèm các cặp expected-recognized sai nhiều nhất. "
+            "QUAN TRỌNG khi diễn giải: mỗi hàng trong `causes` có `products` "
+            "(số SẢN PHẨM) và `frames` (số FRAME) — trả lời user bằng `products`. "
+            "Tổng các hàng lớn hơn tổng sản phẩm fail là bình thường vì một sản "
+            "phẩm trượt được nhiều bước cùng lúc. Trường "
+            "`text_mismatch_kinds` cho biết lỗi OCR là do camera chỉ nhìn thấy "
+            "một phần nhãn (thùng lệch) hay do nhận dạng sai thật — hãy nêu rõ "
+            "điều này thay vì mặc định quy cho chất lượng ảnh. "
+            "Lọc được theo recipe, camera và khung giờ."
         ),
         category="analytics"
     ),
