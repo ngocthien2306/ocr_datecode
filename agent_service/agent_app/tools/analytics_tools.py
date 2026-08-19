@@ -805,7 +805,34 @@ def explain_failures(
                 query.update(_id_or_name(recipe_id, "recipe_id", "recipe_name"))
 
         total_fail = db["inference_results"].count_documents(query)
-        docs = db["inference_results"].find(query, _FAIL_PROJECTION).sort(_TIME_FIELD, -1).limit(sample_limit)
+
+        # Lấy mẫu RẢI ĐỀU theo ngày khi kỳ dài hơn một ngày.
+        #
+        # Cách cũ lấy N sản phẩm fail gần nhất. Hỏi 7 ngày với 1.036 fail thì 300
+        # cái đó nằm gọn trong 1,5 ngày cuối — tỷ lệ nguyên nhân là của hai ngày,
+        # nhưng được đọc như của cả tuần. Chia hạn mức cho từng ngày thì mỗi ngày
+        # đều có tiếng nói, và một ngày hỏng riêng lẻ không còn nhuộm cả kỳ.
+        # Đếm ngày theo GIỜ ĐỊA PHƯƠNG. `start_dt` là naive-UTC nên `.date()` của nó
+        # rơi về ngày hôm trước (00:00 giờ VN = 17:00 UTC hôm trước), làm một kỳ 7
+        # ngày bị đếm thành 8 và nhãn ghi sai số ngày.
+        span_days = ((datetime.fromisoformat(_to_local_str(end_dt)[:10])
+                      - datetime.fromisoformat(_to_local_str(start_dt)[:10])).days + 1)
+        if span_days > 1 and total_fail > sample_limit:
+            per_day = max(1, sample_limit // span_days)
+            docs = []
+            for i in range(span_days):
+                d0 = start_dt + timedelta(days=i)
+                d1 = min(d0 + timedelta(days=1) - timedelta(microseconds=1), end_dt)
+                day_query = {**query, _TIME_FIELD: {"$gte": d0, "$lte": d1}}
+                docs.extend(db["inference_results"]
+                            .find(day_query, _FAIL_PROJECTION)
+                            .sort(_TIME_FIELD, -1)
+                            .limit(per_day))
+            sampling = f"rải đều {per_day} sản phẩm/ngày trên {span_days} ngày"
+        else:
+            docs = db["inference_results"].find(
+                query, _FAIL_PROJECTION).sort(_TIME_FIELD, -1).limit(sample_limit)
+            sampling = "toàn bộ" if total_fail <= sample_limit else f"{sample_limit} gần nhất"
 
         _CAUSE_KEYS = (
             "text_verification",
@@ -823,9 +850,11 @@ def explain_failures(
         sims: List[float] = []
         samples: List[Dict[str, Any]] = []
         sample_times: List[datetime] = []
+        examined_docs = 0
         examined = 0
 
         for doc in docs:
+            examined_docs += 1
             if doc.get(_TIME_FIELD):
                 sample_times.append(doc[_TIME_FIELD])
             for cam in doc.get("camera_results") or []:
@@ -936,7 +965,8 @@ def explain_failures(
             "period": {"start": _to_local_str(start_dt), "end": _to_local_str(end_dt)},
             "filters": {"recipe_id": recipe_id or "all", "camera": camera or "all"},
             "total_failed_products": total_fail,
-            "examined_products": min(total_fail, sample_limit),
+            "examined_products": examined_docs,
+            "sampling": sampling,
             "sample_span": sample_span,
             "sample_covers_all": total_fail <= sample_limit,
             "failed_camera_frames_examined": examined,
@@ -962,13 +992,13 @@ def explain_failures(
             "template_similarity_avg": round(sum(sims) / len(sims), 4) if sims else None,
             "samples": samples,
             "note": (
-                f"Mổ {min(total_fail, sample_limit)} sản phẩm fail GẦN NHẤT trên tổng "
-                f"{total_fail}. "
-                f"`sample_covers_all` là false nghĩa là mẫu KHÔNG phủ hết kỳ được hỏi — "
-                f"xem `sample_span` để biết mẫu thực sự trải từ lúc nào tới lúc nào, và "
-                f"PHẢI nói rõ điều đó khi trả lời. Ví dụ: hỏi 7 ngày mà mẫu chỉ nằm trong "
-                f"2 ngày cuối thì tỷ lệ nguyên nhân là của 2 ngày đó, không phải của tuần. "
-                f"Muốn phủ rộng hơn thì gọi lại với `sample_limit` lớn hơn. Mỗi hàng trong `causes` có hai con số: `products` "
+                f"Mổ {examined_docs} sản phẩm fail trên tổng {total_fail} "
+                f"(cách lấy mẫu: {sampling}). "
+                f"`sample_covers_all` là false nghĩa là chưa mổ hết số fail của kỳ; khi đó "
+                f"mẫu được rải đều theo ngày nên vẫn đại diện cho cả kỳ, nhưng con số "
+                f"tuyệt đối trong `causes` là của MẪU, không phải của cả kỳ — hãy nói theo "
+                f"tỷ lệ, hoặc nêu rõ là trên mẫu. `sample_span` cho biết mẫu trải từ lúc "
+                f"nào tới lúc nào. Muốn mổ hết thì gọi lại với `sample_limit` lớn hơn. Mỗi hàng trong `causes` có hai con số: `products` "
                 f"là số SẢN PHẨM, `frames` là số FRAME — khi trả lời user hãy dùng "
                 f"`products`. Tổng các hàng lớn hơn tổng sản phẩm fail là bình "
                 f"thường: một sản phẩm trượt được nhiều bước cùng lúc. "
@@ -1332,13 +1362,12 @@ def compare_periods(
                 "trăm, tức +2,08% tương đối. "
                 "`diff`/`change_pct` bằng null nghĩa là KHÔNG có nền để so (kỳ đối chiếu "
                 "rỗng, quá ít bản ghi, hoặc recipe chỉ chạy một kỳ) — đừng tự tính hiệu. "
-                "Với recipe có `only_in`: cách diễn đạt DUY NHẤT được phép là 'không có "
-                "bản ghi trong kỳ <tên kỳ>'. Cấm các cụm 'recipe mới', 'mới xuất hiện', "
-                "'đã ngừng chạy', 'bị dừng', 'ngừng sản xuất' — kể cả trong tiêu đề mục. "
-                "Trong một cửa sổ vài ngày đó chỉ là luân phiên sản phẩm bình thường, và "
-                "ONION POWDER vắng ở kỳ trước KHÔNG có nghĩa nó là recipe mới — nó vẫn "
-                "chạy hôm nay và cả tháng trước. Khẳng định như vậy là bịa ra một sự kiện "
-                "kinh doanh mà dữ liệu không hề nói. "
+                "Recipe có `absent_from`: cách diễn đạt DUY NHẤT được phép là 'không có "
+                "bản ghi trong kỳ <absent_from>'. Cấm 'recipe mới', 'mới xuất hiện', "
+                "'sản phẩm mới', 'đã ngừng chạy', 'bị dừng', 'ngừng sản xuất' — kể cả "
+                "trong tiêu đề mục. Vắng mặt ở một kỳ vài ngày chỉ là luân phiên sản phẩm "
+                "bình thường; suy ra tính mới hay việc ngừng sản xuất là bịa ra một sự "
+                "kiện kinh doanh mà dữ liệu không nói. "
                 "`same_length` bằng false thì PHẢI nêu rõ hai kỳ dài khác nhau và dùng "
                 "`per_day` để so, đừng so tổng. "
                 "`all_failed` là sự cố thật: recipe có sản lượng mà pass rate bằng 0. "
@@ -1672,6 +1701,22 @@ def get_target_progress(
         pct = round(actual / target * 100, 1) if target else None
         rate = summ["pass_rate"]
 
+        # Luỹ tiến theo giờ, để thấy nhịp leo tới chỉ tiêu chứ không chỉ thấy con
+        # số cuối. Một ngày đạt 80% có thể là leo đều, hoặc là leo tốt rồi tắc từ
+        # trưa — hai chuyện cần hành động khác nhau, mà con số tổng không phân biệt.
+        hourly = list(get_sync_database()["inference_results"].aggregate([
+            {"$match": {_TIME_FIELD: {"$gte": start_dt, "$lte": end_dt},
+                        **({"recipe_id": {"$in": recipe_ids}} if recipe_ids else {})}},
+            {"$group": {"_id": {"$hour": {"date": f"${_TIME_FIELD}",
+                                          "timezone": settings.TIMEZONE}},
+                        "n": {"$sum": 1}}},
+            {"$sort": {"_id": 1}},
+        ]))
+        running, cumulative = 0, []
+        for h in hourly:
+            running += h["n"]
+            cumulative.append({"hour": h["_id"], "cumulative": running, "in_hour": h["n"]})
+
         return {
             "success": True,
             "date": _to_local_str(start_dt)[:10],
@@ -1687,6 +1732,7 @@ def get_target_progress(
                 "Ngoại suy tuyến tính từ nhịp hiện tại, KHÔNG phải dự báo — nhịp có "
                 "thể đổi và dây chuyền có thể dừng." if projected else None
             ),
+            "cumulative_by_hour": cumulative,
             "pass_rate": rate,
             "min_pass_rate": min_rate,
             "quality_ok": (rate >= min_rate) if min_rate is not None else None,

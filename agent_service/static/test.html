@@ -245,6 +245,8 @@
   .tbl-card-r span{color:var(--muted);flex-shrink:0}
   .tbl-card-r b{color:var(--text-2);font-weight:500;text-align:right;
                 font-variant-numeric:tabular-nums;word-break:break-word}
+
+  .viz-ref{font-size:10px;color:var(--muted);text-align:right;margin:-4px 0 6px}
 </style>
 </head>
 <body>
@@ -595,10 +597,14 @@ function drawFiles(files){
 }
 
 function drawChart(c){
-  const max = Math.max(...c.series.map(s=>s.value), 1);
+  // `c.max` là thang đo cố định do phía server đặt (ví dụ chỉ tiêu sản lượng).
+  // Không có nó thì lấy cột lớn nhất — nhưng khi so với một mốc thì cách đó làm
+  // cột cuối luôn đầy track và mọi ngày đều trông như đã hoàn thành.
+  const max = c.max || Math.max(...c.series.map(s=>s.value), 1);
   const box = document.createElement('div');
   box.className = 'viz';
-  box.innerHTML = `<div class="viz-title">${esc(c.title)}</div>` + c.series.map(s=>{
+  const refLine = c.ref ? `<div class="viz-ref">▏${esc(c.ref.label)}</div>` : '';
+  box.innerHTML = `<div class="viz-title">${esc(c.title)}</div>${refLine}` + c.series.map(s=>{
     const pct = (s.value / max) * 100;
     // Cột cao nhất tô đỏ khi đang đếm lỗi — mắt bắt ngay thủ phạm.
     const hot = c.unit !== '%' && s.value === max && max > 0 ? ' hot' : '';

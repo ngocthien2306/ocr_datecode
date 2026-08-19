@@ -65,7 +65,8 @@ def _period_label(args: Dict[str, Any], result: Dict[str, Any]) -> str:
 
 
 def _bar(title: str, series: List[Dict[str, Any]], unit: str = "",
-         ordered: bool = False) -> Optional[Dict[str, Any]]:
+         ordered: bool = False, scale_max: Optional[float] = None,
+         ref: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """
     Một biểu đồ cột.
 
@@ -89,7 +90,16 @@ def _bar(title: str, series: List[Dict[str, Any]], unit: str = "",
             series = sorted(series, key=lambda s: -(s.get("value") or 0))[:_MAX_BARS]
             title += f" · {dropped} mục nhỏ hơn không hiện"
 
-    return {"type": "bar", "title": title, "unit": unit, "series": series}
+    out: Dict[str, Any] = {"type": "bar", "title": title, "unit": unit, "series": series}
+    if scale_max:
+        # Thang đo cố định để cột đo được so với một MỐC, không phải so với cột lớn
+        # nhất trong chính nó. Với tiến độ chỉ tiêu, track đầy = đạt chỉ tiêu; để
+        # renderer tự lấy max thì cột cuối luôn đầy track và mọi ngày đều trông
+        # như đã hoàn thành.
+        out["max"] = scale_max
+    if ref:
+        out["ref"] = ref
+    return out
 
 
 def images_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, str]]:
@@ -266,10 +276,40 @@ def strip_for_llm(result: Any) -> Any:
     """
     if not isinstance(result, dict):
         return result
-    if not any(k in result for k in ("samples", "download_url", "people", "by_recipe")):
+    if not any(k in result for k in ("samples", "download_url", "people", "by_recipe",
+                                     "sample_covers_all")):
         return result
 
     out = dict(result)
+
+    # Mẫu không phủ hết kỳ: đổi số TUYỆT ĐỐI của nguyên nhân thành PHẦN TRĂM.
+    #
+    # Để nguyên số đếm thì câu trả lời ghi "tổng fail 1.036" rồi liệt kê
+    # "144 / 106 / 102" — ba con số đó là của mẫu 294, nhưng nằm ngay dưới con số
+    # 1.036 nên đọc thành 144 trên 1.036. Note đã bảo phải nói theo tỷ lệ và mô
+    # hình vẫn không làm; bỏ hẳn số đếm đi thì nó không còn gì để trình bày sai.
+    if result.get("sample_covers_all") is False:
+        n = result.get("examined_products") or 0
+        if n:
+            out["causes"] = [
+                {"cause": c.get("cause"), "label": c.get("label"),
+                 "percent_of_sample": round((c.get("products") or 0) / n * 100, 1)}
+                for c in (result.get("causes") or [])
+            ]
+            out["text_mismatch_kinds"] = [
+                {"kind": k.get("kind"), "label": k.get("label"),
+                 "percent_of_sample": round((k.get("count") or 0) / n * 100, 1)}
+                for k in (result.get("text_mismatch_kinds") or [])
+            ]
+            out.pop("causes_by_product", None)
+            out.pop("failed_frames_by_camera", None)
+            out["_counts"] = (
+                f"<số đếm tuyệt đối đã bỏ: mẫu chỉ {n} trên tổng "
+                f"{result.get('total_failed_products')} sản phẩm fail. Nói theo TỶ LỆ "
+                f"(`percent_of_sample`), đừng đưa số đếm — đặt một con số của mẫu cạnh "
+                f"tổng số fail của kỳ sẽ bị đọc thành số của cả kỳ>"
+            )
+
     if "samples" in result:
         out["samples"] = f"<{len(result.get('samples') or [])} ảnh minh hoạ đã được hệ thống đính kèm tự động>"
 
@@ -317,14 +357,30 @@ def strip_for_llm(result: Any) -> Any:
             > (result.get("per_day") or {}).get("previous", 0) else "giảm"
         )
         # Điểm bất thường — đây mới là thứ văn xuôi cần nêu.
-        out["notable"] = [
-            {"recipe_name": r["recipe_name"],
-             "only_in": r.get("only_in"),
-             "all_failed": r.get("all_failed"),
-             "baseline_too_small": r.get("baseline_too_small")}
-            for r in (result.get("by_recipe") or [])
-            if r.get("only_in") or r.get("all_failed") or r.get("baseline_too_small")
-        ]
+        # Đảo cách diễn đạt: `absent_from` (VẮNG ở kỳ nào) thay cho `only_in`
+        # (CHỈ CÓ ở kỳ nào).
+        #
+        # Cùng một sự thật, nhưng "only_in: 7 ngày qua" khiến mô hình suy ra
+        # "recipe mới xuất hiện" — và nó viết đúng như vậy, kể cả sau khi note cấm
+        # đích danh cụm từ đó. ONION POWDER vắng ở kỳ trước KHÔNG phải recipe mới:
+        # nó vẫn chạy hôm nay và cả tháng trước. Nói "vắng ở kỳ X" thì không còn
+        # chỗ để suy ra tính mới, vì câu đó chỉ nói về một kỳ chứ không nói về vòng
+        # đời sản phẩm.
+        pa_label = (result.get("period_a") or {}).get("label")
+        pb_label = (result.get("period_b") or {}).get("label")
+        notable = []
+        for r in (result.get("by_recipe") or []):
+            if not (r.get("only_in") or r.get("all_failed") or r.get("baseline_too_small")):
+                continue
+            item: Dict[str, Any] = {"recipe_name": r["recipe_name"]}
+            if r.get("only_in"):
+                item["absent_from"] = pb_label if r["only_in"] == pa_label else pa_label
+            if r.get("all_failed"):
+                item["all_failed"] = True
+            if r.get("baseline_too_small"):
+                item["baseline_too_small"] = True
+            notable.append(item)
+        out["notable"] = notable
         out["recipes_in_both"] = [
             r["recipe_name"] for r in (result.get("by_recipe") or [])
             if not r.get("only_in")
@@ -724,6 +780,25 @@ def charts_from_tool_result(tool_name: str, args: Dict[str, Any], result: Any) -
                 )
                 if c:
                     charts.append(c)
+
+    # Tiến độ chỉ tiêu → luỹ tiến theo giờ, thang đo là chỉ tiêu
+    elif tool_name == "get_target_progress":
+        rows = result.get("cumulative_by_hour") or []
+        target = result.get("target")
+        if rows and target:
+            c = _bar(
+                f"Luỹ tiến so với chỉ tiêu · {result.get('scope')} · {result.get('date')}",
+                [{"label": f"{r['hour']:02d}h", "value": r["cumulative"],
+                  "sub": f"+{r['in_hour']:,} trong giờ"} for r in rows],
+                "sp",
+                ordered=True,
+                scale_max=target,
+                # Mốc tham chiếu: nếu sản xuất đều cả ngày thì tới giờ này phải đạt
+                # bao nhiêu. Không có nó thì người xem không biết đang sớm hay muộn.
+                ref={"label": f"chỉ tiêu {target:,}", "value": target},
+            )
+            if c:
+                charts.append(c)
 
     # So sánh hai kỳ → cột kép sản lượng theo recipe
     #
