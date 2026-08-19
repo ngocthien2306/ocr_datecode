@@ -63,6 +63,9 @@ class ChatResponse(BaseModel):
     files: Optional[List[Dict[str, Any]]] = None
     # Thẻ thông tin (hiện tại: người thao tác trong audit log).
     cards: Optional[List[Dict[str, Any]]] = None
+    # Ô KPI và bảng dữ liệu, dựng tất định từ kết quả tool.
+    kpis: Optional[List[Dict[str, Any]]] = None
+    tables: Optional[List[Dict[str, Any]]] = None
     timestamp: str
 
 
@@ -236,6 +239,8 @@ async def chat(
         charts = (result_context or {}).get("ui_charts")
         files = (result_context or {}).get("ui_files")
         cards = (result_context or {}).get("ui_cards")
+        kpis = (result_context or {}).get("ui_kpis")
+        tables = (result_context or {}).get("ui_tables")
 
         # Gỡ khối [SUGGESTIONS] khỏi text hiển thị, tách thành chip riêng.
         # Ba nguồn theo thứ tự ưu tiên: LLM tự sinh → agent đặt sẵn trong
@@ -286,6 +291,8 @@ async def chat(
             charts=charts,
             files=files,
             cards=cards,
+            kpis=kpis,
+            tables=tables,
             timestamp=datetime.now().isoformat()
         )
 

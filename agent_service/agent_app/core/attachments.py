@@ -237,7 +237,7 @@ def strip_for_llm(result: Any) -> Any:
     """
     if not isinstance(result, dict):
         return result
-    if not any(k in result for k in ("samples", "download_url", "people")):
+    if not any(k in result for k in ("samples", "download_url", "people", "by_recipe")):
         return result
 
     out = dict(result)
@@ -258,6 +258,50 @@ def strip_for_llm(result: Any) -> Any:
         for k in ("download_url", "filename"):
             out.pop(k, None)
 
+    # Kết quả compare_periods: giữ phần ĐỊNH TÍNH, bỏ con số thô.
+    #
+    # Bảo prompt "đừng đọc lại ô KPI" không giữ được — LLM vẫn liệt kê đủ bốn
+    # dòng tổng/pass/fail/tỷ lệ, mỗi con số hai lần trên cùng một câu trả lời.
+    # Cách chắc chắn là cách đã dùng cho `download_url`: không đưa con số cho nó.
+    # Ô KPI và bảng đã hiện đầy đủ, còn việc của văn xuôi là kết luận và nguyên
+    # nhân — thứ không cần tới con số tuyệt đối.
+    if "by_recipe" in result and "period_a" in result:
+        keep = {
+            "success", "period_a", "period_b", "same_length", "baseline_usable",
+            "baseline_note", "recipe_scope", "note",
+        }
+        out = {k: v for k, v in result.items() if k in keep}
+        out["_numbers"] = ("<ô KPI và bảng so sánh đã hiện đầy đủ con số — "
+                           "ĐỪNG liệt kê lại, hãy viết kết luận>")
+        # Hướng thay đổi bằng lời, đủ để kết luận mà không đọc được ra số.
+        out["direction"] = {
+            k: result[k].get("direction") for k in ("total", "pass", "fail", "pass_rate")
+            if isinstance(result.get(k), dict)
+        }
+        pr = result.get("pass_rate") or {}
+        if pr.get("diff") is not None:
+            # Một con số được phép: chênh lệch pass rate là kết luận chất lượng,
+            # và nói "tăng 1,15 điểm" mới cụ thể hơn "tăng nhẹ".
+            out["pass_rate_diff_points"] = pr["diff"]
+        out["per_day_direction"] = (
+            "tăng" if (result.get("per_day") or {}).get("current", 0)
+            > (result.get("per_day") or {}).get("previous", 0) else "giảm"
+        )
+        # Điểm bất thường — đây mới là thứ văn xuôi cần nêu.
+        out["notable"] = [
+            {"recipe_name": r["recipe_name"],
+             "only_in": r.get("only_in"),
+             "all_failed": r.get("all_failed"),
+             "baseline_too_small": r.get("baseline_too_small")}
+            for r in (result.get("by_recipe") or [])
+            if r.get("only_in") or r.get("all_failed") or r.get("baseline_too_small")
+        ]
+        out["recipes_in_both"] = [
+            r["recipe_name"] for r in (result.get("by_recipe") or [])
+            if not r.get("only_in")
+        ]
+        return out
+
     # `people` đã được biến thành thẻ hiển thị; để nguyên trong ToolMessage thì
     # LLM lại kể lại đúng những gì thẻ đang hiện, và mỗi người kèm cả URL ảnh.
     # Giữ lại phần tối thiểu để nó vẫn nói đúng số người và chức vụ.
@@ -270,6 +314,190 @@ def strip_for_llm(result: Any) -> Any:
         ]
         out["_cards"] = "<thẻ thông tin người thao tác đã được hệ thống đính kèm tự động>"
     return out
+
+
+def _tile(label: str, value: Any, sub: Optional[str] = None,
+          delta: Optional[Dict[str, Any]] = None, accent: str = "",
+          lower_is_better: bool = False, delta_kind: str = "rel",
+          delta_fmt: str = "{:+,.0f}") -> Dict[str, Any]:
+    """
+    Một ô KPI.
+
+    `accent` chỉ là màu nhận dạng của con số (ok/bad/rỗng). `lower_is_better` là
+    thứ quyết định mũi tên xanh hay đỏ. Hai việc này phải tách: gộp vào một
+    trường thì ô Fail vừa bị sơn đỏ vĩnh viễn — kể cả ngày fail giảm — vừa dùng
+    chính màu đó để đảo cực mũi tên. Trong xưởng, đỏ là màu báo động; một ô đỏ
+    thường trực là tiếng ồn, và nó che đúng cái ngày lẽ ra phải báo động.
+
+    `delta_kind` là ĐƠN VỊ của chênh lệch: 'pp' cho điểm phần trăm (pass rate),
+    'rel' cho phần trăm tương đối (sản lượng). Thiếu nó thì lớp vẽ phải tự đoán,
+    và nó đã đoán sai — ô pass rate hiển thị con số tương đối ngay dưới một giá
+    trị phần trăm, đọc thành điểm phần trăm. Vì pass rate luôn quanh 98%, hai con
+    số chỉ lệch nhau chút ít nên sai mà không ai phát hiện.
+    """
+    out: Dict[str, Any] = {"label": label, "value": value, "accent": accent}
+    if sub:
+        out["sub"] = sub
+    if delta and delta.get("diff") is not None:
+        d = delta["diff"]
+        out["delta"] = {
+            # Con số người vận hành cần là chênh lệch tuyệt đối; phần trăm tương
+            # đối là phụ. Bỏ tuyệt đối đi thì "▲ +21,6%" không nói của bao nhiêu,
+            # và văn xuôi buộc phải nhắc lại — chính là chỗ trùng lặp phải dẹp.
+            "text": (f"{d:+.2f} điểm" if delta_kind == "pp" else delta_fmt.format(d)),
+            "rel": (f"{delta['change_pct']:+.1f}%"
+                    if delta.get("change_pct") is not None
+                    and abs(delta["change_pct"]) < 1000 else None),
+            "direction": delta.get("direction"),
+            "good": (delta.get("direction") == "down") if lower_is_better
+                    else (delta.get("direction") == "up"),
+            "previous": delta.get("previous"),
+        }
+    return out
+
+
+def _rate_accent(rate: Optional[float]) -> str:
+    """Màu của pass rate theo NGƯỠNG, không phải cố định xanh.
+
+    Trước đây ô Pass rate luôn tô xanh, nên một recipe fail sạch 18/18 vẫn hiện
+    "Pass rate 0%" màu xanh thành công."""
+    if rate is None:
+        return ""
+    return "ok" if rate >= 95 else "warn" if rate >= 90 else "bad"
+
+
+def kpis_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]:
+    """
+    Dãy ô KPI suy tất định từ kết quả tool.
+
+    Lý do tồn tại: con số quan trọng nhất của câu trả lời chỉ nằm trong văn xuôi
+    do LLM viết. Dựng ô riêng từ chính kết quả tool thì số trên giao diện không
+    thể lệch khỏi số trong cơ sở dữ liệu.
+    """
+    if not isinstance(result, dict) or not result.get("success"):
+        return []
+
+    def fmt(n: Any) -> str:
+        try:
+            return f"{int(n):,}"
+        except (TypeError, ValueError):
+            return "—" if n is None else str(n)
+
+    if tool_name == "compare_periods":
+        pa, pb = result.get("period_a") or {}, result.get("period_b") or {}
+        # Phụ đề mang khoảng ngày thật: "so với kỳ liền trước" không cho biết là
+        # 7 ngày nào, mà đó là thứ người xem cần để tin con số.
+        base = f"so với {pb.get('label')}"
+        if not result.get("baseline_usable"):
+            base = result.get("baseline_note") or "kỳ đối chiếu không đủ dữ liệu"
+        rate = result["pass_rate"]["current"]
+        return [
+            _tile("Tổng sản phẩm", fmt(result["total"]["current"]), base, result["total"]),
+            _tile("Pass", fmt(result["pass"]["current"]), base, result["pass"], "ok"),
+            _tile("Fail", fmt(result["fail"]["current"]), base, result["fail"],
+                  "", lower_is_better=True),
+            _tile("Pass rate", f"{rate}%" if rate is not None else "—",
+                  f"{pa.get('label')} · {base}", result["pass_rate"],
+                  _rate_accent(rate), delta_kind="pp"),
+        ]
+
+    if tool_name in ("get_pass_fail_stats", "get_production_summary"):
+        summ = result.get("summary") or {}
+        total = summ.get("total_products")
+        if not total:
+            return []
+        rate = summ.get("pass_rate")
+        pct = lambda n: f"{round((n or 0) / total * 100, 2)}% tổng"  # noqa: E731
+        return [
+            _tile("Tổng sản phẩm", fmt(total)),
+            _tile("Pass", fmt(summ.get("pass_count")), pct(summ.get("pass_count")), None, "ok"),
+            _tile("Fail", fmt(summ.get("fail_count")), pct(summ.get("fail_count"))),
+            _tile("Pass rate", f"{rate}%", None, None, _rate_accent(rate)),
+        ]
+
+    return []
+
+
+def _period_caption(p: Dict[str, Any]) -> str:
+    """
+    "nhãn: từ → đến (N ngày)", nhưng bỏ phần ngày nếu nhãn ĐÃ là khoảng ngày.
+
+    Kỳ đối chiếu tự động lấy nhãn chính là khoảng ngày của nó, nên ghép máy móc
+    sẽ ra "2026-08-06 → 2026-08-12: 2026-08-06 → 2026-08-12 (7 ngày)".
+    """
+    lo, hi = str(p.get("start", ""))[:10], str(p.get("end", ""))[:10]
+    days = f"{p.get('days')} ngày"
+    label = str(p.get("label", ""))
+    rng = lo if lo == hi else f"{lo} → {hi}"
+    if label == rng:
+        return f"{rng} ({days})"
+    return f"{label}: {rng} ({days})"
+
+
+def _num(v: Optional[float], suffix: str = "") -> str:
+    """Số cho ô bảng; vắng mặt là "—" chứ không phải 0.
+
+    Một số 0 in ra phải luôn có nghĩa "đo được và bằng 0". Trước đây sản lượng
+    vắng mặt hiện 0 còn pass rate vắng mặt hiện "—" — cùng một sự thật, hai cách
+    viết, trong cùng một hàng."""
+    if v is None:
+        return "—"
+    return (f"{v:,.0f}" if suffix == "" else f"{v}{suffix}")
+
+
+def tables_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]:
+    """
+    Bảng dữ liệu tất định.
+
+    Thay cho việc để LLM tự dựng bảng markdown: nó hay bỏ sót hàng khi danh sách
+    dài, và định dạng số mỗi lượt một kiểu.
+    """
+    if not isinstance(result, dict) or not result.get("success"):
+        return []
+
+    if tool_name == "compare_periods":
+        rows = result.get("by_recipe") or []
+        if not rows:
+            return []
+        pa, pb = result.get("period_a") or {}, result.get("period_b") or {}
+        scope = result.get("recipe_scope")
+        title = f"So sánh theo recipe · {pa.get('label')} vs {pb.get('label')}"
+        if scope and scope != "tất cả recipe":
+            title += f" · chỉ {scope}"
+
+        body = []
+        for r in rows:
+            t, pr = r["total"], r["pass_rate"]
+            if r.get("only_in"):
+                note = f"chỉ chạy ở {r['only_in']}"
+            elif r.get("baseline_too_small"):
+                note = f"nền quá ít ({_num(pr['previous'] and t['previous'])} sp)"
+            else:
+                note = ""
+            if r.get("all_failed"):
+                note = ("⚠ fail toàn bộ" + (f" · {note}" if note else ""))
+            body.append([
+                r["recipe_name"],
+                _num(t["previous"]), _num(t["current"]),
+                f"{t['change_pct']:+.1f}%" if t.get("change_pct") is not None else "—",
+                _num(pr["previous"], "%"), _num(pr["current"], "%"),
+                # "đ" là ký hiệu đồng ở Việt Nam — "+1.36đ" đọc thành "1,36 đồng"
+                # trong một cột về chất lượng. Viết đủ chữ "điểm".
+                f"{pr['diff']:+.2f} điểm" if pr.get("diff") is not None else "—",
+                note,
+            ])
+        return [{
+            "title": title,
+            # Tiêu đề ngắn: nhãn kỳ đầy đủ đã nằm ở title, nhồi thêm vào từng cột
+            # làm bảng rộng ra tới 1.300px và cột quyết định bị đẩy khỏi màn hình.
+            "columns": ["Recipe", "SL trước", "SL nay", "Thay đổi SL",
+                        "Pass trước", "Pass nay", "Chênh lệch (điểm %)", "Ghi chú"],
+            "align": ["l", "r", "r", "r", "r", "r", "r", "l"],
+            "rows": body,
+            "caption": " · ".join(_period_caption(p) for p in (pa, pb)),
+        }]
+
+    return []
 
 
 def charts_from_tool_result(tool_name: str, args: Dict[str, Any], result: Any) -> List[Dict[str, Any]]:

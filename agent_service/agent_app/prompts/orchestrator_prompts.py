@@ -52,6 +52,8 @@ nằm trong audit log. Mọi câu về người dùng → `log_analysis`.
 - "Ai load recipe này?"
 - "So sánh tuần này với tuần trước"
 - "Recipe nào fail nhiều nhất?"
+- "So sánh sản lượng tuần này với tuần trước"
+- "Hôm nay có tốt hơn hôm qua không?"
 - "Xuất báo cáo 7 ngày qua dạng Excel"
 - "Tạo report PDF cho tháng này"
 - "Gửi tôi file báo cáo sản xuất hôm nay"

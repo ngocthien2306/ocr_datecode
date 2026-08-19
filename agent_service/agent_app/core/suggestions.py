@@ -58,6 +58,11 @@ _FALLBACK: Dict[str, List[str]] = {
     ],
     # list_recipes đã sinh `options` rồi, thêm gợi ý nữa chỉ gây nhiễu.
     "list_recipes": [],
+    "compare_periods": [
+        "So sánh 7 ngày qua",
+        "Recipe nào tệ hơn kỳ trước?",
+        "Xuất báo cáo kỳ này",
+    ],
     "generate_report": [
         "Xuất bản Excel luôn",
         "Báo cáo 7 ngày qua",
@@ -121,7 +126,10 @@ def extract_suggestions(text: str) -> tuple[str, List[str]]:
         if not item:
             continue
         # Bỏ ** đậm nếu LLM tự thêm vào
-        value = item.group("text").strip().strip("*").strip()
+        # Bỏ cả dấu ngoặc kép bao quanh: LLM có lượt trả về `- "Xem chi tiết..."`
+        # và chip hiện ra kèm dấu " nhìn thấy được, lại còn được gửi nguyên văn
+        # (kể cả dấu ngoặc) làm câu hỏi tiếp theo.
+        value = item.group("text").strip().strip("*").strip().strip('"“”').strip()
         if value and value not in items and _is_safe(value):
             items.append(value)
 

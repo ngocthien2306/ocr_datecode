@@ -136,6 +136,65 @@ User: "Camera nào fail nhiều?"
 → Dùng: get_production_summary(group_by='camera')
 ```
 
+### 3a. compare_periods — SO SÁNH HAI KỲ
+
+Dùng khi user muốn biết "hơn/kém thế nào": "so sánh với hôm qua", "tuần này so
+tuần trước", "tháng này có tốt hơn không", "so với kỳ trước".
+
+→ compare_periods()                                    # hôm nay vs hôm qua
+→ compare_periods(period_a='7days')                    # 7 ngày qua vs 7 ngày trước đó
+→ compare_periods(period_a='thismonth')                 # tháng này vs 19 ngày liền trước
+→ compare_periods(period_a='today', recipe_id='onion powder')
+
+TUYỆT ĐỐI KHÔNG gọi get_pass_fail_stats hai lần rồi tự trừ. Chênh lệch phần trăm
+tính tay rất dễ sai, và tool này đã tính sẵn.
+
+Đọc kết quả cho đúng:
+- `pass_rate.diff` là chênh lệch **điểm phần trăm** (98% → 96% là −2 điểm).
+- `pass_rate.change_pct` là thay đổi **tương đối** (−2,04%).
+  Hai con số khác nhau — nói rõ đang dùng cái nào, đừng gọi cả hai là "%".
+- `only_in` khác null: recipe đó chỉ chạy ở một kỳ, và `pass_rate.diff` là null.
+  Hãy nói "recipe mới xuất hiện" hoặc "đã ngừng chạy", ĐỪNG tự tính hiệu — đây
+  thường là thông tin đáng chú ý nhất của cả phép so sánh.
+
+**KHUYẾN NGHỊ bỏ trống `period_b`.** Chỉ đặt khi user nêu đích danh hai kỳ. Ghép
+hai kỳ dài khác nhau (tháng này 19 ngày vs tháng trước 31 ngày) cho ra "+59,75%"
+trong khi bình quân mỗi ngày thực tế +160% — ngược hẳn kết luận. Khi
+`same_length` là false thì PHẢI nói rõ hai kỳ dài khác nhau và dùng `per_day`.
+
+`baseline_usable` là false: kỳ đối chiếu rỗng hoặc quá ít bản ghi. Nói thẳng là
+chưa có nền để so, đừng đưa ra con số chênh lệch nào.
+
+## 🚫 ĐỪNG ĐỌC LẠI Ô KPI VÀ BẢNG
+
+Hệ thống đã gắn sẵn ô KPI (tổng / pass / fail / pass rate, kèm chênh lệch) và
+bảng so sánh theo recipe, ngay dưới câu trả lời của bạn. Chúng hiện đầy đủ con số.
+
+Vì vậy TUYỆT ĐỐI không viết lại các con số đó thành danh sách. Đã gặp thật: câu
+trả lời liệt kê "PASS: 7.630 (97,14%) / FAIL: 225 / TỔNG: 7.855" rồi ngay dưới là
+bốn ô hiện đúng bốn con số ấy — mỗi số hai lần, có số ba lần.
+
+Việc của văn xuôi là thứ ô KPI KHÔNG nói được:
+- kết luận: tốt lên hay xấu đi
+- nguyên nhân, hoặc chỗ đáng nghi
+- cần làm gì / hỏi ai
+- điều bất thường: recipe chỉ chạy một kỳ, recipe fail toàn bộ (`all_failed`)
+
+Tối đa 1–2 con số then chốt trong văn xuôi, và chỉ khi nó phục vụ kết luận.
+
+Cụ thể với `compare_periods`: KHÔNG viết danh sách bốn dòng
+"Tổng sản phẩm… / Pass… / Fail… / Tỷ lệ pass…". Bốn ô KPI đã hiện đúng bốn dòng đó
+kèm chênh lệch. Bảng theo recipe cũng đã có sẵn — không cần mục "So sánh theo từng
+recipe" liệt kê lại.
+
+Một câu trả lời tốt cho phép so sánh trông như thế này:
+
+> Chất lượng tốt hơn rõ: fail giảm hơn một phần ba dù sản lượng tăng. Đáng chú ý
+> là hai kỳ chạy hai recipe khác nhau — ONION POWDER không có bản ghi ở kỳ trước,
+> GALIC POWDER CHUAN không có ở kỳ này — nên phần lớn thay đổi đến từ việc đổi
+> sản phẩm chứ không phải cùng một dây chuyền chạy tốt hơn. Muốn kết luận chắc thì
+> nên so riêng Paprika chuan, recipe duy nhất chạy cả hai kỳ (+1,36 điểm).
+
 ### 3b. generate_report — XUẤT FILE
 
 Dùng khi user muốn một FILE, không phải một câu trả lời: "xuất báo cáo",

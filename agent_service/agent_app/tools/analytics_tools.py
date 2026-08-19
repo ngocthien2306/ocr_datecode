@@ -1025,3 +1025,285 @@ get_recipe_load_history_tool = BaseTool.create_tool(
     ),
     args_schema=RecipeLoadHistoryArgs
 )
+
+
+# ── So sánh hai kỳ ───────────────────────────────────────────────────────────
+#
+# Vì sao cần một tool riêng thay vì để LLM gọi get_pass_fail_stats hai lần rồi
+# tự trừ: chênh lệch pass rate là phép tính trên phần trăm, và LLM làm số học
+# kiểu đó rất hay sai — sai theo hướng nghe hợp lý. Tệ hơn, "tăng 1,2 điểm phần
+# trăm" và "tăng 1,2%" là hai con số khác nhau mà LLM thường dùng lẫn. Tính tất
+# định ở đây thì câu trả lời không thể lệch khỏi dữ liệu.
+
+#: Nhãn kỳ bằng tiếng Việt. `PERIOD_LABELS` của report_tools là tiếng Anh và đi
+#: thẳng vào tiêu đề bảng, phụ đề ô KPI — tức người vận hành đọc "so với
+#: Yesterday" giữa một câu tiếng Việt. Khoá vẫn giữ tiếng Anh cho phần bên trong.
+PERIOD_VI = {
+    "today": "hôm nay", "yesterday": "hôm qua",
+    "thisweek": "tuần này", "lastweek": "tuần trước",
+    "7days": "7 ngày qua", "thismonth": "tháng này",
+    "lastmonth": "tháng trước", "30days": "30 ngày qua",
+}
+
+#: Số bản ghi tối thiểu để một kỳ được coi là có nền so sánh.
+#:
+#: Dưới ngưỡng này thì mọi tỷ lệ đều là nhiễu. Đo trên dữ liệu thật: một recipe
+#: có 2 bản ghi ở kỳ trước (cả 2 đều fail) và 66.199 bản ghi ở kỳ này cho ra
+#: "+3.309.850%" và "+97,79 điểm pass rate" — hai con số vô nghĩa, và tệ hơn là
+#: chúng trông như lỗi hiển thị nên người xem mất tin vào cả bảng.
+MIN_BASELINE = 30
+
+
+class ComparePeriodsArgs(BaseModel):
+    """Arguments for compare_periods"""
+    period_a: Optional[str] = Field(
+        default=None,
+        description="Kỳ CẦN ĐÁNH GIÁ: today, yesterday, thisweek, lastweek, 7days, "
+                    "thismonth, lastmonth, 30days. Bỏ trống = today.",
+    )
+    period_b: Optional[str] = Field(
+        default=None,
+        description="Kỳ ĐỐI CHIẾU. Bỏ trống = kỳ liền trước period_a có cùng độ dài "
+                    "(khuyến nghị bỏ trống, vì hai kỳ cùng độ dài mới so được).",
+    )
+    recipe_id: Optional[str] = Field(default=None, description="Chỉ so sánh một recipe: tên hoặc ObjectId")
+
+
+def _period_bounds(period: Optional[str]) -> tuple:
+    """
+    (start, end, nhãn tiếng Việt) — dùng lại bảng kỳ của report_tools.
+
+    Tên kỳ lạ phải BÁO LỖI, không được im lặng rơi về "today": `resolve_period`
+    mặc định là hôm nay, nên `compare_periods(period_a='2019')` từng trả về
+    success kèm nhãn "Today" — user hỏi năm 2019 mà nhận số của hôm nay, không có
+    dấu hiệu gì cho biết câu hỏi đã bị hiểu khác.
+    """
+    from agent_app.reports.data import PERIOD_LABELS, resolve_period
+
+    p = (period or "today").lower()
+    if p not in PERIOD_LABELS:
+        raise ValueError(
+            f"Kỳ '{period}' không hợp lệ. Hợp lệ: {', '.join(PERIOD_LABELS)}. "
+            f"Cần khoảng ngày cụ thể thì dùng get_pass_fail_stats với start_date/end_date."
+        )
+    start, end, _ = resolve_period(p, None, None)
+    return start, end, PERIOD_VI[p]
+
+
+def _shift_back(start: datetime, end: datetime) -> tuple:
+    """
+    Kỳ liền trước, cùng độ dài, KẾ TIẾP NGAY TRƯỚC `start`.
+
+    Lùi đúng bằng độ dài kỳ chứ không lùi cứng một ngày: "7 ngày qua" phải đối
+    chiếu với 7 ngày trước đó, không phải với hôm qua.
+
+    Mốc cuối là `start` trừ 1 micro-giây. Trừ thẳng span cho cả hai đầu thì cửa
+    sổ trước lại BAO GỒM đúng mốc `start` — tức micro-giây đầu tiên của kỳ hiện
+    tại bị tính sang kỳ trước, đồng thời bỏ mất micro-giây đầu của kỳ trước.
+    """
+    span = end - start
+    prev_end = start - timedelta(microseconds=1)
+    return prev_end - span, prev_end
+
+
+def _span_days(start: datetime, end: datetime) -> int:
+    return max(1, round((end - start).total_seconds() / 86400))
+
+
+def _delta(a: Optional[float], b: Optional[float], *, comparable: bool = True) -> Dict[str, Any]:
+    """
+    Chênh lệch a so với b, kèm cả hai cách đọc.
+
+    `diff` là hiệu tuyệt đối — với pass rate thì đây chính là "điểm phần trăm".
+    `change_pct` là thay đổi tương đối. Hai con số khác nhau, nên trả cả hai và
+    gọi tên rõ; `kind` cho lớp hiển thị biết đơn vị nào đang dùng.
+
+    `comparable=False` khi kỳ đối chiếu không có nền (rỗng, hoặc quá ít bản ghi):
+    khi đó giữ nguyên giá trị thực nhưng BỎ HẲN mọi con số chênh lệch. Để nguyên
+    phép trừ sẽ ra "+98 điểm" từ một nền bằng 0 — đúng số học mà đọc thành "cải
+    thiện vượt bậc", trong khi kỳ kia đơn giản là không chạy.
+    """
+    out: Dict[str, Any] = {"current": a, "previous": b,
+                           "diff": None, "change_pct": None, "direction": "n/a"}
+    if not comparable or a is None or b is None:
+        return out
+    diff = round(a - b, 2)
+    out["diff"] = diff
+    out["change_pct"] = round((a - b) / b * 100, 2) if b else None
+    out["direction"] = "up" if diff > 0 else "down" if diff < 0 else "flat"
+    return out
+
+
+def compare_periods(
+    period_a: Optional[str] = None,
+    period_b: Optional[str] = None,
+    recipe_id: Optional[str] = None,
+    **_ignored: Any,
+) -> Dict[str, Any]:
+    """So sánh sản lượng và chất lượng giữa hai kỳ."""
+    try:
+        from agent_app.reports.data import build_summary
+
+        start_a, end_a, label_a = _period_bounds(period_a)
+        if period_b:
+            start_b, end_b, label_b = _period_bounds(period_b)
+        else:
+            start_b, end_b = _shift_back(start_a, end_a)
+            # Nhãn phải mang khoảng ngày: "kỳ liền trước" một mình không cho biết
+            # là 7 ngày nào, mà nhãn này đi thẳng vào tiêu đề bảng.
+            lo, hi = _to_local_str(start_b)[:10], _to_local_str(end_b)[:10]
+            label_b = lo if lo == hi else f"{lo} → {hi}"
+
+        # So một kỳ với chính nó thì mọi chênh lệch bằng 0, và câu trả lời thành
+        # "không có gì thay đổi" — một kết luận về sản xuất rút ra từ một phép so
+        # sánh chưa từng diễn ra. Đã gặp thật: user hỏi "tháng trước so với tháng
+        # trước nữa", LLM không có từ vựng cho "tháng trước nữa" nên điền
+        # lastmonth cho cả hai.
+        if (start_a, end_a) == (start_b, end_b):
+            return {
+                "success": False,
+                "error": (f"Hai kỳ trùng khít nhau ({_to_local_str(start_a)[:10]} → "
+                          f"{_to_local_str(end_a)[:10]}), không so sánh được. "
+                          f"Chỉ có 8 kỳ dựng sẵn ({', '.join(PERIOD_VI.values())}); "
+                          f"cần khoảng khác thì bỏ trống period_b để lấy kỳ liền trước, "
+                          f"hoặc dùng get_pass_fail_stats với start_date/end_date."),
+            }
+
+        days_a, days_b = _span_days(start_a, end_a), _span_days(start_b, end_b)
+
+        recipe_ids = None
+        if recipe_id:
+            matches = _matching_recipes(recipe_id, min(start_a, start_b), max(end_a, end_b))
+            if len(matches) > 1:
+                return _disambiguation(recipe_id, matches)
+            if not matches:
+                return {"success": False,
+                        "error": f"Không có recipe nào khớp '{recipe_id}' trong hai kỳ này"}
+            recipe_ids = [matches[0]["recipe_id"]]
+
+        a = build_summary(start_a, end_a, recipe_ids)
+        b = build_summary(start_b, end_b, recipe_ids)
+
+        if a["total"] == 0 and b["total"] == 0:
+            return {"success": False,
+                    "error": f"Cả hai kỳ đều không có dữ liệu ({label_a} và {label_b})"}
+
+        # Nền đủ lớn thì mới so; không thì chỉ trình bày giá trị thực.
+        baseline_ok = b["total"] >= MIN_BASELINE
+        baseline_note = None
+        if b["total"] == 0:
+            baseline_note = f"Kỳ đối chiếu ({label_b}) KHÔNG CÓ dữ liệu — không so sánh được."
+        elif not baseline_ok:
+            baseline_note = (f"Kỳ đối chiếu ({label_b}) chỉ có {b['total']} sản phẩm, "
+                             f"dưới {MIN_BASELINE} — quá ít để làm nền so sánh.")
+
+        # Recipe gom theo recipe_id, không theo tên: `build_summary` nhóm theo
+        # (recipe_id, recipe_name) nên hai recipe trùng tên sẽ đè nhau nếu khoá
+        # bằng tên, và bảng thôi không cộng đủ về tổng.
+        by_id_a = {r["recipe_id"]: r for r in a["by_recipe"]}
+        by_id_b = {r["recipe_id"]: r for r in b["by_recipe"]}
+        recipes = []
+        for rid in set(by_id_a) | set(by_id_b):
+            ra, rb = by_id_a.get(rid), by_id_b.get(rid)
+            only_in = None if (ra and rb) else (label_a if ra else label_b)
+            # Recipe chỉ chạy một kỳ: cả sản lượng lẫn pass rate đều không có nền.
+            # Trước đây chỉ pass_rate bị bỏ, còn sản lượng vẫn ra "-100.0%" —
+            # một recipe không được lên lịch đọc thành sụp sản lượng hoàn toàn.
+            # Và giá trị vắng mặt trả None chứ không phải 0, để số 0 in ra luôn
+            # có nghĩa là "đo được và bằng 0" — nếu không, một recipe 18 sản phẩm
+            # fail 100% sẽ trông y như một ô không có dữ liệu.
+            comparable = baseline_ok and not only_in and (rb or {}).get("total", 0) >= MIN_BASELINE
+            recipes.append({
+                "recipe_id": rid,
+                "recipe_name": (ra or rb)["recipe_name"],
+                "total": _delta(ra["total"] if ra else None,
+                                rb["total"] if rb else None, comparable=comparable),
+                "pass_rate": _delta(ra["pass_rate"] if ra else None,
+                                    rb["pass_rate"] if rb else None, comparable=comparable),
+                "only_in": only_in,
+                # Nền quá ít nhưng vẫn có: nói rõ vì sao không có chênh lệch.
+                "baseline_too_small": (not only_in and 0 < (rb or {}).get("total", 0) < MIN_BASELINE),
+                # 100% fail trên một lô nhỏ là sự cố thật, đừng để nó lẫn vào các
+                # hàng "không có dữ liệu".
+                "all_failed": bool(ra and ra["total"] > 0 and ra["pass_rate"] == 0.0),
+            })
+
+        # Sắp theo sản lượng LỚN NHẤT của hai kỳ, tên làm khoá phụ.
+        #
+        # Khoá cũ chỉ dùng sản lượng kỳ A nên recipe vắng ở A đều bằng 0, xếp
+        # xuống cuối và thứ tự giữa chúng phụ thuộc thứ tự băm của set — cùng câu
+        # hỏi, mỗi lần chạy ra một bảng khác. Mà chính những hàng đó lại là thay
+        # đổi lớn nhất: một recipe 34.736 sản phẩm biến mất bị đẩy xuống dòng cuối.
+        recipes.sort(key=lambda r: (-max(r["total"]["current"] or 0, r["total"]["previous"] or 0),
+                                    r["recipe_name"]))
+
+        return {
+            "success": True,
+            "period_a": {"label": label_a, "days": days_a,
+                         "start": _to_local_str(start_a), "end": _to_local_str(end_a)},
+            "period_b": {"label": label_b, "days": days_b,
+                         "start": _to_local_str(start_b), "end": _to_local_str(end_b)},
+            # Hai kỳ dài khác nhau thì so tổng là vô nghĩa: tháng này (19 ngày đã
+            # qua) so tháng trước (31 ngày) cho ra "+59,75%" trong khi bình quân
+            # mỗi ngày thực tế +160%. Cờ này để lớp trả lời buộc phải nói ra.
+            "same_length": days_a == days_b,
+            "per_day": {
+                "current": round(a["total"] / days_a, 1),
+                "previous": round(b["total"] / days_b, 1),
+            },
+            "baseline_usable": baseline_ok,
+            "baseline_note": baseline_note,
+            "recipe_scope": recipe_id or "tất cả recipe",
+            "total": _delta(a["total"], b["total"], comparable=baseline_ok),
+            "pass": _delta(a["pass"], b["pass"], comparable=baseline_ok),
+            "fail": _delta(a["fail"], b["fail"], comparable=baseline_ok),
+            "pass_rate": _delta(a["pass_rate"], b["pass_rate"], comparable=baseline_ok),
+            "by_recipe": recipes,
+            "note": (
+                "Với `pass_rate`, `diff` là chênh lệch ĐIỂM PHẦN TRĂM còn `change_pct` "
+                "là thay đổi tương đối — đừng dùng lẫn. 98% so với 96% là +2 điểm phần "
+                "trăm, tức +2,08% tương đối. "
+                "`diff`/`change_pct` bằng null nghĩa là KHÔNG có nền để so (kỳ đối chiếu "
+                "rỗng, quá ít bản ghi, hoặc recipe chỉ chạy một kỳ) — đừng tự tính hiệu. "
+                "Với recipe có `only_in`: cách diễn đạt DUY NHẤT được phép là 'không có "
+                "bản ghi trong kỳ <tên kỳ>'. Cấm các cụm 'recipe mới', 'mới xuất hiện', "
+                "'đã ngừng chạy', 'bị dừng', 'ngừng sản xuất' — kể cả trong tiêu đề mục. "
+                "Trong một cửa sổ vài ngày đó chỉ là luân phiên sản phẩm bình thường, và "
+                "ONION POWDER vắng ở kỳ trước KHÔNG có nghĩa nó là recipe mới — nó vẫn "
+                "chạy hôm nay và cả tháng trước. Khẳng định như vậy là bịa ra một sự kiện "
+                "kinh doanh mà dữ liệu không hề nói. "
+                "`same_length` bằng false thì PHẢI nêu rõ hai kỳ dài khác nhau và dùng "
+                "`per_day` để so, đừng so tổng. "
+                "`all_failed` là sự cố thật: recipe có sản lượng mà pass rate bằng 0. "
+                "Ô KPI và bảng so sánh đã được hệ thống gắn sẵn — nêu KẾT LUẬN và nguyên "
+                "nhân, đừng đọc lại các con số đó."
+            ),
+        }
+    except ValueError as e:
+        # Chỉ lỗi tên kỳ mới tới đây; ValueError từ tầng dưới đã được các nhánh
+        # trên chặn, nhưng vẫn ghi log để không nuốt mất nguyên nhân thật.
+        logger.warning("compare_periods: %s", e)
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        logger.error(f"compare_periods lỗi: {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e), "message": "Không so sánh được hai kỳ"}
+
+
+compare_periods_tool = BaseTool.create_tool(
+    func=compare_periods,
+    metadata=ToolMetadata(
+        name="compare_periods",
+        description=(
+            "So sánh sản lượng và pass rate giữa HAI KỲ. Dùng khi user nói 'so sánh với "
+            "hôm qua', 'tuần này so tuần trước', 'tháng này thế nào so tháng rồi', "
+            "'có tốt hơn không'. Bỏ trống `period_b` thì tự lấy kỳ liền trước cùng độ dài. "
+            "ĐỪNG gọi get_pass_fail_stats hai lần rồi tự trừ — chênh lệch phần trăm tính "
+            "tay rất dễ sai, tool này tính sẵn cả hiệu tuyệt đối và thay đổi tương đối."
+        ),
+        category="analytics",
+    ),
+    args_schema=ComparePeriodsArgs,
+)
+
+logger.info("✅ Compare tool registered")

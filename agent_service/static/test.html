@@ -193,6 +193,41 @@
   .card-row{display:flex;justify-content:space-between;gap:12px;font-size:12px;line-height:1.45}
   .card-row span{color:var(--muted);flex-shrink:0}
   .card-row b{color:var(--text-2);font-weight:500;text-align:right;word-break:break-word}
+
+  /* ── Ô KPI ── */
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:10px;margin:10px 0 4px}
+  .kpi{border:1px solid var(--border);border-radius:10px;background:var(--card);padding:11px 13px}
+  .kpi-l{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  .kpi-v{font-size:23px;font-weight:700;line-height:1.15;margin-top:3px;color:var(--text);
+         font-variant-numeric:tabular-nums}
+  .kpi-v.ok{color:var(--ok)} .kpi-v.bad{color:var(--danger)}
+  .kpi-d{font-size:12px;font-weight:600;margin-top:2px;color:var(--muted)}
+  .kpi-d.g{color:var(--ok)} .kpi-d.b{color:var(--danger)}
+  .kpi-s{font-size:10px;color:var(--muted-2);margin-top:2px}
+
+  /* ── Bảng dữ liệu ── */
+  .tbl-wrap{margin:10px 0 4px}
+  .tbl-t{font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:6px}
+  /* Bảng so sánh có 8 cột; cho cuộn ngang trong khung riêng chứ không để cả
+     trang chat bị kéo ngang theo. */
+  .tbl-scroll{overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--card)}
+  .tbl{width:100%;border-collapse:collapse;font-size:12px}
+  .tbl th{background:var(--bg);color:var(--text-2);font-weight:700;font-size:10px;
+          text-transform:uppercase;letter-spacing:.04em;padding:7px 10px;
+          border-bottom:1px solid var(--border);white-space:nowrap}
+  .tbl td{padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-2);
+          font-variant-numeric:tabular-nums;white-space:nowrap}
+  .tbl tbody tr:last-child td{border-bottom:none}
+  .tbl tbody tr:nth-child(even) td{background:var(--bg)}
+
+  .kpi-r{font-weight:500;color:var(--muted)}
+  .kpi-p{font-size:10px;color:var(--muted-2);margin-top:1px;font-variant-numeric:tabular-nums}
+  .tbl-c{font-size:10px;color:var(--muted-2);margin:-2px 0 6px}
+  .tbl-scroll{position:relative}
+  /* Vệt mờ rìa phải khi còn cột chưa thấy */
+  .tbl-scroll.more::after{content:'';position:sticky;right:0;top:0;float:right;width:26px;height:100%;
+    background:linear-gradient(to right,transparent,var(--card));pointer-events:none}
+  .tbl td:first-child{white-space:normal;max-width:190px}
 </style>
 </head>
 <body>
@@ -427,6 +462,55 @@ function scroll(){ $('log').scrollTop = $('log').scrollHeight; }
 
 // Biểu đồ cột ngang. Số liệu do backend suy tất định từ kết quả tool nên luôn
 // khớp con số trong câu trả lời — ở đây chỉ vẽ, không tính toán lại.
+function drawKpis(list){
+  const box = document.createElement('div'); box.className='kpis';
+  list.forEach(k=>{
+    const el = document.createElement('div'); el.className='kpi';
+    let d = '';
+    if(k.delta && k.delta.text){
+      // Không vẽ mũi tên trơ: khi không có nền so sánh, `delta` vắng hẳn nên
+      // khối này không chạy. Trước đây mũi tên vẫn hiện kèm chuỗi rỗng — bốn ô
+      // với bốn mũi tên xanh/đỏ không con số nào, chỉ vào một kỳ không có dữ liệu.
+      const dir = k.delta.direction;
+      const arrow = dir==='flat' ? '→' : (dir==='up' ? '▲' : '▼');
+      const cls = dir==='flat' ? '' : (k.delta.good ? 'g' : 'b');
+      const rel = k.delta.rel ? ` <span class="kpi-r">(${esc(k.delta.rel)})</span>` : '';
+      d = `<div class="kpi-d ${cls}">${arrow} ${esc(k.delta.text)}${rel}</div>`;
+    }
+    const prev = (k.delta && k.delta.previous!=null)
+      ? `<div class="kpi-p">trước: ${esc(String(k.delta.previous))}</div>` : '';
+    el.innerHTML = `<div class="kpi-l">${esc(k.label)}</div>
+                    <div class="kpi-v ${k.accent||''}">${esc(String(k.value))}</div>
+                    ${d}${prev}${k.sub?`<div class="kpi-s">${esc(k.sub)}</div>`:''}`;
+    box.appendChild(el);
+  });
+  $('log').appendChild(box);
+}
+
+function drawTable(t){
+  const wrap = document.createElement('div'); wrap.className='tbl-wrap';
+  const al = i => ({l:'left',r:'right',c:'center'}[(t.align||[])[i]] || 'left');
+  // esc() gọi String() ở mọi chỗ: nó dùng s.replace nên một tiêu đề cột dạng số
+  // sẽ ném TypeError, và lỗi đó thoát ra khỏi send() làm mất luôn phần vẽ còn
+  // lại của cả câu trả lời. Hiện Python luôn trả chuỗi, nên đây là gia cố.
+  const S = v => esc(String(v==null?'':v));
+  wrap.innerHTML = `
+    ${t.title?`<div class="tbl-t">${S(t.title)}</div>`:''}
+    ${t.caption?`<div class="tbl-c">${S(t.caption)}</div>`:''}
+    <div class="tbl-scroll"><table class="tbl">
+      <thead><tr>${(t.columns||[]).map((c,i)=>`<th style="text-align:${al(i)}">${S(c)}</th>`).join('')}</tr></thead>
+      <tbody>${(t.rows||[]).map(r=>`<tr>${r.map((v,i)=>
+        `<td style="text-align:${al(i)}">${S(v)}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table></div>`;
+  $('log').appendChild(wrap);
+  // Còn cuộn được thì bật gợi ý ở rìa phải. Bảng 8 cột trên màn hình hẹp chỉ
+  // hiện 1-2 cột đầu — tức toàn số của KỲ TRƯỚC — mà không có dấu hiệu nào cho
+  // biết còn cột nữa, nên người xem đọc số kỳ trước thành số kỳ này.
+  const sc = wrap.querySelector('.tbl-scroll');
+  const sync = () => sc.classList.toggle('more', sc.scrollWidth - sc.clientWidth - sc.scrollLeft > 4);
+  sc.addEventListener('scroll', sync); requestAnimationFrame(sync);
+}
+
 function drawCards(cards){
   // Thẻ người thao tác. Ảnh trỏ vào /api/uploads/avatar/... do agent service
   // mount thẳng backend/uploads, nên không phụ thuộc backend :8000 còn sống.
@@ -583,9 +667,11 @@ async function send(text){
 
     bubble(j.response, 'bot');
 
+    if(j.kpis?.length) drawKpis(j.kpis);
     if(j.charts?.length) j.charts.forEach(drawChart);
     if(j.images?.length) drawImages(j.images);
     if(j.cards?.length) drawCards(j.cards);
+    if(j.tables?.length) j.tables.forEach(drawTable);
     if(j.files?.length) drawFiles(j.files);
 
     if(j.tool_calls?.length){
