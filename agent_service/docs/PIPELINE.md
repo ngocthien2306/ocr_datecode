@@ -231,6 +231,48 @@ Chạy thật trên service, không phải unit test:
 - Xuất CSV thật ở cả hai ngôn ngữ rồi đọc lại đầu file.
 - 0 vi phạm quy tắc "tải" trên 3 câu về recipe.
 
+
+## 8. Định tuyến sai, và đường ra cho người dùng
+
+Người dùng gặp một chuỗi hai câu hỏi làm lộ ra vấn đề rõ nhất trong ngày:
+
+1. "Từ 16h đến 18h camera nào fail nhiều nhất?" → đúng, ra 5 sản phẩm fail.
+2. "Show 5 sản phẩm lỗi đó từ 16h đến 18h" → route sang `log_analysis`, gọi
+   `search_logs`, không thấy dòng log nào, trả lời **"không có sự cố nào được ghi
+   lại"**. Năm sản phẩm fail đó có thật, có cả ảnh, và nằm trong MongoDB.
+
+Đáng chú ý: **ngữ cảnh hội thoại vẫn hoạt động bình thường** — câu 2 đã tự lấy
+`camera 40762191` và khung giờ 16–18h từ câu 1. Lỗi không nằm ở việc quên ngữ
+cảnh, mà ở việc mang đúng ngữ cảnh đó đến sai agent.
+
+Ba việc đã làm:
+
+**Rào kết luận ngay trong dữ liệu.** `search_logs` khi rỗng từng ghi note "Đã quét
+hết các file trong phạm vi yêu cầu" — đọc lên đúng như một lời xác nhận không có
+gì. Nay note nói thẳng đây là kết quả tìm trong FILE LOG, không cho biết gì về
+việc sản phẩm có fail hay không, cấm kết luận "không có lỗi", và chỉ sang
+`explain_failures`. Rào bằng dữ liệu hiệu quả hơn dặn trong prompt: prompt nằm cách
+chỗ đó 18.000 ký tự, còn note nằm ngay cạnh kết quả rỗng mà mô hình đang đọc.
+
+**Dạy orchestrator phân biệt hai nghĩa của chữ "lỗi".** Tiếng Việt dùng chung một
+chữ cho sản phẩm FAIL (database) và dòng ERROR (file log). Quy tắc: "lỗi"/"fail"
+đứng cạnh "sản phẩm / hàng / con / chai / thùng" → `historical_analytics`; chỉ khi
+user nói rõ "log / traceback / service / module" → `log_analysis`.
+
+**Đường ra khi vẫn sai** (`core/reroute.py`). Siết từ khoá chỉ giảm tỷ lệ sai chứ
+không triệt được, nên phần này quan trọng không kém: khi có dấu hiệu route sai, bày
+nút hỏi lại chính câu đó bằng agent khác, gửi thẳng vào agent được chọn. Nút chỉ
+hiện trong ba tình huống — ý định lệch với agent đã trả lời (kể cả khi tool trả về
+đầy dữ liệu, đây là ca tệ nhất), tool chạy nhưng rỗng, và không tool nào chạy trong
+khi agent đang hỏi lại. Một nút "không đúng ý?" sau câu trả lời đúng là gieo nghi
+ngờ vào chính thứ đang đúng.
+
+**Chip gợi ý đọc số liệu, không đọc tên tool.** `_FALLBACK` tra theo tên tool nên
+sau `group_by='camera'` nó vẫn mời "Phân tích theo camera". Nay có `_REDUNDANT` loại
+câu đã thành vô nghĩa, và `_followups()` suy gợi ý từ kết quả — "Xem 5 sản phẩm lỗi
+đó" lấy đúng con số vừa hiện. Khối [SUGGESTIONS] của LLM bị hạ xuống sau nhóm này:
+nó bám ngữ cảnh hội thoại tốt hơn nhưng viết gợi ý mà không nhìn con số.
+
 ---
 
 ## Còn để mở
