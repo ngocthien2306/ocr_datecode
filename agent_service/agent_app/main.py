@@ -92,6 +92,14 @@ else:
     logger.warning("Không thấy thư mục uploads: %s — ảnh sẽ không hiển thị", _UPLOADS)
 
 
+# File báo cáo do `tools/report_tools.generate_report` sinh ra. Mount ở đây để
+# link tải trong câu trả lời chat dùng được ngay, không phải nhờ backend serve.
+from agent_app.tools.report_tools import REPORTS_DIR, REPORTS_URL_PREFIX  # noqa: E402
+
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount(REPORTS_URL_PREFIX, StaticFiles(directory=str(REPORTS_DIR)), name="reports")
+
+
 @app.get("/test", include_in_schema=False)
 async def test_ui():
     """

@@ -58,6 +58,9 @@ class ChatResponse(BaseModel):
     suggestions: Optional[List[str]] = None
     images: Optional[List[Dict[str, Any]]] = None
     charts: Optional[List[Dict[str, Any]]] = None
+    # File tải về do tool sinh ra (báo cáo). Tách khỏi `images` vì đây là thứ
+    # user bấm để tải, không phải ảnh hiển thị trong luồng chat.
+    files: Optional[List[Dict[str, Any]]] = None
     timestamp: str
 
 
@@ -229,6 +232,7 @@ async def chat(
         options = (result_context or {}).get("ui_options")
         images = (result_context or {}).get("ui_images")
         charts = (result_context or {}).get("ui_charts")
+        files = (result_context or {}).get("ui_files")
 
         # Gỡ khối [SUGGESTIONS] khỏi text hiển thị, tách thành chip riêng.
         # Ba nguồn theo thứ tự ưu tiên: LLM tự sinh → agent đặt sẵn trong
@@ -277,6 +281,7 @@ async def chat(
             suggestions=suggestions,
             images=images,
             charts=charts,
+            files=files,
             timestamp=datetime.now().isoformat()
         )
 

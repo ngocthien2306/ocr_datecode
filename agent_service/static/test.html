@@ -394,6 +394,25 @@ function scroll(){ $('log').scrollTop = $('log').scrollHeight; }
 
 // Biểu đồ cột ngang. Số liệu do backend suy tất định từ kết quả tool nên luôn
 // khớp con số trong câu trả lời — ở đây chỉ vẽ, không tính toán lại.
+function drawFiles(files){
+  // File báo cáo do generate_report sinh ra. Mở tab mới thay vì <a download>:
+  // trang này có thể đang xem qua tunnel, và với HTML/PDF thì xem trực tiếp
+  // tiện hơn tải về rồi mới mở.
+  const box = document.createElement('div'); box.className = 'chips';
+  box.style.margin = '6px 0 2px';
+  files.forEach(f=>{
+    const a = document.createElement('a');
+    a.className = 'opt';
+    a.href = agUrl() + f.url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.style.textDecoration = 'none';
+    a.innerHTML = `⬇ ${esc(f.label || f.filename)}<small>${esc(f.meta || f.filename)}</small>`;
+    box.appendChild(a);
+  });
+  $('log').appendChild(box);
+}
+
 function drawChart(c){
   const max = Math.max(...c.series.map(s=>s.value), 1);
   const box = document.createElement('div');
@@ -502,6 +521,7 @@ async function send(text){
 
     if(j.charts?.length) j.charts.forEach(drawChart);
     if(j.images?.length) drawImages(j.images);
+    if(j.files?.length) drawFiles(j.files);
 
     if(j.tool_calls?.length){
       const m = document.createElement('div'); m.className='meta';

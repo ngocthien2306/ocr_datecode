@@ -88,6 +88,36 @@ def images_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, str]]
     return out
 
 
+def files_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]:
+    """
+    File tải về suy từ kết quả tool.
+
+    Chỉ `generate_report` sinh file. Dựng ở đây thay vì để LLM tự viết link vào
+    câu trả lời: LLM hay bỏ mất tiền tố đường dẫn hoặc tự đổi tên file, mà link
+    sai thì user không tải được gì và cũng không hiểu tại sao.
+    """
+    if tool_name != "generate_report" or not isinstance(result, dict):
+        return []
+    url = result.get("download_url")
+    if not url:
+        return []
+
+    period = (result.get("period") or {}).get("label") or ""
+    summary = result.get("summary") or {}
+    bits = [str(result.get("format", "")).upper()]
+    if result.get("size_kb") is not None:
+        bits.append(f"{result['size_kb']:g} KB")
+    if summary.get("total") is not None:
+        bits.append(f"{summary['total']:,} sản phẩm")
+
+    return [{
+        "url": url,
+        "filename": result.get("filename") or url.rsplit("/", 1)[-1],
+        "label": f"Báo cáo {period}".strip(),
+        "meta": " · ".join(b for b in bits if b),
+    }]
+
+
 def strip_for_llm(result: Any) -> Any:
     """
     Bản rút gọn của kết quả tool để đưa vào ToolMessage.
