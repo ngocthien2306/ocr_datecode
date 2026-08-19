@@ -317,7 +317,13 @@ def fallback_suggestions(
         tool = call.get("tool") or ""
         args = call.get("args") or {}
         for key, val in args.items():
-            drop |= _REDUNDANT.get((tool, key, val), set())
+            # `args` là tham số THÔ do mô hình sinh, chưa qua Pydantic, nên một
+            # field khai báo `str` vẫn có thể nhận về `list`. Nhồi cái đó vào
+            # tuple khoá là `TypeError: unhashable type: 'list'` — và vì chỗ này
+            # nằm trên đường dựng câu trả lời, nó làm sập cả lượt chat chỉ vì một
+            # chip gợi ý. Lọc còn scalar trước khi tra bảng.
+            if isinstance(val, (str, int, float, bool)) or val is None:
+                drop |= _REDUNDANT.get((tool, key, val), set())
         for value in _followups(tool, args, results.get(tool)):
             if value not in items:
                 items.append(value)
