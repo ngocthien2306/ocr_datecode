@@ -4,3 +4,4 @@ __pycache__/
 logs/
 .env.bak
 .env.local
+generated_reports/
