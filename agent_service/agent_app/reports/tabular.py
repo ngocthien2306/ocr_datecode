@@ -15,6 +15,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from agent_app.core.i18n import t, treport_period
 from agent_app.reports.html_report import _fmt_label
 
 
@@ -59,12 +60,15 @@ def build_tables(
 
     return {
         "meta": {
-            "period_label": cfg["periodLabel"],
+            # `cfg["periodLabel"]` luôn là tiếng Anh (port từ
+            # reportGenerator.ts), nên phải dịch để bản tiếng Việt không
+            # ghi "Kỳ báo cáo: Today".
+            "period_label": treport_period(cfg["periodLabel"]),
             "start": cfg["startDate"],
             "end": cfg["endDate"],
             "granularity": gran,
             "recipe_scope": (", ".join(r["recipe_name"] for r in recipes)
-                             if picked else "Tất cả recipe"),
+                             if picked else t("Tất cả recipe")),
             "generated_at": cfg["generatedAt"],
         },
         "overview": {"total": total, "pass": passed, "fail": failed, "pass_rate": rate},
@@ -97,25 +101,25 @@ def to_csv(tables: Dict[str, Any]) -> bytes:
         w.writerows(rows)
         w.writerow([])
 
-    block("# THÔNG TIN BÁO CÁO", ["Trường", "Giá trị"], [
-        ["Kỳ báo cáo", m["period_label"]],
-        ["Từ", m["start"]],
-        ["Đến", m["end"]],
-        ["Mốc thời gian", m["granularity"]],
-        ["Phạm vi recipe", m["recipe_scope"]],
-        ["Xuất lúc", m["generated_at"]],
+    block(t("# THÔNG TIN BÁO CÁO"), [t("Trường"), t("Giá trị")], [
+        [t("Kỳ báo cáo"), m["period_label"]],
+        [t("Từ"), m["start"]],
+        [t("Đến"), m["end"]],
+        [t("Mốc thời gian"), m["granularity"]],
+        [t("Phạm vi recipe"), m["recipe_scope"]],
+        [t("Xuất lúc"), m["generated_at"]],
     ])
-    block("# TỔNG QUAN", ["Tổng", "Pass", "Fail", "Tỷ lệ pass (%)"],
+    block(t("# TỔNG QUAN"), [t("Tổng"), "Pass", "Fail", t("Tỷ lệ pass (%)")],
           [[o["total"], o["pass"], o["fail"], o["pass_rate"]]])
-    block("# THEO THỜI GIAN", ["Mốc", "Tổng", "Pass", "Fail", "Tỷ lệ pass (%)"],
+    block(t("# THEO THỜI GIAN"), [t("Mốc"), t("Tổng"), "Pass", "Fail", t("Tỷ lệ pass (%)")],
           [[r["bucket"], r["total"], r["pass"], r["fail"], r["pass_rate"]] for r in tables["by_time"]])
-    block("# THEO RECIPE", ["Recipe", "Tổng", "Pass", "Fail", "Tỷ lệ pass (%)"],
+    block(t("# THEO RECIPE"), ["Recipe", t("Tổng"), "Pass", "Fail", t("Tỷ lệ pass (%)")],
           [[r["recipe_name"], r["total"], r["pass"], r["fail"], r["pass_rate"]] for r in tables["by_recipe"]])
-    block("# THEO THỜI GIAN × RECIPE", ["Mốc", "Recipe", "Tổng", "Pass", "Fail", "Tỷ lệ pass (%)"],
+    block(t("# THEO THỜI GIAN × RECIPE"), [t("Mốc"), "Recipe", t("Tổng"), "Pass", "Fail", t("Tỷ lệ pass (%)")],
           [[r["bucket"], r["recipe_name"], r["total"], r["pass"], r["fail"], r["pass_rate"]]
            for r in tables["by_time_recipe"]])
     if tables["by_camera"]:
-        block("# THEO CAMERA", ["Camera", "Serial", "Tổng", "Pass", "Fail", "Tỷ lệ pass (%)"],
+        block(t("# THEO CAMERA"), ["Camera", "Serial", t("Tổng"), "Pass", "Fail", t("Tỷ lệ pass (%)")],
               [[c["camera_id"], c["serial_number"], c["total"], c["pass"], c["fail"], c["pass_rate"]]
                for c in tables["by_camera"]])
 
@@ -152,16 +156,16 @@ def to_xlsx(tables: Dict[str, Any]) -> bytes:
     m, o = tables["meta"], tables["overview"]
     wb = Workbook()
     ws = wb.active
-    ws.title = "Tổng quan"
-    ws.append(["BÁO CÁO SẢN XUẤT"])
+    ws.title = t("Tổng quan")
+    ws.append([t("BÁO CÁO SẢN XUẤT")])
     ws["A1"].font = _TITLE_FONT
     ws.append([])
-    for k, v in (("Kỳ báo cáo", m["period_label"]), ("Từ", m["start"]), ("Đến", m["end"]),
-                 ("Mốc thời gian", m["granularity"]), ("Phạm vi recipe", m["recipe_scope"]),
-                 ("Xuất lúc", m["generated_at"])):
+    for k, v in ((t("Kỳ báo cáo"), m["period_label"]), (t("Từ"), m["start"]), (t("Đến"), m["end"]),
+                 (t("Mốc thời gian"), m["granularity"]), (t("Phạm vi recipe"), m["recipe_scope"]),
+                 (t("Xuất lúc"), m["generated_at"])):
         ws.append([k, v])
     ws.append([])
-    ws.append(["Tổng", "Pass", "Fail", "Tỷ lệ pass (%)"])
+    ws.append([t("Tổng"), "Pass", "Fail", t("Tỷ lệ pass (%)")])
     for cell in ws[ws.max_row]:
         cell.fill = _HDR_FILL
         cell.font = _HDR_FONT
@@ -169,18 +173,18 @@ def to_xlsx(tables: Dict[str, Any]) -> bytes:
     ws.column_dimensions["A"].width = 18
     ws.column_dimensions["B"].width = 40
 
-    _sheet(wb, "Theo thời gian", ["Mốc", "Tổng", "Pass", "Fail", "Tỷ lệ pass (%)"],
+    _sheet(wb, t("Theo thời gian"), [t("Mốc"), t("Tổng"), "Pass", "Fail", t("Tỷ lệ pass (%)")],
            [[r["bucket"], r["total"], r["pass"], r["fail"], r["pass_rate"]] for r in tables["by_time"]],
            [22, 12, 12, 12, 16])
-    _sheet(wb, "Theo recipe", ["Recipe", "Tổng", "Pass", "Fail", "Tỷ lệ pass (%)"],
+    _sheet(wb, t("Theo recipe"), ["Recipe", t("Tổng"), "Pass", "Fail", t("Tỷ lệ pass (%)")],
            [[r["recipe_name"], r["total"], r["pass"], r["fail"], r["pass_rate"]] for r in tables["by_recipe"]],
            [34, 12, 12, 12, 16])
-    _sheet(wb, "Thời gian x Recipe", ["Mốc", "Recipe", "Tổng", "Pass", "Fail", "Tỷ lệ pass (%)"],
+    _sheet(wb, t("Thời gian x Recipe"), [t("Mốc"), "Recipe", t("Tổng"), "Pass", "Fail", t("Tỷ lệ pass (%)")],
            [[r["bucket"], r["recipe_name"], r["total"], r["pass"], r["fail"], r["pass_rate"]]
             for r in tables["by_time_recipe"]],
            [22, 34, 12, 12, 12, 16])
     if tables["by_camera"]:
-        _sheet(wb, "Theo camera", ["Camera", "Serial", "Tổng", "Pass", "Fail", "Tỷ lệ pass (%)"],
+        _sheet(wb, t("Theo camera"), ["Camera", "Serial", t("Tổng"), "Pass", "Fail", t("Tỷ lệ pass (%)")],
                [[c["camera_id"], c["serial_number"], c["total"], c["pass"], c["fail"], c["pass_rate"]]
                 for c in tables["by_camera"]],
                [22, 22, 12, 12, 12, 16])

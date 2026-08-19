@@ -17,7 +17,7 @@ nhau, không cần kiểu chart riêng.
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from agent_app.core.i18n import t, tcols, tphrase, ttitle
+from agent_app.core.i18n import t, tcols, tphrase, treport_period, ttitle
 
 #: Số cột tối đa của một biểu đồ.
 #:
@@ -154,12 +154,14 @@ def files_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]:
     if result.get("size_kb") is not None:
         bits.append(f"{result['size_kb']:g} KB")
     if summary.get("total") is not None:
-        bits.append(f"{summary['total']:,} sản phẩm")
+        bits.append(f"{summary['total']:,} {t('sản phẩm').lower()}")
 
     return [{
         "url": url,
         "filename": result.get("filename") or url.rsplit("/", 1)[-1],
-        "label": f"Báo cáo {period}".strip(),
+        # Cả hai nửa đều phải theo ngôn ngữ: "Báo cáo Today" hay
+        # "Report hôm nay" đều là nửa nọ nửa này.
+        "label": f"{t('Báo cáo')} {treport_period(period)}".strip(),
         "meta": " · ".join(b for b in bits if b),
     }]
 

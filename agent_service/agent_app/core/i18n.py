@@ -371,6 +371,30 @@ _EN: Dict[str, str] = {
         "not why.",
     "mong '{expected}' → đọc '{got}'": "expected '{expected}' → read '{got}'",
     "(rỗng)": "(empty)",
+
+    # --- nhãn trong file Excel/CSV xuất ra ---
+    "BÁO CÁO SẢN XUẤT": "PRODUCTION REPORT",
+    "# THÔNG TIN BÁO CÁO": "# REPORT INFO",
+    "# TỔNG QUAN": "# SUMMARY",
+    "# THEO THỜI GIAN": "# BY TIME",
+    "# THEO THỜI GIAN × RECIPE": "# BY TIME × RECIPE",
+    "# THEO RECIPE": "# BY RECIPE",
+    "# THEO CAMERA": "# BY CAMERA",
+    "Theo recipe": "By recipe",
+    "Theo camera": "By camera",
+    "Tổng quan": "Summary",
+    "Theo thời gian": "By time",
+    "Thời gian x Recipe": "Time x Recipe",
+    "Kỳ báo cáo": "Report period",
+    "Phạm vi recipe": "Recipe scope",
+    "Tất cả recipe": "All recipes",
+    "Xuất lúc": "Exported at",
+    "Trường": "Field",
+    "Giá trị": "Value",
+    "Mốc": "Bucket",
+    "Mốc thời gian": "Timestamp",
+    "Tổng": "Total",
+    "Tỷ lệ pass (%)": "Pass rate (%)",
 }
 
 _TABLES: Dict[str, Dict[str, str]] = {"en": _EN}
@@ -440,6 +464,29 @@ _PHRASES = [
     ("ngày", "days"),
     (" vs ", " vs "),
 ]
+
+
+# `reports/data.PERIOD_LABELS` viết bằng tiếng Anh vì nó được port nguyên từ
+# reportGenerator.ts của frontend. Nhãn đó đi thẳng vào tên nút tải file, nên ở
+# chế độ tiếng Việt ra "Báo cáo Today" — lẫn hai thứ tiếng trong ba chữ. Bảng này
+# dịch ngược sang tiếng Việt; ở chế độ tiếng Anh thì giữ nguyên.
+_REPORT_PERIOD_VI = {
+    "Today": "hôm nay",
+    "Yesterday": "hôm qua",
+    "This Week": "tuần này",
+    "Last Week": "tuần trước",
+    "Last 7 Days": "7 ngày qua",
+    "This Month": "tháng này",
+    "Last Month": "tháng trước",
+    "Last 30 Days": "30 ngày qua",
+}
+
+
+def treport_period(label: str, lang: Optional[str] = None) -> str:
+    """Nhãn kỳ của báo cáo, theo ngôn ngữ đang chọn."""
+    if (lang or get_lang()) == "vi":
+        return _REPORT_PERIOD_VI.get(label, label)
+    return label
 
 
 def tphrase(s: str, lang: Optional[str] = None) -> str:
