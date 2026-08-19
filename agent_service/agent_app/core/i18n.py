@@ -371,6 +371,11 @@ _EN: Dict[str, str] = {
         "not why.",
     "mong '{expected}' → đọc '{got}'": "expected '{expected}' → read '{got}'",
     "(rỗng)": "(empty)",
+    "Chuỗi đọc được": "String read",
+    "Độ tin cậy": "Confidence",
+    "Template dùng lúc đó": "Template in use then",
+    "Ảnh fail": "Failed frame",
+    "Template gốc": "Original template",
 
     # --- gợi ý suy từ kết quả (mẫu câu, điền số sau khi dịch) ---
     "Xem {n} sản phẩm lỗi đó": "Show those {n} failed units",

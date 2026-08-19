@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pydantic import BaseModel, Field
 from agent_app.core.i18n import t
+from agent_app.core.templates import attach_templates
 from agent_app.core.config import settings
 from agent_app.db.mongodb import get_sync_database
 from agent_app.tools.base_tool import BaseTool, ToolMetadata
@@ -936,7 +937,25 @@ def explain_failures(
                             "confidence": frame.get("confidence"),
                             "expected": (bad or {}).get("expected"),
                             "recognized": (bad or {}).get("recognized"),
+                            # Ba khoá dưới chỉ để tra ảnh template đang chạy lúc
+                            # frame này được chụp (xem core/templates.py). Cần cả
+                            # ba: recipe nào, frame nào của camera nào, và mốc
+                            # thời gian dạng datetime — chuỗi giờ địa phương ở
+                            # trên đã mất kiểu, không so sánh được với `loaded_at`.
+                            "recipe_id": doc.get("recipe_id"),
+                            "template_name": frame.get("template_name"),
+                            "_ts_utc": doc["timestamp"],
                         })
+
+        # Gắn ảnh template đang chạy lúc từng frame fail được chụp. Đặt ở đây,
+        # sau khi mẫu đã chốt, để chỉ tra đúng số mẫu sẽ hiện chứ không tra cho
+        # toàn bộ document đã quét.
+        try:
+            attach_templates(samples)
+        except Exception as e:
+            # Không có ảnh template thì câu trả lời vẫn đầy đủ, chỉ kém trực quan.
+            # Đừng để việc trang trí làm sập một tool phân tích.
+            logger.warning("Không gắn được ảnh template: %s", e)
 
         top_mismatch = [
             {"expected": e, "recognized": r, "count": n}

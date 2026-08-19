@@ -107,6 +107,55 @@ def _bar(title: str, series: List[Dict[str, Any]], unit: str = "",
     return out
 
 
+
+def _fail_diff(sample: Dict[str, Any],
+               tpl: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Những gì lệch giữa frame fail và template, dạng từng dòng nhãn/giá trị.
+
+    Chỉ nêu thứ ĐO ĐƯỢC. Cố ý không đưa ra phán đoán kiểu "thùng bị lệch" hay
+    "nhãn bị che": trong ảnh không có gì chứng minh điều đó, và một suy đoán đặt
+    cạnh mấy con số thật sẽ được đọc như một kết luận.
+    """
+    rows: List[Dict[str, Any]] = []
+
+    exp, got = sample.get("expected"), sample.get("recognized")
+    if exp is not None or got is not None:
+        rows.append({
+            "label": t("Chuỗi đọc được"),
+            "expected": exp if exp is not None else "—",
+            "actual": got if got else t("(rỗng)"),
+            "bad": True,
+        })
+
+    conf = sample.get("confidence")
+    roi = next((r for r in ((tpl or {}).get("rois") or []) if r.get("highlight")), None)
+    threshold = (roi or {}).get("conf")
+    if conf is not None:
+        rows.append({
+            "label": t("Độ tin cậy"),
+            "expected": (f"≥ {threshold}" if threshold is not None else "—"),
+            "actual": round(conf, 4) if isinstance(conf, (int, float)) else conf,
+            # Chỉ tô đỏ khi thật sự dưới ngưỡng. Thiếu ngưỡng thì để trung tính
+            # thay vì đoán — tô đỏ một con số vẫn đạt là báo động giả.
+            "bad": bool(threshold is not None and isinstance(conf, (int, float))
+                        and conf < threshold),
+        })
+
+    if tpl and tpl.get("loaded_at"):
+        # Dòng thông tin, không phải dòng so sánh: dùng `value` chứ không nhét vào
+        # hai cột mong/thực. Nhét vào đó thì đọc thành "mong Frame 4, thực System
+        # Administrator" — vô nghĩa.
+        who = tpl.get("loaded_by")
+        rows.append({
+            "label": t("Template dùng lúc đó"),
+            "value": (f"{tpl.get('name')} · {tpl['loaded_at'][11:16]}"
+                      + (f" · {who}" if who else "")),
+        })
+
+    return rows
+
+
 def images_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, str]]:
     """Ảnh minh hoạ frame fail."""
     if tool_name != "explain_failures" or not isinstance(result, dict):
@@ -126,10 +175,24 @@ def images_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, str]]
                 expected=s.get("expected"),
                 got=s.get("recognized") or t("(rỗng)")))
 
+        # Ảnh template đang chạy lúc frame này được chụp, nếu tra được. Không tra
+        # được thì không có khoá `template` và lớp vẽ chỉ hiện ảnh fail — xem
+        # core/templates.py về lý do không dùng template hiện tại làm hàng thay thế.
+        tpl = s.get("template") or None
+
         out.append({
             "url": _UPLOAD_PREFIX + path,
             "caption": " · ".join(bits),
             "recipe": s.get("recipe_name") or "",
+            "template": tpl,
+            # Nhãn hai bên do SERVER gửi, không hardcode trong test.html: chúng là
+            # nhãn hiện ra nên phải theo ngôn ngữ đang chọn, y như ô KPI và cột
+            # bảng. Hardcode ở FE thì chọn English vẫn ra "Ảnh fail".
+            "label_fail": t("Ảnh fail"),
+            "label_template": t("Template gốc"),
+            # Dòng đối chiếu hiện dưới cặp ảnh. Dựng bằng code chứ không để mô
+            # hình viết, vì đây là những con số phải khớp tuyệt đối với dữ liệu.
+            "diff": _fail_diff(s, tpl),
         })
     return out
 

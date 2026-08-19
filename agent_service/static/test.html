@@ -132,6 +132,44 @@
                text-transform:uppercase;letter-spacing:.04em;margin-bottom:7px}
   .chips{display:flex;flex-wrap:wrap;gap:8px}
 
+
+  /* ── Cặp ảnh fail ↔ template ────────────────────────────────────────────
+     Đặt cạnh nhau vì câu hỏi người xem đang có là một câu so sánh: chữ lẽ ra
+     nằm ở đâu, và thực tế camera thấy gì. Xếp trên–dưới thì mắt phải nhớ ảnh
+     trên trong lúc nhìn ảnh dưới. */
+  .pair{
+    margin:10px 0; padding:10px; border:1px solid var(--border,#e2e8f0);
+    border-radius:10px; background:var(--surface,#fff);
+  }
+  .pair-imgs{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  /* Máy tính bảng dọc và điện thoại: hai cột thành 320px mỗi bên, ROI nhỏ hơn
+     đầu ngón tay. Xuống một cột còn đọc được. */
+  @media (max-width:760px){ .pair-imgs{ grid-template-columns:1fr; } }
+
+  .pair-side{ min-width:0; }
+  .pair-label{
+    font-size:.74rem; text-transform:uppercase; letter-spacing:.04em;
+    color:var(--muted,#64748b); margin-bottom:4px;
+  }
+  .pair-label b{ color:var(--text,#1f2937); font-weight:600; letter-spacing:0; text-transform:none; }
+  .pair-frame{ position:relative; line-height:0; cursor:zoom-in; }
+  .pair-frame img{ width:100%; height:auto; border-radius:6px; display:block; }
+  /* SVG phủ đúng khít ảnh và dùng toạ độ 0..1, nên ROI luôn khớp dù ảnh được
+     co giãn bao nhiêu — không phải tính lại theo pixel. */
+  .pair-frame svg{ position:absolute; inset:0; width:100%; height:100%; }
+  .pair-frame rect{ fill:none; stroke-width:1.5; vector-effect:non-scaling-stroke; }
+  .roi{ stroke:#3b82f6; opacity:.55; }
+  .roi-hl{ stroke:#dc2626; stroke-width:2.5; opacity:1; }
+
+  .pair-cap{ margin-top:8px; font-size:.86rem; color:var(--muted,#64748b); }
+  .pair-diff{ width:100%; margin-top:8px; border-collapse:collapse; font-size:.86rem; }
+  .pair-diff td{ padding:4px 8px; border-top:1px solid var(--border,#eef2f7); }
+  .pair-diff td:first-child{ color:var(--muted,#64748b); white-space:nowrap; width:1%; }
+  .pair-diff .exp{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .pair-diff .act{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .pair-diff .act.bad{ color:#dc2626; font-weight:600; }
+  .pair-diff .arrow{ color:var(--muted,#94a3b8); padding:0 2px; }
+
   /* reroute = đường ra khi route sai. Trung gian giữa options (bắt buộc) và
      suggestions (gợi ý): thấy được nhưng không tranh chú ý với câu trả lời. */
   .rr{
@@ -645,15 +683,83 @@ function drawChart(c){
   $('log').appendChild(box); scroll();
 }
 
+// ROI của template, vẽ bằng SVG toạ độ 0..1 nên khớp ảnh ở mọi kích thước.
+// Vùng liên quan tới lỗi được tô đỏ; nếu không có nó thì người xem phải tự dò
+// trong 3-4 khung xem khung nào ứng với dòng "mong ... → đọc ...".
+function roiSvg(rois){
+  if(!rois?.length) return '';
+  const rects = rois.map(r=>{
+    if([r.x,r.y,r.w,r.h].some(v=>typeof v!=='number')) return '';
+    return `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}"`
+         + ` class="${r.highlight?'roi-hl':'roi'}"></rect>`;
+  }).join('');
+  return `<svg viewBox="0 0 1 1" preserveAspectRatio="none">${rects}</svg>`;
+}
+
+function diffTable(rows){
+  if(!rows?.length) return '';
+  const tr = rows.map(d=>{
+    if(d.value !== undefined)
+      return `<tr><td>${esc(d.label)}</td><td colspan="2">${esc(String(d.value))}</td></tr>`;
+    return `<tr><td>${esc(d.label)}</td>`
+         + `<td class="exp">${esc(String(d.expected))}`
+         + `<span class="arrow"> → </span>`
+         + `<span class="act${d.bad?' bad':''}">${esc(String(d.actual))}</span></td></tr>`;
+  }).join('');
+  return `<table class="pair-diff">${tr}</table>`;
+}
+
 function drawImages(list){
-  const g = document.createElement('div'); g.className = 'shots';
+  const g = document.createElement('div');
+  const hasTpl = list.some(im=>im.template);
+  // Không có template nào thì giữ lưới ảnh cũ — gọn hơn cho trường hợp chỉ cần
+  // xem nhanh vài ảnh.
+  if(!hasTpl){
+    g.className = 'shots';
+    list.forEach(im=>{
+      const fig = document.createElement('figure'); fig.className = 'shot';
+      const cap = esc(im.caption).replace(/→ đọc '([^']*)'/, "→ đọc <span class='bad'>'$1'</span>");
+      fig.innerHTML = `<img src="${esc(im.url)}" alt="" loading="lazy"
+                            onerror="this.style.opacity=.25;this.alt='không tải được'">
+                       <figcaption>${cap}</figcaption>`;
+      fig.onclick = ()=>lightbox(im);
+      g.appendChild(fig);
+    });
+    $('log').appendChild(g); scroll(); return;
+  }
+
   list.forEach(im=>{
-    const fig = document.createElement('figure'); fig.className = 'shot';
+    const t = im.template;
+    const fig = document.createElement('figure'); fig.className = 'pair';
     const cap = esc(im.caption).replace(/→ đọc '([^']*)'/, "→ đọc <span class='bad'>'$1'</span>");
-    fig.innerHTML = `<img src="${esc(im.url)}" alt="" loading="lazy"
-                          onerror="this.style.opacity=.25;this.alt='không tải được'">
-                     <figcaption>${cap}</figcaption>`;
-    fig.onclick = ()=>lightbox(im);
+    const err = `onerror="this.style.opacity=.25;this.alt='không tải được'"`;
+
+    fig.innerHTML = `
+      <div class="pair-imgs">
+        <div class="pair-side">
+          <div class="pair-label">${esc(im.label_fail || 'Ảnh fail')}</div>
+          <div class="pair-frame" data-side="fail">
+            <img src="${esc(im.url)}" alt="" loading="lazy" ${err}>
+          </div>
+        </div>
+        ${t ? `
+        <div class="pair-side">
+          <div class="pair-label">${esc(im.label_template || 'Template gốc')} · <b>${esc(t.name||'')}</b></div>
+          <div class="pair-frame" data-side="tpl">
+            <img src="${esc(t.url)}" alt="" loading="lazy" ${err}>
+            ${roiSvg(t.rois)}
+          </div>
+        </div>` : ''}
+      </div>
+      <div class="pair-cap">${cap}</div>
+      ${diffTable(im.diff)}`;
+
+    // Bấm vào bên nào thì mở đúng ảnh bên đó.
+    fig.querySelector('[data-side="fail"]')?.addEventListener('click',
+      ()=>lightbox({url: im.url, caption: im.caption}));
+    fig.querySelector('[data-side="tpl"]')?.addEventListener('click',
+      ()=>lightbox({url: t.url,
+                    caption: `Template ${t.name||''} · load ${t.loaded_at||''}`}));
     g.appendChild(fig);
   });
   $('log').appendChild(g); scroll();
