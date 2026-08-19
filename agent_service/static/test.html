@@ -132,6 +132,19 @@
                text-transform:uppercase;letter-spacing:.04em;margin-bottom:7px}
   .chips{display:flex;flex-wrap:wrap;gap:8px}
 
+  /* reroute = đường ra khi route sai. Trung gian giữa options (bắt buộc) và
+     suggestions (gợi ý): thấy được nhưng không tranh chú ý với câu trả lời. */
+  .rr{
+    display:inline-flex; flex-direction:column; align-items:flex-start;
+    gap:2px; padding:6px 11px; margin:3px 4px 0 0;
+    font:inherit; font-size:.86rem; text-align:left; cursor:pointer;
+    background:var(--surface, #fff); color:var(--text, #1f2937);
+    border:1px dashed var(--border, #cbd5e1); border-radius:8px;
+  }
+  .rr:hover{ border-style:solid; border-color:var(--accent, #2563eb);
+             color:var(--accent, #2563eb); }
+  .rr small{ font-size:.74rem; opacity:.62; font-weight:400; }
+
   /* options = bắt buộc chọn → viền đậm hơn */
   .opt{background:#fff;border:1.5px solid var(--primary);color:var(--primary-h);
        text-align:left;font-weight:600;display:flex;flex-direction:column;
@@ -698,7 +711,9 @@ async function clearConv(){
   $('log').innerHTML=''; note('Đã xoá lịch sử của session này.');
 }
 
-async function send(text){
+// `agentOverride` cho nút hỏi-lại gửi thẳng vào một agent, bỏ qua orchestrator:
+// orchestrator vừa đoán sai một lần, để nó đoán lại thì ra đúng kết quả cũ.
+async function send(text, agentOverride){
   const msg = (text ?? $('inp').value).trim();
   if(!msg || BUSY) return;
   if(!TOKEN) return bubble('Chưa đăng nhập — bấm "Đăng nhập" ở cột trái.','err');
@@ -711,7 +726,7 @@ async function send(text){
     const r = await fetch(agUrl()+'/api/agent/chat', {
       method:'POST',
       headers:{'Content-Type':'application/json', Authorization:'Bearer '+TOKEN},
-      body:JSON.stringify({message:msg, agent_id:$('agent').value,
+      body:JSON.stringify({message:msg, agent_id:agentOverride || $('agent').value,
                            session_id:$('sid').value, language:$('lang').value})
     });
     const j = await r.json();
@@ -742,6 +757,18 @@ async function send(text){
         b.className='opt';
         b.innerHTML = `${esc(o.label)}${o.hint?`<small>${esc(o.hint)}</small>`:''}`;
         b.onclick = ()=>{ g.querySelectorAll('button').forEach(x=>x.disabled=true); send(o.value); };
+        return b;
+      });
+    }
+    // reroute: KHÔNG bắt buộc — chỉ là đường ra khi câu trả lời vừa rồi đến từ
+    // agent sai. Bấm vào là hỏi lại NGUYÊN VĂN câu đó bằng agent khác.
+    if(j.reroute?.length){
+      chipGroup('Không đúng ý? Hỏi lại bằng', j.reroute, o=>{
+        const b = document.createElement('button');
+        b.className='rr';
+        b.innerHTML = `${esc(o.label)}${o.hint?`<small>${esc(o.hint)}</small>`:''}`;
+        b.title = 'Hỏi lại: "' + (o.value||'') + '"';
+        b.onclick = ()=>send(o.value, o.agent_id);
         return b;
       });
     }

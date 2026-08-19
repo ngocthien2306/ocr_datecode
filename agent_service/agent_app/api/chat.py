@@ -16,9 +16,14 @@ from agent_app.core.registry import AgentRegistry
 from agent_app.base.base_agent import AgentState
 from agent_app.api.deps import get_current_user
 from agent_app.core.i18n import set_lang
-from agent_app.core.suggestions import extract_suggestions, fallback_suggestions
+from agent_app.core.reroute import build_reroute
+from agent_app.core.suggestions import (
+    extract_suggestions,
+    fallback_suggestions,
+    grounded_suggestions,
+)
 from agent_app.memory.conversation_service import ConversationService
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +56,10 @@ class ChatOption(BaseModel):
     label: str          # hiển thị trên nút
     value: str          # câu gửi đi khi bấm
     hint: Optional[str] = None   # chú thích phụ, vd "49.503 sản phẩm"
+    # Bấm nút này thì gửi câu hỏi vào ĐÚNG agent này, bỏ qua orchestrator. Chỉ
+    # dùng cho nút hỏi-lại (`reroute`): khi orchestrator đã đoán sai một lần thì
+    # để nó đoán lại cũng ra kết quả cũ.
+    agent_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -60,6 +69,10 @@ class ChatResponse(BaseModel):
     session_id: str
     tool_calls: Optional[List[Dict[str, Any]]] = None
     options: Optional[List[ChatOption]] = None
+    # Nút "hỏi lại bằng agent khác". Tách khỏi `options` vì `options` là lựa chọn
+    # BẮT BUỘC, hiện ra là chặn luồng; reroute chỉ là đường ra khi câu trả lời
+    # vừa rồi đến từ agent sai, và không được chặn gì.
+    reroute: Optional[List[ChatOption]] = None
     suggestions: Optional[List[str]] = None
     images: Optional[List[Dict[str, Any]]] = None
     charts: Optional[List[Dict[str, Any]]] = None
@@ -119,6 +132,38 @@ def extract_tool_calls(state, skip: int = 0) -> Optional[List[Dict[str, Any]]]:
                 })
 
     return tool_calls or None
+
+
+
+def extract_tool_results(state, skip: int = 0) -> Dict[str, Any]:
+    """
+    Kết quả của từng tool trong lượt này, theo tên tool.
+
+    Chỉ dùng cho việc phán đoán "tool này có trả về rỗng không" (xem
+    `core/reroute.py`), nên độ chính xác vừa đủ là được và thất bại thì không sao.
+
+    Nội dung `ToolMessage` là `str(dict)` do agent tự ghi, nên đọc lại bằng
+    `literal_eval`. Nó có thể thất bại — chuỗi bị cắt, hoặc chứa object không
+    phải literal. Khi đó bỏ qua tool đó: hậu quả duy nhất là không hiện nút hỏi
+    lại, chứ không phải vỡ cả câu trả lời.
+    """
+    import ast
+
+    messages = state.get("messages") if isinstance(state, dict) else state.messages
+    out: Dict[str, Any] = {}
+    for msg in (messages or [])[skip:]:
+        if not isinstance(msg, ToolMessage):
+            continue
+        name = getattr(msg, "name", None)
+        if not name:
+            continue
+        try:
+            parsed = ast.literal_eval(str(msg.content))
+        except (ValueError, SyntaxError, MemoryError, RecursionError):
+            continue
+        if isinstance(parsed, dict):
+            out[name] = parsed
+    return out
 
 
 def _trim_history(messages: List[Any], limit: int) -> List[Any]:
@@ -258,11 +303,36 @@ async def chat(
         # Ba nguồn theo thứ tự ưu tiên: LLM tự sinh → agent đặt sẵn trong
         # context (vd orchestrator không hiểu ý, gợi ý câu vào bài) → suy từ
         # tool vừa chạy.
-        response_text, suggestions = extract_suggestions(response_text)
+        tool_results = extract_tool_results(result_state, skip=len(historical_messages))
+
+        response_text, llm_suggestions = extract_suggestions(response_text)
+
+        # Thứ tự ưu tiên: gợi ý suy từ SỐ LIỆU trước, rồi mới tới văn của mô hình.
+        #
+        # Trước đây khối [SUGGESTIONS] của LLM được ưu tiên tuyệt đối, và nó viết
+        # gợi ý mà không nhìn con số — sau câu "từ 16h đến 18h camera nào fail
+        # nhiều nhất" nó mời "Xem lịch sử load recipe gần đây". Nhóm grounded thì
+        # lấy đúng con số vừa hiện: "Xem 5 sản phẩm lỗi đó".
+        #
+        # Vẫn giữ gợi ý của LLM để lấp cho đủ bốn chip: nó bám ngữ cảnh hội thoại
+        # tốt hơn bảng tra tĩnh, chỉ không đáng tin về số liệu.
+        suggestions = grounded_suggestions(tool_calls, tool_results)
+        for extra in (llm_suggestions or []):
+            if extra not in suggestions:
+                suggestions.append(extra)
         if not suggestions:
             suggestions = (result_context or {}).get("ui_suggestions") or []
-        if not suggestions:
-            suggestions = fallback_suggestions(tool_calls)
+        # Lấp cho đủ ít nhất 3 chip. Nhóm grounded rất đúng nhưng thường chỉ ra
+        # một câu; dừng ở một chip thì mất chỗ để đi tiếp, mà chip là cách chính
+        # người vận hành khám phá agent — họ không biết agent trả lời được gì cho
+        # tới khi thấy câu hỏi mẫu.
+        if len(suggestions) < 3:
+            for extra in fallback_suggestions(tool_calls, tool_results):
+                if extra not in suggestions:
+                    suggestions.append(extra)
+                if len(suggestions) >= 3:
+                    break
+        suggestions = suggestions[:4]
         # Đang bắt user chọn recipe thì đừng bày thêm gợi ý gây phân tán.
         if options:
             suggestions = None
@@ -292,9 +362,20 @@ async def chat(
             len(response_text), len(conversation_messages)
         )
 
+        # Nút hỏi-lại. Chỉ dựng khi KHÔNG có `options`: options là lựa chọn bắt
+        # buộc, bày thêm một nhóm nút nữa cạnh nó là làm loãng đúng cái phải bấm.
+        reroute = None
+        if not options:
+            reroute = build_reroute(
+                request.message, tool_calls, tool_results,
+                response_text=response_text,
+                has_history=bool(historical_messages),
+            ) or None
+
         return ChatResponse(
             response=response_text,
             agent_id=request.agent_id,
+            reroute=reroute,
             session_id=session_id,
             tool_calls=tool_calls,
             options=options,

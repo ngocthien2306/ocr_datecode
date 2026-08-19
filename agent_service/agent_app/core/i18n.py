@@ -372,6 +372,24 @@ _EN: Dict[str, str] = {
     "mong '{expected}' → đọc '{got}'": "expected '{expected}' → read '{got}'",
     "(rỗng)": "(empty)",
 
+    # --- gợi ý suy từ kết quả (mẫu câu, điền số sau khi dịch) ---
+    "Xem {n} sản phẩm lỗi đó": "Show those {n} failed units",
+    "Nguyên nhân fail của camera {cam}": "Fail causes for camera {cam}",
+    "Vì sao nhiều lỗi \"{cause}\"?": "Why so many \"{cause}\"?",
+    "Ai thao tác gì lúc {time}?": "Who did what at {time}?",
+
+    # --- nút hỏi lại bằng agent khác ---
+    "Số liệu sản xuất": "Production data",
+    "Log & audit": "Logs & audit",
+    "Thiết bị": "Equipment",
+    "Camera service": "Camera service",
+    "sản lượng, pass/fail, ảnh sản phẩm lỗi, báo cáo":
+        "output, pass/fail, images of failed units, reports",
+    "dòng ERROR trong log, ai đã thao tác gì":
+        "ERROR lines in the log, who did what",
+    "reject, trigger, cảm biến, module": "reject, trigger, sensors, modules",
+    "trạng thái start/stop của service": "the service's start/stop state",
+
     # --- nhãn trong file Excel/CSV xuất ra ---
     "BÁO CÁO SẢN XUẤT": "PRODUCTION REPORT",
     "# THÔNG TIN BÁO CÁO": "# REPORT INFO",
