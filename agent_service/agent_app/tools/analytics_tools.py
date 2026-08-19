@@ -20,6 +20,34 @@ _TZ = ZoneInfo(settings.TIMEZONE)
 
 
 # ============================================================================
+# Vì sao lọc theo `created_at` chứ không phải `timestamp`
+#
+# Hai field này là một: trên 72.550 bản ghi 7 ngày, chênh lệch tối đa 1 ms
+# (231 bản ghi lệch đúng 1 ms, còn lại bằng 0). Nhưng chỉ `created_at` nằm
+# trong compound index mà scripts/optimize_mongodb.sh dựng sẵn:
+#
+#     {created_at: 1, product_pass_fail: 1, recipe_id: 1, recipe_name: 1}
+#
+# Lọc bằng `timestamp` thì index `{timestamp: -1}` chỉ lọc được khoảng ngày,
+# sau đó Mongo phải nạp TOÀN BỘ document để đọc `product_pass_fail`. Mỗi
+# document nặng trung bình 62,8 KB vì `char_verification.results[].mask_diff_b64`
+# nhúng một ảnh PNG base64 cho từng ký tự. Đo trên 7 ngày (72k bản ghi):
+#
+#     $group lọc theo timestamp   : 18,82 s
+#     $group lọc theo created_at  :  0,20 s   ← index bao trọn, không nạp document
+#
+# Đổi field là đủ, không cần thêm index mới.
+# ============================================================================
+
+_TIME_FIELD = "created_at"
+
+# `find()` trong explain_failures phải nạp document thật (cần frames chi tiết),
+# nên bỏ hẳn ảnh base64 của từng ký tự — thứ chiếm gần hết 62,8 KB kia mà phần
+# phân tích không dùng tới.
+_FAIL_PROJECTION = {"camera_results.frames.char_verification.results.mask_diff_b64": 0}
+
+
+# ============================================================================
 # Quy đổi múi giờ
 #
 # MongoDB lưu timestamp là naive-UTC (kiểm chứng: bản ghi mới nhất lệch 0 phút
@@ -98,7 +126,7 @@ def _matching_recipes(value: str, start_dt: datetime, end_dt: datetime) -> List[
     vốn không có dữ liệu trong kỳ đó.
     """
     db = get_sync_database()
-    match: Dict[str, Any] = {"timestamp": {"$gte": start_dt, "$lte": end_dt}}
+    match: Dict[str, Any] = {_TIME_FIELD: {"$gte": start_dt, "$lte": end_dt}}
     match.update(_id_or_name(value, "recipe_id", "recipe_name"))
 
     rows = db["inference_results"].aggregate([
@@ -106,7 +134,7 @@ def _matching_recipes(value: str, start_dt: datetime, end_dt: datetime) -> List[
         {"$group": {
             "_id": {"id": "$recipe_id", "name": "$recipe_name"},
             "total": {"$sum": 1},
-            "last": {"$max": "$timestamp"},
+            "last": {"$max": "$created_at"},
         }},
         {"$sort": {"total": -1}},
     ])
@@ -203,7 +231,7 @@ def get_pass_fail_stats(
 
         # Build query
         query = {
-            "timestamp": {
+            _TIME_FIELD: {
                 "$gte": start_dt,
                 "$lte": end_dt
             }
@@ -263,7 +291,7 @@ def get_pass_fail_stats(
             {
                 "$group": {
                     "_id": {
-                        "time": {"$dateToString": {"format": group_format, "date": "$timestamp",
+                        "time": {"$dateToString": {"format": group_format, "date": "$created_at",
                                                    "timezone": settings.TIMEZONE}},
                         "result": "$product_pass_fail"
                     },
@@ -353,7 +381,7 @@ def get_production_summary(
             end_dt = _local_bound(date, end=True)
 
         query = {
-            "timestamp": {
+            _TIME_FIELD: {
                 "$gte": start_dt,
                 "$lte": end_dt
             }
@@ -373,7 +401,7 @@ def get_production_summary(
             group_field = "$recipe_name"
             group_key = "recipe"
         elif group_by == "hour":
-            group_field = {"$hour": {"date": "$timestamp", "timezone": settings.TIMEZONE}}
+            group_field = {"$hour": {"date": "$created_at", "timezone": settings.TIMEZONE}}
             group_key = "hour"
         elif group_by == "camera":
             # Verdict phải lấy TỪNG CAMERA (`camera_results.pass_fail`), không
@@ -651,7 +679,7 @@ def explain_failures(
         end_dt = _local_bound(end_date, end=True)
 
         query: Dict[str, Any] = {
-            "timestamp": {"$gte": start_dt, "$lte": end_dt},
+            _TIME_FIELD: {"$gte": start_dt, "$lte": end_dt},
             "product_pass_fail": "FAIL",
         }
 
@@ -665,17 +693,21 @@ def explain_failures(
                 query.update(_id_or_name(recipe_id, "recipe_id", "recipe_name"))
 
         total_fail = db["inference_results"].count_documents(query)
-        docs = db["inference_results"].find(query).sort("timestamp", -1).limit(sample_limit)
+        docs = db["inference_results"].find(query, _FAIL_PROJECTION).sort(_TIME_FIELD, -1).limit(sample_limit)
 
-        causes = {
-            "text_verification": 0,
-            "char_verification": 0,
-            "template_verification": 0,
-            "product_verification": 0,
-            "unknown": 0,
-        }
+        _CAUSE_KEYS = (
+            "text_verification",
+            "char_verification",
+            "template_verification",
+            "product_verification",
+            "no_detection",
+            "unknown",
+        )
+        causes = {k: 0 for k in _CAUSE_KEYS}          # đếm theo FRAME
+        causes_products = {k: set() for k in _CAUSE_KEYS}   # đếm theo SẢN PHẨM
         per_camera: Dict[str, int] = {}
         mismatches: Dict[tuple, int] = {}
+        mismatch_kinds: Dict[str, int] = {}
         sims: List[float] = []
         samples: List[Dict[str, Any]] = []
         examined = 0
