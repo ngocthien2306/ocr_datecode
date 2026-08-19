@@ -35,10 +35,16 @@ trong log", "ai đã thao tác gì" đều thuộc `log_analysis`.
 **Khi nào dùng:**
 - User hỏi về thống kê, số liệu (pass/fail, counts, percentages)
 - User muốn xem trends, xu hướng theo thời gian
-- User hỏi về lịch sử (ai làm gì, khi nào)
+- User hỏi về lịch sử LOAD RECIPE (recipe nào chạy lúc nào, ai load)
 - User so sánh data giữa các khoảng thời gian
 - **User muốn XUẤT BÁO CÁO ra file** (Excel, PDF, CSV, JSON, HTML)
-- Keywords: "thống kê", "bao nhiêu", "pass", "fail", "rate", "trend", "xu hướng", "hôm nay", "tuần", "tháng", "ai", "load", "lịch sử", "history", "xuất báo cáo", "tạo report", "xuất Excel", "báo cáo PDF", "export", "file báo cáo", "tải báo cáo"
+- Keywords: "thống kê", "bao nhiêu sản phẩm", "pass", "fail", "rate", "trend", "xu hướng", "load recipe", "xuất báo cáo", "tạo report", "xuất Excel", "báo cáo PDF", "export", "file báo cáo", "tải báo cáo"
+
+**KHÔNG dùng cho câu hỏi về NGƯỜI DÙNG.** Agent này không có tool nào về đăng
+nhập, đăng xuất, tạo/sửa/xoá user. "Hôm nay bao nhiêu người đăng nhập?" thoạt
+nghe là thống kê nên rất dễ route sai vào đây — nhưng route vào đây thì nó không
+gọi được tool nào và sẽ trả lời "không có dữ liệu", một câu SAI vì dữ liệu vẫn
+nằm trong audit log. Mọi câu về người dùng → `log_analysis`.
 
 **Examples:**
 - "Hôm nay có bao nhiêu sản phẩm fail?"
@@ -56,8 +62,11 @@ trong log", "ai đã thao tác gì" đều thuộc `log_analysis`.
 - User muốn xem log, đọc log, tìm một chuỗi trong log
 - User hỏi về audit: AI đã đăng nhập / sửa / xoá / load recipe / đổi camera
 - User muốn biết một sự cố xảy ra lúc mấy giờ, lặp bao nhiêu lần
+- **User hỏi SỐ LƯỢNG hoặc DANH SÁCH người dùng đã đăng nhập / thao tác**
 - Keywords: "log", "lỗi", "error", "warning", "cảnh báo", "traceback", "vì sao",
-  "tại sao lỗi", "sự cố", "ai đã", "ai sửa", "ai đăng nhập", "audit", "lịch sử thao tác"
+  "tại sao lỗi", "sự cố", "ai đã", "ai sửa", "ai đăng nhập", "bao nhiêu người",
+  "bao nhiêu user", "đăng nhập", "đăng xuất", "audit", "lịch sử thao tác",
+  "nhân viên nào", "công nhân nào"
 
 **Examples:**
 - "Hôm nay hệ thống có lỗi gì không?"
@@ -65,12 +74,15 @@ trong log", "ai đã thao tác gì" đều thuộc `log_analysis`.
 - "Tìm trong log xem có timeout không"
 - "Ai đã đổi recipe hôm nay?"
 - "Vì sao lúc 10 giờ máy bị khựng?"
+- "Hôm nay có bao nhiêu người đăng nhập vào hệ thống?"
+- "Hôm nay những nhân viên nào làm việc trên hệ thống?"
 
 **Phân biệt với historical_analytics:**
 `historical_analytics` trả lời bằng SỐ LIỆU SẢN XUẤT trong MongoDB (bao nhiêu
 sản phẩm pass/fail, recipe nào, camera nào). `log_analysis` trả lời bằng LOG
 HỆ THỐNG (máy báo lỗi gì, module nào, lúc mấy giờ).
 - "Hôm nay bao nhiêu sản phẩm fail?" → historical_analytics
+- "Hôm nay bao nhiêu NGƯỜI đăng nhập?"  → log_analysis (đếm người, không phải sản phẩm)
 - "Hôm nay hệ thống báo lỗi gì?"     → log_analysis
 - "Vì sao sản phẩm bị fail?"          → historical_analytics (lý do nằm ở kết quả inference)
 - "Vì sao service bị treo?"           → log_analysis (lý do nằm ở log)
