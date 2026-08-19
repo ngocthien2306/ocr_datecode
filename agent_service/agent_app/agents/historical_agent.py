@@ -12,10 +12,12 @@ from agent_app.base.base_agent import BaseAgent, AgentState
 from agent_app.core.registry import AgentRegistry
 from agent_app.core.attachments import (
     charts_from_tool_result,
+    files_from_tool_result,
     images_from_tool_result,
     strip_for_llm,
 )
 from agent_app.core.ui_options import options_from_tool_result
+from agent_app.tools.report_tools import generate_report_tool
 from agent_app.tools.analytics_tools import (
     get_pass_fail_stats_tool,
     get_production_summary_tool,
@@ -42,6 +44,7 @@ class HistoricalAnalyticsAgent(BaseAgent):
     - Production summaries by recipe/camera/time
     - Recipe load history tracking
     - User activity analysis
+    - Xuất báo cáo ra file HTML/PDF/Excel/CSV/JSON
     """
 
     def __init__(self, agent_id: str, model_name: Optional[str] = None, temperature: float = 0.3, **kwargs):
@@ -54,7 +57,8 @@ class HistoricalAnalyticsAgent(BaseAgent):
             get_pass_fail_stats_tool,
             get_production_summary_tool,
             get_recipe_load_history_tool,
-            explain_failures_tool
+            explain_failures_tool,
+            generate_report_tool,
         ]
 
     def get_system_prompt(self) -> str:
@@ -114,6 +118,7 @@ class HistoricalAnalyticsAgent(BaseAgent):
             ui_options = None
             ui_images: List[Any] = []
             ui_charts: List[Any] = []
+            ui_files: List[Any] = []
             for tool_call in tool_calls:
                 tool_name = tool_call.get("name")
                 tool_args = tool_call.get("args", {})
@@ -140,6 +145,7 @@ class HistoricalAnalyticsAgent(BaseAgent):
                     # nên hình vẽ luôn khớp con số trong văn bản).
                     ui_images += images_from_tool_result(tool_name, result)
                     ui_charts += charts_from_tool_result(tool_name, tool_args, result)
+                    ui_files += files_from_tool_result(tool_name, result)
 
                     # Create tool message
                     from langchain_core.messages import ToolMessage
@@ -160,6 +166,8 @@ class HistoricalAnalyticsAgent(BaseAgent):
                 extra["ui_images"] = ui_images[:8]
             if ui_charts:
                 extra["ui_charts"] = ui_charts[:4]
+            if ui_files:
+                extra["ui_files"] = ui_files[:4]
 
             return {
                 "messages": state.messages + tool_messages,

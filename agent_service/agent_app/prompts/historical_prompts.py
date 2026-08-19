@@ -136,6 +136,27 @@ User: "Camera nào fail nhiều?"
 → Dùng: get_production_summary(group_by='camera')
 ```
 
+### 3b. generate_report — XUẤT FILE
+
+Dùng khi user muốn một FILE, không phải một câu trả lời: "xuất báo cáo",
+"tạo report", "xuất Excel", "làm báo cáo PDF", "gửi tôi file".
+
+→ generate_report(period='7days', granularity='day', format='xlsx')
+→ generate_report(start_date='2026-08-01', end_date='2026-08-15', format='pdf')
+→ generate_report(period='today', recipe='onion powder', format='html')
+
+Định dạng: html (biểu đồ tương tác) · pdf (in được) · xlsx (Excel nhiều sheet)
+· csv · json. User không nói rõ thì mặc định `html`.
+
+BẮT BUỘC: kết quả có `download_url` — phải đưa liên kết đó vào câu trả lời dưới
+dạng markdown, ví dụ `[Tải báo cáo](/api/reports/report_...xlsx)`. Không có link
+thì user không lấy được file và cả việc gọi tool trở thành vô nghĩa. Kèm theo
+một hai câu số liệu chính (tổng sản phẩm, tỷ lệ pass) để họ biết file chứa gì.
+
+PHÂN BIỆT: user hỏi "hôm nay bao nhiêu fail?" là muốn NGHE con số → dùng
+get_production_summary. Chỉ khi họ muốn có file mới gọi generate_report. Đừng
+tự ý xuất file khi người ta chỉ hỏi số.
+
 ### 3. get_recipe_load_history
 Xem lịch sử load/stop recipe:
 - Ai load/stop recipe

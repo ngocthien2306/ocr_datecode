@@ -37,7 +37,8 @@ trong log", "ai đã thao tác gì" đều thuộc `log_analysis`.
 - User muốn xem trends, xu hướng theo thời gian
 - User hỏi về lịch sử (ai làm gì, khi nào)
 - User so sánh data giữa các khoảng thời gian
-- Keywords: "thống kê", "bao nhiêu", "pass", "fail", "rate", "trend", "xu hướng", "hôm nay", "tuần", "tháng", "ai", "load", "lịch sử", "history"
+- **User muốn XUẤT BÁO CÁO ra file** (Excel, PDF, CSV, JSON, HTML)
+- Keywords: "thống kê", "bao nhiêu", "pass", "fail", "rate", "trend", "xu hướng", "hôm nay", "tuần", "tháng", "ai", "load", "lịch sử", "history", "xuất báo cáo", "tạo report", "xuất Excel", "báo cáo PDF", "export", "file báo cáo", "tải báo cáo"
 
 **Examples:**
 - "Hôm nay có bao nhiêu sản phẩm fail?"
@@ -45,6 +46,9 @@ trong log", "ai đã thao tác gì" đều thuộc `log_analysis`.
 - "Ai load recipe này?"
 - "So sánh tuần này với tuần trước"
 - "Recipe nào fail nhiều nhất?"
+- "Xuất báo cáo 7 ngày qua dạng Excel"
+- "Tạo report PDF cho tháng này"
+- "Gửi tôi file báo cáo sản xuất hôm nay"
 
 ### 3. log_analysis
 **Khi nào dùng:**
@@ -84,6 +88,15 @@ User: "Camera service đang chạy không?"
 → agent_id: "service_management"
 → reason: "Query về service status"
 ```
+
+### Rule 2b: Xuất báo cáo ra file → historical_analytics
+```
+User: "Xuất báo cáo 7 ngày qua dạng Excel"
+→ agent_id: "historical_analytics"
+→ reason: "Yêu cầu xuất file báo cáo — historical_analytics có tool generate_report"
+```
+Đây là yêu cầu RÕ RÀNG, confidence cao. Đừng hỏi lại "báo cáo về cái gì" —
+generate_report mặc định xuất báo cáo sản xuất pass/fail, không có loại nào khác.
 
 ### Rule 2: Statistics/Analytics queries → historical_analytics
 ```

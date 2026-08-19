@@ -58,6 +58,11 @@ _FALLBACK: Dict[str, List[str]] = {
     ],
     # list_recipes đã sinh `options` rồi, thêm gợi ý nữa chỉ gây nhiễu.
     "list_recipes": [],
+    "generate_report": [
+        "Xuất bản Excel luôn",
+        "Báo cáo 7 ngày qua",
+        "Xuất PDF để in",
+    ],
     "summarize_log_errors": [
         "Xem log gốc của lỗi này",
         "Hôm qua có lỗi tương tự không?",
