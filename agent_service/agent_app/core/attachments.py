@@ -14,6 +14,7 @@ một bộ render. So sánh hai kỳ thì LLM gọi tool hai lần, thành hai c
 nhau, không cần kiểu chart riêng.
 """
 
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 _MAX_BARS = 12
@@ -158,10 +159,24 @@ def cards_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]:
         # đầu tiên để biết "ai đây", còn `role` chỉ là quyền trong hệ thống.
         role_line = " · ".join(x for x in (p.get("job_title"), p.get("department")) if x)
 
+        # Khoảng hoạt động kèm THỜI LƯỢNG. Hai mốc giờ trơ trọi buộc người đọc tự
+        # trừ nhẩm, mà thời lượng mới là thứ so được với độ dài ca ghi ngay trên
+        # thẻ — 7h50m trên ca 8h là bình thường, 0h06m thì là mới vào ca.
         window = None
         if p.get("first_seen") and p.get("last_seen"):
             a, b = p["first_seen"][11:19], p["last_seen"][11:19]
-            window = a if a == b else f"{a} → {b}"
+            if a == b:
+                window = a
+            else:
+                window = f"{a} → {b}"
+                try:
+                    lo = datetime.fromisoformat(p["first_seen"])
+                    hi = datetime.fromisoformat(p["last_seen"])
+                    mins = int((hi - lo).total_seconds() // 60)
+                    if mins > 0:
+                        window += f"  ({mins // 60}h{mins % 60:02d}m)"
+                except (ValueError, TypeError):
+                    pass
 
         cards.append({
             "title": p.get("full_name") or p.get("username"),

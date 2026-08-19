@@ -212,3 +212,5 @@ tests/fragment_removal_demo
 shape_based_matching/
 crop_samples
 outputs/
+# Danh sách tài khoản test — chứa mật khẩu dạng rõ, không được commit
+TEST_ACCOUNTS.txt
