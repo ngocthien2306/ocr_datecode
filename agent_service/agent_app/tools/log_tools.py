@@ -698,6 +698,43 @@ def get_audit_logs(
         actions = Counter(e["action_type"] for e in entries)
         users = Counter(e["username"] for e in entries)
 
+        # Hồ sơ người thao tác, nối từ collection `users`.
+        #
+        # Audit log chỉ lưu `username` — một chuỗi. Muốn hiện thẻ có tên đầy đủ,
+        # chức vụ và ảnh thì phải tra sang `users`; tra ở đây (một truy vấn cho
+        # cả danh sách) chứ không để LLM tự đoán, vì nó sẽ bịa ra chức vụ.
+        people: List[Dict[str, Any]] = []
+        if entries:
+            names = list(users)
+            profiles = {
+                u["username"]: u
+                for u in db["users"].find(
+                    {"username": {"$in": names}},
+                    {"username": 1, "full_name": 1, "role": 1, "avatar_url": 1,
+                     "email": 1, "phone_number": 1, "is_active": 1},
+                )
+            }
+            for name, count in users.most_common():
+                mine = [e for e in entries if e["username"] == name]
+                prof = profiles.get(name) or {}
+                people.append({
+                    "username": name,
+                    # Tài khoản đã bị xoá vẫn còn dấu vết trong audit log — đó
+                    # chính là điểm của audit log — nên phải chịu được việc
+                    # không tra ra hồ sơ, thay vì bỏ người đó khỏi thẻ.
+                    "full_name": prof.get("full_name") or f"(tài khoản đã xoá: {name})",
+                    "role": prof.get("role") or "unknown",
+                    "avatar_url": prof.get("avatar_url"),
+                    "email": prof.get("email"),
+                    "phone_number": prof.get("phone_number"),
+                    "is_active": prof.get("is_active"),
+                    "account_exists": bool(prof),
+                    "action_count": count,
+                    "actions": dict(Counter(e["action_type"] for e in mine).most_common()),
+                    "first_seen": mine[-1]["time"],
+                    "last_seen": mine[0]["time"],
+                })
+
         return {
             "success": True,
             "filters": {
@@ -710,6 +747,7 @@ def get_audit_logs(
             "returned": len(entries),
             "by_action": dict(actions.most_common()),
             "by_user": dict(users.most_common()),
+            "people": people,
             "entries": entries,
             "note": (
                 f"Khớp {total} bản ghi, trả về {len(entries)} bản mới nhất."

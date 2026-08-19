@@ -10,7 +10,7 @@ from agent_app.core.llm import make_llm
 
 from agent_app.base.base_agent import BaseAgent, AgentState
 from agent_app.core.registry import AgentRegistry
-from agent_app.core.attachments import strip_for_llm
+from agent_app.core.attachments import cards_from_tool_result, strip_for_llm
 from agent_app.tools.log_tools import (
     list_log_sources_tool,
     read_log_tail_tool,
@@ -92,6 +92,7 @@ class LogAnalysisAgent(BaseAgent):
 
             from langchain_core.messages import ToolMessage
             tool_messages = []
+            ui_cards: List[Any] = []
             for tool_call in tool_calls:
                 tool_name = tool_call.get("name")
                 tool_args = tool_call.get("args", {})
@@ -108,6 +109,7 @@ class LogAnalysisAgent(BaseAgent):
                     # Log kết quả log-tool thì rất dài (hàng trăm dòng); chỉ ghi
                     # phần đầu để chính file log của agent không phình ra.
                     logger.info(f"Tool {tool_name} result: {str(result)[:600]}")
+                    ui_cards += cards_from_tool_result(tool_name, result)
                     tool_messages.append(
                         ToolMessage(
                             content=str(strip_for_llm(result)),
@@ -118,7 +120,10 @@ class LogAnalysisAgent(BaseAgent):
                 else:
                     logger.error(f"Tool {tool_name} not found")
 
-            return {"messages": state.messages + tool_messages, "context": state.context}
+            context = state.context
+            if ui_cards:
+                context = {**context, "ui_cards": ui_cards[:12]}
+            return {"messages": state.messages + tool_messages, "context": context}
 
         def should_continue(state: AgentState):
             last_message = state.messages[-1]

@@ -61,6 +61,8 @@ class ChatResponse(BaseModel):
     # File tải về do tool sinh ra (báo cáo). Tách khỏi `images` vì đây là thứ
     # user bấm để tải, không phải ảnh hiển thị trong luồng chat.
     files: Optional[List[Dict[str, Any]]] = None
+    # Thẻ thông tin (hiện tại: người thao tác trong audit log).
+    cards: Optional[List[Dict[str, Any]]] = None
     timestamp: str
 
 
@@ -233,6 +235,7 @@ async def chat(
         images = (result_context or {}).get("ui_images")
         charts = (result_context or {}).get("ui_charts")
         files = (result_context or {}).get("ui_files")
+        cards = (result_context or {}).get("ui_cards")
 
         # Gỡ khối [SUGGESTIONS] khỏi text hiển thị, tách thành chip riêng.
         # Ba nguồn theo thứ tự ưu tiên: LLM tự sinh → agent đặt sẵn trong
@@ -282,6 +285,7 @@ async def chat(
             images=images,
             charts=charts,
             files=files,
+            cards=cards,
             timestamp=datetime.now().isoformat()
         )
 

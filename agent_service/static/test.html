@@ -160,6 +160,28 @@
   pre.raw{background:#f3f4f6;padding:10px;border-radius:8px;overflow-x:auto;
           font-size:11px;max-height:260px;margin-top:8px;line-height:1.5}
   .hint{font-size:11.5px;color:var(--muted-2);margin-top:6px;line-height:1.5}
+
+  /* ── Thẻ người thao tác ── */
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:10px;margin:8px 0 2px}
+  .card-p{border:1px solid #2b3444;border-radius:10px;background:#161d29;overflow:hidden}
+  .card-p.off{opacity:.55}
+  .card-hd{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#1b2430}
+  .card-av{width:52px;height:52px;border-radius:50%;object-fit:cover;flex-shrink:0;
+           border:2px solid #38bdf8;background:#0f172a}
+  .card-av.ph{display:flex;align-items:center;justify-content:center;font-size:20px;
+              font-weight:700;color:#64748b;border-color:#334155}
+  .card-id{flex:1;min-width:0}
+  .card-t{font-size:13px;font-weight:600;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card-s{font-size:11px;color:#64748b;margin:1px 0 4px}
+  .card-b{display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;
+          letter-spacing:.04em;padding:2px 7px;border-radius:99px;background:#0e7490;color:#e0f2fe}
+  .card-n{text-align:right;flex-shrink:0}
+  .card-n b{display:block;font-size:19px;color:#38bdf8;line-height:1}
+  .card-n small{font-size:10px;color:#64748b}
+  .card-bd{padding:8px 12px 10px;display:flex;flex-direction:column;gap:4px}
+  .card-row{display:flex;justify-content:space-between;gap:10px;font-size:11px;line-height:1.45}
+  .card-row span{color:#64748b;flex-shrink:0}
+  .card-row b{color:#cbd5e1;font-weight:500;text-align:right;word-break:break-word}
 </style>
 </head>
 <body>
@@ -394,6 +416,35 @@ function scroll(){ $('log').scrollTop = $('log').scrollHeight; }
 
 // Biểu đồ cột ngang. Số liệu do backend suy tất định từ kết quả tool nên luôn
 // khớp con số trong câu trả lời — ở đây chỉ vẽ, không tính toán lại.
+function drawCards(cards){
+  // Thẻ người thao tác. Ảnh trỏ vào /api/uploads/avatar/... do agent service
+  // mount thẳng backend/uploads, nên không phụ thuộc backend :8000 còn sống.
+  const wrap = document.createElement('div'); wrap.className = 'cards';
+  cards.forEach(c=>{
+    const el = document.createElement('div');
+    el.className = 'card-p' + (c.inactive ? ' off' : '');
+    const av = c.avatar
+      ? `<img class="card-av" src="${esc(c.avatar)}" alt="" loading="lazy"
+              onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'card-av ph',textContent:'?'}))">`
+      : `<div class="card-av ph">${esc((c.title||'?').slice(0,1).toUpperCase())}</div>`;
+    const rows = (c.rows||[]).map(r=>
+      `<div class="card-row"><span>${esc(r[0])}</span><b>${esc(String(r[1]))}</b></div>`).join('');
+    el.innerHTML = `
+      <div class="card-hd">
+        ${av}
+        <div class="card-id">
+          <div class="card-t">${esc(c.title||'')}</div>
+          <div class="card-s">${esc(c.subtitle||'')}</div>
+          <span class="card-b">${esc(c.badge||'')}</span>
+        </div>
+        ${c.stat!=null?`<div class="card-n"><b>${esc(String(c.stat))}</b><small>${esc(c.stat_label||'')}</small></div>`:''}
+      </div>
+      ${rows?`<div class="card-bd">${rows}</div>`:''}`;
+    wrap.appendChild(el);
+  });
+  $('log').appendChild(wrap);
+}
+
 function drawFiles(files){
   // File báo cáo do generate_report sinh ra. Mở tab mới thay vì <a download>:
   // trang này có thể đang xem qua tunnel, và với HTML/PDF thì xem trực tiếp
@@ -521,6 +572,7 @@ async function send(text){
 
     if(j.charts?.length) j.charts.forEach(drawChart);
     if(j.images?.length) drawImages(j.images);
+    if(j.cards?.length) drawCards(j.cards);
     if(j.files?.length) drawFiles(j.files);
 
     if(j.tool_calls?.length){

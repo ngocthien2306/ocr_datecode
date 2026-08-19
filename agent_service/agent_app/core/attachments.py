@@ -118,6 +118,60 @@ def files_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]:
     }]
 
 
+_AVATAR_PREFIX = "/api/uploads/avatar/"
+
+
+def _avatar_url(raw: Optional[str]) -> Optional[str]:
+    """
+    URL avatar dùng được từ agent service.
+
+    Backend lưu `avatar_url` dạng `/api/upload/avatars/{file}` — đường dẫn của
+    endpoint riêng bên :8000. Agent service không có route đó, nhưng nó đã mount
+    `backend/uploads` ở `/api/uploads`, và file avatar nằm ở
+    `backend/uploads/avatar/{file}`. Nên chỉ cần đổi sang đường dẫn tĩnh đó là
+    ảnh hiện được mà không phải proxy qua backend — quan trọng vì backend có thể
+    đang restart trong khi user vẫn xem thẻ.
+    """
+    if not raw:
+        return None
+    name = str(raw).rstrip("/").rsplit("/", 1)[-1]
+    if not name:
+        return None
+    return _AVATAR_PREFIX + name
+
+
+def cards_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]:
+    """
+    Thẻ thông tin người thao tác, suy từ `get_audit_logs`.
+
+    Dựng ở đây thay vì để LLM kể bằng văn xuôi: chức vụ và ảnh là dữ liệu tra
+    được, còn LLM thì có xu hướng bịa chức vụ cho một username nó chưa từng thấy.
+    """
+    if tool_name != "get_audit_logs" or not isinstance(result, dict):
+        return []
+
+    cards = []
+    for p in (result.get("people") or [])[:12]:
+        acts = p.get("actions") or {}
+        cards.append({
+            "title": p.get("full_name") or p.get("username"),
+            "subtitle": f"@{p.get('username')}",
+            "badge": p.get("role") or "unknown",
+            "avatar": _avatar_url(p.get("avatar_url")),
+            "inactive": p.get("account_exists") is False or p.get("is_active") is False,
+            "stat": p.get("action_count"),
+            "stat_label": "thao tác",
+            "rows": [r for r in (
+                (f"Hoạt động", f"{p['first_seen'][11:19]} → {p['last_seen'][11:19]}"
+                 if p.get("first_seen") and p.get("last_seen") else None),
+                ("Thao tác", ", ".join(f"{k} ×{v}" for k, v in acts.items()) or None),
+                ("Email", p.get("email")),
+                ("Điện thoại", p.get("phone_number")),
+            ) if r[1]],
+        })
+    return cards
+
+
 def strip_for_llm(result: Any) -> Any:
     """
     Bản rút gọn của kết quả tool để đưa vào ToolMessage.
@@ -130,7 +184,7 @@ def strip_for_llm(result: Any) -> Any:
     """
     if not isinstance(result, dict):
         return result
-    if "samples" not in result and "download_url" not in result:
+    if not any(k in result for k in ("samples", "download_url", "people")):
         return result
 
     out = dict(result)
@@ -150,6 +204,17 @@ def strip_for_llm(result: Any) -> Any:
         # `format` và `size_kb` vẫn ở lại nên nó biết file đã tạo xong.
         for k in ("download_url", "filename"):
             out.pop(k, None)
+
+    # `people` đã được biến thành thẻ hiển thị; để nguyên trong ToolMessage thì
+    # LLM lại kể lại đúng những gì thẻ đang hiện, và mỗi người kèm cả URL ảnh.
+    # Giữ lại phần tối thiểu để nó vẫn nói đúng số người và chức vụ.
+    if "people" in result:
+        out["people"] = [
+            {"username": p.get("username"), "full_name": p.get("full_name"),
+             "role": p.get("role"), "action_count": p.get("action_count")}
+            for p in (result.get("people") or [])
+        ]
+        out["_cards"] = "<thẻ thông tin người thao tác đã được hệ thống đính kèm tự động>"
     return out
 
 
