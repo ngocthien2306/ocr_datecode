@@ -198,6 +198,7 @@
           <option value="orchestrator">orchestrator (tự định tuyến)</option>
           <option value="historical_analytics">historical_analytics</option>
           <option value="service_management">service_management</option>
+          <option value="log_analysis">log_analysis</option>
         </select>
         <label>Session ID</label>
         <input id="sid">
@@ -247,6 +248,11 @@ const PRESETS = [
   ['Ai load recipe gần đây nhất?',       'lịch sử recipe'],
   ['Từ 16h đến 18h camera nào fail nhiều nhất?', 'lọc theo KHUNG GIỜ'],
   ['Tại sao sản phẩm bị fail hôm nay?',  'explain_failures — nguyên nhân'],
+  ['Hôm nay hệ thống có lỗi gì không?',  'log_analysis — gom nhóm ERROR/WARNING'],
+  ['Lúc 5 giờ sáng có chuyện gì?',       'log_analysis — lọc theo khung giờ'],
+  ['Tìm trong log xem có cảnh báo GPU không?', 'log_analysis — search_logs'],
+  ['Ai đã thao tác gì trên hệ thống hôm nay?', 'log_analysis — audit log MongoDB'],
+  ['Log chiếm bao nhiêu dung lượng?',    'log_analysis — file ngoài chính sách dọn'],
 ];
 
 // Public URL dùng khi mở trang bằng file:// (lúc đó location.origin là "null").
