@@ -289,7 +289,17 @@
           <option value="historical_analytics">historical_analytics</option>
           <option value="service_management">service_management</option>
           <option value="log_analysis">log_analysis</option>
+          <option value="equipment_health">equipment_health</option>
         </select>
+        <label>Ngôn ngữ trả lời</label>
+        <select id="lang">
+          <option value="vi">Tiếng Việt</option>
+          <option value="en">English</option>
+          <option value="auto">Auto — theo ngôn ngữ câu hỏi</option>
+        </select>
+        <p class="hint">"Auto" trả lời đúng thứ tiếng bạn vừa gõ. Chọn cứng một
+        ngôn ngữ thì hỏi tiếng nào cũng trả lời bằng ngôn ngữ đó — nhãn ô KPI,
+        cột bảng và chip gợi ý cũng đổi theo.</p>
         <label>Session ID</label>
         <input id="sid">
         <div class="row">
@@ -701,7 +711,8 @@ async function send(text){
     const r = await fetch(agUrl()+'/api/agent/chat', {
       method:'POST',
       headers:{'Content-Type':'application/json', Authorization:'Bearer '+TOKEN},
-      body:JSON.stringify({message:msg, agent_id:$('agent').value, session_id:$('sid').value})
+      body:JSON.stringify({message:msg, agent_id:$('agent').value,
+                           session_id:$('sid').value, language:$('lang').value})
     });
     const j = await r.json();
     wait.remove();
@@ -763,6 +774,18 @@ PRESETS.forEach(([q,why])=>{
 newSession();
 health();
 note('Bấm "Đăng nhập" để bắt đầu. Câu hỏi mẫu ở dưới — di chuột vào để xem nó test cái gì.');
+
+  // Ngôn ngữ là lựa chọn dai dẳng, không phải theo từng câu: đổi rồi tải lại
+  // trang mà quay về tiếng Việt thì lần test sau lại phải chọn lại.
+  (function(){
+    var sel = $('lang');
+    if (!sel) return;
+    var saved = localStorage.getItem('agentLang');
+    if (saved) sel.value = saved;
+    sel.addEventListener('change', function(){
+      localStorage.setItem('agentLang', sel.value);
+    });
+  })();
 </script>
 </body>
 </html>
