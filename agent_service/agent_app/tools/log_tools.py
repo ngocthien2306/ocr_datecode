@@ -480,6 +480,27 @@ def search_logs(
                 f"Đã dừng ở {cap} dòng khớp đầu tiên — còn dòng khớp khác chưa liệt kê. "
                 "Hãy thu hẹp `pattern`, `categories` hoặc `days` để thấy hết."
                 if truncated else
+                # 0 dòng khớp KHÔNG phải một kết luận, và đây là chỗ mô hình đã
+                # biến nó thành kết luận: được hỏi "show 5 sản phẩm lỗi", nó gọi
+                # search_logs, không thấy dòng nào, rồi trả lời "không có sự cố
+                # nào được ghi lại" — trong khi 5 sản phẩm fail đó nằm trong
+                # MongoDB, không nằm trong file log. Câu trả lời nghe hợp lý và
+                # sai hoàn toàn.
+                #
+                # Nên khi rỗng, note phải chặn đúng suy luận đó và chỉ sang tool
+                # đúng. Rào bằng dữ liệu hiệu quả hơn dặn trong prompt: prompt
+                # nằm cách chỗ này 18.000 ký tự, còn note thì nằm ngay cạnh kết
+                # quả rỗng mà mô hình đang đọc.
+                "KHÔNG có dòng log nào khớp trong phạm vi đã quét. Đây là kết quả "
+                "tìm trong FILE LOG, và nó KHÔNG cho biết gì về việc sản phẩm có "
+                "fail hay không — bản ghi kiểm tra sản phẩm nằm trong database, "
+                "không nằm trong file log. TUYỆT ĐỐI không kết luận 'không có "
+                "lỗi', 'không có sự cố', 'hệ thống bình thường'. Nếu user đang hỏi "
+                "về SẢN PHẨM fail (xem ảnh, xem nguyên nhân, 'show N sản phẩm "
+                "lỗi'), đây là tool SAI — phải dùng `explain_failures` của agent "
+                "historical_analytics. Hãy nói thẳng là bạn tra sai chỗ và đề nghị "
+                "tra lại đúng chỗ."
+                if not matches else
                 "Đã quét hết các file trong phạm vi yêu cầu."
             ),
         }

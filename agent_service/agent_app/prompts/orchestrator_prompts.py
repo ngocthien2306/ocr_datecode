@@ -351,6 +351,34 @@ Khi routing, học từ feedback:
 
 Hãy luôn cải thiện accuracy!
 
+## ⚠️ "LỖI" CỦA SẢN PHẨM ≠ "LỖI" CỦA HỆ THỐNG
+
+Đây là chỗ định tuyến sai nhiều nhất, vì tiếng Việt dùng CHUNG một chữ "lỗi" cho
+hai thứ hoàn toàn khác nhau, nằm ở hai nơi lưu trữ khác nhau:
+
+| User nói | Nghĩa thật | Nằm ở đâu | Agent |
+|---|---|---|---|
+| "sản phẩm lỗi", "hàng lỗi", "5 sản phẩm lỗi đó" | sản phẩm FAIL khi kiểm tra | database | `historical_analytics` |
+| "xem ảnh sản phẩm lỗi", "show mấy cái fail đó" | frame fail kèm ảnh | database | `historical_analytics` |
+| "vì sao fail", "nguyên nhân lỗi", "lỗi OCR" | phân loại nguyên nhân fail | database | `historical_analytics` |
+| "log báo lỗi gì", "có lỗi gì trong log" | dòng ERROR trong file log | file log | `log_analysis` |
+| "vì sao service restart", "traceback" | sự cố phần mềm | file log | `log_analysis` |
+
+**Quy tắc:** chữ "lỗi" hay "fail" đứng cạnh chữ **sản phẩm / hàng / con / cái /
+chai / thùng** thì đó là SẢN PHẨM FAIL → `historical_analytics`, dùng
+`explain_failures`. Chỉ khi user nói rõ **log / traceback / service / module** thì
+mới là `log_analysis`.
+
+**Sai đã xảy ra thật, đừng lặp lại:** user hỏi "Từ 16h đến 18h camera nào fail
+nhiều nhất?" (đúng, vào historical) rồi hỏi tiếp "Show 5 sản phẩm lỗi đó từ 16h
+đến 18h". Câu sau bị route sang `log_analysis`, nó gọi `search_logs`, không thấy
+dòng log nào, và trả lời "không có sự cố nào được ghi lại" — trong khi 5 sản phẩm
+fail đó có thật và có cả ảnh. Câu trả lời nghe rất hợp lý và sai hoàn toàn.
+
+Chữ "đó" ở đây còn là dấu hiệu: user đang nói tiếp về **cùng dữ liệu của câu
+trước**. Câu trước vào agent nào thì câu sau gần như chắc chắn vào agent đó, trừ
+khi user đổi hẳn chủ đề.
+
 ## 🌐 CÂU HỎI TIẾNG ANH
 
 Danh sách keywords có cả bản tiếng Việt và tiếng Anh vì user có thể hỏi bằng
@@ -365,4 +393,6 @@ phải vào cùng một agent. Đặc biệt lưu ý mấy chỗ dễ nhầm:
 | "Is the service running?" | `service_management` | không phải câu về thiết bị |
 | "Any module in error?" | `equipment_health` | "error" không tự động nghĩa là log_analysis |
 | "Shift handover" | `historical_analytics` | cần cả số sản xuất, không chỉ số đo thiết bị |
+| "Show me those 5 failed units" | `historical_analytics` | sản phẩm fail nằm trong database, không nằm trong file log |
+| "What errors are in the log?" | `log_analysis` | đây mới thật là câu về file log |
 """ + GLOSSARY
