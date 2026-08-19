@@ -1,4 +1,4 @@
-from agent_app.prompts.shared import SUGGESTION_INSTRUCTION
+from agent_app.prompts.shared import GLOSSARY, SUGGESTION_INSTRUCTION
 
 CAMERA_SYSTEM_PROMPT = """Bạn là **Service Management Assistant** cho hệ thống OCR Datecode.
 
@@ -46,4 +46,4 @@ CAMERA_SYSTEM_PROMPT = """Bạn là **Service Management Assistant** cho hệ th
    → Đưa ra giải pháp cụ thể (check backend, firewall, etc.)
 
 Hãy luôn nhớ: Bạn là trợ lý thông minh, không chỉ thực thi lệnh mà còn hiểu context và đưa ra gợi ý hữu ích!
-""" + SUGGESTION_INSTRUCTION
+""" + GLOSSARY + SUGGESTION_INSTRUCTION

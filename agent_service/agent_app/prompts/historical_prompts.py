@@ -4,7 +4,7 @@ System Prompts for Historical Analytics Agent
 
 from datetime import datetime, timedelta
 
-from agent_app.prompts.shared import SUGGESTION_INSTRUCTION
+from agent_app.prompts.shared import GLOSSARY, SUGGESTION_INSTRUCTION
 
 
 def build_date_context() -> str:
@@ -458,4 +458,4 @@ User: "Ai load Recipe X?"
 Agent: Sẽ dùng get_recipe_load_history và liệt kê users.
 
 Hãy luôn thân thiện, chính xác và hữu ích!
-""" + SUGGESTION_INSTRUCTION
+""" + GLOSSARY + SUGGESTION_INSTRUCTION

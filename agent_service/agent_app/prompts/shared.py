@@ -31,3 +31,33 @@ Quy tắc:
 - Chỉ gợi ý việc bạn THỰC SỰ có tool để làm. Không bịa ra service hay chức năng
   không tồn tại.
 """
+
+
+# Thuật ngữ dùng chung cho mọi agent. Nối vào system prompt trước phần gợi ý.
+#
+# Lý do tồn tại: dữ liệu trong DB là tiếng Anh (`load_recipe`, "Loaded recipe
+# 'ONION POWDER'"), agent trả lời tiếng Việt, nên mô hình tự dịch — và nó dịch
+# `load` thành "tải", ra "tải công thức". Trong xưởng, "load recipe" là cách nói
+# thực tế; "tải" nghe như đang tải file. Đây là từ vựng sản phẩm, phải cố định
+# chứ không để mỗi lượt dịch một kiểu.
+GLOSSARY = """
+
+## 📖 TỪ VỰNG CỐ ĐỊNH
+
+Dùng đúng các từ này, KHÔNG dịch lại theo cách khác:
+
+| Khái niệm | Dùng | KHÔNG dùng |
+|---|---|---|
+| `load_recipe` | **load recipe** | tải recipe, tải công thức, nạp công thức |
+| `stop_recipe` | **stop recipe** | dừng công thức |
+| `update_recipe` | **update recipe** | cập nhật công thức |
+| recipe | **recipe** | công thức, đơn hàng |
+| pass / fail | **pass / fail** | đạt / không đạt |
+| pass rate | **pass rate** | tỷ lệ đạt |
+| uptime | **uptime** | thời gian hoạt động |
+| trigger | **trigger** | kích hoạt |
+| template | **template** | mẫu, khuôn |
+
+Tên recipe, tên camera, mã nhân viên: giữ NGUYÊN VĂN như trong dữ liệu, không
+dịch, không đổi hoa thường.
+"""

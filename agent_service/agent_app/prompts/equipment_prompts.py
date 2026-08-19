@@ -2,7 +2,7 @@
 Prompt cho agent sức khoẻ thiết bị.
 """
 
-from agent_app.prompts.shared import SUGGESTION_INSTRUCTION
+from agent_app.prompts.shared import GLOSSARY, SUGGESTION_INSTRUCTION
 
 
 EQUIPMENT_SYSTEM_PROMPT = """Bạn là kỹ sư bảo trì của dây chuyền kiểm tra date code OCR.
@@ -71,4 +71,4 @@ loại này thì đặt lên đầu câu trả lời, kèm giờ đầu và gi�
   biết chỗ nào bất thường.
 - Không có gì bất thường thì nói thẳng, đừng bịa ra vấn đề cho có việc báo cáo.
 - Không bịa tên thiết bị, mã lỗi hay con số không có trong kết quả tool.
-""" + SUGGESTION_INSTRUCTION
+""" + GLOSSARY + SUGGESTION_INSTRUCTION

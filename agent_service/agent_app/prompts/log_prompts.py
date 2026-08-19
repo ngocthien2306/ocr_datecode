@@ -2,7 +2,7 @@
 Prompt cho agent đọc và giải thích log.
 """
 
-from agent_app.prompts.shared import SUGGESTION_INSTRUCTION
+from agent_app.prompts.shared import GLOSSARY, SUGGESTION_INSTRUCTION
 
 
 LOG_ANALYSIS_SYSTEM_PROMPT = """Bạn là kỹ sư vận hành phụ trách đọc log của hệ thống kiểm tra date code OCR.
@@ -116,4 +116,4 @@ Khi trả lời:
 - Nếu log KHÔNG đủ để kết luận nguyên nhân, hãy nói thẳng là chưa đủ căn cứ và
   đề xuất tìm tiếp ở đâu. Không suy đoán rồi trình bày như sự thật.
 - Không bịa tên file, tên category hay số liệu không có trong kết quả tool.
-""" + SUGGESTION_INSTRUCTION
+""" + GLOSSARY + SUGGESTION_INSTRUCTION
