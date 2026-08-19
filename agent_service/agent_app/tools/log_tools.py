@@ -783,6 +783,11 @@ def get_audit_logs(
                     "actions": dict(stat["actions"].most_common()),
                     "first_seen": _to_local_str(stat["first"]),
                     "last_seen": _to_local_str(stat["last"]),
+                    # Số giờ có mặt, tính sẵn. Không có nó thì câu "ai làm việc
+                    # nhiều giờ nhất" bị trả lời bằng SỐ THAO TÁC — một người
+                    # bấm 130 lần trong 10 phút xếp trên người trực suốt 8 tiếng.
+                    "active_hours": round(
+                        (stat["last"] - stat["first"]).total_seconds() / 3600, 2),
                 })
 
         return {
@@ -804,7 +809,10 @@ def get_audit_logs(
             "note": (
                 f"Khớp {total} bản ghi, trả về {len(entries)} bản mới nhất trong `entries`. "
                 f"`by_action`, `by_user` và `people` thống kê trên TOÀN BỘ {total} bản ghi "
-                f"nên dùng chúng khi cần con số tổng, đừng tự đếm lại từ `entries`."
+                f"nên dùng chúng khi cần con số tổng, đừng tự đếm lại từ `entries`. "
+                f"Hỏi 'ai làm việc NHIỀU GIỜ nhất' thì xếp theo `active_hours`, KHÔNG "
+                f"phải `action_count` — số thao tác không phải số giờ, người bấm 130 lần "
+                f"trong 10 phút không làm nhiều giờ hơn người trực cả ca."
                 + (" Tăng `limit` hoặc thu hẹp khoảng ngày để xem thêm."
                    if total > len(entries) else "")
             ),

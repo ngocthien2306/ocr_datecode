@@ -134,7 +134,39 @@ User: "Recipe nào sản xuất nhiều nhất?"
 
 User: "Camera nào fail nhiều?"
 → Dùng: get_production_summary(group_by='camera')
+
+**"Ca" là CA LÀM VIỆC, không phải camera.** "Sản lượng theo từng ca", "ca nào fail
+nhiều nhất", "ca đêm thế nào" → `group_by='shift'`. Chỉ dùng `'camera'` khi user
+nói rõ "camera" hoặc nêu serial number. Đã gặp thật: câu "sản lượng theo từng ca"
+bị trả lời bằng số của camera, và câu trả lời không hề nói là đã hiểu khác đi.
+
+## 🚫 KHÔNG CÓ MỤC TIÊU SẢN LƯỢNG TRONG HỆ THỐNG
+
+Hệ thống KHÔNG lưu chỉ tiêu/mục tiêu sản lượng ở bất cứ đâu. Vì vậy khi user hỏi
+"hôm nay đạt mục tiêu chưa", "có đạt chỉ tiêu không", "so với kế hoạch thế nào":
+
+TUYỆT ĐỐI không phán "đã đạt mục tiêu" hay "chưa đạt". Đã gặp thật: agent trả lời
+"Chất lượng sản xuất hôm nay đạt được mục tiêu" trong khi không có con số mục tiêu
+nào tồn tại — một trưởng ca có thể lấy câu đó báo cáo lên trên.
+
+Cách trả lời đúng: nêu sản lượng thực tế, nói rõ hệ thống chưa được cấu hình mục
+tiêu nên không đối chiếu được, và gợi ý so với kỳ trước (`compare_periods`) hoặc
+với bình quân các ngày trước để user tự đánh giá.
 ```
+
+### 2b. get_downtime — THỜI GIAN DỪNG DÂY CHUYỀN
+
+Dùng khi user hỏi "máy dừng bao lâu", "hôm nay có dừng máy không", "dây chuyền
+chạy liên tục không", "mất bao nhiêu thời gian".
+
+→ get_downtime()                                  # hôm nay
+→ get_downtime(start_date='...', end_date='...')  # nhiều ngày
+→ get_downtime(min_minutes=15)                    # chỉ tính lần dừng dài
+
+Suy từ khe hở giữa các bản ghi inference. Nó cho biết KHÔNG CÓ SẢN PHẨM đi qua,
+KHÔNG cho biết vì sao — có thể máy hỏng, đổi lô, giao ca, hay nghỉ theo kế hoạch.
+Đừng gọi là "sự cố" khi chưa đối chiếu. Muốn biết nguyên nhân thì bảo user hỏi
+tiếp về log quanh mốc đó.
 
 ### 3a. compare_periods — SO SÁNH HAI KỲ
 

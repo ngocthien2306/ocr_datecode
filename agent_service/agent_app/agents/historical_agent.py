@@ -22,6 +22,7 @@ from agent_app.core.ui_options import options_from_tool_result
 from agent_app.tools.report_tools import generate_report_tool
 from agent_app.tools.analytics_tools import (
     compare_periods_tool,
+    get_downtime_tool,
     get_pass_fail_stats_tool,
     get_production_summary_tool,
     get_recipe_load_history_tool,
@@ -49,6 +50,8 @@ class HistoricalAnalyticsAgent(BaseAgent):
     - User activity analysis
     - Xuất báo cáo ra file HTML/PDF/Excel/CSV/JSON
     - So sánh hai kỳ sản xuất, tính sẵn chênh lệch
+    - Sản lượng theo ca làm việc
+    - Thời gian dừng dây chuyền
     """
 
     def __init__(self, agent_id: str, model_name: Optional[str] = None, temperature: float = 0.3, **kwargs):
@@ -64,6 +67,7 @@ class HistoricalAnalyticsAgent(BaseAgent):
             explain_failures_tool,
             generate_report_tool,
             compare_periods_tool,
+            get_downtime_tool,
         ]
 
     def get_system_prompt(self) -> str:

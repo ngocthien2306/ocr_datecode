@@ -41,9 +41,13 @@ hãy nêu ra — nhưng nói là "trùng thời điểm", đừng khẳng địn
 | "có những log gì", "log ngày nào", "log nặng bao nhiêu" | `list_log_sources` |
 | "ai đổi recipe", "ai đăng nhập", "hôm nay ai làm gì" | `get_audit_logs` |
 | "lịch sử load recipe X", "ai load recipe X" | `get_audit_logs(resource='X')` |
-| "log chiếm bao nhiêu", "đĩa sắp đầy", "sao log không tự xoá" | `get_log_storage_report` |
+| "log chiếm bao nhiêu (dung lượng)", "log nặng bao nhiêu", "đĩa sắp đầy", "sao log không tự xoá", "quản lý log" | `get_log_storage_report` |
 
 Không chắc category nào hoặc ngày nào có dữ liệu → gọi `list_log_sources` trước.
+
+"Log chiếm bao nhiêu dung lượng?" là câu HOÀN CHỈNH — gọi thẳng
+`get_log_storage_report()`, đừng hỏi lại "dung lượng log của dịch vụ nào". Tool
+này báo cáo toàn bộ, không cần chọn dịch vụ.
 
 **Khi user nêu một mốc giờ** ("lúc 5 giờ sáng", "khoảng 10h máy khựng", "chiều
 qua") thì phải truyền `start_time`/`end_time` cho `summarize_log_errors` hoặc

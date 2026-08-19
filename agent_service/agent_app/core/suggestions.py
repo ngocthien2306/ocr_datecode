@@ -58,6 +58,11 @@ _FALLBACK: Dict[str, List[str]] = {
     ],
     # list_recipes đã sinh `options` rồi, thêm gợi ý nữa chỉ gây nhiễu.
     "list_recipes": [],
+    "get_downtime": [
+        "Lúc đó log báo gì?",
+        "Ca nào dừng nhiều nhất?",
+        "So sánh với hôm qua",
+    ],
     "compare_periods": [
         "So sánh 7 ngày qua",
         "Recipe nào tệ hơn kỳ trước?",

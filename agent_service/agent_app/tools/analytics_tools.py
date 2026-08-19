@@ -102,6 +102,41 @@ def _to_local_str(dt_utc: datetime) -> str:
 # "không có dữ liệu" — sai mà không hề có lỗi.
 # ============================================================================
 
+#: Định nghĩa ca làm việc, dùng để gom số liệu theo ca.
+#:
+#: "Ca" là đơn vị mà xưởng thực sự vận hành theo — trưởng ca chịu trách nhiệm
+#: theo ca, và câu hỏi đầu tiên khi chất lượng tụt là "ca nào". Trước khi có mục
+#: này, câu "sản lượng theo từng ca" bị hiểu thành "theo camera" (chữ "ca" nằm
+#: trong "camera") và trả về số của camera mà không nói là đã hiểu khác đi.
+#:
+#: `inference_results` không có trường ca, nên ca được suy từ GIỜ ĐỊA PHƯƠNG của
+#: `created_at`. Ca C vắt qua nửa đêm nên phải xử lý riêng — xem `_shift_expr`.
+SHIFTS = [
+    {"name": "Ca A", "start": 6,  "end": 14, "label": "Ca A (06:00–14:00)"},
+    {"name": "Ca B", "start": 14, "end": 22, "label": "Ca B (14:00–22:00)"},
+    {"name": "Ca C", "start": 22, "end": 6,  "label": "Ca C (22:00–06:00)"},
+]
+
+
+def _shift_expr() -> Dict[str, Any]:
+    """
+    Biểu thức Mongo gán mỗi bản ghi vào một ca theo giờ địa phương.
+
+    Ca đêm 22:00–06:00 vắt qua nửa đêm nên điều kiện là `giờ >= 22 HOẶC giờ < 6`,
+    không phải một khoảng liên tục. Dùng `$switch` thay vì `$bucket` vì bucket
+    yêu cầu biên tăng dần và không biểu diễn được ca vòng qua nửa đêm.
+    """
+    hour = {"$hour": {"date": f"${_TIME_FIELD}", "timezone": settings.TIMEZONE}}
+    branches = []
+    for sh in SHIFTS:
+        if sh["start"] < sh["end"]:
+            cond = {"$and": [{"$gte": [hour, sh["start"]]}, {"$lt": [hour, sh["end"]]}]}
+        else:
+            cond = {"$or": [{"$gte": [hour, sh["start"]]}, {"$lt": [hour, sh["end"]]}]}
+        branches.append({"case": cond, "then": sh["label"]})
+    return {"$switch": {"branches": branches, "default": "Không rõ ca"}}
+
+
 _OBJECT_ID = re.compile(r"^[0-9a-fA-F]{24}$")
 
 
@@ -175,7 +210,12 @@ class PassFailStatsArgs(BaseModel):
 class ProductionSummaryArgs(BaseModel):
     """Arguments for get_production_summary"""
     date: Optional[str] = Field(None, description="Một ngày cụ thể 'YYYY-MM-DD' (mặc định: hôm nay)")
-    group_by: str = Field("recipe", description="Gom theo 'recipe', 'camera', hoặc 'hour'")
+    group_by: str = Field(
+        "recipe",
+        description="Gom theo 'recipe', 'shift' (ca làm việc), 'camera', hoặc 'hour'. "
+                    "User nói 'ca'/'theo ca'/'ca nào' là CA LÀM VIỆC → 'shift', "
+                    "KHÔNG phải 'camera'.",
+    )
     start_date: Optional[str] = Field(None, description="Mốc đầu, KÈM GIỜ được: '2026-07-22T16:00:00'. Dùng khi user hỏi theo khung giờ.")
     end_date: Optional[str] = Field(None, description="Mốc cuối, kèm giờ được: '2026-07-22T18:00:00'")
     recipe_id: Optional[str] = Field(None, description="Chỉ tính một recipe: tên hoặc ObjectId 24 ký tự")
@@ -403,6 +443,9 @@ def get_production_summary(
         elif group_by == "hour":
             group_field = {"$hour": {"date": "$created_at", "timezone": settings.TIMEZONE}}
             group_key = "hour"
+        elif group_by == "shift":
+            group_field = _shift_expr()
+            group_key = "shift"
         elif group_by == "camera":
             # Verdict phải lấy TỪNG CAMERA (`camera_results.pass_fail`), không
             # phải verdict của cả sản phẩm (`product_pass_fail`). Dùng nhầm
@@ -1307,3 +1350,127 @@ compare_periods_tool = BaseTool.create_tool(
 )
 
 logger.info("✅ Compare tool registered")
+
+
+# ── Thời gian dừng máy ───────────────────────────────────────────────────────
+#
+# "Máy dừng bao lâu hôm nay?" là câu người vận hành hỏi hằng ngày, và trước đây
+# agent chỉ hỏi lại "máy nào?" vì không có tool nào trả lời.
+#
+# Không có collection nào ghi downtime, nhưng suy được: dây chuyền chạy thì cứ
+# vài giây lại sinh một bản ghi inference. Một khe hở dài giữa hai bản ghi liên
+# tiếp CHÍNH LÀ lúc không có sản phẩm nào đi qua. Đo trên dữ liệu thật, cách này
+# bắt đúng sự cố 04:58→05:49 mà phân tích log và audit log cũng chỉ vào.
+#
+# Điều phải nói rõ với người đọc: khe hở cho biết KHÔNG CÓ SẢN PHẨM, chứ không
+# phân biệt được máy hỏng, đổi lô, hay hết ca. Trình bày nó như "downtime do sự
+# cố" là suy diễn quá xa.
+
+class DowntimeArgs(BaseModel):
+    """Arguments for get_downtime"""
+    date: Optional[str] = Field(default=None, description="Ngày YYYY-MM-DD, bỏ trống = hôm nay")
+    start_date: Optional[str] = Field(default=None, description="Mốc đầu nếu xét nhiều ngày")
+    end_date: Optional[str] = Field(default=None, description="Mốc cuối")
+    min_minutes: int = Field(
+        default=5,
+        description="Khe hở từ bao nhiêu phút mới tính là dừng (mặc định 5). "
+                    "Đặt thấp hơn sẽ bắt cả các nhịp nghỉ ngắn bình thường.",
+    )
+
+
+def get_downtime(
+    date: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    min_minutes: int = 5,
+    **_ignored: Any,
+) -> Dict[str, Any]:
+    """Các khoảng dây chuyền không ra sản phẩm, suy từ khe hở giữa các bản ghi."""
+    try:
+        db = get_sync_database()
+        if start_date or end_date:
+            start_dt = _local_bound(start_date, end=False)
+            end_dt = _local_bound(end_date, end=True)
+        else:
+            start_dt = _local_bound(date, end=False)
+            end_dt = _local_bound(date, end=True)
+
+        gap_s = max(1, int(min_minutes)) * 60
+
+        # Chỉ lấy đúng trường thời gian, không nạp document: mỗi document nặng
+        # 62,8 KB vì nhúng ảnh base64 của từng ký tự.
+        cur = db["inference_results"].find(
+            {_TIME_FIELD: {"$gte": start_dt, "$lte": end_dt}},
+            {_TIME_FIELD: 1, "_id": 0},
+        ).sort(_TIME_FIELD, 1)
+
+        stamps = [d[_TIME_FIELD] for d in cur]
+        if len(stamps) < 2:
+            return {
+                "success": False,
+                "error": (f"Chỉ có {len(stamps)} bản ghi trong kỳ này — không đủ để "
+                          f"tính khoảng dừng."),
+            }
+
+        gaps = []
+        for a, b in zip(stamps, stamps[1:]):
+            secs = (b - a).total_seconds()
+            if secs >= gap_s:
+                gaps.append({
+                    "from": _to_local_str(a),
+                    "to": _to_local_str(b),
+                    "minutes": round(secs / 60, 1),
+                })
+
+        window_min = (stamps[-1] - stamps[0]).total_seconds() / 60
+        down_min = sum(g["minutes"] for g in gaps)
+        gaps.sort(key=lambda g: -g["minutes"])
+
+        return {
+            "success": True,
+            "period": {"start": _to_local_str(start_dt), "end": _to_local_str(end_dt)},
+            "min_gap_minutes": min_minutes,
+            "first_product": _to_local_str(stamps[0]),
+            "last_product": _to_local_str(stamps[-1]),
+            "products": len(stamps),
+            "stop_count": len(gaps),
+            "downtime_minutes": round(down_min, 1),
+            # Tỷ lệ tính trên khoảng từ sản phẩm đầu tới sản phẩm cuối, KHÔNG
+            # phải trên 24 giờ: dây chuyền không chạy cả ngày, lấy 24h làm mẫu số
+            # sẽ ra một con số "uptime" đẹp giả tạo.
+            "observed_minutes": round(window_min, 1),
+            "uptime_percent": round((window_min - down_min) / window_min * 100, 2) if window_min else None,
+            "stops": gaps[:15],
+            "note": (
+                f"Khe hở từ {min_minutes} phút trở lên giữa hai sản phẩm liên tiếp được "
+                f"tính là một lần dừng. Đây là dấu hiệu KHÔNG CÓ SẢN PHẨM đi qua — nó "
+                f"KHÔNG cho biết vì sao: có thể máy hỏng, đổi lô, giao ca, hay nghỉ theo "
+                f"kế hoạch. Đừng gọi đó là 'sự cố' nếu chưa đối chiếu. Muốn biết nguyên "
+                f"nhân thì xem log quanh mốc đó (agent log_analysis) hoặc audit log xem "
+                f"có ai load recipe khác. Tỷ lệ uptime tính trên khoảng từ sản phẩm đầu "
+                f"tới sản phẩm cuối, không phải trên 24 giờ."
+            ),
+        }
+    except Exception as e:
+        logger.error(f"get_downtime lỗi: {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e), "message": "Không tính được thời gian dừng"}
+
+
+get_downtime_tool = BaseTool.create_tool(
+    func=get_downtime,
+    metadata=ToolMetadata(
+        name="get_downtime",
+        description=(
+            "Các khoảng dây chuyền KHÔNG ra sản phẩm, kèm tổng thời gian dừng và tỷ lệ "
+            "uptime. Dùng khi user hỏi 'máy dừng bao lâu', 'hôm nay có dừng máy không', "
+            "'dây chuyền chạy liên tục không', 'mất bao nhiêu thời gian'. "
+            "Suy từ khe hở giữa các bản ghi inference, nên nó cho biết KHÔNG CÓ SẢN PHẨM "
+            "chứ không cho biết NGUYÊN NHÂN — đừng gọi là sự cố khi chưa đối chiếu log."
+        ),
+        category="analytics",
+    ),
+    args_schema=DowntimeArgs,
+)
+
+logger.info("✅ Downtime tool registered")

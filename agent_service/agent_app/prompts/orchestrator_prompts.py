@@ -38,6 +38,11 @@ trong log", "ai đã thao tác gì" đều thuộc `log_analysis`.
 - User hỏi về lịch sử LOAD RECIPE (recipe nào chạy lúc nào, ai load)
 - User so sánh data giữa các khoảng thời gian
 - **User muốn XUẤT BÁO CÁO ra file** (Excel, PDF, CSV, JSON, HTML)
+- **User hỏi về DỪNG MÁY / dừng dây chuyền / uptime** ("máy dừng bao lâu", "hôm
+  nay có dừng máy không", "dây chuyền chạy liên tục không") — agent này có tool
+  `get_downtime`. Đây KHÔNG phải câu hỏi về service, đừng đưa sang
+  service_management: "máy" ở đây là dây chuyền sản xuất.
+- **User hỏi theo CA LÀM VIỆC** ("ca nào", "sản lượng theo ca", "ca đêm thế nào")
 - Keywords: "thống kê", "bao nhiêu sản phẩm", "pass", "fail", "rate", "trend", "xu hướng", "load recipe", "xuất báo cáo", "tạo report", "xuất Excel", "báo cáo PDF", "export", "file báo cáo", "tải báo cáo"
 
 **KHÔNG dùng cho câu hỏi về NGƯỜI DÙNG.** Agent này không có tool nào về đăng
@@ -54,6 +59,8 @@ nằm trong audit log. Mọi câu về người dùng → `log_analysis`.
 - "Recipe nào fail nhiều nhất?"
 - "So sánh sản lượng tuần này với tuần trước"
 - "Hôm nay có tốt hơn hôm qua không?"
+- "Máy dừng bao lâu hôm nay?"
+- "Ca nào có tỷ lệ fail cao nhất?"
 - "Xuất báo cáo 7 ngày qua dạng Excel"
 - "Tạo report PDF cho tháng này"
 - "Gửi tôi file báo cáo sản xuất hôm nay"
@@ -65,6 +72,9 @@ nằm trong audit log. Mọi câu về người dùng → `log_analysis`.
 - User hỏi về audit: AI đã đăng nhập / sửa / xoá / load recipe / đổi camera
 - User muốn biết một sự cố xảy ra lúc mấy giờ, lặp bao nhiêu lần
 - **User hỏi SỐ LƯỢNG hoặc DANH SÁCH người dùng đã đăng nhập / thao tác**
+- **User hỏi DUNG LƯỢNG LOG / đĩa đầy** ("log chiếm bao nhiêu dung lượng", "log
+  nặng bao nhiêu", "sao log không tự xoá") — agent này có `get_log_storage_report`,
+  báo cáo toàn bộ nên không cần hỏi lại "log của dịch vụ nào"
 - Keywords: "log", "lỗi", "error", "warning", "cảnh báo", "traceback", "vì sao",
   "tại sao lỗi", "sự cố", "ai đã", "ai sửa", "ai đăng nhập", "bao nhiêu người",
   "bao nhiêu user", "đăng nhập", "đăng xuất", "audit", "lịch sử thao tác",
@@ -78,6 +88,8 @@ nằm trong audit log. Mọi câu về người dùng → `log_analysis`.
 - "Vì sao lúc 10 giờ máy bị khựng?"
 - "Hôm nay có bao nhiêu người đăng nhập vào hệ thống?"
 - "Hôm nay những nhân viên nào làm việc trên hệ thống?"
+- "Log chiếm bao nhiêu dung lượng?"
+- "Nhân viên nào làm việc nhiều giờ nhất?"
 
 **Phân biệt với historical_analytics:**
 `historical_analytics` trả lời bằng SỐ LIỆU SẢN XUẤT trong MongoDB (bao nhiêu

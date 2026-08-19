@@ -196,6 +196,7 @@ def cards_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]:
             ("Điện thoại", p.get("phone_number")),
             ("Vào làm", p.get("hire_date")),
             ("Hoạt động", window),
+            ("Số giờ có mặt", f"{p['active_hours']}h" if p.get("active_hours") else None),
             ("Thao tác", ", ".join(f"{k} ×{v}" for k, v in acts.items()) or None),
         )
         rows = [(k, v if v else "—") for k, v in fields] if exists else [
@@ -309,7 +310,11 @@ def strip_for_llm(result: Any) -> Any:
         out["people"] = [
             {"username": p.get("username"), "full_name": p.get("full_name"),
              "role": p.get("role"), "department": p.get("department"),
-             "job_title": p.get("job_title"), "action_count": p.get("action_count")}
+             "job_title": p.get("job_title"), "action_count": p.get("action_count"),
+             # Phải giữ: câu "ai làm việc nhiều giờ nhất" cần con số này, mà cắt
+             # nó đi thì LLM chỉ còn `action_count` để xếp hạng và trả lời bằng
+             # số thao tác — sai đơn vị, và nghe vẫn như một câu trả lời.
+             "active_hours": p.get("active_hours")}
             for p in (result.get("people") or [])
         ]
         out["_cards"] = "<thẻ thông tin người thao tác đã được hệ thống đính kèm tự động>"
@@ -401,6 +406,20 @@ def kpis_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]:
                   _rate_accent(rate), delta_kind="pp"),
         ]
 
+    if tool_name == "get_downtime":
+        up = result.get("uptime_percent")
+        down = result.get("downtime_minutes") or 0
+        h, m = int(down // 60), int(down % 60)
+        return [
+            _tile("Uptime", f"{up}%" if up is not None else "—",
+                  "trên khoảng có sản xuất", None, _rate_accent(up)),
+            _tile("Thời gian dừng", f"{h}h{m:02d}m" if h else f"{m} phút"),
+            _tile("Số lần dừng", fmt(result.get("stop_count"))),
+            _tile("Sản phẩm", fmt(result.get("products")),
+                  f"{str(result.get('first_product',''))[11:16]} → "
+                  f"{str(result.get('last_product',''))[11:16]}"),
+        ]
+
     if tool_name in ("get_pass_fail_stats", "get_production_summary"):
         summ = result.get("summary") or {}
         total = summ.get("total_products")
@@ -454,6 +473,20 @@ def tables_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]
     """
     if not isinstance(result, dict) or not result.get("success"):
         return []
+
+    if tool_name == "get_downtime":
+        stops = result.get("stops") or []
+        if not stops:
+            return []
+        return [{
+            "title": f"Các lần dừng dây chuyền · {str(result.get('period',{}).get('start',''))[:10]}",
+            "columns": ["Từ", "Đến", "Số phút"],
+            "align": ["l", "l", "r"],
+            "rows": [[s["from"][:16].replace("T", " "), s["to"][11:16], f"{s['minutes']:,.0f}"]
+                     for s in stops],
+            "caption": (f"Khe hở ≥ {result.get('min_gap_minutes')} phút giữa hai sản phẩm. "
+                        f"Cho biết không có sản phẩm đi qua, không cho biết nguyên nhân."),
+        }]
 
     if tool_name == "compare_periods":
         rows = result.get("by_recipe") or []
@@ -510,9 +543,9 @@ def charts_from_tool_result(tool_name: str, args: Dict[str, Any], result: Any) -
     # Tổng quan gom nhóm → cột số sản phẩm fail của từng nhóm
     if tool_name == "get_production_summary":
         group = args.get("group_by", "recipe")
-        key = {"camera": "camera", "hour": "hour"}.get(group, "recipe")
+        key = {"camera": "camera", "hour": "hour", "shift": "shift"}.get(group, "recipe")
         rows = result.get("breakdown") or []
-        label = {"camera": "camera", "hour": "giờ", "recipe": "recipe"}[key]
+        label = {"camera": "camera", "hour": "giờ", "recipe": "recipe", "shift": "ca"}[key]
 
         c = _bar(
             f"Sản phẩm FAIL theo {label} · {_period_label(args, result)}",
