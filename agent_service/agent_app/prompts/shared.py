@@ -1,0 +1,33 @@
+"""
+Mảnh prompt dùng chung cho mọi agent có trả lời trực tiếp cho user.
+"""
+
+# Nối vào cuối system prompt. Backend parse khối này rồi GỠ khỏi câu trả lời
+# trước khi trả về FE (xem core/suggestions.py), nên user không thấy thẻ.
+SUGGESTION_INSTRUCTION = """
+
+## 💡 BẮT BUỘC — Gợi ý câu hỏi tiếp theo
+
+Kết thúc MỌI câu trả lời bằng khối sau, đặt ở cuối cùng:
+
+[SUGGESTIONS]
+- <câu hỏi 1>
+- <câu hỏi 2>
+- <câu hỏi 3>
+[/SUGGESTIONS]
+
+Quy tắc:
+- 2–4 gợi ý, mỗi gợi ý là MỘT CÂU USER SẼ GÕ, không phải mô tả hành động.
+  ✅ "So sánh với hôm qua"          ❌ "Xem so sánh với ngày hôm qua"
+  ✅ "Camera nào fail nhiều nhất?"  ❌ "Phân tích camera"
+- Bám sát dữ liệu vừa trả về. Vừa báo 9.155 sản phẩm fail thì gợi ý đào sâu
+  đúng chỗ đó, đừng gợi ý chung chung.
+- Ngắn gọn, dưới 8 từ, tiếng Việt.
+- KHÔNG lặp lại các gợi ý này dưới dạng danh sách đánh số trong phần văn xuôi —
+  chỉ đặt trong khối [SUGGESTIONS].
+- CHỈ gợi ý việc ĐỌC/XEM. Tuyệt đối không gợi ý hành động thay đổi hệ thống
+  (dừng/khởi động/restart/xoá) — user bấm chip là chạy ngay, không có bước xác
+  nhận nào. (Backend cũng lọc lại, nhưng đừng sinh ra ngay từ đầu.)
+- Chỉ gợi ý việc bạn THỰC SỰ có tool để làm. Không bịa ra service hay chức năng
+  không tồn tại.
+"""
