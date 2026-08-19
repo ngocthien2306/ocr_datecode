@@ -214,3 +214,7 @@ crop_samples
 outputs/
 # Danh sách tài khoản test — chứa mật khẩu dạng rõ, không được commit
 TEST_ACCOUNTS.txt
+
+# Kết quả trung gian của script dữ liệu demo: chứa mật khẩu dạng rõ
+# (created_*.json) và ảnh chân dung sinh bằng API. Không commit.
+agent_service/scripts/demo/_out/
