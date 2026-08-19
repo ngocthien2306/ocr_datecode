@@ -10,6 +10,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pydantic import BaseModel, Field
+from agent_app.core.i18n import t
 from agent_app.core.config import settings
 from agent_app.db.mongodb import get_sync_database
 from agent_app.tools.base_tool import BaseTool, ToolMetadata
@@ -978,7 +979,12 @@ def explain_failures(
             "causes": [
                 {
                     "cause": k,
-                    "label": _CAUSE_LABELS.get(k, k),
+                    # Dịch NGAY TRONG kết quả tool, không chỉ ở nhãn biểu đồ:
+                    # mô hình đọc trường này rồi nhắc lại trong câu trả lời, nên
+                    # để nguyên tiếng Việt là câu trả lời tiếng Anh vẫn lẫn tên
+                    # nguyên nhân tiếng Việt — và tên trong văn xuôi sẽ khác tên
+                    # trên biểu đồ ngay bên cạnh.
+                    "label": t(_CAUSE_LABELS.get(k, k)),
                     "products": len(causes_products[k]),
                     "frames": causes[k],
                 }

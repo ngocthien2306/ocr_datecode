@@ -17,7 +17,7 @@ nhau, không cần kiểu chart riêng.
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from agent_app.core.i18n import t, tcols, tseg
+from agent_app.core.i18n import t, tcols, tphrase, ttitle
 
 #: Số cột tối đa của một biểu đồ.
 #:
@@ -94,7 +94,7 @@ def _bar(title: str, series: List[Dict[str, Any]], unit: str = "",
 
     # tseg() dịch từng đoạn của tiêu đề ghép: phần chữ được dịch, phần dữ liệu
     # (tên recipe, ngày, tên ca) không khớp bảng nên giữ nguyên.
-    out: Dict[str, Any] = {"type": "bar", "title": tseg(title),
+    out: Dict[str, Any] = {"type": "bar", "title": ttitle(title),
                            "unit": t(unit), "series": series}
     if scale_max:
         # Thang đo cố định để cột đo được so với một MỐC, không phải so với cột lớn
@@ -122,7 +122,9 @@ def images_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, str]]
         if s.get("timestamp"):
             bits.append(str(s["timestamp"])[11:19])
         if s.get("expected") is not None:
-            bits.append(f"mong '{s.get('expected')}' → đọc '{s.get('recognized') or '(rỗng)'}'")
+            bits.append(t("mong '{expected}' → đọc '{got}'").format(
+                expected=s.get("expected"),
+                got=s.get("recognized") or t("(rỗng)")))
 
         out.append({
             "url": _UPLOAD_PREFIX + path,
@@ -249,6 +251,7 @@ def cards_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]:
         ]
 
         cards.append({
+            # KHÔNG dịch: đây là tên người, là dữ liệu.
             "title": p.get("full_name") or p.get("username"),
             "role_line": role_line or None,
             "subtitle": (f"@{p.get('username')}"
@@ -485,7 +488,7 @@ def _tile(label: str, value: Any, sub: Optional[str] = None,
     # dịch thì t() trả về nguyên văn nên không có ô nào bị trống.
     out: Dict[str, Any] = {"label": t(label), "value": value, "accent": accent}
     if sub:
-        out["sub"] = tseg(sub)
+        out["sub"] = ttitle(sub)
     if delta and delta.get("diff") is not None:
         d = delta["diff"]
         out["delta"] = {
@@ -694,17 +697,18 @@ def tables_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]
         ch = result.get("recipe_changes") or []
         if ch:
             out.append({
-                "title": f"Thay đổi recipe trong ca · {result.get('shift')}",
+                "title": ttitle(f"Thay đổi recipe trong ca · {result.get('shift')}"),
                 "columns": tcols(["Giờ", "Người", "Thao tác", "Nội dung"]),
                 "align": ["l", "l", "l", "l"],
                 "rows": [[c["time"], c["username"], c["action"], c["description"][:70]]
                          for c in ch[:12]],
-                "caption": "Đổi recipe thường đi kèm dừng máy và một cú vọt fail ngay sau.",
+                "caption": t("Đổi recipe thường đi kèm dừng máy và một "
+                             "cú vọt fail ngay sau."),
             })
         st = ((result.get("downtime") or {}).get("stops")) or []
         if st:
             out.append({
-                "title": f"Các lần dừng trong ca · {result.get('shift')}",
+                "title": ttitle(f"Các lần dừng trong ca · {result.get('shift')}"),
                 "columns": tcols(["Từ", "Đến", "Số phút"]),
                 "align": ["l", "l", "r"],
                 "rows": [[s["from"][11:16], s["to"][11:16], f"{s['minutes']:,.0f}"] for s in st],
@@ -716,13 +720,17 @@ def tables_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]
         if not stops:
             return []
         return [{
-            "title": f"Các lần dừng dây chuyền · {str(result.get('period',{}).get('start',''))[:10]}",
+            "title": ttitle(f"Các lần dừng dây chuyền · {str(result.get('period',{}).get('start',''))[:10]}"),
             "columns": tcols(["Từ", "Đến", "Số phút"]),
             "align": ["l", "l", "r"],
             "rows": [[s["from"][:16].replace("T", " "), s["to"][11:16], f"{s['minutes']:,.0f}"]
                      for s in stops],
-            "caption": (f"Khe hở ≥ {result.get('min_gap_minutes')} phút giữa hai sản phẩm. "
-                        f"Cho biết không có sản phẩm đi qua, không cho biết nguyên nhân."),
+            # Dịch mẫu câu TRƯỚC rồi mới điền số: tiếng Anh đặt đơn vị ở chỗ
+            # khác ("15+ minutes" so với "≥ 15 phút") nên ghép chuỗi rồi dịch
+            # sẽ không khớp bảng.
+            "caption": t("Khe hở ≥ {gap} phút giữa hai sản phẩm. Cho biết không "
+                         "có sản phẩm đi qua, không cho biết nguyên nhân."
+                         ).format(gap=result.get("min_gap_minutes")),
         }]
 
     if tool_name == "compare_periods":
@@ -757,7 +765,7 @@ def tables_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]
                 note,
             ])
         return [{
-            "title": title,
+            "title": ttitle(title),
             # Tiêu đề ngắn: nhãn kỳ đầy đủ đã nằm ở title, nhồi thêm vào từng cột
             # làm bảng rộng ra tới 1.300px và cột quyết định bị đẩy khỏi màn hình.
             "columns": tcols(["Recipe", "SL trước", "SL nay", "Thay đổi SL",

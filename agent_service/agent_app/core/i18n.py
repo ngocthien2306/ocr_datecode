@@ -257,11 +257,12 @@ _EN: Dict[str, str] = {
     "không rõ": "unknown",
 
     # --- nguyên nhân fail ---
-    "Chưa xác định": "Unclassified",
-    "Không khớp template": "Template mismatch",
+    "OCR đọc sai chuỗi": "OCR read the wrong string",
+    "Ký tự dưới ngưỡng tin cậy": "Character below confidence threshold",
+    "Ảnh không khớp template": "Image does not match the template",
     "Không nhận ra sản phẩm": "Product not recognised",
-    "Không thấy nhãn trong khung": "No label in frame",
-    "Sai ký tự": "Character mismatch",
+    "Detector không thấy vùng nào trong khung": "Detector found no region in frame",
+    "Chưa xác định": "Unclassified",
 
     # --- trạng thái / phụ đề ---
     "· đang chạy": "· running",
@@ -360,6 +361,16 @@ _EN: Dict[str, str] = {
     "chỉ": "only",
     "mốc đầu không hiện": "leading points hidden",
     "mục nhỏ hơn không hiện": "smaller items hidden",
+
+    # --- chú thích dưới bảng / biểu đồ ---
+    "Đổi recipe thường đi kèm dừng máy và một cú vọt fail ngay sau.":
+        "A recipe change usually brings downtime and a fail spike right after.",
+    "Khe hở ≥ {gap} phút giữa hai sản phẩm. Cho biết không có sản phẩm đi qua, "
+    "không cho biết nguyên nhân.":
+        "Gaps of {gap}+ minutes between units. Shows that nothing passed through, "
+        "not why.",
+    "mong '{expected}' → đọc '{got}'": "expected '{expected}' → read '{got}'",
+    "(rỗng)": "(empty)",
 }
 
 _TABLES: Dict[str, Dict[str, str]] = {"en": _EN}
@@ -403,6 +414,52 @@ def tseg(s: str, lang: Optional[str] = None) -> str:
     if not s or _SEP not in s:
         return t(s, lang)
     return _SEP.join(t(part.strip(), lang) for part in s.split(_SEP))
+
+
+# Nhãn kỳ và mấy cụm nối do TOOL sinh ra, không phải attachment: chúng đi vào
+# giữa một chuỗi dài ("tuần này vs tuần trước", "tuần này (không gồm 3 recipe
+# không chạy kỳ này)") nên tra cả chuỗi không bao giờ khớp. Riêng nhóm này phải
+# thay theo cụm con. Bảng cố tình để nhỏ và chỉ gồm cụm thời gian: thay cụm con
+# trên một bảng lớn sẽ đụng vào dữ liệu thật như tên recipe.
+_PHRASES = [
+    ("không gồm", "excluding"),
+    ("recipe không chạy kỳ này", "recipes not run in this period"),
+    ("30 ngày qua", "last 30 days"),
+    ("7 ngày qua", "last 7 days"),
+    ("tuần trước", "last week"),
+    ("tháng trước", "last month"),
+    ("tuần này", "this week"),
+    ("tháng này", "this month"),
+    ("hôm qua", "yesterday"),
+    ("hôm nay", "today"),
+    (" so với ", " vs "),
+    ("tất cả recipe", "all recipes"),
+    ("chỉ chạy ở", "only ran in"),
+    ("nền quá ít", "baseline too small"),
+    ("fail toàn bộ", "all failed"),
+    ("ngày", "days"),
+    (" vs ", " vs "),
+]
+
+
+def tphrase(s: str, lang: Optional[str] = None) -> str:
+    """
+    Thay các cụm thời gian bên trong một chuỗi tự do.
+
+    Dùng cho nhãn kỳ do tool sinh ra. Duyệt theo thứ tự dài-trước-ngắn để
+    "7 ngày qua" không bị "ngày" ăn mất một nửa.
+    """
+    if not s or (lang or get_lang()) == "vi":
+        return s
+    for vi, en in _PHRASES:
+        if vi in s:
+            s = s.replace(vi, en)
+    return s
+
+
+def ttitle(s: str, lang: Optional[str] = None) -> str:
+    """Tiêu đề đầy đủ: dịch từng đoạn ' · ', rồi vét các cụm thời gian còn lại."""
+    return tphrase(tseg(s, lang), lang)
 
 
 def tcols(cols: List[str], lang: Optional[str] = None) -> List[str]:

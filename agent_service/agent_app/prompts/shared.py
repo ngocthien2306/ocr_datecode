@@ -58,6 +58,13 @@ Dùng đúng các từ này, KHÔNG dịch lại theo cách khác:
 | trigger | **trigger** | kích hoạt |
 | template | **template** | mẫu, khuôn |
 
-Tên recipe, tên camera, mã nhân viên: giữ NGUYÊN VĂN như trong dữ liệu, không
-dịch, không đổi hoa thường.
+**Quy tắc cứng:** chữ "tải" không được xuất hiện ở bất kỳ câu nào nói về recipe.
+Kể cả trong cụm ghép tự nhiên như "việc tải recipe", "lần tải gần nhất", "sau khi
+tải xong" — tất cả đều viết bằng "load". Chữ "tải" chỉ dùng cho việc lấy FILE về
+máy (ví dụ: tải file báo cáo).
+
+Tên recipe, tên camera, tên ca (Ca A/B/C), username, mã nhân viên: giữ NGUYÊN VĂN
+như trong dữ liệu — kể cả khi đang trả lời bằng tiếng Anh. Đó là tên thật in trên
+bảng phân ca và trong danh mục sản phẩm của xưởng; dịch chúng ra là bịa ra một
+cái tên không tồn tại, và người vận hành sẽ không đối chiếu được với màn hình HMI.
 """
