@@ -447,9 +447,10 @@ function drawCards(cards){
           <div class="card-t">${esc(c.title||'')}</div>
           ${c.role_line?`<div class="card-role">${esc(c.role_line)}</div>`:''}
           <div class="card-s">${esc(c.subtitle||'')}</div>
-          <span class="card-b ${c.badge==='admin'?'adm':c.badge==='supervisor'?'sup':''}">${esc(c.badge||'')}</span>
+          <span class="card-b ${c.badge_role==='admin'?'adm':c.badge_role==='supervisor'?'sup':''}"
+              title="Mức phân quyền trong phần mềm — khác với chức vụ ở dòng trên">${esc(c.badge||'')}</span>
         </div>
-        ${c.stat!=null?`<div class="card-n"><b>${esc(String(c.stat))}</b><small>${esc(c.stat_label||'')}</small></div>`:''}
+        ${c.stat!=null?`<div class="card-n" title="Số bản ghi audit log của người này trong kỳ đang xem"><b>${esc(String(c.stat))}</b><small>${esc(c.stat_label||'')}</small></div>`:''}
       </div>
       ${rows?`<div class="card-bd">${rows}</div>`:''}`;
     wrap.appendChild(el);

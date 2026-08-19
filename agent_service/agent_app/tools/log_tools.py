@@ -712,8 +712,38 @@ def get_audit_logs(
             "ip_address": d.get("ip_address"),
         } for d in cursor]
 
-        actions = Counter(e["action_type"] for e in entries)
-        users = Counter(e["username"] for e in entries)
+        # Thống kê theo người phải gom trên TOÀN BỘ bản ghi khớp, không phải trên
+        # `entries`.
+        #
+        # `entries` chỉ là `limit` bản ghi mới nhất. Tính từ đó thì mọi con số co
+        # lại theo đúng cái trần đó mà vẫn được trình bày như thể là tất cả — đã
+        # gặp thật: hôm nay có 120 bản ghi, limit 40, và thẻ báo khoảng hoạt động
+        # của một người là 14:12 → 14:23 (10 phút) trong khi bản ghi đầu tiên của
+        # người đó là 11:05. Càng nhiều log thì con số càng sai, và sai một cách
+        # trông rất hợp lý.
+        agg = list(db["action_logs"].aggregate([
+            {"$match": query},
+            {"$group": {
+                "_id": {"u": "$username", "a": "$action_type"},
+                "n": {"$sum": 1},
+                "first": {"$min": "$timestamp"},
+                "last": {"$max": "$timestamp"},
+            }},
+        ]))
+
+        per_user: Dict[str, Dict[str, Any]] = {}
+        actions: Counter = Counter()
+        for row in agg:
+            uname, act, n = row["_id"]["u"], row["_id"]["a"], row["n"]
+            actions[act] += n
+            u = per_user.setdefault(uname, {"count": 0, "actions": Counter(),
+                                            "first": row["first"], "last": row["last"]})
+            u["count"] += n
+            u["actions"][act] += n
+            u["first"] = min(u["first"], row["first"])
+            u["last"] = max(u["last"], row["last"])
+
+        users = Counter({k: v["count"] for k, v in per_user.items()})
 
         # Hồ sơ người thao tác, nối từ collection `users`.
         #
@@ -721,8 +751,8 @@ def get_audit_logs(
         # chức vụ và ảnh thì phải tra sang `users`; tra ở đây (một truy vấn cho
         # cả danh sách) chứ không để LLM tự đoán, vì nó sẽ bịa ra chức vụ.
         people: List[Dict[str, Any]] = []
-        if entries:
-            names = list(users)
+        if per_user:
+            names = list(per_user)
             profiles = {
                 u["username"]: u
                 for u in db["users"].find(
@@ -734,7 +764,7 @@ def get_audit_logs(
                 )
             }
             for name, count in users.most_common():
-                mine = [e for e in entries if e["username"] == name]
+                stat = per_user[name]
                 prof = profiles.get(name) or {}
                 people.append({
                     "username": name,
@@ -750,9 +780,9 @@ def get_audit_logs(
                     **{f: prof.get(f) for f in PROFILE_FIELDS},
                     "account_exists": bool(prof),
                     "action_count": count,
-                    "actions": dict(Counter(e["action_type"] for e in mine).most_common()),
-                    "first_seen": mine[-1]["time"],
-                    "last_seen": mine[0]["time"],
+                    "actions": dict(stat["actions"].most_common()),
+                    "first_seen": _to_local_str(stat["first"]),
+                    "last_seen": _to_local_str(stat["last"]),
                 })
 
         return {
@@ -765,12 +795,16 @@ def get_audit_logs(
             },
             "total_matching": total,
             "returned": len(entries),
+            # Hai bảng này và `people` gom trên TOÀN BỘ bản ghi khớp; chỉ
+            # `entries` mới bị chặn bởi `limit`.
             "by_action": dict(actions.most_common()),
             "by_user": dict(users.most_common()),
             "people": people,
             "entries": entries,
             "note": (
-                f"Khớp {total} bản ghi, trả về {len(entries)} bản mới nhất."
+                f"Khớp {total} bản ghi, trả về {len(entries)} bản mới nhất trong `entries`. "
+                f"`by_action`, `by_user` và `people` thống kê trên TOÀN BỘ {total} bản ghi "
+                f"nên dùng chúng khi cần con số tổng, đừng tự đếm lại từ `entries`."
                 + (" Tăng `limit` hoặc thu hẹp khoảng ngày để xem thêm."
                    if total > len(entries) else "")
             ),

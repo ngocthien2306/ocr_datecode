@@ -178,27 +178,49 @@ def cards_from_tool_result(tool_name: str, result: Any) -> List[Dict[str, Any]]:
                 except (ValueError, TypeError):
                     pass
 
+        exists = p.get("account_exists") is not False
+
+        # Tài khoản còn tồn tại thì hiện ĐỦ bộ hàng, thiếu giá trị điền "—".
+        #
+        # Trước đây tôi bỏ hẳn hàng rỗng, và hệ quả là mỗi thẻ có số hàng khác
+        # nhau — người xem tưởng hệ thống hiển thị lung tung chứ không đoán được
+        # là "người này chưa khai số điện thoại". Khung thẻ giống nhau thì chỗ
+        # trống tự nói lên là thiếu dữ liệu.
+        #
+        # Tài khoản đã xoá thì không có hồ sơ để mà thiếu, nên chỉ hiện phần có
+        # thật — bảy dòng "—" liền nhau chỉ là nhiễu.
+        fields = (
+            ("Ca làm việc", p.get("shift")),
+            ("Dây chuyền", p.get("production_line")),
+            ("Email", p.get("email")),
+            ("Điện thoại", p.get("phone_number")),
+            ("Vào làm", p.get("hire_date")),
+            ("Hoạt động", window),
+            ("Thao tác", ", ".join(f"{k} ×{v}" for k, v in acts.items()) or None),
+        )
+        rows = [(k, v if v else "—") for k, v in fields] if exists else [
+            (k, v) for k, v in fields if v
+        ]
+
         cards.append({
             "title": p.get("full_name") or p.get("username"),
             "role_line": role_line or None,
             "subtitle": (f"@{p.get('username')}"
                          + (f" · {p['employee_code']}" if p.get("employee_code") else "")),
-            "badge": p.get("role") or "unknown",
+            # Ghi rõ đây là QUYỀN trong phần mềm, không phải chức vụ.
+            #
+            # `role` là mức phân quyền (viewer/operator/supervisor/admin), còn
+            # dòng ngay trên là chức vụ ngoài xưởng. Hai trục khác nhau, mà đặt
+            # cạnh nhau không nhãn thì thẻ đọc như hai chức danh đá nhau:
+            # "Maintenance Technician" mà badge lại ghi "operator", hay
+            # "Quality Inspector" mà badge ghi "supervisor".
+            "badge": f"Quyền: {p.get('role') or 'không rõ'}",
+            "badge_role": p.get("role") or "unknown",
             "avatar": _avatar_url(p.get("avatar_url")),
-            "inactive": p.get("account_exists") is False or p.get("is_active") is False,
+            "inactive": not exists or p.get("is_active") is False,
             "stat": p.get("action_count"),
             "stat_label": "thao tác",
-            # Chỉ giữ dòng có giá trị: user chưa khai bộ phận thì đừng hiện một
-            # hàng "Bộ phận —" trống, thẻ trông như dữ liệu bị lỗi.
-            "rows": [r for r in (
-                ("Ca làm việc", p.get("shift")),
-                ("Dây chuyền", p.get("production_line")),
-                ("Email", p.get("email")),
-                ("Điện thoại", p.get("phone_number")),
-                ("Vào làm", p.get("hire_date")),
-                ("Hoạt động", window),
-                ("Thao tác", ", ".join(f"{k} ×{v}" for k, v in acts.items()) or None),
-            ) if r[1]],
+            "rows": rows,
         })
     return cards
 
