@@ -762,6 +762,86 @@ _MISMATCH_LABELS = {
 }
 
 
+
+# Số ứng viên ảnh gom trong lúc quét, và số ảnh thực sự hiện ra. Gom rộng hơn số
+# hiện để còn có cái mà dàn đều theo nguyên nhân; gom cả nghìn thì tốn bộ nhớ vô
+# ích vì phần lớn sẽ bị bỏ.
+_SAMPLE_POOL = 120
+_SAMPLE_SHOW = 8
+
+# Thứ tự ưu tiên khi một frame trượt nhiều bước cùng lúc. Lỗi OCR đứng trước vì
+# ảnh của nó nói được nhiều nhất: nhìn là thấy đọc thiếu chữ hay đọc sai chữ.
+# `no_detection` đứng cuối vì mọi ảnh no-detection trông na ná nhau — một tấm đã
+# đủ hiểu, tám tấm thì không thêm gì.
+_CAUSE_PRIORITY = (
+    "text_verification",
+    "char_verification",
+    "template_verification",
+    "product_verification",
+    "no_detection",
+    "unknown",
+)
+
+# Tối đa bao nhiêu ảnh cho cùng MỘT sản phẩm. Một sản phẩm fail ở nhiều frame
+# (Frame 3 và Frame 4) nên dễ chiếm hai suất; để nó chiếm hết thì 8 ảnh chỉ còn
+# là 4 sản phẩm.
+_MAX_PER_PRODUCT = 2
+
+
+def _pick_samples(cands: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+    """
+    Chọn `limit` ảnh sao cho mọi nguyên nhân có mặt, không dồn hết vào một loại.
+
+    Xoay vòng qua từng nhóm nguyên nhân, mỗi lượt lấy một ảnh. Nhờ vậy nguyên nhân
+    hiếm vẫn có ít nhất một ảnh, còn nguyên nhân phổ biến vẫn được nhiều ảnh hơn
+    vì nhóm của nó dài hơn — mà không chiếm sạch.
+
+    Trong mỗi nhóm, ảnh CÓ `expected` được lấy trước: đó là ảnh kèm được dòng
+    "mong X → đọc Y", tức là ảnh tự giải thích. Ảnh không có thì người xem chỉ
+    thấy một khung hình và phải tự đoán.
+    """
+    if len(cands) <= limit:
+        return cands
+
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for c in cands:
+        primary = next((k for k in _CAUSE_PRIORITY if k in (c.get("_causes") or [])),
+                       "unknown")
+        groups.setdefault(primary, []).append(c)
+
+    for key in groups:
+        groups[key].sort(key=lambda c: (c.get("expected") is None,))
+
+    order = [k for k in _CAUSE_PRIORITY if k in groups]
+    picked: List[Dict[str, Any]] = []
+    per_product: Dict[str, int] = {}
+    idx = {k: 0 for k in order}
+
+    while len(picked) < limit:
+        moved = False
+        for key in order:
+            if len(picked) >= limit:
+                break
+            bucket = groups[key]
+            while idx[key] < len(bucket):
+                cand = bucket[idx[key]]
+                idx[key] += 1
+                pid = cand.get("_product") or ""
+                if per_product.get(pid, 0) >= _MAX_PER_PRODUCT:
+                    continue
+                per_product[pid] = per_product.get(pid, 0) + 1
+                picked.append(cand)
+                moved = True
+                break
+        if not moved:
+            # Mọi nhóm đã cạn (hoặc chỉ còn ảnh của sản phẩm đã đủ suất). Nới trần
+            # mỗi-sản-phẩm còn tệ hơn để trống: thà 6 ảnh của 6 sản phẩm khác nhau
+            # hơn là 8 ảnh mà 4 cái là cùng một sản phẩm.
+            break
+
+    return picked
+
+
 def explain_failures(
     recipe_id: Optional[str] = None,
     camera: Optional[str] = None,
@@ -872,9 +952,12 @@ def explain_failures(
                 for frame in cam.get("frames") or []:
                     if frame.get("pass_fail") != "FAIL":
                         continue
+                    frame_causes: List[str] = []
+
                     def _mark(key: str) -> None:
                         causes[key] += 1
                         causes_products[key].add(doc["_id"])
+                        frame_causes.append(key)
 
                     hit = False
 
@@ -922,9 +1005,12 @@ def explain_failures(
                         else:
                             _mark("unknown")
 
-                    # Ảnh visualize của frame fail — để FE hiện kèm câu trả lời.
-                    # Giữ tối đa 8 cái, đủ để nhìn ra quy luật mà không nặng UI.
-                    if frame.get("image_path") and len(samples) < 8:
+                    # Ảnh visualize của frame fail. Gom ỨNG VIÊN ở đây rồi mới
+                    # chọn ra 8 cái ở cuối (xem `_pick_samples`). Trước đây lấy
+                    # thẳng 8 frame gặp đầu tiên, và thế là cả 8 ảnh cùng một
+                    # nguyên nhân: hỏi "xem case sai OCR" mà nhận về 8 ảnh
+                    # no-detection, không có ảnh nào cho thấy lỗi OCR.
+                    if frame.get("image_path") and len(samples) < _SAMPLE_POOL:
                         bad = next(
                             (r for r in (tv.get("results") or []) if not r.get("match")),
                             None,
@@ -945,7 +1031,12 @@ def explain_failures(
                             "recipe_id": doc.get("recipe_id"),
                             "template_name": frame.get("template_name"),
                             "_ts_utc": doc["timestamp"],
+                            "_causes": list(frame_causes),
+                            "_product": str(doc["_id"]),
                         })
+
+        # Chọn ra bộ ảnh sẽ hiện, dàn đều theo nguyên nhân.
+        samples = _pick_samples(samples, _SAMPLE_SHOW)
 
         # Gắn ảnh template đang chạy lúc từng frame fail được chụp. Đặt ở đây,
         # sau khi mẫu đã chốt, để chỉ tra đúng số mẫu sẽ hiện chứ không tra cho

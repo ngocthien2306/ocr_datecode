@@ -181,9 +181,11 @@ def attach_templates(samples: List[Dict[str, Any]]) -> int:
             }
             done += 1
 
-    # Bỏ khoá nội bộ: nó là `datetime`, không phải thứ JSON hoá được, và cũng
-    # chẳng ai ngoài hàm này cần. Dọn ở đây thay vì trông chờ tầng trên lọc.
+    # Bỏ các khoá nội bộ. `_ts_utc` là `datetime` nên không JSON hoá được, còn
+    # `_causes`/`_product` chỉ dùng để chọn mẫu. Dọn ở đây thay vì trông chờ tầng
+    # trên lọc — chỗ này là điểm cuối cùng mọi mẫu đều đi qua.
     for s in samples:
-        s.pop("_ts_utc", None)
+        for k in ("_ts_utc", "_causes", "_product"):
+            s.pop(k, None)
 
     return done

@@ -422,7 +422,15 @@ def strip_for_llm(result: Any) -> Any:
                            "`*_whole_day` là của CẢ NGÀY, đừng dùng chúng làm số của ca>")
 
     if "samples" in result:
-        out["samples"] = f"<{len(result.get('samples') or [])} ảnh minh hoạ đã được hệ thống đính kèm tự động>"
+        # Nói rõ ảnh được CHỌN DÀN ĐỀU theo nguyên nhân, không phải lấy ngẫu
+        # nhiên: nếu không, mô hình rất dễ đếm ảnh rồi kết luận tỷ lệ nguyên
+        # nhân — mà tỷ lệ thật nằm ở `causes`, không nằm ở mấy tấm ảnh.
+        out["samples"] = (
+            f"<{len(result.get('samples') or [])} ảnh minh hoạ đã được hệ thống "
+            f"đính kèm tự động, mỗi ảnh kèm ảnh template gốc để đối chiếu. Ảnh "
+            f"được chọn dàn đều qua các nguyên nhân nên TỶ LỆ ẢNH KHÔNG phản ánh "
+            f"tỷ lệ nguyên nhân — tỷ lệ lấy ở `causes`. Đừng đếm ảnh.>"
+        )
 
     # Cùng lý do, và đã quan sát thấy thật: nhìn thấy `download_url` là LLM tự
     # viết markdown link — có lần nó bịa ra cả hostname
