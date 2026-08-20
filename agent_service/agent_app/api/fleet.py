@@ -383,3 +383,116 @@ async def failure_image(
     data = await anyio.to_thread.run_sync(_render)
     return Response(content=data, media_type="image/jpeg",
                     headers={"Cache-Control": "public, max-age=86400"})
+
+
+@router.get("/audit", summary="Nhật ký thao tác, lọc bản ghi giả lập (không LLM)")
+async def audit(
+    days: int = Query(7, ge=1, le=90),
+    username: Optional[str] = Query(None),
+    action_type: Optional[str] = Query(None),
+    include_simulated: bool = Query(False, description="Kèm bản ghi demo (simulated)"),
+    limit: int = Query(100, ge=1, le=500),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Nhật ký thao tác của máy này.
+
+    Hai điểm khác `get_audit_logs` của tool, và cả hai đều cần cho tầng fleet:
+
+    **Lọc `simulated` mặc định BẬT.** Dữ liệu demo đã seed mang cờ
+    `simulated: true`; trộn chúng vào nhật ký thật thì không ai phân biệt được,
+    mà bảng vẫn trông hoàn toàn bình thường.
+
+    **Username lạ KHÔNG phải lỗi.** Tool trả lỗi kèm danh sách hợp lệ — đúng cho
+    một máy, nhưng ở fleet thì `truongca_m2` chỉ tồn tại trên M2, và bốn máy kia
+    trả lỗi sẽ bị đọc thành "bốn máy hỏng". Ở đây trả `matched: false` để tầng
+    trên phân biệt "không có người này" với "máy không trả lời".
+    """
+    from agent_app.db.mongodb import get_sync_database
+    from agent_app.tools.analytics_tools import _local_bound
+
+    db = get_sync_database()
+    q: Dict[str, Any] = {
+        "timestamp": {"$gte": _local_bound(_dates(days)[0], end=False),
+                      "$lte": _local_bound(_dates(days)[1], end=True)},
+    }
+    if not include_simulated:
+        q["simulated"] = {"$ne": True}
+    if action_type:
+        q["action_type"] = action_type
+    if username:
+        known = db["action_logs"].distinct("username")
+        if username not in known:
+            return {"success": True, "matched": False, "count": 0, "entries": [],
+                    "by_action": {},
+                    "message": f"Máy này không có bản ghi nào của '{username}'."}
+        q["username"] = username
+
+    cur = (db["action_logs"]
+           .find(q, {"old_value": 0, "new_value": 0, "user_agent": 0})
+           .sort("timestamp", -1).limit(limit))
+    entries = []
+    for d in cur:
+        entries.append({
+            "time": d["timestamp"].isoformat() if d.get("timestamp") else None,
+            "username": d.get("username"),
+            "action_type": d.get("action_type"),
+            "resource_type": d.get("resource_type"),
+            "resource_id": d.get("resource_id"),
+            "description": d.get("description"),
+            "ip_address": d.get("ip_address"),
+        })
+
+    # Thống kê theo action tính trên TOÀN BỘ match, không phải trên `entries` đã
+    # bị `limit` cắt — đúng lỗi đã sửa ở tầng tool: thẻ ghi "14:12 → 14:23" trong
+    # khi bản ghi đầu tiên là 11:05, vì thống kê tính trên phần đã cắt.
+    by_action = {r["_id"]: r["n"] for r in db["action_logs"].aggregate([
+        {"$match": q}, {"$group": {"_id": "$action_type", "n": {"$sum": 1}}},
+        {"$sort": {"n": -1}},
+    ]) if r["_id"]}
+
+    return {"success": True, "matched": True, "count": len(entries),
+            "total_in_period": sum(by_action.values()),
+            "by_action": by_action, "entries": entries}
+
+
+@router.get("/log-errors", summary="Tóm tắt lỗi hệ thống của máy này (không LLM)")
+async def log_errors(
+    date: Optional[str] = Query(None, description="YYYY-MM-DD, mặc định hôm nay"),
+    top: int = Query(8, ge=1, le=30),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Nhóm ERROR/WARNING/CRITICAL từ file log, đã gom nhóm giống nhau.
+
+    Fleet chỉ nhận BẢN TÓM TẮT, không bao giờ nhận file log. File log trên máy
+    này từng phình tới 1,4 GB; đọc trọn một file như vậy là treo agent và ăn hết
+    RAM của Jetson (lý do đã ghi trong `log_tools.py`). Muốn sâu hơn thì ủy quyền
+    câu hỏi cho agent của chính máy đó.
+    """
+    from agent_app.tools.log_tools import summarize_log_errors
+
+    r = _cached(f"logerr:{date or 'today'}:{top}",
+                lambda: summarize_log_errors(date=date, top=top))
+    if not r.get("success"):
+        return {"success": False, "error": r.get("error")}
+    return {
+        "success": True,
+        "date": r.get("date"),
+        "total_problem_lines": r.get("total_problem_lines"),
+        "distinct_problems": r.get("distinct_problems"),
+        "by_level": r.get("by_level"),
+        "scanned_files": len(r.get("scanned_files") or []),
+        "skipped_categories": r.get("skipped_categories"),
+        # Giữ chữ ký nhóm + số lần, và MỘT dòng ví dụ đã được tool cắt ngắn.
+        # Không đưa dòng log thô đầy đủ: một traceback dài vài KB, nhân 5 máy là
+        # vài trăm KB qua link chậm chỉ để dựng một cái bảng.
+        "problems": [{"signature": g.get("signature"),
+                      "level": g.get("level"),
+                      "category": g.get("category"),
+                      "count": g.get("count"),
+                      "first_seen": g.get("first_seen"),
+                      "last_seen": g.get("last_seen"),
+                      "example": g.get("example")}
+                     for g in (r.get("problems") or [])[:top]],
+    }

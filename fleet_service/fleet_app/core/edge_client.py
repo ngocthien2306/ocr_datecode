@@ -247,6 +247,29 @@ class EdgeClient:
         except httpx.HTTPError as e:
             return EdgeResult(False, error=f"không kết nối được ({type(e).__name__})")
 
+    async def audit(self, node_id: str, ip: str, days: int = 7,
+                    username: Optional[str] = None,
+                    action_type: Optional[str] = None,
+                    include_simulated: bool = False,
+                    limit: int = 100) -> EdgeResult:
+        params: Dict[str, Any] = {"days": days, "limit": limit,
+                                  "include_simulated": str(include_simulated).lower()}
+        if username:
+            params["username"] = username
+        if action_type:
+            params["action_type"] = action_type
+        return await self._authed(node_id, ip, settings.EDGE_AGENT_PORT,
+                                  "/api/fleet/audit", params=params)
+
+    async def log_errors(self, node_id: str, ip: str,
+                         date: Optional[str] = None, top: int = 8) -> EdgeResult:
+        params: Dict[str, Any] = {"top": top}
+        if date:
+            params["date"] = date
+        return await self._authed(node_id, ip, settings.EDGE_AGENT_PORT,
+                                  "/api/fleet/log-errors",
+                                  timeout=settings.EDGE_ROLLUP_TIMEOUT, params=params)
+
     async def chat(self, node_id: str, ip: str, message: str,
                    session_id: Optional[str] = None) -> EdgeResult:
         """

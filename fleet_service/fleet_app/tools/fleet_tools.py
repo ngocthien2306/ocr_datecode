@@ -416,3 +416,137 @@ FLEET_TOOLS.append(_tool(
     "rõ chọn máy nào, kỳ nào, định dạng nào thì GỌI TOOL VỚI THAM SỐ TRỐNG — tool sẽ "
     "trả về danh sách lựa chọn để bạn hỏi lại. TUYỆT ĐỐI không tự chọn thay user.",
     ReportArgs))
+
+
+# ------------------------------------------------- nhân sự · nhật ký · log ---
+
+async def fleet_staff(**_ignored: Any) -> Dict[str, Any]:
+    """
+    Nhân sự toàn nhà máy: ai, ở máy nào, bộ phận nào, ca nào, quyền gì.
+
+    Dùng cho câu hỏi về con người và tổ chức: bộ phận nào bao nhiêu người, ai
+    trực ca nào, một người có mặt ở những máy nào.
+    """
+    d = await queries.fleet_staff()
+    users = [
+        {"machine": u.get("machine"), "username": u.get("username"),
+         "full_name": u.get("full_name"), "role": u.get("role"),
+         "employee_code": u.get("employee_code"),
+         "department": u.get("department"), "job_title": u.get("job_title"),
+         "shift": u.get("shift"), "production_line": u.get("production_line"),
+         "is_active": u.get("is_active")}
+        for u in d["users"]
+    ]
+
+    # Đếm sẵn bằng CODE, không để mô hình tự đếm 54 dòng.
+    #
+    # Đã xảy ra thật: hỏi "bộ phận QA có bao nhiêu người" thì mô hình trả lời 10
+    # ở văn xuôi và 13 ở bảng, trong khi số thật là 11 — nó đọc danh sách rồi
+    # đếm tay, và đếm sai theo hai cách khác nhau trong cùng một câu trả lời.
+    # Cùng nguyên tắc với `kpis`/`charts`: thứ gì code tính được thì đừng để mô
+    # hình suy ra.
+    def tally(key: str) -> Dict[str, int]:
+        out: Dict[str, int] = {}
+        for u in users:
+            out[u.get(key) or "(trống)"] = out.get(u.get(key) or "(trống)", 0) + 1
+        return dict(sorted(out.items(), key=lambda x: -x[1]))
+
+    cross: Dict[str, Dict[str, int]] = {}
+    for u in users:
+        dep = u.get("department") or "(trống)"
+        cross.setdefault(dep, {})
+        cross[dep][u["machine"]] = cross[dep].get(u["machine"], 0) + 1
+
+    out = {
+        "coverage": d["coverage"],
+        "count": d["count"],
+        "by_machine": d["by_machine"],
+        "by_department": tally("department"),
+        "by_role": tally("role"),
+        "by_shift": tally("shift"),
+        "by_department_and_machine": cross,
+        "users": users,
+        "note": ("CÁC SỐ ĐẾM Ở TRÊN LÀ CHUẨN — dùng chúng, đừng tự đếm lại từ "
+                 "danh sách `users`. Cùng một `username` trên hai máy là HAI tài "
+                 "khoản khác nhau (admin có trên cả 5 máy); khi nói về một người "
+                 "luôn nêu kèm tên máy. Định danh xuyên máy duy nhất là "
+                 "employee_code."),
+    }
+    _remember("fleet_staff", out)
+    return out
+
+
+class AuditArgs(BaseModel):
+    days: int = Field(default=7, ge=1, le=90, description="Số ngày tính ngược từ hôm nay.")
+    username: Optional[str] = Field(
+        default=None,
+        description="Lọc theo một tài khoản. Đây là TÊN NGƯỜI DÙNG, không phải "
+                    "tên recipe hay tên máy — tên recipe thì đừng truyền vào đây.")
+    action_type: Optional[str] = Field(
+        default=None,
+        description="Lọc theo loại thao tác: login, logout, create_user, "
+                    "update_user, delete_user, reset_password, load_recipe, "
+                    "stop_recipe, update_recipe.")
+
+
+async def fleet_audit_log(days: int = 7, username: Optional[str] = None,
+                          action_type: Optional[str] = None,
+                          **_ignored: Any) -> Dict[str, Any]:
+    """
+    Ai làm gì, trên máy nào, lúc nào — gộp từ mọi máy.
+
+    Bản ghi demo (`simulated`) đã bị loại sẵn.
+    """
+    d = await queries.fleet_audit(days=days, username=username,
+                                  action_type=action_type)
+    out = {
+        "coverage": d["coverage"],
+        "period_days": d["period_days"],
+        "total_in_period": d["total_in_period"],
+        "by_action": d["by_action"],
+        "machines_without_user": d["machines_without_user"],
+        # Cắt còn 25 dòng cho mô hình: nó cần thấy hình dạng, không cần đọc hết.
+        # Con số tổng đã nằm ở `by_action`, tính trên TOÀN BỘ kỳ chứ không phải
+        # trên phần bị cắt.
+        "entries": d["entries"][:25],
+        "entries_shown": min(25, d["count"]),
+        "entries_total_fetched": d["count"],
+        "note": d["note"] + (
+            " `machines_without_user` là các máy KHÔNG CÓ tài khoản này — đó là "
+            "chuyện bình thường (tài khoản chỉ tồn tại trên một số máy), KHÔNG "
+            "phải máy hỏng. Máy hỏng nằm ở coverage.machines_missing."),
+    }
+    _remember("fleet_audit_log", out)
+    return out
+
+
+class LogErrorArgs(BaseModel):
+    date: Optional[str] = Field(default=None, description="Ngày YYYY-MM-DD, để trống là hôm nay.")
+    top: int = Field(default=8, ge=1, le=30, description="Số nhóm lỗi lấy mỗi máy.")
+
+
+async def fleet_log_errors(date: Optional[str] = None, top: int = 8,
+                           **_ignored: Any) -> Dict[str, Any]:
+    """
+    Lỗi và cảnh báo trong LOG HỆ THỐNG của mọi máy, đã gom nhóm.
+
+    Khác `fleet_audit_log` (thao tác của người) và khác `fleet_health` (phần
+    cứng): đây là thứ các service tự ghi ra khi có chuyện — dùng khi được hỏi
+    máy nào đang kêu gì, có lỗi gì lặp lại, service nào bất ổn.
+    """
+    d = await queries.fleet_log_errors(date=date, top=top)
+    _remember("fleet_log_errors", d)
+    return d
+
+
+FLEET_TOOLS.extend([
+    _tool(fleet_staff, "fleet_staff",
+          "Nhân sự toàn nhà máy: ai ở máy nào, bộ phận, chức vụ, ca, quyền. Rẻ."),
+    _tool(fleet_audit_log, "fleet_audit_log",
+          "Nhật ký thao tác của người dùng trên mọi máy: ai làm gì lúc nào. "
+          "Đã loại bản ghi demo. Rẻ.", AuditArgs),
+    _tool(fleet_log_errors, "fleet_log_errors",
+          "Lỗi/cảnh báo trong LOG HỆ THỐNG của mọi máy, đã gom nhóm. Khác với "
+          "nhật ký thao tác (việc của người) và khác sức khoẻ phần cứng. Rẻ.",
+          LogErrorArgs),
+])

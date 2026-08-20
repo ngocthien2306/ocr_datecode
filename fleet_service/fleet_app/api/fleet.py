@@ -130,3 +130,25 @@ async def fleet_failure_image(machine: str, img_id: str,
         raise HTTPException(r.status or 502, f"{m.name}: {r.error}")
     return Response(content=r.data, media_type="image/jpeg",
                     headers={"Cache-Control": "public, max-age=86400"})
+
+
+@router.get("/audit", summary="Nhật ký thao tác gộp từ mọi máy")
+async def fleet_audit(
+    days: int = Query(7, ge=1, le=90),
+    username: Optional[str] = Query(None),
+    action_type: Optional[str] = Query(None),
+    include_simulated: bool = Query(False),
+    per_machine: int = Query(40, ge=1, le=200),
+) -> Dict[str, Any]:
+    return await queries.fleet_audit(days=days, username=username,
+                                     action_type=action_type,
+                                     include_simulated=include_simulated,
+                                     per_machine=per_machine)
+
+
+@router.get("/log-errors", summary="Lỗi hệ thống của mọi máy")
+async def fleet_log_errors(
+    date: Optional[str] = Query(None, description="YYYY-MM-DD, mặc định hôm nay"),
+    top: int = Query(8, ge=1, le=30),
+) -> Dict[str, Any]:
+    return await queries.fleet_log_errors(date=date, top=top)

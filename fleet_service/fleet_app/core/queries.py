@@ -405,3 +405,102 @@ async def fleet_failure_images(days: int = 7, per_machine: int = 6,
         "count": len(mixed),
         "images": mixed,
     }
+
+
+async def fleet_audit(days: int = 7, username: Optional[str] = None,
+                      action_type: Optional[str] = None,
+                      include_simulated: bool = False,
+                      per_machine: int = 40) -> Dict[str, Any]:
+    """
+    Nhật ký thao tác gộp từ mọi máy, sắp theo thời gian.
+
+    Phân biệt ba tình huống mà gộp lại là nói sai:
+      - máy trả lời, có bản ghi          → nằm trong `entries`
+      - máy trả lời, KHÔNG có người này  → `machines_without_user`
+      - máy không trả lời                → `coverage.machines_missing`
+
+    Tình huống giữa rất dễ bị đọc thành lỗi: `truongca_m2` chỉ tồn tại trên M2,
+    nên bốn máy kia "không có" là chuyện bình thường, không phải bốn máy hỏng.
+    """
+    ms = [m for m in registry.all() if m.online]
+
+    async def one(m: Machine) -> Dict[str, Any]:
+        r = await client.audit(m.node_id, m.ip, days=days, username=username,
+                               action_type=action_type,
+                               include_simulated=include_simulated,
+                               limit=per_machine)
+        if not r.ok:
+            raise RuntimeError(r.error or "audit lỗi")
+        return r.data
+
+    results = await fan_out(ms, one, timeout=settings.EDGE_TIMEOUT + 2)
+
+    entries, by_action, no_user, totals = [], {}, [], 0
+    for r in results:
+        if not r.get("ok"):
+            continue
+        d = r["data"] or {}
+        if username and not d.get("matched"):
+            no_user.append(r["machine"])
+            continue
+        totals += d.get("total_in_period") or 0
+        for k, v in (d.get("by_action") or {}).items():
+            by_action[k] = by_action.get(k, 0) + v
+        for e in d.get("entries") or []:
+            entries.append({**e, "machine": r["machine"],
+                            "key": f"{r['machine']}/{e.get('username')}"})
+
+    entries.sort(key=lambda e: e.get("time") or "", reverse=True)
+
+    return {
+        "generated_at": time.time(),
+        "coverage": coverage(results),
+        "period_days": days,
+        "total_in_period": totals,
+        "by_action": dict(sorted(by_action.items(), key=lambda x: -x[1])),
+        "machines_without_user": no_user,
+        "count": len(entries),
+        "entries": entries,
+        "note": ("username chỉ duy nhất TRONG một máy; mỗi bản ghi có `key` dạng "
+                 "máy/username. Bản ghi demo (simulated) mặc định đã bị loại."),
+    }
+
+
+async def fleet_log_errors(date: Optional[str] = None,
+                           top: int = 8) -> Dict[str, Any]:
+    """Tóm tắt lỗi hệ thống của mọi máy. Chỉ nhận bản tóm tắt, không nhận file log."""
+    ms = [m for m in registry.all() if m.online]
+
+    async def one(m: Machine) -> Dict[str, Any]:
+        r = await client.log_errors(m.node_id, m.ip, date=date, top=top)
+        if not r.ok:
+            raise RuntimeError(r.error or "log-errors lỗi")
+        return r.data
+
+    results = await fan_out(ms, one, timeout=settings.EDGE_ROLLUP_TIMEOUT + 3)
+
+    rows, total = [], 0
+    for r in results:
+        if not r.get("ok"):
+            rows.append({"machine": r["machine"], "error": r.get("error")})
+            continue
+        d = r["data"] or {}
+        if not d.get("success"):
+            rows.append({"machine": r["machine"], "error": d.get("error")})
+            continue
+        total += d.get("total_problem_lines") or 0
+        rows.append({
+            "machine": r["machine"],
+            "total_problem_lines": d.get("total_problem_lines"),
+            "distinct_problems": d.get("distinct_problems"),
+            "by_level": d.get("by_level"),
+            "problems": d.get("problems"),
+        })
+
+    return {
+        "generated_at": time.time(),
+        "coverage": coverage(results),
+        "date": date or "hôm nay",
+        "fleet_total_problem_lines": total,
+        "machines": rows,
+    }
