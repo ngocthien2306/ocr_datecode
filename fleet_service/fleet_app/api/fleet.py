@@ -155,9 +155,12 @@ async def fleet_log_errors(
 
 
 @router.get("/frame/{machine}", summary="Ảnh lỗi gần nhất + template của một máy")
-async def fleet_machine_frame(machine: str) -> Dict[str, Any]:
+async def fleet_machine_frame(
+    machine: str,
+    template: Optional[str] = Query(None, description="Chỉ lấy lỗi của template này"),
+) -> Dict[str, Any]:
     """Metadata; ảnh thật lấy qua /failure-image/{machine}/{id} và /template."""
-    return await queries.machine_frame(machine)
+    return await queries.machine_frame(machine, template=template)
 
 
 @router.get("/frames", summary="Ảnh gần nhất của mọi máy — tường ảnh")
@@ -232,6 +235,7 @@ async def fleet_live_frame(
     machine: str,
     serial: str = Query(..., description="serial camera, lấy từ /frame"),
     quality: int = Query(80, ge=30, le=95),
+    w: int = Query(520, ge=160, le=1920),
 ):
     """
     Ảnh camera NGAY LÚC NÀY, đọc ring buffer shared memory qua backend của máy.
@@ -256,8 +260,24 @@ async def fleet_live_frame(
                                      headers={"Authorization": f"Bearer {token}"})
         if r.status_code >= 400:
             raise HTTPException(r.status_code, "camera không trả frame")
-        return Response(content=r.content,
-                        media_type=r.headers.get("content-type", "image/jpeg"),
+        # Thu nhỏ: bản gốc đo được 1920×1200 / 190 KB. Ở chế độ trực tiếp ảnh
+        # được tải lại vài giây một lần, và tường ảnh thì nhân lên bảy máy —
+        # gửi nguyên bản là vài MB mỗi phút cho một khung ảnh rộng 300px.
+        body = r.content
+        try:
+            from io import BytesIO
+
+            from PIL import Image
+
+            im = Image.open(BytesIO(body)).convert("RGB")
+            if im.width > w:
+                im.thumbnail((w, w * im.height // max(im.width, 1)))
+                buf = BytesIO()
+                im.save(buf, "JPEG", quality=quality)
+                body = buf.getvalue()
+        except Exception:
+            pass
+        return Response(content=body, media_type="image/jpeg",
                         headers={"Cache-Control": "no-store"})
     except HTTPException:
         raise

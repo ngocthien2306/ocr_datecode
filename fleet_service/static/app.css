@@ -630,3 +630,104 @@ h3.chat-heading { padding-bottom: 5px; border-bottom: 1px solid var(--line-soft)
   #chat { right: 10px; bottom: 10px; width: calc(100vw - 20px); max-height: calc(100vh - 20px); }
   #log { min-height: 130px; }
 }
+
+
+/* ── Khung ảnh sản phẩm trong drawer ─────────────────────────────────────── */
+
+.frame-panel { margin-top: 14px; }
+.frame-body { padding: 10px 14px 14px; }
+/* Hai ảnh phải BẰNG NHAU và sát nhau: mắt so hai tấm bằng cách quét qua lại,
+   mà lệch kích thước thì mọi khác biệt đều trông như khác biệt thật. */
+.shots { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.shots.one { grid-template-columns: 1fr; }
+.shot { position: relative; margin: 0; }
+.shot img {
+  width: 100%; aspect-ratio: 16 / 10; object-fit: cover; display: block;
+  border-radius: var(--r-md); border: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.shot.bad img { border-color: color-mix(in srgb, var(--bad) 55%, var(--line)); }
+.shot.ref img { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.shot-empty {
+  aspect-ratio: 16 / 10; display: grid; place-items: center;
+  border: 1px dashed var(--line); border-radius: var(--r-md); color: var(--faint);
+}
+.shot-badge {
+  position: absolute; top: 6px; left: 6px; font-size: 9.5px; letter-spacing: .8px;
+  font-weight: 700; padding: 2px 6px; border-radius: 3px;
+  background: rgba(24, 28, 32, .78); color: #fff;
+}
+.shot.live .shot-badge { background: var(--bad); }
+.shot-cap { margin-top: 5px; font-size: 11px; color: var(--dim); }
+
+/* "Mong" và "đọc được" đặt cạnh nhau trên một dòng: đó là hai vế của cùng một
+   phép so, tách ra hai dòng thì phải nhớ vế trên khi đọc vế dưới. */
+.shot-diff {
+  display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px;
+  padding: 8px 10px; border-radius: var(--r-md); background: var(--surface-2);
+  font-size: 12.5px;
+}
+.shot-diff .want b { color: var(--ok); }
+.shot-diff .got b { color: var(--bad); font-family: var(--f-mono, monospace); }
+.shot-note {
+  display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+  margin-top: 8px; font-size: 11.5px; color: var(--dim);
+}
+.shot-note .pill {
+  border: 1px solid var(--line); border-radius: 99px; padding: 1px 8px;
+}
+
+/* Chia lỗi theo template. Một camera soi nhiều vị trí thì đây là dòng đọc
+   trước tiên: lỗi dồn vào vị trí nào. */
+.tpl-split { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.tpl-chip {
+  display: flex; align-items: baseline; gap: 6px; padding: 3px 9px;
+  border: 1px solid var(--line); border-radius: 99px; background: var(--surface);
+  font-size: 11.5px; color: var(--dim); cursor: pointer;
+}
+.tpl-chip b { font-size: 12px; color: var(--text); }
+.tpl-chip span { font-weight: 700; }
+.tpl-chip i { font-style: normal; color: var(--faint); font-size: 10.5px; }
+.tpl-chip:hover { border-color: var(--accent); }
+.tpl-chip[aria-pressed="true"] {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+.tpl-chip[aria-pressed="true"] b, .tpl-chip[aria-pressed="true"] i { color: #fff; }
+.tpl-chip.clear { border-style: dashed; }
+
+/* ── Tường ảnh ───────────────────────────────────────────────────────────── */
+
+.wall {
+  display: grid; gap: 12px; padding: 12px 14px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+.wtile {
+  border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden;
+  background: var(--surface); cursor: pointer;
+  transition: border-color .12s;
+}
+.wtile:hover, .wtile:focus-visible { border-color: var(--accent); outline: none; }
+.wtile header {
+  display: flex; align-items: baseline; gap: 8px; padding: 7px 10px;
+  font-family: var(--f-head); font-weight: 600; font-size: 13px;
+}
+.wtile-rec {
+  font-family: var(--f-body); font-weight: 400; font-size: 10.5px;
+  color: var(--faint); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wtile img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; display: block; }
+.wtile footer {
+  padding: 6px 10px; font-size: 11px; color: var(--dim);
+  border-top: 1px solid var(--line-soft);
+  display: flex; align-items: center; gap: 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wtile.off { opacity: .72; }
+.wtile.off .shot-empty { border: 0; aspect-ratio: 16 / 10; font-size: 12px; }
+.live-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--bad); flex: none;
+  animation: livepulse 1.6s ease-in-out infinite;
+}
+@keyframes livepulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }

@@ -58,6 +58,7 @@
   <nav class="tabs" role="tablist">
     <button id="tab-overview" role="tab" aria-selected="true"></button>
     <button id="tab-staff" role="tab" aria-selected="false"></button>
+    <button id="tab-frames" role="tab" aria-selected="false"></button>
     <button id="tab-log" role="tab" aria-selected="false"></button>
   </nav>
 
@@ -103,6 +104,22 @@
 
   <!-- Nhật ký: hai nguồn tách riêng. User audit và edge-log không cùng ngữ nghĩa,
        nên không bao giờ gộp thành một timeline. -->
+  <!-- Tường ảnh: mọi máy trên một màn hình -->
+  <section id="pane-frames" role="tabpanel" hidden>
+    <div class="panel">
+      <div class="panel-head">
+        <h2 id="wall-title"></h2>
+        <span class="hint" id="wall-hint"></span>
+        <span class="spacer"></span>
+        <div class="seg">
+          <button id="w-inspected" aria-pressed="true"></button>
+          <button id="w-live" aria-pressed="false"></button>
+        </div>
+      </div>
+      <div id="wall-body"></div>
+    </div>
+  </section>
+
   <section id="pane-log" role="tabpanel" hidden>
     <div class="panel activity-panel">
       <div class="activity-head">

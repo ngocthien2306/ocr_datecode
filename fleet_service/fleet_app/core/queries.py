@@ -430,7 +430,8 @@ async def _frame_cached(key: str, make, ttl: float = FRAME_TTL) -> Dict[str, Any
     return {**val, "cached": False, "cache_age": 0.0}
 
 
-async def machine_frame(machine: str) -> Dict[str, Any]:
+async def machine_frame(machine: str,
+                        template: Optional[str] = None) -> Dict[str, Any]:
     """
     Ảnh lỗi gần nhất của một máy + template chuẩn của chính nó.
 
@@ -444,9 +445,9 @@ async def machine_frame(machine: str) -> Dict[str, Any]:
     m = ms[0]
 
     async def fetch() -> Dict[str, Any]:
-        r = await client.frame_pair(m.node_id, m.ip)
+        r = await client.frame_pair(m.node_id, m.ip, template=template)
         if not r.ok:
-            stale = _frame_cache.get(f"pair:{m.node_id}")
+            stale = _frame_cache.get(f"pair:{m.node_id}:{template or ''}")
             if stale:
                 return {**stale[1], "stale": True, "error": r.error}
             return {"success": False, "machine": m.name, "error": r.error}
@@ -455,9 +456,14 @@ async def machine_frame(machine: str) -> Dict[str, Any]:
                 "state": m.state(), "found": d.get("found"),
                 "frame": d.get("frame"), "template": d.get("template"),
                 "template_matched": d.get("template_matched"),
+                "templates": d.get("templates"),
+                "selected_template": d.get("selected_template"),
+                "cameras": d.get("cameras"),
                 "note": d.get("note")}
 
-    return await _frame_cached(f"pair:{m.node_id}", fetch)
+    # Khoá cache PHẢI kèm template: thiếu nó thì bấm sang Frame 3 lại nhận về
+    # bản đã cache của Frame 4, và người xem tưởng hai vị trí lỗi giống hệt nhau.
+    return await _frame_cached(f"pair:{m.node_id}:{template or ''}", fetch)
 
 
 async def fleet_frames() -> Dict[str, Any]:

@@ -276,13 +276,16 @@ class EdgeClient:
     # giữ TTL: nhịp làm mới là quyết định của sản phẩm ("60 giây một ảnh"), chứ
     # không phải chi tiết vận chuyển.
 
-    async def frame_pair(self, node_id: str, ip: str,
-                         within_hours: int = 24) -> EdgeResult:
+    async def frame_pair(self, node_id: str, ip: str, within_hours: int = 24,
+                         template: Optional[str] = None) -> EdgeResult:
         """Ảnh lỗi mới nhất kèm template chuẩn đang chạy lúc đó."""
+        params: Dict[str, Any] = {"within_hours": within_hours}
+        if template:
+            params["template"] = template
         return await self._authed(node_id, ip, settings.EDGE_AGENT_PORT,
                                   "/api/fleet/frame-pair",
                                   timeout=settings.EDGE_ROLLUP_TIMEOUT,
-                                  params={"within_hours": within_hours})
+                                  params=params)
 
     async def latest_frame(self, node_id: str, ip: str,
                            verdict: str = "any") -> EdgeResult:

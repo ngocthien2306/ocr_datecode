@@ -382,14 +382,22 @@ def _frame_payload(doc: Dict[str, Any], frame: Dict[str, Any],
     }
 
 
-def _pick_frame(doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _pick_frame(doc: Dict[str, Any],
+                template: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Frame đại diện của một sản phẩm: ưu tiên frame FAIL, vì đó là frame giải
-    thích được vì sao sản phẩm trượt. Sản phẩm đạt thì lấy frame đầu có ảnh."""
+    thích được vì sao sản phẩm trượt. Sản phẩm đạt thì lấy frame đầu có ảnh.
+
+    `template` lọc theo TÊN template. Một camera có thể soi nhiều vị trí chụp
+    (đo trên M2: cùng một camera có Frame 2/3/4), và mỗi vị trí có template
+    riêng — muốn xem lỗi của riêng một vị trí thì phải lọc ở đây.
+    """
     best = None
     for cam in doc.get("camera_results") or []:
         serial = str(cam.get("serial_number"))
         for frame in cam.get("frames") or []:
             if not frame.get("image_path"):
+                continue
+            if template and frame.get("template_name") != template:
                 continue
             if frame.get("pass_fail") == "FAIL":
                 return _frame_payload(doc, frame, serial)
@@ -398,7 +406,8 @@ def _pick_frame(doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return best
 
 
-def _scan(query: Dict[str, Any], sort_dir: int, scan: int) -> Optional[Dict[str, Any]]:
+def _scan(query: Dict[str, Any], sort_dir: int, scan: int,
+          template: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Quét ngược từ mốc thời gian, trả frame CÓ ẢNH đầu tiên gặp được.
 
     Phải quét nhiều document chứ không lấy đúng một: không phải sản phẩm nào
@@ -412,10 +421,64 @@ def _scan(query: Dict[str, Any], sort_dir: int, scan: int) -> Optional[Dict[str,
            .sort(_TIME_FIELD, sort_dir)
            .limit(scan))
     for doc in cur:
-        got = _pick_frame(doc)
+        got = _pick_frame(doc, template)
         if got:
             return got
     return None
+
+
+def _known_cameras(since: datetime) -> List[str]:
+    """Serial của các camera máy này dùng, lấy từ bản ghi kiểm gần nhất.
+
+    Không đi qua đường ảnh lỗi: LineTine không có lỗi nào trong 24 giờ, và như
+    thế thì màn hình lại không cho xem camera của đúng cái máy đang chạy tốt
+    nhất — vô lý.
+    """
+    from agent_app.db.mongodb import get_sync_database
+
+    out: List[str] = []
+    cur = (get_sync_database()["inference_results"]
+           .find({_TIME_FIELD: {"$gte": since}}, {"camera_results.serial_number": 1})
+           .sort(_TIME_FIELD, -1)
+           .limit(20))
+    for doc in cur:
+        for cam in doc.get("camera_results") or []:
+            s = str(cam.get("serial_number") or "")
+            if s and s not in out:
+                out.append(s)
+    return out
+
+
+def _template_split(since: datetime, scan: int) -> List[Dict[str, Any]]:
+    """Lỗi gần đây chia theo TEMPLATE, cho từng camera.
+
+    Đây mới là câu trả lời khi một camera soi nhiều vị trí: đo trên M2, 86% frame
+    fail dồn vào Frame 4 và chỉ 12% vào Frame 3 — tức hỏng ở MỘT vị trí chụp
+    chứ không phải cả camera. Nhìn một tấm ảnh lỗi đơn lẻ thì không bao giờ
+    thấy được điều đó.
+    """
+    from agent_app.db.mongodb import get_sync_database
+
+    counts: Dict[tuple, int] = {}
+    cur = (get_sync_database()["inference_results"]
+           .find({_TIME_FIELD: {"$gte": since}, "product_pass_fail": "FAIL"})
+           .sort(_TIME_FIELD, -1)
+           .limit(scan))
+    for doc in cur:
+        for cam in doc.get("camera_results") or []:
+            serial = str(cam.get("serial_number"))
+            for f in cam.get("frames") or []:
+                if f.get("pass_fail") != "FAIL":
+                    continue
+                key = (serial, f.get("template_name") or "—")
+                counts[key] = counts.get(key, 0) + 1
+
+    total = sum(counts.values()) or 1
+    rows = [{"camera": cam, "template_name": name, "fails": n,
+             "share_pct": round(n * 100 / total, 1)}
+            for (cam, name), n in counts.items()]
+    rows.sort(key=lambda r: -r["fails"])
+    return rows
 
 
 @router.get("/latest-frame", summary="Ảnh sản phẩm kiểm gần nhất (không LLM)")
@@ -452,6 +515,8 @@ async def latest_frame(
 async def frame_pair(
     within_hours: int = Query(24, ge=1, le=168),
     scan: int = Query(60, ge=5, le=400),
+    template: Optional[str] = Query(None, description="Chỉ lấy lỗi của template này"),
+    split_scan: int = Query(300, ge=50, le=1000),
     current_user: Dict[str, Any] = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
@@ -474,10 +539,14 @@ async def frame_pair(
     from agent_app.core.templates import attach_templates
 
     since = datetime.now() - timedelta(hours=within_hours)
-    bad = _scan({_TIME_FIELD: {"$gte": since}, "product_pass_fail": "FAIL"}, -1, scan)
+    split = _template_split(since, split_scan)
+    cams = _known_cameras(since)
+    bad = _scan({_TIME_FIELD: {"$gte": since}, "product_pass_fail": "FAIL"},
+                -1, scan, template)
     if not bad:
         return {"success": True, "found": False, "frame": None, "template": None,
-                "within_hours": within_hours}
+                "templates": split, "selected_template": template,
+                "cameras": cams, "within_hours": within_hours}
 
     attached = 0
     try:
@@ -492,6 +561,13 @@ async def frame_pair(
         "frame": {k: v for k, v in bad.items() if k != "template"},
         "template": bad.get("template"),
         "template_matched": bool(attached),
+        # Một camera soi nhiều vị trí thì phải thấy lỗi dồn vào vị trí nào.
+        "templates": split,
+        "selected_template": template,
+        # Serial camera KHÔNG được phụ thuộc vào việc có lỗi gần đây: xem ảnh
+        # camera trực tiếp là chuyện của một máy đang chạy tốt, mà máy chạy tốt
+        # thì đúng là không có ảnh lỗi nào để lấy serial ra.
+        "cameras": cams,
         "within_hours": within_hours,
         "note": ("Sản phẩm ĐẠT không lưu ảnh trong pipeline này, nên vế đối chiếu "
                  "là ảnh template chuẩn — thứ hệ thống thật sự đem ra so."),

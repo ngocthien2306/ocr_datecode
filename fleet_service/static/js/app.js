@@ -14,6 +14,8 @@ import { store, I18N, api, esc, clock, coverageHTML } from './core.js';
 import * as map from './factory-map-3d.js';
 import * as V from './views.js';
 import * as chat from './chat.js';
+import * as frames from './frame-view.js';
+import * as wall from './frame-wall.js';
 
 const $ = s => document.querySelector(s);
 const state = { status: null, prod: null, staff: null, audit: null,
@@ -81,6 +83,7 @@ function paintTop() {
   ['en', 'vi'].forEach(l => $('#btn-' + l).setAttribute('aria-pressed', store.lang === l));
   ['light', 'dark'].forEach(x => $('#btn-' + x).setAttribute('aria-pressed', store.theme === x));
   $('#tab-overview').textContent = t.tabOverview;
+  $('#tab-frames').textContent = t.tabFrames;
   $('#tab-staff').textContent = t.tabStaff;
   $('#tab-log').textContent = t.tabLog;
   $('#stale').innerHTML = state.stale
@@ -121,11 +124,25 @@ function openDrawer(nodeId) {
   const m = (state.status?.machines || []).find(x => x.node_id === nodeId);
   if (!m) return;
   state.selected = nodeId;
-  $('#drawer').innerHTML = V.drawerHTML(m, state.prod);
+  // Ảnh đặt TRÊN CÙNG: mở drawer ra là để xem máy đang chạy thế nào, và một
+  // tấm ảnh sản phẩm trả lời câu đó nhanh hơn mọi con số bên dưới. Nằm dưới
+  // vân tay lỗi thì phải cuộn qua cả trang mới thấy.
+  $('#drawer').innerHTML = '<section class="panel frame-panel" id="frame-panel"></section>'
+    + V.drawerHTML(m, state.prod);
   $('#drawer').classList.add('open');
+  // Ảnh chỉ tải khi drawer MỞ, và dừng hẳn khi đóng: kéo ảnh về cho một máy
+  // không ai còn nhìn là chạm vào Jetson đang chạy dây chuyền, không lý do.
+  frames.open(m.name);
   paintFold();
 }
+/** Mở drawer theo TÊN máy — tường ảnh chỉ biết tên, không biết node id. */
+function openDrawerByName(name) {
+  const m = (state.status?.machines || []).find(x => x.name === name);
+  if (m) openDrawer(m.node_id);
+}
+
 window.__closeDrawer = () => {
+  frames.stop();
   state.selected = null;
   $('#drawer').classList.remove('open');
   paintFold();
@@ -141,11 +158,15 @@ window.__askAbout = name => {
 
 function paintTabs() {
   const t = store.t;
-  ['overview', 'staff', 'log'].forEach(k =>
+  ['overview', 'staff', 'frames', 'log'].forEach(k =>
     $('#tab-' + k).setAttribute('aria-selected', state.tab === k));
   $('#pane-overview').hidden = state.tab !== 'overview';
   $('#pane-staff').hidden = state.tab !== 'staff';
+  $('#pane-frames').hidden = state.tab !== 'frames';
   $('#pane-log').hidden = state.tab !== 'log';
+  // Rời tab là dừng hẳn: tường ảnh ở chế độ camera hỏi BẢY máy một lúc, để nó
+  // chạy ngầm dưới một tab không ai xem là phí đúng bảy lần.
+  if (state.tab !== 'frames') wall.stop();
 
   if (state.tab === 'overview') {
     $('#stats-title').textContent = t.quality;
@@ -332,10 +353,11 @@ function boot() {
     await fetch('/api/fleet/refresh', { method: 'POST' });
     loadStatus(); loadProduction();
   };
-  ['overview', 'staff', 'log'].forEach(k => $('#tab-' + k).onclick = () => {
+  ['overview', 'staff', 'frames', 'log'].forEach(k => $('#tab-' + k).onclick = () => {
     state.tab = k; paintTabs();
     if (k === 'staff' && !state.staff) loadStaff();
     if (k === 'log' && !state.audit) loadLogs();
+    if (k === 'frames') wall.show(openDrawerByName);
   });
   ['machine', 'dept', 'shift'].forEach(g => $('#g-' + g).onclick = () => {
     state.staffOpts.group = g; paintTabs();
