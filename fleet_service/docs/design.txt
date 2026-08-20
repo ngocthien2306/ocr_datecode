@@ -1,4 +1,23 @@
 mục tiêu tôi build hệ thống này dùng để quản lí tập trung các máy trong nhà máy. Mỗi máy là 1 line sản suất khác nhau 
 vì vậy tôi cần build các agent để quản lí như user management (quản lí user tất cả các máy)
 log agent (quản lý log hệ thống và action của toàn máy)
-historical cũng tương tự (có thể truy vấn tất cả máy để so sánh, theo giờ, theo ca)
+historical cũng tương tự (có thể truy vấn tất cả máy để so sánh, theo giờ, theo ca, xuất report tất cả nhà máy) mọi tính năng phải làm sao để tăng trải nghiệm người dùng như xuất report hiện ra các danh sách máy để người dùng click, và định dạng để click, sau đó là theo ngày hay giờ, hay tuần. Nếu trong prompt của người dùng đã rõ ràng thì không cần hỏi lại 
+... sẽ có thêm các tính năng quản lý khác, hiện tại chỉ cần tập trung và làm tốt cái hiện tại 
+
+về mặt UI tôi muốn nhờ claude design để design lại user cho 1 system tổng quản lý các máy 
+và 1 UI khác trên cụ thể 1 máy để nhân viên ở line đó dùng 
+
+
+tôi muốn design UI ở máy tổng là có trang home chính, hiển thị tất cả máy trong nhà máy. Ngoài ra bên trái là sơ đồ nhà máy (sơ đồ 3d)
+hiển thị vị trí của các máy (hiện tại chưa có sơ đồ cụ thể nên hãy tự sáng tạo cho tôi)
+
+sau đó hiện thị 3d object lên, khi mà tôi nhấn vào máy nào thì máy đó hiện lên, show các thông tin cần thiết tình trạng sản xuất của line hiện tại, có các bộ lọc theo giờ, theo ngày, tuần (vẽ chart minh hoạ)
+
+bên dưới vị trí show ra các máy trong hệ thống là sơ đồ thống kê toàn bộ máy dưới dạng (chart, bảng) tuỳ người dùng chọn cần show tỉ lệ pass/fail (theo dropbox là giờ, ngày, tuần)
+
+bên dưới là điều tra các nguyên nhân chính bị lỗi, thì cần show top N ảnh minh hoạ, expand xem máy nào thì truy vấn máy đó
+
+sau đó là tab quản lí nhân viên toàn bộ hệ thống, group theo máy (line, bộ phận, ...) 
+quản lý action log của các user để biết họ làm gì, tính năng này phải tích hợp vào agent chat bot để hỏi cho nhanh
+
+hãy giúp tôi build các tài liệu cần thiết để build UI/UX ra 1 folder sau đó là build 1 plan để hoàn thiện các tính năng tôi đã liệt kê, ngoài ra bạn hãy đề xuất thêm tính năng, cũng như đọc hiểu dữ liệu và hệ thống để đề xuất thêm sau cho phù hợp 
