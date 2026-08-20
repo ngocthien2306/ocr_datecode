@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from agent_app.api import auth, chat
+from agent_app.api import auth, chat, fleet
 from agent_app.core.config import settings
 from agent_app.db.mongodb import (
     close_mongo_connection,
@@ -81,6 +81,9 @@ app.add_middleware(
 # Cùng prefix với backend cũ (/api/agent/...) để FE chỉ cần đổi base URL.
 app.include_router(auth.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
+# Đường XÁC ĐỊNH cho tầng fleet: gọi thẳng tool, không qua LLM. Fleet poll 5 máy
+# mỗi phút, đi qua /agent/chat thì mỗi vòng là 5 lượt LLM.
+app.include_router(fleet.router, prefix="/api")
 
 
 # Ảnh kết quả inference. Backend cũng serve thư mục này ở :8000, nhưng tunnel

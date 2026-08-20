@@ -25,6 +25,8 @@ class Settings(BaseSettings):
 
     EDGE_TIMEOUT: float = 8.0
     EDGE_CHAT_TIMEOUT: float = 90.0
+    # Lần lạnh của rollup phải mổ vài trăm document fail trên Jetson.
+    EDGE_ROLLUP_TIMEOUT: float = 30.0
 
     POLL_INTERVAL: float = 60.0
     STALE_AFTER: float = 180.0

@@ -169,3 +169,90 @@ async def ask_machine(key: str, q: str = Query(..., description="Câu hỏi")) -
     if not res.ok:
         raise HTTPException(502, f"{m.name}: {res.error}")
     return {"machine": m.name, "node_id": m.node_id, "answer": res.data}
+
+
+@router.get("/production", summary="Sản lượng và vân tay kiểu lỗi của cả đội hình")
+async def fleet_production(
+    days: int = Query(7, ge=1, le=90),
+    causes: bool = Query(True, description="Kèm vân tay kiểu lỗi"),
+) -> Dict[str, Any]:
+    """
+    Số liệu sản xuất gộp từ 5 máy, KHÔNG qua LLM.
+
+    **Không xếp hạng theo pass rate.** Năm máy chạy năm sản phẩm khác nhau —
+    recipe gần như không trùng nhau (đúng một recipe chung giữa hai máy trên cả
+    đội hình). "M2 pass 69% còn PC-Auto-1 pass 98%" không nói lên máy nào tệ
+    hơn, nó chỉ nói hai máy đang chạy hai mặt hàng khác độ khó. Xếp hạng thẳng ở
+    đây là dựng sẵn một kết luận sai mà trông rất thuyết phục.
+
+    Thứ so sánh được là **vân tay kiểu lỗi**: tỉ lệ giữa các nguyên nhân thuộc về
+    pipeline OCR chứ không thuộc về mặt hàng. Một máy có `no_detection` lệch hẳn
+    khỏi mặt bằng là vấn đề camera/trigger/ánh sáng, và kết luận đó đúng dù bốn
+    máy kia đang chạy thứ khác.
+    """
+    ms = [m for m in registry.all() if m.online]
+
+    async def one(m: Machine) -> Dict[str, Any]:
+        r = await client.rollup(m.node_id, m.ip, days=days, causes=causes)
+        if not r.ok:
+            raise RuntimeError(r.error or "rollup lỗi")
+        return r.data
+
+    results = await fan_out(ms, one, timeout=settings.EDGE_ROLLUP_TIMEOUT + 3)
+    by_id = {r["node_id"]: r for r in results}
+
+    rows, totals = [], {"products": 0, "pass": 0, "fail": 0}
+    for m in registry.all():
+        r = by_id.get(m.node_id) or {}
+        d = (r.get("data") or {}) if r.get("ok") else {}
+        prod = d.get("production") or None
+        fm = d.get("failure_modes") or None
+        if prod:
+            totals["products"] += prod.get("total_products") or 0
+            totals["pass"] += prod.get("pass") or 0
+            totals["fail"] += prod.get("fail") or 0
+        rows.append({
+            "node_id": m.node_id, "machine": m.name, "line": m.line,
+            "state": m.state(),
+            "production": prod,
+            "failure_modes": fm,
+            "recipes": d.get("recipes"),
+            "error": r.get("error") or d.get("production_error"),
+        })
+
+    totals["pass_rate"] = (round(totals["pass"] * 100.0 / totals["products"], 2)
+                           if totals["products"] else None)
+
+    # Ma trận vân tay: hàng là máy, cột là nguyên nhân, ô là % của mẫu máy đó.
+    # Đây là bảng để MẮT so sánh — chỗ nào một máy lệch hẳn khỏi cột của nó thì
+    # nhìn ra ngay, mà không cần đem pass rate của hai mặt hàng khác nhau ra so.
+    matrix: Dict[str, Dict[str, Any]] = {}
+    if causes:
+        keys: List[str] = []
+        for row in rows:
+            for c in ((row.get("failure_modes") or {}).get("by_cause") or []):
+                if c["cause"] not in keys:
+                    keys.append(c["cause"])
+        for row in rows:
+            fm = row.get("failure_modes") or {}
+            share = {c["cause"]: c["percent_of_sample"]
+                     for c in (fm.get("by_cause") or [])}
+            matrix[row["machine"]] = {
+                "by_cause": {k: share.get(k) for k in keys},
+                "sample_products": fm.get("sample_products"),
+                # Mẫu chưa phủ hết kỳ thì đây là TỈ LỆ của mẫu, không phải của cả
+                # kỳ. Nói ra để không ai đọc thành số tuyệt đối.
+                "sample_covers_all": fm.get("sample_covers_all"),
+            }
+        matrix = {"causes": keys, "by_machine": matrix} if keys else {}
+
+    return {
+        "generated_at": time.time(),
+        "period_days": days,
+        "coverage": coverage(results),
+        "fleet_total": totals,
+        "note": ("Không xếp hạng theo pass rate: các máy chạy recipe khác nhau nên "
+                 "tỉ lệ pass không so trực tiếp được. Dùng vân tay kiểu lỗi để so."),
+        "failure_fingerprint": matrix,
+        "machines": rows,
+    }

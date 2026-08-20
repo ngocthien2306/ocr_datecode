@@ -186,6 +186,21 @@ class EdgeClient:
                              "/api/jetson-monitoring/metrics"),
             timeout=settings.EDGE_TIMEOUT)
 
+    async def rollup(self, node_id: str, ip: str, days: int = 7,
+                     causes: bool = True) -> EdgeResult:
+        """
+        L5 — số liệu sản xuất gọn, KHÔNG qua LLM. Đo được 1,4 KB / 2,0s lạnh,
+        0,2s khi edge còn cache.
+
+        Timeout rộng hơn EDGE_TIMEOUT vì lần lạnh phải mổ vài trăm document fail
+        trên Jetson; 8s là vừa đủ hụt.
+        """
+        return await self._authed(node_id, ip, settings.EDGE_AGENT_PORT,
+                                  "/api/fleet/rollup",
+                                  timeout=settings.EDGE_ROLLUP_TIMEOUT,
+                                  params={"days": days,
+                                          "causes": str(causes).lower()})
+
     async def chat(self, node_id: str, ip: str, message: str,
                    session_id: Optional[str] = None) -> EdgeResult:
         """

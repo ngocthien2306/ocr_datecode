@@ -83,6 +83,26 @@
        color:var(--bad);font-size:12px;border-top:1px solid var(--line);word-break:break-word}
   .na{color:var(--faint);font-weight:500}
 
+  section#prod{padding:0 26px 30px}
+  .sec-h{display:flex;align-items:baseline;gap:12px;margin:6px 0 12px}
+  .sec-h h2{font-size:15px;margin:0;font-weight:640;letter-spacing:-.01em}
+  .sec-h .hint{font-size:12px;color:var(--faint)}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;
+         box-shadow:var(--shadow);overflow-x:auto;margin-bottom:16px}
+  table{border-collapse:collapse;width:100%;min-width:640px;font-size:13px}
+  th,td{padding:10px 14px;text-align:right;white-space:nowrap;
+        border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);
+     font-weight:600;background:var(--card2)}
+  th:first-child,td:first-child{text-align:left}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr.total td{font-weight:660;background:var(--card2)}
+  td.name{font-weight:600}
+  td.dim{color:var(--dim);font-weight:400}
+  .heat{position:relative}
+  .heat span{position:relative;z-index:1}
+  .heat::before{content:'';position:absolute;inset:4px 6px;border-radius:4px;
+                background:var(--accent);opacity:calc(var(--v) / 130)}
   .cov{margin:0 26px 26px;padding:13px 16px;border-radius:10px;
        background:var(--card);border:1px solid var(--line);font-size:13px;color:var(--dim)}
   .cov.miss{border-color:color-mix(in srgb,var(--warn) 45%,var(--line))}
@@ -104,6 +124,7 @@
 
 <div class="grid" id="grid"></div>
 <div class="cov" id="cov"></div>
+<section id="prod"></section>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -124,6 +145,12 @@ const I18N = {
     cameraOn: 'camera service running', cameraOff: 'camera service stopped',
     cameraUnknown: 'camera service unknown',
     d: 'd', h: 'h', m: 'm',
+    production: 'Production', fingerprint: 'Failure fingerprint',
+    fpNote: 'Percent of each machine\'s sampled failures. Comparable across machines because these causes belong to the OCR pipeline, not to the product.',
+    noRank: 'Not ranked by pass rate: the machines run different recipes, so pass rates are not directly comparable.',
+    output: 'Output', perDay: 'per day', passRate: 'Pass rate', recipe: 'Recipe',
+    sample: 'sample', partialSample: 'sampled', fullSample: 'complete',
+    fleetTotal: 'Fleet total', days: 'days',
     complete: n => `All ${n} machines reporting.`,
     missing: (k, n) => `<b>No data from ${k}/${n} machines:</b> `,
     partial: (k, n) => `<b>Partial data from ${k}/${n} machines:</b> `,
@@ -142,6 +169,12 @@ const I18N = {
     cameraOn: 'camera service đang chạy', cameraOff: 'camera service đã tắt',
     cameraUnknown: 'camera service không rõ',
     d: 'ngày', h: 'giờ', m: 'phút',
+    production: 'Sản xuất', fingerprint: 'Vân tay kiểu lỗi',
+    fpNote: 'Tỉ lệ trên mẫu fail của từng máy. So được giữa các máy vì các nguyên nhân này thuộc pipeline OCR, không thuộc mặt hàng.',
+    noRank: 'Không xếp hạng theo tỉ lệ pass: các máy chạy recipe khác nhau nên không so trực tiếp được.',
+    output: 'Sản lượng', perDay: 'mỗi ngày', passRate: 'Tỉ lệ pass', recipe: 'Recipe',
+    sample: 'mẫu', partialSample: 'lấy mẫu', fullSample: 'phủ hết kỳ',
+    fleetTotal: 'Toàn nhà máy', days: 'ngày',
     complete: n => `Đủ cả ${n} máy.`,
     missing: (k, n) => `<b>Không lấy được ${k}/${n} máy:</b> `,
     partial: (k, n) => `<b>Thiếu một phần ${k}/${n} máy:</b> `,
@@ -155,7 +188,8 @@ const I18N = {
 
 let lang = localStorage.getItem('fleet_lang') || 'en';
 let T = I18N[lang];
-let latest = null;               // dữ liệu lần tải gần nhất, để đổi ngôn ngữ khỏi gọi lại API
+let latest = null;
+let latestProd = null;               // dữ liệu lần tải gần nhất, để đổi ngôn ngữ khỏi gọi lại API
 
 function setLang(l) {
   lang = l; T = I18N[l];
@@ -165,6 +199,7 @@ function setLang(l) {
   $('#btn-vi').setAttribute('aria-pressed', l === 'vi');
   $('#btn-refresh').textContent = T.refresh;
   if (latest) render(latest);    // vẽ lại từ dữ liệu cũ, không gọi lại 5 máy
+  if (latestProd) renderProduction(latestProd);
 }
 
 // Không có số thì hiện "—", KHÔNG hiện 0. Nhiệt độ null nghĩa là máy không có
@@ -260,6 +295,71 @@ function card(m) {
   </article>`;
 }
 
+
+/* Bảng sản xuất + ma trận vân tay lỗi.
+   Cố ý KHÔNG xếp hạng theo tỉ lệ pass. Năm máy chạy năm recipe khác nhau (gần
+   như không recipe nào trùng), nên "máy A pass 98%, máy B pass 69%" chỉ nói hai
+   máy đang chạy hai mặt hàng khác độ khó. Thứ so được là vân tay kiểu lỗi. */
+function renderProduction(d) {
+  if (!d) { $('#prod').innerHTML = ''; return; }
+  const fmt = v => v === null || v === undefined
+    ? '<span class="na">—</span>' : Number(v).toLocaleString(T.locale);
+
+  const t = d.fleet_total || {};
+  const rows = (d.machines || []).map(m => {
+    const p = m.production;
+    if (!p) return `<tr><td class="name">${m.machine}</td>
+      <td colspan="4" class="dim">${m.error || T.noMetrics}</td></tr>`;
+    const rec = (m.recipes || [])[0];
+    return `<tr>
+      <td class="name">${m.machine}</td>
+      <td>${fmt(p.total_products)}</td>
+      <td>${fmt(p.per_day)}</td>
+      <td>${p.pass_rate}%</td>
+      <td class="dim">${rec ? rec.name : '—'}</td></tr>`;
+  }).join('');
+
+  let fpTable = '';
+  const fp = d.failure_fingerprint;
+  if (fp && fp.causes && fp.causes.length) {
+    const head = fp.causes.map(c => `<th>${c.replace(/_/g, ' ')}</th>`).join('');
+    const body = Object.entries(fp.by_machine).map(([name, r]) => {
+      const cells = fp.causes.map(c => {
+        const v = r.by_cause[c];
+        return v === null || v === undefined
+          ? '<td class="dim">—</td>'
+          : `<td class="heat" style="--v:${v}"><span>${v.toFixed(1)}%</span></td>`;
+      }).join('');
+      // Mẫu chưa phủ hết kỳ thì đây là tỉ lệ của MẪU. Ghi ra ngay cạnh, không
+      // để trong chú thích cuối trang — người đọc bảng sẽ không kéo xuống đó.
+      const cov = r.sample_covers_all ? T.fullSample : T.partialSample;
+      return `<tr><td class="name">${name}</td>${cells}
+        <td class="dim">${fmt(r.sample_products)} ${T.sample} · ${cov}</td></tr>`;
+    }).join('');
+    fpTable = `
+      <div class="sec-h" style="margin-top:22px">
+        <h2>${T.fingerprint}</h2><span class="hint">${T.fpNote}</span>
+      </div>
+      <div class="panel"><table>
+        <thead><tr><th>${T.output.replace(/.*/, '')}&nbsp;</th>${head}<th>${T.sample}</th></tr></thead>
+        <tbody>${body}</tbody></table></div>`;
+  }
+
+  $('#prod').innerHTML = `
+    <div class="sec-h">
+      <h2>${T.production}</h2>
+      <span class="hint">${d.period_days} ${T.days} · ${T.noRank}</span>
+    </div>
+    <div class="panel"><table>
+      <thead><tr><th>&nbsp;</th><th>${T.output}</th><th>${T.perDay}</th>
+                 <th>${T.passRate}</th><th>${T.recipe}</th></tr></thead>
+      <tbody>${rows}
+        <tr class="total"><td>${T.fleetTotal}</td><td>${fmt(t.products)}</td>
+          <td>—</td><td>${t.pass_rate ?? '—'}%</td><td class="dim">—</td></tr>
+      </tbody></table></div>
+    ${fpTable}`;
+}
+
 function render(d) {
   $('#grid').innerHTML = d.machines.map(card).join('');
 
@@ -284,6 +384,15 @@ function render(d) {
       .filter(Boolean).join('<br>');
 }
 
+async function loadProduction() {
+  // Poll thưa hơn trạng thái máy: rollup lần lạnh phải mổ vài trăm document fail
+  // trên Jetson (đo được 2,0s), còn trạng thái chỉ đọc số đã có sẵn.
+  try {
+    latestProd = await (await fetch('/api/fleet/production?days=7')).json();
+    renderProduction(latestProd);
+  } catch (e) { /* giữ nguyên bảng cũ, đừng xoá trắng vì một lần hụt */ }
+}
+
 async function load(refresh) {
   try {
     if (refresh) await fetch('/api/fleet/refresh', { method: 'POST' });
@@ -297,7 +406,9 @@ async function load(refresh) {
 
 setLang(lang);
 load();
+loadProduction();
 setInterval(load, 30000);
+setInterval(loadProduction, 300000);   // 5 phút
 </script>
 </body>
 </html>
