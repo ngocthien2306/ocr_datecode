@@ -99,4 +99,8 @@ async def health():
 
 @app.get("/", include_in_schema=False)
 async def dashboard():
-    return FileResponse(SERVICE_ROOT / "static" / "index.html")
+    # Cùng chính sách no-cache như /static. Trang này KHÔNG đi qua mount đó, nên
+    # nó từng là mảnh duy nhất bị giữ cache: JS mới, HTML cũ — và importmap khai
+    # báo trong HTML thì không tới được trình duyệt, three.js không resolve nổi.
+    return FileResponse(SERVICE_ROOT / "static" / "index.html",
+                        headers={"Cache-Control": "no-cache, must-revalidate"})

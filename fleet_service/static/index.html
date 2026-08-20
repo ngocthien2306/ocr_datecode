@@ -101,21 +101,23 @@
     </div>
   </section>
 
-  <!-- Nhật ký: hai phần trong một tab, KHÔNG trộn một dòng thời gian -->
+  <!-- Nhật ký: hai nguồn tách riêng. User audit và edge-log không cùng ngữ nghĩa,
+       nên không bao giờ gộp thành một timeline. -->
   <section id="pane-log" role="tabpanel" hidden>
-    <div class="panel">
-      <div class="panel-head">
-        <h2 id="log-users-title"></h2>
+    <div class="panel activity-panel">
+      <div class="activity-head">
+        <div class="seg activity-switch" aria-label="Activity source">
+          <button id="activity-audit" aria-pressed="true"></button>
+          <button id="activity-errors" aria-pressed="false"></button>
+        </div>
+        <span class="activity-note" id="activity-note"></span>
         <span class="spacer"></span>
-        <label style="font-size:12px;color:var(--dim);display:flex;gap:6px;align-items:center">
+        <label class="sim-control" id="sim-control">
           <input type="checkbox" id="sim-toggle"><span id="sim-label"></span>
         </label>
       </div>
-      <div id="log-users"></div>
-    </div>
-    <div class="panel" style="margin-top:14px">
-      <div class="panel-head"><h2 id="log-sys-title"></h2></div>
-      <div id="log-sys"></div>
+      <div id="activity-filters"></div>
+      <div id="activity-body"></div>
     </div>
   </section>
 </div>

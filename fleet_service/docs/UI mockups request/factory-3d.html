@@ -22,50 +22,99 @@
 }
 </script>
 <style>
-  html,body{margin:0;height:100%;background:var(--color-accent-900);font-family:var(--font-body);color:var(--color-text)}
-  a{color:var(--color-accent-700)}a:hover{color:var(--color-accent-900)}
-  three-d-stage:not(:defined){visibility:hidden}
-  #wrap{position:relative;height:100vh}
-  three-d-stage{width:100%;height:100%}
-  .hud{position:absolute;background:rgba(242,242,243,.95);border:1px solid rgba(89,128,166,.55);padding:12px 14px;backdrop-filter:blur(2px)}
-  .hud h1{font:600 15px var(--font-heading);letter-spacing:.06em;margin:0 0 2px}
-  .k{font:600 9px var(--font-body);letter-spacing:.1em;color:var(--color-neutral-600);margin:0 0 6px}
-  .row{display:flex;align-items:center;gap:8px;font:11px var(--font-body);padding:3px 0}
-  .sw{width:9px;height:9px;flex:none}
-  .mono{font:10.5px ui-monospace,Menlo,monospace}
-  .note{font:10px/1.5 var(--font-body);color:var(--color-neutral-600)}
+  :root { --paper:#fff; --ink:#1d1f20; --line:#d4d4d7; --muted:#98989b; --green:#2f855a; --amber:#b17600; }
+  * { box-sizing:border-box; }
+  html,body { min-height:100%; }
+  body { margin:0; overflow-x:auto; background:var(--color-bg); color:var(--ink); font-family:var(--font-body); }
+  three-d-stage:not(:defined) { visibility:hidden; }
+
+  .dashboard { display:grid; grid-template-columns:minmax(720px,1004px) 470px; gap:36px; align-items:start; min-width:1270px; padding:30px 24px 44px; }
+  .map-card { overflow:hidden; background:var(--paper); border:2px solid var(--line); border-radius:15px; box-shadow:0 12px 22px rgba(29,31,32,.10); }
+  .map-header { display:flex; align-items:flex-end; justify-content:space-between; min-height:168px; padding:32px 31px 25px; border-bottom:2px solid #e5e5e7; }
+  .map-header h1 { margin:0; font:600 43px/1 var(--font-heading); letter-spacing:.015em; white-space:nowrap; }
+  .map-header p { margin:0 0 5px; color:var(--muted); font-size:20px; letter-spacing:.03em; white-space:nowrap; }
+  .map-stage { position:relative; height:566px; background:var(--color-bg); }
+  .map-stage three-d-stage { display:block; width:100%; height:100%; }
+
+  .legend { display:flex; flex-wrap:wrap; align-items:center; gap:18px 29px; min-height:122px; padding:23px 34px; border-top:2px solid #e5e5e7; color:#626468; font-size:20px; }
+  .legend-item { display:inline-flex; align-items:center; gap:11px; white-space:nowrap; }
+  .status-dot { width:16px; height:16px; border-radius:50%; background:var(--green); }
+  .warn-icon { position:relative; width:24px; height:22px; clip-path:polygon(50% 1%,98% 94%,2% 94%); background:var(--amber); }
+  .warn-icon::after { position:absolute; inset:4px 4px 3px; content:''; clip-path:polygon(50% 1%,98% 94%,2% 94%); background:var(--paper); }
+  .muted-icon,.offline-icon { width:22px; height:20px; }
+  .muted-icon path,.offline-icon path { fill:none; stroke:#9b9da1; stroke-width:2; }
+
+  .machine-list { padding-top:31px; }
+  .machine-list > h2 { margin:0 0 27px 4px; font:600 42px/1 var(--font-heading); letter-spacing:.02em; white-space:nowrap; }
+  .machine-cards { display:grid; gap:28px; }
+  .machine-card { min-height:326px; padding:31px 31px 25px; border:2px solid #d1d3d7; border-radius:15px; background:var(--paper); box-shadow:0 3px 7px rgba(29,31,32,.08); }
+  .machine-card.running { border-color:#5c86b3; }
+  .card-kicker { margin-bottom:14px; overflow:hidden; color:#98989b; font:600 18px var(--font-heading); letter-spacing:.11em; text-overflow:ellipsis; text-transform:uppercase; white-space:nowrap; }
+  .card-title-row { display:flex; align-items:center; gap:17px; }
+  .card-title-row h3 { margin:0; font:600 45px/1 var(--font-heading); }
+  .recipe { max-width:210px; overflow:hidden; padding:5px 15px; border:2px solid #d4d4d7; border-radius:8px; color:#666a70; font-size:16px; letter-spacing:.04em; text-overflow:ellipsis; text-transform:uppercase; white-space:nowrap; }
+  .pass-row { display:flex; align-items:end; gap:30px; margin-top:34px; }
+  .pass { font:600 75px/.85 var(--font-heading); letter-spacing:.02em; }
+  .pass small { font:400 34px/1 var(--font-heading); }
+  .pass-copy { margin-top:8px; color:#98989b; font:600 18px var(--font-heading); letter-spacing:.09em; text-transform:uppercase; }
+  .output { padding-bottom:4px; font:600 27px/1 var(--font-heading); white-space:nowrap; }
+  .output span { color:#98989b; font:400 17px var(--font-body); }
+  .rule { height:2px; margin:27px 0 23px; background:#e5e5e7; }
+  .health { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+  .health-label { color:#98989b; font:600 17px var(--font-heading); letter-spacing:.12em; }
+  .health-value { margin-top:6px; font:600 27px/1 var(--font-heading); }
+  .health-note { margin-top:6px; color:#98989b; font-size:16px; }
+  .attention .pass { color:var(--amber); }
+
+  @media (max-width:1080px) {
+    .dashboard { display:block; min-width:0; padding:14px; }
+    .map-header { min-height:110px; padding:20px; }
+    .map-header h1 { font-size:clamp(25px,5vw,43px); white-space:normal; }
+    .map-header p { display:none; }
+    .map-stage { height:min(62vw,566px); min-height:360px; }
+    .legend { min-height:0; padding:20px; font-size:16px; }
+    .machine-list { display:none; }
+  }
 </style>
 </head>
 <body>
-<div id="wrap">
-  <three-d-stage name="factory-floor-ocr-datecode" background="var(--color-accent-900)"></three-d-stage>
+  <main class="dashboard">
+    <section class="map-card" aria-labelledby="factory-floor-title">
+      <header class="map-header">
+        <h1 id="factory-floor-title">Factory floor — spice packing · 3D (tier 2)</h1>
+        <p>drag to orbit · scroll to zoom · right-drag to pan</p>
+      </header>
+      <div class="map-stage">
+        <three-d-stage compact name="factory-floor-ocr-datecode" background="var(--color-bg)"></three-d-stage>
+      </div>
+      <footer class="legend" aria-label="Machine status legend">
+        <span class="legend-item"><i class="status-dot"></i>Running</span>
+        <span class="legend-item"><i class="warn-icon"></i>Needs attention</span>
+        <span class="legend-item"><svg class="muted-icon" viewBox="0 0 24 20" aria-hidden="true"><path d="M21 14a3 3 0 0 1-3 3H8l-5 3V5a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3Z M2 19 22 1" /></svg>Assistant off · machine running</span>
+        <span class="legend-item"><svg class="offline-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 3 17 17 M17 3 3 17" /></svg>Unreachable</span>
+      </footer>
+    </section>
 
-  <div class="hud" style="right:18px;bottom:78px;width:236px">
-    <div class="k">TRẠNG THÁI MÁY</div>
-    <div class="row"><span class="sw" style="background:#4f8a52"></span>đang chạy <span class="mono" style="margin-left:auto;color:#5f6878">4 máy</span></div>
-    <div class="row"><span class="sw" style="background:#c98a20"></span>cần chú ý <span class="mono" style="margin-left:auto;color:#5f6878">M2</span></div>
-    <div class="row"><span class="sw" style="background:#8a9099"></span>trợ lý tắt · máy vẫn chạy</div>
-    <div class="row"><span class="sw" style="background:#f2f2f3;border:1px dashed #8a9099"></span>mất liên lạc <span class="mono" style="margin-left:auto;color:#5f6878">—</span></div>
-    <div class="note" style="margin-top:6px">Phân biệt bằng <b>cả hình lẫn màu</b>: đèn tháp đổi màu, máy cần chú ý có vòng cảnh báo trên sàn, trợ lý tắt có dấu chảo xám.</div>
-  </div>
-
-  <div class="hud" style="right:18px;top:18px;width:236px">
-    <div class="k">ĐỘI HÌNH · CA B 14:00–22:00</div>
-    <div class="row"><span class="sw" style="background:#4f8a52"></span><b>Auto2</b> <span style="color:#5f6878">Line 1</span> <span class="mono" style="margin-left:auto">98,4%</span></div>
-    <div class="row"><span class="sw" style="background:#4f8a52"></span><b>M1</b> <span style="color:#5f6878">Line 2</span> <span class="mono" style="margin-left:auto">77,8%</span></div>
-    <div class="row"><span class="sw" style="background:#c98a20"></span><b>M2</b> <span style="color:#5f6878">Line 3</span> <span class="mono" style="margin-left:auto;color:#a8621f">69,4%</span></div>
-    <div class="row"><span class="sw" style="background:#8a9099"></span><b>LineTine</b> <span style="color:#5f6878">Tine</span> <span class="mono" style="margin-left:auto">81,5%</span></div>
-    <div class="row"><span class="sw" style="background:#4f8a52"></span><b>PC-Auto-1</b> <span style="color:#5f6878">Auto</span> <span class="mono" style="margin-left:auto">96,2%</span></div>
-    <div class="note" style="margin-top:8px">Không xếp hạng theo tỉ lệ đạt — các line chạy mặt hàng khác nhau.</div>
-  </div>
-
-  <div class="hud" style="left:18px;bottom:18px;width:430px">
-    <h1>SƠ ĐỒ NHÀ MÁY — BẬC 2 (THREE.JS)</h1>
-    <div class="note" style="margin-bottom:8px">Xưởng đóng gói gia vị · 5 dây chuyền OCR datecode · kéo để xoay, cuộn để zoom, chuột phải để dịch.</div>
-    <div class="k">GHI CHÚ KỸ THUẬT — SO VỚI BẬC 1 (SVG ĐẲNG CỰ)</div>
-    <div class="note">Bậc 2 cần WebGL + ~600 KB three.js, dựng 4–6 ngày; đổi được vì <b>FactoryMap({machines, selected, onSelect})</b> giữ nguyên interface. Dùng cho Fleet Console trên màn hình lớn; <b>không</b> đưa xuống tablet cạnh dây chuyền — ở đó giữ bản đẳng cự. Vị trí máy đọc từ <span class="mono">config/machines.json</span> (x, y, rotation, zone), khoá theo Tailscale node id. Toàn bộ hình học dựng bằng code, không tải model — tải nặng nhất vẫn là thư viện.</div>
-  </div>
-</div>
+    <aside class="machine-list" aria-label="Machines in the current shift">
+      <h2>Machines — current shift</h2>
+      <div class="machine-cards">
+        <article class="machine-card running">
+          <div class="card-kicker">Line 1 · Jetson Orin Nano 8GB</div>
+          <div class="card-title-row"><h3>Auto2</h3><span class="recipe">Onion powder</span></div>
+          <div class="pass-row"><div><div class="pass">98.3<small>%</small></div><div class="pass-copy">Pass · this shift</div></div><div class="output">78,440<br><span>products</span></div></div>
+          <div class="rule"></div>
+          <div class="health"><div><div class="health-label">CPU</div><div class="health-value">58°C</div><div class="health-note">load 50%</div></div><div><div class="health-label">RAM</div><div class="health-value">62%</div><div class="health-note">5.0 / 8 GB</div></div></div>
+        </article>
+        <article class="machine-card attention">
+          <div class="card-kicker">Tine line · Jetson Orin Nano 8GB</div>
+          <div class="card-title-row"><h3>LineTine</h3><span class="recipe">Pure sea salt</span></div>
+          <div class="pass-row"><div><div class="pass">81.5<small>%</small></div><div class="pass-copy">Pass · this shift</div></div><div class="output">6,594<br><span>products</span></div></div>
+          <div class="rule"></div>
+          <div class="health"><div><div class="health-label">CPU</div><div class="health-value">56°C</div><div class="health-note">load 46%</div></div><div><div class="health-label">RAM</div><div class="health-value">71%</div><div class="health-note">5.7 / 8 GB</div></div></div>
+        </article>
+      </div>
+    </aside>
+  </main>
 
 <script src="three-d-stage.js"></script>
 <script type="module">

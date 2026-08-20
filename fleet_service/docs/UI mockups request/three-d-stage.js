@@ -108,6 +108,7 @@
       color: rgba(26, 25, 21, 0.55);
       user-select: none;
     }
+    :host([compact]) .toolbar, :host([compact]) .note { display: none; }
     .err {
       position: absolute;
       inset: 0;

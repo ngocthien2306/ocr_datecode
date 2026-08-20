@@ -11,7 +11,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { store, I18N, api, esc, clock, coverageHTML } from './core.js';
-import * as map from './factory-map.js';
+import * as map from './factory-map-3d.js';
 import * as V from './views.js';
 import * as chat from './chat.js';
 
@@ -20,7 +20,50 @@ const state = { status: null, prod: null, staff: null, audit: null,
                 logerr: null, images: null,
                 selected: null, tab: 'overview', statsView: 'chart',
                 period: 7, staffOpts: { group: 'machine' }, simulated: false,
+                activityView: 'audit', auditOpts: { machine: '', action: '', range: 'today', query: '' },
+                selectedLogProblem: null,
                 stale: null };
+
+/* Inventory vẫn phải hiện khi Tailnet không tới được: đây là dữ liệu tạm ở
+   frontend, không giả telemetry và tự biến mất từng máy khi API trả máy thật
+   cùng tên. Model được chuẩn hoá theo inventory vật lý của xưởng. */
+const DISPLAY_MODEL = {
+  Auto2: 'Jetson Orin Nano 8GB',
+  M1: 'Jetson Orin Nano 8GB',
+  M2: 'Jetson Orin Nano 8GB',
+  LineTine: 'Jetson Orin Nano 8GB',
+  'PC-Auto-1': 'Jetson AGX Orin 16GB',
+  'Auto 1': 'Jetson Orin Nano 8GB Super',
+  'Tin 2': 'Jetson Orin Nano 8GB Super',
+};
+const PROVISIONAL_MACHINES = [
+  { node_id: '__offline_auto2__', name: 'Auto2', line: 'Line 1',
+    hostname: 'auto2', model: DISPLAY_MODEL.Auto2, state: 'offline', floor: { x: 0, y: 0 }, provisional: true },
+  { node_id: '__offline_m1__', name: 'M1', line: 'Line 2',
+    hostname: 'm1', model: DISPLAY_MODEL.M1, state: 'offline', floor: { x: 0, y: 0 }, provisional: true },
+  { node_id: '__offline_m2__', name: 'M2', line: 'Line 3',
+    hostname: 'm2', model: DISPLAY_MODEL.M2, state: 'offline', floor: { x: 0, y: 0 }, provisional: true },
+  { node_id: '__offline_linetine__', name: 'LineTine', line: 'Tine line',
+    hostname: 'linetine', model: DISPLAY_MODEL.LineTine, state: 'offline', floor: { x: 0, y: 0 }, provisional: true },
+  { node_id: '__offline_pc_auto_1__', name: 'PC-Auto-1', line: 'Auto line',
+    hostname: 'pc-auto-1', model: DISPLAY_MODEL['PC-Auto-1'], state: 'offline', floor: { x: 0, y: 0 }, provisional: true },
+  { node_id: '__offline_auto_1__', name: 'Auto 1', line: 'Carton line 5',
+    hostname: 'auto-1', model: DISPLAY_MODEL['Auto 1'], state: 'offline', floor: { x: 0, y: 0 }, provisional: true },
+  { node_id: '__offline_tin_2__', name: 'Tin 2', line: 'Carton line 6 · annex building',
+    hostname: 'tin-2', model: DISPLAY_MODEL['Tin 2'], state: 'offline', floor: { x: 0, y: 0 }, provisional: true },
+];
+
+function applyProvisionalFleet(status) {
+  const live = status?.machines || [];
+  const names = new Set(live.map(machine => machine.name));
+  const machines = live.map(machine => ({ ...machine,
+    model: DISPLAY_MODEL[machine.name] || machine.model,
+  }));
+  PROVISIONAL_MACHINES.forEach(machine => {
+    if (!names.has(machine.name)) machines.push({ ...machine });
+  });
+  return { ...(status || {}), machines };
+}
 
 /* ── Thanh đầu trang ─────────────────────────────────────────────────────── */
 
@@ -87,7 +130,12 @@ window.__closeDrawer = () => {
   $('#drawer').classList.remove('open');
   paintFold();
 };
-window.__askAbout = name => chat.setContext(name);
+window.__askAbout = name => {
+  // Drawer nằm trên chat theo z-index; giữ nó mở thì panel chat đã focus vẫn bị
+  // che hoàn toàn. Đóng trước, bỏ chọn máy rồi mới mở chat theo ngữ cảnh đó.
+  window.__closeDrawer();
+  chat.setContext(name);
+};
 
 /* ── Tab ─────────────────────────────────────────────────────────────────── */
 
@@ -100,10 +148,10 @@ function paintTabs() {
   $('#pane-log').hidden = state.tab !== 'log';
 
   if (state.tab === 'overview') {
-    $('#stats-title').textContent = t.production;
+    $('#stats-title').textContent = t.quality;
     $('#fail-title').textContent = t.failures;
     $('#btn-export').textContent = t.export;
-    $('#stats-body').innerHTML = V.statsHTML(state.prod, state.statsView);
+    $('#stats-body').innerHTML = V.statsHTML(state.prod, state.statsView, state.status?.machines || []);
     $('#fingerprint').innerHTML = V.fingerprintHTML(state.prod);
     $('#fail-body').innerHTML = V.failureGridHTML(state.images);
   }
@@ -120,14 +168,84 @@ function paintTabs() {
     });
   }
   if (state.tab === 'log') {
-    $('#log-users-title').textContent = t.userActions;
-    $('#log-sys-title').textContent = t.systemErrors;
-    $('#sim-label').textContent = t.showSimulated;
-    $('#log-users').innerHTML = V.auditHTML(state.audit);
-    $('#log-sys').innerHTML = V.logErrorsHTML(state.logerr);
-    document.querySelectorAll('[data-ask]').forEach(b =>
-      b.onclick = () => chat.askNow(b.dataset.ask));
+    paintActivity();
   }
+}
+
+function paintActivity() {
+  const t = store.t;
+  const audit = state.activityView === 'audit';
+  $('#activity-audit').textContent = t.userActions;
+  $('#activity-errors').textContent = t.systemErrors;
+  $('#activity-audit').setAttribute('aria-pressed', audit);
+  $('#activity-errors').setAttribute('aria-pressed', !audit);
+  $('#activity-note').textContent = audit ? t.activityAuditNote : t.activityErrorNote;
+  $('#sim-control').hidden = !audit;
+  $('#sim-label').textContent = t.showSimulated;
+  $('#activity-audit').onclick = () => {
+    state.activityView = 'audit';
+    paintTabs();
+  };
+  $('#activity-errors').onclick = () => {
+    state.activityView = 'errors';
+    paintTabs();
+  };
+
+  const entries = state.audit?.entries || [];
+  const values = key => [...new Set(entries.map(entry => entry[key]).filter(Boolean))].sort();
+  $('#activity-filters').innerHTML = audit ? `<div class="activity-filters">
+    <select id="audit-machine" aria-label="${esc(t.machine)}">
+      <option value="">${esc(t.activityAllMachines)}</option>
+      ${values('machine').map(value => `<option value="${esc(value)}" ${value === state.auditOpts.machine ? 'selected' : ''}>${esc(value)}</option>`).join('')}
+    </select>
+    <select id="audit-action" aria-label="${esc(t.action)}">
+      <option value="">${esc(t.activityAllActions)}</option>
+      ${values('action_type').map(value => `<option value="${esc(value)}" ${value === state.auditOpts.action ? 'selected' : ''}>${esc(value)}</option>`).join('')}
+    </select>
+    <select id="audit-range" aria-label="${esc(t.activityPeriod)}">
+      <option value="today" ${state.auditOpts.range === 'today' ? 'selected' : ''}>${esc(t.activityToday)}</option>
+      <option value="week" ${state.auditOpts.range === 'week' ? 'selected' : ''}>${esc(t.activityWeek)}</option>
+    </select>
+    <input id="audit-query" type="search" value="${esc(state.auditOpts.query)}" placeholder="${esc(t.searchActivity)}" aria-label="${esc(t.searchActivity)}">
+  </div>` : '';
+
+  const renderBody = () => {
+    $('#activity-body').innerHTML = audit
+      ? V.auditHTML(state.audit, state.auditOpts)
+      : V.logErrorsHTML(state.logerr, state.selectedLogProblem);
+    $('#activity-body').querySelectorAll('[data-ask]').forEach(button =>
+      button.onclick = () => chat.askNow(button.dataset.ask));
+    $('#activity-body').querySelectorAll('[data-error-machine]').forEach(row => {
+      const selectProblem = () => {
+        state.selectedLogProblem = { machine: row.dataset.errorMachine, index: Number(row.dataset.errorIndex) };
+        renderBody();
+      };
+      row.onclick = selectProblem;
+      row.onkeydown = event => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectProblem(); }
+      };
+    });
+    $('#activity-body').querySelectorAll('[data-copy-log]').forEach(button => {
+      button.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(button.dataset.copyLog);
+          button.textContent = t.copied;
+          setTimeout(() => { button.textContent = t.copyExample; }, 1400);
+        } catch (_) {}
+      };
+    });
+  };
+  renderBody();
+
+  if (!audit) return;
+  const update = (key, value) => {
+    state.auditOpts[key] = value;
+    renderBody();
+  };
+  $('#audit-machine').onchange = event => update('machine', event.target.value);
+  $('#audit-action').onchange = event => update('action', event.target.value);
+  $('#audit-range').onchange = event => update('range', event.target.value);
+  $('#audit-query').oninput = event => update('query', event.target.value);
 }
 
 function paintStaffFilters() {
@@ -159,8 +277,9 @@ function paintStaffFilters() {
 
 async function loadStatus() {
   const r = await api('/api/fleet/status');
-  if (r.data) { state.status = r.data; state.stale = r.stale ? r.at : null; }
-  paintTop(); paintFold();
+  state.status = applyProvisionalFleet(r.data || state.status);
+  if (r.data) state.stale = r.stale ? r.at : null;
+  paintTop(); paintFold(); paintTabs();
 }
 
 async function loadProduction() {
@@ -198,7 +317,7 @@ function setLang(l) {
 function setTheme(x) {
   store.theme = x; localStorage.setItem('fleet_theme', x);
   document.documentElement.setAttribute('data-theme', x);
-  paintTop();
+  paintTop(); paintFold();
 }
 
 function boot() {

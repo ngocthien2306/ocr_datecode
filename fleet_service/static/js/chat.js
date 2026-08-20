@@ -22,7 +22,9 @@ export function mount() {
   $('#chat-hint').textContent = t.chatHint;
   $('#btn-send').textContent = t.send;
   $('#q').placeholder = t.placeholder;
-  $('#chips').innerHTML = t.chips
+  const initialChips = history.length ? [] : t.chips.slice(0, 2);
+  $('#chips').hidden = initialChips.length === 0;
+  $('#chips').innerHTML = initialChips
     .map(c => `<button type="button">${esc(c)}</button>`).join('');
   $('#chips').onclick = e => {
     if (e.target.tagName === 'BUTTON') { $('#q').value = e.target.textContent; send(); }
@@ -73,21 +75,64 @@ export function askNow(text, machine) {
 }
 
 /* Markdown tối giản: đủ cho thứ agent trả về. Không kéo cả thư viện markdown vào
-   một trang tĩnh chỉ để render bảng và chữ đậm. */
+   một trang tĩnh chỉ để render bảng và chữ đậm. Tách cấu trúc trước rồi mới
+   escape từng nội dung; escape cả chuỗi ngay từ đầu sẽ khiến `###` thành text
+   thường và bảng tab-separated không có cách nhận ra cột. */
 function mini(md) {
-  const lines = esc(md).split('\n');
-  let out = '', tbl = null;
-  const flush = () => { if (tbl) { out += `<table>${tbl}</table>`; tbl = null; } };
-  for (const ln of lines) {
-    if (/^\s*\|/.test(ln)) {
-      if (/^\s*\|[\s|:-]+\|\s*$/.test(ln)) continue;
-      const cells = ln.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
-      const tag = tbl === null ? 'th' : 'td';
-      tbl = (tbl || '') + `<tr>${cells.map(c => `<${tag}>${c}</${tag}>`).join('')}</tr>`;
-    } else { flush(); out += ln ? `<div>${ln}</div>` : '<div style="height:5px"></div>'; }
+  const inline = value => esc(value)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  const tableCells = line => {
+    const clean = line.trim();
+    if (!clean) return null;
+    if (clean.includes('|')) {
+      const cells = clean.replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim());
+      return cells.length > 1 ? cells : null;
+    }
+    const cells = clean.split('\t').map(cell => cell.trim());
+    return cells.length > 1 ? cells : null;
+  };
+  const divider = cells => cells.every(cell => /^:?-{3,}:?$/.test(cell));
+  const tableCell = value => /^(critical|error|warning|info)$/i.test(value.trim())
+    ? `<span class="chat-level ${value.trim().toLowerCase()}">${inline(value)}</span>`
+    : inline(value);
+  const lines = String(md || '').replace(/\r/g, '').split('\n');
+  const out = [];
+  let table = null, list = null;
+  const flushTable = () => {
+    if (!table?.length) { table = null; return; }
+    const [head, ...body] = table;
+    out.push(`<div class="chat-table-wrap"><table class="chat-table"><thead><tr>${head.map(cell =>
+      `<th>${tableCell(cell)}</th>`).join('')}</tr></thead><tbody>${body.map(row =>
+      `<tr>${row.map(cell => `<td>${tableCell(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`);
+    table = null;
+  };
+  const flushList = () => {
+    if (list?.length) out.push(`<ul class="chat-list">${list.map(item => `<li>${inline(item)}</li>`).join('')}</ul>`);
+    list = null;
+  };
+  for (const raw of lines) {
+    const cells = tableCells(raw);
+    if (cells) {
+      flushList();
+      if (!divider(cells)) (table ||= []).push(cells);
+      continue;
+    }
+    flushTable();
+    const heading = raw.match(/^\s*(#{1,3})\s+(.+)$/);
+    if (heading) {
+      flushList();
+      const tag = heading[1].length === 1 ? 'h2' : 'h3';
+      out.push(`<${tag} class="chat-heading">${inline(heading[2])}</${tag}>`);
+      continue;
+    }
+    const bullet = raw.match(/^\s*[-*]\s+(.+)$/);
+    if (bullet) { (list ||= []).push(bullet[1]); continue; }
+    flushList();
+    if (raw.trim()) out.push(`<p>${inline(raw)}</p>`);
   }
-  flush();
-  return out.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`(.+?)`/g, '<code>$1</code>');
+  flushTable(); flushList();
+  return out.join('');
 }
 
 function bubble(cls, html) {
@@ -106,6 +151,9 @@ async function send() {
   const q = context ? `${raw} (${context.hint})` : raw;
   $('#chat').classList.remove('min');
   $('#chat-caret').textContent = '▼';
+  // Chỉ cần gợi ý global trước câu đầu. Sau đó để phần trả lời dùng gợi ý theo
+  // ngữ cảnh, tránh 2 cụm câu hỏi lặp nhau chiếm hết cửa sổ chat.
+  $('#chips').hidden = true;
   $('#q').value = '';
   bubble('u', esc(raw));
   const wait = bubble('a', `<span class="na">${t.thinking}</span>`);
@@ -117,8 +165,9 @@ async function send() {
     const dl = d.file
       ? `<a class="dl" href="${esc(d.file.url)}" download>⬇ ${esc(d.file.name)}</a>` : '';
     // Gợi ý cũng do server dựng từ số liệu, không do mô hình tự nghĩ.
-    const sg = (d.suggestions || []).length
-      ? `<div class="sugg">${d.suggestions.map(s =>
+    const suggestions = (d.suggestions || []).slice(0, 2);
+    const sg = suggestions.length
+      ? `<div class="sugg">${suggestions.map(s =>
           `<button type="button">${esc(s)}</button>`).join('')}</div>` : '';
     wait.innerHTML = mini(d.response || '') + dl +
       `<div class="meta">${t.usedTools}: ${(d.tool_calls || []).join(', ') || '—'}` +
