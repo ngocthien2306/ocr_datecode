@@ -1,0 +1,27 @@
+{
+  "nRNxYvVKty11CNTRL": {
+    "label": "M1",
+    "line": "Line 2",
+    "note": ""
+  },
+  "nq4qJrTpxe11CNTRL": {
+    "label": "PC-Auto-1",
+    "line": "Auto Line",
+    "note": "x86, hiển thị như Jetson 16GB"
+  },
+  "nrA4UKfWDs11CNTRL": {
+    "label": "LineTine",
+    "line": "Tine Line",
+    "note": ""
+  },
+  "nmupyJbod721CNTRL": {
+    "label": "M2",
+    "line": "Line 3",
+    "note": ""
+  },
+  "nbHLF1csro11CNTRL": {
+    "label": "Auto2",
+    "line": "Line 1",
+    "note": ""
+  }
+}

@@ -1,0 +1,12 @@
+# Fleet service — chạy trên máy dev (Mac) hoặc VPS, KHÔNG chạy trên Jetson.
+# Cố ý không dùng MongoDB: fleet chỉ giữ snapshot vài KB, SQLite của stdlib là đủ
+# và bớt một dịch vụ phải dựng.
+
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0,<3.0.0
+pydantic-settings>=2.1.0
+python-dotenv>=1.0.0
+
+# Gọi ra 5 edge. Bắt buộc async: hỏi tuần tự 5 máy là ~40s.
+httpx>=0.27.0

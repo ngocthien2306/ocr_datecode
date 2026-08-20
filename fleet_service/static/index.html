@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet — OCR Datecode</title>
+<style>
+  :root{
+    --bg:#0f1117; --card:#171a23; --line:#252a37; --fg:#e6e9ef; --dim:#8b93a7;
+    --ok:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#4c8dff;
+  }
+  @media (prefers-color-scheme:light){
+    :root{--bg:#f6f7f9;--card:#fff;--line:#e3e6ec;--fg:#1a1d24;--dim:#6b7280;}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  header{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;
+         padding:20px 24px;border-bottom:1px solid var(--line)}
+  h1{font-size:18px;margin:0;font-weight:650}
+  .sub{color:var(--dim);font-size:13px}
+  .grid{display:grid;gap:14px;padding:20px 24px;
+        grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+  .card.bad{border-color:var(--bad)}
+  .card.warn{border-color:var(--warn)}
+  .top{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+  .name{font-weight:650;font-size:15px}
+  .dot{width:8px;height:8px;border-radius:50%;flex:none}
+  .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)}
+  .meta{color:var(--dim);font-size:12px;margin-bottom:12px}
+  .row{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-variant-numeric:tabular-nums}
+  .row .k{color:var(--dim)}
+  .bar{height:4px;border-radius:2px;background:var(--line);margin-top:3px;overflow:hidden}
+  .bar>i{display:block;height:100%;background:var(--accent)}
+  .bar>i.warn{background:var(--warn)} .bar>i.bad{background:var(--bad)}
+  .err{color:var(--bad);font-size:12px;margin-top:8px;word-break:break-word}
+  .na{color:var(--dim)}
+  .cov{padding:0 24px 20px;color:var(--dim);font-size:13px}
+  .cov b{color:var(--warn)}
+  button{background:var(--card);color:var(--fg);border:1px solid var(--line);
+         border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px}
+  button:hover{border-color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Fleet — OCR Datecode</h1>
+  <span class="sub" id="clock">đang tải…</span>
+  <span style="flex:1"></span>
+  <button onclick="load(true)">Quét lại</button>
+</header>
+<div class="grid" id="grid"></div>
+<div class="cov" id="cov"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+
+// Không có số thì hiện "—", KHÔNG hiện 0. Nhiệt độ null nghĩa là máy không có
+// cảm biến; vẽ 0°C ra màn hình đọc như máy đang rất mát, tức sai đúng theo
+// hướng nguy hiểm nhất.
+const num = (v, unit = '', d = 0) =>
+  (v === null || v === undefined) ? '<span class="na">—</span>'
+                                  : Number(v).toFixed(d) + unit;
+
+const uptime = s => {
+  if (!s) return '—';
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600);
+  return d ? `${d} ngày ${h} giờ` : `${h} giờ`;
+};
+
+function bar(pct, warnAt = 80, badAt = 92) {
+  if (pct === null || pct === undefined) return '';
+  const cls = pct >= badAt ? 'bad' : pct >= warnAt ? 'warn' : '';
+  return `<div class="bar"><i class="${cls}" style="width:${Math.min(pct,100)}%"></i></div>`;
+}
+
+const STATE = {
+  ok:          ['ok',  'đang chạy'],
+  agent_down:  ['warn','agent tắt — máy vẫn chạy'],
+  unreachable: ['bad', 'không với tới được'],
+  offline:     ['bad', 'ngoài tailnet'],
+};
+
+function card(m) {
+  const [dot, text] = STATE[m.state] || ['bad', m.state];
+  const x = m.metrics || {};
+  const cls = dot === 'bad' ? 'card bad' : dot === 'warn' ? 'card warn' : 'card';
+  const seen = m.last_seen
+    ? new Date(m.last_seen * 1000).toLocaleTimeString('vi-VN') : 'chưa từng';
+
+  const body = m.metrics ? `
+    <div class="row"><span class="k">CPU</span>
+      <span>${num(x.cpu_percent,'%',1)} · ${num(x.cpu_temp,'°C',1)}</span></div>
+    ${bar(x.cpu_percent)}
+    <div class="row"><span class="k">GPU</span>
+      <span>${num(x.gpu_percent,'%',0)} · ${num(x.gpu_temp,'°C',1)}</span></div>
+    <div class="row"><span class="k">RAM</span>
+      <span>${num(x.ram_percent,'%',0)} — ${num(x.ram_used_gb,'',2)}/${num(x.ram_total_gb,' GB',2)}</span></div>
+    ${bar(x.ram_percent)}
+    <div class="row"><span class="k">Đĩa</span>
+      <span>${num(x.disk_percent,'%',0)} — còn ${num(x.disk_free_gb,' GB',1)}</span></div>
+    ${bar(x.disk_percent)}
+    <div class="row"><span class="k">Chạy liên tục</span><span>${uptime(x.uptime_seconds)}</span></div>
+    ${x.model ? `<div class="row"><span class="k">Thiết bị</span><span>${x.model}</span></div>` : ''}
+  ` : `<div class="row"><span class="k">Phần cứng</span><span class="na">không có số liệu</span></div>`;
+
+  const svc = m.service
+    ? `<div class="row"><span class="k">Camera service</span><span>${
+        m.service.is_running ? '✅ chạy' : '❌ tắt'}</span></div>` : '';
+
+  return `<div class="${cls}">
+    <div class="top"><span class="dot ${dot}"></span><span class="name">${m.name}</span></div>
+    <div class="meta">${text} · ${m.line || m.hostname} · ${m.ip} · L${m.level} · thấy lúc ${seen}</div>
+    ${body}${svc}
+    ${(m.errors || []).map(e => `<div class="err">⚠ ${e}</div>`).join('')}
+  </div>`;
+}
+
+async function load(refresh) {
+  try {
+    if (refresh) await fetch('/api/fleet/refresh', { method: 'POST' });
+    const d = await (await fetch('/api/fleet/status')).json();
+    $('#grid').innerHTML = d.machines.map(card).join('');
+    $('#clock').textContent = 'cập nhật ' + new Date().toLocaleTimeString('vi-VN');
+    const c = d.coverage;
+    // Luôn nói rõ mẫu che được mấy máy. Con số tổng mà không kèm phạm vi thì
+    // người đọc không có cách nào biết mình đang nhìn thiếu một máy.
+    const miss = (c.machines_missing || []).map(m => `${m.machine} (${m.reason})`);
+    const deg  = (c.machines_degraded || []).map(m => `${m.machine} (${m.reason})`);
+    $('#cov').innerHTML = c.complete
+      ? `Đủ cả ${c.machines_total} máy.`
+      : [miss.length ? `<b>Không lấy được ${miss.length}/${c.machines_total} máy:</b> ${miss.join(' · ')}` : '',
+         deg.length  ? `<b>Thiếu một phần ${deg.length}/${c.machines_total} máy:</b> ${deg.join(' · ')}` : '']
+        .filter(Boolean).join('<br>');
+  } catch (e) {
+    $('#cov').innerHTML = `<b>Không tải được: ${e}</b>`;
+  }
+}
+
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>
