@@ -54,7 +54,7 @@ không đụng backend, không restart backend trên máy sản xuất.
 
 ---
 
-## GĐ 4 — Nhân sự + Nhật ký thao tác + agent tương ứng (5 ngày)
+## GĐ 4 — Nhân sự + Nhật ký (thao tác & lỗi hệ thống) + agent (6 ngày)
 
 | # | Việc | Ngày |
 |---|---|---|
@@ -63,6 +63,7 @@ không đụng backend, không restart backend trên máy sản xuất.
 | 4.3 | Tool `fleet_user_management` cho agent | 1,0 |
 | 4.4 | Tool `fleet_audit_log` cho agent | 1,0 |
 | 4.5 | Nút "hỏi thêm" từ mỗi hàng nhật ký sang chat, kèm ngữ cảnh | 0,5 |
+| 4.6 | Phần "Lỗi hệ thống": fan-out `summarize_log_errors`, click xem tail, nút ủy quyền | 1,0 |
 
 **Ràng buộc:** mọi bản ghi người dùng khoá theo **(máy, username)** — username
 trùng trên cả 5 máy (`admin` ×5), gộp theo username trần là trộn 5 người thành một.
@@ -89,7 +90,7 @@ chat báo tạm không dùng được.
 
 ---
 
-## GĐ 6 — Picker cho agent + đánh bóng (3 ngày)
+## GĐ 6 — Picker cho agent + đánh bóng (4 ngày)
 
 | # | Việc | Ngày |
 |---|---|---|
@@ -97,6 +98,7 @@ chat báo tạm không dùng được.
 | 6.2 | Chip ngữ cảnh gắn sẵn ("đang hỏi về M2") | 0,5 |
 | 6.3 | Nhãn trạng thái chờ theo tool đang chạy | 0,5 |
 | 6.4 | Rà lại 5 trạng thái của mọi khối dữ liệu | 0,5 |
+| 6.5 | Nút "Xuất báo cáo" từ khối thống kê (điền sẵn theo bộ lọc) + danh sách báo cáo đã sinh | 1,0 |
 
 **Kiểm chứng:** "xuất PDF so sánh M1 M2 tuần này" xuất luôn **không hỏi lại**;
 "xuất báo cáo" hiện picker đủ 3 nhóm; "xuất báo cáo PDF" chỉ hỏi 2 nhóm còn thiếu.
@@ -105,7 +107,7 @@ chat báo tạm không dùng được.
 
 ## Tổng
 
-**26 ngày công** cho toàn bộ phạm vi đã mô tả.
+**28 ngày công** cho toàn bộ phạm vi đã mô tả.
 
 | Nếu chỉ có… | Làm gì | Được gì |
 |---|---|---|

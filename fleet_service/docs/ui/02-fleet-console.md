@@ -225,13 +225,32 @@ Mỗi thẻ người: ảnh, tên, mã NV, chức vụ, ca, **quyền hệ thố
 
 Bộ lọc: theo máy, bộ phận, ca, vai trò, trạng thái (đang trong ca / không).
 
+**Phạm vi giai đoạn này: chỉ XEM.** "Quản lý user" đầy đủ (tạo / sửa / đổi mật
+khẩu / khoá trên nhiều máy) là thao tác **có tác dụng phụ** — nó cần cổng xác
+nhận riêng, ghi audit, và trả lời câu "tạo trên máy nào / mọi máy?". Đưa vào cùng
+đợt với phần xem là trộn một tính năng an toàn với một tính năng nguy hiểm. Ghi
+nhận là giai đoạn kế tiếp, thiết kế cổng xác nhận trước khi làm.
+
 > ⚠️ **Khoảng trống kỹ thuật:** API `/api/users/` của backend **không trả về**
 > `department`, `production_line`, `shift`, `employee_code`, `job_title` — dù
 > MongoDB có đủ. Không có chúng thì mọi cách nhóm ở trên đều không dựng được.
 
 ---
 
-## 6. Tab Nhật ký thao tác
+## 6. Tab Nhật ký — hai phần, đừng gộp
+
+Yêu cầu gốc là quản lý **cả log hệ thống lẫn log thao tác**. Hai thứ này khác
+nhau về nguồn, người đọc và câu hỏi, nên là hai phần trong một tab chứ không
+trộn chung một dòng thời gian:
+
+| | Thao tác người dùng | Lỗi hệ thống |
+|---|---|---|
+| Nguồn | `action_logs` (Mongo) | file log của service trên từng máy |
+| Ai đọc | quản trị, trưởng ca | kỹ thuật |
+| Câu hỏi | "ai làm gì" | "máy nào đang kêu gì" |
+| Tool sẵn có | `get_audit_logs` | `summarize_log_errors`, `search_logs`, `read_log_tail` |
+
+### 6a. Thao tác người dùng
 
 Ai làm gì, trên máy nào, lúc nào. Dòng thời gian gộp từ 5 máy.
 
@@ -254,3 +273,24 @@ mà không cần mở tab này.
 > ⚠️ Bản ghi giả lập mang cờ `simulated: true`. Giao diện phải **có bộ lọc tách
 > chúng ra** — nếu không, số liệu demo trộn vào số liệu thật và không ai phân
 > biệt được.
+
+### 6b. Lỗi hệ thống
+
+Fan-out `summarize_log_errors` qua các máy, gộp thành bảng: máy · nhóm lỗi · số
+lần · lần cuối. Click một hàng → `read_log_tail` của đúng máy đó, và nút "hỏi
+agent máy này phân tích" (ủy quyền, đường đắt).
+
+Không kéo nguyên file log về fleet: file log trên Jetson từng phình tới 1,4 GB —
+đọc trọn một file như vậy là treo agent và ăn hết RAM (đã ghi ở `log_tools.py`).
+Fleet chỉ nhận bản tóm tắt do edge làm; muốn sâu hơn thì ủy quyền.
+
+## 7. Xuất báo cáo — không chỉ từ chat
+
+Khối thống kê (mục 3) có nút **"Xuất báo cáo"** mở đúng cái picker của chat
+(chọn máy / kỳ / định dạng) với **giá trị điền sẵn theo bộ lọc đang xem** — người
+dùng đang nhìn 30 ngày dạng bảng thì picker mở ra đã chọn sẵn 30 ngày. Cùng một
+component `AskPicker`, hai lối vào.
+
+Cạnh nút là **danh sách báo cáo đã sinh** (tên, máy, kỳ, định dạng, lúc nào) để
+tải lại mà không phải xuất lần nữa — file đã nằm sẵn trong `generated_reports/`,
+chỉ thiếu chỗ liệt kê.

@@ -61,4 +61,16 @@ hàng khác nhau nên phép so đó vô nghĩa và dễ gây tị nạnh.
 
 - Điều khiển máy từ xa (start/stop recipe) — có tác dụng phụ, cần thiết kế cổng xác nhận riêng
 - Phân quyền theo vai trò trên Fleet Console — hiện dùng chung một tài khoản admin
+- Tạo / sửa / xoá user từ Fleet Console — thao tác ghi, cần cổng xác nhận; giai đoạn đầu chỉ xem
 - Ứng dụng di động
+
+## Một quyết định phải nói rõ: Fleet Console hiện KHÔNG có đăng nhập
+
+Cổng `:8200` không có trang login. Đây là quyết định có chủ đích ở giai đoạn
+này: fleet chỉ với tới được **qua tailnet** — mạng riêng, thiết bị phải được mời
+vào — nên tầng mạng đang làm việc của tầng đăng nhập.
+
+Nhưng nó là ranh giới cứng: **trước khi đưa Fleet Console ra ngoài tailnet (ngrok,
+VPN khách, mạng xưởng mở) thì phải thêm đăng nhập trước**, vì bên trong nó có
+danh sách nhân sự, nhật ký thao tác và nút xuất báo cáo. Line Station thì khác:
+nó chạy trên chính máy đó và dùng đăng nhập sẵn có của backend máy đó.
