@@ -43,7 +43,9 @@ def _metrics_view(raw: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         "ram_used_gb": round(ram["used_mb"] / 1024, 2) if ram.get("used_mb") else None,
         "ram_total_gb": round(ram["total_mb"] / 1024, 2) if ram.get("total_mb") else None,
         "disk_percent": disk.get("usage_percent"),
+        "disk_used_gb": round(disk["used_gb"], 1) if disk.get("used_gb") else None,
         "disk_free_gb": round(disk["available_gb"], 1) if disk.get("available_gb") else None,
+        "disk_total_gb": round(disk["total_gb"], 1) if disk.get("total_gb") else None,
         "uptime_seconds": raw.get("uptime_seconds"),
         # nvp_model là CHẾ ĐỘ ĐIỆN của Jetson (MAXN_SUPER, 15W, 25W…), không phải
         # model thiết bị. Model lấy từ registry, xem Machine.model.

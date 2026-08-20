@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="vi">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -33,6 +33,13 @@
   button:hover{border-color:var(--accent);color:var(--accent)}
   button:active{transform:translateY(1px)}
 
+  .lang{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+  .lang button{border:0;border-radius:0;padding:7px 11px;font-size:12px;font-weight:600;
+               color:var(--faint);background:var(--card)}
+  .lang button[aria-pressed="true"]{background:var(--accent);color:#fff}
+  .lang button:hover{color:var(--accent)}
+  .lang button[aria-pressed="true"]:hover{color:#fff}
+
   .grid{display:grid;gap:16px;padding:20px 26px;
         grid-template-columns:repeat(auto-fill,minmax(330px,1fr))}
 
@@ -63,7 +70,8 @@
        letter-spacing:-.02em}
   .val small{font-size:12px;font-weight:500;color:var(--dim);margin-left:3px}
   .val.hot{color:var(--bad)} .val.warm{color:var(--warn)}
-  .track{height:3px;border-radius:2px;background:var(--line);margin-top:8px;overflow:hidden}
+  .note{font-size:11px;color:var(--faint);margin-top:6px;font-variant-numeric:tabular-nums}
+  .track{height:3px;border-radius:2px;background:var(--line);margin-top:7px;overflow:hidden}
   .track>i{display:block;height:100%;border-radius:2px;background:var(--accent);
            transition:width .4s ease}
   .track>i.warn{background:var(--warn)} .track>i.bad{background:var(--bad)}
@@ -86,8 +94,12 @@
   <h1>Fleet — OCR Datecode</h1>
   <div class="tally" id="tally"></div>
   <span class="spacer"></span>
-  <span class="stamp" id="stamp">đang tải…</span>
-  <button onclick="load(true)">Quét lại</button>
+  <span class="stamp" id="stamp"></span>
+  <div class="lang">
+    <button id="btn-en" onclick="setLang('en')">EN</button>
+    <button id="btn-vi" onclick="setLang('vi')">VI</button>
+  </div>
+  <button id="btn-refresh" onclick="load(true)"></button>
 </header>
 
 <div class="grid" id="grid"></div>
@@ -95,6 +107,65 @@
 
 <script>
 const $ = s => document.querySelector(s);
+
+/* ---------------------------------------------------------------------------
+   Ngôn ngữ. Mặc định tiếng Anh; lựa chọn lưu trong localStorage nên đổi một lần
+   là nhớ. Mọi chuỗi nằm ở ĐÂY chứ không rải trong hàm dựng thẻ — rải ra thì lần
+   sau thêm ngôn ngữ sẽ sót chỗ, và sót chỗ nào chỉ lộ khi máy rơi đúng vào
+   trạng thái hiếm đó.
+--------------------------------------------------------------------------- */
+const I18N = {
+  en: {
+    locale: 'en-GB',
+    refresh: 'Refresh', updated: 'updated', seen: 'seen', never: 'never',
+    healthy: 'healthy', problems: 'need attention',
+    load: 'load', free: 'free', of: 'of', uptime: 'Uptime', disk: 'Disk',
+    hardware: 'Hardware', noMetrics: 'no readings available',
+    cameraOn: 'camera service running', cameraOff: 'camera service stopped',
+    cameraUnknown: 'camera service unknown',
+    d: 'd', h: 'h', m: 'm',
+    complete: n => `All ${n} machines reporting.`,
+    missing: (k, n) => `<b>No data from ${k}/${n} machines:</b> `,
+    partial: (k, n) => `<b>Partial data from ${k}/${n} machines:</b> `,
+    loadFail: e => `<b>Could not load: ${e}</b>`,
+    state: {
+      ok: 'running', agent_down: 'agent stopped · machine still running',
+      unreachable: 'unreachable', offline: 'off the tailnet',
+    },
+  },
+  vi: {
+    locale: 'vi-VN',
+    refresh: 'Quét lại', updated: 'cập nhật', seen: 'thấy', never: 'chưa từng',
+    healthy: 'tốt', problems: 'có vấn đề',
+    load: 'tải', free: 'trống', of: '/', uptime: 'Chạy liên tục', disk: 'Đĩa',
+    hardware: 'Phần cứng', noMetrics: 'không lấy được số liệu',
+    cameraOn: 'camera service đang chạy', cameraOff: 'camera service đã tắt',
+    cameraUnknown: 'camera service không rõ',
+    d: 'ngày', h: 'giờ', m: 'phút',
+    complete: n => `Đủ cả ${n} máy.`,
+    missing: (k, n) => `<b>Không lấy được ${k}/${n} máy:</b> `,
+    partial: (k, n) => `<b>Thiếu một phần ${k}/${n} máy:</b> `,
+    loadFail: e => `<b>Không tải được: ${e}</b>`,
+    state: {
+      ok: 'đang chạy', agent_down: 'agent tắt · máy vẫn chạy',
+      unreachable: 'không với tới được', offline: 'ngoài tailnet',
+    },
+  },
+};
+
+let lang = localStorage.getItem('fleet_lang') || 'en';
+let T = I18N[lang];
+let latest = null;               // dữ liệu lần tải gần nhất, để đổi ngôn ngữ khỏi gọi lại API
+
+function setLang(l) {
+  lang = l; T = I18N[l];
+  localStorage.setItem('fleet_lang', l);
+  document.documentElement.lang = l;
+  $('#btn-en').setAttribute('aria-pressed', l === 'en');
+  $('#btn-vi').setAttribute('aria-pressed', l === 'vi');
+  $('#btn-refresh').textContent = T.refresh;
+  if (latest) render(latest);    // vẽ lại từ dữ liệu cũ, không gọi lại 5 máy
+}
 
 // Không có số thì hiện "—", KHÔNG hiện 0. Nhiệt độ null nghĩa là máy không có
 // cảm biến đọc được; vẽ 0°C ra màn hình đọc như máy đang rất mát, tức sai đúng
@@ -106,8 +177,8 @@ const n = (v, d = 0) => has(v) ? Number(v).toFixed(d) : null;
 const uptime = s => {
   if (!s) return NA;
   const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600);
-  return d ? `${d}<small>ngày</small> ${h}<small>giờ</small>`
-           : `${h}<small>giờ</small> ${Math.floor(s % 3600 / 60)}<small>phút</small>`;
+  return d ? `${d}<small>${T.d}</small> ${h}<small>${T.h}</small>`
+           : `${h}<small>${T.h}</small> ${Math.floor(s % 3600 / 60)}<small>${T.m}</small>`;
 };
 
 const track = (pct, warnAt = 80, badAt = 92) => {
@@ -120,12 +191,7 @@ const track = (pct, warnAt = 80, badAt = 92) => {
 // xung quanh 85°C, còn CPU x86 ở đây có crit=100. 80/92 là mốc cảnh báo sớm.
 const tempCls = t => !has(t) ? '' : t >= 92 ? 'hot' : t >= 80 ? 'warm' : '';
 
-const STATE = {
-  ok:          ['',     'đang chạy'],
-  agent_down:  ['warn', 'agent tắt · máy vẫn chạy'],
-  unreachable: ['bad',  'không với tới được'],
-  offline:     ['bad',  'ngoài tailnet'],
-};
+const TONE = { ok: '', agent_down: 'warn', unreachable: 'bad', offline: 'bad' };
 
 function stat(label, value, extra = '', cls = '') {
   return `<div class="stat">
@@ -134,49 +200,46 @@ function stat(label, value, extra = '', cls = '') {
 }
 
 function card(m) {
-  const [tone, text] = STATE[m.state] || ['bad', m.state];
+  const tone = TONE[m.state] ?? 'bad';
+  const text = T.state[m.state] || m.state;
   const x = m.metrics || {};
   const seen = m.last_seen
-    ? new Date(m.last_seen * 1000).toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit'})
-    : 'chưa từng';
+    ? new Date(m.last_seen * 1000).toLocaleTimeString(T.locale, {hour:'2-digit',minute:'2-digit'})
+    : T.never;
 
   // Chế độ điện (MAXN_SUPER, 15W…) KHÁC model thiết bị. Model là thuộc tính
-  // tĩnh, lấy từ registry; nvp_model của backend là chế độ nguồn.
+  // tĩnh lấy từ registry; nvp_model của backend là chế độ nguồn.
   const pmode = m.power_mode_override || x.power_mode;
 
   const body = m.metrics ? `
     <div class="stats">
-      ${stat('CPU',
-             has(x.cpu_temp) ? `${n(x.cpu_temp,1)}<small>°C</small>` : null,
-             `<div class="lbl" style="margin-top:6px">tải ${n(x.cpu_percent,0) ?? '—'}%</div>
+      ${stat('CPU', has(x.cpu_temp) ? `${n(x.cpu_temp,1)}<small>°C</small>` : null,
+             `<div class="note">${T.load} ${n(x.cpu_percent,0) ?? '—'}%</div>
               ${track(x.cpu_percent)}`, tempCls(x.cpu_temp))}
-      ${stat('GPU',
-             has(x.gpu_temp) ? `${n(x.gpu_temp,1)}<small>°C</small>` : null,
-             `<div class="lbl" style="margin-top:6px">tải ${n(x.gpu_percent,0) ?? '—'}%</div>
+      ${stat('GPU', has(x.gpu_temp) ? `${n(x.gpu_temp,1)}<small>°C</small>` : null,
+             `<div class="note">${T.load} ${n(x.gpu_percent,0) ?? '—'}%</div>
               ${track(x.gpu_percent)}`, tempCls(x.gpu_temp))}
-      ${stat('RAM',
-             has(x.ram_percent) ? `${n(x.ram_percent,0)}<small>%</small>` : null,
-             `<div class="lbl" style="margin-top:6px">
-                ${n(x.ram_used_gb,1) ?? '—'} / ${n(x.ram_total_gb,1) ?? '—'} GB</div>
+      ${stat('RAM', has(x.ram_percent) ? `${n(x.ram_percent,0)}<small>%</small>` : null,
+             `<div class="note">${n(x.ram_used_gb,1) ?? '—'} ${T.of} ${n(x.ram_total_gb,1) ?? '—'} GB</div>
               ${track(x.ram_percent)}`)}
-      ${stat('Đĩa',
-             has(x.disk_percent) ? `${n(x.disk_percent,0)}<small>%</small>` : null,
-             `<div class="lbl" style="margin-top:6px">
-                còn ${n(x.disk_free_gb,0) ?? '—'} GB</div>${track(x.disk_percent)}`)}
+      ${stat(T.disk, has(x.disk_percent) ? `${n(x.disk_percent,0)}<small>%</small>` : null,
+             `<div class="note">${n(x.disk_used_gb,0) ?? '—'} ${T.of} ${n(x.disk_total_gb,0) ?? '—'} GB
+                · ${n(x.disk_free_gb,0) ?? '—'} GB ${T.free}</div>
+              ${track(x.disk_percent)}`)}
       <div class="stat wide">
-        <div class="lbl">Chạy liên tục</div>
+        <div class="lbl">${T.uptime}</div>
         <div class="val">${uptime(x.uptime_seconds)}</div>
       </div>
     </div>` : `
     <div class="stats"><div class="stat wide">
-      <div class="lbl">Phần cứng</div><div class="val">${NA}</div>
-      <div class="lbl" style="margin-top:6px">không lấy được số liệu</div>
+      <div class="lbl">${T.hardware}</div><div class="val">${NA}</div>
+      <div class="note">${T.noMetrics}</div>
     </div></div>`;
 
   const svc = m.service
     ? `<span class="${m.service.is_running ? 'dotgreen' : 'dotred'}">●</span>
-       camera service ${m.service.is_running ? 'đang chạy' : 'đã tắt'}`
-    : `<span class="na">● camera service không rõ</span>`;
+       ${m.service.is_running ? T.cameraOn : T.cameraOff}`
+    : `<span class="na">● ${T.cameraUnknown}</span>`;
 
   return `<article class="card ${tone ? 'is-' + tone : ''}">
     <div class="head">
@@ -188,7 +251,7 @@ function card(m) {
       <div class="sub">
         <span>${m.line || '—'}</span><span>${m.ip}</span>
         ${pmode ? `<span>${pmode}</span>` : ''}<span>L${m.level}</span>
-        <span>thấy ${seen}</span>
+        <span>${T.seen} ${seen}</span>
       </div>
     </div>
     ${body}
@@ -197,37 +260,42 @@ function card(m) {
   </article>`;
 }
 
+function render(d) {
+  $('#grid').innerHTML = d.machines.map(card).join('');
+
+  const ok = d.machines.filter(m => m.state === 'ok').length;
+  const bad = d.machines.length - ok;
+  $('#tally').innerHTML =
+    `<span class="pip" style="background:var(--ok)"></span>${ok} ${T.healthy}` +
+    (bad ? ` <span class="pip" style="background:var(--bad);margin-left:8px"></span>${bad} ${T.problems}` : '');
+  $('#stamp').textContent = `${T.updated} ${new Date().toLocaleTimeString(T.locale)}`;
+
+  // Luôn nói rõ mẫu che được mấy máy, và phân biệt "không lấy được gì" với "lấy
+  // được một phần". Con số tổng mà không kèm phạm vi thì người đọc không có
+  // cách nào biết mình đang nhìn thiếu một máy.
+  const c = d.coverage;
+  const miss = (c.machines_missing  || []).map(m => `${m.machine} (${m.reason})`);
+  const deg  = (c.machines_degraded || []).map(m => `${m.machine} (${m.reason})`);
+  $('#cov').className = c.complete ? 'cov' : 'cov miss';
+  $('#cov').innerHTML = c.complete
+    ? T.complete(c.machines_total)
+    : [miss.length ? T.missing(miss.length, c.machines_total) + miss.join(' · ') : '',
+       deg.length  ? T.partial(deg.length,  c.machines_total) + deg.join(' · ')  : '']
+      .filter(Boolean).join('<br>');
+}
+
 async function load(refresh) {
   try {
     if (refresh) await fetch('/api/fleet/refresh', { method: 'POST' });
-    const d = await (await fetch('/api/fleet/status')).json();
-    $('#grid').innerHTML = d.machines.map(card).join('');
-
-    const ok = d.machines.filter(m => m.state === 'ok').length;
-    const bad = d.machines.length - ok;
-    $('#tally').innerHTML =
-      `<span class="pip" style="background:var(--ok)"></span>${ok} tốt` +
-      (bad ? ` <span class="pip" style="background:var(--bad);margin-left:8px"></span>${bad} có vấn đề` : '');
-    $('#stamp').textContent = 'cập nhật ' + new Date().toLocaleTimeString('vi-VN');
-
-    // Luôn nói rõ mẫu che được mấy máy, và phân biệt "không lấy được gì" với
-    // "lấy được một phần". Con số tổng mà không kèm phạm vi thì người đọc không
-    // có cách nào biết mình đang nhìn thiếu một máy.
-    const c = d.coverage;
-    const miss = (c.machines_missing  || []).map(m => `${m.machine} (${m.reason})`);
-    const deg  = (c.machines_degraded || []).map(m => `${m.machine} (${m.reason})`);
-    $('#cov').className = c.complete ? 'cov' : 'cov miss';
-    $('#cov').innerHTML = c.complete
-      ? `Đủ cả ${c.machines_total} máy.`
-      : [miss.length ? `<b>Không lấy được ${miss.length}/${c.machines_total} máy:</b> ${miss.join(' · ')}` : '',
-         deg.length  ? `<b>Thiếu một phần ${deg.length}/${c.machines_total} máy:</b> ${deg.join(' · ')}` : '']
-        .filter(Boolean).join('<br>');
+    latest = await (await fetch('/api/fleet/status')).json();
+    render(latest);
   } catch (e) {
     $('#cov').className = 'cov miss';
-    $('#cov').innerHTML = `<b>Không tải được: ${e}</b>`;
+    $('#cov').innerHTML = T.loadFail(e);
   }
 }
 
+setLang(lang);
 load();
 setInterval(load, 30000);
 </script>
