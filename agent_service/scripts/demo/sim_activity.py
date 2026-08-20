@@ -34,7 +34,14 @@ def env(k, f=None):
         if l.startswith(k + "="): return l.split("=", 1)[1]
 
 db = MongoClient(env("MONGODB_URL"))[env("DATABASE_NAME")]
-rnd = random.Random(20260819)          # cố định seed để chạy lại ra cùng kết quả
+# Seed cố định để chạy lại ra cùng kết quả — nhưng KHÁC nhau giữa các máy. Cùng
+# seed thì bốn máy sinh ra đúng cùng một mẫu giờ vào/ra tới từng phút.
+import sys as _sys
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+from profiles import active as _profile, banner as _banner
+_P = _profile()
+_banner()
+rnd = random.Random(_P["seed"] if _P else 20260819)
 
 def to_utc(local_dt):
     """Giờ địa phương → naive UTC, đúng cách collection này lưu."""
@@ -62,10 +69,14 @@ def shift_window(shift, day):
 # Hai người làm bán thời gian 4h, để trên thẻ có cả ca 4h lẫn ca 8h
 # Đặt hai ca 4h phủ qua giờ hiện tại, để hôm nay chúng hiện dạng "đang trong ca"
 # thay vì bị các bản ghi login thật ngoài ca kéo dài khoảng hoạt động ra.
-db["users"].update_one({"username": "nv_kho"},
-                       {"$set": {"shift": "Shift P (11:00–15:00)"}})
-db["users"].update_one({"username": "kt_baotri"},
-                       {"$set": {"shift": "Shift P (12:00–16:00)"}})
+_PART_TIME = _P["part_time"] if _P else {
+    "nv_kho": "Shift P (11:00–15:00)",
+    "kt_baotri": "Shift P (12:00–16:00)",
+}
+# Khung giờ ca 4h so le giữa các máy: cùng khung thì thẻ nhân sự bốn máy hiện
+# đúng một dải giờ như nhau.
+for _u, _shift in _PART_TIME.items():
+    db["users"].update_one({"username": _u}, {"$set": {"shift": _shift}})
 
 users = list(db["users"].find({}, {"username": 1, "full_name": 1, "role": 1, "shift": 1}))
 now_local = datetime.now(TZ).replace(tzinfo=None)

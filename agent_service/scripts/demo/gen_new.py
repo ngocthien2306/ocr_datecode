@@ -11,7 +11,7 @@ OUTDIR.mkdir(exist_ok=True)
 BACKEND_ENV = REPO / "backend" / ".env"
 AGENT_ENV = REPO / "agent_service" / ".env"
 
-import base64, os, sys
+import base64, os, sys, time
 from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -40,10 +40,51 @@ PEOPLE = {
     "kt_baotri":   BLUE + VIET + "A man in his late 30s, weathered complexion, slight stubble, sturdy build.",
     "nv_kho":      BLUE + VIET + "A man in his early 50s, greying short hair under the hairnet, friendly crow's feet.",
 }
+
+# Khối văn phòng: không đồ xưởng, không lưới trùm tóc.
+OFFICE = ("Wearing a well-tailored dark navy blazer over a crisp white dress shirt, "
+          "no hairnet, neatly groomed hair, poised executive presence. ")
+
+# Bộ ảnh riêng cho từng máy. Profile chỉ giữ (đồng phục, đặc điểm riêng) chứ
+# không giữ prompt hoàn chỉnh: FRAME và VIET là phần phải giống hệt nhau giữa
+# mọi ảnh, để 40 tấm trông như chụp cùng một buổi chứ không phải 40 phong cách.
+import sys as _sys
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+from profiles import active as _profile, banner as _banner
+_P = _profile()
+_banner()
+if _P:
+    _UNIFORM = {"blue": BLUE, "white": WHITE, "office": OFFICE}
+    PEOPLE = {u: _UNIFORM[k] + VIET + d for u, (k, d) in _P["avatars"].items()}
+
+
+def generate(prompt, label):
+    """
+    Sinh một ảnh, lùi lại và thử lại khi bị rate limit.
+
+    gpt-image-1 giới hạn 5 ảnh/phút cho cả organization. Sinh cho nhiều máy là
+    chắc chắn chạm trần, và bản cũ để nguyên 429 bay lên thành traceback — mất
+    luôn cả những ảnh còn lại trong lượt. Ảnh đã có thì được bỏ qua nên chạy lại
+    không tốn tiền, nhưng phải chạy lại bằng tay thì vẫn phiền.
+    """
+    from openai import RateLimitError
+    delay = 20
+    for attempt in range(6):
+        try:
+            return client.images.generate(model="gpt-image-1", prompt=prompt,
+                                          size="1024x1024", n=1)
+        except RateLimitError:
+            if attempt == 5:
+                raise
+            print(f"  {label:13} rate limit, chờ {delay}s", flush=True)
+            time.sleep(delay)
+            delay = min(delay * 2, 120)
+
+
 for name, desc in PEOPLE.items():
     dst = OUT / f"{name}.png"
     if dst.exists():
         print(f"  {name:13} da co"); continue
-    r = client.images.generate(model="gpt-image-1", prompt=FRAME + desc, size="1024x1024", n=1)
+    r = generate(FRAME + desc, name)
     dst.write_bytes(base64.b64decode(r.data[0].b64_json))
     print(f"  {name:13} {dst.stat().st_size/1024:7.1f} KB", flush=True)

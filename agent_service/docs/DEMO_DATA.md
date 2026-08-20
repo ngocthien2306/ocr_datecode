@@ -17,6 +17,48 @@ vào `scripts/demo/_out/`.
 > Chỉ dùng nhóm thao tác về **user** và **đăng nhập/đăng xuất**. Nếu bạn thêm
 > script mới vào đây, giữ nguyên ràng buộc đó.
 
+## Nhiều máy: mỗi máy một bộ nhân sự riêng
+
+Bộ script này ban đầu hardcode **một** bộ nhân sự (`STAFF`, `PEOPLE`, `NAMES`, và
+seed random cố định). Dựng lên bốn máy thì bốn máy ra đúng cùng một tập người,
+cùng một mẫu giờ vào/ra tới từng phút — đứng cạnh nhau là lộ ngay đây là dữ liệu
+dựng.
+
+`scripts/demo/profiles.py` tách phần đó ra theo máy. Chọn bằng biến môi trường:
+
+```bash
+export DEMO_MACHINE=M1          # M1 | M2 | LineTine | PC-Auto-1
+export DEMO_ADMIN_PASSWORD='...'
+python3 seed_staff.py
+python3 to_english.py
+python3 gen_new.py _out/avatars_M1     # sinh ảnh (chạy ở máy có mạng nhanh)
+python3 replace_avatars.py             # đọc _out/avatars/
+python3 sim_activity.py
+```
+
+**Không đặt `DEMO_MACHINE` thì mọi thứ giữ nguyên hành vi cũ** — cố ý, để Auto2
+(máy đã setup xong trước khi có cơ chế này) không phải chạy lại gì.
+
+Mỗi profile giữ: `staff` (tài khoản tạo mới), `existing` (hồ sơ cho tài khoản có
+sẵn — danh sách này khác nhau từng máy), `names`, `avatars`, `part_time`, và
+`seed`. Seed khác nhau là phần dễ quên nhất: cùng seed thì `sim_activity.py` sinh
+ra đúng cùng một mẫu giờ trên mọi máy.
+
+`gen_avatars.py` **thoát ngay** khi `DEMO_MACHINE` bật: ở chế độ theo máy,
+`gen_new.py` đã bao gồm cả tài khoản có sẵn, chạy tiếp sẽ ghi đè
+`supervisor.png` / `operator.png` bằng khuôn mặt của bộ gốc.
+
+### Hai thứ vấp phải khi rollout bốn máy
+
+| Hiện tượng | Nguyên nhân | Cách xử lý |
+|---|---|---|
+| `RateLimitError` giữa chừng, mất luôn các ảnh còn lại của lượt | gpt-image-1 giới hạn **5 ảnh/phút cho cả organization**; chạy song song bốn máy là chắc chắn chạm trần | `gen_new.py` lùi lại và thử lại (20s → 120s). Ảnh đã có được bỏ qua nên chạy lại không tốn tiền |
+| `rsync` ảnh sang Jetson mất hơn 5 phút rồi timeout | ảnh gốc 1024×1024 PNG ≈ **1,5 MB/tấm**, link tới Jetson chỉ vài chục KB/s | thu về 512×512 trước khi đẩy: 13 MB → 2,7 MB. Trang 12 thẻ nhân sự cũng khỏi phải tải 18 MB ảnh |
+
+Ảnh nên sinh ở máy dev rồi rsync sang, chứ không bắt Jetson gọi OpenAI.
+
+---
+
 ## Yêu cầu
 
 - Backend đang chạy ở `http://localhost:8000`, đăng nhập được bằng `admin`.

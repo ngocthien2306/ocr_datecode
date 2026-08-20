@@ -23,6 +23,16 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 load_dotenv(AGENT_ENV)
+
+# Ở chế độ theo máy, `gen_new.py` đã sinh ảnh cho CẢ tài khoản mới lẫn tài khoản
+# có sẵn (profile giữ chung một bảng `avatars`). Chạy tiếp script này sẽ ghi đè
+# `supervisor.png` / `operator.png` bằng khuôn mặt của bộ gốc — đúng thứ ta đang
+# cố tránh. Nên thoát sớm thay vì lặng lẽ làm hỏng.
+import sys as _sys
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+from profiles import active as _profile
+if _profile():
+    raise SystemExit("DEMO_MACHINE đang bật ⇒ dùng gen_new.py (đã bao gồm tài khoản có sẵn). Bỏ qua.")
 # Thư mục ảnh: tham số 1 nếu có, không thì mặc định _out/avatars — để
 # replace_avatars.py tìm thấy mà không phải truyền đường dẫn hai lần.
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else OUTDIR / "avatars"

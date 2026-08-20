@@ -74,6 +74,17 @@ STAFF = [
     ("nv_kho",      "viewer",     "Đặng Văn Sáu",     "sau.dv",   "NV-0903", "Kho vận",  "Nhân viên kho",             "Ca hành chính",      "—",       "2020-11-03"),
 ]
 
+# Mỗi máy một bộ nhân sự riêng — nếu không bộ nào giống bộ nào thì bốn máy đứng
+# cạnh nhau mới không lộ là cùng một tập dữ liệu dựng. Không đặt DEMO_MACHINE
+# thì giữ nguyên bộ ở trên (bộ đang chạy trên Auto2).
+import sys as _sys
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+from profiles import active as _profile, banner as _banner
+_P = _profile()
+_banner()
+if _P:
+    STAFF = _P["staff"]
+
 st, r = call("POST", "/api/auth/login", form={"username": "admin", "password": admin_password()})
 ADMIN = r["access_token"]
 
@@ -113,6 +124,12 @@ EXISTING = [
     ("qa_operator1",  "NV-1210", "QA/QC",         "Nhân viên QA",        "Ca A (06:00–14:00)", "Line 1", "2024-08-19"),
     ("qa_operator2",  "NV-1211", "QA/QC",         "Nhân viên QA",        "Ca B (14:00–22:00)", "Line 2", "2025-02-03"),
 ]
+if _P:
+    # Danh sách tài khoản có sẵn khác nhau từng máy (M1/M2 chỉ có admin/
+    # supervisor/operator; PC-Auto-1 còn vài tài khoản test). Ghi hồ sơ cho
+    # username không tồn tại thì `update_one` chỉ no-op, nhưng liệt kê đúng theo
+    # máy giúp phần in ra khớp với thứ thực sự đổi.
+    EXISTING = _P["existing"]
 for uname, code, dept, title, shift, line, hired in EXISTING:
     db["users"].update_one({"username": uname}, {"$set": {
         "employee_code": code, "department": dept, "job_title": title,

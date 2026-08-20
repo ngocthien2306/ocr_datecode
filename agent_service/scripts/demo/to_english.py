@@ -58,6 +58,16 @@ NAMES = {
     "qa_operator2": "Vũ Thị Mai Anh",
 }
 
+# Tên của nhóm tài khoản có sẵn cũng phải khác nhau giữa các máy, không thì bốn
+# máy cùng có một "Hoàng Văn Nam" đứng ở ô operator.
+import sys as _sys
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+from profiles import active as _profile, banner as _banner
+_P = _profile()
+_banner()
+if _P:
+    NAMES = _P["names"]
+
 changed = 0
 for u in db["users"].find({}, {"username": 1, "department": 1, "job_title": 1,
                               "shift": 1, "production_line": 1, "full_name": 1}):
