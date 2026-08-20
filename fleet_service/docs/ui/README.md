@@ -13,6 +13,7 @@ Bộ tài liệu để dựng hai giao diện của hệ thống OCR Datecode nh
 | [07 — Lộ trình](07-roadmap.md) | Kế hoạch theo giai đoạn, có mốc kiểm chứng | lập kế hoạch |
 | [08 — Đề xuất thêm](08-proposals.md) | Tính năng đề xuất, dựa trên dữ liệu thật đã khảo sát | quyết định phạm vi |
 | [09 — Mở rộng](09-scale.md) | Cái gì gãy ở 10/20/50 máy, sửa lúc nào | trước khi thêm máy |
+| [10 — Mẫu báo cáo](10-report-templates.md) | Code xuất báo cáo gốc làm gì + 2 prompt Claude Design | thiết kế lại báo cáo |
 
 ## Ba nguyên tắc xuyên suốt, kế thừa từ hệ thống hiện tại
 
