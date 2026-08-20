@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>Sơ đồ nhà máy 3D — Fleet Console (bậc 2, three.js)</title>
+<link rel="stylesheet" href="_ds/industry-2352efdc-016e-485e-9772-5622780c2901/styles.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.184.0/build/three.module.js",
+    "three/addons/controls/OrbitControls.js": "https://unpkg.com/three@0.184.0/examples/jsm/controls/OrbitControls.js",
+    "three/addons/exporters/OBJExporter.js": "https://unpkg.com/three@0.184.0/examples/jsm/exporters/OBJExporter.js",
+    "three/addons/exporters/GLTFExporter.js": "https://unpkg.com/three@0.184.0/examples/jsm/exporters/GLTFExporter.js"
+  },
+  "integrity": {
+    "https://unpkg.com/three@0.184.0/build/three.module.js": "sha384-8FCZ1eVO6it4+pbec2aDtnTrwjWXZLJRC+MAGCIPDgsYnUrl/E0A2YlF8ioMKI/J",
+    "https://unpkg.com/three@0.184.0/build/three.core.js": "sha384-dw2ooPewaEIrAgl6oFDBmmBWCE9oW9LxRGcfwZ0hLvEprzo202wXl7vCYHRlSnOT",
+    "https://unpkg.com/three@0.184.0/examples/jsm/controls/OrbitControls.js": "sha384-4rziNxOBZKQ69i+w+f89KJ55TCYquwchVbByQwmaOeIOXdOU2PLDn3kOfXHwIJC9",
+    "https://unpkg.com/three@0.184.0/examples/jsm/exporters/OBJExporter.js": "sha384-nbwtoZENJD3Vq+ACK0CuGQdPMuDWHkamC2KJD70EV5nfg6jQjfppKOea07YJN+N3",
+    "https://unpkg.com/three@0.184.0/examples/jsm/exporters/GLTFExporter.js": "sha384-VofkvpG6HERhFCYbsUOHeNXBCqID2nfqkQqnVzE1jc/oPcz+qJ13ADdXH08hE+cQ"
+  }
+}
+</script>
+<style>
+  html,body{margin:0;height:100%;background:var(--color-accent-900);font-family:var(--font-body);color:var(--color-text)}
+  a{color:var(--color-accent-700)}a:hover{color:var(--color-accent-900)}
+  three-d-stage:not(:defined){visibility:hidden}
+  #wrap{position:relative;height:100vh}
+  three-d-stage{width:100%;height:100%}
+  .hud{position:absolute;background:rgba(242,242,243,.95);border:1px solid rgba(89,128,166,.55);padding:12px 14px;backdrop-filter:blur(2px)}
+  .hud h1{font:600 15px var(--font-heading);letter-spacing:.06em;margin:0 0 2px}
+  .k{font:600 9px var(--font-body);letter-spacing:.1em;color:var(--color-neutral-600);margin:0 0 6px}
+  .row{display:flex;align-items:center;gap:8px;font:11px var(--font-body);padding:3px 0}
+  .sw{width:9px;height:9px;flex:none}
+  .mono{font:10.5px ui-monospace,Menlo,monospace}
+  .note{font:10px/1.5 var(--font-body);color:var(--color-neutral-600)}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <three-d-stage name="factory-floor-ocr-datecode" background="var(--color-accent-900)"></three-d-stage>
+
+  <div class="hud" style="right:18px;bottom:78px;width:236px">
+    <div class="k">TRẠNG THÁI MÁY</div>
+    <div class="row"><span class="sw" style="background:#4f8a52"></span>đang chạy <span class="mono" style="margin-left:auto;color:#5f6878">4 máy</span></div>
+    <div class="row"><span class="sw" style="background:#c98a20"></span>cần chú ý <span class="mono" style="margin-left:auto;color:#5f6878">M2</span></div>
+    <div class="row"><span class="sw" style="background:#8a9099"></span>trợ lý tắt · máy vẫn chạy</div>
+    <div class="row"><span class="sw" style="background:#f2f2f3;border:1px dashed #8a9099"></span>mất liên lạc <span class="mono" style="margin-left:auto;color:#5f6878">—</span></div>
+    <div class="note" style="margin-top:6px">Phân biệt bằng <b>cả hình lẫn màu</b>: đèn tháp đổi màu, máy cần chú ý có vòng cảnh báo trên sàn, trợ lý tắt có dấu chảo xám.</div>
+  </div>
+
+  <div class="hud" style="right:18px;top:18px;width:236px">
+    <div class="k">ĐỘI HÌNH · CA B 14:00–22:00</div>
+    <div class="row"><span class="sw" style="background:#4f8a52"></span><b>Auto2</b> <span style="color:#5f6878">Line 1</span> <span class="mono" style="margin-left:auto">98,4%</span></div>
+    <div class="row"><span class="sw" style="background:#4f8a52"></span><b>M1</b> <span style="color:#5f6878">Line 2</span> <span class="mono" style="margin-left:auto">77,8%</span></div>
+    <div class="row"><span class="sw" style="background:#c98a20"></span><b>M2</b> <span style="color:#5f6878">Line 3</span> <span class="mono" style="margin-left:auto;color:#a8621f">69,4%</span></div>
+    <div class="row"><span class="sw" style="background:#8a9099"></span><b>LineTine</b> <span style="color:#5f6878">Tine</span> <span class="mono" style="margin-left:auto">81,5%</span></div>
+    <div class="row"><span class="sw" style="background:#4f8a52"></span><b>PC-Auto-1</b> <span style="color:#5f6878">Auto</span> <span class="mono" style="margin-left:auto">96,2%</span></div>
+    <div class="note" style="margin-top:8px">Không xếp hạng theo tỉ lệ đạt — các line chạy mặt hàng khác nhau.</div>
+  </div>
+
+  <div class="hud" style="left:18px;bottom:18px;width:430px">
+    <h1>SƠ ĐỒ NHÀ MÁY — BẬC 2 (THREE.JS)</h1>
+    <div class="note" style="margin-bottom:8px">Xưởng đóng gói gia vị · 5 dây chuyền OCR datecode · kéo để xoay, cuộn để zoom, chuột phải để dịch.</div>
+    <div class="k">GHI CHÚ KỸ THUẬT — SO VỚI BẬC 1 (SVG ĐẲNG CỰ)</div>
+    <div class="note">Bậc 2 cần WebGL + ~600 KB three.js, dựng 4–6 ngày; đổi được vì <b>FactoryMap({machines, selected, onSelect})</b> giữ nguyên interface. Dùng cho Fleet Console trên màn hình lớn; <b>không</b> đưa xuống tablet cạnh dây chuyền — ở đó giữ bản đẳng cự. Vị trí máy đọc từ <span class="mono">config/machines.json</span> (x, y, rotation, zone), khoá theo Tailscale node id. Toàn bộ hình học dựng bằng code, không tải model — tải nặng nhất vẫn là thư viện.</div>
+  </div>
+</div>
+
+<script src="three-d-stage.js"></script>
+<script type="module">
+const stage = document.querySelector('three-d-stage');
+const { THREE } = await stage.ready;
+
+const M = {
+  floor:      new THREE.MeshStandardMaterial({ name:'floor',      color:0x2b3440, roughness:0.94, metalness:0.02 }),
+  aisle:      new THREE.MeshStandardMaterial({ name:'aisle_paint', color:0x39434f, roughness:0.85 }),
+  steel:      new THREE.MeshStandardMaterial({ name:'steel',      color:0xb7bcc2, roughness:0.42, metalness:0.34 }),
+  panel:      new THREE.MeshStandardMaterial({ name:'panel',      color:0xe4e6e9, roughness:0.55, metalness:0.12 }),
+  accent:     new THREE.MeshStandardMaterial({ name:'steel_blue', color:0x5980a6, roughness:0.48, metalness:0.22 }),
+  dark:       new THREE.MeshStandardMaterial({ name:'dark_trim',  color:0x3f464e, roughness:0.6,  metalness:0.2 }),
+  belt:       new THREE.MeshStandardMaterial({ name:'belt',       color:0x6b7078, roughness:0.9 }),
+  guard:      new THREE.MeshStandardMaterial({ name:'guard_yellow', color:0xd8ab2c, roughness:0.7 }),
+  glass:      new THREE.MeshStandardMaterial({ name:'glass',      color:0xd7e2ec, roughness:0.18, metalness:0.1, transparent:true, opacity:0.42 }),
+  carton:     new THREE.MeshStandardMaterial({ name:'carton',     color:0xc9a882, roughness:0.95 }),
+  ok:         new THREE.MeshStandardMaterial({ name:'status_ok',    color:0x4f8a52, emissive:0x4f8a52, emissiveIntensity:1.6, roughness:0.4 }),
+  warn:       new THREE.MeshStandardMaterial({ name:'status_warn',  color:0xc98a20, emissive:0xc98a20, emissiveIntensity:1.9, roughness:0.4 }),
+  mute:       new THREE.MeshStandardMaterial({ name:'status_muted', color:0x8a9099, roughness:0.55 }),
+  building:   new THREE.MeshStandardMaterial({ name:'building',   color:0xb9bec5, roughness:0.9 })
+};
+
+const box = (name, w, h, d, mat, x=0, y=0, z=0) => {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.name = name; m.position.set(x, y, z); return m;
+};
+const cyl = (name, rt, rb, h, mat, x=0, y=0, z=0, seg=24) => {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), mat);
+  m.name = name; m.position.set(x, y, z); return m;
+};
+
+function label(text, sub) {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 160;
+  const g = c.getContext('2d');
+  g.fillStyle = 'rgba(242,242,243,0.96)'; g.fillRect(0, 0, 512, 160);
+  g.strokeStyle = '#5980a6'; g.lineWidth = 4; g.strokeRect(2, 2, 508, 156);
+  g.fillStyle = '#1d1f20'; g.font = '700 64px Barlow Condensed, Barlow, sans-serif';
+  g.fillText(text, 22, 74);
+  g.fillStyle = '#41505f'; g.font = '600 38px Barlow, sans-serif';
+  g.fillText(sub, 22, 130);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ name:'label_' + text, map: tex, transparent:true }));
+  sp.name = 'label_' + text;
+  sp.scale.set(6.4, 2.0, 1);
+  return sp;
+}
+
+/* one inspection line: infeed conveyor → OCR inspection cabinet with camera arm
+   → reject gate + bin → outfeed conveyor → control cabinet + status beacon */
+function inspectionLine(cfg) {
+  const g = new THREE.Group();
+  g.name = 'line_' + cfg.key;
+  const st = cfg.status;
+  const beaconMat = st === 'warn' ? M.warn : st === 'agent_down' ? M.mute : M.ok;
+
+  // conveyor, 9 m along x
+  const frame = new THREE.Group(); frame.name = 'conveyor_' + cfg.key;
+  frame.add(box('belt_surface', 9, 0.08, 0.86, M.belt, 0, 0.92, 0));
+  frame.add(box('belt_rail_n', 9, 0.14, 0.07, M.steel, 0, 1.0, 0.47));
+  frame.add(box('belt_rail_s', 9, 0.14, 0.07, M.steel, 0, 1.0, -0.47));
+  frame.add(box('belt_bed', 9, 0.16, 0.9, M.steel, 0, 0.82, 0));
+  for (let i = -4; i <= 4; i += 2) {
+    frame.add(cyl('conveyor_leg', 0.055, 0.055, 0.74, M.steel, i, 0.37, 0.34, 10));
+    frame.add(cyl('conveyor_leg', 0.055, 0.055, 0.74, M.steel, i, 0.37, -0.34, 10));
+    frame.add(box('conveyor_crossbrace', 0.06, 0.06, 0.68, M.steel, i, 0.2, 0));
+  }
+  frame.add(cyl('drive_roller', 0.16, 0.16, 0.92, M.dark, 4.5, 0.9, 0, 20).rotateZ(Math.PI / 2) || null);
+  g.add(frame);
+
+  // drive motor
+  const motor = new THREE.Group(); motor.name = 'drive_motor_' + cfg.key;
+  motor.add(cyl('motor_body', 0.22, 0.22, 0.5, M.dark, 0, 0, 0, 18));
+  motor.rotation.z = Math.PI / 2;
+  motor.position.set(4.9, 0.9, 0.58);
+  g.add(motor);
+
+  // inspection cabinet — the OCR station
+  const cab = new THREE.Group(); cab.name = 'inspection_cabinet_' + cfg.key;
+  cab.add(box('cabinet_body', 2.3, 1.5, 1.9, M.panel, 0, 1.65, 0));
+  cab.add(box('cabinet_base', 2.4, 0.9, 2.0, M.steel, 0, 0.45, 0));
+  cab.add(box('cabinet_window', 1.5, 0.9, 0.06, M.glass, 0, 1.75, 0.98));
+  cab.add(box('cabinet_frame_top', 2.42, 0.1, 2.02, M.dark, 0, 2.45, 0));
+  cab.add(box('cabinet_hmi', 0.6, 0.42, 0.06, M.dark, 0.78, 1.35, 0.99));
+  cab.add(box('cabinet_hmi_screen', 0.5, 0.32, 0.02, M.accent, 0.78, 1.35, 1.03));
+  // camera bridge over the belt
+  cab.add(box('camera_bridge', 0.16, 0.16, 2.4, M.steel, 0, 2.62, 0));
+  cab.add(cyl('camera_post_l', 0.07, 0.07, 0.5, M.steel, 0, 2.35, 1.1, 12));
+  cab.add(cyl('camera_post_r', 0.07, 0.07, 0.5, M.steel, 0, 2.35, -1.1, 12));
+  const camA = box('camera_head_1', 0.34, 0.3, 0.42, M.dark, 0, 2.34, 0.3);
+  const lensA = cyl('camera_lens_1', 0.11, 0.13, 0.24, M.steel, 0, 2.1, 0.3, 16);
+  cab.add(camA, lensA);
+  const camB = box('camera_head_2', 0.3, 0.26, 0.36, M.dark, 0, 2.36, -0.42);
+  const lensB = cyl('camera_lens_2', 0.09, 0.11, 0.2, M.steel, 0, 2.14, -0.42, 16);
+  cab.add(camB, lensB);
+  cab.add(box('light_bar', 0.9, 0.08, 0.1, M.panel, 0, 2.16, 0.62));
+  cab.position.set(-0.6, 0, 1.35);
+  g.add(cab);
+
+  // reject gate + bin
+  const rej = new THREE.Group(); rej.name = 'reject_station_' + cfg.key;
+  rej.add(box('reject_arm', 0.9, 0.1, 0.12, M.accent, 0, 1.05, 0.55));
+  rej.add(cyl('reject_pivot', 0.09, 0.09, 0.36, M.steel, -0.45, 0.9, 0.55, 12));
+  rej.add(box('reject_bin', 1.0, 0.85, 1.0, M.steel, 0.2, 0.43, 1.5));
+  rej.add(box('reject_bin_rim', 1.06, 0.06, 1.06, M.dark, 0.2, 0.88, 1.5));
+  rej.position.set(2.5, 0, 0);
+  g.add(rej);
+
+  // control cabinet + status beacon (shape carries status as well as colour)
+  const ctl = new THREE.Group(); ctl.name = 'control_cabinet_' + cfg.key;
+  ctl.add(box('control_body', 1.0, 2.0, 0.7, M.panel, 0, 1.0, 0));
+  ctl.add(box('control_door_seam', 0.03, 1.7, 0.72, M.dark, 0, 1.05, 0));
+  ctl.add(box('control_plinth', 1.05, 0.12, 0.75, M.dark, 0, 0.06, 0));
+  ctl.add(cyl('beacon_post', 0.05, 0.05, 0.7, M.steel, 0, 2.35, 0, 10));
+  const lamp = cyl('status_beacon', 0.17, 0.17, 0.36, beaconMat, 0, 2.85, 0, 20);
+  ctl.add(lamp);
+  ctl.add(cyl('beacon_cap', 0.18, 0.18, 0.06, M.dark, 0, 3.06, 0, 20));
+  ctl.position.set(-4.1, 0, 1.45);
+  g.add(ctl);
+
+  // outfeed carton stack — production leaving the line
+  if (st !== 'unreachable') {
+    const stack = new THREE.Group(); stack.name = 'carton_stack_' + cfg.key;
+    for (let i = 0; i < 3; i++) stack.add(box('carton', 0.6, 0.4, 0.5, M.carton, i * 0.05, 0.2 + i * 0.4, 0));
+    stack.position.set(-4.4, 0, -1.5);
+    g.add(stack);
+  }
+
+  // safety guard rails, in the design system's yellow
+  const rail = (x, z, len) => {
+    const r = new THREE.Group(); r.name = 'guard_rail';
+    r.add(box('rail_top', len, 0.07, 0.07, M.guard, 0, 1.05, 0));
+    r.add(box('rail_mid', len, 0.05, 0.05, M.guard, 0, 0.62, 0));
+    r.add(cyl('rail_post', 0.05, 0.05, 1.1, M.guard, -len / 2 + 0.1, 0.55, 0, 10));
+    r.add(cyl('rail_post', 0.05, 0.05, 1.1, M.guard, len / 2 - 0.1, 0.55, 0, 10));
+    r.position.set(x, 0, z);
+    return r;
+  };
+  g.add(rail(1.2, -1.9, 3.4), rail(-3.2, -1.9, 2.6), rail(3.4, 2.6, 2.4));
+
+  // attention ring on the floor — a shape cue, not only a colour cue
+  if (st === 'warn') {
+    const ring = new THREE.Mesh(new THREE.RingGeometry(3.6, 4.0, 48), M.warn);
+    ring.name = 'attention_ring'; ring.rotation.x = -Math.PI / 2; ring.position.set(0, 0.02, 0.6);
+    g.add(ring);
+  }
+  if (st === 'agent_down') {
+    const dish = cyl('assistant_offline_marker', 0.02, 0.34, 0.5, M.mute, -4.1, 3.4, 1.45, 14);
+    g.add(dish);
+  }
+
+  const lb = label(cfg.name, cfg.sub);
+  lb.position.set(-1.0, 4.7, 0.4);
+  g.add(lb);
+
+  g.position.set(cfg.x, 0, cfg.z);
+  g.rotation.y = cfg.rotation || 0;
+  return g;
+}
+
+const factory = new THREE.Group();
+factory.name = 'factory_floor';
+
+const slab = box('floor_slab', 46, 0.2, 30, M.floor, 0, -0.1, 0);
+slab.receiveShadow = true;
+factory.add(slab);
+
+const aisle = box('aisle_marking', 42, 0.02, 2.6, M.aisle, 0, 0.01, 0);
+factory.add(aisle);
+for (let x = -20; x <= 20; x += 2.5) factory.add(box('aisle_chevron', 0.7, 0.03, 0.14, M.guard, x, 0.02, 1.25));
+for (let x = -20; x <= 20; x += 2.5) factory.add(box('aisle_chevron', 0.7, 0.03, 0.14, M.guard, x, 0.02, -1.25));
+
+// perimeter wall stubs, so the floor reads as a hall
+factory.add(box('wall_north', 46, 1.1, 0.3, M.building, 0, 0.55, -15));
+factory.add(box('wall_south', 46, 1.1, 0.3, M.building, 0, 0.55, 15));
+factory.add(box('wall_west', 0.3, 1.1, 30, M.building, -23, 0.55, 0));
+factory.add(box('wall_east', 0.3, 1.1, 30, M.building, 23, 0.55, 0));
+
+const lines = [
+  { key:'auto2',   name:'Auto2',     sub:'Line 1 · ONION POWDER',      x:-14.5, z:-7.5, status:'ok' },
+  { key:'m1',      name:'M1',        sub:'Line 2 · CHILI Pdr',         x:0,     z:-7.5, status:'ok' },
+  { key:'m2',      name:'M2',        sub:'Line 3 · ORG CINNAMON CC',   x:14.5,  z:-7.5, status:'warn' },
+  { key:'linetine',name:'LineTine',  sub:'Tine Line · PURE SEA SALT',  x:-8,    z:7.5,  status:'agent_down', rotation:Math.PI },
+  { key:'pcauto1', name:'PC-Auto-1', sub:'Auto Line · Minced Onion',   x:8,     z:7.5,  status:'ok', rotation:Math.PI }
+];
+lines.forEach(c => factory.add(inspectionLine(c)));
+
+// warehouses
+const store = (name, x, z, w, d, text) => {
+  const g = new THREE.Group(); g.name = name;
+  g.add(box('store_body', w, 3.2, d, M.building, 0, 1.6, 0));
+  g.add(box('store_roof', w + 0.3, 0.16, d + 0.3, M.dark, 0, 3.28, 0));
+  g.add(box('store_door', 2.2, 2.2, 0.1, M.accent, 0, 1.1, d / 2 + 0.02));
+  const lb = label(text, name === 'raw_material_store' ? 'Kho nguyên liệu' : 'Kho thành phẩm');
+  lb.scale.set(5.2, 1.6, 1); lb.position.set(0, 4.6, 0);
+  g.add(lb);
+  g.position.set(x, 0, z);
+  return g;
+};
+factory.add(store('raw_material_store', -18, 11, 7, 5, 'KHO NL'));
+factory.add(store('finished_goods_store', 18, 11, 7, 5, 'KHO TP'));
+
+factory.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+stage.setObject(factory);
+
+/* technical ground: a blueprint grid under the slab, and a tighter, lower
+   camera than the stage's default framing */
+const grid = new THREE.GridHelper(160, 64, 0x5980a6, 0x416180);
+grid.name = 'reference_grid';
+grid.position.y = -0.22;
+stage._scene.add(grid);
+stage._scene.fog = new THREE.Fog(0x1d2d3d, 70, 190);
+
+const cam = stage._camera, ctl = stage._controls;
+ctl.target.set(-0.5, 1.0, -1.0);
+cam.position.set(30, 20, 33);
+cam.updateProjectionMatrix();
+ctl.minDistance = 14; ctl.maxDistance = 110;
+ctl.maxPolarAngle = Math.PI * 0.49;
+ctl.update();
+</script>
+</body>
+</html>

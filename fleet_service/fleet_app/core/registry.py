@@ -59,6 +59,9 @@ class Machine:
     model: Optional[str] = None
     # Chặn chế độ điện cho máy mà `nvp_model` đã bị ghi đè thành chuỗi khác.
     power_mode_override: Optional[str] = None
+    # Vị trí trên sơ đồ mặt bằng: {x, y, rotation, zone}. Để trong config chứ
+    # không hardcode trong component — đổi mặt bằng thì sửa JSON, không sửa code.
+    floor: Optional[Dict[str, Any]] = None
 
     # kết quả dò năng lực
     level: int = 0
@@ -214,6 +217,7 @@ class Registry:
                 m.label, m.line, m.note = lbl.get("label"), lbl.get("line"), lbl.get("note")
                 m.model = lbl.get("model")
                 m.power_mode_override = lbl.get("power_mode")
+                m.floor = lbl.get("floor")
             # Máy rời tailnet: giữ lại bản ghi và đánh dấu offline thay vì xoá —
             # xoá đi thì mất luôn `last_seen`, tức mất câu trả lời "im từ bao giờ".
             for nid, m in self._machines.items():

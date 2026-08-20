@@ -152,3 +152,35 @@ async def fleet_log_errors(
     top: int = Query(8, ge=1, le=30),
 ) -> Dict[str, Any]:
     return await queries.fleet_log_errors(date=date, top=top)
+
+
+@router.get("/avatar/{machine}", summary="Proxy ảnh đại diện từ backend của máy")
+async def fleet_avatar(machine: str, p: str = Query(..., description="avatar_url của user")):
+    """
+    Ảnh đại diện nằm trên backend từng máy. Proxy qua fleet cùng lý do với ảnh
+    lỗi: trình duyệt không gắn được token vào thẻ <img>.
+
+    Chỉ nhận đường dẫn bắt đầu bằng `/api/upload/` — một `p` bịa ra không được
+    biến endpoint này thành cổng đọc mọi URL trên máy đích.
+    """
+    from fastapi.responses import Response
+
+    if not p.startswith("/api/upload/"):
+        raise HTTPException(400, "Đường dẫn ảnh không hợp lệ")
+    m = _one_or_409(machine)
+    token = await client.token_for(m.node_id, m.ip)
+    if not token:
+        raise HTTPException(502, f"{m.name}: không đăng nhập được")
+    url = f"http://{m.ip}:{settings.EDGE_BACKEND_PORT}{p}"
+    try:
+        r = await client._client.get(url, timeout=settings.EDGE_TIMEOUT,
+                                     headers={"Authorization": f"Bearer {token}"})
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, "không lấy được ảnh")
+        return Response(content=r.content,
+                        media_type=r.headers.get("content-type", "image/png"),
+                        headers={"Cache-Control": "public, max-age=86400"})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"{m.name}: {type(e).__name__}") from e

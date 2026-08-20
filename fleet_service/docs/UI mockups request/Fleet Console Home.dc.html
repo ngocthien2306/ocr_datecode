@@ -1,0 +1,1301 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="_ds/industry-2352efdc-016e-485e-9772-5622780c2901/styles.css">
+<script src="_ds/industry-2352efdc-016e-485e-9772-5622780c2901/_ds_bundle.js"></script>
+<style>
+body{margin:0;background:var(--color-bg);font-family:var(--font-body)}
+a{color:var(--color-accent-700)}a:hover{color:var(--color-accent-900)}
+.dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(0,0,0,.08);scroll-margin-top:16px}
+.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 20px}
+.dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#1d1f20;color:#fff;text-decoration:none}
+.dv-tname{font:600 15px/1.2 var(--font-heading);letter-spacing:.04em;text-transform:uppercase;color:var(--color-text)}
+.dv-opts{display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start}
+.dv-opt{flex:none;display:flex;flex-direction:column;gap:9px;scroll-margin-top:16px}
+.dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#1d1f20;text-decoration:none}
+.dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 11.5px/1.3 var(--font-body);color:rgba(0,0,0,.6)}
+.dv-card{max-width:100%;background:#fff;border:1px solid rgba(0,0,0,.12);box-shadow:var(--shadow-sm);overflow:hidden}
+.dv-opt:target .dv-oid{background:var(--color-accent);color:#fff}
+.dv-next{margin:24px 0 0;font:12px/1.5 var(--font-body);color:rgba(0,0,0,.5)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.2}}
+@keyframes skel{0%,100%{opacity:.55}50%{opacity:.25}}
+</style>
+</helmet>
+
+<section class="dv-turn" id="t4">
+<div class="dv-thd"><a class="dv-tid" href="#t4">4</a><span class="dv-tname">Sơ đồ nhà máy 3D thật — bậc 2 (three.js)</span>
+<span style="font:11px var(--font-body);color:var(--color-neutral-600)">trang riêng, mở được: <a href="factory-3d.html" target="_blank">factory-3d.html</a></span></div>
+<div class="dv-opts">
+<div class="dv-opt" id="4a" data-screen-label="4a Factory map tier 2 three.js">
+<div class="dv-olabel"><a class="dv-oid" href="#4a">4a</a>Xưởng 3D dựng bằng code · xoay/zoom/dịch thật · xuất được OBJ+MTL / GLB</div>
+<div style="display:flex;gap:16px;align-items:flex-start">
+<a href="factory-3d.html" target="_blank" class="dv-card" style="width:924px;display:block">
+<img src="screenshots/factory-3d-c.png" alt="Sơ đồ nhà máy 3D — 5 dây chuyền OCR datecode trên nền lưới kỹ thuật" style="width:100%;display:block">
+</a>
+<div style="flex:none;width:290px;display:flex;flex-direction:column;gap:12px">
+<div style="border:1px solid var(--color-neutral-300);padding:12px 14px;font:11px/1.6 var(--font-body);color:var(--color-neutral-700)">
+<div style="font:600 10px var(--font-heading);letter-spacing:.1em;color:var(--color-text);margin-bottom:6px">CÓ GÌ TRONG CẢNH</div>
+5 dây chuyền kiểm tra thật: băng tải + chân đỡ, tủ OCR có <b>cầu camera 2 mắt</b> (đúng CAM001/CAM002 trong <span style="font-family:ui-monospace,Menlo,monospace;font-size:10px">exports/</span>), tay gạt loại + thùng phế, tủ điện có <b>đèn tháp trạng thái</b>, hàng rào an toàn vàng, lối đi kẻ vạch, hai kho, tường bao.<br><br>
+Trạng thái vẫn theo quy tắc 04: đèn tháp đổi màu <b>và</b> M2 có vòng cảnh báo trên sàn, LineTine (trợ lý tắt) có dấu "chảo" xám phía trên tủ — phân biệt được cả khi mù màu hoặc màn hình chói.
+</div>
+<div style="border:1px solid var(--color-neutral-300);padding:12px 14px;font:11px/1.6 var(--font-body);color:var(--color-neutral-700)">
+<div style="font:600 10px var(--font-heading);letter-spacing:.1em;color:var(--color-text);margin-bottom:6px">REACT THÌ SAO</div>
+Được — trong React thì đây là <span style="font-family:ui-monospace,Menlo,monospace;font-size:10px">@react-three/fiber</span> + <span style="font-family:ui-monospace,Menlo,monospace;font-size:10px">drei</span>: mỗi máy một component, click → <span style="font-family:ui-monospace,Menlo,monospace;font-size:10px">onSelect(machineKey)</span> mở ngăn kéo, nhãn trạng thái dùng <span style="font-family:ui-monospace,Menlo,monospace;font-size:10px">&lt;Html&gt;</span> của drei nên vẫn là DOM (song ngữ, chọn được chữ). Interface <span style="font-family:ui-monospace,Menlo,monospace;font-size:10px">FactoryMap({machines, selected, onSelect})</span> giữ nguyên — đổi bậc 1 ↔ bậc 2 chỉ là thay ruột component.
+</div>
+<div style="border:1px solid #b08334;background:#b0833414;padding:12px 14px;font:11px/1.6 var(--font-body);color:#7a5a20">
+<div style="font:600 10px var(--font-heading);letter-spacing:.1em;margin-bottom:6px">CÁI GIÁ, NÓI THẲNG</div>
+~600 KB three.js + cần WebGL · dựng 4–6 ngày (bậc 1 là 1–2 ngày) · toạ độ máy vẫn phải có trong <span style="font-family:ui-monospace,Menlo,monospace;font-size:10px">machines.json</span> trước.<br><br>
+Đề xuất: <b>bậc 2 cho Fleet Console</b> (màn hình lớn, ngồi bàn, là chỗ cần "xịn" khi demo khách) và <b>giữ bậc 1 đẳng cự cho Line Station</b> trên tablet cạnh dây chuyền — nơi RAM Jetson còn ~1 GB và màn hình có thể là máy cũ.
+</div>
+</div>
+</div>
+</div>
+</div>
+<p class="dv-next">Try next: "click vào máy trong bản 3D mở ngăn kéo" · "thêm thùng hàng chạy trên băng tải (animation)" · "đổi mặt bằng theo bản vẽ xưởng thật" · "so bậc 1 và bậc 2 cạnh nhau cho khách chọn"</p>
+</section>
+
+<section class="dv-turn" id="t3">
+<div class="dv-thd"><a class="dv-tid" href="#t3">3</a><span class="dv-tname">Fleet Console — tab Staff &amp; tab Activity log</span>
+<span style="font:11px var(--font-body);color:var(--color-neutral-600)">theo 02 §5–6 · cùng khung console với <a class="dv-oid" href="#1a">1a</a> · UI copy EN (mặc định), chuỗi VI trong ghi chú</span></div>
+<div class="dv-opts">
+
+<div class="dv-opt" id="3a" data-screen-label="3a Staff tab">
+<div class="dv-olabel"><a class="dv-oid" href="#3a">3a</a>Tab Staff — nhóm Máy → Bộ phận (đổi được) · chỉ xem</div>
+<div style="display:flex;gap:16px;align-items:flex-start">
+<div class="dv-card" style="width:1180px">
+<div style="display:flex;gap:2px;padding:0 20px;border-bottom:1px solid var(--color-neutral-300);align-items:center">
+<span style="font:600 14px var(--font-heading);letter-spacing:.05em;margin-right:14px">FLEET — OCR DATECODE</span>
+<span style="padding:9px 16px;font:600 11.5px var(--font-body);color:var(--color-neutral-500)">Overview</span>
+<span style="padding:9px 16px;font:600 11.5px var(--font-body);color:var(--color-accent-700);border-bottom:2px solid var(--color-accent)">Staff</span>
+<span style="padding:9px 16px;font:600 11.5px var(--font-body);color:var(--color-neutral-500)">Activity log</span>
+<span style="margin-left:auto;font:500 11px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">16:42:05</span>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:12px 20px 0">
+<span style="display:inline-flex;border:1px solid var(--color-neutral-400)">
+<span style="padding:5px 12px;font:600 10.5px var(--font-body);background:var(--color-accent);color:#fff">Machine → Dept</span>
+<span style="padding:5px 12px;font:600 10.5px var(--font-body);color:var(--color-neutral-600)">Dept → Machine</span>
+<span style="padding:5px 12px;font:600 10.5px var(--font-body);color:var(--color-neutral-600)">Shift → Machine</span>
+</span>
+<span style="display:inline-flex;align-items:center;gap:7px;border:1px solid var(--color-neutral-400);padding:5px 10px;min-width:200px;color:var(--color-neutral-400);font:11px var(--font-body)">
+<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4-4"></path></svg>Search name, NV code, username…</span>
+<span style="font:11px var(--font-body);color:var(--color-neutral-500)">54 accounts · 5 machines</span>
+<span class="tag tag-outline" style="margin-left:auto;font-size:9.5px">read-only — user management ships later, behind a confirmation gate</span>
+</div>
+<div style="display:flex;align-items:center;gap:8px;padding:10px 20px;font:10.5px var(--font-body);color:var(--color-neutral-600)">
+<span style="border:1px solid var(--color-neutral-300);padding:4px 10px">Machine · All ▾</span>
+<span style="border:1px solid var(--color-neutral-300);padding:4px 10px">Department · All ▾</span>
+<span style="border:1px solid var(--color-neutral-300);padding:4px 10px">Shift · All ▾</span>
+<span style="border:1px solid var(--color-neutral-300);padding:4px 10px">Access · All ▾</span>
+<span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-neutral-300);padding:4px 10px"><span style="width:8px;height:8px;background:#5d8a5a;border-radius:50%"></span>On shift now only</span>
+<span style="margin-left:auto;color:var(--color-neutral-400)">loaded when the tab opens — profiles rarely change</span>
+</div>
+<div style="margin:0 20px;border:1px dashed var(--color-neutral-400);padding:8px 12px;display:flex;gap:9px;align-items:center;font:10.5px/1.45 var(--font-body);color:var(--color-neutral-600)">
+<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.5"><circle cx="12" cy="12" r="9"></circle><path d="M12 8h.01M12 11v5"></path></svg>
+<span><b>admin, operator, supervisor</b> exist on all 5 machines — same username, <b>different accounts</b>. Everything here is keyed by (machine, username); <b>employee_code (NV-xxxx)</b> is what links one person across machines.</span>
+</div>
+<div style="padding:12px 20px 20px">
+<div style="border:1px solid var(--color-neutral-300)">
+<div style="display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--color-neutral-100)">
+<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--color-text)" stroke-width="2"><path d="m6 9 6 6 6-6"></path></svg>
+<span style="font:600 14px var(--font-heading);letter-spacing:.04em">M2 · LINE 3</span>
+<span style="font:10px var(--font-body);color:var(--color-neutral-500)">Jetson Orin Nano 8GB</span>
+<span style="margin-left:auto;font:600 11px var(--font-body);color:var(--color-neutral-600)">9 people · <span style="color:#5d8a5a">4 on shift</span></span>
+</div>
+<div style="display:flex;align-items:center;gap:8px;padding:7px 14px 5px 34px;font:600 10px var(--font-body);letter-spacing:.08em;color:var(--color-neutral-500)">
+<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"></path></svg>PRODUCTION — 5
+</div>
+<div style="display:flex;flex-direction:column">
+<div style="display:flex;align-items:center;gap:12px;padding:7px 14px 7px 48px;border-top:1px solid var(--color-neutral-200)">
+<span style="width:34px;height:34px;background:var(--color-accent-100);border:1px solid var(--color-accent-300);display:inline-flex;align-items:center;justify-content:center;font:600 11px var(--font-heading);color:var(--color-accent-700)">PD</span>
+<span style="width:210px"><b style="font:600 12.5px var(--font-body)">Phan Thị Thuỳ Dương</b><br><span style="font:10px ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">NV-3120 · @nv_dungmay1</span></span>
+<span style="width:150px;font:11px var(--font-body);color:var(--color-neutral-600)">CN vận hành</span>
+<span class="tag tag-outline" style="font-size:9.5px">Shift B · 14–22</span>
+<span class="tag tag-neutral" style="font-size:9.5px">Access: operator</span>
+<span style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;font:600 10.5px var(--font-body);color:#5d8a5a"><span style="width:6px;height:6px;background:#5d8a5a;border-radius:50%"></span>on shift since 14:02</span>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:7px 14px 7px 48px;border-top:1px solid var(--color-neutral-200)">
+<span style="width:34px;height:34px;background:var(--color-accent-100);border:1px solid var(--color-accent-300);display:inline-flex;align-items:center;justify-content:center;font:600 11px var(--font-heading);color:var(--color-accent-700)">VM</span>
+<span style="width:210px"><b style="font:600 12.5px var(--font-body)">Vũ Thị Mai</b><br><span style="font:10px ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">NV-3132 · @nv_dungmay2</span></span>
+<span style="width:150px;font:11px var(--font-body);color:var(--color-neutral-600)">CN vận hành</span>
+<span class="tag tag-outline" style="font-size:9.5px">Shift B · 14–22</span>
+<span class="tag tag-neutral" style="font-size:9.5px">Access: operator</span>
+<span style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;font:600 10.5px var(--font-body);color:#5d8a5a"><span style="width:6px;height:6px;background:#5d8a5a;border-radius:50%"></span>on shift since 14:05</span>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:7px 14px 7px 48px;border-top:1px solid var(--color-neutral-200)">
+<span style="width:34px;height:34px;background:var(--color-accent-100);border:1px solid var(--color-accent-300);display:inline-flex;align-items:center;justify-content:center;font:600 11px var(--font-heading);color:var(--color-accent-700)">QH</span>
+<span style="width:210px"><b style="font:600 12.5px var(--font-body)">Đỗ Quang Huy</b><br><span style="font:10px ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">NV-3151 · @truongca_m2</span></span>
+<span style="width:150px;font:11px var(--font-body);color:var(--color-neutral-600)">Trưởng ca</span>
+<span class="tag tag-outline" style="font-size:9.5px">Shift B · 14–22</span>
+<span class="tag tag-neutral" style="font-size:9.5px">Access: supervisor</span>
+<span style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;font:600 10.5px var(--font-body);color:#5d8a5a"><span style="width:6px;height:6px;background:#5d8a5a;border-radius:50%"></span>on shift since 13:51</span>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:7px 14px 7px 48px;border-top:1px solid var(--color-neutral-200)">
+<span style="width:34px;height:34px;background:var(--color-neutral-100);border:1px solid var(--color-neutral-300);display:inline-flex;align-items:center;justify-content:center;font:600 11px var(--font-heading);color:var(--color-neutral-500)">MK</span>
+<span style="width:210px"><b style="font:600 12.5px var(--font-body)">Tạ Minh Khoa</b><br><span style="font:10px ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">NV-3145 · @nv_dungmay3</span></span>
+<span style="width:150px;font:11px var(--font-body);color:var(--color-neutral-600)">CN vận hành</span>
+<span class="tag tag-outline" style="font-size:9.5px">Shift C · 22–06</span>
+<span class="tag tag-neutral" style="font-size:9.5px">Access: operator</span>
+<span style="margin-left:auto;font:10.5px var(--font-body);color:var(--color-neutral-500)">off shift · starts 22:00</span>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:7px 14px 7px 48px;border-top:1px solid var(--color-neutral-200)">
+<span style="width:34px;height:34px;background:var(--color-neutral-100);border:1px solid var(--color-neutral-300);display:inline-flex;align-items:center;justify-content:center;font:600 11px var(--font-heading);color:var(--color-neutral-500)">ĐL</span>
+<span style="width:210px"><b style="font:600 12.5px var(--font-body)">Nguyễn Đức Long</b><br><span style="font:10px ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">NV-3098 · @nv_dungmay4</span></span>
+<span style="width:150px;font:11px var(--font-body);color:var(--color-neutral-600)">CN vận hành</span>
+<span class="tag tag-outline" style="font-size:9.5px">Shift A · 06–14</span>
+<span class="tag tag-neutral" style="font-size:9.5px">Access: operator</span>
+<span style="margin-left:auto;font:10.5px var(--font-body);color:var(--color-neutral-500)">off shift · last active 13:58 today</span>
+</div>
+</div>
+<div style="display:flex;align-items:center;gap:8px;padding:7px 14px 5px 34px;font:600 10px var(--font-body);letter-spacing:.08em;color:var(--color-neutral-500);border-top:1px solid var(--color-neutral-200)">
+<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"></path></svg>QA / QC — 2
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:7px 14px 7px 48px;border-top:1px solid var(--color-neutral-200)">
+<span style="width:34px;height:34px;background:var(--color-accent-100);border:1px solid var(--color-accent-300);display:inline-flex;align-items:center;justify-content:center;font:600 11px var(--font-heading);color:var(--color-accent-700)">HY</span>
+<span style="width:210px"><b style="font:600 12.5px var(--font-body)">Chu Thị Hải Yến</b><br><span style="font:10px ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">NV-2210 · @qa_giamsat1</span></span>
+<span style="width:150px;font:11px var(--font-body);color:var(--color-neutral-600)">Giám sát QA</span>
+<span class="tag tag-outline" style="font-size:9.5px">Shift B · 14–22</span>
+<span class="tag tag-neutral" style="font-size:9.5px">Access: supervisor</span>
+<span style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;font:600 10.5px var(--font-body);color:#5d8a5a"><span style="width:6px;height:6px;background:#5d8a5a;border-radius:50%"></span>on shift since 14:05</span>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:7px 14px 7px 48px;border-top:1px solid var(--color-neutral-200)">
+<span style="width:34px;height:34px;background:var(--color-neutral-100);border:1px solid var(--color-neutral-300);display:inline-flex;align-items:center;justify-content:center;font:600 11px var(--font-heading);color:var(--color-neutral-500)">NA</span>
+<span style="width:210px"><b style="font:600 12.5px var(--font-body)">Trần Ngọc Anh</b><br><span style="font:10px ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">NV-2216 · @qa_operator2</span></span>
+<span style="width:150px;font:11px var(--font-body);color:var(--color-neutral-600)">QA</span>
+<span class="tag tag-outline" style="font-size:9.5px">Shift A · 06–14</span>
+<span class="tag tag-neutral" style="font-size:9.5px">Access: operator</span>
+<span style="margin-left:auto;font:10.5px var(--font-body);color:var(--color-neutral-500)">off shift · last active 12:31 today</span>
+</div>
+<div style="display:flex;align-items:center;gap:8px;padding:7px 14px 5px 34px;font:600 10px var(--font-body);letter-spacing:.08em;color:var(--color-neutral-500);border-top:1px solid var(--color-neutral-200)">
+<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"></path></svg>MAINTENANCE — 1
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:7px 14px 7px 48px;border-top:1px solid var(--color-neutral-200)">
+<span style="width:34px;height:34px;background:var(--color-accent-100);border:1px solid var(--color-accent-300);display:inline-flex;align-items:center;justify-content:center;font:600 11px var(--font-heading);color:var(--color-accent-700)">VH</span>
+<span style="width:210px"><b style="font:600 12.5px var(--font-body)">Lê Văn Hùng</b><br><span style="font:10px ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">NV-2201 · @baotri_m2</span></span>
+<span style="width:150px;font:11px var(--font-body);color:var(--color-neutral-600)">Kỹ thuật viên bảo trì</span>
+<span class="tag tag-outline" style="font-size:9.5px">Shift B · 14–22</span>
+<span class="tag tag-neutral" style="font-size:9.5px">Access: operator</span>
+<span style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;font:600 10.5px var(--font-body);color:#5d8a5a"><span style="width:6px;height:6px;background:#5d8a5a;border-radius:50%"></span>on shift since 14:11</span>
+</div>
+<div style="display:flex;align-items:center;gap:8px;padding:7px 14px 5px 34px;font:600 10px var(--font-body);letter-spacing:.08em;color:var(--color-neutral-500);border-top:1px solid var(--color-neutral-200)">
+<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"></path></svg>SYSTEM — 1
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:7px 14px 9px 48px;border-top:1px solid var(--color-neutral-200)">
+<span style="width:34px;height:34px;background:var(--color-neutral-100);border:1px solid var(--color-neutral-300);display:inline-flex;align-items:center;justify-content:center;font:600 11px var(--font-heading);color:var(--color-neutral-500)">AD</span>
+<span style="width:210px"><b style="font:600 12.5px var(--font-body)">System Administrator</b><br><span style="font:10px ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">@admin · on M2</span></span>
+<span style="width:150px;font:11px var(--font-body);color:var(--color-neutral-600)">—</span>
+<span class="tag tag-neutral" style="font-size:9.5px">Access: admin</span>
+<span style="margin-left:auto;font:10.5px var(--font-body);color:var(--color-neutral-500)">"admin" also exists on 4 other machines — different accounts</span>
+</div>
+</div>
+<div style="border:1px solid var(--color-neutral-300);border-top:none;display:flex;align-items:center;gap:10px;padding:9px 14px">
+<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--color-text)" stroke-width="2"><path d="m9 6 6 6-6 6"></path></svg>
+<span style="font:600 14px var(--font-heading);letter-spacing:.04em">M1 · LINE 2</span>
+<span style="font:10px var(--font-body);color:var(--color-neutral-500)">Production 6 · QA 2 · System 1</span>
+<span style="margin-left:auto;font:600 11px var(--font-body);color:var(--color-neutral-600)">9 people · <span style="color:#5d8a5a">3 on shift</span></span>
+</div>
+<div style="border:1px solid var(--color-neutral-300);border-top:none;display:flex;align-items:center;gap:10px;padding:9px 14px">
+<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--color-text)" stroke-width="2"><path d="m9 6 6 6-6 6"></path></svg>
+<span style="font:600 14px var(--font-heading);letter-spacing:.04em">AUTO2 · LINE 1</span>
+<span style="font:10px var(--font-body);color:var(--color-neutral-500)">Production 8 · QA 2 · Maintenance 1 · System 1</span>
+<span style="margin-left:auto;font:600 11px var(--font-body);color:var(--color-neutral-600)">12 people · <span style="color:#5d8a5a">5 on shift</span></span>
+</div>
+<div style="border:1px solid var(--color-neutral-300);border-top:none;display:flex;align-items:center;gap:10px;padding:9px 14px">
+<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--color-text)" stroke-width="2"><path d="m9 6 6 6-6 6"></path></svg>
+<span style="font:600 14px var(--font-heading);letter-spacing:.04em">LINETINE · TINE LINE</span>
+<span style="font:10px var(--font-body);color:var(--color-neutral-500)">Production 7 · QA 2 · Maintenance 1 · System 1</span>
+<span style="margin-left:auto;font:600 11px var(--font-body);color:var(--color-neutral-600)">11 people · <span style="color:#5d8a5a">4 on shift</span></span>
+</div>
+<div style="border:1px solid var(--color-neutral-300);border-top:none;display:flex;align-items:center;gap:10px;padding:9px 14px">
+<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--color-text)" stroke-width="2"><path d="m9 6 6 6-6 6"></path></svg>
+<span style="font:600 14px var(--font-heading);letter-spacing:.04em">PC-AUTO-1 · AUTO LINE</span>
+<span style="font:10px var(--font-body);color:var(--color-neutral-500)">Production 9 · QA 2 · Maintenance 1 · System 1</span>
+<span style="margin-left:auto;font:600 11px var(--font-body);color:var(--color-neutral-600)">13 people · <span style="color:#5d8a5a">5 on shift</span></span>
+</div>
+<div style="display:flex;justify-content:space-between;padding:9px 0 0;font:10px var(--font-body);color:var(--color-neutral-500)">
+<span>Coverage: profiles from all 5 machines · loaded 16:41:52</span>
+<span>counts: 9 + 9 + 12 + 11 + 13 = 54 accounts</span>
+</div>
+</div>
+</div>
+<sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+<div style="flex:none;width:250px;border:1px dashed var(--color-neutral-400);padding:12px 14px;font:11px/1.55 var(--font-body);color:var(--color-neutral-700)">
+<div style="font:600 10px var(--font-heading);letter-spacing:.1em;color:var(--color-text);margin-bottom:6px">SPEC NOTES — STAFF</div>
+· <b>Chặn bởi Thiếu 1:</b> /api/users/ không trả department/shift/line/employee_code — cần GET /api/fleet/staff (GĐ 1) trước khi tab này dựng được (06)<br>
+· Badge quyền luôn có nhãn "Access:" — "operator" trần đứng cạnh "Kỹ thuật viên bảo trì" đọc như hai chức danh đá nhau (02 §5, VI: "Quyền: operator")<br>
+· Khoá (máy, username); employee_code NV-xxxx liên kết một người qua nhiều máy (09 §9)<br>
+· Giai đoạn này CHỈ XEM — tạo/sửa/khoá user là thao tác có tác dụng phụ, cần cổng xác nhận riêng<br>
+· Tải khi mở tab, không poll — hồ sơ gần như không đổi (04)
+</div>
+</sc-if>
+</div>
+</div>
+
+<div class="dv-opt" id="3b" data-screen-label="3b Activity log — user actions">
+<div class="dv-olabel"><a class="dv-oid" href="#3b">3b</a>Tab Activity log — phần 1: User actions (6a) · gộp 5 máy · lọc simulated</div>
+<div style="display:flex;gap:16px;align-items:flex-start">
+<div class="dv-card" style="width:1180px">
+<div style="display:flex;gap:2px;padding:0 20px;border-bottom:1px solid var(--color-neutral-300);align-items:center">
+<span style="font:600 14px var(--font-heading);letter-spacing:.05em;margin-right:14px">FLEET — OCR DATECODE</span>
+<span style="padding:9px 16px;font:600 11.5px var(--font-body);color:var(--color-neutral-500)">Overview</span>
+<span style="padding:9px 16px;font:600 11.5px var(--font-body);color:var(--color-neutral-500)">Staff</span>
+<span style="padding:9px 16px;font:600 11.5px var(--font-body);color:var(--color-accent-700);border-bottom:2px solid var(--color-accent)">Activity log</span>
+<span style="margin-left:auto;font:500 11px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">16:42:05</span>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:12px 20px">
+<span style="display:inline-flex;border:1px solid var(--color-neutral-400)">
+<span style="padding:5px 14px;font:600 10.5px var(--font-body);background:var(--color-accent);color:#fff">User actions</span>
+<span style="padding:5px 14px;font:600 10.5px var(--font-body);color:var(--color-neutral-600)">System errors</span>
+</span>
+<span style="font:10px var(--font-body);color:var(--color-neutral-500)">two sources, two readers — never merged into one timeline (02 §6)</span>
+<span style="margin-left:auto;display:inline-flex;align-items:center;gap:7px;font:600 10.5px var(--font-body);color:var(--color-accent-700)">
+<span style="width:26px;height:14px;background:var(--color-accent);position:relative;display:inline-block"><span style="position:absolute;right:1px;top:1px;width:12px;height:12px;background:#fff"></span></span>
+Hide simulated records · 12 hidden</span>
+</div>
+<div style="display:flex;align-items:center;gap:8px;padding:0 20px 12px;font:10.5px var(--font-body);color:var(--color-neutral-600)">
+<span style="border:1px solid var(--color-neutral-300);padding:4px 10px">All machines ▾</span>
+<span style="border:1px solid var(--color-neutral-300);padding:4px 10px">All action types ▾</span>
+<span style="border:1px solid var(--color-neutral-300);padding:4px 10px">Today ▾</span>
+<span style="display:inline-flex;align-items:center;gap:7px;border:1px solid var(--color-neutral-300);padding:4px 10px;min-width:180px;color:var(--color-neutral-400)">
+<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4-4"></path></svg>Search user, target…</span>
+<span style="margin-left:auto;color:var(--color-neutral-400)">action types from real data: login · logout · create_user · update_user · delete_user · reset_password · load_recipe · stop_recipe</span>
+</div>
+<div style="margin:0 20px 20px;border:1px solid var(--color-neutral-300)">
+<div style="display:grid;grid-template-columns:64px 110px 150px 130px 1fr 90px;gap:10px;padding:7px 14px;font:600 9px var(--font-body);letter-spacing:.08em;color:var(--color-neutral-500);border-bottom:1.5px solid var(--color-neutral-400)">
+<span>TIME</span><span>MACHINE</span><span>USER</span><span>ACTION</span><span>DETAIL</span><span></span></div>
+<div style="display:grid;grid-template-columns:64px 110px 150px 130px 1fr 90px;gap:10px;padding:7px 14px;align-items:center;border-bottom:1px solid var(--color-neutral-200);font:11px var(--font-body)">
+<span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">16:32</span>
+<span style="display:inline-flex;align-items:center;gap:5px;font-weight:600;font-size:10.5px"><span style="width:8px;height:8px;background:#d97706"></span>M2</span>
+<span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">truongca_m2</span>
+<span><span class="tag tag-accent" style="font-size:9px">load_recipe</span></span>
+<span>ORG CINNAMON CC</span>
+<span style="display:inline-flex;align-items:center;gap:5px;font:600 10px var(--font-body);color:var(--color-accent-700);justify-self:end"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>Ask</span></div>
+<div style="display:grid;grid-template-columns:64px 110px 150px 130px 1fr 90px;gap:10px;padding:7px 14px;align-items:center;border-bottom:1px solid var(--color-neutral-200);font:11px var(--font-body)">
+<span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">16:07</span>
+<span style="display:inline-flex;align-items:center;gap:5px;font-weight:600;font-size:10.5px"><span style="width:8px;height:8px;background:#0891b2"></span>M1</span>
+<span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">nv_dungmay1</span>
+<span><span class="tag tag-outline" style="font-size:9px">login</span></span>
+<span style="color:var(--color-neutral-500)">—</span>
+<span style="display:inline-flex;align-items:center;gap:5px;font:600 10px var(--font-body);color:var(--color-accent-700);justify-self:end"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>Ask</span></div>
+<div style="display:grid;grid-template-columns:64px 110px 150px 130px 1fr 90px;gap:10px;padding:7px 14px;align-items:center;border-bottom:1px solid var(--color-neutral-200);font:11px var(--font-body)">
+<span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">15:58</span>
+<span style="display:inline-flex;align-items:center;gap:5px;font-weight:600;font-size:10.5px"><span style="width:8px;height:8px;background:#2563eb"></span>Auto2</span>
+<span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">admin <span style="color:var(--color-neutral-400)">(Auto2)</span></span>
+<span><span class="tag tag-outline" style="font-size:9px">update_user</span></span>
+<span>qa_operator2 — job title changed</span>
+<span style="display:inline-flex;align-items:center;gap:5px;font:600 10px var(--font-body);color:var(--color-accent-700);justify-self:end"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>Ask</span></div>
+<div style="display:grid;grid-template-columns:64px 110px 150px 130px 1fr 90px;gap:10px;padding:7px 14px;align-items:center;border-bottom:1px solid var(--color-neutral-200);font:11px var(--font-body)">
+<span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">15:41</span>
+<span style="display:inline-flex;align-items:center;gap:5px;font-weight:600;font-size:10.5px"><span style="width:8px;height:8px;background:#7c3aed"></span>LineTine</span>
+<span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">supervisor <span style="color:var(--color-neutral-400)">(LT)</span></span>
+<span><span class="tag" style="font-size:9px;background:#b0833422;color:#7a5a20">reset_password</span></span>
+<span>nv_kho2</span>
+<span style="display:inline-flex;align-items:center;gap:5px;font:600 10px var(--font-body);color:var(--color-accent-700);justify-self:end"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>Ask</span></div>
+<div style="display:grid;grid-template-columns:64px 110px 150px 130px 1fr 90px;gap:10px;padding:7px 14px;align-items:center;border-bottom:1px solid var(--color-neutral-200);font:11px var(--font-body)">
+<span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">14:58</span>
+<span style="display:inline-flex;align-items:center;gap:5px;font-weight:600;font-size:10.5px"><span style="width:8px;height:8px;background:#d97706"></span>M2</span>
+<span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">admin <span style="color:var(--color-neutral-400)">(M2)</span></span>
+<span><span class="tag tag-outline" style="font-size:9px">create_user</span></span>
+<span>nv_moi_ca_c · Access: operator</span>
+<span style="display:inline-flex;align-items:center;gap:5px;font:600 10px var(--font-body);color:var(--color-accent-700);justify-self:end"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>Ask</span></div>
+<div style="display:grid;grid-template-columns:64px 110px 150px 130px 1fr 90px;gap:10px;padding:7px 14px;align-items:center;border-bottom:1px solid var(--color-neutral-200);font:11px var(--font-body)">
+<span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">14:32</span>
+<span style="display:inline-flex;align-items:center;gap:5px;font-weight:600;font-size:10.5px"><span style="width:8px;height:8px;background:#2563eb"></span>Auto2</span>
+<span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">truongca_a2</span>
+<span><span class="tag" style="font-size:9px;background:#b0833422;color:#7a5a20">stop_recipe</span></span>
+<span>BLACK PEPPER 400 — end of run</span>
+<span style="display:inline-flex;align-items:center;gap:5px;font:600 10px var(--font-body);color:var(--color-accent-700);justify-self:end"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>Ask</span></div>
+<div style="display:grid;grid-template-columns:64px 110px 150px 130px 1fr 90px;gap:10px;padding:7px 14px;align-items:center;font:11px var(--font-body)">
+<span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">14:22</span>
+<span style="display:inline-flex;align-items:center;gap:5px;font-weight:600;font-size:10.5px"><span style="width:8px;height:8px;background:#d97706"></span>M2</span>
+<span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">nv_dungmay3</span>
+<span><span class="tag tag-outline" style="font-size:9px">login</span></span>
+<span style="color:var(--color-neutral-500)">—</span>
+<span style="display:inline-flex;align-items:center;gap:5px;font:600 10px var(--font-body);color:var(--color-accent-700);justify-self:end"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>Ask</span></div>
+<div style="display:flex;justify-content:space-between;padding:8px 14px;border-top:1.5px solid var(--color-neutral-400);font:10px var(--font-body);color:var(--color-neutral-500)">
+<span>Merged from 5 machines · all reachable · "admin" rows are keyed (machine, username) — 5 different accounts</span>
+<span>simulated: true records excluded by default in production</span>
+</div>
+</div>
+</div>
+<sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+<div style="flex:none;width:250px;border:1px dashed var(--color-neutral-400);padding:12px 14px;font:11px/1.55 var(--font-body);color:var(--color-neutral-700)">
+<div style="font:600 10px var(--font-heading);letter-spacing:.1em;color:var(--color-text);margin-bottom:6px">SPEC NOTES — USER ACTIONS</div>
+· Bản ghi seed mang cờ simulated:true — bộ lọc tách riêng, mặc định ẨN ở môi trường thật (06 ⚠4)<br>
+· Nút "Ask" mang ngữ cảnh (user + máy + thời điểm) sang chat — chip "asking about admin@M2 · 15:58" gỡ được (05)<br>
+· Chiều ngược lại: "hôm nay ai sửa recipe trên M2?" trả lời ngay trong chat, không cần mở tab (02 §6a)<br>
+· Gộp 5 máy mỗi lần mở tab là đủ ở quy mô 5; ~20 máy chuyển sang SQLite tích luỹ (09 §8)
+</div>
+</sc-if>
+</div>
+</div>
+
+<div class="dv-opt" id="3c" data-screen-label="3c Activity log — system errors">
+<div class="dv-olabel"><a class="dv-oid" href="#3c">3c</a>Tab Activity log — phần 2: System errors (6b) · tóm tắt từ edge + ủy quyền</div>
+<div style="display:flex;gap:16px;align-items:flex-start">
+<div class="dv-card" style="width:1180px">
+<div style="display:flex;gap:2px;padding:0 20px;border-bottom:1px solid var(--color-neutral-300);align-items:center">
+<span style="font:600 14px var(--font-heading);letter-spacing:.05em;margin-right:14px">FLEET — OCR DATECODE</span>
+<span style="padding:9px 16px;font:600 11.5px var(--font-body);color:var(--color-neutral-500)">Overview</span>
+<span style="padding:9px 16px;font:600 11.5px var(--font-body);color:var(--color-neutral-500)">Staff</span>
+<span style="padding:9px 16px;font:600 11.5px var(--font-body);color:var(--color-accent-700);border-bottom:2px solid var(--color-accent)">Activity log</span>
+<span style="margin-left:auto;font:500 11px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">16:42:05</span>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:12px 20px">
+<span style="display:inline-flex;border:1px solid var(--color-neutral-400)">
+<span style="padding:5px 14px;font:600 10.5px var(--font-body);color:var(--color-neutral-600)">User actions</span>
+<span style="padding:5px 14px;font:600 10.5px var(--font-body);background:var(--color-accent);color:#fff">System errors</span>
+</span>
+<span style="font:10px var(--font-body);color:var(--color-neutral-500)">summaries via summarize_log_errors fan-out · last 7 days</span>
+<span style="margin-left:auto;font:10px var(--font-body);color:var(--color-neutral-500)">fleet never downloads raw log files — a Jetson log once reached 1.4 GB</span>
+</div>
+<div style="display:flex;gap:16px;padding:0 20px 20px">
+<div style="flex:1;border:1px solid var(--color-neutral-300);align-self:flex-start">
+<div style="display:grid;grid-template-columns:110px 1fr 90px 90px;gap:10px;padding:7px 14px;font:600 9px var(--font-body);letter-spacing:.08em;color:var(--color-neutral-500);border-bottom:1.5px solid var(--color-neutral-400)">
+<span>MACHINE</span><span>ERROR GROUP</span><span>COUNT · 7D</span><span>LAST SEEN</span></div>
+<div style="display:grid;grid-template-columns:110px 1fr 90px 90px;gap:10px;padding:8px 14px;align-items:center;border-bottom:1px solid var(--color-neutral-200);font:11px var(--font-body)">
+<span style="display:inline-flex;align-items:center;gap:5px;font-weight:600;font-size:10.5px"><span style="width:8px;height:8px;background:#d97706"></span>M2</span>
+<span>mongo disk usage warning</span><span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">41</span><span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">16:38</span></div>
+<div style="display:grid;grid-template-columns:110px 1fr 90px 90px;gap:10px;padding:8px 14px;align-items:center;border-bottom:1px solid var(--color-neutral-200);font:11px var(--font-body);background:var(--color-accent-100);border-left:2px solid var(--color-accent)">
+<span style="display:inline-flex;align-items:center;gap:5px;font-weight:600;font-size:10.5px"><span style="width:8px;height:8px;background:#0891b2"></span>M1</span>
+<span style="font-weight:600">camera trigger timeout</span><span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px;font-weight:700">17</span><span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">15:02</span></div>
+<div style="display:grid;grid-template-columns:110px 1fr 90px 90px;gap:10px;padding:8px 14px;align-items:center;border-bottom:1px solid var(--color-neutral-200);font:11px var(--font-body)">
+<span style="display:inline-flex;align-items:center;gap:5px;font-weight:600;font-size:10.5px"><span style="width:8px;height:8px;background:#16a34a"></span>PC-Auto-1</span>
+<span>CPU thermal throttle</span><span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">28</span><span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">16:12</span></div>
+<div style="display:grid;grid-template-columns:110px 1fr 90px 90px;gap:10px;padding:8px 14px;align-items:center;border-bottom:1px solid var(--color-neutral-200);font:11px var(--font-body)">
+<span style="display:inline-flex;align-items:center;gap:5px;font-weight:600;font-size:10.5px"><span style="width:8px;height:8px;background:#7c3aed"></span>LineTine</span>
+<span style="color:#7a5a20;font-weight:600">agent service unreachable — no summary</span><span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--color-neutral-400)">—</span><span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">14:22</span></div>
+<div style="display:grid;grid-template-columns:110px 1fr 90px 90px;gap:10px;padding:8px 14px;align-items:center;font:11px var(--font-body)">
+<span style="display:inline-flex;align-items:center;gap:5px;font-weight:600;font-size:10.5px"><span style="width:8px;height:8px;background:#2563eb"></span>Auto2</span>
+<span>OCR engine reload</span><span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">6</span><span style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px">11:47</span></div>
+<div style="padding:8px 14px;border-top:1.5px solid var(--color-neutral-400);font:10px var(--font-body);color:var(--color-neutral-500)">Coverage: summaries from 4 of 5 machines — <b>missing LineTine</b> (agent down 14:22); hardware data for it still arrives via backend</div>
+</div>
+<div style="width:470px;flex:none;border:1px solid var(--color-neutral-300)">
+<div style="display:flex;align-items:baseline;gap:8px;padding:9px 14px;border-bottom:1px solid var(--color-neutral-200)">
+<span style="font:600 12px var(--font-heading);letter-spacing:.05em">M1 — CAMERA TRIGGER TIMEOUT</span>
+<span style="font:9.5px var(--font-body);color:var(--color-neutral-500)">read_log_tail · last 80 lines</span></div>
+<div style="background:#1d1f20;color:#c9d2de;padding:12px 14px;font:10px/1.7 ui-monospace,Menlo,monospace">
+15:02:11 <span style="color:#e0b34d">WARN</span> [camera_service] trigger timeout after 1800 ms (CAM001 · 24241268)<br>
+15:02:11 INFO [camera_service] retry 1/3 via software_trigger<br>
+15:02:12 INFO [camera_service] frame acquired 2464×2056 · 412 ms<br>
+15:02:12 <span style="color:#e0b34d">WARN</span> [camera_service] delay_trigger 1800 ms near limit for line speed<br>
+15:02:13 INFO [inference] queue depth 3 — within budget</div>
+<div style="display:flex;align-items:center;gap:10px;padding:12px 14px">
+<span class="btn btn-primary blueprint" style="position:relative;font-size:11px;padding:7px 14px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>Ask M1's agent to analyze</span>
+<span class="btn btn-ghost" style="font-size:11px;padding:7px 12px">Copy tail</span>
+<span style="font:9.5px/1.4 var(--font-body);color:var(--color-neutral-500)">delegated path · 4–20 s<br>shows "asking M1…" while waiting</span>
+</div>
+</div>
+</div>
+</div>
+<sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+<div style="flex:none;width:250px;border:1px dashed var(--color-neutral-400);padding:12px 14px;font:11px/1.55 var(--font-body);color:var(--color-neutral-700)">
+<div style="font:600 10px var(--font-heading);letter-spacing:.1em;color:var(--color-text);margin-bottom:6px">SPEC NOTES — SYSTEM ERRORS</div>
+· Hai phần trong MỘT tab, không trộn chung dòng thời gian: nguồn khác (Mongo vs file log), người đọc khác (quản trị vs kỹ thuật) (02 §6)<br>
+· Edge tóm tắt (summarize_log_errors); fleet chỉ nhận bản tóm tắt — không kéo nguyên file (log_tools.py, sự cố 1,4 GB)<br>
+· Click hàng → read_log_tail đúng máy đó; nút ủy quyền là đường đắt, có nhãn chờ theo tool (05)<br>
+· Máy thiếu vẫn có hàng riêng + được nêu tên trong coverage
+</div>
+</sc-if>
+</div>
+</div>
+
+</div>
+<p class="dv-next">Try next: "cách nhóm Dept → Machine của <a class="dv-oid" href="#3a">3a</a>" · "trạng thái tab Staff khi thiếu GET /api/fleet/staff" · "picker AskPicker + chat panel" · "Line Station"</p>
+</section>
+
+<section class="dv-turn" id="t2">
+<div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">Report templates — single machine &amp; fleet · A4 · Vietnamese · static charts</span>
+<span style="font:11px var(--font-body);color:var(--color-neutral-600)">from uploads/10 — one stylesheet, two export paths (reportGenerator.ts + styles.py)</span></div>
+<div class="dv-opts">
+
+<div class="dv-opt" id="2a" data-screen-label="2a Machine report p1 Industrial">
+<div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>MỘT MÁY — Trang 1/2 · theme Industrial · A4 794×1123</div>
+<div class="dv-card" style="width:794px;min-height:1123px;display:flex;flex-direction:column;color:#1a2230">
+<div style="background:#1e2a3a;color:#fff;padding:20px 40px;display:flex;align-items:center;gap:18px">
+<div style="flex:1"><div style="font:600 19px var(--font-heading);letter-spacing:.06em">BÁO CÁO KIỂM TRA SẢN XUẤT</div>
+<div style="font:11px var(--font-body);color:#b8c4d4;margin-top:2px">Máy M2 · Line 3 · ORG CINNAMON CC</div></div>
+<div style="text-align:center;font:11px/1.5 var(--font-body);color:#dbe3ee"><b style="font-size:13px">7 ngày</b><br>14/08–20/08/2026 · chia theo ngày</div>
+<div style="flex:1;display:flex;justify-content:flex-end;align-items:center;gap:12px">
+<div style="text-align:right;font:9.5px/1.5 var(--font-body);color:#b8c4d4">Lập lúc 20/08/2026 19:40<br>OCR Datecode System</div>
+<div style="width:84px;height:34px;border:1px dashed #5a6b82;display:flex;align-items:center;justify-content:center;font:9px var(--font-body);color:#8fa0b8;letter-spacing:.15em">LOGO</div></div>
+</div>
+<div style="padding:22px 40px 0;display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+<div style="border:1px solid #d8dee8;padding:12px 14px"><div style="font:600 9px var(--font-body);letter-spacing:.1em;color:#5f6878">TỔNG KIỂM</div><div style="font:600 27px var(--font-heading);margin-top:2px">5.258</div><div style="font:9.5px var(--font-body);color:#98a1b3">sản phẩm</div></div>
+<div style="border:1px solid #d8dee8;padding:12px 14px"><div style="font:600 9px var(--font-body);letter-spacing:.1em;color:#5f6878">ĐẠT</div><div style="font:600 27px var(--font-heading);margin-top:2px;color:#1a7f37">3.651</div><div style="font:9.5px var(--font-body);color:#98a1b3">sản phẩm</div></div>
+<div style="border:1px solid #d8dee8;padding:12px 14px"><div style="font:600 9px var(--font-body);letter-spacing:.1em;color:#5f6878">KHÔNG ĐẠT</div><div style="font:600 27px var(--font-heading);margin-top:2px;color:#cf222e">1.607</div><div style="font:9.5px var(--font-body);color:#98a1b3">sản phẩm</div></div>
+<div style="border:1.5px solid #dc2626;background:#fdf2f2;padding:12px 14px"><div style="font:600 9px var(--font-body);letter-spacing:.1em;color:#5f6878">TỈ LỆ ĐẠT</div><div style="font:600 27px var(--font-heading);margin-top:2px;color:#dc2626">69,4%</div><div style="font:600 9.5px var(--font-body);color:#dc2626">Dưới ngưỡng (&lt;85) — cần điều tra</div></div>
+</div>
+<div style="padding:20px 40px 0">
+<div style="font:600 12px var(--font-heading);letter-spacing:.08em;border-bottom:2px solid #1e2a3a;padding-bottom:4px">SẢN LƯỢNG &amp; TỈ LỆ ĐẠT THEO NGÀY</div>
+<div style="border:1px solid #d8dee8;border-top:none;padding:12px 12px 6px">
+<svg viewBox="0 0 660 240" style="width:100%;display:block">
+<g stroke="#e8ecf2"><line x1="46" y1="149" x2="640" y2="149"></line><line x1="46" y1="102" x2="640" y2="102"></line><line x1="46" y1="56" x2="640" y2="56"></line></g>
+<line x1="46" y1="196" x2="640" y2="196" stroke="#c6ccd6"></line>
+<g style="font:9px var(--font-body)" fill="#98a1b3"><text x="40" y="199" text-anchor="end">0</text><text x="40" y="152" text-anchor="end">200</text><text x="40" y="105" text-anchor="end">400</text><text x="40" y="59" text-anchor="end">600</text>
+<text x="646" y="19">100%</text><text x="646" y="55">80%</text><text x="646" y="91">60%</text></g>
+<g fill="#2563eb"><rect x="60" y="73" width="52" height="123"></rect><rect x="142" y="70" width="52" height="126"></rect><rect x="224" y="63" width="52" height="133"></rect><rect x="306" y="74" width="52" height="122"></rect><rect x="388" y="70" width="52" height="126"></rect><rect x="470" y="83" width="52" height="113"></rect><rect x="552" y="87" width="52" height="109"></rect></g>
+<g fill="#dc2626"><rect x="60" y="28" width="52" height="45"></rect><rect x="142" y="21" width="52" height="49"></rect><rect x="224" y="16" width="52" height="47"></rect><rect x="306" y="22" width="52" height="52"></rect><rect x="388" y="18" width="52" height="52"></rect><rect x="470" y="19" width="52" height="64"></rect><rect x="552" y="20" width="52" height="67"></rect></g>
+<polyline points="86,65 168,66 250,63 332,70 414,68 496,81 578,84" fill="none" stroke="#1e2a3a" stroke-width="1.6"></polyline>
+<g fill="#1e2a3a"><circle cx="86" cy="65" r="2.4"></circle><circle cx="168" cy="66" r="2.4"></circle><circle cx="250" cy="63" r="2.4"></circle><circle cx="332" cy="70" r="2.4"></circle><circle cx="414" cy="68" r="2.4"></circle><circle cx="496" cy="81" r="2.4"></circle><circle cx="578" cy="84" r="2.4"></circle></g>
+<g style="font:9px var(--font-body)" fill="#5f6878" text-anchor="middle"><text x="86" y="212">14/08</text><text x="168" y="212">15/08</text><text x="250" y="212">16/08</text><text x="332" y="212">17/08</text><text x="414" y="212">18/08</text><text x="496" y="212">19/08</text><text x="578" y="212">20/08</text></g>
+<g style="font:9.5px var(--font-body)" fill="#5f6878"><rect x="180" y="226" width="8" height="8" fill="#2563eb"></rect><text x="192" y="233">Đạt</text><rect x="230" y="226" width="8" height="8" fill="#dc2626"></rect><text x="242" y="233">Không đạt</text><line x1="300" y1="230" x2="318" y2="230" stroke="#1e2a3a" stroke-width="1.6"></line><circle cx="309" cy="230" r="2.2" fill="#1e2a3a"></circle><text x="323" y="233">Tỉ lệ đạt (trục phải)</text></g>
+</svg>
+<div style="font:8.5px var(--font-body);color:#98a1b3;text-align:right">ảnh tĩnh (PNG 2×, nhúng base64) — bản PDF không chạy JavaScript</div>
+</div>
+</div>
+<div style="padding:18px 40px 0">
+<div style="font:600 12px var(--font-heading);letter-spacing:.08em;border-bottom:2px solid #1e2a3a;padding-bottom:4px">THEO RECIPE</div>
+<table style="width:100%;border-collapse:collapse;font:10.5px var(--font-body)">
+<tr style="font:600 9px var(--font-body);letter-spacing:.08em;color:#5f6878;text-align:right"><td style="padding:6px 8px;text-align:left">RECIPE</td><td style="padding:6px 8px">SẢN LƯỢNG</td><td style="padding:6px 8px">ĐẠT</td><td style="padding:6px 8px">KHÔNG ĐẠT</td><td style="padding:6px 8px">TỈ LỆ</td><td style="padding:6px 8px;text-align:left">TRẠNG THÁI</td></tr>
+<tr style="border-top:1px solid #e3e7ee;text-align:right"><td style="padding:6px 8px;text-align:left;font-weight:600">ORG CINNAMON CC</td><td style="padding:6px 8px">3.980</td><td style="padding:6px 8px">2.549</td><td style="padding:6px 8px">1.431</td><td style="padding:6px 8px;font-weight:600">64,0%</td><td style="padding:6px 8px;text-align:left;color:#dc2626;font-weight:600">Thấp</td></tr>
+<tr style="border-top:1px solid #e3e7ee;text-align:right"><td style="padding:6px 8px;text-align:left;font-weight:600">Black Pepper 400 gram</td><td style="padding:6px 8px">1.278</td><td style="padding:6px 8px">1.102</td><td style="padding:6px 8px">176</td><td style="padding:6px 8px;font-weight:600">86,2%</td><td style="padding:6px 8px;text-align:left;color:#9a6700;font-weight:600">Chú ý</td></tr>
+<tr style="border-top:2px solid #1e2a3a;text-align:right;font-weight:600"><td style="padding:6px 8px;text-align:left">TỔNG</td><td style="padding:6px 8px">5.258</td><td style="padding:6px 8px">3.651</td><td style="padding:6px 8px">1.607</td><td style="padding:6px 8px">69,4%</td><td style="padding:6px 8px"></td></tr>
+</table>
+</div>
+<div style="padding:16px 40px 0">
+<div style="font:600 12px var(--font-heading);letter-spacing:.08em;border-bottom:2px solid #1e2a3a;padding-bottom:4px">THEO CAMERA</div>
+<table style="width:100%;border-collapse:collapse;font:10.5px var(--font-body)">
+<tr style="font:600 9px var(--font-body);letter-spacing:.08em;color:#5f6878;text-align:right"><td style="padding:6px 8px;text-align:left">CAMERA · SERIAL</td><td style="padding:6px 8px">SẢN LƯỢNG</td><td style="padding:6px 8px">ĐẠT</td><td style="padding:6px 8px">TỈ LỆ</td></tr>
+<tr style="border-top:1px solid #e3e7ee;text-align:right"><td style="padding:6px 8px;text-align:left"><b>CAM001</b> · Basler acA2440-35uc · 24241268</td><td style="padding:6px 8px">2.986</td><td style="padding:6px 8px">1.981</td><td style="padding:6px 8px;font-weight:600">66,3%</td></tr>
+<tr style="border-top:1px solid #e3e7ee;text-align:right"><td style="padding:6px 8px;text-align:left"><b>CAM002</b> · Basler a2A1920-160ucBAS · 40733814</td><td style="padding:6px 8px">2.272</td><td style="padding:6px 8px">1.670</td><td style="padding:6px 8px;font-weight:600">73,5%</td></tr>
+</table>
+</div>
+<div style="margin-top:auto;display:flex;justify-content:space-between;border-top:1px solid #e3e7ee;padding:10px 40px 14px;font:9px var(--font-body);color:#98a1b3">
+<span>OCR Datecode Inspection System</span><span>M2 · Line 3 · kỳ 14/08–20/08/2026</span><span>Trang 1/2</span></div>
+</div>
+</div>
+
+<div class="dv-opt" id="2b" data-screen-label="2b Machine report p2 Industrial">
+<div class="dv-olabel"><a class="dv-oid" href="#2b">2b</a>MỘT MÁY — Trang 2/2 · theme Industrial</div>
+<div class="dv-card" style="width:794px;min-height:1123px;display:flex;flex-direction:column;color:#1a2230">
+<div style="background:#1e2a3a;color:#fff;padding:12px 40px;display:flex;justify-content:space-between;align-items:baseline">
+<span style="font:600 14px var(--font-heading);letter-spacing:.06em">BÁO CÁO KIỂM TRA SẢN XUẤT — M2 · LINE 3</span>
+<span style="font:10px var(--font-body);color:#b8c4d4">7 ngày · 14/08–20/08/2026</span></div>
+<div style="padding:20px 40px 0">
+<div style="font:600 12px var(--font-heading);letter-spacing:.08em;border-bottom:2px solid #1e2a3a;padding-bottom:4px">THEO CA</div>
+<div style="border:1px solid #d8dee8;border-top:none">
+<div style="display:flex;align-items:center;gap:14px;padding:10px 14px;border-bottom:1px solid #e3e7ee">
+<span style="width:110px;font:600 11px var(--font-body)">Ca A <span style="font-weight:400;color:#5f6878">06–14</span></span>
+<span style="width:90px;font:600 15px var(--font-heading)">2.105 <span style="font:9px var(--font-body);color:#98a1b3">sp</span></span>
+<span style="width:70px;font:600 12px var(--font-body);color:#9a6700">74,1%</span>
+<span style="display:flex;align-items:flex-end;gap:2px;height:20px">
+<span style="width:7px;height:15px;background:#2563eb"></span><span style="width:7px;height:16px;background:#2563eb"></span><span style="width:7px;height:14px;background:#2563eb"></span><span style="width:7px;height:17px;background:#2563eb"></span><span style="width:7px;height:15px;background:#2563eb"></span><span style="width:7px;height:13px;background:#2563eb"></span><span style="width:7px;height:14px;background:#2563eb"></span></span>
+<span style="margin-left:auto;font:9.5px var(--font-body);color:#98a1b3">7/7 ngày có dữ liệu</span></div>
+<div style="display:flex;align-items:center;gap:14px;padding:10px 14px;border-bottom:1px solid #e3e7ee">
+<span style="width:110px;font:600 11px var(--font-body)">Ca B <span style="font-weight:400;color:#5f6878">14–22</span></span>
+<span style="width:90px;font:600 15px var(--font-heading)">1.978 <span style="font:9px var(--font-body);color:#98a1b3">sp</span></span>
+<span style="width:70px;font:600 12px var(--font-body);color:#dc2626">68,9%</span>
+<span style="display:flex;align-items:flex-end;gap:2px;height:20px">
+<span style="width:7px;height:14px;background:#2563eb"></span><span style="width:7px;height:15px;background:#2563eb"></span><span style="width:7px;height:16px;background:#2563eb"></span><span style="width:7px;height:13px;background:#2563eb"></span><span style="width:7px;height:14px;background:#2563eb"></span><span style="width:7px;height:11px;background:#2563eb"></span><span style="width:7px;height:12px;background:#2563eb"></span></span>
+<span style="margin-left:auto;font:9.5px var(--font-body);color:#98a1b3">7/7 ngày có dữ liệu</span></div>
+<div style="display:flex;align-items:center;gap:14px;padding:10px 14px">
+<span style="width:110px;font:600 11px var(--font-body)">Ca C <span style="font-weight:400;color:#5f6878">22–06</span></span>
+<span style="width:90px;font:600 15px var(--font-heading)">1.175 <span style="font:9px var(--font-body);color:#98a1b3">sp</span></span>
+<span style="width:70px;font:600 12px var(--font-body);color:#dc2626">62,0%</span>
+<span style="display:flex;align-items:flex-end;gap:2px;height:20px">
+<span style="width:7px;height:12px;background:#2563eb"></span><span style="width:7px;height:13px;background:#2563eb"></span><span style="width:7px;height:11px;background:#2563eb"></span><span style="width:7px;height:12px;background:#2563eb"></span><span style="width:7px;height:10px;background:#2563eb"></span><span style="width:7px;height:11px;background:#2563eb"></span><span style="width:7px;height:6px;background:#e3e7ee;border:1px dashed #c6ccd6"></span></span>
+<span style="margin-left:auto;font:9.5px var(--font-body);color:#9a6700">20/08: <b>chưa bắt đầu</b> lúc lập báo cáo (22:00) — không tính 0</span></div>
+</div>
+<div style="font:8.5px var(--font-body);color:#98a1b3;margin-top:3px">Ca C vắt qua nửa đêm (22:00–06:00): sản lượng tính theo cửa sổ ca, không theo ngày lịch.</div>
+</div>
+<div style="padding:18px 40px 0">
+<div style="font:600 12px var(--font-heading);letter-spacing:.08em;border-bottom:2px solid #1e2a3a;padding-bottom:4px">NGUYÊN NHÂN LỖI <span style="font:9.5px var(--font-body);letter-spacing:0;color:#5f6878;text-transform:none">— trên mẫu 196 sản phẩm · lấy mẫu rải đều theo ngày · tỉ trọng của mẫu</span></div>
+<div style="border:1px solid #d8dee8;border-top:none;padding:14px">
+<div style="display:flex;height:26px;font:600 10px var(--font-body);color:#fff">
+<span style="width:56.5%;background:#1e2a3a;display:flex;align-items:center;padding-left:8px">56,5%</span>
+<span style="width:18.7%;background:#2563eb;display:flex;align-items:center;padding-left:8px">18,7%</span>
+<span style="width:14.3%;background:#94b8e0;display:flex;align-items:center;padding-left:8px;color:#1a2230">14,3%</span>
+<span style="width:10.5%;background:#d97706;display:flex;align-items:center;padding-left:8px">10,5%</span></div>
+<div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:8px;font:9.5px var(--font-body);color:#5f6878">
+<span><span style="display:inline-block;width:8px;height:8px;background:#1e2a3a"></span> ký tự dưới ngưỡng tin cậy</span>
+<span><span style="display:inline-block;width:8px;height:8px;background:#2563eb"></span> OCR đọc sai chuỗi</span>
+<span><span style="display:inline-block;width:8px;height:8px;background:#94b8e0"></span> ảnh không khớp template</span>
+<span><span style="display:inline-block;width:8px;height:8px;background:#d97706"></span> detector không thấy vùng</span></div>
+</div>
+</div>
+<div style="padding:18px 40px 0">
+<div style="font:600 12px var(--font-heading);letter-spacing:.08em;border-bottom:2px solid #1e2a3a;padding-bottom:4px">ẢNH SẢN PHẨM LỖI <span style="font:9.5px var(--font-body);letter-spacing:0;color:#5f6878;text-transform:none">— 6 mẫu, bản thu nhỏ 480px</span></div>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;border:1px solid #d8dee8;border-top:none;padding:14px">
+<div><div style="height:88px;background:#eef1f5;border:1px solid #d8dee8;display:flex;align-items:center;justify-content:center"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#98a1b3" stroke-width="1.5"><rect x="3" y="7" width="18" height="13"></rect><path d="M8 7l1.5-3h5L16 7"></path><circle cx="12" cy="13" r="3.5"></circle></svg></div><div style="font:9px/1.4 var(--font-body);margin-top:3px">mong <b>BB/2609</b> → đọc <b style="color:#dc2626">BB/2G09</b><br><span style="color:#98a1b3">15:42 · CAM001</span></div></div>
+<div><div style="height:88px;background:#eef1f5;border:1px solid #d8dee8;display:flex;align-items:center;justify-content:center"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#98a1b3" stroke-width="1.5"><rect x="3" y="7" width="18" height="13"></rect><path d="M8 7l1.5-3h5L16 7"></path><circle cx="12" cy="13" r="3.5"></circle></svg></div><div style="font:9px/1.4 var(--font-body);margin-top:3px">mong <b>BB/2609</b> → đọc <b style="color:#dc2626">(trống)</b><br><span style="color:#98a1b3">14:07 · CAM001</span></div></div>
+<div><div style="height:88px;background:#eef1f5;border:1px solid #d8dee8;display:flex;align-items:center;justify-content:center"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#98a1b3" stroke-width="1.5"><rect x="3" y="7" width="18" height="13"></rect><path d="M8 7l1.5-3h5L16 7"></path><circle cx="12" cy="13" r="3.5"></circle></svg></div><div style="font:9px/1.4 var(--font-body);margin-top:3px">mong <b>26/09/27</b> → đọc <b style="color:#dc2626">26/09/2?</b><br><span style="color:#98a1b3">13:58 · CAM002</span></div></div>
+<div><div style="height:88px;background:#eef1f5;border:1px solid #d8dee8;display:flex;align-items:center;justify-content:center"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#98a1b3" stroke-width="1.5"><rect x="3" y="7" width="18" height="13"></rect><path d="M8 7l1.5-3h5L16 7"></path><circle cx="12" cy="13" r="3.5"></circle></svg></div><div style="font:9px/1.4 var(--font-body);margin-top:3px">mong <b>BB/2609</b> → đọc <b style="color:#dc2626">B8/2609</b><br><span style="color:#98a1b3">11:24 · CAM001</span></div></div>
+<div><div style="height:88px;background:#eef1f5;border:1px solid #d8dee8;display:flex;align-items:center;justify-content:center"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#98a1b3" stroke-width="1.5"><rect x="3" y="7" width="18" height="13"></rect><path d="M8 7l1.5-3h5L16 7"></path><circle cx="12" cy="13" r="3.5"></circle></svg></div><div style="font:9px/1.4 var(--font-body);margin-top:3px">mong <b>26/09/27</b> → <b style="color:#dc2626">không thấy vùng</b><br><span style="color:#98a1b3">10:51 · CAM002</span></div></div>
+<div><div style="height:88px;background:#eef1f5;border:1px solid #d8dee8;display:flex;align-items:center;justify-content:center"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#98a1b3" stroke-width="1.5"><rect x="3" y="7" width="18" height="13"></rect><path d="M8 7l1.5-3h5L16 7"></path><circle cx="12" cy="13" r="3.5"></circle></svg></div><div style="font:9px/1.4 var(--font-body);margin-top:3px">mong <b>BB/2609</b> → đọc <b style="color:#dc2626">BB/26O9</b><br><span style="color:#98a1b3">09:12 · CAM001</span></div></div>
+</div>
+</div>
+<div style="padding:18px 40px 0">
+<div style="font:600 12px var(--font-heading);letter-spacing:.08em;border-bottom:2px solid #1e2a3a;padding-bottom:4px">SO VỚI KỲ TRƯỚC <span style="font:9.5px var(--font-body);letter-spacing:0;color:#5f6878;text-transform:none">— 31/07–13/08 (14 ngày) so 14/08–20/08 (7 ngày)</span></div>
+<div style="border:1px solid #d8dee8;border-top:none;padding:10px 14px;font:11px/1.9 var(--font-body)">
+<div><b style="color:#dc2626">▼ 8,2 điểm</b> — tỉ lệ đạt: 77,6% kỳ trước → 69,4% kỳ này</div>
+<div><b style="color:#1a7f37">▲ 4,2%</b> — sản lượng mỗi ngày: 721 → 751 sp/ngày <span style="color:#5f6878">(hai kỳ khác độ dài — so theo per-day)</span></div>
+<div><b style="color:#dc2626">▲ 6,3 điểm</b> — "ký tự dưới ngưỡng tin cậy": 50,2% → 56,5% <span style="color:#5f6878">của mẫu</span></div>
+</div>
+</div>
+<div style="margin-top:auto;display:flex;justify-content:space-between;border-top:1px solid #e3e7ee;padding:10px 40px 14px;font:9px var(--font-body);color:#98a1b3">
+<span>OCR Datecode Inspection System</span><span>M2 · Line 3 · kỳ 14/08–20/08/2026</span><span>Trang 2/2</span></div>
+</div>
+</div>
+
+<div class="dv-opt" id="2c" data-screen-label="2c Machine report p1 Executive">
+<div class="dv-olabel"><a class="dv-oid" href="#2c">2c</a>MỘT MÁY — Trang 1 · theme Executive · để gửi khách hàng / cấp trên</div>
+<div class="dv-card" style="width:794px;min-height:1123px;display:flex;flex-direction:column;background:#eef2f7;color:#1a2230">
+<div style="background:linear-gradient(90deg,#1e3a8a,#1d4ed8);color:#fff;padding:24px 40px;display:flex;align-items:center;gap:18px">
+<div style="flex:1"><div style="font:600 20px var(--font-heading);letter-spacing:.06em">BÁO CÁO KIỂM TRA SẢN XUẤT</div>
+<div style="font:11px var(--font-body);color:#c7d5f2;margin-top:2px">Máy M2 · Line 3 · ORG CINNAMON CC</div></div>
+<div style="text-align:center;font:11px/1.5 var(--font-body);color:#dbe6fb"><b style="font-size:13px">7 ngày</b><br>14/08–20/08/2026 · chia theo ngày</div>
+<div style="flex:1;display:flex;justify-content:flex-end;align-items:center;gap:12px">
+<div style="text-align:right;font:9.5px/1.5 var(--font-body);color:#c7d5f2">Lập lúc 20/08/2026 19:40<br>OCR Datecode System</div>
+<div style="width:84px;height:34px;border:1px dashed #7f9be0;border-radius:4px;display:flex;align-items:center;justify-content:center;font:9px var(--font-body);color:#a9bdf0;letter-spacing:.15em">LOGO</div></div>
+</div>
+<div style="padding:22px 40px 0;display:grid;grid-template-columns:repeat(4,1fr);gap:14px">
+<div style="background:#fff;border-radius:6px;box-shadow:0 1px 4px rgba(30,58,138,.12);padding:14px"><span style="display:inline-block;font:600 8.5px var(--font-body);letter-spacing:.1em;color:#fff;background:#1e3a8a;border-radius:10px;padding:3px 9px">TỔNG KIỂM</span><div style="font:600 28px var(--font-heading);margin-top:8px">5.258</div><div style="font:9.5px var(--font-body);color:#98a1b3">sản phẩm</div></div>
+<div style="background:#fff;border-radius:6px;box-shadow:0 1px 4px rgba(30,58,138,.12);padding:14px"><span style="display:inline-block;font:600 8.5px var(--font-body);letter-spacing:.1em;color:#fff;background:#1e3a8a;border-radius:10px;padding:3px 9px">ĐẠT</span><div style="font:600 28px var(--font-heading);margin-top:8px;color:#1a7f37">3.651</div><div style="font:9.5px var(--font-body);color:#98a1b3">sản phẩm</div></div>
+<div style="background:#fff;border-radius:6px;box-shadow:0 1px 4px rgba(30,58,138,.12);padding:14px"><span style="display:inline-block;font:600 8.5px var(--font-body);letter-spacing:.1em;color:#fff;background:#1e3a8a;border-radius:10px;padding:3px 9px">KHÔNG ĐẠT</span><div style="font:600 28px var(--font-heading);margin-top:8px;color:#cf222e">1.607</div><div style="font:9.5px var(--font-body);color:#98a1b3">sản phẩm</div></div>
+<div style="background:#fff;border-radius:6px;box-shadow:0 1px 4px rgba(30,58,138,.12);padding:14px;border:1.5px solid #dc2626"><span style="display:inline-block;font:600 8.5px var(--font-body);letter-spacing:.1em;color:#fff;background:#1e3a8a;border-radius:10px;padding:3px 9px">TỈ LỆ ĐẠT</span><div style="font:600 28px var(--font-heading);margin-top:8px;color:#dc2626">69,4%</div><div style="font:600 9.5px var(--font-body);color:#dc2626">Dưới ngưỡng — cần điều tra</div></div>
+</div>
+<div style="padding:20px 40px 0">
+<div style="background:#fff;border-radius:6px;box-shadow:0 1px 4px rgba(30,58,138,.12);padding:16px 16px 8px">
+<div style="font:600 12px var(--font-heading);letter-spacing:.08em;color:#1e3a8a;margin-bottom:8px">SẢN LƯỢNG &amp; TỈ LỆ ĐẠT THEO NGÀY</div>
+<svg viewBox="0 0 660 240" style="width:100%;display:block">
+<g stroke="#eef1f7"><line x1="46" y1="149" x2="640" y2="149"></line><line x1="46" y1="102" x2="640" y2="102"></line><line x1="46" y1="56" x2="640" y2="56"></line></g>
+<line x1="46" y1="196" x2="640" y2="196" stroke="#c6ccd6"></line>
+<g style="font:9px var(--font-body)" fill="#98a1b3"><text x="40" y="199" text-anchor="end">0</text><text x="40" y="152" text-anchor="end">200</text><text x="40" y="105" text-anchor="end">400</text><text x="40" y="59" text-anchor="end">600</text><text x="646" y="19">100%</text><text x="646" y="55">80%</text><text x="646" y="91">60%</text></g>
+<g fill="#1d4ed8"><rect x="60" y="73" width="52" height="123"></rect><rect x="142" y="70" width="52" height="126"></rect><rect x="224" y="63" width="52" height="133"></rect><rect x="306" y="74" width="52" height="122"></rect><rect x="388" y="70" width="52" height="126"></rect><rect x="470" y="83" width="52" height="113"></rect><rect x="552" y="87" width="52" height="109"></rect></g>
+<g fill="#f97316"><rect x="60" y="28" width="52" height="45"></rect><rect x="142" y="21" width="52" height="49"></rect><rect x="224" y="16" width="52" height="47"></rect><rect x="306" y="22" width="52" height="52"></rect><rect x="388" y="18" width="52" height="52"></rect><rect x="470" y="19" width="52" height="64"></rect><rect x="552" y="20" width="52" height="67"></rect></g>
+<polyline points="86,65 168,66 250,63 332,70 414,68 496,81 578,84" fill="none" stroke="#1e3a8a" stroke-width="1.6"></polyline>
+<g fill="#1e3a8a"><circle cx="86" cy="65" r="2.4"></circle><circle cx="168" cy="66" r="2.4"></circle><circle cx="250" cy="63" r="2.4"></circle><circle cx="332" cy="70" r="2.4"></circle><circle cx="414" cy="68" r="2.4"></circle><circle cx="496" cy="81" r="2.4"></circle><circle cx="578" cy="84" r="2.4"></circle></g>
+<g style="font:9px var(--font-body)" fill="#5f6878" text-anchor="middle"><text x="86" y="212">14/08</text><text x="168" y="212">15/08</text><text x="250" y="212">16/08</text><text x="332" y="212">17/08</text><text x="414" y="212">18/08</text><text x="496" y="212">19/08</text><text x="578" y="212">20/08</text></g>
+<g style="font:9.5px var(--font-body)" fill="#5f6878"><rect x="180" y="226" width="8" height="8" fill="#1d4ed8"></rect><text x="192" y="233">Đạt</text><rect x="230" y="226" width="8" height="8" fill="#f97316"></rect><text x="242" y="233">Không đạt</text><line x1="300" y1="230" x2="318" y2="230" stroke="#1e3a8a" stroke-width="1.6"></line><circle cx="309" cy="230" r="2.2" fill="#1e3a8a"></circle><text x="323" y="233">Tỉ lệ đạt (trục phải)</text></g>
+</svg>
+<div style="font:8.5px var(--font-body);color:#98a1b3;text-align:right">ảnh tĩnh (PNG 2×, nhúng base64)</div>
+</div>
+</div>
+<div style="padding:18px 40px 0;display:grid;grid-template-columns:1.25fr 1fr;gap:14px">
+<div style="background:#fff;border-radius:6px;box-shadow:0 1px 4px rgba(30,58,138,.12);padding:14px 16px">
+<div style="font:600 12px var(--font-heading);letter-spacing:.08em;color:#1e3a8a">THEO RECIPE</div>
+<table style="width:100%;border-collapse:collapse;font:10px var(--font-body)">
+<tr style="font:600 8.5px var(--font-body);letter-spacing:.08em;color:#5f6878;text-align:right"><td style="padding:6px 6px;text-align:left">RECIPE</td><td style="padding:6px">SL</td><td style="padding:6px">ĐẠT</td><td style="padding:6px">TỈ LỆ</td><td style="padding:6px;text-align:left">TT</td></tr>
+<tr style="border-top:1px solid #e8ecf4;text-align:right"><td style="padding:6px;text-align:left;font-weight:600">ORG CINNAMON CC</td><td style="padding:6px">3.980</td><td style="padding:6px">2.549</td><td style="padding:6px;font-weight:600">64,0%</td><td style="padding:6px;text-align:left;color:#dc2626;font-weight:600">Thấp</td></tr>
+<tr style="border-top:1px solid #e8ecf4;text-align:right"><td style="padding:6px;text-align:left;font-weight:600">Black Pepper 400 g</td><td style="padding:6px">1.278</td><td style="padding:6px">1.102</td><td style="padding:6px;font-weight:600">86,2%</td><td style="padding:6px;text-align:left;color:#9a6700;font-weight:600">Chú ý</td></tr>
+<tr style="border-top:2px solid #1e3a8a;text-align:right;font-weight:600"><td style="padding:6px;text-align:left">TỔNG</td><td style="padding:6px">5.258</td><td style="padding:6px">3.651</td><td style="padding:6px">69,4%</td><td></td></tr>
+</table>
+</div>
+<div style="background:#fff;border-radius:6px;box-shadow:0 1px 4px rgba(30,58,138,.12);padding:14px 16px">
+<div style="font:600 12px var(--font-heading);letter-spacing:.08em;color:#1e3a8a">THEO CAMERA</div>
+<table style="width:100%;border-collapse:collapse;font:10px var(--font-body)">
+<tr style="font:600 8.5px var(--font-body);letter-spacing:.08em;color:#5f6878;text-align:right"><td style="padding:6px;text-align:left">CAMERA</td><td style="padding:6px">SL</td><td style="padding:6px">TỈ LỆ</td></tr>
+<tr style="border-top:1px solid #e8ecf4;text-align:right"><td style="padding:6px;text-align:left"><b>CAM001</b> · 24241268</td><td style="padding:6px">2.986</td><td style="padding:6px;font-weight:600">66,3%</td></tr>
+<tr style="border-top:1px solid #e8ecf4;text-align:right"><td style="padding:6px;text-align:left"><b>CAM002</b> · 40733814</td><td style="padding:6px">2.272</td><td style="padding:6px;font-weight:600">73,5%</td></tr>
+</table>
+</div>
+</div>
+<div style="margin-top:auto;display:flex;justify-content:space-between;padding:12px 40px 16px;font:9px var(--font-body);color:#8792a6">
+<span>OCR Datecode Inspection System</span><span>Bản Executive — gửi ngoài · bản in mặc định: Industrial</span><span>Trang 1/2</span></div>
+</div>
+</div>
+
+<sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+<div style="flex:none;width:250px;border:1px dashed var(--color-neutral-400);padding:12px 14px;font:11px/1.55 var(--font-body);color:var(--color-neutral-700)">
+<div style="font:600 10px var(--font-heading);letter-spacing:.1em;color:var(--color-text);margin-bottom:6px">SPEC NOTES — BÁO CÁO MỘT MÁY</div>
+· Một bộ style, hai đường xuất: CSS này dán nguyên văn vào cả reportGenerator.ts (panel Historical) lẫn styles.py (agent) — sửa một nơi là phải sửa nơi kia (10A)<br>
+· Biểu đồ = PNG matplotlib theo theme, nhúng base64 — WeasyPrint không chạy JS<br>
+· Tiêu đề mục + câu dẫn + biểu đồ chung một khối break-after:avoid — không để tiêu đề mồ côi cuối trang<br>
+· Khối "Theo ca" và ảnh lỗi cần GĐ 1 (granularity=shift + endpoint ảnh thu nhỏ) — mẫu thiết kế trước, dữ liệu theo sau<br>
+· Theme dark chỉ để xem trên màn hình; bản in mặc định Industrial — in nền tối là đốt mực
+</div>
+</sc-if>
+
+<div class="dv-opt" id="2d" data-screen-label="2d Fleet report p1">
+<div class="dv-olabel"><a class="dv-oid" href="#2d">2d</a>TOÀN NHÀ MÁY — Trang 1/3 · Tổng quan · hai biến thể banner phạm vi</div>
+<div class="dv-card" style="width:794px;min-height:1123px;display:flex;flex-direction:column;color:#1a2230">
+<div style="background:#1e2a3a;color:#fff;padding:20px 40px;display:flex;align-items:center;gap:18px">
+<div style="flex:1"><div style="font:600 19px var(--font-heading);letter-spacing:.06em">BÁO CÁO SO SÁNH DÂY CHUYỀN</div>
+<div style="font:11px var(--font-body);color:#b8c4d4;margin-top:2px">Xưởng đóng gói gia vị · OCR Datecode</div></div>
+<div style="text-align:center;font:11px/1.5 var(--font-body);color:#dbe3ee"><b style="font-size:13px">5 máy · 7 ngày</b><br>14/08–20/08/2026</div>
+<div style="flex:1;display:flex;justify-content:flex-end;align-items:center;gap:12px">
+<div style="text-align:right;font:9.5px/1.5 var(--font-body);color:#b8c4d4">Lập lúc 20/08/2026 19:40<br>Fleet Service</div>
+<div style="width:84px;height:34px;border:1px dashed #5a6b82;display:flex;align-items:center;justify-content:center;font:9px var(--font-body);color:#8fa0b8;letter-spacing:.15em">LOGO</div></div>
+</div>
+<div style="padding:14px 40px 0;display:flex;flex-direction:column;gap:8px">
+<div style="display:flex;align-items:center;gap:10px;background:#e8f3ea;border:1px solid #1a7f37;padding:9px 14px">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1a7f37" stroke-width="2"><path d="M20 6 9 17l-5-5"></path></svg>
+<span style="font:600 11px var(--font-body);color:#14602a">Đủ cả 5 máy — dữ liệu phủ toàn đội hình</span>
+<span style="margin-left:auto;font:600 8.5px ui-monospace,Menlo,monospace;color:#1a7f37;border:1px solid #1a7f37;padding:1px 6px">BIẾN THỂ (a)</span></div>
+<div style="display:flex;align-items:center;gap:10px;background:#d97706;padding:11px 14px">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"></path><path d="M12 9v4M12 17h.01"></path></svg>
+<span style="font:600 12px var(--font-body);color:#fff">KHÔNG đủ đội hình — thiếu LineTine (agent tắt lúc 14:22). Mọi số tổng dưới đây chỉ phủ 4/5 máy.</span>
+<span style="margin-left:auto;font:600 8.5px ui-monospace,Menlo,monospace;color:#fff;border:1px solid #fff;padding:1px 6px">BIẾN THỂ (b)</span></div>
+</div>
+<div style="padding:16px 40px 0;display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+<div style="border:1px solid #d8dee8;padding:12px 14px"><div style="font:600 9px var(--font-body);letter-spacing:.1em;color:#5f6878">TỔNG SẢN LƯỢNG</div><div style="font:600 27px var(--font-heading);margin-top:2px">117.443</div><div style="font:9.5px var(--font-body);color:#98a1b3">sản phẩm</div></div>
+<div style="border:1px solid #d8dee8;padding:12px 14px"><div style="font:600 9px var(--font-body);letter-spacing:.1em;color:#5f6878">ĐẠT</div><div style="font:600 27px var(--font-heading);margin-top:2px;color:#1a7f37">112.109</div><div style="font:9.5px var(--font-body);color:#98a1b3">sản phẩm</div></div>
+<div style="border:1px solid #d8dee8;padding:12px 14px"><div style="font:600 9px var(--font-body);letter-spacing:.1em;color:#5f6878">KHÔNG ĐẠT</div><div style="font:600 27px var(--font-heading);margin-top:2px;color:#cf222e">5.334</div><div style="font:9.5px var(--font-body);color:#98a1b3">sản phẩm</div></div>
+<div style="border:1px solid #d8dee8;padding:12px 14px"><div style="font:600 9px var(--font-body);letter-spacing:.1em;color:#5f6878">TỈ LỆ ĐẠT CHUNG</div><div style="font:600 27px var(--font-heading);margin-top:2px;color:#1a7f37">95,46%</div><div style="font:9.5px var(--font-body);color:#98a1b3">có trọng số theo sản lượng</div></div>
+</div>
+<div style="padding:20px 40px 0">
+<div style="font:600 12px var(--font-heading);letter-spacing:.08em;border-bottom:2px solid #1e2a3a;padding-bottom:4px">SẢN PHẨM MỖI NGÀY THEO MÁY <span style="font:9.5px var(--font-body);letter-spacing:0;color:#5f6878;text-transform:none">— chuẩn hoá per-day: các máy chạy số ngày khác nhau</span></div>
+<div style="border:1px solid #d8dee8;border-top:none;padding:12px 12px 4px">
+<svg viewBox="0 0 660 230" style="width:100%;display:block">
+<g stroke="#e8ecf2"><line x1="46" y1="128" x2="640" y2="128"></line><line x1="46" y1="71" x2="640" y2="71"></line></g>
+<line x1="46" y1="184" x2="640" y2="184" stroke="#c6ccd6"></line>
+<g style="font:9px var(--font-body)" fill="#98a1b3"><text x="40" y="187" text-anchor="end">0</text><text x="40" y="131" text-anchor="end">2.000</text><text x="40" y="74" text-anchor="end">4.000</text></g>
+<rect x="70" y="14" width="64" height="170" fill="#2563eb"></rect>
+<rect x="186" y="116" width="64" height="68" fill="#0891b2"></rect>
+<rect x="302" y="163" width="64" height="21" fill="#d97706"></rect>
+<rect x="418" y="96" width="64" height="88" fill="#7c3aed"></rect>
+<rect x="534" y="57" width="64" height="127" fill="#16a34a"></rect>
+<g style="font:600 10px var(--font-body)" fill="#1a2230" text-anchor="middle"><text x="102" y="8">6.020</text><text x="218" y="110">2.410</text><text x="334" y="157">751</text><text x="450" y="90">3.105</text><text x="566" y="51">4.491</text></g>
+<g style="font:9.5px var(--font-body)" fill="#5f6878" text-anchor="middle"><text x="102" y="200">Auto2</text><text x="218" y="200">M1</text><text x="334" y="200">M2</text><text x="450" y="200">LineTine</text><text x="566" y="200">PC-Auto-1</text></g>
+<text x="352" y="222" text-anchor="middle" style="font:8.5px var(--font-body)" fill="#98a1b3">màu cố định theo TÊN máy — bỏ một máy khỏi báo cáo không làm các máy còn lại đổi màu</text>
+</svg>
+</div>
+</div>
+<div style="padding:18px 40px 0">
+<div style="font:600 12px var(--font-heading);letter-spacing:.08em;border-bottom:2px solid #1e2a3a;padding-bottom:4px">BẢNG MÁY</div>
+<table style="width:100%;border-collapse:collapse;font:10.5px var(--font-body)">
+<tr style="font:600 9px var(--font-body);letter-spacing:.08em;color:#5f6878;text-align:right"><td style="padding:6px 8px;text-align:left">MÁY</td><td style="padding:6px 8px;text-align:left">LINE</td><td style="padding:6px 8px">SẢN LƯỢNG</td><td style="padding:6px 8px">MỖI NGÀY</td><td style="padding:6px 8px">TỈ LỆ ĐẠT</td><td style="padding:6px 8px;text-align:left">RECIPE ĐANG CHẠY</td></tr>
+<tr style="border-top:1px solid #e3e7ee;text-align:right"><td style="padding:6px 8px;text-align:left;font-weight:600"><span style="display:inline-block;width:8px;height:8px;background:#2563eb;margin-right:6px"></span>Auto2</td><td style="padding:6px 8px;text-align:left">Line 1</td><td style="padding:6px 8px">42.140</td><td style="padding:6px 8px">6.020</td><td style="padding:6px 8px;font-weight:600">98,0%</td><td style="padding:6px 8px;text-align:left">ONION POWDER</td></tr>
+<tr style="border-top:1px solid #e3e7ee;text-align:right"><td style="padding:6px 8px;text-align:left;font-weight:600"><span style="display:inline-block;width:8px;height:8px;background:#0891b2;margin-right:6px"></span>M1</td><td style="padding:6px 8px;text-align:left">Line 2</td><td style="padding:6px 8px">16.870</td><td style="padding:6px 8px">2.410</td><td style="padding:6px 8px;font-weight:600">92,0%</td><td style="padding:6px 8px;text-align:left">CHILI Pdr</td></tr>
+<tr style="border-top:1px solid #e3e7ee;text-align:right"><td style="padding:6px 8px;text-align:left;font-weight:600"><span style="display:inline-block;width:8px;height:8px;background:#d97706;margin-right:6px"></span>M2</td><td style="padding:6px 8px;text-align:left">Line 3</td><td style="padding:6px 8px">5.258</td><td style="padding:6px 8px">751</td><td style="padding:6px 8px;font-weight:600;color:#dc2626">74,0%</td><td style="padding:6px 8px;text-align:left">ORG CINNAMON CC</td></tr>
+<tr style="border-top:1px solid #e3e7ee;text-align:right"><td style="padding:6px 8px;text-align:left;font-weight:600"><span style="display:inline-block;width:8px;height:8px;background:#7c3aed;margin-right:6px"></span>LineTine</td><td style="padding:6px 8px;text-align:left">Tine Line</td><td style="padding:6px 8px">21.735</td><td style="padding:6px 8px">3.105</td><td style="padding:6px 8px;font-weight:600">92,4%</td><td style="padding:6px 8px;text-align:left">PURE SEA SALT</td></tr>
+<tr style="border-top:1px solid #e3e7ee;text-align:right"><td style="padding:6px 8px;text-align:left;font-weight:600"><span style="display:inline-block;width:8px;height:8px;background:#16a34a;margin-right:6px"></span>PC-Auto-1</td><td style="padding:6px 8px;text-align:left">Auto Line</td><td style="padding:6px 8px">31.440</td><td style="padding:6px 8px">4.491</td><td style="padding:6px 8px;font-weight:600">99,6%</td><td style="padding:6px 8px;text-align:left">Minced Onion</td></tr>
+<tr style="border-top:2px solid #1e2a3a;text-align:right;font-weight:600"><td style="padding:6px 8px;text-align:left">TỔNG</td><td></td><td style="padding:6px 8px">117.443</td><td style="padding:6px 8px">16.777</td><td style="padding:6px 8px">95,46%</td><td></td></tr>
+</table>
+<div style="font:italic 9.5px var(--font-body);color:#5f6878;margin-top:5px">Không xếp hạng theo tỉ lệ đạt: các máy chạy recipe khác nhau, tỉ lệ phản ánh độ khó mặt hàng.</div>
+</div>
+<div style="margin-top:auto;display:flex;justify-content:space-between;border-top:1px solid #e3e7ee;padding:10px 40px 14px;font:9px var(--font-body);color:#98a1b3">
+<span>Sinh bởi Fleet Service · dữ liệu đọc trực tiếp từ từng máy tại thời điểm lập báo cáo</span><span>Trang 1/3</span></div>
+</div>
+</div>
+
+<div class="dv-opt" id="2e" data-screen-label="2e Fleet report p2 fingerprint">
+<div class="dv-olabel"><a class="dv-oid" href="#2e">2e</a>TOÀN NHÀ MÁY — Trang 2/3 · Vân tay kiểu lỗi (phần đinh)</div>
+<div class="dv-card" style="width:794px;min-height:1123px;display:flex;flex-direction:column;color:#1a2230">
+<div style="background:#1e2a3a;color:#fff;padding:12px 40px;display:flex;justify-content:space-between;align-items:baseline">
+<span style="font:600 14px var(--font-heading);letter-spacing:.06em">BÁO CÁO SO SÁNH DÂY CHUYỀN — VÂN TAY KIỂU LỖI</span>
+<span style="font:10px var(--font-body);color:#b8c4d4">5 máy · 14/08–20/08/2026</span></div>
+<div style="padding:18px 40px 0;font:11px/1.6 var(--font-body);color:#3a4354">Tỉ trọng giữa các nguyên nhân trên mẫu fail của từng máy — các ô một máy cộng lại bằng 100. Đây là cách so sánh <b>có nghĩa</b> giữa các máy vì những nguyên nhân này thuộc pipeline OCR, không thuộc mặt hàng.</div>
+<div style="padding:14px 40px 0">
+<div style="display:flex;flex-direction:column;gap:7px">
+<div style="display:flex;align-items:center;gap:10px"><span style="width:78px;font:600 10.5px var(--font-body);text-align:right">Auto2</span><div style="flex:1;display:flex;height:20px;font:600 8.5px var(--font-body);color:#fff"><span style="width:38%;background:#1e2a3a;display:flex;align-items:center;padding-left:6px">38</span><span style="width:22%;background:#2563eb;display:flex;align-items:center;padding-left:6px">22</span><span style="width:24%;background:#94b8e0;display:flex;align-items:center;padding-left:6px;color:#1a2230">24</span><span style="width:16%;background:#d97706;display:flex;align-items:center;padding-left:6px">16</span></div></div>
+<div style="display:flex;align-items:center;gap:10px"><span style="width:78px;font:600 10.5px var(--font-body);text-align:right">M1</span><div style="flex:1;display:flex;height:20px;font:600 8.5px var(--font-body);color:#fff"><span style="width:30%;background:#1e2a3a;display:flex;align-items:center;padding-left:6px">30</span><span style="width:18%;background:#2563eb;display:flex;align-items:center;padding-left:6px">18</span><span style="width:12%;background:#94b8e0;display:flex;align-items:center;padding-left:6px;color:#1a2230">12</span><span style="width:40%;background:#d97706;display:flex;align-items:center;padding-left:6px">40</span></div></div>
+<div style="display:flex;align-items:center;gap:10px"><span style="width:78px;font:600 10.5px var(--font-body);text-align:right">M2</span><div style="flex:1;display:flex;height:20px;font:600 8.5px var(--font-body);color:#fff"><span style="width:56.5%;background:#1e2a3a;display:flex;align-items:center;padding-left:6px">56,5</span><span style="width:18.7%;background:#2563eb;display:flex;align-items:center;padding-left:6px">18,7</span><span style="width:14.3%;background:#94b8e0;display:flex;align-items:center;padding-left:6px;color:#1a2230">14,3</span><span style="width:10.5%;background:#d97706;display:flex;align-items:center;padding-left:6px">10,5</span></div></div>
+<div style="display:flex;align-items:center;gap:10px"><span style="width:78px;font:600 10.5px var(--font-body);text-align:right">LineTine</span><div style="flex:1;display:flex;height:20px;font:600 8.5px var(--font-body);color:#fff"><span style="width:41%;background:#1e2a3a;display:flex;align-items:center;padding-left:6px">41</span><span style="width:25%;background:#2563eb;display:flex;align-items:center;padding-left:6px">25</span><span style="width:21%;background:#94b8e0;display:flex;align-items:center;padding-left:6px;color:#1a2230">21</span><span style="width:13%;background:#d97706;display:flex;align-items:center;padding-left:6px">13</span></div></div>
+<div style="display:flex;align-items:center;gap:10px"><span style="width:78px;font:600 10.5px var(--font-body);text-align:right">PC-Auto-1</span><div style="flex:1;display:flex;height:20px;font:600 8.5px var(--font-body);color:#fff"><span style="width:35%;background:#1e2a3a;display:flex;align-items:center;padding-left:6px">35</span><span style="width:28%;background:#2563eb;display:flex;align-items:center;padding-left:6px">28</span><span style="width:22%;background:#94b8e0;display:flex;align-items:center;padding-left:6px;color:#1a2230">22</span><span style="width:15%;background:#d97706;display:flex;align-items:center;padding-left:6px">15</span></div></div>
+</div>
+<div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:8px;font:9.5px var(--font-body);color:#5f6878">
+<span><span style="display:inline-block;width:8px;height:8px;background:#1e2a3a"></span> ký tự dưới ngưỡng tin cậy</span>
+<span><span style="display:inline-block;width:8px;height:8px;background:#2563eb"></span> OCR đọc sai chuỗi</span>
+<span><span style="display:inline-block;width:8px;height:8px;background:#94b8e0"></span> ảnh không khớp template</span>
+<span><span style="display:inline-block;width:8px;height:8px;background:#d97706"></span> detector không thấy vùng</span>
+<span style="margin-left:auto;font:8.5px var(--font-body);color:#98a1b3">% của mẫu fail từng máy — ảnh tĩnh trong bản PDF</span></div>
+</div>
+<div style="padding:18px 40px 0">
+<div style="font:600 12px var(--font-heading);letter-spacing:.08em;border-bottom:2px solid #1e2a3a;padding-bottom:4px">BẢNG NHIỆT <span style="font:9.5px var(--font-body);letter-spacing:0;color:#5f6878;text-transform:none">— ô lệch mạnh khỏi trung vị tô đậm · % của mẫu</span></div>
+<table style="width:100%;border-collapse:collapse;font:10.5px var(--font-body);text-align:center">
+<tr style="font:600 8.5px var(--font-body);letter-spacing:.05em;color:#5f6878"><td style="padding:6px 8px;text-align:left">MÁY</td><td style="padding:6px">KÝ TỰ DƯỚI NGƯỠNG</td><td style="padding:6px">OCR ĐỌC SAI</td><td style="padding:6px">KHÔNG KHỚP TEMPLATE</td><td style="padding:6px">KHÔNG THẤY VÙNG</td><td style="padding:6px;text-align:right">MẪU</td></tr>
+<tr style="border-top:1px solid #e3e7ee"><td style="padding:5px 8px;text-align:left;font-weight:600">Auto2</td><td style="background:#f0f4fa;padding:5px">38</td><td style="background:#f6f8fc;padding:5px">22</td><td style="background:#f0f4fa;padding:5px">24</td><td style="background:#f6f8fc;padding:5px">16</td><td style="padding:5px;text-align:right;font:9.5px var(--font-body);color:#5f6878">300 · lấy mẫu</td></tr>
+<tr style="border-top:1px solid #e3e7ee"><td style="padding:5px 8px;text-align:left;font-weight:600">M1</td><td style="background:#f6f8fc;padding:5px">30</td><td style="background:#f9fafc;padding:5px">18</td><td style="background:#f9fafc;padding:5px">12</td><td style="background:#1e3a8a;color:#fff;font-weight:700;padding:5px">40</td><td style="padding:5px;text-align:right;font:9.5px var(--font-body);color:#5f6878">300 · lấy mẫu</td></tr>
+<tr style="border-top:1px solid #e3e7ee"><td style="padding:5px 8px;text-align:left;font-weight:600">M2</td><td style="background:#1e3a8a;color:#fff;font-weight:700;padding:5px">56,5</td><td style="background:#f9fafc;padding:5px">18,7</td><td style="background:#f9fafc;padding:5px">14,3</td><td style="background:#f9fafc;padding:5px">10,5</td><td style="padding:5px;text-align:right;font:9.5px var(--font-body);color:#5f6878">196 · lấy mẫu</td></tr>
+<tr style="border-top:1px solid #e3e7ee"><td style="padding:5px 8px;text-align:left;font-weight:600">LineTine</td><td style="background:#eef2f9;padding:5px">41</td><td style="background:#f0f4fa;padding:5px">25</td><td style="background:#f6f8fc;padding:5px">21</td><td style="background:#f9fafc;padding:5px">13</td><td style="padding:5px;text-align:right;font:9.5px var(--font-body);color:#5f6878">300 · lấy mẫu</td></tr>
+<tr style="border-top:1px solid #e3e7ee"><td style="padding:5px 8px;text-align:left;font-weight:600">PC-Auto-1</td><td style="background:#f0f4fa;padding:5px">35</td><td style="background:#eef2f9;padding:5px">28</td><td style="background:#f0f4fa;padding:5px">22</td><td style="background:#f6f8fc;padding:5px">15</td><td style="padding:5px;text-align:right;font:9.5px var(--font-body);color:#5f6878"><b>126 · phủ hết kỳ</b></td></tr>
+<tr style="border-top:1px solid #c6ccd6;font-style:italic;color:#98a1b3;font-size:9.5px"><td style="padding:4px 8px;text-align:left">trung vị</td><td>38</td><td>22</td><td>21</td><td>15</td><td></td></tr>
+</table>
+</div>
+<div style="padding:18px 40px 0">
+<div style="border:1px solid #d8dee8;background:#f7f9fc;padding:12px 16px;font:10.5px/1.65 var(--font-body);color:#3a4354">
+<b style="font:600 11px var(--font-heading);letter-spacing:.06em">ĐỌC THẾ NÀO</b><br>
+<b>"Không thấy vùng" cao</b> → vấn đề camera / trigger / ánh sáng — máy không nhìn thấy chỗ in.
+<b>"Ký tự dưới ngưỡng" cao</b> → thấy vùng nhưng ký tự mờ dưới ngưỡng tin cậy — nghi chất lượng in hoặc template.
+Hai máy cùng "pass thấp" có thể hỏng hai thứ hoàn toàn khác nhau.</div>
+</div>
+<div style="padding:16px 40px 0">
+<div style="font:600 12px var(--font-heading);letter-spacing:.08em;border-bottom:2px solid #1e2a3a;padding-bottom:4px">PHÁT HIỆN CHÍNH</div>
+<div style="font:11px/1.8 var(--font-body);padding-top:6px">
+<div>· <b>M1: "không thấy vùng" 40% của mẫu</b> — gấp ~2,7 lần trung vị đội hình. Thuộc nhóm camera/trigger/ánh sáng. <span style="color:#1e3a8a">→ Chạy check_trigger_health và check_sensor_pulse trước ca tới.</span></div>
+<div>· <b>M2: "ký tự dưới ngưỡng" 56,5% của mẫu</b> — 20,9% mẫu fail nằm cách ngưỡng 0,60 chưa tới 0,05. <span style="color:#1e3a8a">→ Xem phân bố khoảng cách tới ngưỡng trước khi chỉnh; công cụ không tự đổi ngưỡng.</span></div>
+<div>· <b>PC-Auto-1: 126 lỗi cả kỳ, phủ hết</b> — không cần lấy mẫu; vân tay là số liệu đầy đủ. <span style="color:#1e3a8a">→ Không cần hành động.</span></div>
+</div>
+</div>
+<div style="margin-top:auto;display:flex;justify-content:space-between;border-top:1px solid #e3e7ee;padding:10px 40px 14px;font:9px var(--font-body);color:#98a1b3">
+<span>Sinh bởi Fleet Service · dữ liệu đọc trực tiếp từ từng máy tại thời điểm lập báo cáo</span><span>Trang 2/3</span></div>
+</div>
+</div>
+
+<div class="dv-opt" id="2f" data-screen-label="2f Fleet report p3 appendix">
+<div class="dv-olabel"><a class="dv-oid" href="#2f">2f</a>TOÀN NHÀ MÁY — Trang 3/3 · Phụ lục theo máy · gồm thẻ máy thiếu dữ liệu</div>
+<div class="dv-card" style="width:794px;min-height:1123px;display:flex;flex-direction:column;color:#1a2230">
+<div style="background:#1e2a3a;color:#fff;padding:12px 40px;display:flex;justify-content:space-between;align-items:baseline">
+<span style="font:600 14px var(--font-heading);letter-spacing:.06em">BÁO CÁO SO SÁNH DÂY CHUYỀN — PHỤ LỤC THEO MÁY</span>
+<span style="font:10px var(--font-body);color:#b8c4d4">5 máy · 14/08–20/08/2026</span></div>
+<div style="padding:20px 40px 0;display:flex;flex-direction:column;gap:12px">
+
+<div style="border:1px solid #d8dee8;padding:14px 16px;display:flex;align-items:center;gap:18px">
+<div style="width:150px"><div style="font:600 17px var(--font-heading)"><span style="display:inline-block;width:9px;height:9px;background:#2563eb;margin-right:6px"></span>Auto2</div><div style="font:9.5px var(--font-body);color:#5f6878">Line 1 · Jetson Orin Nano 8GB</div></div>
+<div style="display:flex;align-items:flex-end;gap:3px;height:34px"><div style="width:10px;height:30px;background:#2563eb"><div style="height:1px;background:#dc2626"></div></div><div style="width:10px;height:31px;background:#2563eb"></div><div style="width:10px;height:29px;background:#2563eb"></div><div style="width:10px;height:32px;background:#2563eb"></div><div style="width:10px;height:30px;background:#2563eb"></div><div style="width:10px;height:31px;background:#2563eb"></div><div style="width:10px;height:30px;background:#2563eb"></div></div>
+<div style="display:flex;gap:22px;margin-left:auto;text-align:right">
+<div><div style="font:600 15px var(--font-heading)">42.140</div><div style="font:8.5px var(--font-body);color:#98a1b3">sản lượng</div></div>
+<div><div style="font:600 15px var(--font-heading)">6.020</div><div style="font:8.5px var(--font-body);color:#98a1b3">mỗi ngày</div></div>
+<div><div style="font:600 15px var(--font-heading);color:#1a7f37">98,0%</div><div style="font:8.5px var(--font-body);color:#98a1b3">tỉ lệ đạt</div></div></div>
+<span style="font:9px var(--font-body);border:1px solid #c6ccd6;color:#5f6878;padding:3px 8px">ONION POWDER</span>
+</div>
+
+<div style="border:1px solid #d8dee8;padding:14px 16px;display:flex;align-items:center;gap:18px">
+<div style="width:150px"><div style="font:600 17px var(--font-heading)"><span style="display:inline-block;width:9px;height:9px;background:#0891b2;margin-right:6px"></span>M1</div><div style="font:9.5px var(--font-body);color:#5f6878">Line 2 · Jetson Orin Nano 8GB</div></div>
+<div style="display:flex;align-items:flex-end;gap:3px;height:34px"><div style="width:10px;height:26px;background:#0891b2"></div><div style="width:10px;height:28px;background:#0891b2"></div><div style="width:10px;height:25px;background:#0891b2"></div><div style="width:10px;height:27px;background:#0891b2"></div><div style="width:10px;height:24px;background:#0891b2"></div><div style="width:10px;height:26px;background:#0891b2"></div><div style="width:10px;height:25px;background:#0891b2"></div></div>
+<div style="display:flex;gap:22px;margin-left:auto;text-align:right">
+<div><div style="font:600 15px var(--font-heading)">16.870</div><div style="font:8.5px var(--font-body);color:#98a1b3">sản lượng</div></div>
+<div><div style="font:600 15px var(--font-heading)">2.410</div><div style="font:8.5px var(--font-body);color:#98a1b3">mỗi ngày</div></div>
+<div><div style="font:600 15px var(--font-heading)">92,0%</div><div style="font:8.5px var(--font-body);color:#98a1b3">tỉ lệ đạt</div></div></div>
+<span style="font:9px var(--font-body);border:1px solid #c6ccd6;color:#5f6878;padding:3px 8px">CHILI Pdr</span>
+</div>
+
+<div style="border:1px solid #d8dee8;padding:14px 16px;display:flex;align-items:center;gap:18px">
+<div style="width:150px"><div style="font:600 17px var(--font-heading)"><span style="display:inline-block;width:9px;height:9px;background:#d97706;margin-right:6px"></span>M2</div><div style="font:9.5px var(--font-body);color:#5f6878">Line 3 · Jetson Orin Nano 8GB</div></div>
+<div style="display:flex;align-items:flex-end;gap:3px;height:34px"><div style="width:10px;height:28px;background:#d97706"></div><div style="width:10px;height:29px;background:#d97706"></div><div style="width:10px;height:30px;background:#d97706"></div><div style="width:10px;height:29px;background:#d97706"></div><div style="width:10px;height:30px;background:#d97706"></div><div style="width:10px;height:29px;background:#d97706"></div><div style="width:10px;height:29px;background:#d97706"></div></div>
+<div style="display:flex;gap:22px;margin-left:auto;text-align:right">
+<div><div style="font:600 15px var(--font-heading)">5.258</div><div style="font:8.5px var(--font-body);color:#98a1b3">sản lượng</div></div>
+<div><div style="font:600 15px var(--font-heading)">751</div><div style="font:8.5px var(--font-body);color:#98a1b3">mỗi ngày</div></div>
+<div><div style="font:600 15px var(--font-heading);color:#dc2626">74,0%</div><div style="font:8.5px var(--font-body);color:#98a1b3">tỉ lệ đạt</div></div></div>
+<span style="font:9px var(--font-body);border:1px solid #c6ccd6;color:#5f6878;padding:3px 8px">ORG CINNAMON CC</span>
+</div>
+
+<div style="border:1px solid #c6ccd6;background:#f0f2f5;padding:14px 16px;display:flex;align-items:center;gap:18px">
+<div style="width:150px"><div style="font:600 17px var(--font-heading);color:#5f6878"><span style="display:inline-block;width:9px;height:9px;background:#7c3aed;opacity:.4;margin-right:6px"></span>LineTine</div><div style="font:9.5px var(--font-body);color:#98a1b3">Tine Line · Jetson Orin Nano 8GB</div></div>
+<div style="font:10.5px/1.5 var(--font-body);color:#5f6878;max-width:280px"><b>Thiếu dữ liệu:</b> agent tắt lúc 14:22 · <b>máy vẫn sản xuất</b>. Vẫn có mặt trong báo cáo — không bị bỏ ra khỏi đội hình.</div>
+<div style="display:flex;gap:22px;margin-left:auto;text-align:right;color:#98a1b3">
+<div><div style="font:600 15px var(--font-heading)">—</div><div style="font:8.5px var(--font-body)">sản lượng</div></div>
+<div><div style="font:600 15px var(--font-heading)">—</div><div style="font:8.5px var(--font-body)">mỗi ngày</div></div>
+<div><div style="font:600 15px var(--font-heading)">—</div><div style="font:8.5px var(--font-body)">tỉ lệ đạt</div></div></div>
+<span style="font:9px var(--font-body);border:1px solid #c6ccd6;color:#98a1b3;padding:3px 8px">PURE SEA SALT</span>
+</div>
+
+<div style="border:1px solid #d8dee8;padding:14px 16px;display:flex;align-items:center;gap:18px">
+<div style="width:150px"><div style="font:600 17px var(--font-heading)"><span style="display:inline-block;width:9px;height:9px;background:#16a34a;margin-right:6px"></span>PC-Auto-1</div><div style="font:9.5px var(--font-body);color:#5f6878">Auto Line · x86 industrial PC</div></div>
+<div style="display:flex;align-items:flex-end;gap:3px;height:34px"><div style="width:10px;height:29px;background:#16a34a"></div><div style="width:10px;height:30px;background:#16a34a"></div><div style="width:10px;height:31px;background:#16a34a"></div><div style="width:10px;height:30px;background:#16a34a"></div><div style="width:10px;height:29px;background:#16a34a"></div><div style="width:10px;height:31px;background:#16a34a"></div><div style="width:10px;height:30px;background:#16a34a"></div></div>
+<div style="display:flex;gap:22px;margin-left:auto;text-align:right">
+<div><div style="font:600 15px var(--font-heading)">31.440</div><div style="font:8.5px var(--font-body);color:#98a1b3">sản lượng</div></div>
+<div><div style="font:600 15px var(--font-heading)">4.491</div><div style="font:8.5px var(--font-body);color:#98a1b3">mỗi ngày</div></div>
+<div><div style="font:600 15px var(--font-heading);color:#1a7f37">99,6%</div><div style="font:8.5px var(--font-body);color:#98a1b3">tỉ lệ đạt</div></div></div>
+<span style="font:9px var(--font-body);border:1px solid #c6ccd6;color:#5f6878;padding:3px 8px">Minced Onion</span>
+</div>
+
+<div style="font:9px var(--font-body);color:#98a1b3">Mini-bar: pass/fail 7 ngày, ảnh tĩnh. Giá trị thiếu hiện "—", không hiện 0. Delta điểm phần trăm luôn viết chữ "điểm".</div>
+</div>
+<div style="margin-top:auto;display:flex;justify-content:space-between;border-top:1px solid #e3e7ee;padding:10px 40px 14px;font:9px var(--font-body);color:#98a1b3">
+<span>Sinh bởi Fleet Service · dữ liệu đọc trực tiếp từ từng máy tại thời điểm lập báo cáo</span><span>Trang 3/3</span></div>
+</div>
+</div>
+
+<sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+<div style="flex:none;width:250px;border:1px dashed var(--color-neutral-400);padding:12px 14px;font:11px/1.55 var(--font-body);color:var(--color-neutral-700)">
+<div style="font:600 10px var(--font-heading);letter-spacing:.1em;color:var(--color-text);margin-bottom:6px">SPEC NOTES — BÁO CÁO FLEET</div>
+· Banner phạm vi NGAY dưới header, hai biến thể thiết kế sẵn — trạng thái xấu mới là trạng thái cần thiết kế kỹ (10 ghi chú 3)<br>
+· Không xếp hạng pass rate — chú thích in cố định dưới bảng máy<br>
+· Vân tay: tỉ trọng <b>của mẫu</b>, cỡ mẫu từng hàng ("196 · lấy mẫu" / "126 · phủ hết kỳ"); ô lệch mạnh khỏi trung vị tô đậm<br>
+· Màu máy gán theo TÊN — bỏ máy khỏi báo cáo không đổi màu máy còn lại<br>
+· Máy thiếu dữ liệu vẫn xuất hiện trong phụ lục kèm lý do, không bị loại<br>
+· Fleet report chưa có theme — mẫu này kéo nó về cùng ngôn ngữ Industrial của báo cáo một máy (10A)
+</div>
+</sc-if>
+
+</div>
+<p class="dv-next">Try next: "bản dark của <a class="dv-oid" href="#2a">2a</a> để xem trên màn hình" · "theme Executive cho báo cáo fleet" · "gộp CSS chung thành một file để dán vào reportGenerator.ts / styles.py"</p>
+</section>
+
+<section class="dv-turn" id="t1">
+<div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">Fleet Console — Home · first fold + full state matrix</span>
+<span style="font:11px var(--font-body);color:var(--color-neutral-600)">Industry DS · EN default, VI toggle · grounded in uploads/01–09 + repo exports</span></div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<defs>
+<g id="mbox">
+<path d="M0,-28 L56,0 L0,28 L-56,0 Z" style="fill:var(--ft);stroke:var(--s);stroke-width:var(--sw,1);stroke-dasharray:var(--sd,none)"></path>
+<path d="M-56,0 L0,28 L0,58 L-56,30 Z" style="fill:var(--fl);stroke:var(--s);stroke-width:var(--sw,1);stroke-dasharray:var(--sd,none)"></path>
+<path d="M0,28 L56,0 L56,30 L0,58 Z" style="fill:var(--fr);stroke:var(--s);stroke-width:var(--sw,1);stroke-dasharray:var(--sd,none)"></path>
+</g>
+<g id="wbox">
+<path d="M0,-22 L44,0 L0,22 L-44,0 Z" style="fill:var(--ft);stroke:var(--s)"></path>
+<path d="M-44,0 L0,22 L0,38 L-44,16 Z" style="fill:var(--fl);stroke:var(--s)"></path>
+<path d="M0,22 L44,0 L44,16 L0,38 Z" style="fill:var(--fr);stroke:var(--s)"></path>
+</g>
+<pattern id="hatch" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><line x1="0" y1="0" x2="0" y2="6" stroke="#8a8f96" stroke-width="1"></line></pattern>
+</defs>
+</svg>
+
+<div class="dv-opts">
+
+<div style="flex:none;width:250px;border:1px dashed var(--color-neutral-400);padding:14px 16px;font:11px/1.55 var(--font-body);color:var(--color-neutral-700)">
+<div style="font:600 11px var(--font-heading);letter-spacing:.08em;color:var(--color-text);margin-bottom:8px">SCOPE &amp; ASSUMPTIONS</div>
+Fleet Console <b>home, first fold only</b> (map + machine cards) per your pick. Stats, failure investigation, staff and log tabs are separate mocks.<br><br>
+Real survey numbers where the docs record them (M2 69.4%, RAM 87%, fleet 95.5%). Hardware values on the other four machines and PC-Auto-1's pass rate are <b>plausible placeholders</b> — the survey only measured M2.<br><br>
+Recipes, camera models and roles come from the repo's <span style="font-family:ui-monospace,Menlo,monospace;font-size:10px">exports/</span>. Copy is EN (default locale); VI strings shown in the state matrices.
+</div>
+
+<div class="dv-opt" id="1a" data-screen-label="1a Fleet home — nominal">
+<div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Home — nominal · shift B · 4 running, 1 needs attention</div>
+<div style="display:flex;gap:16px;align-items:flex-start">
+<div class="dv-card" style="width:1400px;position:relative">
+
+<div style="display:flex;align-items:center;gap:14px;height:54px;padding:0 20px;border-bottom:1px solid var(--color-neutral-300)">
+<span style="font:600 18px var(--font-heading);letter-spacing:.05em">FLEET — OCR DATECODE</span>
+<span class="tag tag-outline" style="font-size:10px">tailnet-only · no login by design</span>
+<span style="flex:1"></span>
+<span style="display:inline-flex;align-items:center;gap:6px;font:600 11px var(--font-body);color:#5d8a5a"><span style="width:7px;height:7px;background:#5d8a5a;border-radius:50%"></span>4 running</span>
+<span style="display:inline-flex;align-items:center;gap:6px;font:600 11px var(--font-body);color:#b08334"><span style="width:7px;height:7px;background:#b08334;border-radius:50%;animation:pulse 2.4s ease-in-out infinite"></span>1 needs attention</span>
+<span style="width:1px;height:20px;background:var(--color-neutral-300)"></span>
+<span style="font:500 12px ui-monospace,Menlo,monospace;color:var(--color-neutral-700)">16:42:05</span>
+<span style="display:inline-flex;border:1px solid var(--color-neutral-400)">
+<span style="padding:4px 10px;font:600 11px var(--font-body);background:var(--color-accent);color:#fff">EN</span>
+<span style="padding:4px 10px;font:600 11px var(--font-body);color:var(--color-neutral-600)">VI</span>
+</span>
+<span style="display:inline-flex;border:1px solid var(--color-neutral-400)">
+<span style="width:26px;height:24px;display:inline-flex;align-items:center;justify-content:center;background:var(--color-neutral-200)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#1d1f20" stroke-width="1.5"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg></span>
+<span style="width:26px;height:24px;display:inline-flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#98a1b3" stroke-width="1.5"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"></path></svg></span>
+</span>
+<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border:1px solid var(--color-accent);color:var(--color-accent-700);font:600 11px var(--font-body)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 12a9 9 0 1 1-2.6-6.3"></path><path d="M21 3v6h-6"></path></svg>Refresh</span>
+</div>
+
+<div style="display:flex;gap:20px;padding:20px">
+
+<div class="blueprint" style="position:relative;flex:none;width:620px;border:1px solid var(--color-neutral-300);padding:14px 16px 10px">
+<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+<div style="display:flex;justify-content:space-between;align-items:baseline">
+<span style="font:600 11px var(--font-heading);letter-spacing:.1em;color:var(--color-neutral-600)">FACTORY FLOOR — SPICE PACKING · ISOMETRIC (TIER 1)</span>
+<span style="font:10px var(--font-body);color:var(--color-neutral-500)">not to scale · positions from machines.json</span>
+</div>
+<svg viewBox="0 0 780 490" style="width:100%;display:block">
+<path d="M140,36 L756,36 L646,452 L28,452 Z" fill="none" stroke="var(--color-neutral-300)"></path>
+<g stroke="var(--color-neutral-200)">
+<line x1="242" y1="36" x2="131" y2="452"></line><line x1="345" y1="36" x2="234" y2="452"></line><line x1="448" y1="36" x2="337" y2="452"></line><line x1="551" y1="36" x2="440" y2="452"></line><line x1="653" y1="36" x2="543" y2="452"></line>
+<line x1="121" y1="105" x2="738" y2="105"></line><line x1="103" y1="175" x2="719" y2="175"></line><line x1="84" y1="244" x2="701" y2="244"></line><line x1="65" y1="313" x2="683" y2="313"></line><line x1="47" y1="383" x2="664" y2="383"></line>
+</g>
+<g stroke="var(--color-accent)" stroke-width="1">
+<path d="M134,36 H146 M140,30 V42"></path><path d="M750,36 H762 M756,30 V42"></path><path d="M640,452 H652 M646,446 V458"></path><path d="M22,452 H34 M28,446 V458"></path>
+</g>
+<g stroke="var(--color-neutral-400)" stroke-dasharray="5 4">
+<line x1="92" y1="248" x2="694" y2="248"></line><line x1="88" y1="266" x2="690" y2="266"></line>
+</g>
+<text x="390" y="261" text-anchor="middle" style="font:600 9px var(--font-body);letter-spacing:.25em;fill:var(--color-neutral-500)">AISLE</text>
+<text x="180" y="144" text-anchor="end" style="font:600 9px var(--font-body);letter-spacing:.2em;fill:var(--color-neutral-400)">ROW A</text>
+<text x="262" y="304" text-anchor="end" style="font:600 9px var(--font-body);letter-spacing:.2em;fill:var(--color-neutral-400)">ROW B</text>
+
+<g transform="translate(250,140)">
+<use href="#mbox" style="--ft:var(--color-accent-100);--fl:var(--color-accent-200);--fr:var(--color-accent-300);--s:var(--color-accent)"></use>
+<circle cx="0" cy="-42" r="4.5" fill="#5d8a5a"></circle>
+<text x="0" y="76" text-anchor="middle" style="font:600 15px var(--font-heading);fill:var(--color-text)">Auto2</text>
+<text x="0" y="90" text-anchor="middle" style="font:9.5px var(--font-body);fill:var(--color-neutral-600)">Line 1 · ONION POWDER</text>
+</g>
+<g transform="translate(410,140)">
+<use href="#mbox" style="--ft:var(--color-accent-100);--fl:var(--color-accent-200);--fr:var(--color-accent-300);--s:var(--color-accent)"></use>
+<circle cx="0" cy="-42" r="4.5" fill="#5d8a5a"></circle>
+<text x="0" y="76" text-anchor="middle" style="font:600 15px var(--font-heading);fill:var(--color-text)">M1</text>
+<text x="0" y="90" text-anchor="middle" style="font:9.5px var(--font-body);fill:var(--color-neutral-600)">Line 2 · CHILI Pdr</text>
+</g>
+<g transform="translate(570,140)">
+<use href="#mbox" style="--ft:var(--color-accent-100);--fl:var(--color-accent-200);--fr:var(--color-accent-300);--s:#b08334;--sw:1.5"></use>
+<path d="M0,-74 L9,-58 L-9,-58 Z" fill="#b08334"></path>
+<path d="M0,-70 V-64" stroke="#fff" stroke-width="1.6"></path><circle cx="0" cy="-61" r="1" fill="#fff"></circle>
+<circle cx="0" cy="-44" r="4.5" fill="#b08334" style="animation:pulse 2.4s ease-in-out infinite"></circle>
+<text x="0" y="76" text-anchor="middle" style="font:600 15px var(--font-heading);fill:var(--color-text)">M2</text>
+<text x="0" y="90" text-anchor="middle" style="font:9.5px var(--font-body);fill:var(--color-neutral-600)">Line 3 · ORG CINNAMON CC</text>
+</g>
+<g transform="translate(330,300)">
+<use href="#mbox" style="--ft:var(--color-accent-100);--fl:var(--color-accent-200);--fr:var(--color-accent-300);--s:var(--color-accent)"></use>
+<circle cx="0" cy="-42" r="4.5" fill="#5d8a5a"></circle>
+<text x="0" y="76" text-anchor="middle" style="font:600 15px var(--font-heading);fill:var(--color-text)">LineTine</text>
+<text x="0" y="90" text-anchor="middle" style="font:9.5px var(--font-body);fill:var(--color-neutral-600)">Tine Line · PURE SEA SALT</text>
+</g>
+<g transform="translate(490,300)">
+<use href="#mbox" style="--ft:var(--color-accent-100);--fl:var(--color-accent-200);--fr:var(--color-accent-300);--s:var(--color-accent)"></use>
+<circle cx="0" cy="-42" r="4.5" fill="#5d8a5a"></circle>
+<text x="0" y="76" text-anchor="middle" style="font:600 15px var(--font-heading);fill:var(--color-text)">PC-Auto-1</text>
+<text x="0" y="90" text-anchor="middle" style="font:9.5px var(--font-body);fill:var(--color-neutral-600)">Auto Line · Minced Onion</text>
+</g>
+<g transform="translate(140,408)">
+<use href="#wbox" style="--ft:var(--color-neutral-100);--fl:var(--color-neutral-200);--fr:var(--color-neutral-300);--s:var(--color-neutral-400)"></use>
+<text x="0" y="52" text-anchor="middle" style="font:600 8.5px var(--font-body);letter-spacing:.15em;fill:var(--color-neutral-500)">RAW MATERIALS</text>
+</g>
+<g transform="translate(630,404)">
+<use href="#wbox" style="--ft:var(--color-neutral-100);--fl:var(--color-neutral-200);--fr:var(--color-neutral-300);--s:var(--color-neutral-400)"></use>
+<text x="0" y="52" text-anchor="middle" style="font:600 8.5px var(--font-body);letter-spacing:.15em;fill:var(--color-neutral-500)">FINISHED GOODS</text>
+</g>
+</svg>
+<div style="display:flex;align-items:center;gap:14px;border-top:1px solid var(--color-neutral-200);padding-top:8px;font:10.5px var(--font-body);color:var(--color-neutral-600)">
+<span style="display:inline-flex;align-items:center;gap:5px"><span style="width:7px;height:7px;background:#5d8a5a;border-radius:50%"></span>running</span>
+<span style="display:inline-flex;align-items:center;gap:5px"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M5,1 L9.5,9 H0.5 Z" fill="#b08334"></path></svg>needs attention</span>
+<span style="display:inline-flex;align-items:center;gap:5px"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#8a8f96" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path><line x1="3" y1="3" x2="21" y2="21"></line></svg>assistant off</span>
+<span style="display:inline-flex;align-items:center;gap:5px"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="url(#hatch)" stroke="#8a8f96" stroke-dasharray="2 2"></rect></svg>unreachable</span>
+<span style="flex:1"></span>
+<span class="btn btn-ghost" style="font-size:10.5px;padding:3px 10px">⟲ rotate</span>
+<span class="btn btn-ghost" style="font-size:10.5px;padding:3px 10px">reset view</span>
+</div>
+</div>
+
+<div style="flex:1;min-width:0">
+<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">
+<span style="font:600 11px var(--font-heading);letter-spacing:.1em;color:var(--color-neutral-600)">MACHINES — CURRENT SHIFT · B 14:00–22:00</span>
+<span style="font:10px var(--font-body);color:var(--color-neutral-500)">click a card or a block on the map → machine drawer</span>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+<sc-for list="{{ machines }}" as="m" hint-placeholder-count="5">
+<div class="blueprint" style="position:relative;border:1px solid {{m.border}};padding:12px 14px">
+<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+<div style="display:flex;justify-content:space-between;align-items:baseline">
+<span style="font:600 9.5px var(--font-body);letter-spacing:.08em;color:var(--color-neutral-500)">{{m.line}} · {{m.model}}</span>
+<span style="display:inline-flex;align-items:center;gap:5px;font:600 10.5px var(--font-body);color:{{m.stC}}"><span style="width:6px;height:6px;background:{{m.stC}};border-radius:50%;animation:{{m.dotAnim}}"></span>{{m.stTxt}}</span>
+</div>
+<div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 8px">
+<span style="font:600 20px var(--font-heading)">{{m.name}}</span>
+<span class="tag tag-outline" style="font-size:9.5px">{{m.recipe}}</span>
+</div>
+<div style="display:flex;gap:16px;align-items:flex-end">
+<div style="flex:none">
+<div style="font:600 34px/1 var(--font-heading);color:{{m.passC}}">{{m.pass}}</div>
+<div style="font:9.5px var(--font-body);color:var(--color-neutral-500);margin-top:3px">pass · this shift</div>
+<div style="font:600 10px var(--font-body);color:{{m.deltaC}};margin-top:1px">{{m.delta}}</div>
+</div>
+<div style="flex:1;min-width:0">
+<div style="font:600 15px var(--font-heading)">{{m.out}} <span style="font:11px var(--font-body);color:var(--color-neutral-500)">/ {{m.target}} products</span></div>
+<div style="height:5px;background:var(--color-neutral-200);margin:5px 0 3px"><div style="height:5px;background:var(--color-accent);width:{{m.pctW}}"></div></div>
+<div style="font:9.5px var(--font-body);color:var(--color-neutral-500)">{{m.pctTxt}} of shift target</div>
+</div>
+</div>
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;border-top:1px solid var(--color-neutral-200);margin-top:10px;padding-top:8px">
+<div><div style="font:9px var(--font-body);letter-spacing:.08em;color:var(--color-neutral-400)">CPU</div><div style="font:600 11.5px var(--font-body);color:{{m.cpuC}}">{{m.cpu}}</div></div>
+<div><div style="font:9px var(--font-body);letter-spacing:.08em;color:var(--color-neutral-400)">GPU</div><div style="font:600 11.5px var(--font-body);color:{{m.gpuC}}">{{m.gpu}}</div></div>
+<div><div style="font:9px var(--font-body);letter-spacing:.08em;color:var(--color-neutral-400)">RAM</div><div style="font:600 11.5px var(--font-body);color:{{m.ramC}}">{{m.ram}} <span style="font-weight:400;color:var(--color-neutral-500)">{{m.ramAbs}}</span></div></div>
+<div><div style="font:9px var(--font-body);letter-spacing:.08em;color:var(--color-neutral-400)">DISK</div><div style="font:600 11.5px var(--font-body);color:{{m.diskC}}">{{m.disk}}</div></div>
+</div>
+</div>
+</sc-for>
+<div style="border:1px dashed var(--color-neutral-400);padding:12px 14px;display:flex;flex-direction:column;justify-content:center;gap:4px">
+<div style="font:600 9.5px var(--font-body);letter-spacing:.08em;color:var(--color-neutral-500)">FLEET · LAST 7 DAYS</div>
+<div style="font:600 22px var(--font-heading)">117,000 products · 95.5% pass</div>
+<div style="font:10.5px var(--font-body);color:#5d8a5a;font-weight:600">✓ All 5 machines reporting</div>
+<div style="font:10px/1.45 var(--font-body);color:var(--color-neutral-500);font-style:italic">Lines run different recipes — pass rates are not comparable across lines.</div>
+</div>
+</div>
+<div style="display:flex;justify-content:space-between;margin-top:10px;font:10px var(--font-body);color:var(--color-neutral-500)">
+<span>Coverage: all 5 machines · hardware refreshed 30 s ago · production 4 min ago</span>
+<span>deterministic endpoints — no LLM on this screen</span>
+</div>
+</div>
+</div>
+
+<div style="position:absolute;right:18px;bottom:56px;display:flex;align-items:center;gap:10px;background:#fff;border:1px solid var(--color-accent);box-shadow:var(--shadow-md);padding:10px 14px">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>
+<div><div style="font:600 12px var(--font-heading);letter-spacing:.04em">FLEET ASSISTANT</div>
+<div style="font:9.5px var(--font-body);color:var(--color-neutral-500)">always on screen · opens with machine context attached</div></div>
+</div>
+
+<div style="display:flex;gap:2px;padding:0 20px;border-top:1px solid var(--color-neutral-300)">
+<span style="padding:9px 16px;font:600 11.5px var(--font-body);color:var(--color-accent-700);border-bottom:2px solid var(--color-accent)">Overview</span>
+<span style="padding:9px 16px;font:600 11.5px var(--font-body);color:var(--color-neutral-500)">Staff</span>
+<span style="padding:9px 16px;font:600 11.5px var(--font-body);color:var(--color-neutral-500)">Activity log</span>
+</div>
+<div style="border-top:1px dashed var(--color-neutral-400);padding:8px 20px;font:10px var(--font-body);letter-spacing:.06em;color:var(--color-neutral-400);text-align:center">▼ BELOW THE FOLD — FACTORY-WIDE STATISTICS · FAILURE INVESTIGATION (separate mock)</div>
+</div>
+
+<sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+<div style="flex:none;width:250px;border:1px dashed var(--color-neutral-400);padding:12px 14px;font:11px/1.55 var(--font-body);color:var(--color-neutral-700)">
+<div style="font:600 10px var(--font-heading);letter-spacing:.1em;color:var(--color-text);margin-bottom:6px">SPEC NOTES — DEV</div>
+· Map + card grid share the first fold, no scroll — the start-of-shift question is "which line needs me" (02)<br>
+· Series &amp; status colours keyed to machine <b>name</b> hash, never list order (04)<br>
+· Every status reads by <b>shape and colour</b> — colourblind users, glare near the line (02)<br>
+· Refresh: hardware 30 s · production 5 min; a failed poll keeps last values + timestamp (04)<br>
+· No pass-rate ranking across lines; comparisons use failure fingerprints (README)<br>
+· This screen is 100% deterministic endpoints — agent only in chat (README rule 1)
+</div>
+</sc-if>
+</div>
+</div>
+
+<div class="dv-opt" id="1b" data-screen-label="1b MachineCard state matrix">
+<div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>MachineCard — full state matrix · 8 states</div>
+<div style="display:flex;gap:16px;align-items:flex-start">
+<div class="dv-card" style="width:1060px;padding:20px;display:flex;flex-wrap:wrap;gap:18px;background:var(--color-bg)">
+
+<div style="width:315px">
+<div style="display:flex;gap:8px;align-items:baseline;margin-bottom:6px"><span class="tag tag-neutral" style="font-size:9.5px">ok</span><b style="font:600 12px var(--font-body)">Running</b>
+<sc-if value="{{ showVi }}" hint-placeholder-val="{{ true }}"><span style="font:10.5px var(--font-body);color:var(--color-neutral-500)">VI: "đang chạy"</span></sc-if></div>
+<div class="blueprint" style="position:relative;border:1px solid var(--color-neutral-300);padding:12px 14px;background:#fff">
+<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:600 9.5px var(--font-body);letter-spacing:.08em;color:var(--color-neutral-500)">LINE 1 · JETSON ORIN NANO 8GB</span><span style="display:inline-flex;align-items:center;gap:5px;font:600 10.5px var(--font-body);color:#5d8a5a"><span style="width:6px;height:6px;background:#5d8a5a;border-radius:50%"></span>Running</span></div>
+<div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 6px"><span style="font:600 20px var(--font-heading)">Auto2</span><span class="tag tag-outline" style="font-size:9.5px">ONION POWDER</span></div>
+<div style="display:flex;gap:14px;align-items:flex-end"><div><div style="font:600 30px/1 var(--font-heading)">98.4%</div><div style="font:9.5px var(--font-body);color:var(--color-neutral-500);margin-top:2px">pass · this shift</div></div>
+<div style="flex:1"><div style="font:600 14px var(--font-heading)">1,632 <span style="font:10.5px var(--font-body);color:var(--color-neutral-500)">/ 1,600 products</span></div><div style="height:5px;background:var(--color-neutral-200);margin:4px 0"><div style="height:5px;background:var(--color-accent);width:100%"></div></div><div style="font:9.5px var(--font-body);color:var(--color-neutral-500)">102% of shift target</div></div></div>
+<div style="font:10.5px var(--font-body);color:var(--color-neutral-600);border-top:1px solid var(--color-neutral-200);margin-top:8px;padding-top:6px">CPU 48°C · GPU 51°C · RAM 62% <span style="color:var(--color-neutral-400)">5.0/8 GB</span> · Disk 41%</div>
+</div>
+<div style="font:10px/1.4 var(--font-body);color:var(--color-neutral-500);margin-top:5px">Baseline. Target overshoot allowed — bar caps at 100%.</div>
+</div>
+
+<div style="width:315px">
+<div style="display:flex;gap:8px;align-items:baseline;margin-bottom:6px"><span class="tag" style="font-size:9.5px;background:#b0833422;color:#7a5a20">warn</span><b style="font:600 12px var(--font-body)">Needs attention</b>
+<sc-if value="{{ showVi }}" hint-placeholder-val="{{ true }}"><span style="font:10.5px var(--font-body);color:var(--color-neutral-500)">VI: "cần chú ý"</span></sc-if></div>
+<div class="blueprint" style="position:relative;border:1.5px solid #b08334;padding:12px 14px;background:#fff">
+<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:600 9.5px var(--font-body);letter-spacing:.08em;color:var(--color-neutral-500)">LINE 3 · JETSON ORIN NANO 8GB</span><span style="display:inline-flex;align-items:center;gap:5px;font:600 10.5px var(--font-body);color:#b08334"><span style="width:6px;height:6px;background:#b08334;border-radius:50%;animation:pulse 2.4s ease-in-out infinite"></span>Needs attention</span></div>
+<div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 6px"><span style="font:600 20px var(--font-heading)">M2</span><span class="tag tag-outline" style="font-size:9.5px">ORG CINNAMON CC</span></div>
+<div style="display:flex;gap:14px;align-items:flex-end"><div><div style="font:600 30px/1 var(--font-heading);color:#b08334">69.4%</div><div style="font:9.5px var(--font-body);color:var(--color-neutral-500);margin-top:2px">pass · this shift</div><div style="font:600 10px var(--font-body);color:#b0524a">▼ 8.2 pts vs prev shift</div></div>
+<div style="flex:1"><div style="font:600 14px var(--font-heading)">1,284 <span style="font:10.5px var(--font-body);color:var(--color-neutral-500)">/ 1,800 products</span></div><div style="height:5px;background:var(--color-neutral-200);margin:4px 0"><div style="height:5px;background:var(--color-accent);width:71%"></div></div><div style="font:9.5px var(--font-body);color:var(--color-neutral-500)">71% of shift target</div></div></div>
+<div style="font:10.5px var(--font-body);color:var(--color-neutral-600);border-top:1px solid var(--color-neutral-200);margin-top:8px;padding-top:6px">CPU 56°C · GPU 56°C · <b style="color:#7a5a20">RAM 87% <span style="font-weight:400">7.0/8 GB</span></b> · Disk 74%</div>
+</div>
+<div style="font:10px/1.4 var(--font-body);color:var(--color-neutral-500);margin-top:5px">Delta in <b>points</b>, never "%". RAM crosses the 80% watch threshold → value tinted, card border warns.</div>
+</div>
+
+<div style="width:315px">
+<div style="display:flex;gap:8px;align-items:baseline;margin-bottom:6px"><span class="tag tag-neutral" style="font-size:9.5px">agent_down</span><b style="font:600 12px var(--font-body)">Assistant off · machine running</b>
+<sc-if value="{{ showVi }}" hint-placeholder-val="{{ true }}"><span style="font:10.5px var(--font-body);color:var(--color-neutral-500)">VI: "trợ lý tắt · máy vẫn chạy"</span></sc-if></div>
+<div class="blueprint" style="position:relative;border:1px solid var(--color-neutral-300);padding:12px 14px;background:#fff">
+<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+<div style="display:flex;align-items:center;gap:8px;border:1px solid var(--color-neutral-300);background:var(--color-neutral-100);padding:6px 9px;margin-bottom:9px">
+<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#8a8f96" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path><line x1="3" y1="3" x2="21" y2="21"></line></svg>
+<span style="font:10.5px/1.35 var(--font-body);color:var(--color-neutral-600)">Assistant unavailable since 14:22 — <b>production numbers unaffected</b> (deterministic path)</span></div>
+<div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 6px"><span style="font:600 20px var(--font-heading)">LineTine</span><span class="tag tag-outline" style="font-size:9.5px">PURE SEA SALT</span></div>
+<div style="display:flex;gap:14px;align-items:flex-end"><div><div style="font:600 30px/1 var(--font-heading)">81.5%</div><div style="font:9.5px var(--font-body);color:var(--color-neutral-500);margin-top:2px">pass · this shift</div></div>
+<div style="flex:1"><div style="font:600 14px var(--font-heading)">1,506 <span style="font:10.5px var(--font-body);color:var(--color-neutral-500)">/ 1,650 products</span></div><div style="height:5px;background:var(--color-neutral-200);margin:4px 0"><div style="height:5px;background:var(--color-accent);width:91%"></div></div><div style="font:9.5px var(--font-body);color:var(--color-neutral-500)">91% of shift target</div></div></div>
+<div style="font:10.5px var(--font-body);color:var(--color-neutral-600);border-top:1px solid var(--color-neutral-200);margin-top:8px;padding-top:6px">services: camera <b style="color:#5d8a5a">✓</b> · backend <b style="color:#5d8a5a">✓</b> · agent <b style="color:#b0524a">✕</b></div>
+</div>
+<div style="font:10px/1.4 var(--font-body);color:var(--color-neutral-500);margin-top:5px">Never merged into "machine down" — techs would run to the wrong place (04).</div>
+</div>
+
+<div style="width:315px">
+<div style="display:flex;gap:8px;align-items:baseline;margin-bottom:6px"><span class="tag tag-neutral" style="font-size:9.5px">unreachable</span><b style="font:600 12px var(--font-body)">Unreachable since 14:22</b>
+<sc-if value="{{ showVi }}" hint-placeholder-val="{{ true }}"><span style="font:10.5px var(--font-body);color:var(--color-neutral-500)">VI: "không với tới được từ 14:22"</span></sc-if></div>
+<div class="blueprint" style="position:relative;border:1px dashed var(--color-neutral-500);padding:12px 14px;background:#fff">
+<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:600 9.5px var(--font-body);letter-spacing:.08em;color:var(--color-neutral-500)">LINE 2 · JETSON ORIN NANO 8GB</span><span style="font:600 10.5px var(--font-body);color:#8a8f96">◌ unreachable</span></div>
+<div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 6px"><span style="font:600 20px var(--font-heading);color:var(--color-neutral-500)">M1</span><span class="tag tag-neutral" style="font-size:9.5px">CHILI Pdr</span></div>
+<div style="opacity:.5">
+<div style="display:flex;gap:14px;align-items:flex-end"><div><div style="font:600 30px/1 var(--font-heading)">77.8%</div><div style="font:9.5px var(--font-body);color:var(--color-neutral-500);margin-top:2px">pass · as of 14:22</div></div>
+<div style="flex:1"><div style="font:600 14px var(--font-heading)">1,410 <span style="font:10.5px var(--font-body);color:var(--color-neutral-500)">/ 1,700 products</span></div><div style="height:5px;background:var(--color-neutral-200);margin:4px 0"><div style="height:5px;background:var(--color-neutral-400);width:83%"></div></div><div style="font:9.5px var(--font-body);color:var(--color-neutral-500)">83% of shift target</div></div></div>
+</div>
+<div style="font:10.5px var(--font-body);color:var(--color-neutral-600);border-top:1px solid var(--color-neutral-200);margin-top:8px;padding-top:6px">Last contact <b>14:22</b> · retrying every 30 s</div>
+</div>
+<div style="font:10px/1.4 var(--font-body);color:var(--color-neutral-500);margin-top:5px">Last-known values kept and dimmed, timestamped — never blanked (04).</div>
+</div>
+
+<div style="width:315px">
+<div style="display:flex;gap:8px;align-items:baseline;margin-bottom:6px"><span class="tag tag-neutral" style="font-size:9.5px">offline</span><b style="font:600 12px var(--font-body)">Off network</b>
+<sc-if value="{{ showVi }}" hint-placeholder-val="{{ true }}"><span style="font:10.5px var(--font-body);color:var(--color-neutral-500)">VI: "ngoài mạng"</span></sc-if></div>
+<div class="blueprint" style="position:relative;border:1px dashed var(--color-neutral-400);padding:12px 14px;background:var(--color-neutral-100)">
+<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:600 9.5px var(--font-body);letter-spacing:.08em;color:var(--color-neutral-400)">AUTO LINE · X86 INDUSTRIAL PC</span><span style="font:600 10.5px var(--font-body);color:#8a8f96">⊘ off network</span></div>
+<div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 6px"><span style="font:600 20px var(--font-heading);color:var(--color-neutral-400)">PC-Auto-1</span></div>
+<div style="display:flex;gap:14px;align-items:flex-end"><div><div style="font:600 30px/1 var(--font-heading);color:var(--color-neutral-400)">—</div><div style="font:9.5px var(--font-body);color:var(--color-neutral-400);margin-top:2px">pass</div></div>
+<div style="flex:1"><div style="font:600 14px var(--font-heading);color:var(--color-neutral-400)">— <span style="font:10.5px var(--font-body)">products</span></div><div style="height:5px;background:var(--color-neutral-200);margin:4px 0"></div><div style="font:9.5px var(--font-body);color:var(--color-neutral-400)">no data — not on tailnet since 06:14</div></div></div>
+<div style="font:10.5px var(--font-body);color:var(--color-neutral-500);border-top:1px solid var(--color-neutral-200);margin-top:8px;padding-top:6px">Excluded from totals · named in every coverage line</div>
+</div>
+<div style="font:10px/1.4 var(--font-body);color:var(--color-neutral-500);margin-top:5px">Missing values render "—", never 0 — "0°C" reads as a very cool machine (04).</div>
+</div>
+
+<div style="width:315px">
+<div style="display:flex;gap:8px;align-items:baseline;margin-bottom:6px"><span class="tag tag-neutral" style="font-size:9.5px">loading</span><b style="font:600 12px var(--font-body)">Skeleton</b></div>
+<div class="blueprint" style="position:relative;border:1px solid var(--color-neutral-300);padding:12px 14px;background:#fff">
+<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+<div style="width:150px;height:9px;background:var(--color-neutral-200);animation:skel 1.6s infinite"></div>
+<div style="width:90px;height:20px;background:var(--color-neutral-200);margin:10px 0;animation:skel 1.6s .2s infinite"></div>
+<div style="display:flex;gap:14px"><div style="width:96px;height:34px;background:var(--color-neutral-200);animation:skel 1.6s .3s infinite"></div>
+<div style="flex:1"><div style="height:12px;background:var(--color-neutral-200);animation:skel 1.6s .4s infinite"></div><div style="height:5px;background:var(--color-neutral-200);margin-top:8px;animation:skel 1.6s .5s infinite"></div></div></div>
+<div style="height:10px;background:var(--color-neutral-200);margin-top:14px;animation:skel 1.6s .6s infinite"></div>
+</div>
+<div style="font:10px/1.4 var(--font-body);color:var(--color-neutral-500);margin-top:5px">Skeleton holds the exact card height — the grid never jumps (04).</div>
+</div>
+
+<div style="width:315px">
+<div style="display:flex;gap:8px;align-items:baseline;margin-bottom:6px"><span class="tag tag-neutral" style="font-size:9.5px">partial</span><b style="font:600 12px var(--font-body)">Partial data</b>
+<sc-if value="{{ showVi }}" hint-placeholder-val="{{ true }}"><span style="font:10.5px var(--font-body);color:var(--color-neutral-500)">VI: "thiếu một phần"</span></sc-if></div>
+<div class="blueprint" style="position:relative;border:1px solid var(--color-neutral-300);padding:12px 14px;background:#fff">
+<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:600 9.5px var(--font-body);letter-spacing:.08em;color:var(--color-neutral-500)">LINE 2 · JETSON ORIN NANO 8GB</span><span style="display:inline-flex;align-items:center;gap:5px;font:600 10.5px var(--font-body);color:#5d8a5a"><span style="width:6px;height:6px;background:#5d8a5a;border-radius:50%"></span>Running</span></div>
+<div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 8px"><span style="font:600 20px var(--font-heading)">M1</span><span class="tag tag-outline" style="font-size:9.5px">CHILI Pdr</span></div>
+<div style="border:1px dashed var(--color-neutral-400);padding:8px 10px;font:10.5px/1.45 var(--font-body);color:var(--color-neutral-600)">Production rollup failed on this refresh — showing <b>16:35</b> values below.</div>
+<div style="display:flex;gap:14px;align-items:flex-end;opacity:.55;margin-top:8px"><div><div style="font:600 26px/1 var(--font-heading)">77.8%</div><div style="font:9.5px var(--font-body);color:var(--color-neutral-500)">pass · as of 16:35</div></div>
+<div style="flex:1"><div style="font:600 13px var(--font-heading)">1,410 <span style="font:10px var(--font-body);color:var(--color-neutral-500)">/ 1,700</span></div><div style="height:5px;background:var(--color-neutral-200);margin-top:4px"><div style="height:5px;background:var(--color-neutral-400);width:83%"></div></div></div></div>
+<div style="font:10.5px var(--font-body);border-top:1px solid var(--color-neutral-200);margin-top:8px;padding-top:6px;color:var(--color-neutral-600)">hardware <b style="color:#5d8a5a">live</b>: CPU 52°C · RAM 71% <span style="color:var(--color-neutral-400)">5.7/8 GB</span> · Disk 58%</div>
+</div>
+<div style="font:10px/1.4 var(--font-body);color:var(--color-neutral-500);margin-top:5px">The most-skipped state: hardware fresh, production stale — show what arrived, name what didn't (04).</div>
+</div>
+
+<div style="width:315px">
+<div style="display:flex;gap:8px;align-items:baseline;margin-bottom:6px"><span class="tag tag-neutral" style="font-size:9.5px">not_started</span><b style="font:600 12px var(--font-body)">Shift not started</b>
+<sc-if value="{{ showVi }}" hint-placeholder-val="{{ true }}"><span style="font:10.5px var(--font-body);color:var(--color-neutral-500)">VI: "ca chưa bắt đầu"</span></sc-if></div>
+<div class="blueprint" style="position:relative;border:1px solid var(--color-neutral-300);padding:12px 14px;background:#fff">
+<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:600 9.5px var(--font-body);letter-spacing:.08em;color:var(--color-neutral-500)">LINE 1 · JETSON ORIN NANO 8GB</span><span style="display:inline-flex;align-items:center;gap:5px;font:600 10.5px var(--font-body);color:#5d8a5a"><span style="width:6px;height:6px;background:#5d8a5a;border-radius:50%"></span>Running</span></div>
+<div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 8px"><span style="font:600 20px var(--font-heading)">Auto2</span><span class="tag tag-outline" style="font-size:9.5px">ONION POWDER</span></div>
+<div style="font:600 17px var(--font-heading);margin:6px 0 2px">Shift C — not started</div>
+<div style="font:10.5px var(--font-body);color:var(--color-neutral-600)">begins 22:00 · in 5 h 18 m</div>
+<div style="font:10.5px var(--font-body);color:var(--color-neutral-600);border-top:1px solid var(--color-neutral-200);margin-top:10px;padding-top:6px">Shift B closed: <b>1,912 products · 94.1% pass</b> <span style="color:var(--color-neutral-400)">(for reference)</span></div>
+</div>
+<div style="font:10px/1.4 var(--font-body);color:var(--color-neutral-500);margin-top:5px">Never "0 products, 0% pass" — that reads as a broken machine (03/04). Shift C spans midnight; the window logic must follow it.</div>
+</div>
+
+</div>
+
+<sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+<div style="flex:none;width:250px;border:1px dashed var(--color-neutral-400);padding:12px 14px;font:11px/1.55 var(--font-body);color:var(--color-neutral-700)">
+<div style="font:600 10px var(--font-heading);letter-spacing:.1em;color:var(--color-text);margin-bottom:6px">SPEC NOTES — DEV</div>
+· Four machine statuses are distinct vocabulary: ok / agent_down / unreachable / offline — never merged (04)<br>
+· Every data block defines all 5 states: loading, data, empty-with-reason, partial, error (04)<br>
+· Percentages carry absolutes ("87% · 7.0/8 GB"); deltas say "pts" (04)<br>
+· All strings from one i18n table; EN↔VI re-renders from loaded data, no refetch (04)
+</div>
+</sc-if>
+</div>
+</div>
+
+<div class="dv-opt" id="1c" data-screen-label="1c FactoryMap tile states">
+<div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>FactoryMap tile — 5 display states · shape + colour redundancy</div>
+<div style="display:flex;gap:16px;align-items:flex-start">
+<div class="dv-card" style="padding:20px 24px;display:flex;gap:26px;align-items:flex-start">
+
+<div style="width:150px;text-align:center">
+<svg viewBox="-80 -85 160 165" style="width:100%"><g transform="translate(0,0)">
+<use href="#mbox" style="--ft:var(--color-accent-100);--fl:var(--color-accent-200);--fr:var(--color-accent-300);--s:var(--color-accent)"></use>
+<circle cx="0" cy="-44" r="5" fill="#5d8a5a"></circle></g></svg>
+<div style="font:600 11.5px var(--font-body)">Running</div>
+<div style="font:9.5px/1.4 var(--font-body);color:var(--color-neutral-500)">line colour block, thin border, steady dot</div>
+</div>
+
+<div style="width:150px;text-align:center">
+<svg viewBox="-80 -85 160 165"><g>
+<use href="#mbox" style="--ft:var(--color-accent-100);--fl:var(--color-accent-200);--fr:var(--color-accent-300);--s:#b08334;--sw:1.5"></use>
+<path d="M0,-76 L9,-60 L-9,-60 Z" fill="#b08334"></path><path d="M0,-72 V-66" stroke="#fff" stroke-width="1.6"></path><circle cx="0" cy="-63" r="1" fill="#fff"></circle>
+<circle cx="0" cy="-46" r="5" fill="#b08334" style="animation:pulse 2.4s ease-in-out infinite"></circle></g></svg>
+<div style="font:600 11.5px var(--font-body);color:#7a5a20">Needs attention</div>
+<div style="font:9.5px/1.4 var(--font-body);color:var(--color-neutral-500)">amber border + slow-blink dot + triangle (shape, not just colour)</div>
+</div>
+
+<div style="width:150px;text-align:center">
+<svg viewBox="-80 -85 160 165"><g>
+<use href="#mbox" opacity="0.4" style="--ft:var(--color-accent-100);--fl:var(--color-accent-200);--fr:var(--color-accent-300);--s:var(--color-accent)"></use>
+<g transform="translate(34,-56)"><rect x="-10" y="-8" width="20" height="16" fill="#fff" stroke="#8a8f96" stroke-width="1.3"></rect><path d="M-6,-4 h12 M-6,0 h8" stroke="#8a8f96" stroke-width="1.2"></path><line x1="-12" y1="-11" x2="12" y2="11" stroke="#b0524a" stroke-width="1.6"></line></g></g></svg>
+<div style="font:600 11.5px var(--font-body)">Assistant off</div>
+<div style="font:9.5px/1.4 var(--font-body);color:var(--color-neutral-500)">block dimmed, slashed-chat glyph — <b>machine still producing</b></div>
+</div>
+
+<div style="width:150px;text-align:center">
+<svg viewBox="-80 -85 160 165"><g>
+<use href="#mbox" style="--ft:var(--color-neutral-100);--fl:var(--color-neutral-200);--fr:var(--color-neutral-300);--s:#8a8f96;--sd:4 3"></use>
+<path d="M0,-28 L56,0 L0,28 L-56,0 Z" fill="url(#hatch)" opacity="0.7"></path>
+<text x="0" y="-40" text-anchor="middle" style="font:600 9px var(--font-body);fill:#8a8f96">since 14:22</text></g></svg>
+<div style="font:600 11.5px var(--font-body);color:var(--color-neutral-600)">Unreachable</div>
+<div style="font:9.5px/1.4 var(--font-body);color:var(--color-neutral-500)">grey + hatched top + dashed edge, timestamped</div>
+</div>
+
+<div style="width:150px;text-align:center">
+<svg viewBox="-80 -85 160 165">
+<g stroke="var(--color-accent)" stroke-width="1.2"><path d="M-74,-72 h10 M-69,-77 v10"></path><path d="M64,-72 h10 M69,-77 v10"></path><path d="M-74,66 h10 M-69,61 v10"></path><path d="M64,66 h10 M69,61 v10"></path></g>
+<ellipse cx="0" cy="62" rx="50" ry="9" fill="rgba(29,31,32,.14)"></ellipse>
+<g transform="translate(0,-10)">
+<use href="#mbox" style="--ft:var(--color-accent-100);--fl:var(--color-accent-200);--fr:var(--color-accent-300);--s:var(--color-accent-700);--sw:2"></use>
+<circle cx="0" cy="-44" r="5" fill="#5d8a5a"></circle></g></svg>
+<div style="font:600 11.5px var(--font-body);color:var(--color-accent-700)">Selected</div>
+<div style="font:9.5px/1.4 var(--font-body);color:var(--color-neutral-500)">lifted + shadow + heavy border + registration marks; drawer opens beside, never over the map</div>
+</div>
+
+</div>
+<sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+<div style="flex:none;width:250px;border:1px dashed var(--color-neutral-400);padding:12px 14px;font:11px/1.55 var(--font-body);color:var(--color-neutral-700)">
+<div style="font:600 10px var(--font-heading);letter-spacing:.1em;color:var(--color-text);margin-bottom:6px">SPEC NOTES — DEV</div>
+· Tier 1: isometric SVG ~15 KB — no WebGL on old tablets; interface FactoryMap({machines, selected, onSelect}) so tier 2 Three.js is a drop-in later (02)<br>
+· Positions from config/machines.json (x, y, rotation, zone), keyed by Tailscale node id — 4 of 5 hostnames are identical (06)<br>
+· Hover → tooltip: line, recipe, shift pass rate (02)
+</div>
+</sc-if>
+</div>
+</div>
+
+<div class="dv-opt" id="1d" data-screen-label="1d Header and coverage states">
+<div class="dv-olabel"><a class="dv-oid" href="#1d">1d</a>Header pills &amp; coverage line — aggregate states</div>
+<div style="display:flex;gap:16px;align-items:flex-start">
+<div class="dv-card" style="width:720px;padding:20px;display:flex;flex-direction:column;gap:12px">
+
+<div style="display:flex;align-items:center;gap:12px;border:1px solid var(--color-neutral-300);padding:10px 14px">
+<span style="display:inline-flex;align-items:center;gap:6px;font:600 11px var(--font-body);color:#5d8a5a"><span style="width:7px;height:7px;background:#5d8a5a;border-radius:50%"></span>5 running</span>
+<span style="font:10.5px var(--font-body);color:var(--color-neutral-500)">All 5 machines reporting · updated 16:42:05</span>
+<span style="margin-left:auto;font:9.5px var(--font-body);color:var(--color-neutral-400)">nominal</span>
+</div>
+
+<div style="display:flex;align-items:center;gap:12px;border:1px solid var(--color-neutral-300);padding:10px 14px">
+<span style="display:inline-flex;align-items:center;gap:6px;font:600 11px var(--font-body);color:#5d8a5a"><span style="width:7px;height:7px;background:#5d8a5a;border-radius:50%"></span>4 running</span>
+<span style="display:inline-flex;align-items:center;gap:6px;font:600 11px var(--font-body);color:#b08334"><span style="width:7px;height:7px;background:#b08334;border-radius:50%;animation:pulse 2.4s ease-in-out infinite"></span>1 needs attention</span>
+<span style="font:10.5px var(--font-body);color:var(--color-neutral-500)">M2 — pass down 8.2 pts, RAM 87%</span>
+<span style="margin-left:auto;font:9.5px var(--font-body);color:var(--color-neutral-400)">attention</span>
+</div>
+
+<div style="border:1px solid #b08334;background:#b0833414;padding:10px 14px">
+<div style="display:flex;align-items:center;gap:8px;font:600 11.5px var(--font-body);color:#7a5a20">
+<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#b08334" stroke-width="1.5"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"></path><path d="M12 9v4M12 17h.01"></path></svg>
+Totals cover 4 of 5 machines — missing LineTine (agent down since 14:22)</div>
+<div style="font:10px var(--font-body);color:var(--color-neutral-600);margin-top:3px">Every aggregate carries its sample scope. A "whole factory" table quietly missing a line looks completely normal (README rule 2).</div>
+</div>
+
+<div style="border:1px dashed var(--color-neutral-500);padding:10px 14px">
+<div style="display:flex;align-items:center;gap:8px;font:600 11.5px var(--font-body);color:var(--color-neutral-700)">
+<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#8a8f96" stroke-width="1.5"><path d="M21 12a9 9 0 1 1-2.6-6.3"></path><path d="M21 3v6h-6"></path></svg>
+Refresh failed at 16:42 — showing 16:38 data · retrying every 30 s</div>
+<div style="font:10px var(--font-body);color:var(--color-neutral-600);margin-top:3px">A failed poll never blanks the previous values — keep old numbers with their timestamp (04).</div>
+</div>
+
+</div>
+<sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+<div style="flex:none;width:250px;border:1px dashed var(--color-neutral-400);padding:12px 14px;font:11px/1.55 var(--font-body);color:var(--color-neutral-700)">
+<div style="font:600 10px var(--font-heading);letter-spacing:.1em;color:var(--color-text);margin-bottom:6px">SPEC NOTES — DEV</div>
+· CoverageNote is a mandatory component under every aggregate block (04)<br>
+· Missing machines are always <b>named</b>, with the reason and time<br>
+· Pill counts come from /api/fleet/status (1.3 s, no LLM), 30 s cadence (06)
+</div>
+</sc-if>
+</div>
+</div>
+
+</div>
+<p class="dv-next">Try next: "mock the machine drawer for M2" · "home in the degraded state — LineTine agent down" · "Line Station next" · toggle the dev notes off in Tweaks for a clean demo view.</p>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;annotations&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Presentation&quot;,&quot;description&quot;:&quot;Show dev spec-note cards next to each mock&quot;},&quot;viCopy&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Presentation&quot;,&quot;description&quot;:&quot;Show Vietnamese strings in the state matrices&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const ok = '#5d8a5a', warn = '#b08334', bad = '#b0524a';
+    const fg = 'var(--color-text)', faint = 'var(--color-neutral-400)';
+    const nb = 'var(--color-neutral-300)';
+    const none = 'none', pulse = 'pulse 2.4s ease-in-out infinite';
+    const machines = [
+      {name:'Auto2', line:'LINE 1', model:'JETSON ORIN NANO 8GB', recipe:'ONION POWDER', stTxt:'Running', stC:ok, dotAnim:none, border:nb,
+       pass:'98.4%', passC:fg, delta:'▲ 0.6 pts vs prev shift', deltaC:ok, out:'1,632', target:'1,600', pctW:'100%', pctTxt:'102%',
+       cpu:'48°C', cpuC:fg, gpu:'51°C', gpuC:fg, ram:'62%', ramAbs:'5.0/8 GB', ramC:fg, disk:'41%', diskC:fg},
+      {name:'M1', line:'LINE 2', model:'JETSON ORIN NANO 8GB', recipe:'CHILI Pdr', stTxt:'Running', stC:ok, dotAnim:none, border:nb,
+       pass:'77.8%', passC:fg, delta:'▼ 1.1 pts vs prev shift', deltaC:'var(--color-neutral-500)', out:'1,410', target:'1,700', pctW:'83%', pctTxt:'83%',
+       cpu:'52°C', cpuC:fg, gpu:'54°C', gpuC:fg, ram:'71%', ramAbs:'5.7/8 GB', ramC:fg, disk:'58%', diskC:fg},
+      {name:'M2', line:'LINE 3', model:'JETSON ORIN NANO 8GB', recipe:'ORG CINNAMON CC', stTxt:'Needs attention', stC:warn, dotAnim:pulse, border:'#b08334',
+       pass:'69.4%', passC:'#7a5a20', delta:'▼ 8.2 pts vs prev shift', deltaC:bad, out:'1,284', target:'1,800', pctW:'71%', pctTxt:'71%',
+       cpu:'56°C', cpuC:fg, gpu:'56°C', gpuC:fg, ram:'87%', ramAbs:'7.0/8 GB', ramC:'#7a5a20', disk:'74%', diskC:fg},
+      {name:'LineTine', line:'TINE LINE', model:'JETSON ORIN NANO 8GB', recipe:'PURE SEA SALT', stTxt:'Running', stC:ok, dotAnim:none, border:nb,
+       pass:'81.5%', passC:fg, delta:'▲ 0.4 pts vs prev shift', deltaC:ok, out:'1,506', target:'1,650', pctW:'91%', pctTxt:'91%',
+       cpu:'61°C', cpuC:fg, gpu:'59°C', gpuC:fg, ram:'76%', ramAbs:'6.1/8 GB', ramC:fg, disk:'66%', diskC:fg},
+      {name:'PC-Auto-1', line:'AUTO LINE', model:'X86 INDUSTRIAL PC', recipe:'Minced Onion', stTxt:'Running', stC:ok, dotAnim:none, border:nb,
+       pass:'96.2%', passC:fg, delta:'▲ 0.2 pts vs prev shift', deltaC:ok, out:'1,388', target:'1,500', pctW:'93%', pctTxt:'93%',
+       cpu:'71°C', cpuC:fg, gpu:'—', gpuC:faint, ram:'34%', ramAbs:'10.9/32 GB', ramC:fg, disk:'52%', diskC:fg}
+    ];
+    return {
+      machines,
+      showNotes: this.props.annotations ?? true,
+      showVi: this.props.viCopy ?? true
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from fleet_app.api import chat, fleet
@@ -67,6 +68,25 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])
 app.include_router(fleet.router)
 app.include_router(chat.router)
+# File tĩnh: ES module thuần, không bundler. Fleet service là một tiến trình
+# FastAPI phục vụ vài file; thêm toolchain build chỉ để tách module là cái giá
+# không đáng ở quy mô này.
+class _NoCacheStatic(StaticFiles):
+    """Buộc trình duyệt revalidate mỗi lần tải file tĩnh.
+
+    Chuỗi `?v=` chỉ đánh dấu được file mà HTML trỏ tới trực tiếp; các module do
+    ES import lồng nhau (`app.js` import `factory-map.js`) là mục cache riêng và
+    vẫn được phục vụ bản cũ. Đây là dashboard nội bộ, vài chục KB trên LAN —
+    revalidate mỗi lần rẻ hơn nhiều so với việc nhìn nhầm một bản đã sửa.
+    """
+
+    def file_response(self, *args, **kwargs):  # type: ignore[override]
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return resp
+
+
+app.mount("/static", _NoCacheStatic(directory=str(SERVICE_ROOT / "static")), name="static")
 
 
 @app.get("/health", include_in_schema=False)

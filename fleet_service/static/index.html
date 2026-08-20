@@ -4,569 +4,135 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fleet — OCR Datecode</title>
-<style>
-  /* Sáng là mặc định. Nền tối chỉ bật khi người dùng chọn, nên bảng màu đầy đủ
-     phải nằm ở :root trần — định nghĩa màu chỉ trong khối [data-theme] thì lúc
-     chưa chọn gì trang sẽ không có màu nào cả. */
-  :root{
-    --bg:#f4f6fa; --card:#fff; --card2:#f7f9fc; --line:#e3e7ee;
-    --fg:#141821; --dim:#5f6878; --faint:#98a1b3;
-    --ok:#1a7f37; --warn:#9a6700; --bad:#cf222e; --accent:#0969da;
-    --shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px -14px rgba(16,24,40,.24);
-  }
-  :root[data-theme="dark"]{
-    --bg:#0b0d12; --card:#151822; --card2:#1b1f2b; --line:#252a37;
-    --fg:#e8ebf2; --dim:#8b93a7; --faint:#5a6275;
-    --ok:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#4c8dff;
-    --shadow:0 1px 3px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--fg);
-       font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-       -webkit-font-smoothing:antialiased}
-
-  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
-         padding:20px 26px 16px;border-bottom:1px solid var(--line)}
-  h1{font-size:17px;margin:0;font-weight:660;letter-spacing:-.01em}
-  .tally{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--dim)}
-  .pip{width:7px;height:7px;border-radius:50%}
-  .spacer{flex:1}
-  .stamp{font-size:12px;color:var(--faint);font-variant-numeric:tabular-nums}
-  button{background:var(--card);color:var(--fg);border:1px solid var(--line);
-         border-radius:7px;padding:7px 13px;cursor:pointer;font-size:13px;font-weight:500}
-  button:hover{border-color:var(--accent);color:var(--accent)}
-  button:active{transform:translateY(1px)}
-
-  .lang{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
-  .lang button{border:0;border-radius:0;padding:7px 11px;font-size:12px;font-weight:600;
-               color:var(--faint);background:var(--card)}
-  .lang button[aria-pressed="true"]{background:var(--accent);color:#fff}
-  .lang button:hover{color:var(--accent)}
-  .lang button[aria-pressed="true"]:hover{color:#fff}
-
-  .grid{display:grid;gap:16px;padding:20px 26px;
-        grid-template-columns:repeat(auto-fill,minmax(330px,1fr))}
-
-  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
-        box-shadow:var(--shadow);overflow:hidden;transition:border-color .15s}
-  .card:hover{border-color:var(--faint)}
-  .card.is-warn{border-color:color-mix(in srgb,var(--warn) 45%,var(--line))}
-  .card.is-bad {border-color:color-mix(in srgb,var(--bad)  45%,var(--line))}
-
-  .head{padding:15px 17px 13px;border-bottom:1px solid var(--line)}
-  .title{display:flex;align-items:center;gap:9px}
-  .nm{font-weight:660;font-size:16px;letter-spacing:-.01em}
-  .pill{margin-left:auto;font-size:11px;font-weight:600;padding:3px 9px;
-        border-radius:99px;white-space:nowrap;
-        background:color-mix(in srgb,var(--ok) 15%,transparent);color:var(--ok)}
-  .pill.warn{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn)}
-  .pill.bad {background:color-mix(in srgb,var(--bad) 16%,transparent);color:var(--bad)}
-  .device{font-size:12.5px;color:var(--dim);margin-top:5px}
-  .sub{font-size:11.5px;color:var(--faint);margin-top:3px;
-       display:flex;gap:7px;flex-wrap:wrap;align-items:center}
-  .sub span:not(:last-child)::after{content:"·";margin-left:7px;color:var(--line)}
-
-  .stats{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line)}
-  .stat{background:var(--card);padding:12px 17px}
-  .stat.wide{grid-column:1/-1}
-  .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint)}
-  .val{font-size:19px;font-weight:640;margin-top:2px;font-variant-numeric:tabular-nums;
-       letter-spacing:-.02em}
-  .val small{font-size:12px;font-weight:500;color:var(--dim);margin-left:3px}
-  .val.hot{color:var(--bad)} .val.warm{color:var(--warn)}
-  .note{font-size:11px;color:var(--faint);margin-top:6px;font-variant-numeric:tabular-nums}
-  .track{height:3px;border-radius:2px;background:var(--line);margin-top:7px;overflow:hidden}
-  .track>i{display:block;height:100%;border-radius:2px;background:var(--accent);
-           transition:width .4s ease}
-  .track>i.warn{background:var(--warn)} .track>i.bad{background:var(--bad)}
-
-  .foot{padding:11px 17px;background:var(--card2);font-size:12px;color:var(--dim);
-        display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  .foot .dotgreen{color:var(--ok)} .foot .dotred{color:var(--bad)}
-  .err{padding:10px 17px;background:color-mix(in srgb,var(--bad) 9%,transparent);
-       color:var(--bad);font-size:12px;border-top:1px solid var(--line);word-break:break-word}
-  .na{color:var(--faint);font-weight:500}
-
-  section#prod{padding:0 26px 30px}
-  .sec-h{display:flex;align-items:baseline;gap:12px;margin:6px 0 12px}
-  .sec-h h2{font-size:15px;margin:0;font-weight:640;letter-spacing:-.01em}
-  .sec-h .hint{font-size:12px;color:var(--faint)}
-  .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;
-         box-shadow:var(--shadow);overflow-x:auto;margin-bottom:16px}
-  table{border-collapse:collapse;width:100%;min-width:640px;font-size:13px}
-  th,td{padding:10px 14px;text-align:right;white-space:nowrap;
-        border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
-  th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);
-     font-weight:600;background:var(--card2)}
-  th:first-child,td:first-child{text-align:left}
-  tbody tr:last-child td{border-bottom:0}
-  tbody tr.total td{font-weight:660;background:var(--card2)}
-  td.name{font-weight:600}
-  td.dim{color:var(--dim);font-weight:400}
-  .heat{position:relative}
-  .heat span{position:relative;z-index:1}
-  .heat::before{content:'';position:absolute;inset:4px 6px;border-radius:4px;
-                background:var(--accent);opacity:calc(var(--v) / 130)}
-  /* Khung chat với fleet_orchestrator */
-  #chat{position:fixed;right:20px;bottom:20px;width:min(430px,calc(100vw - 40px));
-        background:var(--card);border:1px solid var(--line);border-radius:14px;
-        box-shadow:0 12px 40px -12px rgba(0,0,0,.35);display:flex;flex-direction:column;
-        max-height:min(560px,calc(100vh - 40px));z-index:50}
-  #chat.min{max-height:44px;overflow:hidden}
-  #chat header{padding:11px 14px;border:0;border-bottom:1px solid var(--line);
-               cursor:pointer;gap:9px;align-items:center}
-  #chat header b{font-size:13px;font-weight:640}
-  #chat header .hintlbl{font-size:11px;color:var(--faint)}
-  #log{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
-  .msg{font-size:13px;line-height:1.5;max-width:92%}
-  .msg.u{align-self:flex-end;background:var(--accent);color:#fff;
-         padding:7px 11px;border-radius:12px 12px 3px 12px}
-  .msg.a{align-self:flex-start;color:var(--fg)}
-  .msg.a table{min-width:0;font-size:11.5px;margin:6px 0}
-  .msg.a th,.msg.a td{padding:4px 7px}
-  .msg .meta{font-size:10.5px;color:var(--faint);margin-top:4px}
-  .msg.err{color:var(--bad)}
-  #ask{display:flex;gap:8px;padding:11px 14px;border-top:1px solid var(--line)}
-  #ask input{flex:1;background:var(--bg);border:1px solid var(--line);border-radius:8px;
-             padding:8px 11px;color:var(--fg);font-size:13px;font-family:inherit}
-  #ask input:focus{outline:0;border-color:var(--accent)}
-  .dl{display:inline-flex;align-items:center;gap:7px;margin-top:8px;
-      background:var(--accent);color:#fff;border-radius:8px;padding:7px 12px;
-      font-size:12.5px;font-weight:600;text-decoration:none}
-  .dl:hover{opacity:.9}
-  .sugg{display:flex;flex-direction:column;gap:5px;margin-top:9px}
-  .sugg button{text-align:left;font-size:11.5px;padding:6px 10px;border-radius:8px;
-               color:var(--dim);background:var(--bg)}
-  .sugg button:hover{color:var(--accent);border-color:var(--accent)}
-  .chips{display:flex;gap:6px;flex-wrap:wrap;padding:0 14px 11px}
-  .chips button{font-size:11px;padding:5px 9px;border-radius:99px;color:var(--dim)}
-  .cov{margin:0 26px 26px;padding:13px 16px;border-radius:10px;
-       background:var(--card);border:1px solid var(--line);font-size:13px;color:var(--dim)}
-  .cov.miss{border-color:color-mix(in srgb,var(--warn) 45%,var(--line))}
-  .cov b{color:var(--warn)}
-</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<header>
-  <h1>Fleet — OCR Datecode</h1>
+
+<header class="topbar">
+  <span class="brand">Fleet — OCR Datecode</span>
+  <span class="chip-note" id="no-login"></span>
   <div class="tally" id="tally"></div>
   <span class="spacer"></span>
-  <span class="stamp" id="stamp"></span>
-  <div class="lang">
-    <button id="btn-light" onclick="setTheme('light')" title="Light">☀</button>
-    <button id="btn-dark"  onclick="setTheme('dark')"  title="Dark">☾</button>
+  <span id="stale"></span>
+  <span class="clock" id="clock"></span>
+  <div class="seg">
+    <button id="btn-light" title="Light">☀</button>
+    <button id="btn-dark" title="Dark">☾</button>
   </div>
-  <div class="lang">
-    <button id="btn-en" onclick="setLang('en')">EN</button>
-    <button id="btn-vi" onclick="setLang('vi')">VI</button>
+  <div class="seg">
+    <button id="btn-en">EN</button>
+    <button id="btn-vi">VI</button>
   </div>
-  <button id="btn-refresh" onclick="load(true)"></button>
+  <button id="btn-refresh"></button>
 </header>
 
-<div class="grid" id="grid"></div>
-<div class="cov" id="cov"></div>
-<section id="prod"></section>
+<div class="wrap">
+
+  <!-- Fold đầu: sơ đồ + lưới thẻ máy. Không cuộn — đây là câu hỏi đầu ca. -->
+  <section class="fold">
+    <div class="panel">
+      <div class="panel-head">
+        <h2 id="floor-title"></h2>
+        <span class="hint" id="floor-hint"></span>
+      </div>
+      <div class="map-body" id="map"></div>
+      <div class="map-legend" id="map-legend"></div>
+    </div>
+
+    <div>
+      <div class="panel-head" style="padding-left:2px;padding-right:2px;border:0">
+        <h2 id="mach-title"></h2>
+        <span class="hint" id="mach-hint"></span>
+      </div>
+      <div class="grid" id="grid"></div>
+    </div>
+  </section>
+
+  <nav class="tabs" role="tablist">
+    <button id="tab-overview" role="tab" aria-selected="true"></button>
+    <button id="tab-staff" role="tab" aria-selected="false"></button>
+    <button id="tab-log" role="tab" aria-selected="false"></button>
+  </nav>
+
+  <!-- Tổng quan -->
+  <section id="pane-overview" role="tabpanel">
+    <div class="panel">
+      <div class="panel-head">
+        <h2 id="stats-title"></h2>
+        <span class="spacer"></span>
+        <div class="seg">
+          <button id="v-chart">▤</button>
+          <button id="v-table">☰</button>
+        </div>
+        <button id="btn-export"></button>
+      </div>
+      <div id="stats-body"></div>
+    </div>
+    <div id="fingerprint"></div>
+    <div class="panel" style="margin-top:14px">
+      <div class="panel-head"><h2 id="fail-title"></h2></div>
+      <div id="fail-body"></div>
+    </div>
+  </section>
+
+  <!-- Nhân sự -->
+  <section id="pane-staff" role="tabpanel" hidden>
+    <div class="panel">
+      <div class="filters">
+        <div class="seg">
+          <button id="g-machine"></button>
+          <button id="g-dept"></button>
+          <button id="g-shift"></button>
+        </div>
+        <input id="f-q" type="search">
+        <select id="f-machine"></select>
+        <select id="f-dept"></select>
+        <select id="f-shift"></select>
+        <select id="f-role"></select>
+      </div>
+      <div id="staff-body"></div>
+    </div>
+  </section>
+
+  <!-- Nhật ký: hai phần trong một tab, KHÔNG trộn một dòng thời gian -->
+  <section id="pane-log" role="tabpanel" hidden>
+    <div class="panel">
+      <div class="panel-head">
+        <h2 id="log-users-title"></h2>
+        <span class="spacer"></span>
+        <label style="font-size:12px;color:var(--dim);display:flex;gap:6px;align-items:center">
+          <input type="checkbox" id="sim-toggle"><span id="sim-label"></span>
+        </label>
+      </div>
+      <div id="log-users"></div>
+    </div>
+    <div class="panel" style="margin-top:14px">
+      <div class="panel-head"><h2 id="log-sys-title"></h2></div>
+      <div id="log-sys"></div>
+    </div>
+  </section>
+</div>
+
+<aside class="drawer" id="drawer"></aside>
 
 <div id="chat" class="min">
-  <header onclick="toggleChat(event)">
-    <b id="chat-title"></b><span class="hintlbl" id="chat-hint"></span>
+  <header>
+    <b id="chat-title"></b>
+    <span class="hint" id="chat-hint" style="font-size:11px;color:var(--faint)"></span>
     <span class="spacer"></span><span id="chat-caret">▲</span>
   </header>
   <div id="log"></div>
+  <div class="ctxchip" id="ctxchip"></div>
   <div class="chips" id="chips"></div>
-  <form id="ask" onsubmit="send(event)">
+  <form id="ask">
     <input id="q" autocomplete="off">
     <button type="submit" id="btn-send"></button>
   </form>
 </div>
 
-<script>
-const $ = s => document.querySelector(s);
-
-/* ---------------------------------------------------------------------------
-   Ngôn ngữ. Mặc định tiếng Anh; lựa chọn lưu trong localStorage nên đổi một lần
-   là nhớ. Mọi chuỗi nằm ở ĐÂY chứ không rải trong hàm dựng thẻ — rải ra thì lần
-   sau thêm ngôn ngữ sẽ sót chỗ, và sót chỗ nào chỉ lộ khi máy rơi đúng vào
-   trạng thái hiếm đó.
---------------------------------------------------------------------------- */
-const I18N = {
-  en: {
-    locale: 'en-GB',
-    refresh: 'Refresh', updated: 'updated', seen: 'seen', never: 'never',
-    healthy: 'healthy', problems: 'need attention',
-    load: 'load', free: 'free', of: 'of', uptime: 'Uptime', disk: 'Disk',
-    hardware: 'Hardware', noMetrics: 'no readings available',
-    cameraOn: 'camera service running', cameraOff: 'camera service stopped',
-    cameraUnknown: 'camera service unknown',
-    d: 'd', h: 'h', m: 'm',
-    production: 'Production', fingerprint: 'Failure fingerprint',
-    fpNote: 'Percent of each machine\'s sampled failures. Comparable across machines because these causes belong to the OCR pipeline, not to the product.',
-    noRank: 'Not ranked by pass rate: the machines run different recipes, so pass rates are not directly comparable.',
-    output: 'Output', perDay: 'per day', passRate: 'Pass rate', recipe: 'Recipe',
-    sample: 'sample', partialSample: 'sampled', fullSample: 'complete',
-    fleetTotal: 'Fleet total', days: 'days',
-    chatTitle: 'Fleet assistant', chatHint: 'ask about all 5 machines',
-    send: 'Send', placeholder: 'e.g. which machine has the worst quality?',
-    thinking: 'thinking…', usedTools: 'tools', fromMachines: 'attachments',
-    chips: ['Output for all 5 machines this week',
-            'Which machine has the worst quality? Why?',
-            'Any machine running hot or low on disk?'],
-    complete: n => `All ${n} machines reporting.`,
-    missing: (k, n) => `<b>No data from ${k}/${n} machines:</b> `,
-    partial: (k, n) => `<b>Partial data from ${k}/${n} machines:</b> `,
-    loadFail: e => `<b>Could not load: ${e}</b>`,
-    state: {
-      ok: 'running', agent_down: 'agent stopped · machine still running',
-      unreachable: 'unreachable', offline: 'off the tailnet',
-    },
-  },
-  vi: {
-    locale: 'vi-VN',
-    refresh: 'Quét lại', updated: 'cập nhật', seen: 'thấy', never: 'chưa từng',
-    healthy: 'tốt', problems: 'có vấn đề',
-    load: 'tải', free: 'trống', of: '/', uptime: 'Chạy liên tục', disk: 'Đĩa',
-    hardware: 'Phần cứng', noMetrics: 'không lấy được số liệu',
-    cameraOn: 'camera service đang chạy', cameraOff: 'camera service đã tắt',
-    cameraUnknown: 'camera service không rõ',
-    d: 'ngày', h: 'giờ', m: 'phút',
-    production: 'Sản xuất', fingerprint: 'Vân tay kiểu lỗi',
-    fpNote: 'Tỉ lệ trên mẫu fail của từng máy. So được giữa các máy vì các nguyên nhân này thuộc pipeline OCR, không thuộc mặt hàng.',
-    noRank: 'Không xếp hạng theo tỉ lệ pass: các máy chạy recipe khác nhau nên không so trực tiếp được.',
-    output: 'Sản lượng', perDay: 'mỗi ngày', passRate: 'Tỉ lệ pass', recipe: 'Recipe',
-    sample: 'mẫu', partialSample: 'lấy mẫu', fullSample: 'phủ hết kỳ',
-    fleetTotal: 'Toàn nhà máy', days: 'ngày',
-    chatTitle: 'Trợ lý đội hình', chatHint: 'hỏi về cả 5 máy',
-    send: 'Gửi', placeholder: 'vd: máy nào chất lượng tệ nhất?',
-    thinking: 'đang nghĩ…', usedTools: 'tool', fromMachines: 'đính kèm',
-    chips: ['Sản lượng cả 5 máy tuần này',
-            'Máy nào chất lượng tệ nhất? Tại sao?',
-            'Máy nào đang nóng hoặc sắp đầy đĩa?'],
-    complete: n => `Đủ cả ${n} máy.`,
-    missing: (k, n) => `<b>Không lấy được ${k}/${n} máy:</b> `,
-    partial: (k, n) => `<b>Thiếu một phần ${k}/${n} máy:</b> `,
-    loadFail: e => `<b>Không tải được: ${e}</b>`,
-    state: {
-      ok: 'đang chạy', agent_down: 'agent tắt · máy vẫn chạy',
-      unreachable: 'không với tới được', offline: 'ngoài tailnet',
-    },
-  },
-};
-
-// Mặc định sáng. Lựa chọn lưu lại nên đổi một lần là nhớ.
-function setTheme(t) {
-  document.documentElement.setAttribute('data-theme', t);
-  localStorage.setItem('fleet_theme', t);
-  $('#btn-light').setAttribute('aria-pressed', t === 'light');
-  $('#btn-dark').setAttribute('aria-pressed', t === 'dark');
-}
-
-let lang = localStorage.getItem('fleet_lang') || 'en';
-let T = I18N[lang];
-let latest = null;
-let latestProd = null;               // dữ liệu lần tải gần nhất, để đổi ngôn ngữ khỏi gọi lại API
-
-function setLang(l) {
-  lang = l; T = I18N[l];
-  localStorage.setItem('fleet_lang', l);
-  document.documentElement.lang = l;
-  $('#btn-en').setAttribute('aria-pressed', l === 'en');
-  $('#btn-vi').setAttribute('aria-pressed', l === 'vi');
-  $('#btn-refresh').textContent = T.refresh;
-  $('#chat-title').textContent = T.chatTitle;
-  $('#chat-hint').textContent = T.chatHint;
-  $('#btn-send').textContent = T.send;
-  $('#q').placeholder = T.placeholder;
-  $('#chips').innerHTML = T.chips
-    .map(c => `<button type="button" onclick="askChip(this)">${c}</button>`).join('');
-  if (latest) render(latest);    // vẽ lại từ dữ liệu cũ, không gọi lại 5 máy
-  if (latestProd) renderProduction(latestProd);
-}
-
-// Không có số thì hiện "—", KHÔNG hiện 0. Nhiệt độ null nghĩa là máy không có
-// cảm biến đọc được; vẽ 0°C ra màn hình đọc như máy đang rất mát, tức sai đúng
-// theo hướng nguy hiểm nhất.
-const NA = '<span class="na">—</span>';
-const has = v => v !== null && v !== undefined;
-const n = (v, d = 0) => has(v) ? Number(v).toFixed(d) : null;
-
-const uptime = s => {
-  if (!s) return NA;
-  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600);
-  return d ? `${d}<small>${T.d}</small> ${h}<small>${T.h}</small>`
-           : `${h}<small>${T.h}</small> ${Math.floor(s % 3600 / 60)}<small>${T.m}</small>`;
-};
-
-const track = (pct, warnAt = 80, badAt = 92) => {
-  if (!has(pct)) return '';
-  const cls = pct >= badAt ? 'bad' : pct >= warnAt ? 'warn' : '';
-  return `<div class="track"><i class="${cls}" style="width:${Math.min(pct, 100)}%"></i></div>`;
-};
-
-// Ngưỡng nhiệt lấy theo giới hạn thực của phần cứng: Jetson Orin bắt đầu hạ
-// xung quanh 85°C, còn CPU x86 ở đây có crit=100. 80/92 là mốc cảnh báo sớm.
-const tempCls = t => !has(t) ? '' : t >= 92 ? 'hot' : t >= 80 ? 'warm' : '';
-
-const TONE = { ok: '', agent_down: 'warn', unreachable: 'bad', offline: 'bad' };
-
-function stat(label, value, extra = '', cls = '') {
-  return `<div class="stat">
-    <div class="lbl">${label}</div>
-    <div class="val ${cls}">${value ?? NA}</div>${extra}</div>`;
-}
-
-function card(m) {
-  const tone = TONE[m.state] ?? 'bad';
-  const text = T.state[m.state] || m.state;
-  const x = m.metrics || {};
-  const seen = m.last_seen
-    ? new Date(m.last_seen * 1000).toLocaleTimeString(T.locale, {hour:'2-digit',minute:'2-digit'})
-    : T.never;
-
-  // Chế độ điện (MAXN_SUPER, 15W…) KHÁC model thiết bị. Model là thuộc tính
-  // tĩnh lấy từ registry; nvp_model của backend là chế độ nguồn.
-  const pmode = m.power_mode_override || x.power_mode;
-
-  const body = m.metrics ? `
-    <div class="stats">
-      ${stat('CPU', has(x.cpu_temp) ? `${n(x.cpu_temp,1)}<small>°C</small>` : null,
-             `<div class="note">${T.load} ${n(x.cpu_percent,0) ?? '—'}%</div>
-              ${track(x.cpu_percent)}`, tempCls(x.cpu_temp))}
-      ${stat('GPU', has(x.gpu_temp) ? `${n(x.gpu_temp,1)}<small>°C</small>` : null,
-             `<div class="note">${T.load} ${n(x.gpu_percent,0) ?? '—'}%</div>
-              ${track(x.gpu_percent)}`, tempCls(x.gpu_temp))}
-      ${stat('RAM', has(x.ram_percent) ? `${n(x.ram_percent,0)}<small>%</small>` : null,
-             `<div class="note">${n(x.ram_used_gb,1) ?? '—'} ${T.of} ${n(x.ram_total_gb,1) ?? '—'} GB</div>
-              ${track(x.ram_percent)}`)}
-      ${stat(T.disk, has(x.disk_percent) ? `${n(x.disk_percent,0)}<small>%</small>` : null,
-             `<div class="note">${n(x.disk_used_gb,0) ?? '—'} ${T.of} ${n(x.disk_total_gb,0) ?? '—'} GB
-                · ${n(x.disk_free_gb,0) ?? '—'} GB ${T.free}</div>
-              ${track(x.disk_percent)}`)}
-      <div class="stat wide">
-        <div class="lbl">${T.uptime}</div>
-        <div class="val">${uptime(x.uptime_seconds)}</div>
-      </div>
-    </div>` : `
-    <div class="stats"><div class="stat wide">
-      <div class="lbl">${T.hardware}</div><div class="val">${NA}</div>
-      <div class="note">${T.noMetrics}</div>
-    </div></div>`;
-
-  const svc = m.service
-    ? `<span class="${m.service.is_running ? 'dotgreen' : 'dotred'}">●</span>
-       ${m.service.is_running ? T.cameraOn : T.cameraOff}`
-    : `<span class="na">● ${T.cameraUnknown}</span>`;
-
-  return `<article class="card ${tone ? 'is-' + tone : ''}">
-    <div class="head">
-      <div class="title">
-        <span class="nm">${m.name}</span>
-        <span class="pill ${tone}">${text}</span>
-      </div>
-      <div class="device">${m.model || m.hostname}</div>
-      <div class="sub">
-        <span>${m.line || '—'}</span><span>${m.ip}</span>
-        ${pmode ? `<span>${pmode}</span>` : ''}<span>L${m.level}</span>
-        <span>${T.seen} ${seen}</span>
-      </div>
-    </div>
-    ${body}
-    <div class="foot">${svc}</div>
-    ${(m.errors || []).map(e => `<div class="err">⚠ ${e}</div>`).join('')}
-  </article>`;
-}
-
-
-/* Bảng sản xuất + ma trận vân tay lỗi.
-   Cố ý KHÔNG xếp hạng theo tỉ lệ pass. Năm máy chạy năm recipe khác nhau (gần
-   như không recipe nào trùng), nên "máy A pass 98%, máy B pass 69%" chỉ nói hai
-   máy đang chạy hai mặt hàng khác độ khó. Thứ so được là vân tay kiểu lỗi. */
-function renderProduction(d) {
-  if (!d) { $('#prod').innerHTML = ''; return; }
-  const fmt = v => v === null || v === undefined
-    ? '<span class="na">—</span>' : Number(v).toLocaleString(T.locale);
-
-  const t = d.fleet_total || {};
-  const rows = (d.machines || []).map(m => {
-    const p = m.production;
-    if (!p) return `<tr><td class="name">${m.machine}</td>
-      <td colspan="4" class="dim">${m.error || T.noMetrics}</td></tr>`;
-    const rec = (m.recipes || [])[0];
-    return `<tr>
-      <td class="name">${m.machine}</td>
-      <td>${fmt(p.total_products)}</td>
-      <td>${fmt(p.per_day)}</td>
-      <td>${p.pass_rate}%</td>
-      <td class="dim">${rec ? rec.name : '—'}</td></tr>`;
-  }).join('');
-
-  let fpTable = '';
-  const fp = d.failure_fingerprint;
-  if (fp && fp.causes && fp.causes.length) {
-    const head = fp.causes.map(c => `<th>${c.replace(/_/g, ' ')}</th>`).join('');
-    const body = Object.entries(fp.by_machine).map(([name, r]) => {
-      const cells = fp.causes.map(c => {
-        const v = r.by_cause[c];
-        return v === null || v === undefined
-          ? '<td class="dim">—</td>'
-          : `<td class="heat" style="--v:${v}"><span>${v.toFixed(1)}%</span></td>`;
-      }).join('');
-      // Mẫu chưa phủ hết kỳ thì đây là tỉ lệ của MẪU. Ghi ra ngay cạnh, không
-      // để trong chú thích cuối trang — người đọc bảng sẽ không kéo xuống đó.
-      const cov = r.sample_covers_all ? T.fullSample : T.partialSample;
-      return `<tr><td class="name">${name}</td>${cells}
-        <td class="dim">${fmt(r.sample_products)} ${T.sample} · ${cov}</td></tr>`;
-    }).join('');
-    fpTable = `
-      <div class="sec-h" style="margin-top:22px">
-        <h2>${T.fingerprint}</h2><span class="hint">${T.fpNote}</span>
-      </div>
-      <div class="panel"><table>
-        <thead><tr><th>${T.output.replace(/.*/, '')}&nbsp;</th>${head}<th>${T.sample}</th></tr></thead>
-        <tbody>${body}</tbody></table></div>`;
-  }
-
-  $('#prod').innerHTML = `
-    <div class="sec-h">
-      <h2>${T.production}</h2>
-      <span class="hint">${d.period_days} ${T.days} · ${T.noRank}</span>
-    </div>
-    <div class="panel"><table>
-      <thead><tr><th>&nbsp;</th><th>${T.output}</th><th>${T.perDay}</th>
-                 <th>${T.passRate}</th><th>${T.recipe}</th></tr></thead>
-      <tbody>${rows}
-        <tr class="total"><td>${T.fleetTotal}</td><td>${fmt(t.products)}</td>
-          <td>—</td><td>${t.pass_rate ?? '—'}%</td><td class="dim">—</td></tr>
-      </tbody></table></div>
-    ${fpTable}`;
-}
-
-function render(d) {
-  $('#grid').innerHTML = d.machines.map(card).join('');
-
-  const ok = d.machines.filter(m => m.state === 'ok').length;
-  const bad = d.machines.length - ok;
-  $('#tally').innerHTML =
-    `<span class="pip" style="background:var(--ok)"></span>${ok} ${T.healthy}` +
-    (bad ? ` <span class="pip" style="background:var(--bad);margin-left:8px"></span>${bad} ${T.problems}` : '');
-  $('#stamp').textContent = `${T.updated} ${new Date().toLocaleTimeString(T.locale)}`;
-
-  // Luôn nói rõ mẫu che được mấy máy, và phân biệt "không lấy được gì" với "lấy
-  // được một phần". Con số tổng mà không kèm phạm vi thì người đọc không có
-  // cách nào biết mình đang nhìn thiếu một máy.
-  const c = d.coverage;
-  const miss = (c.machines_missing  || []).map(m => `${m.machine} (${m.reason})`);
-  const deg  = (c.machines_degraded || []).map(m => `${m.machine} (${m.reason})`);
-  $('#cov').className = c.complete ? 'cov' : 'cov miss';
-  $('#cov').innerHTML = c.complete
-    ? T.complete(c.machines_total)
-    : [miss.length ? T.missing(miss.length, c.machines_total) + miss.join(' · ') : '',
-       deg.length  ? T.partial(deg.length,  c.machines_total) + deg.join(' · ')  : '']
-      .filter(Boolean).join('<br>');
-}
-
-async function loadProduction() {
-  // Poll thưa hơn trạng thái máy: rollup lần lạnh phải mổ vài trăm document fail
-  // trên Jetson (đo được 2,0s), còn trạng thái chỉ đọc số đã có sẵn.
-  try {
-    latestProd = await (await fetch('/api/fleet/production?days=7')).json();
-    renderProduction(latestProd);
-  } catch (e) { /* giữ nguyên bảng cũ, đừng xoá trắng vì một lần hụt */ }
-}
-
-async function load(refresh) {
-  try {
-    if (refresh) await fetch('/api/fleet/refresh', { method: 'POST' });
-    latest = await (await fetch('/api/fleet/status')).json();
-    render(latest);
-  } catch (e) {
-    $('#cov').className = 'cov miss';
-    $('#cov').innerHTML = T.loadFail(e);
-  }
-}
-
-
-/* ---------------------------------------------------------------------------
-   Chat với fleet_orchestrator. Lịch sử giữ ở client và gửi kèm mỗi lượt: trung
-   tâm không giữ session, nên tắt tab là hết — đúng với nguyên tắc fleet chỉ đọc
-   và không phải thành phần thiết yếu.
---------------------------------------------------------------------------- */
-const history = [];
-
-function toggleChat(e) {
-  if (e.target.closest('button')) return;
-  $('#chat').classList.toggle('min');
-  $('#chat-caret').textContent = $('#chat').classList.contains('min') ? '▲' : '▼';
-}
-
-function askChip(b) { $('#q').value = b.textContent; send(); }
-
-// Bảng markdown → HTML. Đủ cho thứ agent trả về; không kéo cả thư viện markdown
-// vào một trang tĩnh chỉ để render bảng và chữ đậm.
-function mini(md) {
-  const esc = t => t.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
-  const lines = esc(md).split('\n');
-  let out = '', tbl = null;
-  const flush = () => { if (tbl) { out += `<table>${tbl}</table>`; tbl = null; } };
-  for (const ln of lines) {
-    if (/^\s*\|/.test(ln)) {
-      if (/^\s*\|[\s|:-]+\|\s*$/.test(ln)) continue;          // hàng phân cách
-      const cells = ln.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
-      const tag = tbl === null ? 'th' : 'td';
-      tbl = (tbl || '') + `<tr>${cells.map(c => `<${tag}>${c}</${tag}>`).join('')}</tr>`;
-    } else { flush(); out += ln ? `<div>${ln}</div>` : '<div style="height:5px"></div>'; }
-  }
-  flush();
-  return out.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`(.+?)`/g, '<code>$1</code>');
-}
-
-function bubble(cls, html) {
-  const d = document.createElement('div');
-  d.className = 'msg ' + cls; d.innerHTML = html;
-  $('#log').appendChild(d); $('#log').scrollTop = $('#log').scrollHeight;
-  return d;
-}
-
-async function send(e) {
-  if (e) e.preventDefault();
-  const q = $('#q').value.trim();
-  if (!q) return;
-  $('#chat').classList.remove('min'); $('#chat-caret').textContent = '▼';
-  $('#q').value = '';
-  bubble('u', q.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])));
-  const wait = bubble('a', `<span class="na">${T.thinking}</span>`);
-  try {
-    const r = await fetch('/api/fleet/chat', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ message: q, history }),
-    });
-    const d = await r.json();
-    if (!r.ok) { wait.className = 'msg a err'; wait.textContent = d.detail || 'lỗi'; return; }
-    // Số nào tool trả về thì đã nằm trong câu trả lời; attachment chỉ để đếm,
-    // vì hiển thị KPI của 5 máy trong một khung chat hẹp thì rối hơn là rõ.
-    // Link tải do SERVER đưa, không phải do mô hình viết. Mô hình chỉ được biết
-    // "file đã sẵn sàng" — cho nó thấy tên file thì nó bịa ra đường dẫn và người
-    // dùng bấm vào một link không tồn tại.
-    const dl = d.file
-      ? `<a class="dl" href="${d.file.url}" download>⬇ ${d.file.name}</a>` : '';
-    // Gợi ý cũng do server dựng từ số liệu, không phải mô hình tự nghĩ.
-    const sg = (d.suggestions || []).length
-      ? `<div class="sugg">${d.suggestions.map(q =>
-          `<button type="button" onclick="askChip(this)">${q}</button>`).join('')}</div>` : '';
-    wait.innerHTML = mini(d.response) + dl +
-      `<div class="meta">${T.usedTools}: ${(d.tool_calls || []).join(', ') || '—'}` +
-      (d.attachments?.length ? ` · ${d.attachments.length} ${T.fromMachines}` : '') + '</div>' + sg;
-    history.push({ role: 'user', content: q }, { role: 'assistant', content: d.response });
-  } catch (err) {
-    wait.className = 'msg a err'; wait.textContent = String(err);
-  }
-}
-
-setTheme(localStorage.getItem('fleet_theme') || 'light');
-setLang(lang);
-load();
-loadProduction();
-setInterval(load, 30000);
-setInterval(loadProduction, 300000);   // 5 phút
-</script>
+<script type="module" src="/static/js/app.js"></script>
 </body>
 </html>
