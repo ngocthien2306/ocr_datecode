@@ -38,10 +38,20 @@ TTL_OPEN = 45.0
 # quét lại cùng một tuần chục lần.
 TTL_CLOSED = 1800.0
 
+# Số đo phần cứng làm mới mỗi 2 giây. TTL 45s là quá dài (câu "máy còn nóng
+# không" sau khi vừa hạ tải sẽ trả lại con số nóng cũ), nhưng KHÔNG cache thì tệ
+# hơn: mô hình gọi get_system_metrics ba lần trong một lượt và đọc ra ba con số
+# RAM khác nhau — đã gặp thật, câu trả lời ghi 85,83% ở đoạn đầu rồi 87,73% ở
+# đoạn sau. 10 giây đủ để một lượt chat dùng chung một lần đo, và vẫn tươi.
+TTL_LIVE = 10.0
+
 # Category được cache. Cố tình liệt kê CÓ chứ không loại trừ: thêm category mới
 # thì mặc định KHÔNG cache, và đó là mặc định an toàn — bỏ sót một tool đọc thì
 # chỉ chậm, còn cache lỡ một tool ghi thì sai kết quả.
-_CACHEABLE_CATEGORIES = {"analytics", "logs", "equipment"}
+_CACHEABLE_CATEGORIES = {"analytics", "logs", "equipment", "system"}
+
+# Tool đo trạng thái tức thời: dùng TTL_LIVE thay vì TTL_OPEN.
+_LIVE_TOOLS = {"get_system_metrics", "get_system_alerts"}
 
 # Tool không bao giờ cache dù thuộc category ở trên.
 _NEVER_CACHE = {
@@ -66,13 +76,18 @@ def _today_str() -> str:
     return datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).strftime("%Y-%m-%d")
 
 
-def _ttl_for(kwargs: Dict[str, Any]) -> float:
+def _ttl_for(kwargs: Dict[str, Any], name: str = "") -> float:
     """
     TTL dựa trên việc tham số có chạm tới hôm nay hay không.
 
     Không có tham số ngày cũng coi là kỳ mở: mọi tool ở đây mặc định là "hôm nay"
     khi bỏ trống ngày, nên bỏ trống chính là trường hợp mở nhất.
+
+    Tool đo trạng thái tức thời không có khái niệm "kỳ" nên xét theo tên trước.
     """
+    if name in _LIVE_TOOLS:
+        return TTL_LIVE
+
     today = _today_str()
     blob = json.dumps(kwargs, ensure_ascii=False, default=str)
     if today in blob:
@@ -163,7 +178,7 @@ def wrap(func: Callable, name: str) -> Callable:
         result = func(**kwargs)
 
         if isinstance(result, dict) and result.get("success") is True:
-            ttl = _ttl_for(kwargs)
+            ttl = _ttl_for(kwargs, name)
             with _lock:
                 globals()["_misses"] = _misses + 1
                 _prune(now)

@@ -246,7 +246,10 @@ ask_camera_service_tool = BaseTool.create_tool(
         name="ask_camera_service",
         description=(
             "Trạng thái tiến trình camera service: đang chạy hay không, WebSocket có "
-            "kết nối, khởi động/dừng service."
+            "kết nối, khởi động/dừng service. "
+            "CŨNG dùng cho mọi câu về PHẦN CỨNG của máy: nhiệt độ CPU/GPU, máy có "
+            "nóng không, còn bao nhiêu RAM, đĩa sắp đầy chưa, máy chạy được bao lâu, "
+            "điện năng tiêu thụ, cảnh báo vượt ngưỡng."
         ),
         category="agent",
     ),
