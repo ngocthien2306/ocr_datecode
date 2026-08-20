@@ -1,7 +1,9 @@
 import asyncio
+import os
 import logging
 import time
 import psutil
+import subprocess
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from collections import deque
@@ -42,7 +44,48 @@ class JetsonMonitoringService:
         self._disk_io_counters_prev = None
         self._disk_io_time_prev = None
 
+        # --- Ghi đè phần HIỂN THỊ (không phải phép đo) -----------------------
+        # Chỉ bật trên máy nào đặt biến môi trường, nên mặc định mọi máy hiện
+        # đúng phần cứng thật của nó.
+        #
+        # CẢNH BÁO cho người đọc sau: đây là lớp trình bày, KHÔNG phải đo đạc.
+        # Khi DISPLAY_RAM_TOTAL_GB được đặt, các số total/used/available trả ra
+        # đã bị quy đổi và không còn là dung lượng thật của máy. Tỉ lệ phần trăm
+        # thì giữ nguyên số đo thật, vì đó mới là thứ nói lên máy có đang chịu
+        # áp lực bộ nhớ hay không. Muốn biết RAM thật thì đọc thẳng psutil.
+        # Đọc qua Settings chứ không qua os.environ: unit systemd không có
+        # EnvironmentFile, nên biến trong backend/.env chỉ tới được qua pydantic.
+        from ..core.config import settings as _settings
+        self._display_model = (_settings.DISPLAY_DEVICE_MODEL or "").strip() or None
+        self._display_ram_gb = _settings.DISPLAY_RAM_TOTAL_GB or None
+        if self._display_model or self._display_ram_gb:
+            logger.warning(
+                "Bật ghi đè hiển thị phần cứng: model=%r ram_total=%rGB "
+                "— số RAM trả ra KHÔNG phải dung lượng thật",
+                self._display_model, self._display_ram_gb,
+            )
+
         logger.info("JetsonMonitoringService initialized")
+
+    def _apply_display_overrides(self, metrics: SystemMetrics) -> SystemMetrics:
+        """
+        Áp lớp hiển thị lên số liệu vừa đo.
+
+        Quy đổi used/available theo tổng mới thay vì giữ nguyên số cũ: để nguyên
+        thì bảng tự mâu thuẫn ngay trên màn hình — "dùng 7,13 GB / tổng 16 GB"
+        mà lại ghi 24,5%, trong khi 7,13/16 là 44,6%. Người xem sẽ thấy sai ngay.
+        """
+        if self._display_model:
+            metrics.nvp_model = self._display_model
+
+        if self._display_ram_gb:
+            total_mb = self._display_ram_gb * 1024.0
+            pct = metrics.ram.usage_percent          # giữ nguyên số đo thật
+            metrics.ram.total_mb = total_mb
+            metrics.ram.used_mb = total_mb * pct / 100.0
+            metrics.ram.available_mb = total_mb - metrics.ram.used_mb
+
+        return metrics
 
     def set_socketio(self, sio):
         """Set SocketIO instance for real-time updates"""
@@ -100,7 +143,8 @@ class JetsonMonitoringService:
                 while self.is_monitoring and jetson.ok():
                     try:
                         if self.config.enabled:
-                            metrics = self._collect_metrics_jtop(jetson)
+                            metrics = self._apply_display_overrides(
+                                self._collect_metrics_jtop(jetson))
                             self.current_metrics = metrics
 
                             alerts = self._check_alerts(metrics)
@@ -134,7 +178,8 @@ class JetsonMonitoringService:
             while self.is_monitoring:
                 try:
                     if self.config.enabled:
-                        metrics = self._collect_metrics_psutil()
+                        metrics = self._apply_display_overrides(
+                            self._collect_metrics_psutil())
                         self.current_metrics = metrics
 
                         alerts = self._check_alerts(metrics)
@@ -253,6 +298,75 @@ class JetsonMonitoringService:
             nvp_model=nvp_model
         )
 
+    # Thứ tự ưu tiên chip cảm biến nhiệt CPU trên x86. `coretemp` (Intel) và
+    # `k10temp` (AMD) đọc thẳng từ đế CPU nên là con số cần quan tâm. `acpitz` là
+    # nhiệt độ vỏ máy — trên máy này nó báo 27,8°C trong khi đế CPU đang 97°C,
+    # nên lấy nhầm nó là báo "mát" đúng lúc máy sắp throttle.
+    _CPU_TEMP_CHIPS = ("coretemp", "k10temp", "cpu_thermal", "x86_pkg_temp", "acpitz")
+    _CPU_TEMP_LABELS = ("package id 0", "tdie", "tctl", "cpu")
+
+    def _x86_cpu_temp(self) -> Optional[float]:
+        """
+        Nhiệt độ CPU trên máy không có jtop.
+
+        Nhánh psutil trước đây trả thẳng None, nên máy x86 hiện "không có nhiệt
+        độ" — mà thật ra psutil đọc được. Hệ quả: PC-Auto-1 chạy ở 97°C với
+        ngưỡng tới hạn 100°C mà không có cảnh báo nào.
+        """
+        try:
+            temps = psutil.sensors_temperatures()
+        except Exception:
+            return None
+        if not temps:
+            return None
+
+        for chip in self._CPU_TEMP_CHIPS:
+            entries = temps.get(chip)
+            if not entries:
+                continue
+            # Trong một chip, ưu tiên cảm biến toàn đế (package/Tdie) rồi mới tới
+            # từng nhân — nhân đơn lẻ dao động mạnh, đế mới phản ánh nhiệt thật.
+            for want in self._CPU_TEMP_LABELS:
+                for e in entries:
+                    if (e.label or "").strip().lower() == want and e.current:
+                        return round(float(e.current), 1)
+            hottest = max((e.current for e in entries if e.current), default=None)
+            if hottest:
+                return round(float(hottest), 1)
+        return None
+
+    def _nvidia_smi(self) -> Optional[Dict[str, Any]]:
+        """
+        GPU rời qua `nvidia-smi`. None nếu máy không có GPU NVIDIA.
+
+        Không dùng thư viện python-nvml để khỏi thêm dependency chỉ cho một máy;
+        nvidia-smi luôn có sẵn cùng driver.
+        """
+        try:
+            out = subprocess.run(
+                ["nvidia-smi",
+                 "--query-gpu=utilization.gpu,temperature.gpu,clocks.current.graphics,power.draw",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=3,
+            )
+            if out.returncode != 0 or not out.stdout.strip():
+                return None
+            # Nhiều GPU thì lấy dòng đầu — máy trong đội hình này chỉ có một.
+            util, temp, clk, power = [p.strip() for p in out.stdout.strip().splitlines()[0].split(",")]
+            def num(v):
+                try:
+                    return float(v)
+                except ValueError:      # nvidia-smi ghi "[N/A]" khi không đo được
+                    return None
+            return {
+                "usage_percent": num(util) or 0,
+                "temperature_celsius": num(temp),
+                "frequency_mhz": num(clk) or 0,
+                "power_w": num(power),
+            }
+        except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
+            return None
+
     def _collect_metrics_psutil(self) -> SystemMetrics:
         """Fallback: Collect metrics using psutil only"""
         # CPU
@@ -264,15 +378,16 @@ class JetsonMonitoringService:
         cpu_metrics = CPUMetrics(
             usage_percent=cpu_percent,
             frequency_mhz=cpu_freq.current if cpu_freq else 0,
-            temperature_celsius=None,
+            temperature_celsius=self._x86_cpu_temp(),
             per_core_usage=per_core_dict
         )
 
         # GPU
+        gpu = self._nvidia_smi()
         gpu_metrics = GPUMetrics(
-            usage_percent=0,
-            frequency_mhz=0,
-            temperature_celsius=None
+            usage_percent=gpu.get("usage_percent", 0) if gpu else 0,
+            frequency_mhz=gpu.get("frequency_mhz", 0) if gpu else 0,
+            temperature_celsius=gpu.get("temperature_celsius") if gpu else None
         )
 
         # RAM
