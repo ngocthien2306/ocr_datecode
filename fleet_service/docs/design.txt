@@ -1,0 +1,4 @@
+mục tiêu tôi build hệ thống này dùng để quản lí tập trung các máy trong nhà máy. Mỗi máy là 1 line sản suất khác nhau 
+vì vậy tôi cần build các agent để quản lí như user management (quản lí user tất cả các máy)
+log agent (quản lý log hệ thống và action của toàn máy)
+historical cũng tương tự (có thể truy vấn tất cả máy để so sánh, theo giờ, theo ca)

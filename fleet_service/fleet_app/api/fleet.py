@@ -12,6 +12,7 @@ không ai phát hiện cho tới khi có người mở hai màn hình cạnh nha
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, Query
@@ -78,3 +79,20 @@ async def ask_machine(key: str, q: str = Query(..., description="Câu hỏi")) -
     if not res.ok:
         raise HTTPException(502, f"{m.name}: {res.error}")
     return {"machine": m.name, "node_id": m.node_id, "answer": res.data}
+
+
+@router.get("/report/{name}", summary="Tải file báo cáo đã sinh")
+async def download_report(name: str):
+    """
+    Trả file báo cáo. Chỉ nhận tên file trần trong thư mục sinh ra — chặn
+    `../` để một tên file bịa ra không đọc được file khác trên máy.
+    """
+    from fastapi.responses import FileResponse
+
+    from fleet_app.reports import builder
+
+    safe = Path(name).name
+    path = builder.OUT_DIR / safe
+    if not path.is_file():
+        raise HTTPException(404, f"Không có báo cáo {safe!r}")
+    return FileResponse(str(path), filename=safe)

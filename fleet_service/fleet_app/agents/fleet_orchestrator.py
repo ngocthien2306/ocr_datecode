@@ -21,6 +21,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
 from fleet_app.core.config import settings
+from fleet_app.core import suggestions
 from fleet_app.tools import fleet_tools
 
 logger = logging.getLogger(__name__)
@@ -90,7 +91,7 @@ async def run(message: str, history: Optional[List[Dict[str, str]]] = None) -> D
     Attachment của edge KHÔNG đi qua mô hình — chúng được `fleet_tools` hút vào
     một hộp riêng rồi ghép thẳng vào phản hồi, kèm nhãn máy.
     """
-    box = fleet_tools.start_collecting()
+    box, results = fleet_tools.start_collecting()
 
     msgs: List[Any] = []
     for h in (history or [])[-8:]:
@@ -109,8 +110,15 @@ async def run(message: str, history: Optional[List[Dict[str, str]]] = None) -> D
         for tc in (getattr(m, "tool_calls", None) or []):
             tools_used.append(tc.get("name"))
 
+    rep = results.get("generate_fleet_report") or {}
     return {
         "response": out.content if isinstance(out.content, str) else str(out.content),
         "tool_calls": tools_used,
         "attachments": box,
+        # Gợi ý dựng bằng CODE từ kết quả tool, không phải do mô hình viết.
+        "suggestions": suggestions.build(tools_used, results),
+        # Đường tải gắn ở đây chứ không đưa cho mô hình: nó từng bịa ra URL kiểu
+        # example.com khi nhìn thấy trường đường dẫn.
+        "file": ({"name": rep["file"], "url": f"/api/fleet/report/{rep['file']}"}
+                 if rep.get("file") else None),
     }

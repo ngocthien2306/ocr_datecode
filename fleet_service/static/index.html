@@ -130,6 +130,14 @@
   #ask input{flex:1;background:var(--bg);border:1px solid var(--line);border-radius:8px;
              padding:8px 11px;color:var(--fg);font-size:13px;font-family:inherit}
   #ask input:focus{outline:0;border-color:var(--accent)}
+  .dl{display:inline-flex;align-items:center;gap:7px;margin-top:8px;
+      background:var(--accent);color:#fff;border-radius:8px;padding:7px 12px;
+      font-size:12.5px;font-weight:600;text-decoration:none}
+  .dl:hover{opacity:.9}
+  .sugg{display:flex;flex-direction:column;gap:5px;margin-top:9px}
+  .sugg button{text-align:left;font-size:11.5px;padding:6px 10px;border-radius:8px;
+               color:var(--dim);background:var(--bg)}
+  .sugg button:hover{color:var(--accent);border-color:var(--accent)}
   .chips{display:flex;gap:6px;flex-wrap:wrap;padding:0 14px 11px}
   .chips button{font-size:11px;padding:5px 9px;border-radius:99px;color:var(--dim)}
   .cov{margin:0 26px 26px;padding:13px 16px;border-radius:10px;
@@ -535,9 +543,18 @@ async function send(e) {
     if (!r.ok) { wait.className = 'msg a err'; wait.textContent = d.detail || 'lỗi'; return; }
     // Số nào tool trả về thì đã nằm trong câu trả lời; attachment chỉ để đếm,
     // vì hiển thị KPI của 5 máy trong một khung chat hẹp thì rối hơn là rõ.
-    wait.innerHTML = mini(d.response) +
+    // Link tải do SERVER đưa, không phải do mô hình viết. Mô hình chỉ được biết
+    // "file đã sẵn sàng" — cho nó thấy tên file thì nó bịa ra đường dẫn và người
+    // dùng bấm vào một link không tồn tại.
+    const dl = d.file
+      ? `<a class="dl" href="${d.file.url}" download>⬇ ${d.file.name}</a>` : '';
+    // Gợi ý cũng do server dựng từ số liệu, không phải mô hình tự nghĩ.
+    const sg = (d.suggestions || []).length
+      ? `<div class="sugg">${d.suggestions.map(q =>
+          `<button type="button" onclick="askChip(this)">${q}</button>`).join('')}</div>` : '';
+    wait.innerHTML = mini(d.response) + dl +
       `<div class="meta">${T.usedTools}: ${(d.tool_calls || []).join(', ') || '—'}` +
-      (d.attachments?.length ? ` · ${d.attachments.length} ${T.fromMachines}` : '') + '</div>';
+      (d.attachments?.length ? ` · ${d.attachments.length} ${T.fromMachines}` : '') + '</div>' + sg;
     history.push({ role: 'user', content: q }, { role: 'assistant', content: d.response });
   } catch (err) {
     wait.className = 'msg a err'; wait.textContent = String(err);

@@ -212,3 +212,104 @@ async def fleet_production(days: int = 7, causes: bool = True) -> Dict[str, Any]
         "failure_fingerprint": matrix,
         "machines": rows,
     }
+
+
+# --- báo cáo so sánh ---------------------------------------------------------
+
+PERIOD_CHOICES = [
+    {"key": "today",      "label": "Hôm nay",          "days": 1,  "granularity": "day"},
+    {"key": "yesterday",  "label": "Hôm qua",          "days": 2,  "granularity": "day"},
+    {"key": "this_week",  "label": "7 ngày qua",       "days": 7,  "granularity": "day"},
+    {"key": "last_30d",   "label": "30 ngày qua",      "days": 30, "granularity": "week"},
+    {"key": "last_90d",   "label": "90 ngày qua",      "days": 90, "granularity": "week"},
+]
+PERIOD_BY_KEY = {p["key"]: p for p in PERIOD_CHOICES}
+
+
+def _norm(t: str) -> str:
+    """Bỏ dấu, gộp khoảng trắng — để 'Tuần này' và 'tuan nay' về cùng một chuỗi."""
+    import re
+    import unicodedata
+    t = unicodedata.normalize("NFD", str(t or "").strip().lower())
+    t = "".join(c for c in t if unicodedata.category(c) != "Mn")
+    return re.sub(r"[\s_-]+", " ", t)
+
+
+def resolve_period(value: str) -> Optional[Dict[str, Any]]:
+    """
+    Nhận kỳ theo khoá, theo nhãn, hoặc theo cách người ta nói tự nhiên.
+
+    Bản đầu chỉ tra đúng khoá nội bộ (`this_week`), nên mô hình gửi "7 ngày" —
+    tức là nhắc lại chính cái nhãn mà tool vừa in ra cho người dùng chọn — thì bị
+    từ chối. Bắt người gọi học khoá nội bộ là đẩy công việc sai chỗ: tool in ra
+    nhãn nào thì phải nhận lại được nhãn đó.
+    """
+    if not value:
+        return None
+    v = _norm(value)
+    for p in PERIOD_CHOICES:
+        if v in (_norm(p["key"]), _norm(p["label"])):
+            return p
+    # "7 ngày", "30 ngay qua", "90d" — bắt lấy con số rồi khớp với kỳ gần nhất.
+    import re
+    m = re.search(r"(\d+)\s*(?:ngay|day|d\b)", v)
+    if m:
+        want = int(m.group(1))
+        return min(PERIOD_CHOICES, key=lambda p: abs(p["days"] - want))
+    if "hom nay" in v or "today" in v:
+        return PERIOD_BY_KEY["today"]
+    if "hom qua" in v or "yesterday" in v:
+        return PERIOD_BY_KEY["yesterday"]
+    if "tuan" in v or "week" in v:
+        return PERIOD_BY_KEY["this_week"]
+    if "thang" in v or "month" in v:
+        return PERIOD_BY_KEY["last_30d"]
+    return None
+
+
+async def report_data(machine_names: List[str], days: int,
+                      period_label: str) -> Dict[str, Any]:
+    """
+    Dữ liệu cho báo cáo so sánh, CHỈ gồm các máy được chọn.
+
+    `coverage` tính lại trên đúng tập máy được chọn, không phải trên cả đội hình:
+    người dùng chọn 2 máy thì "thiếu 3/5" là câu vô nghĩa, còn "đủ 2/2" mới đúng.
+    """
+    full = await fleet_production(days=days, causes=True)
+    wanted = {n.lower() for n in machine_names}
+    rows = [r for r in full["machines"] if r["machine"].lower() in wanted]
+
+    totals = {"products": 0, "pass": 0, "fail": 0}
+    for r in rows:
+        p = r.get("production") or {}
+        totals["products"] += p.get("total_products") or 0
+        totals["pass"] += p.get("pass") or 0
+        totals["fail"] += p.get("fail") or 0
+    totals["pass_rate"] = (round(totals["pass"] * 100.0 / totals["products"], 2)
+                           if totals["products"] else None)
+
+    fp = full.get("failure_fingerprint") or {}
+    if fp:
+        kept = {k: v for k, v in (fp.get("by_machine") or {}).items()
+                if k.lower() in wanted}
+        # Bỏ luôn cột nguyên nhân mà không máy nào được chọn có số — giữ lại thì
+        # báo cáo có một cột toàn dấu gạch ngang, đọc như "đo được nhưng bằng 0".
+        keys = [c for c in fp.get("causes", [])
+                if any((v["by_cause"].get(c) or 0) > 0 for v in kept.values())]
+        fp = {"causes": keys, "cause_labels": fp.get("cause_labels", {}),
+              "by_machine": {k: {**v, "by_cause": {c: v["by_cause"].get(c) for c in keys}}
+                             for k, v in kept.items()}} if kept and keys else {}
+
+    missing = [{"machine": r["machine"], "reason": r["error"]}
+               for r in rows if r.get("error")]
+    return {
+        "period_days": days, "period_label": period_label,
+        "fleet_total": totals,
+        "failure_fingerprint": fp,
+        "machines": rows,
+        "coverage": {"machines_total": len(rows),
+                     "machines_ok": len(rows) - len(missing),
+                     "machines_missing": missing,
+                     "machines_degraded": [],
+                     "complete": not missing},
+    }

@@ -33,6 +33,7 @@ from fleet_app.core.config import settings
 from fleet_app.core.edge_client import client
 from fleet_app.core.fanout import coverage, fan_out
 from fleet_app.core.registry import Machine, registry
+from fleet_app.reports import builder as reports_builder
 
 logger = logging.getLogger(__name__)
 
@@ -43,16 +44,29 @@ logger = logging.getLogger(__name__)
 # thì 20 ô KPI của 5 máy trộn vào nhau và không ô nào biết của ai.
 _collected: ContextVar[Optional[List[Dict[str, Any]]]] = ContextVar("_collected", default=None)
 
+# Kết quả thô của từng tool, để `core/suggestions.py` suy gợi ý TỪ SỐ LIỆU thay vì
+# để mô hình tự viết. Mô hình viết gợi ý mà không nhìn con số nên mời những thứ
+# chẳng dính gì tới thứ vừa hiện trên màn hình.
+_results: ContextVar[Optional[Dict[str, Any]]] = ContextVar("_results", default=None)
+
 # Văn xuôi của edge bị cắt trước khi vào mô hình. Hỏi 5 máy mà mỗi máy trả về một
 # bài dài thì lượt tổng hợp phình context, và phần thừa không thêm thông tin —
 # con số thật đã đi đường attachment rồi.
 _MAX_EDGE_PROSE = 800
 
 
-def start_collecting() -> List[Dict[str, Any]]:
+def start_collecting() -> tuple:
     box: List[Dict[str, Any]] = []
+    res: Dict[str, Any] = {}
     _collected.set(box)
-    return box
+    _results.set(res)
+    return box, res
+
+
+def _remember(name: str, value: Any) -> None:
+    res = _results.get()
+    if res is not None:
+        res[name] = value
 
 
 def _collect(machine: str, payload: Dict[str, Any]) -> None:
@@ -91,7 +105,7 @@ async def list_machines() -> Dict[str, Any]:
 async def fleet_health() -> Dict[str, Any]:
     """Sức khoẻ phần cứng và service của cả đội hình: nhiệt độ, RAM, đĩa, camera service."""
     d = await queries.fleet_status()
-    return {
+    out = {
         "coverage": d["coverage"],
         "machines": [
             {"machine": m["name"], "state": m["state"], "metrics": m.get("metrics"),
@@ -100,6 +114,8 @@ async def fleet_health() -> Dict[str, Any]:
             for m in d["machines"]
         ],
     }
+    _remember("fleet_health", out)
+    return out
 
 
 class MachineArgs(BaseModel):
@@ -118,7 +134,7 @@ class DaysArgs(BaseModel):
 async def fleet_production(days: int = 7, **_ignored) -> Dict[str, Any]:
     """Sản lượng, pass/fail, sản lượng mỗi ngày và recipe đang chạy của từng máy."""
     d = await queries.fleet_production(days=days, causes=False)
-    return {
+    out = {
         "period_days": d["period_days"], "coverage": d["coverage"],
         "fleet_total": d["fleet_total"], "note": d["note"],
         "machines": [{"machine": r["machine"], "line": r["line"],
@@ -126,6 +142,8 @@ async def fleet_production(days: int = 7, **_ignored) -> Dict[str, Any]:
                       "error": r["error"]}
                      for r in d["machines"]],
     }
+    _remember("fleet_production", out)
+    return out
 
 
 async def compare_failure_modes(days: int = 7, **_ignored) -> Dict[str, Any]:
@@ -137,7 +155,7 @@ async def compare_failure_modes(days: int = 7, **_ignored) -> Dict[str, Any]:
     nhau nên tỉ lệ pass phản ánh độ khó mặt hàng chứ không phản ánh máy.
     """
     d = await queries.fleet_production(days=days, causes=True)
-    return {
+    out = {
         "period_days": d["period_days"], "coverage": d["coverage"],
         "fingerprint": d["failure_fingerprint"],
         "how_to_read": (
@@ -156,6 +174,8 @@ async def compare_failure_modes(days: int = 7, **_ignored) -> Dict[str, Any]:
             "Hai máy cùng 'pass rate thấp' có thể hỏng hai thứ hoàn toàn khác nhau."
         ),
     }
+    _remember("compare_failure_modes", out)
+    return out
 
 
 # ---------------------------------------------------------------- ủy quyền ---
@@ -268,3 +288,131 @@ FLEET_TOOLS: List[StructuredTool] = [
           "Hỏi agent của TẤT CẢ các máy. RẤT ĐẮT: 1 lượt LLM mỗi máy. Cân nhắc "
           "fleet_production / compare_failure_modes trước.", AskAllArgs),
 ]
+
+
+# ------------------------------------------------------------------ báo cáo ---
+
+class ReportArgs(BaseModel):
+    machines: Optional[List[str]] = Field(
+        default=None,
+        description="Danh sách tên máy đưa vào báo cáo, ví dụ ['M1','M2']. "
+                    "ĐỂ TRỐNG nếu user chưa nói rõ chọn máy nào.")
+    period: Optional[str] = Field(
+        default=None,
+        description="Kỳ báo cáo. ĐỂ TRỐNG nếu user chưa chọn.")
+    format: Optional[str] = Field(
+        default=None,
+        description="Định dạng file. ĐỂ TRỐNG nếu user chưa chọn.")
+
+
+async def generate_fleet_report(machines: Optional[List[str]] = None,
+                                period: Optional[str] = None,
+                                format: Optional[str] = None,
+                                **_ignored: Any) -> Dict[str, Any]:
+    """
+    Xuất báo cáo SO SÁNH nhiều máy ra file.
+
+    Ba tham số đều mặc định None, và tool TỪ CHỐI chạy khi thiếu bất kỳ cái nào —
+    nó trả về danh sách lựa chọn để hỏi lại người dùng. Đặt mặc định (ví dụ
+    format="html") là dạy mô hình tự điền, và câu hỏi không bao giờ tới tay người
+    dùng — đúng bài học đã ghi ở `PIPELINE.md §4` của tầng edge.
+
+    `**_ignored` để một tham số bịa ra không giết cả lượt chat: đã xảy ra thật khi
+    mô tả tool nhắc tên khoá trong kết quả và mô hình tưởng đó là tham số.
+    """
+    all_names = [m.name for m in registry.all()]
+
+    missing: Dict[str, Any] = {}
+    if not machines:
+        missing["machines"] = {
+            "prompt": "Báo cáo gồm những máy nào?",
+            "options": all_names + ["Tất cả"],
+        }
+    if not period:
+        missing["period"] = {
+            "prompt": "Báo cáo cho kỳ nào?",
+            # Chỉ đưa NHÃN, không đưa khoá nội bộ: mô hình sẽ nhắc lại đúng thứ
+            # nó nhìn thấy, nên đưa khoá ra là mời nó gửi lại khoá sai chính tả.
+            "options": [p["label"] for p in queries.PERIOD_CHOICES],
+        }
+    if not format:
+        missing["format"] = {
+            "prompt": "Xuất ra định dạng nào?",
+            "options": ["html", "pdf", "excel", "csv"],
+        }
+    if missing:
+        return {
+            "ok": False,
+            "ask_user": missing,
+            "message": ("Chưa đủ thông tin để xuất báo cáo. Hãy HỎI LẠI người dùng "
+                        "đúng những mục còn thiếu, liệt kê các lựa chọn, và ĐỪNG tự "
+                        "chọn thay họ."),
+        }
+
+    # --- đã đủ tham số ---
+    fmt = (format or "").strip().lower()
+    fmt = {"xlsx": "excel", "spreadsheet": "excel"}.get(fmt, fmt)
+    if fmt not in reports_builder.FORMATS:
+        return {"ok": False, "error": f"Định dạng '{format}' không hỗ trợ",
+                "options": list(reports_builder.FORMATS)}
+
+    if isinstance(machines, str):
+        machines = [machines]
+    if any(str(x).strip().lower() in ("tất cả", "all", "tat ca") for x in machines):
+        chosen = all_names
+    else:
+        chosen, unknown = [], []
+        for want in machines:
+            r = queries.resolve(str(want))
+            if r["ok"]:
+                chosen.append(r["machine"].name)
+            elif r.get("ambiguous"):
+                return {"ok": False, "error": r["error"], "candidates": r["ambiguous"]}
+            else:
+                unknown.append(want)
+        if unknown:
+            return {"ok": False, "error": f"Không có máy: {', '.join(map(str, unknown))}",
+                    "known_machines": all_names}
+    if not chosen:
+        return {"ok": False, "error": "Chưa chọn được máy nào"}
+
+    p = queries.resolve_period(period)
+    if not p:
+        return {"ok": False, "error": f"Kỳ '{period}' không hiểu được",
+                "options": [c["label"] for c in queries.PERIOD_CHOICES]}
+
+    data = await queries.report_data(chosen, p["days"], p["label"])
+    path = reports_builder.render(data, fmt)
+    _remember("generate_fleet_report",
+              {"file": path.name, "machines": chosen, "format": fmt})
+    return {
+        "ok": True,
+        "machines": chosen,
+        "period": p["label"],
+        "format": fmt,
+        # TÊN FILE KHÔNG NẰM Ở ĐÂY. Nó đi qua `_remember` để tầng API gắn link
+        # thật vào phản hồi, còn mô hình không được nhìn thấy.
+        #
+        # Bản đầu để `"_file": path.name` với dấu gạch dưới, tưởng vậy là đủ kín.
+        # Không đủ: mô hình đọc được tên file rồi tự bịa ra đường dẫn
+        # `sandbox:/fleet_….pdf` và đưa cho người dùng bấm. Đúng bài học
+        # `PIPELINE.md §3` — thay placeholder thì nó nhúng luôn placeholder, chỉ
+        # khi XOÁ HẲN khỏi tầm nhìn của mô hình thì vấn đề mới hết.
+        "file_ready": True,
+        "how_to_present": ("Nói báo cáo đã sẵn sàng và mời người dùng bấm nút tải "
+                           "bên dưới. TUYỆT ĐỐI không tự viết ra đường dẫn hay link "
+                           "tải — bạn không có nó."),
+        "summary": {
+            "total_products": data["fleet_total"]["products"],
+            "pass_rate": data["fleet_total"]["pass_rate"],
+            "machines_missing": data["coverage"]["machines_missing"],
+        },
+    }
+
+
+FLEET_TOOLS.append(_tool(
+    generate_fleet_report, "generate_fleet_report",
+    "Xuất báo cáo SO SÁNH nhiều máy ra file (html/pdf/excel/csv). Nếu user chưa nói "
+    "rõ chọn máy nào, kỳ nào, định dạng nào thì GỌI TOOL VỚI THAM SỐ TRỐNG — tool sẽ "
+    "trả về danh sách lựa chọn để bạn hỏi lại. TUYỆT ĐỐI không tự chọn thay user.",
+    ReportArgs))
