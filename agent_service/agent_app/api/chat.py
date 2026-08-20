@@ -24,6 +24,7 @@ from agent_app.core.suggestions import (
     grounded_suggestions,
 )
 from agent_app.memory.conversation_service import ConversationService
+from agent_app.memory.summary import as_message, ensure_summary
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 logger = logging.getLogger(__name__)
@@ -270,6 +271,13 @@ async def chat(
         historical_messages = ConversationService.conversation_messages_to_langchain_messages(
             stored_messages
         )
+
+        # Phần lịch sử bị cắt được nén lại thành vài dòng và dán vào đầu ngữ cảnh.
+        # Không có bước này thì ngữ cảnh mất ĐỘT NGỘT ở đúng lượt cửa sổ trượt:
+        # nói 30 lượt về một recipe, lượt 31 agent quên đang nói recipe nào.
+        summary = await ensure_summary(session_id, usable, len(stored_messages))
+        if summary:
+            historical_messages = [as_message(summary)] + historical_messages
 
         logger.info(
             "Session %s: %d stored / %d replayed messages",
