@@ -346,7 +346,149 @@ async def failure_images(
     }
 
 
-@router.get("/failure-image/{img_id}", summary="Ảnh sản phẩm lỗi, thu nhỏ")
+# ═══════════════════════════════════════════════════════════════════════════
+# Ảnh sản phẩm vừa kiểm — nguồn cho khung ảnh trên Fleet Console
+# ═══════════════════════════════════════════════════════════════════════════
+
+_TIME_FIELD = "created_at"   # cùng lý do như analytics_tools: đây là field CÓ INDEX
+
+
+def _frame_payload(doc: Dict[str, Any], frame: Dict[str, Any],
+                   serial: str) -> Dict[str, Any]:
+    """Một frame + đủ ngữ cảnh để câu chú thích dưới ảnh tự đứng được."""
+    tv = frame.get("text_verification") or {}
+    bad = next((r for r in (tv.get("results") or []) if not r.get("match")), None)
+    ts = doc.get("timestamp") or doc.get(_TIME_FIELD)
+    return {
+        "id": _img_id(frame["image_path"]),
+        "product_id": str(doc.get("_id")),
+        "verdict": doc.get("product_pass_fail"),
+        "frame_verdict": frame.get("pass_fail"),
+        "timestamp": str(ts) if ts is not None else None,
+        "age_seconds": (int((datetime.now() - ts).total_seconds())
+                        if isinstance(ts, datetime) else None),
+        "camera": serial,
+        "recipe_name": doc.get("recipe_name"),
+        "recipe_id": str(doc.get("recipe_id")) if doc.get("recipe_id") else None,
+        "confidence": frame.get("confidence"),
+        # `expected` / `recognized` chỉ có khi chuỗi đọc sai. Có nó thì tấm ảnh
+        # tự giải thích được; không có thì người xem phải tự đoán vì sao fail.
+        "expected": (bad or {}).get("expected"),
+        "recognized": (bad or {}).get("recognized"),
+        "template_name": frame.get("template_name"),
+    }
+
+
+def _pick_frame(doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Frame đại diện của một sản phẩm: ưu tiên frame FAIL, vì đó là frame giải
+    thích được vì sao sản phẩm trượt. Sản phẩm đạt thì lấy frame đầu có ảnh."""
+    best = None
+    for cam in doc.get("camera_results") or []:
+        serial = str(cam.get("serial_number"))
+        for frame in cam.get("frames") or []:
+            if not frame.get("image_path"):
+                continue
+            if frame.get("pass_fail") == "FAIL":
+                return _frame_payload(doc, frame, serial)
+            if best is None:
+                best = _frame_payload(doc, frame, serial)
+    return best
+
+
+def _scan(query: Dict[str, Any], sort_dir: int, scan: int) -> Optional[Dict[str, Any]]:
+    """Quét ngược từ mốc thời gian, trả frame CÓ ẢNH đầu tiên gặp được.
+
+    Phải quét nhiều document chứ không lấy đúng một: không phải sản phẩm nào
+    cũng lưu ảnh (chỉ frame fail và một phần frame pass mới có `image_path`),
+    nên `find_one` rất hay trả về một bản ghi không có gì để xem.
+    """
+    from agent_app.db.mongodb import get_sync_database
+
+    cur = (get_sync_database()["inference_results"]
+           .find(query)
+           .sort(_TIME_FIELD, sort_dir)
+           .limit(scan))
+    for doc in cur:
+        got = _pick_frame(doc)
+        if got:
+            return got
+    return None
+
+
+@router.get("/latest-frame", summary="Ảnh sản phẩm kiểm gần nhất (không LLM)")
+async def latest_frame(
+    verdict: str = Query("any", pattern="^(any|PASS|FAIL)$"),
+    within_hours: int = Query(24, ge=1, le=168),
+    scan: int = Query(60, ge=5, le=400),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Metadata của sản phẩm vừa được kiểm — ảnh lấy qua `/fleet/frame/{id}`.
+
+    Đây KHÔNG phải luồng camera trực tiếp, và tầng trên phải gọi đúng tên như
+    vậy. Ảnh camera thô 60 giây lấy một tấm thì phần lớn rơi vào lúc băng tải
+    trống; còn "sản phẩm vừa kiểm" thì tấm nào cũng có nội dung và có phán
+    quyết đi kèm — đó mới là thứ người đứng máy cần nhìn.
+
+    `within_hours` giữ truy vấn có biên: không chặn thì một máy đã dừng ba
+    tháng sẽ kéo cả collection ra để tìm tấm ảnh cuối cùng.
+    """
+    since = datetime.now() - timedelta(hours=within_hours)
+    query: Dict[str, Any] = {_TIME_FIELD: {"$gte": since}}
+    if verdict != "any":
+        query["product_pass_fail"] = verdict
+
+    got = _scan(query, -1, scan)
+    return {"success": True, "found": got is not None, "frame": got,
+            "verdict_filter": verdict, "within_hours": within_hours}
+
+
+@router.get("/frame-pair", summary="Ảnh đạt và ảnh lỗi mới nhất, cùng lúc")
+async def frame_pair(
+    within_hours: int = Query(24, ge=1, le=168),
+    scan: int = Query(60, ge=5, le=400),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Cặp ảnh đạt / lỗi gần nhất của cùng một máy.
+
+    Một tấm ảnh lỗi đứng riêng không nói được lỗi nằm ở đâu — phải có tấm đạt
+    bên cạnh thì mắt mới so ra được là in mờ, lệch khung hay sai chuỗi. Trả cả
+    hai trong MỘT lần gọi vì chúng luôn được xem cùng nhau, và mỗi lần gọi thêm
+    là thêm một vòng qua đường tới Jetson.
+    """
+    since = datetime.now() - timedelta(hours=within_hours)
+    base = {_TIME_FIELD: {"$gte": since}}
+    ok = _scan({**base, "product_pass_fail": "PASS"}, -1, scan)
+    bad = _scan({**base, "product_pass_fail": "FAIL"}, -1, scan)
+    return {"success": True, "pass_frame": ok, "fail_frame": bad,
+            "within_hours": within_hours}
+
+
+@router.get("/frames-around", summary="Ảnh ngay trước và ngay sau một mốc thời gian")
+async def frames_around(
+    ts: str = Query(..., description="Mốc thời gian ISO, vd 2026-08-20T12:15:00"),
+    scan: int = Query(60, ge=5, le=400),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Ảnh cuối TRƯỚC một mốc và ảnh đầu SAU nó.
+
+    Dùng để ghép nhật ký thao tác với ảnh: nhật ký biết chính xác lúc nào ai
+    chạy `update_recipe`, còn hai tấm này cho thấy việc đó đổi gì trên sản phẩm
+    thật. Không có cặp ảnh này thì "đã sửa recipe" mãi chỉ là một dòng chữ.
+    """
+    try:
+        at = datetime.fromisoformat(ts.replace("Z", ""))
+    except ValueError:
+        raise HTTPException(400, "ts phải là ISO datetime")
+    before = _scan({_TIME_FIELD: {"$lt": at}}, -1, scan)
+    after = _scan({_TIME_FIELD: {"$gte": at}}, 1, scan)
+    return {"success": True, "at": ts, "before": before, "after": after}
+
+
+@router.get("/frame/{img_id}", summary="Ảnh sản phẩm, thu nhỏ")
+@router.get("/failure-image/{img_id}", summary="Ảnh sản phẩm lỗi (tên cũ)")
 async def failure_image(
     img_id: str,
     w: int = Query(480, ge=64, le=1600),
