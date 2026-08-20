@@ -273,6 +273,75 @@ câu đã thành vô nghĩa, và `_followups()` suy gợi ý từ kết quả �
 đó" lấy đúng con số vừa hiện. Khối [SUGGESTIONS] của LLM bị hạ xuống sau nhóm này:
 nó bám ngữ cảnh hội thoại tốt hơn nhưng viết gợi ý mà không nhìn con số.
 
+
+## 9. Đợt kiến trúc: agent-như-tool, cache, tóm tắt, stream
+
+Sau một lượt soát kiến trúc, bốn việc được làm. Ba trong số đó (đa chặng, chẻ việc,
+bỏ lượt LLM định tuyến) hoá ra là **cùng một thay đổi**.
+
+### Agent con thành tool của orchestrator
+
+Bản trước định tuyến MỘT chặng: một lượt LLM riêng trả JSON `{agent_id, confidence}`
+rồi giao đứt cho một agent. Nay bốn agent con là tool, nên chọn agent chính là chọn
+tool. "Sản lượng hôm nay có bị ảnh hưởng bởi lỗi thiết bị không?" trước không trả lời
+được vì cần hai agent; nay gọi cả hai một lượt rồi gộp.
+
+**Nhánh trả thẳng** là chỗ đáng chú ý. Vòng lặp tool tiêu chuẩn luôn quay lại LLM để
+viết câu cuối, nhưng với một agent thì lượt đó vừa tốn vừa **có hại**: agent con đã
+viết xong câu trả lời kèm số liệu, để orchestrator kể lại là mở đúng cửa cho lớp bug ở
+mục 3. Nên một agent ⇒ trả nguyên văn, không thêm lượt LLM; từ hai agent mới tổng hợp.
+
+**Đường tắt** (`core/intent.py`) bỏ hẳn lượt LLM điều phối khi câu hỏi khớp cụm rõ
+nghĩa: 7,54s → 4,96s. Bảng cụm cố tình hẹp — không nhận từ đơn như "lỗi"/"log"/"ca",
+đúng những từ đã gây route sai — và khớp nhiều agent thì nhường lại cho LLM, vì đó
+chính là lúc cần nó. `core/reroute` dùng CHUNG bảng này; để hai bảng riêng thì chúng sẽ
+lệch nhau theo cách tệ nhất, đường tắt gửi tới agent A trong khi reroute khẳng định câu
+đó thuộc agent B.
+
+Ba lỗi tự gây ra trong lúc làm, đáng ghi vì đều thuộc loại khó đoán trước:
+
+| Lỗi | Vì sao |
+|---|---|
+| `ToolNode` làm chết mọi request | `AgentState.messages` không gắn reducer `add_messages`, nên giá trị trả về THAY THẾ cả danh sách; ToolNode chỉ trả ToolMessage mới ⇒ xoá sạch hội thoại |
+| `/test` trống, và 4 nút hỏi-lại hiện dưới câu trả lời ĐÚNG | tool call của agent con nằm trong state riêng nên mất khỏi response, `reroute` tưởng không có tool nào chạy |
+| câu về đăng nhập hiện kèm `explain_failures` | vòng gom quét cả history đã replay, báo tool của lượt TRƯỚC như vừa chạy |
+
+### Cache kết quả tool
+
+TTL theo kỳ: kỳ còn mở 45s (số liệu tăng từng giây), kỳ đã đóng 30 phút. Đặt trong
+`BaseTool.create_tool` — nút duy nhất mọi tool đi qua. `should_cache` **liệt kê có**
+thay vì loại trừ, nên category mới mặc định không cache: bỏ sót một tool đọc thì chỉ
+chậm, còn cache lỡ một tool ghi thì trả kết quả sai. Không cache `start/stop_service`,
+`generate_report`, và mọi kết quả lỗi.
+
+### Tóm tắt hội thoại
+
+Cắt cứng 40 message làm ngữ cảnh mất ĐỘT NGỘT: nói 30 lượt về một recipe, lượt 31 quên
+đang nói recipe nào. Nay phần bị cắt được nén thành vài dòng, tích luỹ, lưu trong
+`metadata` của conversation. Chỉ nén phần chưa tóm tắt rồi gộp với bản cũ — nén lại từ
+đầu mỗi lần thì phiên càng dài càng đắt, và chi tiết cũ dần bị mài mất.
+
+Dán dưới dạng `HumanMessage` có nhãn, **không** phải `SystemMessage`:
+`orchestrator.call_model` chỉ thêm system prompt khi chưa có SystemMessage nào, nên dán
+kiểu đó là orchestrator bỏ luôn prompt của chính nó.
+
+### Stream tiến trình
+
+Stream tiến trình, không stream token: câu trả lời chỉ đến ở cuối, sau khi tool xong,
+nên stream token chỉ làm mượt ~1 giây cuối còn 20 giây đầu vẫn trắng. Điểm phát cũng
+nằm trong `create_tool`, bọc NGOÀI cache để cache hit cũng được báo.
+
+Hàng đợi là `queue.Queue` chứ không `asyncio.Queue` vì node LangGraph đồng bộ chạy
+trong thread executor — chỗ phát khác thread chỗ đọc. Kênh phải mở TRƯỚC
+`asyncio.create_task`, vì task chụp context lúc tạo.
+
+`/chat/stream` cũ có đường code riêng nên không nạp/không lưu lịch sử và không có
+attachment. Nay `_run_chat` dùng chung cho cả hai endpoint.
+
+Câu hai agent, đo thật: 0,01s start → 1,94s "đang hỏi số liệu sản xuất" → 2,90s xong
+`get_production_summary` → 4,58s "đang hỏi thiết bị" → 6,63s xong bốn tool thiết bị →
+14,09s kết quả. Trước đó 14 giây là màn hình trắng.
+
 ---
 
 ## Còn để mở
@@ -283,6 +352,19 @@ nó bám ngữ cảnh hội thoại tốt hơn nhưng viết gợi ý mà không
   chưa đi qua lớp i18n.
 - Đã đề xuất, chưa làm: agent `config_audit`, agent `mlops`, `anomaly_watch`,
   `get_jetson_metrics`, tương quan giữa reject và fail.
+
+**Đã nêu, người dùng quyết định CHƯA làm**
+
+- **Không có kiểm tra quyền ở bất kỳ đâu.** `role` được đọc từ JWT và đặt vào
+  `state.context` nhưng không agent hay tool nào dùng tới; `get_current_user` chỉ xác
+  thực token và kiểm tra tài khoản còn hoạt động. Trong khi đó `stop_service` gửi
+  SIGTERM rồi SIGKILL trực tiếp bằng psutil vào `camera_management_service.py`, không
+  đi qua backend nên không có tầng nào chặn. Nghĩa là một tài khoản quyền `viewer` chat
+  "dừng camera service" là dừng được dịch vụ kiểm tra trên dây chuyền đang chạy. Xác
+  minh bằng đọc code, KHÔNG thử thật. Ba bước nếu làm: chặn theo quyền ở tầng tool,
+  bắt xác nhận hai bước qua `ui_options`, ghi audit log mọi hành động agent thực hiện.
+- Ngưỡng `confidence < 0.7` và không có reflection lúc chạy — hai mục còn lại của lượt
+  soát kiến trúc, cũng được quyết định bỏ qua.
 
 **Ngoài agent service**
 
