@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from fleet_app.api import fleet
+from fleet_app.api import chat, fleet
 from fleet_app.core.config import SERVICE_ROOT, settings
 from fleet_app.core.edge_client import client
 from fleet_app.core.registry import registry
@@ -66,6 +66,7 @@ app = FastAPI(title="OCR Datecode — Fleet Service", version="0.1.0", lifespan=
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])
 app.include_router(fleet.router)
+app.include_router(chat.router)
 
 
 @app.get("/health", include_in_schema=False)

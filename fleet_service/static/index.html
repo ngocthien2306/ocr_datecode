@@ -5,16 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fleet — OCR Datecode</title>
 <style>
+  /* Sáng là mặc định. Nền tối chỉ bật khi người dùng chọn, nên bảng màu đầy đủ
+     phải nằm ở :root trần — định nghĩa màu chỉ trong khối [data-theme] thì lúc
+     chưa chọn gì trang sẽ không có màu nào cả. */
   :root{
+    --bg:#f4f6fa; --card:#fff; --card2:#f7f9fc; --line:#e3e7ee;
+    --fg:#141821; --dim:#5f6878; --faint:#98a1b3;
+    --ok:#1a7f37; --warn:#9a6700; --bad:#cf222e; --accent:#0969da;
+    --shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px -14px rgba(16,24,40,.24);
+  }
+  :root[data-theme="dark"]{
     --bg:#0b0d12; --card:#151822; --card2:#1b1f2b; --line:#252a37;
     --fg:#e8ebf2; --dim:#8b93a7; --faint:#5a6275;
     --ok:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#4c8dff;
     --shadow:0 1px 3px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
-  }
-  @media (prefers-color-scheme:light){
-    :root{--bg:#f4f6fa;--card:#fff;--card2:#f7f9fc;--line:#e3e7ee;
-          --fg:#141821;--dim:#5f6878;--faint:#98a1b3;
-          --shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px -14px rgba(16,24,40,.24);}
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);
@@ -103,6 +107,31 @@
   .heat span{position:relative;z-index:1}
   .heat::before{content:'';position:absolute;inset:4px 6px;border-radius:4px;
                 background:var(--accent);opacity:calc(var(--v) / 130)}
+  /* Khung chat với fleet_orchestrator */
+  #chat{position:fixed;right:20px;bottom:20px;width:min(430px,calc(100vw - 40px));
+        background:var(--card);border:1px solid var(--line);border-radius:14px;
+        box-shadow:0 12px 40px -12px rgba(0,0,0,.35);display:flex;flex-direction:column;
+        max-height:min(560px,calc(100vh - 40px));z-index:50}
+  #chat.min{max-height:44px;overflow:hidden}
+  #chat header{padding:11px 14px;border:0;border-bottom:1px solid var(--line);
+               cursor:pointer;gap:9px;align-items:center}
+  #chat header b{font-size:13px;font-weight:640}
+  #chat header .hintlbl{font-size:11px;color:var(--faint)}
+  #log{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+  .msg{font-size:13px;line-height:1.5;max-width:92%}
+  .msg.u{align-self:flex-end;background:var(--accent);color:#fff;
+         padding:7px 11px;border-radius:12px 12px 3px 12px}
+  .msg.a{align-self:flex-start;color:var(--fg)}
+  .msg.a table{min-width:0;font-size:11.5px;margin:6px 0}
+  .msg.a th,.msg.a td{padding:4px 7px}
+  .msg .meta{font-size:10.5px;color:var(--faint);margin-top:4px}
+  .msg.err{color:var(--bad)}
+  #ask{display:flex;gap:8px;padding:11px 14px;border-top:1px solid var(--line)}
+  #ask input{flex:1;background:var(--bg);border:1px solid var(--line);border-radius:8px;
+             padding:8px 11px;color:var(--fg);font-size:13px;font-family:inherit}
+  #ask input:focus{outline:0;border-color:var(--accent)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;padding:0 14px 11px}
+  .chips button{font-size:11px;padding:5px 9px;border-radius:99px;color:var(--dim)}
   .cov{margin:0 26px 26px;padding:13px 16px;border-radius:10px;
        background:var(--card);border:1px solid var(--line);font-size:13px;color:var(--dim)}
   .cov.miss{border-color:color-mix(in srgb,var(--warn) 45%,var(--line))}
@@ -116,6 +145,10 @@
   <span class="spacer"></span>
   <span class="stamp" id="stamp"></span>
   <div class="lang">
+    <button id="btn-light" onclick="setTheme('light')" title="Light">☀</button>
+    <button id="btn-dark"  onclick="setTheme('dark')"  title="Dark">☾</button>
+  </div>
+  <div class="lang">
     <button id="btn-en" onclick="setLang('en')">EN</button>
     <button id="btn-vi" onclick="setLang('vi')">VI</button>
   </div>
@@ -125,6 +158,19 @@
 <div class="grid" id="grid"></div>
 <div class="cov" id="cov"></div>
 <section id="prod"></section>
+
+<div id="chat" class="min">
+  <header onclick="toggleChat(event)">
+    <b id="chat-title"></b><span class="hintlbl" id="chat-hint"></span>
+    <span class="spacer"></span><span id="chat-caret">▲</span>
+  </header>
+  <div id="log"></div>
+  <div class="chips" id="chips"></div>
+  <form id="ask" onsubmit="send(event)">
+    <input id="q" autocomplete="off">
+    <button type="submit" id="btn-send"></button>
+  </form>
+</div>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -151,6 +197,12 @@ const I18N = {
     output: 'Output', perDay: 'per day', passRate: 'Pass rate', recipe: 'Recipe',
     sample: 'sample', partialSample: 'sampled', fullSample: 'complete',
     fleetTotal: 'Fleet total', days: 'days',
+    chatTitle: 'Fleet assistant', chatHint: 'ask about all 5 machines',
+    send: 'Send', placeholder: 'e.g. which machine has the worst quality?',
+    thinking: 'thinking…', usedTools: 'tools', fromMachines: 'attachments',
+    chips: ['Output for all 5 machines this week',
+            'Which machine has the worst quality? Why?',
+            'Any machine running hot or low on disk?'],
     complete: n => `All ${n} machines reporting.`,
     missing: (k, n) => `<b>No data from ${k}/${n} machines:</b> `,
     partial: (k, n) => `<b>Partial data from ${k}/${n} machines:</b> `,
@@ -175,6 +227,12 @@ const I18N = {
     output: 'Sản lượng', perDay: 'mỗi ngày', passRate: 'Tỉ lệ pass', recipe: 'Recipe',
     sample: 'mẫu', partialSample: 'lấy mẫu', fullSample: 'phủ hết kỳ',
     fleetTotal: 'Toàn nhà máy', days: 'ngày',
+    chatTitle: 'Trợ lý đội hình', chatHint: 'hỏi về cả 5 máy',
+    send: 'Gửi', placeholder: 'vd: máy nào chất lượng tệ nhất?',
+    thinking: 'đang nghĩ…', usedTools: 'tool', fromMachines: 'đính kèm',
+    chips: ['Sản lượng cả 5 máy tuần này',
+            'Máy nào chất lượng tệ nhất? Tại sao?',
+            'Máy nào đang nóng hoặc sắp đầy đĩa?'],
     complete: n => `Đủ cả ${n} máy.`,
     missing: (k, n) => `<b>Không lấy được ${k}/${n} máy:</b> `,
     partial: (k, n) => `<b>Thiếu một phần ${k}/${n} máy:</b> `,
@@ -185,6 +243,14 @@ const I18N = {
     },
   },
 };
+
+// Mặc định sáng. Lựa chọn lưu lại nên đổi một lần là nhớ.
+function setTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  localStorage.setItem('fleet_theme', t);
+  $('#btn-light').setAttribute('aria-pressed', t === 'light');
+  $('#btn-dark').setAttribute('aria-pressed', t === 'dark');
+}
 
 let lang = localStorage.getItem('fleet_lang') || 'en';
 let T = I18N[lang];
@@ -198,6 +264,12 @@ function setLang(l) {
   $('#btn-en').setAttribute('aria-pressed', l === 'en');
   $('#btn-vi').setAttribute('aria-pressed', l === 'vi');
   $('#btn-refresh').textContent = T.refresh;
+  $('#chat-title').textContent = T.chatTitle;
+  $('#chat-hint').textContent = T.chatHint;
+  $('#btn-send').textContent = T.send;
+  $('#q').placeholder = T.placeholder;
+  $('#chips').innerHTML = T.chips
+    .map(c => `<button type="button" onclick="askChip(this)">${c}</button>`).join('');
   if (latest) render(latest);    // vẽ lại từ dữ liệu cũ, không gọi lại 5 máy
   if (latestProd) renderProduction(latestProd);
 }
@@ -404,6 +476,75 @@ async function load(refresh) {
   }
 }
 
+
+/* ---------------------------------------------------------------------------
+   Chat với fleet_orchestrator. Lịch sử giữ ở client và gửi kèm mỗi lượt: trung
+   tâm không giữ session, nên tắt tab là hết — đúng với nguyên tắc fleet chỉ đọc
+   và không phải thành phần thiết yếu.
+--------------------------------------------------------------------------- */
+const history = [];
+
+function toggleChat(e) {
+  if (e.target.closest('button')) return;
+  $('#chat').classList.toggle('min');
+  $('#chat-caret').textContent = $('#chat').classList.contains('min') ? '▲' : '▼';
+}
+
+function askChip(b) { $('#q').value = b.textContent; send(); }
+
+// Bảng markdown → HTML. Đủ cho thứ agent trả về; không kéo cả thư viện markdown
+// vào một trang tĩnh chỉ để render bảng và chữ đậm.
+function mini(md) {
+  const esc = t => t.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+  const lines = esc(md).split('\n');
+  let out = '', tbl = null;
+  const flush = () => { if (tbl) { out += `<table>${tbl}</table>`; tbl = null; } };
+  for (const ln of lines) {
+    if (/^\s*\|/.test(ln)) {
+      if (/^\s*\|[\s|:-]+\|\s*$/.test(ln)) continue;          // hàng phân cách
+      const cells = ln.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+      const tag = tbl === null ? 'th' : 'td';
+      tbl = (tbl || '') + `<tr>${cells.map(c => `<${tag}>${c}</${tag}>`).join('')}</tr>`;
+    } else { flush(); out += ln ? `<div>${ln}</div>` : '<div style="height:5px"></div>'; }
+  }
+  flush();
+  return out.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`(.+?)`/g, '<code>$1</code>');
+}
+
+function bubble(cls, html) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls; d.innerHTML = html;
+  $('#log').appendChild(d); $('#log').scrollTop = $('#log').scrollHeight;
+  return d;
+}
+
+async function send(e) {
+  if (e) e.preventDefault();
+  const q = $('#q').value.trim();
+  if (!q) return;
+  $('#chat').classList.remove('min'); $('#chat-caret').textContent = '▼';
+  $('#q').value = '';
+  bubble('u', q.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])));
+  const wait = bubble('a', `<span class="na">${T.thinking}</span>`);
+  try {
+    const r = await fetch('/api/fleet/chat', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ message: q, history }),
+    });
+    const d = await r.json();
+    if (!r.ok) { wait.className = 'msg a err'; wait.textContent = d.detail || 'lỗi'; return; }
+    // Số nào tool trả về thì đã nằm trong câu trả lời; attachment chỉ để đếm,
+    // vì hiển thị KPI của 5 máy trong một khung chat hẹp thì rối hơn là rõ.
+    wait.innerHTML = mini(d.response) +
+      `<div class="meta">${T.usedTools}: ${(d.tool_calls || []).join(', ') || '—'}` +
+      (d.attachments?.length ? ` · ${d.attachments.length} ${T.fromMachines}` : '') + '</div>';
+    history.push({ role: 'user', content: q }, { role: 'assistant', content: d.response });
+  } catch (err) {
+    wait.className = 'msg a err'; wait.textContent = String(err);
+  }
+}
+
+setTheme(localStorage.getItem('fleet_theme') || 'light');
 setLang(lang);
 load();
 loadProduction();

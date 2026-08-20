@@ -33,6 +33,11 @@ class Settings(BaseSettings):
 
     TAILSCALE_BIN: str = "/usr/local/bin/tailscale"
 
+    # Tầng agent của fleet. Để trống OPENAI_API_KEY thì /api/fleet/chat trả 503
+    # còn mọi endpoint xác định vẫn chạy — fleet không được chết theo LLM.
+    OPENAI_API_KEY: str = ""
+    FLEET_MODEL: str = "gpt-4o-mini"
+
     class Config:
         env_file = str(SERVICE_ROOT / ".env")
         case_sensitive = True

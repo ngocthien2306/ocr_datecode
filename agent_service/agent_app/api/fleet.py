@@ -67,7 +67,7 @@ def _fingerprint(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     "M2 có no_detection 43% còn mặt bằng ~10%" thì đúng dù khác sản phẩm, vì
     no_detection thuộc về camera/trigger/ánh sáng chứ không thuộc về hàng.
 
-    Chỉ trả `percent_of_sample`, KHÔNG trả số đếm tuyệt đối. `explain_failures`
+    Chỉ trả tỉ lệ, KHÔNG trả số đếm tuyệt đối. `explain_failures`
     lấy mẫu tối đa `sample_limit`, nên số đếm trong `causes` là của MẪU chứ không
     phải của cả kỳ — đưa nó ra cạnh `total_fail` là dựng sẵn cái bẫy đã ghi trong
     PIPELINE.md: "tổng fail 1.036" rồi liệt kê "144/106/102", ba số sau là của
@@ -85,7 +85,12 @@ def _fingerprint(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             {
                 "cause": c["cause"],
                 "label": c.get("label"),
-                "percent_of_sample": round(c.get("products", 0) * 100.0 / total, 1),
+                # Chuẩn hoá để tổng bằng 100: đây là TỈ TRỌNG giữa các nguyên
+                # nhân, không phải "bao nhiêu % sản phẩm trượt bước này". Một sản
+                # phẩm trượt được nhiều bước, nên con số chưa chuẩn hoá của
+                # `explain_failures` cộng lại vượt 100 — trộn hai thứ đó vào một
+                # câu trả lời là ra hai số khác nhau cho cùng một nguyên nhân.
+                "share_of_causes_pct": round(c.get("products", 0) * 100.0 / total, 1),
             }
             for c in causes
         ],
