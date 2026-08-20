@@ -2,26 +2,32 @@
   "nRNxYvVKty11CNTRL": {
     "label": "M1",
     "line": "Line 2",
-    "note": ""
+    "note": "",
+    "model": "Jetson Orin Nano 8GB Super"
   },
   "nq4qJrTpxe11CNTRL": {
     "label": "PC-Auto-1",
     "line": "Auto Line",
-    "note": "x86, hiển thị như Jetson 16GB"
+    "note": "x86 thật; hiển thị như Jetson 16GB theo yêu cầu",
+    "model": "Jetson AGX Orin 16GB",
+    "power_mode": "—"
   },
   "nrA4UKfWDs11CNTRL": {
     "label": "LineTine",
     "line": "Tine Line",
-    "note": ""
+    "note": "",
+    "model": "Jetson Orin Nano 8GB Super"
   },
   "nmupyJbod721CNTRL": {
     "label": "M2",
     "line": "Line 3",
-    "note": ""
+    "note": "",
+    "model": "Jetson Orin Nano 8GB Super"
   },
   "nbHLF1csro11CNTRL": {
     "label": "Auto2",
     "line": "Line 1",
-    "note": ""
+    "note": "",
+    "model": "Jetson Orin Nano 8GB Super"
   }
 }

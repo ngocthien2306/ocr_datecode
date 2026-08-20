@@ -45,7 +45,9 @@ def _metrics_view(raw: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         "disk_percent": disk.get("usage_percent"),
         "disk_free_gb": round(disk["available_gb"], 1) if disk.get("available_gb") else None,
         "uptime_seconds": raw.get("uptime_seconds"),
-        "model": raw.get("nvp_model"),
+        # nvp_model là CHẾ ĐỘ ĐIỆN của Jetson (MAXN_SUPER, 15W, 25W…), không phải
+        # model thiết bị. Model lấy từ registry, xem Machine.model.
+        "power_mode": raw.get("nvp_model"),
     }
 
 

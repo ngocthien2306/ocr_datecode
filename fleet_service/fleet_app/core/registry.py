@@ -52,6 +52,13 @@ class Machine:
     label: Optional[str] = None
     line: Optional[str] = None
     note: Optional[str] = None
+    # Model thiết bị là thuộc tính TĨNH của máy, nên nằm ở đây chứ không lấy từ
+    # số liệu chạy. `nvp_model` mà backend trả về là CHẾ ĐỘ ĐIỆN (MAXN_SUPER),
+    # không phải model — hai thứ khác nhau, gộp lại thì cột "Thiết bị" hiện ra
+    # tên một chế độ nguồn.
+    model: Optional[str] = None
+    # Chặn chế độ điện cho máy mà `nvp_model` đã bị ghi đè thành chuỗi khác.
+    power_mode_override: Optional[str] = None
 
     # kết quả dò năng lực
     level: int = 0
@@ -205,6 +212,8 @@ class Registry:
                 m.hostname, m.ip, m.online = p["hostname"], p["ip"], p["online"]
                 lbl = self._labels.get(nid) or {}
                 m.label, m.line, m.note = lbl.get("label"), lbl.get("line"), lbl.get("note")
+                m.model = lbl.get("model")
+                m.power_mode_override = lbl.get("power_mode")
             # Máy rời tailnet: giữ lại bản ghi và đánh dấu offline thay vì xoá —
             # xoá đi thì mất luôn `last_seen`, tức mất câu trả lời "im từ bao giờ".
             for nid, m in self._machines.items():
