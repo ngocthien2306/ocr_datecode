@@ -362,6 +362,9 @@ def _frame_payload(doc: Dict[str, Any], frame: Dict[str, Any],
     return {
         "id": _img_id(frame["image_path"]),
         "product_id": str(doc.get("_id")),
+        # `_ts_utc` là khoá NỘI BỘ cho attach_templates (nó cần datetime, không
+        # phải chuỗi). Chính attach_templates dọn khoá này trước khi trả.
+        "_ts_utc": ts if isinstance(ts, datetime) else None,
         "verdict": doc.get("product_pass_fail"),
         "frame_verdict": frame.get("pass_fail"),
         "timestamp": str(ts) if ts is not None else None,
@@ -439,30 +442,60 @@ async def latest_frame(
         query["product_pass_fail"] = verdict
 
     got = _scan(query, -1, scan)
+    if got:
+        got.pop("_ts_utc", None)
     return {"success": True, "found": got is not None, "frame": got,
             "verdict_filter": verdict, "within_hours": within_hours}
 
 
-@router.get("/frame-pair", summary="Ảnh đạt và ảnh lỗi mới nhất, cùng lúc")
+@router.get("/frame-pair", summary="Ảnh lỗi mới nhất kèm template chuẩn của nó")
 async def frame_pair(
     within_hours: int = Query(24, ge=1, le=168),
     scan: int = Query(60, ge=5, le=400),
     current_user: Dict[str, Any] = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
-    Cặp ảnh đạt / lỗi gần nhất của cùng một máy.
+    Ảnh sản phẩm lỗi gần nhất, đặt cạnh ẢNH TEMPLATE đang chạy lúc nó bị chụp.
 
-    Một tấm ảnh lỗi đứng riêng không nói được lỗi nằm ở đâu — phải có tấm đạt
-    bên cạnh thì mắt mới so ra được là in mờ, lệch khung hay sai chuỗi. Trả cả
-    hai trong MỘT lần gọi vì chúng luôn được xem cùng nhau, và mỗi lần gọi thêm
-    là thêm một vòng qua đường tới Jetson.
+    Ý ban đầu là ghép ảnh lỗi với ảnh sản phẩm ĐẠT gần nhất. Đo trên M2 thì
+    không làm được: trong 24 giờ, cả 402 sản phẩm fail đều lưu ảnh, còn 49 sản
+    phẩm đạt thì KHÔNG lưu tấm nào — pipeline chỉ ghi ảnh visualize cho frame
+    fail. "Ảnh đạt mới nhất" là một thứ không tồn tại trong kho.
+
+    Template lại là lựa chọn đúng hơn cả ý ban đầu: nó chính là thứ hệ thống
+    đem ra so, còn một sản phẩm đạt ngẫu nhiên chỉ là một mẫu tình cờ. Và
+    template được tra theo ĐÚNG lần load đang hiệu lực tại thời điểm chụp, kèm
+    tên frame — không phải template hiện tại, vì recipe có thể đã được sửa sau
+    đó và khi ấy tấm ảnh sẽ nói sai.
+
+    Không tra được template thì khoá `template` vắng mặt, chứ không trả về một
+    template rỗng hay template hiện hành thay thế.
     """
+    from agent_app.core.templates import attach_templates
+
     since = datetime.now() - timedelta(hours=within_hours)
-    base = {_TIME_FIELD: {"$gte": since}}
-    ok = _scan({**base, "product_pass_fail": "PASS"}, -1, scan)
-    bad = _scan({**base, "product_pass_fail": "FAIL"}, -1, scan)
-    return {"success": True, "pass_frame": ok, "fail_frame": bad,
-            "within_hours": within_hours}
+    bad = _scan({_TIME_FIELD: {"$gte": since}, "product_pass_fail": "FAIL"}, -1, scan)
+    if not bad:
+        return {"success": True, "found": False, "frame": None, "template": None,
+                "within_hours": within_hours}
+
+    attached = 0
+    try:
+        attached = attach_templates([bad])      # tự dọn `_ts_utc` khi xong
+    except Exception as e:                       # pragma: no cover
+        logger.warning("Không tra được template cho frame lỗi: %s", e)
+        bad.pop("_ts_utc", None)
+
+    return {
+        "success": True,
+        "found": True,
+        "frame": {k: v for k, v in bad.items() if k != "template"},
+        "template": bad.get("template"),
+        "template_matched": bool(attached),
+        "within_hours": within_hours,
+        "note": ("Sản phẩm ĐẠT không lưu ảnh trong pipeline này, nên vế đối chiếu "
+                 "là ảnh template chuẩn — thứ hệ thống thật sự đem ra so."),
+    }
 
 
 @router.get("/frames-around", summary="Ảnh ngay trước và ngay sau một mốc thời gian")
@@ -484,6 +517,9 @@ async def frames_around(
         raise HTTPException(400, "ts phải là ISO datetime")
     before = _scan({_TIME_FIELD: {"$lt": at}}, -1, scan)
     after = _scan({_TIME_FIELD: {"$gte": at}}, 1, scan)
+    for f in (before, after):
+        if f:
+            f.pop("_ts_utc", None)
     return {"success": True, "at": ts, "before": before, "after": after}
 
 

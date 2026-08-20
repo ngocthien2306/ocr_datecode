@@ -13,6 +13,7 @@ nằm trong kết quả kèm lý do.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 import unicodedata
@@ -406,6 +407,93 @@ async def resolve_person(text: str) -> Dict[str, Any]:
     if hit:
         return pick(hit)
     return {"status": "not_found", "query": text, "candidates": []}
+
+
+# ── Ảnh sản phẩm: cache TTL nằm Ở ĐÂY ────────────────────────────────────────
+#
+# Nhịp "60 giây một ảnh" phải do MÁY CHỦ giữ, không phải do trình duyệt. Nếu để
+# setInterval phía FE quyết định thì ba người mở ba tab là Jetson nhận ba lần
+# tải — mà chính con Jetson đó đang chạy inference cho dây chuyền. Có TTL ở đây
+# thì bao nhiêu người xem cũng chỉ còn 1 lần hỏi mỗi 60 giây cho mỗi máy.
+
+FRAME_TTL = 60.0
+_frame_cache: Dict[str, tuple] = {}
+
+
+async def _frame_cached(key: str, make, ttl: float = FRAME_TTL) -> Dict[str, Any]:
+    hit = _frame_cache.get(key)
+    now = time.time()
+    if hit and now - hit[0] < ttl:
+        return {**hit[1], "cached": True, "cache_age": round(now - hit[0], 1)}
+    val = await make()
+    _frame_cache[key] = (now, val)
+    return {**val, "cached": False, "cache_age": 0.0}
+
+
+async def machine_frame(machine: str) -> Dict[str, Any]:
+    """
+    Ảnh lỗi gần nhất của một máy + template chuẩn của chính nó.
+
+    Trả về cả khi máy không với tới được: lúc đó là bản đã cache lần cuối kèm
+    tuổi của nó. Máy mất mạng mà màn hình quay vòng chờ mãi thì người xem không
+    biết là mất mạng hay là chưa có sản phẩm nào.
+    """
+    ms = [m for m in registry.all() if m.name == machine or m.node_id == machine]
+    if not ms:
+        return {"success": False, "error": f"không có máy tên {machine}"}
+    m = ms[0]
+
+    async def fetch() -> Dict[str, Any]:
+        r = await client.frame_pair(m.node_id, m.ip)
+        if not r.ok:
+            stale = _frame_cache.get(f"pair:{m.node_id}")
+            if stale:
+                return {**stale[1], "stale": True, "error": r.error}
+            return {"success": False, "machine": m.name, "error": r.error}
+        d = r.data or {}
+        return {"success": True, "machine": m.name, "node_id": m.node_id,
+                "state": m.state(), "found": d.get("found"),
+                "frame": d.get("frame"), "template": d.get("template"),
+                "template_matched": d.get("template_matched"),
+                "note": d.get("note")}
+
+    return await _frame_cached(f"pair:{m.node_id}", fetch)
+
+
+async def fleet_frames() -> Dict[str, Any]:
+    """
+    Ảnh gần nhất của MỌI máy — tường ảnh.
+
+    Đi qua cùng một cache với khung ảnh trong drawer: mở tường ảnh rồi mở tiếp
+    drawer của một máy thì máy đó không bị hỏi lại.
+    """
+    ms = [m for m in registry.all() if m.online]
+    out = await asyncio.gather(*(machine_frame(m.name) for m in ms),
+                               return_exceptions=True)
+    rows = [o for o in out if isinstance(o, dict)]
+    return {"generated_at": time.time(),
+            "count": len(rows),
+            "machines": rows,
+            "ttl_seconds": FRAME_TTL}
+
+
+async def frames_around(machine: str, ts: str) -> Dict[str, Any]:
+    """Ảnh ngay trước và ngay sau một mốc — để ghép với nhật ký thao tác."""
+    ms = [m for m in registry.all() if m.name == machine or m.node_id == machine]
+    if not ms:
+        return {"success": False, "error": f"không có máy tên {machine}"}
+    m = ms[0]
+
+    async def fetch() -> Dict[str, Any]:
+        r = await client.frames_around(m.node_id, m.ip, ts)
+        if not r.ok:
+            return {"success": False, "machine": m.name, "error": r.error}
+        d = r.data or {}
+        return {"success": True, "machine": m.name, "at": ts,
+                "before": d.get("before"), "after": d.get("after")}
+
+    # Ảnh quanh một mốc trong QUÁ KHỨ không đổi nữa, nên cache lâu hơn nhiều.
+    return await _frame_cached(f"around:{m.node_id}:{ts}", fetch, ttl=900.0)
 
 
 async def fleet_failure_images(days: int = 7, per_machine: int = 6,

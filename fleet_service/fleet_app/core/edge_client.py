@@ -270,6 +270,33 @@ class EdgeClient:
                                   "/api/fleet/log-errors",
                                   timeout=settings.EDGE_ROLLUP_TIMEOUT, params=params)
 
+    # ── Ảnh sản phẩm ────────────────────────────────────────────────────
+    #
+    # Ba đường này KHÔNG dùng cache của HTTP client mà để tầng trên (queries)
+    # giữ TTL: nhịp làm mới là quyết định của sản phẩm ("60 giây một ảnh"), chứ
+    # không phải chi tiết vận chuyển.
+
+    async def frame_pair(self, node_id: str, ip: str,
+                         within_hours: int = 24) -> EdgeResult:
+        """Ảnh lỗi mới nhất kèm template chuẩn đang chạy lúc đó."""
+        return await self._authed(node_id, ip, settings.EDGE_AGENT_PORT,
+                                  "/api/fleet/frame-pair",
+                                  timeout=settings.EDGE_ROLLUP_TIMEOUT,
+                                  params={"within_hours": within_hours})
+
+    async def latest_frame(self, node_id: str, ip: str,
+                           verdict: str = "any") -> EdgeResult:
+        return await self._authed(node_id, ip, settings.EDGE_AGENT_PORT,
+                                  "/api/fleet/latest-frame",
+                                  timeout=settings.EDGE_ROLLUP_TIMEOUT,
+                                  params={"verdict": verdict})
+
+    async def frames_around(self, node_id: str, ip: str, ts: str) -> EdgeResult:
+        return await self._authed(node_id, ip, settings.EDGE_AGENT_PORT,
+                                  "/api/fleet/frames-around",
+                                  timeout=settings.EDGE_ROLLUP_TIMEOUT,
+                                  params={"ts": ts})
+
     async def chat(self, node_id: str, ip: str, message: str,
                    session_id: Optional[str] = None) -> EdgeResult:
         """
