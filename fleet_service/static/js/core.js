@@ -56,6 +56,10 @@ export const I18N = {
     send: 'Send', placeholder: 'e.g. which machine has the worst quality?',
     thinking: 'thinking…', usedTools: 'tools', fromMachines: 'attachments',
     askingAbout: 'asking about',
+    ctxMachine: m => `machine ${m}`,
+    ctxPerson: (n, u, m) => `${n} (@${u}) on ${m}`,
+    askStaff: (n, u, m) =>
+      `What has @${u} (${n}) done on ${m} in the last 7 days — did they load or change any recipe?`,
     chips: ['Output for all machines this week',
             'Which machine has the worst quality? Why?',
             'Any machine running hot or low on disk?'],
@@ -126,6 +130,10 @@ export const I18N = {
     send: 'Gửi', placeholder: 'vd: máy nào chất lượng tệ nhất?',
     thinking: 'đang nghĩ…', usedTools: 'tool', fromMachines: 'đính kèm',
     askingAbout: 'đang hỏi về',
+    ctxMachine: m => `máy ${m}`,
+    ctxPerson: (n, u, m) => `${n} (@${u}) trên ${m}`,
+    askStaff: (n, u, m) =>
+      `@${u} (${n}) đã thao tác gì trên máy ${m} trong 7 ngày qua — có load hay sửa recipe nào không?`,
     chips: ['Sản lượng cả đội hình tuần này',
             'Máy nào chất lượng tệ nhất? Tại sao?',
             'Máy nào đang nóng hoặc sắp đầy đĩa?'],

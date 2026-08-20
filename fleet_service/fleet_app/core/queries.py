@@ -13,7 +13,9 @@ nằm trong kết quả kèm lý do.
 
 from __future__ import annotations
 
+import re
 import time
+import unicodedata
 from typing import Any, Dict, List, Optional
 
 from fleet_app.core.config import settings
@@ -230,12 +232,14 @@ PERIOD_BY_KEY = {p["key"]: p for p in PERIOD_CHOICES}
 
 
 def _norm(t: str) -> str:
-    """Bỏ dấu, gộp khoảng trắng — để 'Tuần này' và 'tuan nay' về cùng một chuỗi."""
-    import re
-    import unicodedata
+    """Bỏ dấu, gộp khoảng trắng — để 'Tuần này' và 'tuan nay' về cùng một chuỗi.
+
+    `đ` phải tự tay đổi thành `d`: NFD không tách nó ra thành d + dấu, nên tên
+    "Đặng Văn Sáu" gõ không dấu vẫn trượt nếu chỉ dựa vào NFD.
+    """
     t = unicodedata.normalize("NFD", str(t or "").strip().lower())
     t = "".join(c for c in t if unicodedata.category(c) != "Mn")
-    return re.sub(r"[\s_-]+", " ", t)
+    return re.sub(r"[\s_-]+", " ", t.replace("đ", "d"))
 
 
 def resolve_period(value: str) -> Optional[Dict[str, Any]]:
@@ -354,6 +358,54 @@ async def fleet_staff() -> Dict[str, Any]:
         "by_machine": by_machine,
         "users": users,
     }
+
+
+# ── Tra người ────────────────────────────────────────────────────────────────
+
+async def resolve_person(text: str) -> Dict[str, Any]:
+    """
+    Đổi thứ người ta gọi một con người thành thứ bảng audit tra được.
+
+    Bảng audit chỉ biết `username`. Còn trên màn hình — và trong đầu người hỏi —
+    một người là HỌ TÊN. Đo được: mô hình truyền thẳng "Lâm Thị Tuyết Mai" vào ô
+    username, cả 5 máy trả "không có tài khoản này", và câu trả lời thành
+    "người này chưa thao tác gì" trong khi thực tế có bản ghi đăng nhập. Sai đó
+    không sửa được bằng cách dặn mô hình kỹ hơn: chỗ hổng nằm ở việc không ai
+    dịch tên người sang tên tài khoản.
+
+    Trả về `status`:
+      found      — ra đúng một username (có thể tồn tại trên nhiều máy)
+      ambiguous  — nhiều username khác nhau cùng khớp, phải hỏi lại
+      not_found  — không khớp ai; KHÁC HẲN với "có người này mà không làm gì"
+    """
+    staff = await fleet_staff()
+    users = staff.get("users") or []
+    q = _norm(text)
+    if not q:
+        return {"status": "not_found", "query": text, "candidates": []}
+
+    def pick(hits: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        names = {u.get("username") for u in hits}
+        if not hits:
+            return None
+        brief = [{"username": u.get("username"), "machine": u.get("machine"),
+                  "full_name": u.get("full_name"),
+                  "employee_code": u.get("employee_code"),
+                  "job_title": u.get("job_title")} for u in hits]
+        if len(names) == 1:
+            return {"status": "found", "query": text,
+                    "username": hits[0].get("username"), "matches": brief}
+        return {"status": "ambiguous", "query": text, "candidates": brief}
+
+    # Thứ tự có chủ đích: khớp chính xác trước, đoán mò sau cùng.
+    for keys in (("username",), ("employee_code",), ("full_name",)):
+        hit = [u for u in users if any(_norm(u.get(k)) == q for k in keys)]
+        if hit:
+            return pick(hit)
+    hit = [u for u in users if q in _norm(u.get("full_name"))]
+    if hit:
+        return pick(hit)
+    return {"status": "not_found", "query": text, "candidates": []}
 
 
 async def fleet_failure_images(days: int = 7, per_machine: int = 6,

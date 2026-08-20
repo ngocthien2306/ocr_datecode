@@ -110,6 +110,14 @@ function paintTabs() {
   if (state.tab === 'staff') {
     $('#staff-body').innerHTML = V.staffHTML(state.staff, state.staffOpts);
     paintStaffFilters();
+    $('#staff-body').querySelectorAll('.person').forEach(el => {
+      const open = () => chat.setPerson({ name: el.dataset.name,
+        username: el.dataset.username, machine: el.dataset.machine });
+      el.onclick = open;
+      el.onkeydown = e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+      };
+    });
   }
   if (state.tab === 'log') {
     $('#log-users-title').textContent = t.userActions;

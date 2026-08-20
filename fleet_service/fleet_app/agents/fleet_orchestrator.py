@@ -65,7 +65,7 @@ Câu hỏi kiểu "máy nào tệ nhất, vì sao?" đi hai chặng:
 
 ## Cách trả lời
 
-Tiếng Việt, ngắn gọn, số liệu đặt trong bảng markdown khi có từ 3 máy trở lên.
+Ngắn gọn, số liệu đặt trong bảng markdown khi có từ 3 máy trở lên.
 Nêu đơn vị rõ ràng: sản phẩm hay frame, phần trăm của mẫu hay của cả kỳ.
 Không bịa số — chỉ dùng số mà tool trả về."""
 
@@ -84,7 +84,18 @@ def get_agent():
     return _agent
 
 
-async def run(message: str, history: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
+# Ngôn ngữ trả lời do GIAO DIỆN quyết định, không để mô hình tự đoán theo câu
+# hỏi. Đo được: giao diện đang ở VI, câu hỏi tiếng Việt, mô hình vẫn trả lời tiếng
+# Anh. Mà tên recipe, tên máy, chức danh trong dữ liệu vốn đã lẫn hai thứ tiếng —
+# càng không có gì để đoán.
+_LANG_RULE = {
+    "vi": "Trả lời bằng TIẾNG VIỆT, kể cả khi câu hỏi viết bằng tiếng Anh.",
+    "en": "Answer in ENGLISH, even if the question is written in Vietnamese.",
+}
+
+
+async def run(message: str, history: Optional[List[Dict[str, str]]] = None,
+              lang: str = "vi") -> Dict[str, Any]:
     """
     Chạy một lượt hỏi đáp.
 
@@ -101,6 +112,7 @@ async def run(message: str, history: Optional[List[Dict[str, str]]] = None) -> D
         elif role == "assistant":
             msgs.append(AIMessage(content=content))
     msgs.append(HumanMessage(content=message))
+    msgs.append(SystemMessage(content=_LANG_RULE.get(lang, _LANG_RULE["vi"])))
 
     result = await get_agent().ainvoke({"messages": msgs})
     out = result["messages"][-1]

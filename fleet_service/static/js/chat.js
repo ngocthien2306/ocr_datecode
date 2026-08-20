@@ -9,7 +9,11 @@
 import { store, esc, post } from './core.js';
 
 const history = [];
-let context = null;          // máy đang gắn ngữ cảnh, nếu có
+/* Ngữ cảnh gắn kèm câu hỏi. Trước đây chỉ là tên máy; giờ là {label, hint} để
+   gắn được cả một CON NGƯỜI — câu "người này đã làm gì" chỉ trả lời đúng khi
+   agent biết cả username lẫn máy, chứ nguyên cái tên đầy đủ thì không tra được
+   bảng audit. */
+let context = null;          // {label, hint} | null
 const $ = s => document.querySelector(s);
 
 export function mount() {
@@ -35,17 +39,29 @@ export function mount() {
 /** Ngữ cảnh gắn sẵn hiện thành chip — gắn ngầm mà không hiện ra thì người dùng
  *  không hiểu vì sao câu trả lời chỉ nói về một máy. */
 export function setContext(machine) {
-  context = machine;
+  context = { label: machine, hint: store.t.ctxMachine(machine) };
   renderCtx();
   $('#chat').classList.remove('min');
   $('#chat-caret').textContent = '▼';
   $('#q').focus();
 }
 
+/** Gắn ngữ cảnh vào MỘT NGƯỜI và mồi sẵn câu hỏi — không tự gửi, để người dùng
+ *  còn sửa được trước khi hỏi. */
+export function setPerson({ name, username, machine }) {
+  context = { label: `${name} · ${machine}`,
+              hint: store.t.ctxPerson(name, username, machine) };
+  renderCtx();
+  $('#chat').classList.remove('min');
+  $('#chat-caret').textContent = '▼';
+  $('#q').value = store.t.askStaff(name, username, machine);
+  $('#q').focus();
+}
+
 function renderCtx() {
   const el = $('#ctxchip');
   if (!context) { el.innerHTML = ''; return; }
-  el.innerHTML = `${store.t.askingAbout} <b>${esc(context)}</b>
+  el.innerHTML = `${store.t.askingAbout} <b>${esc(context.label)}</b>
     <button style="padding:1px 6px;font-size:10px;margin-left:6px">✕</button>`;
   el.querySelector('button').onclick = () => { context = null; renderCtx(); };
 }
@@ -87,14 +103,14 @@ async function send() {
   const t = store.t;
   const raw = $('#q').value.trim();
   if (!raw) return;
-  const q = context ? `${raw} (về máy ${context})` : raw;
+  const q = context ? `${raw} (${context.hint})` : raw;
   $('#chat').classList.remove('min');
   $('#chat-caret').textContent = '▼';
   $('#q').value = '';
   bubble('u', esc(raw));
   const wait = bubble('a', `<span class="na">${t.thinking}</span>`);
   try {
-    const d = await post('/api/fleet/chat', { message: q, history });
+    const d = await post('/api/fleet/chat', { message: q, history, lang: store.lang });
     if (d.detail) { wait.className = 'msg a err'; wait.textContent = d.detail; return; }
     // Link tải do SERVER đưa, không do mô hình viết: cho mô hình thấy tên file
     // thì nó bịa ra đường dẫn và người dùng bấm vào một link không tồn tại.

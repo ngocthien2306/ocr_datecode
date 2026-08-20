@@ -221,7 +221,13 @@ export function staffHTML(d, opts) {
     ((tree[a] ??= {})[b] ??= []).push(u);
   }
 
-  const card = u => `<div class="person">
+  /* Thẻ người là một NÚT: nhìn thấy tên trong danh sách rồi muốn biết người đó
+     vừa làm gì là phản xạ tự nhiên, mà gõ lại username vào ô chat thì vừa chậm
+     vừa dễ sai chính tả. */
+  const card = u => `<div class="person" role="button" tabindex="0"
+    data-name="${esc(u.full_name || u.username)}"
+    data-username="${esc(u.username)}" data-machine="${esc(u.machine || '')}"
+    title="${esc(t.askStaff(u.full_name || u.username, u.username, u.machine || ''))}">
     ${u.avatar_url
       ? `<img loading="lazy" src="/api/fleet/avatar/${esc(u.machine)}?p=${encodeURIComponent(u.avatar_url)}" alt="">`
       : `<div class="avatar-fallback">${esc((u.full_name || u.username || '?')[0])}</div>`}

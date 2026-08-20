@@ -480,8 +480,9 @@ class AuditArgs(BaseModel):
     days: int = Field(default=7, ge=1, le=90, description="Số ngày tính ngược từ hôm nay.")
     username: Optional[str] = Field(
         default=None,
-        description="Lọc theo một tài khoản. Đây là TÊN NGƯỜI DÙNG, không phải "
-                    "tên recipe hay tên máy — tên recipe thì đừng truyền vào đây.")
+        description="Lọc theo một người: truyền username (vd 'qc_tine'), HỌ TÊN "
+                    "đầy đủ, hoặc mã nhân viên — trung tâm tự tra ra tài khoản. "
+                    "Đừng truyền tên recipe hay tên máy vào đây.")
     action_type: Optional[str] = Field(
         default=None,
         description="Lọc theo loại thao tác: login, logout, create_user, "
@@ -497,9 +498,29 @@ async def fleet_audit_log(days: int = 7, username: Optional[str] = None,
 
     Bản ghi demo (`simulated`) đã bị loại sẵn.
     """
+    # Tra người TRƯỚC khi hỏi nhật ký: ô này nhận cả họ tên lẫn username, mà bảng
+    # audit chỉ tra được username.
+    lookup = None
+    if username:
+        lookup = await queries.resolve_person(username)
+        if lookup["status"] == "found":
+            username = lookup["username"]
+        else:
+            # Không tra ra người thì DỪNG, không đi hỏi nhật ký. Hỏi tiếp chỉ nhận
+            # về 5 lần "không có tài khoản này", đọc y hệt "người này chưa làm gì"
+            # — và đó là một câu bịa về một con người có thật.
+            return {"user_lookup": lookup,
+                    "answer_is_unknown": True,
+                    "note": ("KHÔNG tra được người này thành một tài khoản. Đây "
+                             "KHÔNG phải bằng chứng người đó không thao tác gì — "
+                             "chưa hề tra nhật ký. Nếu status là 'ambiguous', hãy "
+                             "hỏi lại người dùng chọn tài khoản nào trong "
+                             "`candidates`.")}
+
     d = await queries.fleet_audit(days=days, username=username,
                                   action_type=action_type)
     out = {
+        "user_lookup": lookup,
         "coverage": d["coverage"],
         "period_days": d["period_days"],
         "total_in_period": d["total_in_period"],
