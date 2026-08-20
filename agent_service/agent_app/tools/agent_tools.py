@@ -27,7 +27,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from agent_app.base.base_agent import AgentState
-from agent_app.core import collector
+from agent_app.core import collector, progress
 from agent_app.core.registry import AgentRegistry
 from agent_app.tools.base_tool import BaseTool, ToolMetadata
 
@@ -61,6 +61,7 @@ def _run(agent_id: str, question: str) -> str:
     không giải được, dù `question` đã được viết lại.
     """
     history = _sub_history.get() or []
+    progress.agent_started(agent_id)
     try:
         agent = AgentRegistry.get_agent(agent_id)
     except ValueError as e:

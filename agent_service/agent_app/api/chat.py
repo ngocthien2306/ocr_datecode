@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -15,7 +16,7 @@ from agent_app.core.config import settings
 from agent_app.core.registry import AgentRegistry
 from agent_app.base.base_agent import AgentState
 from agent_app.api.deps import get_current_user
-from agent_app.core import collector, tool_cache
+from agent_app.core import collector, progress, tool_cache
 from agent_app.core.i18n import set_lang
 from agent_app.core.reroute import build_reroute
 from agent_app.core.suggestions import (
@@ -204,11 +205,18 @@ def _trim_history(messages: List[Any], limit: int) -> List[Any]:
 # API Endpoints
 # ============================================================================
 
-@router.post("/chat", response_model=ChatResponse, summary="Chat with AI agent")
-async def chat(
+async def _run_chat(
     request: ChatRequest,
-    current_user: Dict[str, Any] = Depends(get_current_user)
-):
+    current_user: Dict[str, Any],
+) -> ChatResponse:
+    """
+    Toàn bộ một lượt chat. Dùng CHUNG cho /chat và /chat/stream.
+
+    Tách ra vì hai endpoint chỉ khác nhau ở cách GỬI kết quả, còn phần nạp lịch sử,
+    tóm tắt, chạy agent, dựng attachment, gợi ý, nút hỏi-lại và lưu lại thì giống hệt.
+    Trước đây /chat/stream có đường code riêng và vì thế không nạp lịch sử, không lưu
+    lịch sử, không có attachment — tức là một endpoint trông như có mà không dùng được.
+    """
     """
     Chat with AI agent
 
@@ -430,6 +438,24 @@ async def chat(
         )
 
 
+@router.post("/chat", response_model=ChatResponse, summary="Chat with AI agent")
+async def chat(
+    request: ChatRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Chat với agent, trả về một lần khi xong.
+
+    **Available agents:**
+    - `orchestrator`: tự chọn agent chuyên biệt, gọi được nhiều agent một lượt
+    - `historical_analytics`: thống kê pass-fail, sản lượng, lịch sử recipe
+    - `log_analysis`: log hệ thống, audit log
+    - `equipment_health`: xung reject, trigger, cảm biến, module
+    - `service_management`: trạng thái camera service
+    """
+    return await _run_chat(request, current_user)
+
+
 @router.get("/agents", response_model=List[AgentInfo], summary="List available agents")
 async def list_agents(current_user: Dict[str, Any] = Depends(get_current_user)):
     """List all registered AI agents."""
@@ -519,39 +545,84 @@ async def get_conversations(
 # Streaming (experimental — FE chưa dùng, KHÔNG lưu history)
 # ============================================================================
 
-@router.post("/chat/stream", summary="Chat with streaming response (experimental)")
+@router.post("/chat/stream", summary="Chat kèm stream tiến trình (SSE)")
 async def chat_stream(
     request: ChatRequest,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    Server-Sent Events stream.
+    Server-Sent Events: gửi TIẾN TRÌNH trong lúc chạy, rồi gửi kết quả đầy đủ.
 
-    LƯU Ý: endpoint này KHÔNG nạp và KHÔNG lưu conversation history — mỗi lần
-    gọi là một lượt độc lập. Giữ nguyên trạng từ bản backend cũ.
+    Stream tiến trình chứ không stream token, vì câu trả lời chỉ xuất hiện ở cuối —
+    sau khi tool đã chạy xong, mà tool chiếm phần lớn thời gian (đo thực tế 5–27 giây).
+    Stream token chỉ làm mượt được khoảng một giây cuối, còn hơn 20 giây đầu vẫn là
+    màn hình trắng. Thứ người dùng cần trong 20 giây đó là biết hệ thống đang làm gì.
+
+    Các loại event:
+
+    | `type` | Ý nghĩa |
+    |---|---|
+    | `start` | đã nhận câu hỏi, kèm `session_id` |
+    | `agent` | bắt đầu hỏi một agent chuyên biệt |
+    | `tool` | bắt đầu chạy một tool, `text` là mô tả tiếng Việt |
+    | `tool_done` | tool xong, kèm `seconds` |
+    | `result` | payload y hệt response của POST /chat |
+    | `error` | lỗi, kèm `detail` |
+    | `done` | kết thúc stream |
+
+    Kết quả cuối dùng CHUNG `_run_chat` với endpoint không stream, nên lịch sử, tóm
+    tắt, attachment, gợi ý và nút hỏi-lại giống hệt. Bản trước có đường code riêng và
+    vì thế không nạp/không lưu lịch sử, không có attachment — trông như có mà không
+    dùng được.
     """
-    try:
-        set_lang(request.language, request.message)
-        agent = AgentRegistry.get_agent(request.agent_id)
-        session_id = request.session_id or f"session_{current_user['id']}_{datetime.now().timestamp()}"
+    session_id = request.session_id or f"session_{current_user['id']}_{datetime.now().timestamp()}"
 
-        state = AgentState(
-            messages=[HumanMessage(content=request.message)],
-            user_id=current_user["id"],
-            session_id=session_id,
-            context={"username": current_user["username"]}
-        )
+    # Mở kênh TRƯỚC khi tạo task: `asyncio.create_task` chụp lại context tại thời
+    # điểm tạo, nên mở sau thì task không thấy kênh và không có sự kiện nào.
+    channel = progress.open_channel()
 
-        async def generate():
-            async for chunk in agent.astream(state):
-                yield f"data: {json.dumps({'type': 'chunk', 'data': str(chunk), 'timestamp': datetime.now().isoformat()})}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+    async def generate():
+        def sse(payload: Dict[str, Any]) -> str:
+            return "data: " + json.dumps(payload, ensure_ascii=False, default=str) + "\n\n"
 
-        return StreamingResponse(generate(), media_type="text/event-stream")
+        yield sse({"type": "start", "session_id": session_id})
 
-    except Exception as e:
-        logger.error("Error in streaming chat: %s", e)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        task = asyncio.create_task(_run_chat(request, current_user))
+        try:
+            while not task.done():
+                for ev in progress.drain(channel):
+                    yield sse({"type": ev.get("kind"), **{k: v for k, v in ev.items()
+                                                          if k != "kind"}})
+                # Nhịp đọc 0,12s: đủ mượt để người dùng thấy các bước nối nhau, mà
+                # không biến stream thành vòng lặp quay tít khi chẳng có gì để gửi.
+                await asyncio.sleep(0.12)
+
+            # Vét nốt sự kiện phát ra ở sát lúc kết thúc.
+            for ev in progress.drain(channel):
+                yield sse({"type": ev.get("kind"), **{k: v for k, v in ev.items()
+                                                      if k != "kind"}})
+
+            result = await task
+            yield sse({"type": "result",
+                       "data": result.model_dump(mode="json")})
+        except HTTPException as e:
+            yield sse({"type": "error", "detail": str(e.detail)})
+        except Exception as e:
+            logger.error("Lỗi trong chat stream: %s", e, exc_info=True)
+            yield sse({"type": "error", "detail": str(e)})
+        finally:
+            progress.close_channel()
+            yield sse({"type": "done"})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            # Chặn nginx đệm lại toàn bộ response — đệm là mất hẳn tác dụng của stream.
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+        },
+    )
 
 
 @router.get("/tool-cache", summary="Tình trạng cache kết quả tool")

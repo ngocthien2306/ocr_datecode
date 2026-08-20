@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from langchain_core.tools import StructuredTool
 import logging
 
-from agent_app.core import tool_cache
+from agent_app.core import progress, tool_cache
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,15 @@ class BaseTool:
         if tool_cache.should_cache(metadata.name, metadata.category,
                                    metadata.requires_approval):
             run = tool_cache.wrap(func, metadata.name)
+
+        # Báo tiến trình cũng đặt ở đây, cùng lý do với cache: một chỗ duy nhất mọi
+        # tool đi qua. Bọc NGOÀI cache để lần cache hit cũng được báo — người dùng
+        # thấy "đang tính pass/fail" rồi xong ngay, đó là thông tin đúng.
+        #
+        # Bỏ qua tool `agent` (bốn agent con): chúng đã tự báo bằng
+        # `progress.agent_started`, báo thêm ở đây thành hai dòng cho một việc.
+        if metadata.category != "agent":
+            run = progress.timed(run, metadata.name)
 
         return StructuredTool(
             name=metadata.name,

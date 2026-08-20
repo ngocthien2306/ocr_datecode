@@ -133,6 +133,24 @@
   .chips{display:flex;flex-wrap:wrap;gap:8px}
 
 
+
+  /* ── Dòng tiến trình khi stream ─────────────────────────────────────────
+     Thay cho bong bóng "đang xử lý…" tĩnh. Câu hỏi nặng mất 5–27 giây, và
+     trong khoảng đó thứ duy nhất người dùng cần biết là hệ thống đang làm gì. */
+  .prog{
+    margin:6px 0 2px; padding:8px 12px; border-radius:10px;
+    background:var(--surface-2, #f8fafc); border:1px solid var(--border,#e2e8f0);
+    font-size:.86rem; color:var(--muted,#64748b);
+  }
+  .prog-row{ display:flex; align-items:baseline; gap:8px; padding:1px 0; }
+  .prog-row .dot{ width:6px; height:6px; border-radius:50%; flex:none;
+                  background:var(--accent,#2563eb); opacity:.5; }
+  .prog-row.run .dot{ animation:pulse 1s ease-in-out infinite; opacity:1; }
+  .prog-row.ok .dot{ background:#16a34a; opacity:.7; }
+  .prog-row .who{ color:var(--text,#1f2937); }
+  .prog-row .ms{ margin-left:auto; font-variant-numeric:tabular-nums; opacity:.7; }
+  @keyframes pulse{ 0%,100%{ transform:scale(1) } 50%{ transform:scale(1.6) } }
+
   /* ── Cặp ảnh fail ↔ template ────────────────────────────────────────────
      Đặt cạnh nhau vì câu hỏi người xem đang có là một câu so sánh: chữ lẽ ra
      nằm ở đâu, và thực tế camera thấy gì. Xếp trên–dưới thì mắt phải nhớ ảnh
@@ -351,6 +369,12 @@
         <p class="hint">"Auto" trả lời đúng thứ tiếng bạn vừa gõ. Chọn cứng một
         ngôn ngữ thì hỏi tiếng nào cũng trả lời bằng ngôn ngữ đó — nhãn ô KPI,
         cột bảng và chip gợi ý cũng đổi theo.</p>
+        <label>
+          <input type="checkbox" id="stream" checked
+                 onchange="STREAM = this.checked"> Stream tiến trình
+        </label>
+        <p class="hint">Hiện từng bước (đang hỏi agent nào, đang chạy tool nào, mất
+        bao lâu) trong lúc chờ. Tắt để gọi một lần như cũ.</p>
         <label>Session ID</label>
         <input id="sid">
         <div class="row">
@@ -819,6 +843,80 @@ async function clearConv(){
 
 // `agentOverride` cho nút hỏi-lại gửi thẳng vào một agent, bỏ qua orchestrator:
 // orchestrator vừa đoán sai một lần, để nó đoán lại thì ra đúng kết quả cũ.
+
+// Bật/tắt stream. Mặc định BẬT: câu nặng mất 5–27 giây và không có gì tệ hơn một
+// màn hình trắng không nói gì. Tắt được để so sánh khi debug.
+let STREAM = true;
+
+async function sendPlain(body){
+  const r = await fetch(agUrl()+'/api/agent/chat', {
+    method:'POST',
+    headers:{'Content-Type':'application/json', Authorization:'Bearer '+TOKEN},
+    body
+  });
+  const j = await r.json();
+  if(!r.ok) throw new Error(j.detail || ('HTTP '+r.status));
+  return j;
+}
+
+// Đọc SSE bằng fetch + ReadableStream thay vì EventSource: EventSource chỉ làm được
+// GET và không gắn được header Authorization.
+async function sendStreaming(body, waitBubble){
+  const r = await fetch(agUrl()+'/api/agent/chat/stream', {
+    method:'POST',
+    headers:{'Content-Type':'application/json', Authorization:'Bearer '+TOKEN},
+    body
+  });
+  if(!r.ok || !r.body) throw new Error('HTTP '+r.status);
+
+  waitBubble.remove();
+  const box = document.createElement('div'); box.className = 'prog';
+  $('log').appendChild(box);
+
+  const rows = new Map();          // tool/agent -> phần tử dòng
+  const addRow = (key, text) => {
+    let el = rows.get(key);
+    if(!el){
+      el = document.createElement('div'); el.className = 'prog-row run';
+      el.innerHTML = `<span class="dot"></span><span class="who">${esc(text)}</span>`
+                   + `<span class="ms"></span>`;
+      box.appendChild(el); rows.set(key, el); scroll();
+    }
+    return el;
+  };
+
+  const reader = r.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '', result = null;
+
+  while(true){
+    const {value, done} = await reader.read();
+    if(done) break;
+    buf += dec.decode(value, {stream:true});
+    // SSE phân tách bằng dòng trắng. Giữ phần chưa trọn trong buf.
+    const parts = buf.split('\n\n'); buf = parts.pop();
+    for(const part of parts){
+      const line = part.split('\n').find(x=>x.startsWith('data: '));
+      if(!line) continue;
+      let ev; try{ ev = JSON.parse(line.slice(6)); }catch(e){ continue; }
+
+      if(ev.type === 'agent')      addRow('agent:'+ev.agent, ev.text);
+      else if(ev.type === 'tool')  addRow('tool:'+ev.tool, '· ' + ev.text);
+      else if(ev.type === 'tool_done'){
+        const el = rows.get('tool:'+ev.tool);
+        if(el){ el.className = 'prog-row ok';
+                el.querySelector('.ms').textContent = (ev.seconds ?? '') + 's'; }
+      }
+      else if(ev.type === 'result') result = ev.data;
+      else if(ev.type === 'error')  throw new Error(ev.detail || 'lỗi stream');
+    }
+  }
+  // Xong thì mọi dòng đều là việc đã hoàn thành.
+  rows.forEach(el => { if(el.className.includes('run')) el.className = 'prog-row ok'; });
+  if(!result) throw new Error('stream kết thúc mà không có kết quả');
+  return result;
+}
+
 async function send(text, agentOverride){
   const msg = (text ?? $('inp').value).trim();
   if(!msg || BUSY) return;
@@ -829,16 +927,13 @@ async function send(text, agentOverride){
   const wait = bubble('đang xử lý…','bot'); wait.style.opacity=.5;
 
   try{
-    const r = await fetch(agUrl()+'/api/agent/chat', {
-      method:'POST',
-      headers:{'Content-Type':'application/json', Authorization:'Bearer '+TOKEN},
-      body:JSON.stringify({message:msg, agent_id:agentOverride || $('agent').value,
-                           session_id:$('sid').value, language:$('lang').value})
-    });
-    const j = await r.json();
-    wait.remove();
+    const body = JSON.stringify({message:msg, agent_id:agentOverride || $('agent').value,
+                                 session_id:$('sid').value, language:$('lang').value});
+    // Cả hai nhánh tự lo bong bóng "đang xử lý": nhánh stream thay nó bằng bảng
+    // tiến trình, nhánh thường thì xoá khi có kết quả.
+    const j = STREAM ? await sendStreaming(body, wait)
+                     : await sendPlain(body).finally(()=>wait.remove());
     $('raw').textContent = JSON.stringify(j, null, 2);
-    if(!r.ok) throw new Error(j.detail || ('HTTP '+r.status));
 
     bubble(j.response, 'bot');
 
