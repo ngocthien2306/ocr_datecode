@@ -1,3 +1,4 @@
+
 # 05 — Agent UX: khi nào hỏi lại, khi nào không
 
 ## Quy tắc gốc
@@ -6,9 +7,9 @@
 
 Nghe hiển nhiên, nhưng cả hai vế đều dễ hỏng theo hai hướng ngược nhau:
 
-| Hỏng kiểu A — tự đoán | Hỏng kiểu B — hỏi thừa |
-|---|---|
-| Đặt `format="html"` làm mặc định ⇒ mô hình tự điền ⇒ câu hỏi **không bao giờ** tới tay người dùng, và họ nhận file sai định dạng | Người dùng đã nói "xuất PDF cho M1 và M2 tuần này" mà vẫn hỏi lại cả ba mục ⇒ phải trả lời lại thứ mình vừa nói |
+| Hỏng kiểu A — tự đoán                                                                                                                                        | Hỏng kiểu B — hỏi thừa                                                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Đặt`format="html"` làm mặc định ⇒ mô hình tự điền ⇒ câu hỏi **không bao giờ** tới tay người dùng, và họ nhận file sai định dạng | Người dùng đã nói "xuất PDF cho M1 và M2 tuần này" mà vẫn hỏi lại cả ba mục ⇒ phải trả lời lại thứ mình vừa nói |
 
 Kiểu A đã xảy ra ở tầng edge và được ghi trong `PIPELINE.md §4`. Kiểu B là rủi ro
 mới khi thêm picker.
@@ -36,13 +37,13 @@ Ba điểm bắt buộc:
 
 ## Bảng hành vi mong đợi
 
-| Người dùng gõ | Hệ thống làm |
-|---|---|
-| "Xuất báo cáo" | Hỏi cả 3: máy nào, kỳ nào, định dạng nào |
-| "Xuất báo cáo PDF" | Hỏi 2: máy nào, kỳ nào |
-| "Xuất báo cáo M1 M2 tuần này" | Hỏi 1: định dạng nào |
-| "Xuất PDF so sánh M1 M2 tuần này" | **Không hỏi gì**, xuất luôn |
-| "Xuất báo cáo cho tất cả máy hôm nay ra excel" | **Không hỏi gì**, xuất luôn |
+| Người dùng gõ                                     | Hệ thống làm                                    |
+| ----------------------------------------------------- | -------------------------------------------------- |
+| "Xuất báo cáo"                                     | Hỏi cả 3: máy nào, kỳ nào, định dạng nào |
+| "Xuất báo cáo PDF"                                 | Hỏi 2: máy nào, kỳ nào                        |
+| "Xuất báo cáo M1 M2 tuần này"                    | Hỏi 1: định dạng nào                          |
+| "Xuất PDF so sánh M1 M2 tuần này"                 | **Không hỏi gì**, xuất luôn             |
+| "Xuất báo cáo cho tất cả máy hôm nay ra excel" | **Không hỏi gì**, xuất luôn             |
 
 ## Picker: hỏi bằng nút bấm, không bằng chữ
 
@@ -121,12 +122,12 @@ Thứ tự ưu tiên:
 Chat mở từ một ngữ cảnh cụ thể thì mang theo ngữ cảnh đó, người dùng không phải
 gõ lại:
 
-| Mở từ | Ngữ cảnh gắn sẵn |
-|---|---|
-| Nút trong ngăn kéo máy | máy đó |
-| Một hàng trong nhật ký thao tác | user + máy + thời điểm |
-| Một ảnh sản phẩm lỗi | máy + recipe + giờ |
-| Line Station | luôn là máy đó, không đổi được |
+| Mở từ                              | Ngữ cảnh gắn sẵn                      |
+| ------------------------------------ | ----------------------------------------- |
+| Nút trong ngăn kéo máy           | máy đó                                 |
+| Một hàng trong nhật ký thao tác | user + máy + thời điểm                |
+| Một ảnh sản phẩm lỗi            | máy + recipe + giờ                      |
+| Line Station                         | luôn là máy đó, không đổi được |
 
 Ngữ cảnh hiện thành một chip nhỏ phía trên ô nhập ("đang hỏi về **M2**"), gỡ được.
 Gắn ngầm mà không hiện ra thì người dùng không hiểu vì sao câu trả lời chỉ nói về
@@ -148,8 +149,8 @@ sau; trước mắt hiện nhãn theo tool đang chạy là đủ.
 
 ## Ba thứ tuyệt đối không để mô hình làm
 
-| Không | Vì sao |
-|---|---|
-| Viết đường dẫn tải file | Đã xảy ra thật: mô hình bịa `sandbox:/fleet_….pdf`. Tên file phải **ra khỏi tầm nhìn** của mô hình, link do server gắn |
-| Tự chọn máy / kỳ / định dạng | Câu hỏi sẽ không bao giờ tới người dùng |
-| Nhắc lại số từ trí nhớ | Số đi qua trường có cấu trúc, giao diện tự dựng bảng |
+| Không                              | Vì sao                                                                                                                                        |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Viết đường dẫn tải file       | Đã xảy ra thật: mô hình bịa`sandbox:/fleet_….pdf`. Tên file phải **ra khỏi tầm nhìn** của mô hình, link do server gắn |
+| Tự chọn máy / kỳ / định dạng | Câu hỏi sẽ không bao giờ tới người dùng                                                                                               |
+| Nhắc lại số từ trí nhớ        | Số đi qua trường có cấu trúc, giao diện tự dựng bảng                                                                                |

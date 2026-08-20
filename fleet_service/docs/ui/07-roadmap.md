@@ -64,6 +64,9 @@ không đụng backend, không restart backend trên máy sản xuất.
 | 4.4 | Tool `fleet_audit_log` cho agent | 1,0 |
 | 4.5 | Nút "hỏi thêm" từ mỗi hàng nhật ký sang chat, kèm ngữ cảnh | 0,5 |
 
+**Ràng buộc:** mọi bản ghi người dùng khoá theo **(máy, username)** — username
+trùng trên cả 5 máy (`admin` ×5), gộp theo username trần là trộn 5 người thành một.
+
 **Kiểm chứng:** chat trả lời đúng ba câu:
 - "Hôm nay ai đăng nhập vào M2?"
 - "Ai sửa recipe trên Auto2 tuần này?"

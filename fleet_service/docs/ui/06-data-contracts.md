@@ -117,7 +117,14 @@ Nhật ký thao tác và mọi thống kê về người dùng **phải lọc đ
 mặc định nên **loại chúng ra** ở môi trường thật. Không lọc thì số liệu demo trộn
 vào số liệu thật và không cách nào phân biệt.
 
-## ⚠️ Cần chú ý 5 — Vị trí máy trên sơ đồ
+## ⚠️ Cần chú ý 5 — Username không duy nhất giữa các máy
+
+Đã kiểm chứng: `admin`, `operator`, `supervisor` tồn tại trên **cả 5 máy** — là
+các tài khoản khác nhau trùng tên, không phải một người. Mọi API nhân sự và nhật
+ký ở tầng fleet phải khoá theo **(máy, username)**; muốn liên kết "một người trên
+nhiều máy" thì dùng `employee_code`. Chi tiết: [09 — Mở rộng](09-scale.md), mục 9.
+
+## ⚠️ Cần chú ý 6 — Vị trí máy trên sơ đồ
 
 Chưa có toạ độ. Thêm vào `config/machines.json`:
 

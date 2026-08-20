@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     # Lần lạnh của rollup phải mổ vài trăm document fail trên Jetson.
     EDGE_ROLLUP_TIMEOUT: float = 30.0
 
+    # Số máy được gọi cùng lúc trong một lượt fan-out. 5 máy chưa cần, nhưng
+    # gather không trần thì 50 máy = 50 kết nối chèn nhau trên link chậm.
+    FANOUT_CONCURRENCY: int = 8
+
     POLL_INTERVAL: float = 60.0
     STALE_AFTER: float = 180.0
 

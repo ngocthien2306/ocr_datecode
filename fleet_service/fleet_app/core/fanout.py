@@ -19,6 +19,7 @@ import asyncio
 import logging
 from typing import Any, Awaitable, Callable, Dict, List, Sequence
 
+from fleet_app.core.config import settings
 from fleet_app.core.registry import Machine
 
 logger = logging.getLogger(__name__)
@@ -33,10 +34,17 @@ async def fan_out(machines: Sequence[Machine],
     Timeout đặt cho TỪNG máy chứ không cho cả lượt: đặt cho cả lượt thì một máy
     chậm sẽ cắt ngang cả những máy đã trả lời xong.
     """
+    # Trần song song. Với 5 máy thì gather trần là vô hại, nhưng đội hình sẽ
+    # lớn dần: 50 máy nghĩa là 50 kết nối cùng lúc từ một tiến trình, và các
+    # link tới Jetson vốn chỉ vài chục KB/s sẽ chèn nhau — máy khoẻ cũng thành
+    # timeout. Trần đặt theo cấu hình để không phải sửa code khi mở rộng.
+    sem = asyncio.Semaphore(settings.FANOUT_CONCURRENCY)
+
     async def one(m: Machine) -> Dict[str, Any]:
         base = {"node_id": m.node_id, "machine": m.name, "ip": m.ip}
         try:
-            data = await asyncio.wait_for(call(m), timeout=timeout)
+            async with sem:
+                data = await asyncio.wait_for(call(m), timeout=timeout)
             return {**base, "ok": True, "data": data}
         except asyncio.TimeoutError:
             return {**base, "ok": False, "error": f"quá {timeout:.0f}s không trả lời"}

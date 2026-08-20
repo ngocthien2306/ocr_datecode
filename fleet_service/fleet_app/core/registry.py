@@ -222,7 +222,14 @@ class Registry:
 
         targets = [m for m in self._machines.values() if m.online]
         if targets:
-            await asyncio.gather(*(self.probe(m) for m in targets))
+            # Cùng lý do với fan_out: dò 50 máy cùng lúc là tự bóp nghẹt link.
+            sem = asyncio.Semaphore(settings.FANOUT_CONCURRENCY)
+
+            async def _probe(m: Machine) -> None:
+                async with sem:
+                    await self.probe(m)
+
+            await asyncio.gather(*(_probe(m) for m in targets))
         return self.all()
 
     def all(self) -> List[Machine]:
