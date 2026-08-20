@@ -13,7 +13,7 @@ không ai phát hiện cho tới khi có người mở hai màn hình cạnh nha
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -49,8 +49,10 @@ async def fleet_status() -> Dict[str, Any]:
 
 @router.get("/production", summary="Sản lượng và vân tay kiểu lỗi của cả đội hình")
 async def fleet_production(days: int = Query(7, ge=1, le=90),
-                           causes: bool = Query(True)) -> Dict[str, Any]:
-    return await queries.fleet_production(days=days, causes=causes)
+                           causes: bool = Query(True),
+                           granularity: str = Query("day", pattern="^(hour|day|week|shift)$")) -> Dict[str, Any]:
+    return await queries.fleet_production(days=days, causes=causes,
+                                          granularity=granularity)
 
 
 @router.get("/machine/{key}", summary="Thẻ chi tiết một máy")
@@ -96,3 +98,35 @@ async def download_report(name: str):
     if not path.is_file():
         raise HTTPException(404, f"Không có báo cáo {safe!r}")
     return FileResponse(str(path), filename=safe)
+
+
+@router.get("/staff", summary="Nhân sự toàn nhà máy, khoá theo (máy, username)")
+async def fleet_staff() -> Dict[str, Any]:
+    return await queries.fleet_staff()
+
+
+@router.get("/failure-images", summary="Ảnh sản phẩm lỗi từ mọi máy")
+async def fleet_failure_images(
+    days: int = Query(7, ge=1, le=90),
+    per_machine: int = Query(6, ge=1, le=24),
+    cause: Optional[str] = Query(None),
+) -> Dict[str, Any]:
+    return await queries.fleet_failure_images(days=days, per_machine=per_machine,
+                                              cause=cause)
+
+
+@router.get("/failure-image/{machine}/{img_id}", summary="Proxy ảnh thu nhỏ từ edge")
+async def fleet_failure_image(machine: str, img_id: str,
+                              w: int = Query(480, ge=64, le=1600)):
+    """
+    Trình duyệt không gắn được Bearer token vào thẻ <img>, nên ảnh đi qua fleet:
+    fleet giữ token với edge, edge vẫn giữ xác thực, trình duyệt chỉ thấy fleet.
+    """
+    from fastapi.responses import Response
+
+    m = _one_or_409(machine)
+    r = await client.failure_image_bytes(m.node_id, m.ip, img_id, w=w)
+    if not r.ok:
+        raise HTTPException(r.status or 502, f"{m.name}: {r.error}")
+    return Response(content=r.data, media_type="image/jpeg",
+                    headers={"Cache-Control": "public, max-age=86400"})

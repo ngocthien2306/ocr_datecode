@@ -1033,6 +1033,14 @@ def explain_failures(
                             "_ts_utc": doc["timestamp"],
                             "_causes": list(frame_causes),
                             "_product": str(doc["_id"]),
+                            # Nguyên nhân chính, dạng CÔNG KHAI. `_causes` bị
+                            # attach_templates dọn trước khi trả (cùng _ts_utc,
+                            # vì đó là khoá nội bộ) — nên tầng nào cần nguyên
+                            # nhân của TỪNG ảNH phải lấy từ đây, không phải từ
+                            # _causes. Thiếu field này thì /fleet/failure-images
+                            # đã gán mọi ảnh thành "unknown".
+                            "cause": next((k for k in _CAUSE_PRIORITY
+                                           if k in frame_causes), "unknown"),
                         })
 
         # Chọn ra bộ ảnh sẽ hiện, dàn đều theo nguyên nhân.

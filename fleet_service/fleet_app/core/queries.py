@@ -127,7 +127,8 @@ async def machine_detail(key: str) -> Dict[str, Any]:
     }
 
 
-async def fleet_production(days: int = 7, causes: bool = True) -> Dict[str, Any]:
+async def fleet_production(days: int = 7, causes: bool = True,
+                           granularity: str = "day") -> Dict[str, Any]:
     """
     Sản lượng + vân tay kiểu lỗi cả đội hình.
 
@@ -140,7 +141,8 @@ async def fleet_production(days: int = 7, causes: bool = True) -> Dict[str, Any]
     ms = [m for m in registry.all() if m.online]
 
     async def one(m: Machine) -> Dict[str, Any]:
-        r = await client.rollup(m.node_id, m.ip, days=days, causes=causes)
+        r = await client.rollup(m.node_id, m.ip, days=days, causes=causes,
+                                granularity=granularity)
         if not r.ok:
             raise RuntimeError(r.error or "rollup lỗi")
         return r.data
@@ -160,6 +162,7 @@ async def fleet_production(days: int = 7, causes: bool = True) -> Dict[str, Any]
         rows.append({
             "node_id": m.node_id, "machine": m.name, "line": m.line,
             "state": m.state(), "production": prod,
+            "by_shift": d.get("by_shift"),
             "failure_modes": d.get("failure_modes"),
             "recipes": d.get("recipes"),
             "error": r.get("error") or d.get("production_error"),
@@ -312,4 +315,93 @@ async def report_data(machine_names: List[str], days: int,
                      "machines_missing": missing,
                      "machines_degraded": [],
                      "complete": not missing},
+    }
+
+
+async def fleet_staff() -> Dict[str, Any]:
+    """
+    Nhân sự toàn nhà máy, gộp từ mọi máy.
+
+    Mỗi bản ghi mang `machine` và khoá là **(máy, username)** — username KHÔNG
+    duy nhất giữa các máy (kiểm chứng: `admin`/`operator`/`supervisor` tồn tại
+    trên cả 5 máy, là các tài khoản khác nhau trùng tên). Gộp theo username trần
+    là trộn 5 người thành một. Danh tính xuyên máy duy nhất là `employee_code`.
+    """
+    ms = [m for m in registry.all() if m.online]
+
+    async def one(m: Machine) -> Dict[str, Any]:
+        r = await client.staff(m.node_id, m.ip)
+        if not r.ok:
+            raise RuntimeError(r.error or "staff lỗi")
+        return r.data
+
+    results = await fan_out(ms, one, timeout=settings.EDGE_TIMEOUT + 2)
+
+    users, by_machine = [], {}
+    for r in results:
+        if not r.get("ok"):
+            continue
+        rows = (r["data"] or {}).get("users") or []
+        by_machine[r["machine"]] = len(rows)
+        for u in rows:
+            users.append({**u, "machine": r["machine"],
+                          "key": f"{r['machine']}/{u.get('username')}"})
+
+    return {
+        "generated_at": time.time(),
+        "coverage": coverage(results),
+        "count": len(users),
+        "by_machine": by_machine,
+        "users": users,
+    }
+
+
+async def fleet_failure_images(days: int = 7, per_machine: int = 6,
+                               cause: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Ảnh sản phẩm lỗi từ mọi máy, mỗi máy tối đa `per_machine` ảnh.
+
+    Giới hạn THEO MÁY chứ không lấy top-N toàn cục: top-N toàn cục sẽ bị máy
+    nhiều fail nhất chiếm sạch, và lưới "toàn nhà máy" hoá ra chỉ có ảnh của một
+    line. Ảnh của mỗi máy vốn đã được edge rải đều theo nguyên nhân.
+    """
+    ms = [m for m in registry.all() if m.online]
+
+    async def one(m: Machine) -> Dict[str, Any]:
+        r = await client.failure_images(m.node_id, m.ip, days=days,
+                                        limit=per_machine, cause=cause)
+        if not r.ok:
+            raise RuntimeError(r.error or "failure-images lỗi")
+        return r.data
+
+    results = await fan_out(ms, one, timeout=settings.EDGE_ROLLUP_TIMEOUT + 3)
+
+    images = []
+    for r in results:
+        if not r.get("ok"):
+            continue
+        d = r["data"] or {}
+        for img in d.get("images") or []:
+            images.append({**img, "machine": r["machine"],
+                           # URL đi QUA fleet — trình duyệt không gắn được token
+                           # vào <img>, nên fleet proxy hộ.
+                           "url": f"/api/fleet/failure-image/{r['machine']}/{img['id']}"})
+
+    # Trộn xen kẽ theo máy thay vì nối đuôi: nối đuôi thì 6 ảnh đầu toàn của một
+    # máy, người xem tưởng lưới chỉ có một line.
+    by_m: Dict[str, List[Dict[str, Any]]] = {}
+    for img in images:
+        by_m.setdefault(img["machine"], []).append(img)
+    mixed, idx = [], 0
+    while any(by_m.values()):
+        for k in sorted(by_m):
+            if by_m[k]:
+                mixed.append(by_m[k].pop(0))
+        idx += 1
+
+    return {
+        "generated_at": time.time(),
+        "coverage": coverage(results),
+        "count": len(mixed),
+        "images": mixed,
     }

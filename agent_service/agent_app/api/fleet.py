@@ -18,12 +18,14 @@ Khuôn theo `/api/agent/service/status` đã có: gọi thẳng tool, không t�
 
 from __future__ import annotations
 
+import base64
 import logging
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agent_app.api.deps import get_current_user
 
@@ -98,9 +100,43 @@ def _fingerprint(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
+def _shift_stats(start_date: str, end_date: str) -> Dict[str, Any]:
+    """
+    Pass/fail gộp theo CA — dùng lại `_shift_expr` của analytics_tools chứ không
+    viết lại: ca C (22:00–06:00) vắt qua nửa đêm, điều kiện là `giờ >= 22 HOẶC
+    giờ < 6` chứ không phải một khoảng liên tục, và biểu thức đó đã trả giá xong
+    ở tầng tool. Viết lại bằng khoảng liên tục là mất sạch ca đêm.
+    """
+    from agent_app.db.mongodb import get_sync_database
+    from agent_app.tools.analytics_tools import _TIME_FIELD, _local_bound, _shift_expr
+
+    db = get_sync_database()
+    pipeline = [
+        {"$match": {_TIME_FIELD: {"$gte": _local_bound(start_date, end=False),
+                                  "$lte": _local_bound(end_date, end=True)}}},
+        {"$group": {
+            "_id": {"shift": _shift_expr(), "result": "$product_pass_fail"},
+            "count": {"$sum": 1},
+        }},
+    ]
+    out: Dict[str, Dict[str, int]] = {}
+    for r in db["inference_results"].aggregate(pipeline):
+        sh = r["_id"]["shift"] or "?"
+        d = out.setdefault(sh, {"pass": 0, "fail": 0})
+        key = "pass" if r["_id"]["result"] == "PASS" else "fail"
+        d[key] += r["count"]
+    for d in out.values():
+        t = d["pass"] + d["fail"]
+        d["total"] = t
+        d["pass_rate"] = round(d["pass"] * 100.0 / t, 2) if t else None
+    return {"success": True, "by_shift": out}
+
+
 @router.get("/rollup", summary="Số liệu sản xuất gọn cho tầng fleet (không LLM)")
 async def rollup(
     days: int = Query(7, ge=1, le=90, description="Số ngày tính ngược từ hôm nay"),
+    granularity: str = Query("day", pattern="^(hour|day|week|shift)$",
+                             description="Chia trend theo giờ/ngày/tuần, hoặc gộp theo ca"),
     causes: bool = Query(True, description="Kèm vân tay kiểu lỗi (chậm hơn)"),
     sample_limit: int = Query(200, ge=50, le=1000),
     current_user: Dict[str, Any] = Depends(get_current_user),
@@ -126,9 +162,12 @@ async def rollup(
         "period": {"start": start_date, "end": end_date, "days": days},
     }
 
-    stats = _cached(f"stats:{start_date}:{end_date}",
+    # "shift" không phải một cách chia trend theo thời gian mà là một cách GỘP
+    # khác hẳn, nên trend vẫn chia theo ngày còn kết quả theo ca nằm ở khối riêng.
+    trend_gran = granularity if granularity in ("hour", "day", "week") else "day"
+    stats = _cached(f"stats:{start_date}:{end_date}:{trend_gran}",
                     lambda: get_pass_fail_stats(start_date=start_date,
-                                                end_date=end_date, group_by="day"))
+                                                end_date=end_date, group_by=trend_gran))
     if stats.get("success"):
         s = stats.get("summary") or {}
         out["production"] = {
@@ -139,6 +178,7 @@ async def rollup(
             # Chuẩn hoá theo ngày: hai máy chạy số ngày khác nhau trong kỳ thì
             # sản lượng tuyệt đối không so được, per-day thì so được.
             "per_day": round((s.get("total_products") or 0) / max(days, 1), 1),
+            "trend_granularity": trend_gran,
             "trend": stats.get("trend") or {},
         }
     else:
@@ -154,6 +194,10 @@ async def rollup(
         if not raw.get("success"):
             out["failure_modes_error"] = raw.get("error")
 
+    if granularity == "shift":
+        out["by_shift"] = _cached(f"shift:{start_date}:{end_date}",
+                                  lambda: _shift_stats(start_date, end_date)).get("by_shift")
+
     recs = _cached(f"recipes:{days}", lambda: list_recipes(days=days))
     if recs.get("success"):
         items: List[Dict[str, Any]] = recs.get("recipes") or recs.get("items") or []
@@ -164,3 +208,178 @@ async def rollup(
         ]
 
     return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# GĐ 1 — ba khoảng trống dữ liệu (docs/ui/06-data-contracts.md)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Gốc ảnh sản phẩm: image_path trong DB là đường TƯƠNG ĐỐI so với backend/uploads
+# (đo thật trên M2: "inference_results/<recipe>/<ngày>/<id>/..._viz.jpg").
+_UPLOADS_ROOT = Path(__file__).resolve().parents[3] / "backend" / "uploads"
+_IMG_SUFFIXES = {".jpg", ".jpeg", ".png"}
+
+
+@router.get("/staff", summary="Hồ sơ nhân sự đầy đủ (không LLM)")
+async def staff(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Trả về user kèm CẢ các field hồ sơ mà `/api/users/` của backend làm rơi.
+
+    Kiểm chứng trên M2: MongoDB có `employee_code`, `department`, `job_title`,
+    `shift`, `production_line`, `hire_date` — response model của backend map
+    field tường minh nên cả sáu không ra khỏi API (cùng lớp lỗi đã ghi cho
+    `recipe_to_response`). Không có chúng thì tab Nhân sự nhóm theo line/bộ
+    phận/ca không dựng được.
+
+    Endpoint này đọc thẳng collection thay vì sửa backend: sửa backend là restart
+    5 tiến trình đang phục vụ dây chuyền, còn thêm endpoint ở đây chỉ restart
+    agent — thứ vốn không nằm trên đường sản xuất.
+    """
+    from agent_app.db.mongodb import get_sync_database
+
+    db = get_sync_database()
+    out = []
+    # Loại hashed_password ngay ở projection, không phải lọc sau — trường mật
+    # khẩu không được rời khỏi DB rồi mới bị bỏ.
+    for u in db["users"].find({}, {"hashed_password": 0}):
+        u["_id"] = str(u["_id"])
+        for k in ("created_at", "updated_at", "last_login", "hire_date"):
+            if u.get(k) is not None and not isinstance(u[k], str):
+                u[k] = str(u[k])
+        out.append(u)
+
+    return {
+        "success": True,
+        "count": len(out),
+        "users": out,
+        # Nhắc tầng trên: username KHÔNG duy nhất giữa các máy (admin tồn tại
+        # trên mọi máy) — fleet phải khoá theo (máy, username).
+        "note": "username chỉ duy nhất TRONG một máy; định danh xuyên máy là employee_code.",
+    }
+
+
+def _img_id(rel_path: str) -> str:
+    return base64.urlsafe_b64encode(rel_path.encode()).decode().rstrip("=")
+
+
+def _img_path(img_id: str) -> Optional[Path]:
+    """
+    Giải id ảnh về đường dẫn, CHỈ chấp nhận file nằm trong uploads/.
+
+    Id là base64 của đường dẫn tương đối — không phải để giấu, mà để endpoint
+    không bao giờ nhận đường dẫn tuỳ ý: giải xong phải resolve nằm trong
+    _UPLOADS_ROOT và có đuôi ảnh, không thì coi như không tồn tại. Một id bịa
+    ra (`../../etc/...`) chết ở đây chứ không tới được đĩa.
+    """
+    try:
+        pad = "=" * (-len(img_id) % 4)
+        rel = base64.urlsafe_b64decode(img_id + pad).decode()
+    except (ValueError, UnicodeDecodeError):
+        return None
+    p = (_UPLOADS_ROOT / rel).resolve()
+    try:
+        p.relative_to(_UPLOADS_ROOT.resolve())
+    except ValueError:
+        return None
+    if p.suffix.lower() not in _IMG_SUFFIXES or not p.is_file():
+        return None
+    return p
+
+
+@router.get("/failure-images", summary="Danh sách ảnh sản phẩm lỗi (không LLM)")
+async def failure_images(
+    days: int = Query(7, ge=1, le=90),
+    limit: int = Query(12, ge=1, le=48),
+    cause: Optional[str] = Query(None, description="Lọc theo nguyên nhân, vd no_detection"),
+    sample_limit: int = Query(200, ge=50, le=1000),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Metadata ảnh sản phẩm lỗi — ảnh thật lấy qua `/fleet/failure-image/{id}`.
+
+    Tái dùng mẫu của `explain_failures` (cùng cache với rollup, nên gọi thêm
+    endpoint này không mổ lại document): mẫu đã được RẢI ĐỀU qua các nguyên nhân
+    và ưu tiên ảnh có `expected` — ảnh kèm dòng "mong X → đọc Y" tự giải thích,
+    ảnh không có thì người xem phải tự đoán. Không viết lại logic chọn ảnh.
+    """
+    from agent_app.tools.analytics_tools import _CAUSE_LABELS, explain_failures
+
+    start_date, end_date = _dates(days)
+    raw = _cached(f"causes:{start_date}:{end_date}:{sample_limit}",
+                  lambda: explain_failures(start_date=start_date,
+                                           end_date=end_date,
+                                           sample_limit=sample_limit))
+    if not raw.get("success"):
+        return {"success": False, "error": raw.get("error")}
+
+    items = []
+    for s in raw.get("samples") or []:
+        rel = s.get("image_path")
+        if not rel:
+            continue
+        # `cause` do tool gán lúc tạo mẫu; `_causes` không tới được đây vì
+        # attach_templates dọn khoá nội bộ trước khi trả.
+        primary = s.get("cause") or "unknown"
+        if cause and cause != primary:
+            continue
+        items.append({
+            "id": _img_id(rel),
+            "cause": primary,
+            "cause_label": _CAUSE_LABELS.get(primary, primary),
+            "camera": s.get("camera"),
+            "timestamp": s.get("timestamp"),
+            "recipe_name": s.get("recipe_name"),
+            "expected": s.get("expected"),
+            "recognized": s.get("recognized"),
+        })
+        if len(items) >= limit:
+            break
+
+    return {
+        "success": True,
+        "count": len(items),
+        "images": items,
+        "sampling": raw.get("sampling"),
+        "sample_covers_all": raw.get("sample_covers_all"),
+    }
+
+
+@router.get("/failure-image/{img_id}", summary="Ảnh sản phẩm lỗi, thu nhỏ")
+async def failure_image(
+    img_id: str,
+    w: int = Query(480, ge=64, le=1600),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """
+    Phục vụ ảnh, mặc định thu về 480px.
+
+    Thu nhỏ không phải tuỳ chọn: ảnh gốc 1920×1200 ~500 KB, đường tới Jetson đo
+    được vài chục KB/s — lưới 12 ảnh gốc là ~10 phút tải. 480px JPEG ~40–60 KB.
+    """
+    from io import BytesIO
+
+    from fastapi.responses import Response
+    from PIL import Image
+
+    p = _img_path(img_id)
+    if p is None:
+        raise HTTPException(404, "Không có ảnh này")
+
+    def _render() -> bytes:
+        im = Image.open(p)
+        im = im.convert("RGB")
+        if im.width > w:
+            im.thumbnail((w, w * im.height // max(im.width, 1)))
+        buf = BytesIO()
+        im.save(buf, "JPEG", quality=78)
+        return buf.getvalue()
+
+    # PIL chạy trong threadpool để không chặn event loop của agent — resize một
+    # ảnh mất ~100ms trên Jetson, và agent này còn đang phục vụ chat.
+    import anyio
+
+    data = await anyio.to_thread.run_sync(_render)
+    return Response(content=data, media_type="image/jpeg",
+                    headers={"Cache-Control": "public, max-age=86400"})

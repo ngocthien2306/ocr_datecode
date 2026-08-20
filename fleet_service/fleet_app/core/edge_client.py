@@ -187,7 +187,8 @@ class EdgeClient:
             timeout=settings.EDGE_TIMEOUT)
 
     async def rollup(self, node_id: str, ip: str, days: int = 7,
-                     causes: bool = True) -> EdgeResult:
+                     causes: bool = True,
+                     granularity: str = "day") -> EdgeResult:
         """
         L5 — số liệu sản xuất gọn, KHÔNG qua LLM. Đo được 1,4 KB / 2,0s lạnh,
         0,2s khi edge còn cache.
@@ -199,7 +200,52 @@ class EdgeClient:
                                   "/api/fleet/rollup",
                                   timeout=settings.EDGE_ROLLUP_TIMEOUT,
                                   params={"days": days,
+                                          "granularity": granularity,
                                           "causes": str(causes).lower()})
+
+    async def staff(self, node_id: str, ip: str) -> EdgeResult:
+        """Hồ sơ nhân sự đầy đủ — endpoint mới của GĐ 1, máy cũ chưa deploy sẽ 404."""
+        return await self._authed(node_id, ip, settings.EDGE_AGENT_PORT,
+                                  "/api/fleet/staff")
+
+    async def failure_images(self, node_id: str, ip: str, days: int = 7,
+                             limit: int = 12,
+                             cause: Optional[str] = None) -> EdgeResult:
+        params: Dict[str, Any] = {"days": days, "limit": limit}
+        if cause:
+            params["cause"] = cause
+        return await self._authed(node_id, ip, settings.EDGE_AGENT_PORT,
+                                  "/api/fleet/failure-images",
+                                  timeout=settings.EDGE_ROLLUP_TIMEOUT,
+                                  params=params)
+
+    async def failure_image_bytes(self, node_id: str, ip: str, img_id: str,
+                                  w: int = 480) -> EdgeResult:
+        """
+        Tải MỘT ảnh thu nhỏ từ edge. Trả bytes trong `data`.
+
+        Fleet đứng giữa làm proxy vì trình duyệt không gắn được Bearer token vào
+        thẻ <img> — token nằm ở fleet, ảnh stream qua fleet, còn edge vẫn giữ
+        yêu cầu xác thực.
+        """
+        token = await self.token_for(node_id, ip)
+        if not token:
+            return EdgeResult(False, error="không đăng nhập được")
+        url = self._url(ip, settings.EDGE_AGENT_PORT,
+                        f"/api/fleet/failure-image/{img_id}")
+        assert self._client is not None
+        t0 = time.monotonic()
+        try:
+            resp = await self._client.get(
+                url, params={"w": w}, timeout=settings.EDGE_ROLLUP_TIMEOUT,
+                headers={"Authorization": f"Bearer {token}"})
+            if resp.status_code >= 400:
+                return EdgeResult(False, error=f"HTTP {resp.status_code}",
+                                  status=resp.status_code)
+            return EdgeResult(True, data=resp.content,
+                              elapsed=time.monotonic() - t0)
+        except httpx.HTTPError as e:
+            return EdgeResult(False, error=f"không kết nối được ({type(e).__name__})")
 
     async def chat(self, node_id: str, ip: str, message: str,
                    session_id: Optional[str] = None) -> EdgeResult:
