@@ -127,32 +127,70 @@ class FactoryFloorScene {
     });
     el.append(this.zoneNav);
 
+    /* Thanh góc nhìn. Xoay bằng chuột thì dễ lạc — nhất là trên màn hình cạnh
+       dây chuyền, nơi người ta chạm một cái rồi đi. Ba nút này là đường về. */
+    this.viewNav = document.createElement('nav');
+    this.viewNav.className = 'factory-zone-nav factory-view-nav';
+    this.viewNav.setAttribute('aria-label', 'Camera views');
+    this.viewNav.innerHTML =
+      '<button type="button" data-view="iso" aria-pressed="true" title="3/4 view (0)">3D</button>'
+      + '<button type="button" data-view="top" aria-pressed="false" title="Top-down (1)">Top</button>'
+      + '<button type="button" data-view="front" aria-pressed="false" title="Eye level (2)">Eye</button>'
+      + '<button type="button" data-zoom="-1" title="Zoom in (+)">+</button>'
+      + '<button type="button" data-zoom="1" title="Zoom out (\u2212)">\u2212</button>';
+    this.viewNav.addEventListener('click', event => {
+      const v = event.target.closest('button[data-view]');
+      if (v) { this.setView(v.dataset.view); return; }
+      const z = event.target.closest('button[data-zoom]');
+      if (z) this.zoomBy(Number(z.dataset.zoom) * 6);
+    });
+    el.append(this.viewNav);
+
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.92;
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(34, 1, 0.1, 140);
     this.scene.add(this.machineRoot);
 
-    const hemi = new THREE.HemisphereLight(0xf6fbff, 0x8c98a5, 2.1);
+    /* Ánh sáng. Bản trước cộng hemi 2.1 + key 2.8 + fill 1.1: tổng nền quá cao
+       nên bóng đổ gần như biến mất, và mọi bề mặt về cùng một độ sáng — đó là
+       lý do cảnh trông bẹt. Hạ nền xuống, dồn năng lượng vào MỘT nguồn chính
+       thì mới có bóng, mà bóng mới là thứ nói cho mắt biết vật nào đứng trên
+       sàn và vật nào cao bao nhiêu. */
+    this.scene.environment = this.makeEnvironment();
+    if ('environmentIntensity' in this.scene) this.scene.environmentIntensity = 0.55;
+
+    const hemi = new THREE.HemisphereLight(0xf3f8ff, 0x93a0ad, 0.75);
     this.scene.add(hemi);
-    const key = new THREE.DirectionalLight(0xffffff, 2.8);
-    key.position.set(10, 18, 8);
+    const key = new THREE.DirectionalLight(0xfff4e3, 3.1);
+    key.position.set(16, 26, 12);
     key.castShadow = true;
-    key.shadow.mapSize.set(1024, 1024);
-    key.shadow.camera.left = -30;
-    key.shadow.camera.right = 30;
-    key.shadow.camera.top = 30;
-    key.shadow.camera.bottom = -30;
+    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.camera.left = -42;
+    key.shadow.camera.right = 42;
+    key.shadow.camera.top = 42;
+    key.shadow.camera.bottom = -42;
+    key.shadow.camera.far = 90;
+    // normalBias khử vân sọc trên mặt cong (chai, rulô) — thiếu nó thì bề mặt
+    // tự đổ bóng lên chính nó thành những vệt tối chạy dọc.
+    key.shadow.normalBias = 0.035;
+    key.shadow.bias = -0.0004;
+    key.shadow.camera.updateProjectionMatrix();
     this.scene.add(key);
-    const fill = new THREE.DirectionalLight(0x9dc7e9, 1.1);
-    fill.position.set(-14, 7, -12);
+    const fill = new THREE.DirectionalLight(0xa8ccec, 0.5);
+    fill.position.set(-18, 9, -14);
     this.scene.add(fill);
+    // Đèn hắt ngược nhẹ để viền máy không chìm hẳn vào nền.
+    const rim = new THREE.DirectionalLight(0xffffff, 0.35);
+    rim.position.set(-6, 12, 22);
+    this.scene.add(rim);
+
+    this.renderer.toneMappingExposure = 1.0;
 
     this.floorTheme = store.theme;
     this.floor = this.makeFloor();
@@ -211,6 +249,32 @@ class FactoryFloorScene {
     return floor;
   }
 
+  /** Môi trường phản chiếu: một dải chuyển màu trời→sàn, đưa qua PMREM.
+   *
+   *  Không có nó thì mọi vật liệu metalness cao đổ về xám phẳng — inox băng
+   *  tải, khung nhôm, vỏ tủ đều trông như nhựa sơn. Dựng bằng canvas nên không
+   *  phải tải thêm file HDR nào. */
+  makeEnvironment() {
+    const THREE = this.THREE;
+    const c = document.createElement('canvas');
+    c.width = 32; c.height = 128;
+    const g = c.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, 0, 128);
+    grad.addColorStop(0, '#eef4fa');   // trần sáng
+    grad.addColorStop(0.48, '#c9d4de');
+    grad.addColorStop(0.52, '#8d99a4');
+    grad.addColorStop(1, '#5d666e');   // sàn tối
+    g.fillStyle = grad; g.fillRect(0, 0, 32, 128);
+    const tex = new THREE.CanvasTexture(c);
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    const env = pmrem.fromEquirectangular(tex).texture;
+    pmrem.dispose();
+    tex.dispose();
+    return env;
+  }
+
   refreshFloorTheme() {
     if (this.floorTheme === store.theme) return;
     this.scene.remove(this.floor);
@@ -224,8 +288,15 @@ class FactoryFloorScene {
     if (this.cameraMove) {
       const progress = Math.min(1, (now - this.cameraMove.started) / this.cameraMove.duration);
       const ease = 1 - (1 - progress) ** 3;
-      this.cameraTarget.lerpVectors(this.cameraMove.fromTarget, this.cameraMove.toTarget, ease);
-      this.distance = this.cameraMove.fromDistance + (this.cameraMove.toDistance - this.cameraMove.fromDistance) * ease;
+      const mv = this.cameraMove;
+      this.cameraTarget.lerpVectors(mv.fromTarget, mv.toTarget, ease);
+      this.distance = mv.fromDistance + (mv.toDistance - mv.fromDistance) * ease;
+      // Góc cũng bay theo, nên nút "Top"/"Eye" là một cú lia mượt chứ không
+      // phải một cú nhảy — nhảy thì người xem mất luôn cảm giác đang ở đâu.
+      if (mv.toAzimuth != null)
+        this.azimuth = mv.fromAzimuth + (mv.toAzimuth - mv.fromAzimuth) * ease;
+      if (mv.toElevation != null)
+        this.elevation = mv.fromElevation + (mv.toElevation - mv.fromElevation) * ease;
       if (progress === 1) this.cameraMove = null;
     }
     if (now - this.lastAnimatedAt >= 32) {
@@ -273,6 +344,76 @@ class FactoryFloorScene {
       this.draw();
     }
     this.animationFrame = requestAnimationFrame(next => this.animate(next));
+  }
+
+  /** Bay camera tới một trạng thái mới. Mọi thứ điều khiển camera đều đi qua
+   *  đây, nên không có đường nào làm cảnh nhảy giật. */
+  flyTo({ target, distance, azimuth, elevation, duration = 620 }) {
+    const T = this.THREE;
+    this.cameraMove = {
+      started: performance.now(),
+      duration,
+      fromTarget: this.cameraTarget.clone(),
+      toTarget: target ? target.clone() : this.cameraTarget.clone(),
+      fromDistance: this.distance,
+      toDistance: distance ?? this.distance,
+      fromAzimuth: this.azimuth,
+      toAzimuth: azimuth ?? null,
+      fromElevation: this.elevation,
+      toElevation: elevation ?? null,
+    };
+    void T;
+  }
+
+  /* Ba góc nhìn cố định. "Top" để đọc bố trí mặt bằng, "Eye" để nhìn ngang tầm
+     mắt như đứng trong xưởng, "3D" là góc mặc định ba-phần-tư. */
+  setView(preset) {
+    const T = this.THREE;
+    const home = new T.Vector3(0, 0, 0);
+    if (preset === 'top') this.flyTo({ target: home, distance: 62, azimuth: -Math.PI / 2, elevation: 1.45 });
+    else if (preset === 'front') this.flyTo({ target: new T.Vector3(0, 1.6, 0), distance: 34, azimuth: -Math.PI / 2, elevation: 0.3 });
+    else this.flyTo({ target: home, distance: 47, azimuth: -0.72, elevation: 0.72 });
+    this.viewNav?.querySelectorAll('button[data-view]').forEach(b =>
+      b.setAttribute('aria-pressed', String(b.dataset.view === (preset || 'iso'))));
+  }
+
+  zoomBy(amount) {
+    this.distance = Math.max(14, Math.min(78, this.distance + amount));
+    this.cameraMove = null;
+  }
+
+  /** Điểm trên mặt sàn nằm dưới con trỏ — để zoom đi VỀ PHÍA chỗ đang nhìn. */
+  groundAt(event) {
+    const T = this.THREE;
+    const rect = this.canvas.getBoundingClientRect();
+    this.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    this.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    const hit = new T.Vector3();
+    return this.raycaster.ray.intersectPlane(
+      new T.Plane(new T.Vector3(0, 1, 0), 0), hit) ? hit : null;
+  }
+
+  /** Dời tâm nhìn theo mặt sàn. Kéo chuột phải hoặc giữ Shift.
+   *  Không có pan thì camera chỉ quay quanh đúng một điểm, và muốn xem kỹ máy ở
+   *  góc xưởng là phải zoom ra rồi zoom vào — thao tác đó lặp cả ngày. */
+  panBy(dx, dy) {
+    const k = this.distance * 0.0016;
+    const cos = Math.cos(this.azimuth), sin = Math.sin(this.azimuth);
+    this.cameraTarget.x += (-dx * -sin - dy * cos) * k;
+    this.cameraTarget.z += (-dx * cos - dy * -sin) * k;
+    // Giới hạn quanh xưởng: pan tự do thì rất dễ đẩy cảnh ra ngoài rồi không
+    // biết đường về.
+    this.cameraTarget.x = Math.max(-46, Math.min(46, this.cameraTarget.x));
+    this.cameraTarget.z = Math.max(-30, Math.min(30, this.cameraTarget.z));
+    this.cameraMove = null;
+  }
+
+  /** Bay tới một máy cụ thể — dùng khi bấm đúp trên sơ đồ. */
+  focusMachine(nodeId) {
+    const g = this.machineRoot.children.find(c => c.userData.nodeId === nodeId);
+    if (!g) return;
+    this.flyTo({ target: g.position.clone(), distance: 22, elevation: 0.55 });
   }
 
   focusZone(name) {
@@ -478,9 +619,16 @@ class FactoryFloorScene {
     const dark = store.theme === 'dark';
     const isBottleLine = machine.name === 'PC-Auto-1';
     const isStopped = ['unreachable', 'offline'].includes(machine.state);
-    // PC-Auto-1 là mô hình quy trình: vẫn phát hoạt ảnh để người xem hiểu luồng
-    // băng 1 → robot → băng 2, kể cả khi máy thật đang mất Tailnet.
-    const animateFlow = !isStopped || isBottleLine;
+    /* Máy dừng thì KHÔNG có gì chuyển động — không có ngoại lệ cho line chai.
+       Trước đây `|| isBottleLine` cho PC-Auto-1 chạy băng tải kể cả khi đã mất
+       Tailnet, để minh hoạ luồng băng 1 → robot → băng 2. Nhưng đây là màn hình
+       giám sát, không phải video giới thiệu: một dây chuyền đang chạy trên sơ
+       đồ trong khi thẻ bên cạnh ghi "Off network" là hai câu trái ngược nhau về
+       cùng một máy, và cái chuyển động bao giờ cũng thắng.
+
+       Hàng hoá vẫn nằm nguyên trên băng — dây chuyền dừng thì sản phẩm còn đó,
+       chỉ là không đi. */
+    const animateFlow = !isStopped;
     const productProfile = LINE_PRODUCTS[machine.name] || LINE_PRODUCTS.Auto2;
     const group = new THREE.Group();
     if (machine.virtual) group.userData.focus = machine.building || 'main';
@@ -596,8 +744,10 @@ class FactoryFloorScene {
       add(new THREE.CylinderGeometry(0.1, 0.1, 0.17, 14), bottle, 0, 0.7, 0, transferBottle);
       add(new THREE.CylinderGeometry(0.11, 0.11, 0.08, 14), cap, 0, 0.83, 0, transferBottle);
       group.add(transferBottle);
-      this.robotAnimators.push({ shoulder, elbow, wrist, transferBottle,
-        baseX: -0.35, baseZ: -1.0, speed: 0.115, phase: 0.18 });
+      // Cánh tay robot cũng theo cùng một luật: máy dừng thì tay đứng yên.
+      if (animateFlow)
+        this.robotAnimators.push({ shoulder, elbow, wrist, transferBottle,
+          baseX: -0.35, baseZ: -1.0, speed: 0.115, phase: 0.18 });
     }
 
     // Trạm OCR: carton dùng tunnel camera phía trên; line chai dùng buồng mở để
@@ -778,10 +928,15 @@ class FactoryFloorScene {
   }
 
   bindEvents() {
+    this.canvas.tabIndex = 0;   // nhận được phím, và có vòng focus khi tab tới
+    this.canvas.addEventListener('contextmenu', e => e.preventDefault());
     this.canvas.addEventListener('pointerdown', event => {
       this.canvas.setPointerCapture(event.pointerId);
+      this.canvas.focus({ preventScroll: true });
       this.cameraMove = null;
-      this.drag = { x: event.clientX, y: event.clientY, moved: false };
+      // Chuột phải / chuột giữa / giữ Shift = dời tâm nhìn, chuột trái = xoay.
+      const pan = event.button === 2 || event.button === 1 || event.shiftKey;
+      this.drag = { x: event.clientX, y: event.clientY, moved: false, pan };
       this.canvas.classList.add('is-dragging');
     });
     this.canvas.addEventListener('pointermove', event => {
@@ -789,8 +944,12 @@ class FactoryFloorScene {
         const dx = event.clientX - this.drag.x;
         const dy = event.clientY - this.drag.y;
         if (Math.abs(dx) + Math.abs(dy) > 3) this.drag.moved = true;
-        this.azimuth -= dx * 0.009;
-        this.elevation = Math.max(0.28, Math.min(1.2, this.elevation + dy * 0.008));
+        if (this.drag.pan) {
+          this.panBy(dx, dy);
+        } else {
+          this.azimuth -= dx * 0.009;
+          this.elevation = Math.max(0.28, Math.min(1.45, this.elevation + dy * 0.008));
+        }
         this.drag.x = event.clientX;
         this.drag.y = event.clientY;
         this.draw();
@@ -812,11 +971,53 @@ class FactoryFloorScene {
       this.drag = null;
       this.canvas.classList.remove('is-dragging');
     });
+    /* Zoom đi VỀ PHÍA con trỏ, không về giữa màn hình. Zoom vào tâm thì muốn
+       xem kỹ một máy ở rìa là phải zoom rồi kéo, zoom rồi kéo — còn zoom theo
+       con trỏ thì chỉ cần trỏ vào máy đó và cuộn. */
     this.canvas.addEventListener('wheel', event => {
       event.preventDefault();
-      this.distance = Math.max(28, Math.min(70, this.distance + event.deltaY * 0.018));
+      const before = this.groundAt(event);
+      const next = Math.max(14, Math.min(78, this.distance + event.deltaY * 0.018));
+      const ratio = 1 - next / this.distance;
+      this.distance = next;
+      if (before && ratio > 0) {
+        this.cameraTarget.x += (before.x - this.cameraTarget.x) * ratio;
+        this.cameraTarget.z += (before.z - this.cameraTarget.z) * ratio;
+      }
+      this.cameraMove = null;
       this.draw();
     }, { passive: false });
+
+    // Bấm đúp một máy = bay tới xem gần. Bấm một lần vẫn là chọn, nên thao tác
+    // cũ không đổi nghĩa.
+    this.canvas.addEventListener('dblclick', event => {
+      const target = this.targetAt(event);
+      if (target?.nodeId) this.focusMachine(target.nodeId);
+      else if (target?.focus) this.focusZone(target.focus);
+    });
+
+    /* Bàn phím: màn hình cạnh dây chuyền hay đặt xa tầm với, và không phải chỗ
+       nào cũng có chuột tử tế. */
+    this.canvas.addEventListener('keydown', event => {
+      const step = event.shiftKey ? 0.22 : 0.08;
+      const map = {
+        ArrowLeft:  () => (this.azimuth -= step),
+        ArrowRight: () => (this.azimuth += step),
+        ArrowUp:    () => (this.elevation = Math.min(1.45, this.elevation + step * .6)),
+        ArrowDown:  () => (this.elevation = Math.max(0.28, this.elevation - step * .6)),
+        '+': () => this.zoomBy(-4), '=': () => this.zoomBy(-4),
+        '-': () => this.zoomBy(4),  '_': () => this.zoomBy(4),
+        '0': () => this.setView('iso'),
+        '1': () => this.setView('top'),
+        '2': () => this.setView('front'),
+      };
+      const fn = map[event.key];
+      if (!fn) return;
+      event.preventDefault();
+      this.cameraMove = null;
+      fn();
+      this.draw();
+    });
   }
 }
 

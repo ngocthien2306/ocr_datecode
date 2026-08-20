@@ -163,6 +163,12 @@ button:hover { border-color: var(--accent); color: var(--accent); }
 }
 .factory-zone-nav button { padding: 4px 8px; border-color: transparent; background: transparent; color: var(--dim); font-size: 11px; }
 .factory-zone-nav button:hover, .factory-zone-nav button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* Thanh góc nhìn nằm góc đối diện với thanh chọn khu: hai nhóm nút khác việc
+   nhau, để cạnh nhau thì bấm nhầm — một bên đổi CHỖ ĐANG XEM, một bên đổi
+   GÓC NHÌN. */
+.factory-view-nav { left: auto; right: 12px; }
+.factory-view-nav button[data-zoom] { width: 24px; text-align: center; font-size: 13px; line-height: 1; }
+#map .factory-3d-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .map-loading {
   display: grid;
   height: 100%;
@@ -203,161 +209,15 @@ button:hover { border-color: var(--accent); color: var(--accent); }
 .mcard.s-bad  { border-color: var(--bad); }
 .mcard.s-mute { opacity: .72; }
 
-/* Jetson dev kit: đế carrier, board I/O, pin header và cụm heatsink/quạt.
-   Đây là CSS 3D nên 5 card vẫn nhẹ hơn nhiều so với 5 WebGL canvas. */
+/* Jetson dev kit: hình vẽ nằm trong SVG (js/jetson-art.js), ở đây chỉ còn chỗ
+   đặt. Trước kia là ~150 dòng transform 3D dựng hình bằng <span>; hình học đã
+   chuyển hẳn sang SVG nên phần này không còn việc gì ngoài định vị. */
 .jetson-visual {
-  --led: #2f8a58;
-  position: absolute; z-index: 1; top: 33px; right: 7px; width: 156px; height: 140px;
-  perspective: 340px; pointer-events: none; user-select: none;
+  position: absolute; z-index: 1; top: 30px; right: 6px;
+  width: 158px; height: 128px; pointer-events: none; user-select: none;
 }
-.jetson-visual.is-warn { --led: #b17600; }
-.jetson-visual.is-bad, .jetson-visual.is-mute { --led: #8d969d; }
-.jetson-shadow {
-  position: absolute; left: 12px; top: 82px; width: 126px; height: 43px;
-  border-radius: 50%; background: rgba(25, 31, 35, .18); filter: blur(8px);
-  transform: rotate(-20deg);
-}
-.jetson-device {
-  position: absolute; left: 14px; top: 27px; width: 122px; height: 74px;
-  transform-style: preserve-3d; transform: rotateX(60deg) rotateZ(-31deg);
-}
-.jetson-base {
-  position: absolute; inset: 0; display: block; border: 1px solid #85868d; border-radius: 6px;
-  background: linear-gradient(135deg, #b0b0b5, #787982 56%, #585963);
-  box-shadow: inset 0 0 0 2px rgba(255,255,255,.25), 0 5px 10px rgba(12,15,21,.34);
-  transform: translateZ(4px);
-}
-.jetson-base::before, .jetson-base::after {
-  position: absolute; content: ''; display: block; background: #444650;
-}
-.jetson-base::before {
-  left: 0; top: 100%; width: 100%; height: 11px; transform-origin: top;
-  transform: rotateX(-90deg);
-}
-.jetson-base::after {
-  left: 100%; top: 0; width: 11px; height: 100%; transform-origin: left;
-  transform: rotateY(90deg); background: #363843;
-}
-.jetson-board {
-  position: absolute; left: 8px; top: 12px; display: block; width: 105px; height: 53px;
-  border: 1px solid #30333a; border-radius: 3px;
-  background:
-    repeating-linear-gradient(90deg, transparent 0 8px, rgba(214,217,219,.15) 8px 9px),
-    linear-gradient(135deg, #4a4d55, #292c34 58%, #1e2027);
-  box-shadow: inset 0 0 0 2px rgba(163,168,173,.18), 0 2px 3px rgba(8,11,15,.38);
-  transform: translateZ(11px);
-}
-.jetson-module {
-  position: absolute; left: 15px; top: 5px; display: block; width: 62px; height: 49px;
-  border: 1px solid #b5b7bb; border-radius: 3px;
-  background:
-    repeating-linear-gradient(90deg, #bdc0c2 0 3px, #83878d 3px 5px),
-    linear-gradient(135deg, #d0d2d2, #7b8085);
-  box-shadow: inset 0 0 0 5px rgba(43,46,53,.94), inset 0 0 0 6px rgba(190,193,195,.5), 2px 3px 3px rgba(9,11,14,.4);
-  transform: translateZ(25px);
-}
-.jetson-module::after {
-  position: absolute; left: 8px; bottom: 4px; content: 'NVIDIA'; color: rgba(233,235,235,.76);
-  font: 600 5px/1 Arial, sans-serif; letter-spacing: .18em; text-shadow: 0 1px #25282e;
-}
-.jetson-fan {
-  position: absolute; left: 17px; top: 9px; display: block; width: 28px; height: 28px;
-  border: 2px solid #252932; border-radius: 50%;
-  background: conic-gradient(#c0c4c6 0 11%, #535862 11% 23%, #c0c4c6 23% 35%, #535862 35% 47%, #c0c4c6 47% 59%, #535862 59% 71%, #c0c4c6 71% 83%, #535862 83% 100%);
-  box-shadow: inset 0 0 0 5px #8c9095, 0 1px 2px rgba(0,0,0,.5);
-}
-.jetson-fan::after {
-  position: absolute; inset: 9px; content: ''; border-radius: 50%; background: #c8cbcd; box-shadow: 0 0 0 1px #62666e;
-}
-.jetson-shield {
-  position: absolute; left: 80px; top: 17px; width: 21px; height: 28px; display: block;
-  border: 1px solid #70747b; border-radius: 2px;
-  background: repeating-linear-gradient(0deg, #a7abaf 0 2px, #656a72 2px 4px);
-  box-shadow: inset 0 0 0 2px rgba(242,243,243,.24); transform: translateZ(17px);
-}
-.jetson-pinbank {
-  position: absolute; right: 1px; top: 5px; display: block; width: 7px; height: 45px;
-  background: repeating-linear-gradient(0deg, #2a2c34 0 2px, #c7b56a 2px 4px);
-  box-shadow: 0 0 0 1px #161820; transform: translateZ(18px);
-}
-.jetson-slot {
-  position: absolute; display: block; height: 7px; border: 1px solid #11151b; border-radius: 1px;
-  background: linear-gradient(#c5c7ca, #555b64); box-shadow: inset 0 2px #242932; transform: translateZ(17px);
-}
-.slot-a { left: 12px; bottom: 7px; width: 26px; }
-.slot-b { left: 43px; bottom: 7px; width: 22px; }
-.jetson-ports {
-  position: absolute; z-index: 3; left: 9px; bottom: -2px; display: flex; gap: 3px;
-  transform: translateZ(18px);
-}
-.jetson-ports i { display: block; width: 14px; height: 8px; border: 1px solid #151922; background: #a8adb1; box-shadow: inset 0 2px #273039, 0 1px rgba(255,255,255,.25); }
-.jetson-power {
-  position: absolute; right: 9px; bottom: 7px; display: block; width: 11px; height: 12px;
-  border: 2px solid #1d212a; border-radius: 50%; background: #c2c5c7; transform: translateZ(18px);
-}
-.jetson-led {
-  position: absolute; z-index: 3; right: 29px; bottom: 9px; width: 6px; height: 6px;
-  border-radius: 50%; background: var(--led); box-shadow: 0 0 7px var(--led); transform: translateZ(19px);
-}
-.jetson-badge {
-  position: absolute; z-index: 3; left: 12px; top: 57px; color: rgba(229,231,232,.73);
-  font: 600 4.5px/1 Arial, sans-serif; letter-spacing: .08em; transform: translateZ(18px);
-}
-/* AGX Orin không phải Nano phóng to: đây là industrial enclosure, quạt lớn
-   nằm sau lồng tản nhiệt đứng và toàn bộ cổng I/O ở mặt trước. */
-.jetson-agx .jetson-device { left: 6px; top: 19px; transform: rotateX(60deg) rotateZ(-31deg) scale(1.18); }
-.jetson-agx .jetson-base {
-  background: linear-gradient(135deg, #d2d1cc, #92928e 53%, #55565b);
-  border-color: #b5b3ae;
-}
-.jetson-agx .jetson-board {
-  left: 70px; top: 45px; width: 40px; height: 17px;
-  background: repeating-linear-gradient(90deg, #a9aaa7 0 3px, #272a30 3px 6px);
-  box-shadow: inset 0 0 0 2px rgba(22,24,29,.7), 0 1px 2px rgba(0,0,0,.4);
-}
-.jetson-agx .jetson-module {
-  left: 10px; top: 3px; width: 82px; height: 58px; overflow: hidden;
-  border: 1px solid #c6c5c0; border-radius: 4px 4px 2px 2px;
-  background: radial-gradient(circle at 49% 53%, #16191e 0 29%, #2d3035 30% 42%, #656661 43% 100%);
-  box-shadow: inset 0 0 0 3px #a8a7a2, inset 0 0 0 5px #4b4d51, 2px 3px 3px rgba(0,0,0,.45);
-}
-.jetson-agx .jetson-module::before {
-  position: absolute; z-index: 2; inset: 2px; content: '';
-  background: repeating-linear-gradient(90deg, transparent 0 3px, rgba(215,215,210,.9) 3px 6px, transparent 6px 8px);
-  filter: drop-shadow(1px 0 rgba(35,37,42,.8));
-}
-.jetson-agx .jetson-module::after {
-  z-index: 3; left: 47px; bottom: 6px; color: rgba(241,241,235,.85);
-  content: 'NVIDIA'; font-size: 4px; letter-spacing: .11em;
-}
-.jetson-agx .jetson-fan {
-  z-index: 1; left: 24px; top: 10px; width: 35px; height: 35px;
-  border-color: #111319; background: conic-gradient(#5a5d62 0 12%, #171a20 12% 25%, #7b7d7e 25% 37%, #171a20 37% 50%, #5a5d62 50% 62%, #171a20 62% 75%, #7b7d7e 75% 87%, #171a20 87% 100%);
-  box-shadow: inset 0 0 0 6px #282b31, 0 1px 2px rgba(0,0,0,.7);
-}
-.jetson-agx .jetson-fan::after { inset: 11px; background: #393c40; }
-.jetson-agx .jetson-shield,
-.jetson-agx .jetson-pinbank,
-.jetson-agx .jetson-slot { display: none; }
-.jetson-agx .jetson-ports { left: 76px; bottom: -3px; gap: 2px; }
-.jetson-agx .jetson-ports i { width: 8px; height: 9px; background: #2d3035; border-color: #b3b2ac; }
-.jetson-agx .jetson-power { right: 8px; bottom: 22px; width: 10px; height: 10px; background: #22252a; border-color: #cccac4; }
-.jetson-agx .jetson-led { right: 22px; bottom: 23px; }
-.jetson-agx .jetson-badge { left: 72px; top: 62px; color: #e7e6df; font-size: 4px; }
-/* Nano Super: carrier đen, fan cover xanh và dãy chân gold tách hẳn Nano
-   thường. Tin 2/Auto 1 cần nhìn là nhận ra cả khi telemetry đang offline. */
-.jetson-super .jetson-device { left: 9px; top: 23px; transform: rotateX(60deg) rotateZ(-31deg) scale(1.08); }
-.jetson-super .jetson-base { border-color: #3f5967; background: linear-gradient(135deg, #5c7786, #263946 55%, #182832); }
-.jetson-super .jetson-board {
-  left: 6px; top: 9px; width: 108px; height: 57px; border-color: #18323e;
-  background: repeating-linear-gradient(90deg, transparent 0 7px, rgba(93,193,208,.18) 7px 8px), linear-gradient(135deg, #165568, #0e2f3a 60%, #10222b);
-}
-.jetson-super .jetson-module { left: 13px; top: 4px; width: 66px; height: 51px; border-color: #70aaba; background: linear-gradient(135deg, #253b42, #111d22); box-shadow: inset 0 0 0 4px #b8d0d2, inset 0 0 0 6px #1a3038, 2px 3px 3px rgba(0,0,0,.5); }
-.jetson-super .jetson-fan { left: 18px; top: 10px; width: 30px; height: 30px; border-color: #10242d; background: conic-gradient(#65c7d8 0 12%, #153740 12% 25%, #65c7d8 25% 37%, #153740 37% 50%, #65c7d8 50% 62%, #153740 62% 75%, #65c7d8 75% 87%, #153740 87% 100%); box-shadow: inset 0 0 0 5px #2e6977, 0 1px 2px rgba(0,0,0,.6); }
-.jetson-super .jetson-fan::after { background: #d3ece8; }
-.jetson-super .jetson-shield { left: 84px; top: 15px; background: repeating-linear-gradient(0deg, #d9a954 0 2px, #66502a 2px 4px); }
-.jetson-super .jetson-pinbank { right: -1px; background: repeating-linear-gradient(0deg, #272b2f 0 2px, #e4ba54 2px 4px); }
-.jetson-super .jetson-badge { left: 9px; top: 58px; color: #bdeaf0; font-size: 4px; }
+.jetson-svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.jetson-visual.is-mute { opacity: .78; }
 
 @container (max-width: 500px) {
   .mcard-content { min-height: 224px; padding: 14px 132px 12px 16px; }

@@ -4,6 +4,7 @@
 
 import { store, has, num, fmt, NA, level, uptime, esc, clock,
          coverageHTML, deltaPts, causeLabel } from './core.js';
+import { jetsonSVG } from './jetson-art.js';
 
 const TONE = { ok: 'ok', warn: 'warn', agent_down: 'mute',
                unreachable: 'bad', offline: 'bad' };
@@ -81,20 +82,7 @@ export function machineCard(m) {
 
   return `<article class="${cls}" data-node="${esc(m.node_id)}">
     <div class="jetson-visual jetson-${jetsonKind} is-${tone}" aria-hidden="true">
-      <span class="jetson-shadow"></span>
-      <div class="jetson-device">
-        <span class="jetson-base"></span>
-        <span class="jetson-board"></span>
-        <span class="jetson-module"><i class="jetson-fan"></i></span>
-        <span class="jetson-shield"></span>
-        <span class="jetson-pinbank"></span>
-        <span class="jetson-slot slot-a"></span>
-        <span class="jetson-slot slot-b"></span>
-        <span class="jetson-ports"><i></i><i></i><i></i><i></i></span>
-        <span class="jetson-power"></span>
-        <span class="jetson-led"></span>
-        <span class="jetson-badge">NVIDIA · ${jetsonKind === 'agx' ? 'AGX' : jetsonKind === 'super' ? 'NANO SUPER' : 'NANO'}</span>
-      </div>
+      ${jetsonSVG(jetsonKind, tone)}
     </div>
     <div class="mcard-content">
       <div class="mcard-top">
