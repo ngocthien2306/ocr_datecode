@@ -200,9 +200,26 @@ button:active { transform: translateY(1px); }
 
 /* ── Chân trang ──────────────────────────────────────────────────────────── */
 
+/* Thanh dưới GHIM vào đáy khung nhìn.
+   Hai nút này là hai việc duy nhất người đứng máy cần làm trên màn hình — hỏi
+   trợ lý và bàn giao ca. Trước đây chúng nằm ở cuối tài liệu, tức phải cuộn
+   qua hết sơ đồ 3D mới thấy: một thao tác hai tay trên màn hình cảm ứng, khi
+   người ta đang đeo găng và chỉ muốn bấm một nút.
+
+   `sticky` chứ không `fixed`: sticky vẫn chiếm chỗ trong luồng, nên nó không
+   che mất thẻ cuối trang — `fixed` thì phải bù padding cho thân trang, và mỗi
+   lần đổi chiều cao thanh là một lần lệch.
+
+   Nền đục và viền trên là bắt buộc: nội dung cuộn BÊN DƯỚI thanh, mà chữ 13px
+   trên chữ 13px thì không đọc được cái nào. Cùng công thức với .top ở trên
+   (surface + một đường kẻ), nên hai thanh đọc ra là một cặp. */
 .bottom {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-  padding: 12px 18px 22px; font-size: 13px; color: var(--faint);
+  padding: 12px 18px; font-size: 13px; color: var(--faint);
+  position: sticky; bottom: 0; z-index: 12;
+  background: var(--surface); border-top: 1px solid var(--line);
+  /* Tablet có thanh home ảo: chừa chỗ, không thì nút bị nó liếm mất một nửa. */
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
 }
 
 /* ── Bàn giao ca ─────────────────────────────────────────────────────────── */

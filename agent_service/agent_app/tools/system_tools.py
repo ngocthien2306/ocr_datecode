@@ -131,6 +131,12 @@ def get_system_metrics() -> Dict[str, Any]:
             {"total_w": round(power.get("total_mw", 0) / 1000.0, 2)} if power else None
         ),
         "uptime": _uptime_text(m.get("uptime_seconds")),
+        # Kèm SỐ GIÂY thô bên cạnh chuỗi đã định dạng. Chuỗi trên là tiếng Việt
+        # cho mô hình đọc; còn Line Station có hai ngôn ngữ, và ở chế độ EN nó
+        # hiện ra "up 8 ngày 20 giờ" — nửa câu một thứ tiếng. Lớp vẽ cần con số
+        # để tự dựng câu; không đổi khoá `uptime` để không phá thứ đang đọc nó.
+        "uptime_seconds": (int(m["uptime_seconds"])
+                           if m.get("uptime_seconds") else None),
         "power_mode": m.get("nvp_model"),
         # Để mô hình biết trường None là "phần cứng không đo được", chứ không
         # phải "đo được và bằng không".

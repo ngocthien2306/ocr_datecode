@@ -45,6 +45,7 @@ const I18N = {
     camOn: 'camera service chạy', camOff: 'camera service đã dừng',
     hwStale: at => `chưa đo được từ ${at}`,
     measuredAt: at => `đo lúc ${at}`, uptime: 'chạy liên tục',
+    dur: { d: 'ngày', h: 'giờ', m: 'phút' },
     hwNone: 'Vòng giám sát phần cứng chưa trả số — máy vẫn chạy.',
     ramWatch: p => `RAM đang ${p}% — theo dõi thêm`,
     diskWatch: p => `Đĩa đang ${p}% — nên dọn bớt`,
@@ -126,6 +127,7 @@ const I18N = {
     camOn: 'camera service running', camOff: 'camera service stopped',
     hwStale: at => `no reading since ${at}`,
     measuredAt: at => `measured ${at}`, uptime: 'up',
+    dur: { d: 'd', h: 'h', m: 'min' },
     hwNone: 'Hardware monitor has not reported — the machine is still running.',
     ramWatch: p => `RAM at ${p}% — keep watching`,
     diskWatch: p => `Disk at ${p}% — worth clearing`,
@@ -205,6 +207,22 @@ const state = { over: null, fails: null, hw: null, crew: null, cam: null,
 const esc = s => String(s ?? '').replace(/[&<>"']/g,
   c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = n => n == null ? NA : Number(n).toLocaleString(store.t.locale);
+
+/* Thời lượng chạy liên tục, dựng TẠI ĐÂY từ số giây.
+   Server cũng trả chuỗi `uptime` đã định dạng, nhưng nó là tiếng Việt cho mô
+   hình đọc — ở chế độ EN nó hiện ra "up 8 ngày 20 giờ", nửa câu một thứ tiếng.
+   Chuỗi đó chỉ dùng khi máy chạy bản agent cũ chưa trả `uptime_seconds`: thà
+   đúng một nửa còn hơn để trống chỗ nói máy đã chạy liên tục bao lâu. */
+function upText(h) {
+  const s = h?.uptime_seconds;
+  if (s == null) return h?.uptime || '';
+  const u = store.t.dur;
+  const d = Math.floor(s / 86400), hr = Math.floor((s % 86400) / 3600),
+        m = Math.floor((s % 3600) / 60);
+  if (d) return `${d} ${u.d} ${hr} ${u.h}`;
+  if (hr) return `${hr} ${u.h} ${m} ${u.m}`;
+  return `${m} ${u.m}`;
+}
 const hhmm = iso => String(iso || '').slice(11, 16);
 
 /* Ngưỡng màu. Giống Fleet Console để cùng một con số không đổi nghĩa giữa hai
@@ -400,6 +418,7 @@ function paintHardware() {
     disk_free_gb: raw.disk?.available_gb ?? null,
     measured_at: raw.measured_at || null,
     uptime: raw.uptime || null,
+    uptime_seconds: raw.uptime_seconds ?? null,
     camera_service_running: state.cam,
   };
   // Nhiệt độ `null` giữ nguyên là dấu gạch: máy x86 không có cảm biến kiểu
@@ -447,7 +466,7 @@ function paintHardware() {
           (h.disk_percent ?? 0) >= 85 ? 'warn' : '')
     + notes.map(n => `<div class="note">${esc(n)}</div>`).join('')
     + (h.measured_at ? `<div class="foot">${t.measuredAt(hhmm(h.measured_at))}${
-        h.uptime ? ` · ${t.uptime} ${esc(h.uptime)}` : ''}</div>` : '');
+        upText(h) ? ` · ${t.uptime} ${esc(upText(h))}` : ''}</div>` : '');
 }
 
 function paintCrew() {
