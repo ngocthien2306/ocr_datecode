@@ -320,28 +320,54 @@ class FactoryFloorScene {
       this.peopleAnimators.forEach(p => {
         const rig = p.person.userData.rig;
         if (p.kind === 'walk') {
-          const span = Math.abs(p.to - p.from);
-          const dir = Math.sign(p.to - p.from) || 1;
-          // Đi tới rồi quay lại: lấy phần dư trên quãng đường GẤP ĐÔI, nửa sau
-          // là chiều về. Không phải "chạm mép rồi nhảy về đầu" — nhảy vị trí
-          // giữa cảnh là thứ mắt bắt ngay.
-          const trip = (seconds * p.speed + p.phase * span) % (span * 2);
-          const back = trip > span;
-          const along = back ? span * 2 - trip : trip;
-          p.person.position.x = p.from + dir * along;
-          p.person.position.z = p.z;
-          p.person.rotation.y = (dir > 0) === !back ? Math.PI / 2 : -Math.PI / 2;
-          // Sải chân theo QUÃNG ĐƯỜNG đã đi, không theo đồng hồ: đi nhanh thì
-          // bước nhanh, nên bàn chân không trượt trên sàn.
-          const gait = along * 1.6;
-          const swing = Math.sin(gait) * 0.55;
-          if (rig) {
-            rig.legs[0].rotation.x = swing;
-            rig.legs[1].rotation.x = -swing;
-            rig.arms[0].rotation.x = -swing * 0.7;
-            rig.arms[1].rotation.x = swing * 0.7;
+          /* Đi theo lộ trình có ĐIỂM DỪNG: chạy hết thời gian dừng ở một chặng
+             rồi mới đi tiếp chặng đó. Quãng đường cộng dồn dùng để đánh nhịp
+             chân, nên bàn chân không trượt và lúc đứng thì chân cũng đứng. */
+          let clock = (seconds + p.offset) % p.cycle;
+          let pos = null, dir = null, walked = 0, standing = false;
+          for (let i = 0; i < p.legs.length; i++) {
+            const leg = p.legs[i];
+            const wait = leg.a.pause || 0;
+            if (clock < wait) {
+              const prev = p.legs[(i - 1 + p.legs.length) % p.legs.length];
+              pos = leg.a;
+              dir = { x: leg.a.x - prev.a.x, z: leg.a.z - prev.a.z };
+              standing = true;
+              break;
+            }
+            clock -= wait;
+            const dur = leg.len / p.speed;
+            if (clock < dur) {
+              const k = clock / dur;
+              pos = { x: leg.a.x + (leg.b.x - leg.a.x) * k,
+                      z: leg.a.z + (leg.b.z - leg.a.z) * k };
+              dir = { x: leg.b.x - leg.a.x, z: leg.b.z - leg.a.z };
+              walked = clock * p.speed;
+              break;
+            }
+            clock -= dur;
+            walked += leg.len;
           }
-          p.person.position.y = Math.abs(Math.cos(gait)) * 0.035;
+          if (!pos) { pos = p.stops[0]; dir = { x: 1, z: 0 }; standing = true; }
+
+          p.person.position.x = pos.x;
+          p.person.position.z = pos.z;
+          /* Mặt người quay về -Z (áo phản quang đặt ở z âm), nên góc quay là
+             atan2(-dx, -dz). Bản trước tính như thể mặt quay về +Z, và thế là
+             cả ba người đi giật lùi suốt ca.                                  */
+          if (dir && (dir.x || dir.z))
+            p.person.rotation.y = Math.atan2(-dir.x, -dir.z);
+
+          const rig2 = p.person.userData.rig;
+          if (rig2) {
+            const swing = standing ? 0 : Math.sin(walked * 1.7) * 0.55;
+            rig2.legs[0].rotation.x = swing;
+            rig2.legs[1].rotation.x = -swing;
+            rig2.arms[0].rotation.x = -swing * 0.7;
+            rig2.arms[1].rotation.x = swing * 0.7;
+          }
+          p.person.position.y = standing ? 0
+            : Math.abs(Math.cos(walked * 1.7)) * 0.035;
         } else if (rig) {
           // Đứng máy: dồn trọng tâm và với tay, biên độ nhỏ.
           const t2 = seconds * 0.6 + p.phase * 6;
@@ -731,23 +757,70 @@ class FactoryFloorScene {
 
   addAisleStaff() {
     const staff = new this.THREE.Group();
-    /* Người đi tuần dọc lối đi. Xưởng mà ai cũng đứng bất động thì nhìn như
-       ảnh chụp, không như một ca đang chạy — và chuyển động là thứ mắt bắt
-       được trước cả hình khối. Đi trong LỐI ĐI, không xuyên qua máy: quãng
-       đường lấy theo trục x của lối đi, z giữ trong vạch kẻ. */
+
+    /* Người đi TUẦN CÁC LINE, không phải đi tới đi lui trên lối đi. Đi dọc mãi
+       một đường thẳng thì nhìn ra ngay là hoạt ảnh; còn rẽ vào một line, đứng
+       lại một lúc bên máy rồi ra tiếp sang line khác thì đúng là việc người ta
+       làm trong ca.
+
+       Toạ độ bám bố trí thật: hai dãy máy ở z = ±10, lối đi ở z ≈ 0, mép zone
+       phía lối đi ở z = ±6,3 — nên điểm dừng đặt ở đó là đứng ngay cạnh máy,
+       không phải đứng xuyên qua tường.                                        */
+    const A = 1.25, B = -1.25;          // hai làn của lối đi
+    const IN_TOP = -6.3, IN_BOT = 6.3;  // mép zone phía lối đi
+
     const walkers = [
-      { from: -20, to: 14, z: -0.55, speed: 1.45, shirt: 0x424d66, role: 'supervisor', phase: 0 },
-      { from: 16, to: -12, z: 0.62, speed: 1.15, shirt: 0x6b536d, role: 'supervisor', phase: 0.45 },
-      { from: -8, to: 20, z: 0.05, speed: 1.7, shirt: 0x2d6c9d, role: 'worker', phase: 0.8 },
+      { // tổ trưởng: hai line dãy trên
+        shirt: 0x424d66, role: 'supervisor', speed: 2.6, offset: 0,
+        stops: [
+          { x: -17, z: IN_TOP, pause: 5 },
+          { x: -17, z: B },
+          { x: 0, z: B },
+          { x: 0, z: IN_TOP, pause: 4.5 },
+          { x: 0, z: B },
+          { x: -17, z: B },
+        ],
+      },
+      { // QA: hai line dãy dưới, đi ngược chiều
+        shirt: 0x6b536d, role: 'supervisor', speed: 2.2, offset: 9,
+        stops: [
+          { x: 17, z: IN_BOT, pause: 4 },
+          { x: 17, z: A },
+          { x: -17, z: A },
+          { x: -17, z: IN_BOT, pause: 5.5 },
+          { x: -17, z: A },
+          { x: 17, z: A },
+        ],
+      },
+      { // công nhân: cắt ngang lối đi giữa hai dãy
+        shirt: 0x2d6c9d, role: 'worker', speed: 3.0, offset: 4,
+        stops: [
+          { x: 17, z: IN_TOP, pause: 3.5 },
+          { x: 17, z: B },
+          { x: 8, z: A },
+          { x: 0, z: IN_BOT, pause: 3 },
+          { x: 0, z: A },
+          { x: 12, z: B },
+        ],
+      },
     ];
+
     for (const w of walkers) {
       const person = this.addPerson(staff, {
-        x: w.from, z: w.z, role: w.role, shirt: w.shirt, facing: 0,
+        x: w.stops[0].x, z: w.stops[0].z, role: w.role, shirt: w.shirt, facing: 0,
       });
-      this.peopleAnimators.push({ kind: 'walk', person, ...w });
+      // Dựng sẵn độ dài từng chặng: mỗi khung hình mà tính lại là tính thừa.
+      const legs = w.stops.map((a, i) => {
+        const b = w.stops[(i + 1) % w.stops.length];
+        return { a, b, len: Math.hypot(b.x - a.x, b.z - a.z) };
+      });
+      const cycle = legs.reduce((n, l) => n + l.len / w.speed, 0)
+                  + w.stops.reduce((n, st) => n + (st.pause || 0), 0);
+      this.peopleAnimators.push({ kind: 'walk', person, ...w, legs, cycle });
     }
     this.machineRoot.add(staff);
   }
+
 
   addMachine(machine, x, z, selected) {
     const THREE = this.THREE;
