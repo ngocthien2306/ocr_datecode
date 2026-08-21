@@ -61,6 +61,9 @@ class _Token:
 class EdgeClient:
     def __init__(self) -> None:
         self._tokens: Dict[str, _Token] = {}
+        # Vì sao lần đăng nhập gần nhất hỏng — giữ lại để báo đúng nguyên nhân
+        # thay vì đoán. Xem `token_for`.
+        self._login_errors: Dict[str, str] = {}
         self._locks: Dict[str, asyncio.Lock] = {}
         self._client: Optional[httpx.AsyncClient] = None
 
@@ -135,10 +138,13 @@ class EdgeClient:
             )
             if not res.ok or not isinstance(res.data, dict):
                 logger.warning("Đăng nhập thất bại vào %s (%s): %s", node_id, ip, res.error)
+                self._login_errors[node_id] = res.error or "không rõ"
                 return None
             tok = res.data.get("access_token")
             if not tok:
+                self._login_errors[node_id] = "máy trả lời nhưng không có access_token"
                 return None
+            self._login_errors.pop(node_id, None)
             self._tokens[node_id] = _Token(tok)
             return tok
 
@@ -147,7 +153,17 @@ class EdgeClient:
                       **kw) -> EdgeResult:
         token = await self.token_for(node_id, ip)
         if not token:
-            return EdgeResult(False, error="không đăng nhập được (sai mật khẩu?)")
+            # Nói ĐÚNG cái đã xảy ra. Bản trước luôn ghi "sai mật khẩu?" cho mọi
+            # kiểu hỏng, kể cả khi agent trên máy đó đã tắt hẳn — đo trên
+            # PC-Auto-1: cổng 8100 từ chối kết nối trong 0,14 giây, tức request
+            # chưa tới được đâu để mà sai mật khẩu. Đoán sai nguyên nhân như thế
+            # là đẩy người ta đi đổi mật khẩu cả buổi cho một dịch vụ đang chết.
+            why = self._login_errors.get(node_id) or "không rõ"
+            hint = ("agent trên máy không chạy (cổng 8100 từ chối kết nối)"
+                    if "Connect" in why or "refused" in why.lower()
+                    else "máy không trả lời kịp" if "Timeout" in why
+                    else why)
+            return EdgeResult(False, error=f"không đăng nhập được: {hint}")
         res = await self._request(method, self._url(ip, port, path),
                                   timeout=timeout or settings.EDGE_TIMEOUT,
                                   token=token, **kw)
