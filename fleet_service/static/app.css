@@ -731,3 +731,9 @@ h3.chat-heading { padding-bottom: 5px; border-bottom: 1px solid var(--line-soft)
 }
 @keyframes livepulse { 50% { opacity: .25; } }
 @media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
+
+/* Header drawer dính lại khi cuộn — nút đóng phải luôn với tới được. */
+.drawer-head { position: sticky; top: 0; z-index: 4; background: var(--surface); }
+.drawer-head .ask-btn { font-size: 12px; padding: 4px 10px; }
+.drawer-head .close-btn { font-size: 14px; line-height: 1; padding: 4px 9px; }
+.frame-panel { margin-top: 0; border-top: 0; border-radius: 0; }

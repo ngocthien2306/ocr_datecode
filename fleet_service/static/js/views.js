@@ -416,7 +416,7 @@ export function logErrorsHTML(d, selected = null) {
 
 /* ── Ngăn kéo chi tiết máy ───────────────────────────────────────────────── */
 
-export function drawerHTML(m, prod) {
+export function drawerHTML(m, prod, { headOnly = false, bodyOnly = false } = {}) {
   const t = store.t;
   const x = m.metrics || {};
   const row = (k, v) => `<div class="kv"><span class="k">${k}</span><span>${v}</span></div>`;
@@ -446,16 +446,23 @@ export function drawerHTML(m, prod) {
       <div class="bar"><i style="width:${v}%"></i></div></div>`;
   }).join('') : '';
 
-  return `<div class="drawer-head">
+  /* Header là thanh ĐẦU TIÊN của drawer và dính lại khi cuộn: nút đóng mà trôi
+     mất theo nội dung thì người ta phải cuộn ngược lên mới thoát ra được. Nút
+     hỏi trợ lý cũng lên đây — trước nó nằm tận cuối, sau cả vân tay lỗi, tức là
+     phải cuộn hết trang mới thấy thứ mình định bấm ngay từ đầu. */
+  return `${bodyOnly ? '' : `<div class="drawer-head">
       <div style="display:flex;align-items:center;gap:10px">
         <h2 style="font-size:20px">${esc(m.name)}</h2>
         <span class="state ${TONE[m.state] || 'bad'}">${esc(t.state[m.state] || m.state)}</span>
         <span class="spacer"></span>
-        <button onclick="window.__closeDrawer()">✕</button>
+        <button class="ask-btn" onclick="window.__askAbout('${esc(m.name)}')">
+          ${t.chatTitle} →</button>
+        <button class="close-btn" onclick="window.__closeDrawer()"
+          aria-label="${esc(t.close)}">✕</button>
       </div>
       <div class="eyebrow" style="margin-top:4px">${esc(m.line || '')} ·
         ${esc(m.model || '')} · ${esc(m.ip)}</div>
-    </div>
+    </div>`}${headOnly ? '' : `
     <div class="drawer-body">
       ${spark}
       ${row(t.output, fmt(pr.total_products))}
@@ -472,7 +479,5 @@ export function drawerHTML(m, prod) {
         <div class="muted" style="font-size:11px;margin-top:6px">
           ${fmt(mine.sample_products)} ${t.sample} · ${mine.sample_covers_all ? t.fullSample : t.partialSample}</div>` : ''}
       ${(m.errors || []).map(e => `<div class="coverage miss" style="margin-top:10px">⚠ ${esc(e)}</div>`).join('')}
-      <button style="margin-top:16px" onclick="window.__askAbout('${esc(m.name)}')">
-        ${t.chatTitle} → ${esc(m.name)}</button>
-    </div>`;
+    </div>`}`;
 }

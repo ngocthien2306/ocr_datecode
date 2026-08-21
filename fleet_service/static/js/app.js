@@ -127,8 +127,13 @@ function openDrawer(nodeId) {
   // Ảnh đặt TRÊN CÙNG: mở drawer ra là để xem máy đang chạy thế nào, và một
   // tấm ảnh sản phẩm trả lời câu đó nhanh hơn mọi con số bên dưới. Nằm dưới
   // vân tay lỗi thì phải cuộn qua cả trang mới thấy.
-  $('#drawer').innerHTML = '<section class="panel frame-panel" id="frame-panel"></section>'
-    + V.drawerHTML(m, state.prod);
+  // Thứ tự: header (tên máy, nút hỏi, nút đóng) → ảnh sản phẩm → số liệu.
+  // Ảnh trả lời "máy đang chạy thế nào" nhanh nhất, nhưng nó không được đẩy
+  // header xuống giữa trang — nút đóng phải luôn ở nơi mắt tìm nó đầu tiên.
+  $('#drawer').innerHTML =
+    V.drawerHTML(m, state.prod, { headOnly: true })
+    + '<section class="panel frame-panel" id="frame-panel"></section>'
+    + V.drawerHTML(m, state.prod, { bodyOnly: true });
   $('#drawer').classList.add('open');
   // Ảnh chỉ tải khi drawer MỞ, và dừng hẳn khi đóng: kéo ảnh về cho một máy
   // không ai còn nhìn là chạm vào Jetson đang chạy dây chuyền, không lý do.
