@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -15,9 +16,17 @@ from agent_app.core.config import settings
 from agent_app.core.registry import AgentRegistry
 from agent_app.base.base_agent import AgentState
 from agent_app.api.deps import get_current_user
-from agent_app.core.suggestions import extract_suggestions, fallback_suggestions
+from agent_app.core import collector, progress, tool_cache
+from agent_app.core.i18n import set_lang
+from agent_app.core.reroute import build_reroute
+from agent_app.core.suggestions import (
+    extract_suggestions,
+    fallback_suggestions,
+    grounded_suggestions,
+)
 from agent_app.memory.conversation_service import ConversationService
-from langchain_core.messages import HumanMessage, AIMessage
+from agent_app.memory.summary import as_message, ensure_summary
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +43,10 @@ class ChatRequest(BaseModel):
     agent_id: str = "orchestrator"
     session_id: Optional[str] = None
     stream: bool = False
+    # Ngôn ngữ hiển thị. "vi" | "en" | "auto" ("auto" = trả lời theo đúng ngôn
+    # ngữ user vừa gõ). Bỏ trống thì mặc định tiếng Việt, nên client cũ không
+    # cần sửa gì.
+    language: Optional[str] = None
 
 
 class ChatOption(BaseModel):
@@ -46,6 +59,10 @@ class ChatOption(BaseModel):
     label: str          # hiển thị trên nút
     value: str          # câu gửi đi khi bấm
     hint: Optional[str] = None   # chú thích phụ, vd "49.503 sản phẩm"
+    # Bấm nút này thì gửi câu hỏi vào ĐÚNG agent này, bỏ qua orchestrator. Chỉ
+    # dùng cho nút hỏi-lại (`reroute`): khi orchestrator đã đoán sai một lần thì
+    # để nó đoán lại cũng ra kết quả cũ.
+    agent_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -55,9 +72,21 @@ class ChatResponse(BaseModel):
     session_id: str
     tool_calls: Optional[List[Dict[str, Any]]] = None
     options: Optional[List[ChatOption]] = None
+    # Nút "hỏi lại bằng agent khác". Tách khỏi `options` vì `options` là lựa chọn
+    # BẮT BUỘC, hiện ra là chặn luồng; reroute chỉ là đường ra khi câu trả lời
+    # vừa rồi đến từ agent sai, và không được chặn gì.
+    reroute: Optional[List[ChatOption]] = None
     suggestions: Optional[List[str]] = None
     images: Optional[List[Dict[str, Any]]] = None
     charts: Optional[List[Dict[str, Any]]] = None
+    # File tải về do tool sinh ra (báo cáo). Tách khỏi `images` vì đây là thứ
+    # user bấm để tải, không phải ảnh hiển thị trong luồng chat.
+    files: Optional[List[Dict[str, Any]]] = None
+    # Thẻ thông tin (hiện tại: người thao tác trong audit log).
+    cards: Optional[List[Dict[str, Any]]] = None
+    # Ô KPI và bảng dữ liệu, dựng tất định từ kết quả tool.
+    kpis: Optional[List[Dict[str, Any]]] = None
+    tables: Optional[List[Dict[str, Any]]] = None
     timestamp: str
 
 
@@ -108,6 +137,38 @@ def extract_tool_calls(state, skip: int = 0) -> Optional[List[Dict[str, Any]]]:
     return tool_calls or None
 
 
+
+def extract_tool_results(state, skip: int = 0) -> Dict[str, Any]:
+    """
+    Kết quả của từng tool trong lượt này, theo tên tool.
+
+    Chỉ dùng cho việc phán đoán "tool này có trả về rỗng không" (xem
+    `core/reroute.py`), nên độ chính xác vừa đủ là được và thất bại thì không sao.
+
+    Nội dung `ToolMessage` là `str(dict)` do agent tự ghi, nên đọc lại bằng
+    `literal_eval`. Nó có thể thất bại — chuỗi bị cắt, hoặc chứa object không
+    phải literal. Khi đó bỏ qua tool đó: hậu quả duy nhất là không hiện nút hỏi
+    lại, chứ không phải vỡ cả câu trả lời.
+    """
+    import ast
+
+    messages = state.get("messages") if isinstance(state, dict) else state.messages
+    out: Dict[str, Any] = {}
+    for msg in (messages or [])[skip:]:
+        if not isinstance(msg, ToolMessage):
+            continue
+        name = getattr(msg, "name", None)
+        if not name:
+            continue
+        try:
+            parsed = ast.literal_eval(str(msg.content))
+        except (ValueError, SyntaxError, MemoryError, RecursionError):
+            continue
+        if isinstance(parsed, dict):
+            out[name] = parsed
+    return out
+
+
 def _trim_history(messages: List[Any], limit: int) -> List[Any]:
     """
     Cắt bớt lịch sử NHƯNG chỉ tại ranh giới lượt hội thoại.
@@ -144,11 +205,18 @@ def _trim_history(messages: List[Any], limit: int) -> List[Any]:
 # API Endpoints
 # ============================================================================
 
-@router.post("/chat", response_model=ChatResponse, summary="Chat with AI agent")
-async def chat(
+async def _run_chat(
     request: ChatRequest,
-    current_user: Dict[str, Any] = Depends(get_current_user)
-):
+    current_user: Dict[str, Any],
+) -> ChatResponse:
+    """
+    Toàn bộ một lượt chat. Dùng CHUNG cho /chat và /chat/stream.
+
+    Tách ra vì hai endpoint chỉ khác nhau ở cách GỬI kết quả, còn phần nạp lịch sử,
+    tóm tắt, chạy agent, dựng attachment, gợi ý, nút hỏi-lại và lưu lại thì giống hệt.
+    Trước đây /chat/stream có đường code riêng và vì thế không nạp lịch sử, không lưu
+    lịch sử, không có attachment — tức là một endpoint trông như có mà không dùng được.
+    """
     """
     Chat with AI agent
 
@@ -158,7 +226,18 @@ async def chat(
     - `historical_analytics`: thống kê pass-fail, sản lượng, lịch sử recipe
     """
     try:
-        logger.info("User %s chatting with agent: %s", current_user["username"], request.agent_id)
+        # Đặt ngôn ngữ TRƯỚC mọi thứ khác: từ đây trở đi cả prompt của mô hình và
+        # nhãn UI do code sinh (ô KPI, cột bảng, gợi ý) đều đọc ContextVar này.
+        # Mỗi request là một task asyncio riêng nên không rò sang request khác.
+        lang = set_lang(request.language, request.message)
+        # Mở chỗ hứng attachment cho lượt này. Cần vì một câu hỏi giờ có thể chạy
+        # nhiều agent con, mỗi agent trả `context` riêng; gộp bằng {**a, **b} thì
+        # cái sau ghi đè cái trước và biểu đồ của agent đầu mất im lặng.
+        collector.start()
+        logger.info(
+            "User %s chatting with agent: %s (lang=%s)",
+            current_user["username"], request.agent_id, lang
+        )
 
         try:
             agent = AgentRegistry.get_agent(request.agent_id)
@@ -201,6 +280,13 @@ async def chat(
             stored_messages
         )
 
+        # Phần lịch sử bị cắt được nén lại thành vài dòng và dán vào đầu ngữ cảnh.
+        # Không có bước này thì ngữ cảnh mất ĐỘT NGỘT ở đúng lượt cửa sổ trượt:
+        # nói 30 lượt về một recipe, lượt 31 agent quên đang nói recipe nào.
+        summary = await ensure_summary(session_id, usable, len(stored_messages))
+        if summary:
+            historical_messages = [as_message(summary)] + historical_messages
+
         logger.info(
             "Session %s: %d stored / %d replayed messages",
             session_id, len(conversation.messages), len(historical_messages)
@@ -226,19 +312,66 @@ async def chat(
         # Agent đặt ui_options vào context khi có thứ cần user chọn
         # (tên recipe mơ hồ, hoặc user chưa nêu recipe nào).
         result_context = result_state.get("context") if isinstance(result_state, dict) else result_state.context
-        options = (result_context or {}).get("ui_options")
-        images = (result_context or {}).get("ui_images")
-        charts = (result_context or {}).get("ui_charts")
+
+        # Ưu tiên chỗ hứng: nó gom attachment của MỌI agent con đã chạy, theo thứ
+        # tự được gọi. `result_context` chỉ còn dùng cho đường gọi agent trực tiếp
+        # (agent_id != orchestrator), khi không có agent con nào và chỗ hứng rỗng.
+        bucket = collector.collected()
+
+        def _attach(key: str):
+            got = bucket.get(key) or []
+            return got or (result_context or {}).get(key)
+
+        options = _attach("ui_options")
+        images = _attach("ui_images")
+        charts = _attach("ui_charts")
+        files = _attach("ui_files")
+        cards = _attach("ui_cards")
+        kpis = _attach("ui_kpis")
+        tables = _attach("ui_tables")
 
         # Gỡ khối [SUGGESTIONS] khỏi text hiển thị, tách thành chip riêng.
         # Ba nguồn theo thứ tự ưu tiên: LLM tự sinh → agent đặt sẵn trong
         # context (vd orchestrator không hiểu ý, gợi ý câu vào bài) → suy từ
         # tool vừa chạy.
-        response_text, suggestions = extract_suggestions(response_text)
+        # Tool call/kết quả THẬT gồm cả của các agent con. Orchestrator chỉ thấy
+        # `ask_production_data(...)`; tool đã thực sự chạy dữ liệu nằm bên trong
+        # agent con, và gợi ý lẫn nút hỏi-lại đều dựa vào chúng.
+        inner_calls = collector.inner_tool_calls()
+        if inner_calls:
+            tool_calls = (tool_calls or []) + inner_calls
+
+        tool_results = extract_tool_results(result_state, skip=len(historical_messages))
+        tool_results.update(collector.inner_tool_results())
+
+        response_text, llm_suggestions = extract_suggestions(response_text)
+
+        # Thứ tự ưu tiên: gợi ý suy từ SỐ LIỆU trước, rồi mới tới văn của mô hình.
+        #
+        # Trước đây khối [SUGGESTIONS] của LLM được ưu tiên tuyệt đối, và nó viết
+        # gợi ý mà không nhìn con số — sau câu "từ 16h đến 18h camera nào fail
+        # nhiều nhất" nó mời "Xem lịch sử load recipe gần đây". Nhóm grounded thì
+        # lấy đúng con số vừa hiện: "Xem 5 sản phẩm lỗi đó".
+        #
+        # Vẫn giữ gợi ý của LLM để lấp cho đủ bốn chip: nó bám ngữ cảnh hội thoại
+        # tốt hơn bảng tra tĩnh, chỉ không đáng tin về số liệu.
+        suggestions = grounded_suggestions(tool_calls, tool_results)
+        for extra in (llm_suggestions or []):
+            if extra not in suggestions:
+                suggestions.append(extra)
         if not suggestions:
-            suggestions = (result_context or {}).get("ui_suggestions") or []
-        if not suggestions:
-            suggestions = fallback_suggestions(tool_calls)
+            suggestions = (_attach("ui_suggestions") or [])
+        # Lấp cho đủ ít nhất 3 chip. Nhóm grounded rất đúng nhưng thường chỉ ra
+        # một câu; dừng ở một chip thì mất chỗ để đi tiếp, mà chip là cách chính
+        # người vận hành khám phá agent — họ không biết agent trả lời được gì cho
+        # tới khi thấy câu hỏi mẫu.
+        if len(suggestions) < 3:
+            for extra in fallback_suggestions(tool_calls, tool_results):
+                if extra not in suggestions:
+                    suggestions.append(extra)
+                if len(suggestions) >= 3:
+                    break
+        suggestions = suggestions[:4]
         # Đang bắt user chọn recipe thì đừng bày thêm gợi ý gây phân tán.
         if options:
             suggestions = None
@@ -268,15 +401,30 @@ async def chat(
             len(response_text), len(conversation_messages)
         )
 
+        # Nút hỏi-lại. Chỉ dựng khi KHÔNG có `options`: options là lựa chọn bắt
+        # buộc, bày thêm một nhóm nút nữa cạnh nó là làm loãng đúng cái phải bấm.
+        reroute = None
+        if not options:
+            reroute = build_reroute(
+                request.message, tool_calls, tool_results,
+                response_text=response_text,
+                has_history=bool(historical_messages),
+            ) or None
+
         return ChatResponse(
             response=response_text,
             agent_id=request.agent_id,
+            reroute=reroute,
             session_id=session_id,
             tool_calls=tool_calls,
             options=options,
             suggestions=suggestions,
             images=images,
             charts=charts,
+            files=files,
+            cards=cards,
+            kpis=kpis,
+            tables=tables,
             timestamp=datetime.now().isoformat()
         )
 
@@ -288,6 +436,24 @@ async def chat(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing chat request: {str(e)}"
         )
+
+
+@router.post("/chat", response_model=ChatResponse, summary="Chat with AI agent")
+async def chat(
+    request: ChatRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Chat với agent, trả về một lần khi xong.
+
+    **Available agents:**
+    - `orchestrator`: tự chọn agent chuyên biệt, gọi được nhiều agent một lượt
+    - `historical_analytics`: thống kê pass-fail, sản lượng, lịch sử recipe
+    - `log_analysis`: log hệ thống, audit log
+    - `equipment_health`: xung reject, trigger, cảm biến, module
+    - `service_management`: trạng thái camera service
+    """
+    return await _run_chat(request, current_user)
 
 
 @router.get("/agents", response_model=List[AgentInfo], summary="List available agents")
@@ -379,35 +545,97 @@ async def get_conversations(
 # Streaming (experimental — FE chưa dùng, KHÔNG lưu history)
 # ============================================================================
 
-@router.post("/chat/stream", summary="Chat with streaming response (experimental)")
+@router.post("/chat/stream", summary="Chat kèm stream tiến trình (SSE)")
 async def chat_stream(
     request: ChatRequest,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    Server-Sent Events stream.
+    Server-Sent Events: gửi TIẾN TRÌNH trong lúc chạy, rồi gửi kết quả đầy đủ.
 
-    LƯU Ý: endpoint này KHÔNG nạp và KHÔNG lưu conversation history — mỗi lần
-    gọi là một lượt độc lập. Giữ nguyên trạng từ bản backend cũ.
+    Stream tiến trình chứ không stream token, vì câu trả lời chỉ xuất hiện ở cuối —
+    sau khi tool đã chạy xong, mà tool chiếm phần lớn thời gian (đo thực tế 5–27 giây).
+    Stream token chỉ làm mượt được khoảng một giây cuối, còn hơn 20 giây đầu vẫn là
+    màn hình trắng. Thứ người dùng cần trong 20 giây đó là biết hệ thống đang làm gì.
+
+    Các loại event:
+
+    | `type` | Ý nghĩa |
+    |---|---|
+    | `start` | đã nhận câu hỏi, kèm `session_id` |
+    | `agent` | bắt đầu hỏi một agent chuyên biệt |
+    | `tool` | bắt đầu chạy một tool, `text` là mô tả tiếng Việt |
+    | `tool_done` | tool xong, kèm `seconds` |
+    | `result` | payload y hệt response của POST /chat |
+    | `error` | lỗi, kèm `detail` |
+    | `done` | kết thúc stream |
+
+    Kết quả cuối dùng CHUNG `_run_chat` với endpoint không stream, nên lịch sử, tóm
+    tắt, attachment, gợi ý và nút hỏi-lại giống hệt. Bản trước có đường code riêng và
+    vì thế không nạp/không lưu lịch sử, không có attachment — trông như có mà không
+    dùng được.
     """
-    try:
-        agent = AgentRegistry.get_agent(request.agent_id)
-        session_id = request.session_id or f"session_{current_user['id']}_{datetime.now().timestamp()}"
+    session_id = request.session_id or f"session_{current_user['id']}_{datetime.now().timestamp()}"
 
-        state = AgentState(
-            messages=[HumanMessage(content=request.message)],
-            user_id=current_user["id"],
-            session_id=session_id,
-            context={"username": current_user["username"]}
-        )
+    # Mở kênh TRƯỚC khi tạo task: `asyncio.create_task` chụp lại context tại thời
+    # điểm tạo, nên mở sau thì task không thấy kênh và không có sự kiện nào.
+    channel = progress.open_channel()
 
-        async def generate():
-            async for chunk in agent.astream(state):
-                yield f"data: {json.dumps({'type': 'chunk', 'data': str(chunk), 'timestamp': datetime.now().isoformat()})}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+    async def generate():
+        def sse(payload: Dict[str, Any]) -> str:
+            return "data: " + json.dumps(payload, ensure_ascii=False, default=str) + "\n\n"
 
-        return StreamingResponse(generate(), media_type="text/event-stream")
+        yield sse({"type": "start", "session_id": session_id})
 
-    except Exception as e:
-        logger.error("Error in streaming chat: %s", e)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        task = asyncio.create_task(_run_chat(request, current_user))
+        try:
+            while not task.done():
+                for ev in progress.drain(channel):
+                    yield sse({"type": ev.get("kind"), **{k: v for k, v in ev.items()
+                                                          if k != "kind"}})
+                # Nhịp đọc 0,12s: đủ mượt để người dùng thấy các bước nối nhau, mà
+                # không biến stream thành vòng lặp quay tít khi chẳng có gì để gửi.
+                await asyncio.sleep(0.12)
+
+            # Vét nốt sự kiện phát ra ở sát lúc kết thúc.
+            for ev in progress.drain(channel):
+                yield sse({"type": ev.get("kind"), **{k: v for k, v in ev.items()
+                                                      if k != "kind"}})
+
+            result = await task
+            yield sse({"type": "result",
+                       "data": result.model_dump(mode="json")})
+        except HTTPException as e:
+            yield sse({"type": "error", "detail": str(e.detail)})
+        except Exception as e:
+            logger.error("Lỗi trong chat stream: %s", e, exc_info=True)
+            yield sse({"type": "error", "detail": str(e)})
+        finally:
+            progress.close_channel()
+            yield sse({"type": "done"})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            # Chặn nginx đệm lại toàn bộ response — đệm là mất hẳn tác dụng của stream.
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+        },
+    )
+
+
+@router.get("/tool-cache", summary="Tình trạng cache kết quả tool")
+async def tool_cache_stats(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    Số liệu cache. Có endpoint này để khi ai đó báo "số liệu không đổi dù dây
+    chuyền đang chạy" thì kiểm tra được ngay là do cache hay do truy vấn, thay vì
+    phải đoán.
+    """
+    return tool_cache.stats()
+
+
+@router.delete("/tool-cache", summary="Xoá cache kết quả tool")
+async def tool_cache_clear(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Xoá sạch cache. Dùng khi cần đọc lại số liệu ngay, không chờ TTL."""
+    return {"cleared": tool_cache.clear()}

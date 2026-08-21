@@ -2,3 +2,7 @@
 __pycache__/
 *.py[cod]
 logs/
+.env.bak
+.env.local
+generated_reports/
+scripts/demo/_out/

@@ -15,8 +15,13 @@ from agent_app.tools.service_tools import (
     stop_service_tool,
     get_service_logs_tool
 )
+from agent_app.tools.system_tools import (
+    get_system_metrics_tool,
+    get_system_alerts_tool,
+)
 import logging
 
+from agent_app.core.i18n import apply_language
 from agent_app.prompts.camera_service_prompts import CAMERA_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -43,7 +48,12 @@ class ServiceManagementAgent(BaseAgent):
             check_service_status_tool,
             start_service_tool,
             stop_service_tool,
-            get_service_logs_tool
+            get_service_logs_tool,
+            # Phần cứng của cả cỗ máy, khác với CPU/RAM của một tiến trình mà
+            # check_service_status trả về. Đặt ở agent này vì câu hỏi "máy sao
+            # rồi" và "service sao rồi" gần như luôn đi cùng nhau.
+            get_system_metrics_tool,
+            get_system_alerts_tool,
         ]
 
     def build_graph(self) -> StateGraph:
@@ -71,7 +81,9 @@ class ServiceManagementAgent(BaseAgent):
 
             # Add system prompt if not present
             if not any(isinstance(m, SystemMessage) for m in messages):
-                messages = [SystemMessage(content=self.get_system_prompt())] + messages
+                messages = [SystemMessage(
+                    content=apply_language(self.get_system_prompt())
+                )] + messages
 
             # Call LLM
             response = llm_with_tools.invoke(messages)

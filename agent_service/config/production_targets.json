@@ -1,0 +1,10 @@
+{
+  "_comment": "Chỉ tiêu sản xuất. Sửa file này rồi hỏi lại agent, không cần restart.",
+  "daily_total": 12000,
+  "min_pass_rate": 97.0,
+  "per_recipe": {
+    "ONION POWDER": 8000,
+    "Paprika chuan": 4000
+  },
+  "shift_hours": 8
+}

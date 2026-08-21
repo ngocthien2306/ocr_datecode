@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from agent_app.api import auth, chat
+from agent_app.api import auth, chat, fleet
 from agent_app.core.config import settings
 from agent_app.db.mongodb import (
     close_mongo_connection,
@@ -47,6 +47,8 @@ async def lifespan(app: FastAPI):
     from agent_app.agents.orchestrator_agent import OrchestratorAgent  # noqa: F401
     from agent_app.agents.service_agent import ServiceManagementAgent  # noqa: F401
     from agent_app.agents.historical_agent import HistoricalAnalyticsAgent  # noqa: F401
+    from agent_app.agents.log_agent import LogAnalysisAgent  # noqa: F401
+    from agent_app.agents.equipment_agent import EquipmentHealthAgent  # noqa: F401
 
     from agent_app.core.registry import AgentRegistry
 
@@ -79,6 +81,9 @@ app.add_middleware(
 # Cùng prefix với backend cũ (/api/agent/...) để FE chỉ cần đổi base URL.
 app.include_router(auth.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
+# Đường XÁC ĐỊNH cho tầng fleet: gọi thẳng tool, không qua LLM. Fleet poll 5 máy
+# mỗi phút, đi qua /agent/chat thì mỗi vòng là 5 lượt LLM.
+app.include_router(fleet.router, prefix="/api")
 
 
 # Ảnh kết quả inference. Backend cũng serve thư mục này ở :8000, nhưng tunnel
@@ -89,6 +94,14 @@ if _UPLOADS.is_dir():
     app.mount("/api/uploads", StaticFiles(directory=str(_UPLOADS)), name="uploads")
 else:
     logger.warning("Không thấy thư mục uploads: %s — ảnh sẽ không hiển thị", _UPLOADS)
+
+
+# File báo cáo do `tools/report_tools.generate_report` sinh ra. Mount ở đây để
+# link tải trong câu trả lời chat dùng được ngay, không phải nhờ backend serve.
+from agent_app.tools.report_tools import REPORTS_DIR, REPORTS_URL_PREFIX  # noqa: E402
+
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount(REPORTS_URL_PREFIX, StaticFiles(directory=str(REPORTS_DIR)), name="reports")
 
 
 @app.get("/test", include_in_schema=False)

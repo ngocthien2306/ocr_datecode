@@ -3,20 +3,30 @@ Historical Analytics Agent
 Specializes in analyzing production data, trends, and recipe history
 """
 
-from typing import List, Any, Optional
+from typing import Any, Dict, List, Optional
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+
+from agent_app.core.i18n import apply_language
 from agent_app.core.llm import make_llm
 
 from agent_app.base.base_agent import BaseAgent, AgentState
 from agent_app.core.registry import AgentRegistry
 from agent_app.core.attachments import (
     charts_from_tool_result,
+    files_from_tool_result,
     images_from_tool_result,
+    kpis_from_tool_result,
     strip_for_llm,
+    tables_from_tool_result,
 )
 from agent_app.core.ui_options import options_from_tool_result
+from agent_app.tools.report_tools import generate_report_tool
 from agent_app.tools.analytics_tools import (
+    compare_periods_tool,
+    get_downtime_tool,
+    get_target_progress_tool,
+    get_shift_handover_tool,
     get_pass_fail_stats_tool,
     get_production_summary_tool,
     get_recipe_load_history_tool,
@@ -42,6 +52,12 @@ class HistoricalAnalyticsAgent(BaseAgent):
     - Production summaries by recipe/camera/time
     - Recipe load history tracking
     - User activity analysis
+    - Xuất báo cáo ra file HTML/PDF/Excel/CSV/JSON
+    - So sánh hai kỳ sản xuất, tính sẵn chênh lệch
+    - Sản lượng theo ca làm việc
+    - Thời gian dừng dây chuyền
+    - Đối chiếu sản lượng với chỉ tiêu
+    - Bản giao ca tổng hợp
     """
 
     def __init__(self, agent_id: str, model_name: Optional[str] = None, temperature: float = 0.3, **kwargs):
@@ -54,7 +70,12 @@ class HistoricalAnalyticsAgent(BaseAgent):
             get_pass_fail_stats_tool,
             get_production_summary_tool,
             get_recipe_load_history_tool,
-            explain_failures_tool
+            explain_failures_tool,
+            generate_report_tool,
+            compare_periods_tool,
+            get_downtime_tool,
+            get_target_progress_tool,
+            get_shift_handover_tool,
         ]
 
     def get_system_prompt(self) -> str:
@@ -84,7 +105,8 @@ class HistoricalAnalyticsAgent(BaseAgent):
             # Ngày tháng phải tính tại đây chứ không phải trong __init__ —
             # agent instance bị AgentRegistry cache vĩnh viễn.
             llm_input = [
-                SystemMessage(content=self.system_prompt + build_date_context())
+                SystemMessage(content=apply_language(
+                    self.system_prompt + build_date_context()))
             ] + [m for m in messages if not isinstance(m, SystemMessage)]
 
             response = llm_with_tools.invoke(llm_input)
@@ -114,6 +136,9 @@ class HistoricalAnalyticsAgent(BaseAgent):
             ui_options = None
             ui_images: List[Any] = []
             ui_charts: List[Any] = []
+            ui_files: List[Any] = []
+            ui_kpis: List[Any] = []
+            ui_tables: List[Any] = []
             for tool_call in tool_calls:
                 tool_name = tool_call.get("name")
                 tool_args = tool_call.get("args", {})
@@ -140,6 +165,22 @@ class HistoricalAnalyticsAgent(BaseAgent):
                     # nên hình vẽ luôn khớp con số trong văn bản).
                     ui_images += images_from_tool_result(tool_name, result)
                     ui_charts += charts_from_tool_result(tool_name, tool_args, result)
+                    ui_files += files_from_tool_result(tool_name, result)
+                    # KPI và bảng phải cùng một tool, cùng một phạm vi.
+                    #
+                    # Giữ "bộ KPI đầu tiên" rồi cộng dồn bảng là sai: nếu LLM gọi
+                    # get_pass_fail_stats trước compare_periods trong cùng lượt,
+                    # người xem thấy dãy ô một kỳ (không có chênh lệch) nằm ngay
+                    # trên một bảng so sánh hai kỳ. Lấy KPI của CHÍNH tool đã
+                    # dựng bảng, và nếu chưa có bảng thì lấy tool đầu tiên có KPI.
+                    tbl = tables_from_tool_result(tool_name, result)
+                    kp = kpis_from_tool_result(tool_name, result)
+                    if tbl:
+                        ui_tables += tbl
+                        if kp:
+                            ui_kpis = kp
+                    elif kp and not ui_kpis and not ui_tables:
+                        ui_kpis = kp
 
                     # Create tool message
                     from langchain_core.messages import ToolMessage
@@ -153,13 +194,26 @@ class HistoricalAnalyticsAgent(BaseAgent):
                 else:
                     logger.error(f"Tool {tool_name} not found")
 
-            extra = {}
+            # Gộp với phần đã có trong context, không ghi đè: đồ thị chạy nhiều
+            # vòng call_model → execute_tools, và ghi đè làm mất bảng của vòng
+            # trước khi vòng sau gọi thêm tool.
+            extra: Dict[str, Any] = {}
+            prev = state.context or {}
             if ui_options:
                 extra["ui_options"] = ui_options
             if ui_images:
                 extra["ui_images"] = ui_images[:8]
             if ui_charts:
                 extra["ui_charts"] = ui_charts[:4]
+            if ui_files:
+                extra["ui_files"] = ui_files[:4]
+            if ui_kpis:
+                extra["ui_kpis"] = ui_kpis[:6]
+            elif prev.get("ui_kpis"):
+                extra["ui_kpis"] = prev["ui_kpis"]
+            merged_tables = (prev.get("ui_tables") or []) + ui_tables
+            if merged_tables:
+                extra["ui_tables"] = merged_tables[:2]
 
             return {
                 "messages": state.messages + tool_messages,
