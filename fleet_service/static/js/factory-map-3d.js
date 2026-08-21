@@ -101,6 +101,7 @@ class FactoryFloorScene {
     this.pickables = [];
     this.productAnimators = [];
     this.robotAnimators = [];
+    this.peopleAnimators = [];
     this.lastAnimatedAt = 0;
     this.cameraTarget = new THREE.Vector3(0, 0, 0);
     this.cameraMove = null;
@@ -306,6 +307,42 @@ class FactoryFloorScene {
         const span = item.max - item.min;
         item.object.position.x = item.min + ((seconds * item.speed + item.phase) % span);
       });
+      this.peopleAnimators.forEach(p => {
+        const rig = p.person.userData.rig;
+        if (p.kind === 'walk') {
+          const span = Math.abs(p.to - p.from);
+          const dir = Math.sign(p.to - p.from) || 1;
+          // Đi tới rồi quay lại: lấy phần dư trên quãng đường GẤP ĐÔI, nửa sau
+          // là chiều về. Không phải "chạm mép rồi nhảy về đầu" — nhảy vị trí
+          // giữa cảnh là thứ mắt bắt ngay.
+          const trip = (seconds * p.speed + p.phase * span) % (span * 2);
+          const back = trip > span;
+          const along = back ? span * 2 - trip : trip;
+          p.person.position.x = p.from + dir * along;
+          p.person.position.z = p.z;
+          p.person.rotation.y = (dir > 0) === !back ? Math.PI / 2 : -Math.PI / 2;
+          // Sải chân theo QUÃNG ĐƯỜNG đã đi, không theo đồng hồ: đi nhanh thì
+          // bước nhanh, nên bàn chân không trượt trên sàn.
+          const gait = along * 1.6;
+          const swing = Math.sin(gait) * 0.55;
+          if (rig) {
+            rig.legs[0].rotation.x = swing;
+            rig.legs[1].rotation.x = -swing;
+            rig.arms[0].rotation.x = -swing * 0.7;
+            rig.arms[1].rotation.x = swing * 0.7;
+          }
+          p.person.position.y = Math.abs(Math.cos(gait)) * 0.035;
+        } else if (rig) {
+          // Đứng máy: dồn trọng tâm và với tay, biên độ nhỏ.
+          const t2 = seconds * 0.6 + p.phase * 6;
+          const sway = Math.sin(t2) * 0.12;
+          rig.arms[0].rotation.x = -0.25 + Math.sin(t2 * 1.7) * 0.28;
+          rig.arms[1].rotation.x = -0.15 + Math.sin(t2 * 1.7 + 1.1) * 0.2;
+          rig.legs[0].rotation.x = sway * 0.25;
+          rig.legs[1].rotation.x = -sway * 0.25;
+          p.person.rotation.z = sway * 0.05;
+        }
+      });
       this.robotAnimators.forEach(robot => {
         if (robot.transferBottle) {
           // Một chu kỳ nhìn được ngay từ xa: chai đi trên băng 1, robot nhấc
@@ -501,14 +538,24 @@ class FactoryFloorScene {
       person.add(mesh);
       return mesh;
     };
-    const limb = (from, to, radius, material) => {
+    const limb = (from, to, radius, material, parent = person) => {
       const delta = new THREE.Vector3().subVectors(to, from);
       const part = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius * 1.08, delta.length(), 10), material);
       part.position.copy(from).add(to).multiplyScalar(0.5);
       part.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
       part.castShadow = true;
-      person.add(part);
+      parent.add(part);
       return part;
+    };
+    /* Khớp xoay ở hông và vai. Bản trước dựng tay chân bằng toạ độ TUYỆT ĐỐI
+       trong thân người, nên không có gì để xoay — muốn bước đi thì chỉ còn cách
+       trượt cả khối, và trượt mà chân đứng yên thì nhìn như đi patin. Bọc mỗi
+       chi vào một Group đặt đúng khớp là xoay được quanh đúng trục. */
+    const joint = (px, py, pz) => {
+      const g = new THREE.Group();
+      g.position.set(px, py, pz);
+      person.add(g);
+      return g;
     };
     // Tỉ lệ cơ thể, khớp gối/khuỷu và áo phản quang giúp nhân vật đọc được ở
     // góc isometric, thay vì chỉ là cylinder có hai chân.
@@ -519,20 +566,31 @@ class FactoryFloorScene {
     add(new THREE.CylinderGeometry(0.07, 0.08, 0.12), skin, 0, 1.6, 0);
     const hardhat = add(new THREE.SphereGeometry(0.2, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), helmet, 0, 1.91, 0);
     hardhat.rotation.y = Math.PI / 4;
+    const rig = { legs: [], arms: [] };
     for (const side of [-1, 1]) {
-      const hip = new THREE.Vector3(side * 0.1, 0.88, 0);
-      const knee = new THREE.Vector3(side * 0.12, 0.47, side * 0.04);
-      const ankle = new THREE.Vector3(side * 0.1, 0.16, -0.03);
-      limb(hip, knee, 0.075, trousers);
-      limb(knee, ankle, 0.065, trousers);
-      add(new THREE.BoxGeometry(0.15, 0.09, 0.26), boot, side * 0.1, 0.11, -0.1);
-      const shoulder = new THREE.Vector3(side * 0.22, 1.52, 0);
-      const elbow = new THREE.Vector3(side * 0.33, 1.2, side * 0.08);
-      const hand = new THREE.Vector3(side * 0.28, role === 'supervisor' ? 1.08 : 1.05, -0.18);
-      limb(shoulder, elbow, 0.06, cloth);
-      limb(elbow, hand, 0.052, cloth);
-      add(new THREE.SphereGeometry(0.065, 10, 8), skin, hand.x, hand.y, hand.z);
+      const legPivot = joint(side * 0.1, 0.88, 0);
+      rig.legs.push(legPivot);
+      const knee = new THREE.Vector3(side * 0.02, -0.41, side * 0.04);
+      const ankle = new THREE.Vector3(0, -0.72, -0.03);
+      limb(new THREE.Vector3(0, 0, 0), knee, 0.075, trousers, legPivot);
+      limb(knee, ankle, 0.065, trousers, legPivot);
+      const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.09, 0.26), boot);
+      shoe.position.set(0, -0.77, -0.1);
+      shoe.castShadow = true;
+      legPivot.add(shoe);
+
+      const armPivot = joint(side * 0.22, 1.52, 0);
+      rig.arms.push(armPivot);
+      const elbow = new THREE.Vector3(side * 0.11, -0.32, side * 0.08);
+      const handY = (role === 'supervisor' ? 1.08 : 1.05) - 1.52;
+      const hand = new THREE.Vector3(side * 0.06, handY, -0.18);
+      limb(new THREE.Vector3(0, 0, 0), elbow, 0.06, cloth, armPivot);
+      limb(elbow, hand, 0.052, cloth, armPivot);
+      const fist = new THREE.Mesh(new THREE.SphereGeometry(0.065, 10, 8), skin);
+      fist.position.copy(hand);
+      armPivot.add(fist);
     }
+    person.userData.rig = rig;
     if (role === 'supervisor') {
       const clipboard = add(new THREE.BoxGeometry(0.26, 0.36, 0.04), new THREE.MeshStandardMaterial({ color: 0xd96c42, roughness: 0.6 }), 0.25, 1.2, -0.23);
       clipboard.rotation.z = -0.2;
@@ -540,6 +598,7 @@ class FactoryFloorScene {
     person.position.set(x, 0, z);
     person.rotation.y = facing;
     target.add(person);
+    return person;
   }
 
   addZone(machine, x, z, index) {
@@ -601,15 +660,33 @@ class FactoryFloorScene {
     pallet(-5.3, awayFromAisle * 2.65, 2);
 
     const workerColors = [0x2d6c9d, 0xc85c32, 0x5d8c55, 0x8962a8, 0x237878];
-    this.addPerson(zone, { x: -4.85, z: towardAisle * 2.25, shirt: workerColors[index % workerColors.length], facing: towardAisle > 0 ? 0 : Math.PI });
+    const operator = this.addPerson(zone, { x: -4.85, z: towardAisle * 2.25, shirt: workerColors[index % workerColors.length], facing: towardAisle > 0 ? 0 : Math.PI });
+    // Người đứng máy không đi đâu cả — họ thao tác tại chỗ. Nhưng máy DỪNG thì
+    // họ cũng đứng yên hẳn, cùng một luật với băng tải: cảnh không được nói
+    // rằng có việc đang diễn ra ở một line đã tắt.
+    if (!['unreachable', 'offline'].includes(machine.state))
+      this.peopleAnimators.push({ kind: 'idle', person: operator, phase: index * 0.7 });
     zone.position.set(x, 0, z);
     this.machineRoot.add(zone);
   }
 
   addAisleStaff() {
     const staff = new this.THREE.Group();
-    this.addPerson(staff, { x: -6.4, z: -0.3, role: 'supervisor', shirt: 0x424d66, facing: 0.2 });
-    this.addPerson(staff, { x: 8.6, z: 0.45, role: 'supervisor', shirt: 0x6b536d, facing: -0.4 });
+    /* Người đi tuần dọc lối đi. Xưởng mà ai cũng đứng bất động thì nhìn như
+       ảnh chụp, không như một ca đang chạy — và chuyển động là thứ mắt bắt
+       được trước cả hình khối. Đi trong LỐI ĐI, không xuyên qua máy: quãng
+       đường lấy theo trục x của lối đi, z giữ trong vạch kẻ. */
+    const walkers = [
+      { from: -20, to: 14, z: -0.55, speed: 1.45, shirt: 0x424d66, role: 'supervisor', phase: 0 },
+      { from: 16, to: -12, z: 0.62, speed: 1.15, shirt: 0x6b536d, role: 'supervisor', phase: 0.45 },
+      { from: -8, to: 20, z: 0.05, speed: 1.7, shirt: 0x2d6c9d, role: 'worker', phase: 0.8 },
+    ];
+    for (const w of walkers) {
+      const person = this.addPerson(staff, {
+        x: w.from, z: w.z, role: w.role, shirt: w.shirt, facing: 0,
+      });
+      this.peopleAnimators.push({ kind: 'walk', person, ...w });
+    }
     this.machineRoot.add(staff);
   }
 
