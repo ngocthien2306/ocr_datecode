@@ -16,6 +16,8 @@
    vẫn đầy đủ.
    ═══════════════════════════════════════════════════════════════════════════ */
 
+import * as floorMap from '/station/floor.js';
+
 const $ = s => document.querySelector(s);
 const NA = '—';
 
@@ -54,8 +56,38 @@ const I18N = {
       ? `Tự làm mới 15s · cập nhật ${at} · dữ liệu lấy từ chính máy này`
       : `Không gọi được máy · số liệu từ ${at} · sẽ thử lại`,
     handover: 'Bàn giao ca', print: 'In', running: 'đang chạy',
+    assistant: 'Hỏi trợ lý', send: 'Gửi',
+    tabProd: 'Sản xuất', tabFloor: 'Sơ đồ vị trí',
+    floorTitle: 'Vị trí máy này trong xưởng',
+    floorHint: 'Chỉ máy của bạn thao tác được. Các máy khác chỉ để định vị.',
+    otherMachine: 'máy khác, chỉ để định vị',
+    otherTap: n => `${n} là máy khác — màn hình này chỉ theo dõi máy của bạn.`,
+    chatPlaceholder: 'vd: vì sao giờ vừa rồi tỉ lệ đạt tụt?',
+    chatThinking: 'đang hỏi máy này…',
+    chatOff: 'Trợ lý tạm không dùng được. Mọi số liệu trên màn hình vẫn đúng, '
+      + 'và bàn giao ca vẫn dùng được — nó không đi qua trợ lý.',
+    chipWhyFail: 'Vì sao ca này tỉ lệ đạt thấp?',
+    chipWorstHour: h => `Giờ ${h} có gì khác các giờ còn lại?`,
+    chipRam: 'RAM đang cao — có ảnh hưởng gì không?',
+    chipDisk: 'Đĩa sắp đầy — nên dọn gì?',
+    chipFailKind: 'Các lỗi vừa rồi thuộc kiểu nào?',
+    // Chip phải nói RÕ cần gì. "Tóm tắt ca này" thì agent hỏi lại
+    // "bạn muốn biết sản lượng hay dừng máy?" — mất một lượt vô ích, mà
+    // người đứng máy chỉ bấm một lần rồi đi làm việc khác.
+    chipShift: 'Ca này sản lượng, tỉ lệ đạt và số lần dừng máy ra sao?',
     hoTitle: n => `Bàn giao ca ${n}`,
     hoFail: 'Chưa dựng được bản bàn giao.',
+    hoInProgress: w => `Ca CHƯA kết thúc (${w}) — mọi con số dưới đây là dở dang.`,
+    hoOutput: 'Sản lượng', hoTotal: 'Tổng kiểm', hoPass: 'Đạt',
+    hoFail_: 'Không đạt', hoRate: 'Tỉ lệ đạt',
+    hoTarget: 'Chỉ tiêu', hoTargetDay: 'Chỉ tiêu ngày', hoActualDay: 'Thực tế cả ngày',
+    hoAchieved: 'Đạt chỉ tiêu', hoProjected: 'Dự phóng hết ngày (phép tính)',
+    hoDowntime: 'Dừng máy', hoStops: 'Số lần dừng', hoStopMin: 'Tổng thời gian dừng',
+    hoUptime: 'Thời gian chạy', hoMinutes: 'phút',
+    hoCauses: 'Nguyên nhân lỗi (trên mẫu)', hoFailed: 'Sản phẩm không đạt',
+    hoProducts: 'sản phẩm',
+    hoAlerts: 'Cảnh báo thiết bị', hoPeople: 'Người trong ca',
+    hoActions: 'thao tác', hoChanges: 'Thay đổi recipe',
     notConfigured: 'Chưa khai STATION_NAME — màn hình đang lấy tên từ hostname.',
   },
   en: {
@@ -92,8 +124,35 @@ const I18N = {
       ? `Auto-refresh 15s · updated ${at} · data from this machine`
       : `Could not reach the machine · figures from ${at} · will retry`,
     handover: 'Shift handover', print: 'Print', running: 'running',
+    assistant: 'Ask assistant', send: 'Send',
+    tabProd: 'Production', tabFloor: 'Floor position',
+    floorTitle: 'Where this machine sits on the floor',
+    floorHint: 'Only your machine is interactive. The others are for orientation.',
+    otherMachine: 'another machine, for orientation only',
+    otherTap: n => `${n} is another machine — this screen only follows yours.`,
+    chatPlaceholder: 'e.g. why did the pass rate drop last hour?',
+    chatThinking: 'asking this machine…',
+    chatOff: 'The assistant is unavailable. Every figure on screen is still '
+      + 'correct, and the handover still works — it does not go through the assistant.',
+    chipWhyFail: 'Why is the pass rate low this shift?',
+    chipWorstHour: h => `What was different about ${h}?`,
+    chipRam: 'RAM is high — does it matter?',
+    chipDisk: 'Disk is filling — what should be cleared?',
+    chipFailKind: 'What kind of failures were those?',
+    chipShift: 'This shift: output, pass rate and number of stops?',
     hoTitle: n => `Shift ${n} handover`,
     hoFail: 'Could not build the handover.',
+    hoInProgress: w => `Shift is NOT over (${w}) — every figure below is partial.`,
+    hoOutput: 'Output', hoTotal: 'Inspected', hoPass: 'Pass',
+    hoFail_: 'Fail', hoRate: 'Pass rate',
+    hoTarget: 'Target', hoTargetDay: 'Daily target', hoActualDay: 'Actual today',
+    hoAchieved: 'Target met', hoProjected: 'Projected end of day (calculated)',
+    hoDowntime: 'Downtime', hoStops: 'Stops', hoStopMin: 'Total stopped',
+    hoUptime: 'Uptime', hoMinutes: 'min',
+    hoCauses: 'Failure causes (of sample)', hoFailed: 'Failed products',
+    hoProducts: 'products',
+    hoAlerts: 'Equipment alerts', hoPeople: 'Crew on shift',
+    hoActions: 'actions', hoChanges: 'Recipe changes',
     notConfigured: 'STATION_NAME is not set — falling back to hostname.',
   },
 };
@@ -107,6 +166,7 @@ const store = {
 };
 
 const state = { over: null, fails: null, hw: null, crew: null, cam: null,
+                floor: null, tab: 'prod',
                 fetchedAt: 0,
                 at: null, ok: true };
 
@@ -117,6 +177,25 @@ const hhmm = iso => String(iso || '').slice(11, 16);
 
 /* Ngưỡng màu. Giống Fleet Console để cùng một con số không đổi nghĩa giữa hai
    màn hình của cùng nhà máy. */
+/* Nhãn nguyên nhân: máy trạm trả CẢ khoá ổn định (`cause`) lẫn nhãn tiếng Việt
+   (`label`). Dịch từ KHOÁ; nhãn của máy chỉ dùng khi gặp khoá lạ — không thì
+   bật sang EN vẫn thấy nguyên một cột chữ Việt, đúng lỗi đã sửa ở Fleet Console
+   và tôi vừa để nó lặp lại ở đây. */
+const CAUSE = {
+  vi: { char_verification: 'Ký tự dưới ngưỡng tin cậy',
+        no_detection: 'Detector không thấy vùng nào trong khung',
+        text_verification: 'OCR đọc sai chuỗi',
+        template_verification: 'Ảnh không khớp template',
+        product_verification: 'Không nhận ra sản phẩm' },
+  en: { char_verification: 'Character below confidence threshold',
+        no_detection: 'Detector found no region in frame',
+        text_verification: 'OCR read the wrong string',
+        template_verification: 'Image did not match template',
+        product_verification: 'Product not recognised' },
+};
+const causeLabel = (key, fallback) =>
+  (CAUSE[store.lang] || CAUSE.vi)[key] || fallback || key;
+
 const rateTone = v => v == null ? 'none' : v >= 92 ? 'ok' : v >= 80 ? 'warn' : 'bad';
 
 /* ── Gọi API ─────────────────────────────────────────────────────────────── */
@@ -337,11 +416,47 @@ function paintFooter() {
   const t = store.t;
   $('#f-refresh').textContent = t.refresh(state.at || NA, state.ok);
   $('#btn-handover').textContent = t.handover;
+  $('#btn-assistant').textContent = t.assistant;
+}
+
+function paintFloor() {
+  const t = store.t;
+  $('#t-floor').textContent = t.floorTitle;
+  if (!state.floor) return;
+  floorMap.render($('#v-floor'), {
+    machines: state.floor.machines || [],
+    self: state.floor.self,
+    t,
+    onOtherTap: name => {
+      // Chạm máy khác thì NÓI RA, không im lặng. Và không mở gì — trạng thái
+      // line khác không phải việc của người đứng ở đây.
+      const el = $('#floor-note');
+      if (!el) return;
+      el.textContent = t.otherTap(name);
+      el.classList.add('hit');
+      clearTimeout(paintFloor._to);
+      paintFloor._to = setTimeout(() => {
+        el.textContent = t.floorHint;
+        el.classList.remove('hit');
+      }, 4000);
+    },
+  });
+}
+
+function paintTabs() {
+  const t = store.t;
+  $('#tab-prod').textContent = t.tabProd;
+  $('#tab-floor').textContent = t.tabFloor;
+  $('#tab-prod').setAttribute('aria-selected', state.tab === 'prod');
+  $('#tab-floor').setAttribute('aria-selected', state.tab === 'floor');
+  $('#pane-prod').hidden = state.tab !== 'prod';
+  $('#pane-floor').hidden = state.tab !== 'floor';
+  if (state.tab === 'floor') paintFloor();
 }
 
 function paintAll() {
   paintHeader(); paintProduction(); paintHourly();
-  paintFails(); paintHardware(); paintCrew(); paintFooter();
+  paintFails(); paintHardware(); paintCrew(); paintFooter(); paintTabs();
 }
 
 /* ── Nạp dữ liệu ─────────────────────────────────────────────────────────── */
@@ -350,18 +465,22 @@ async function load() {
   try {
     // Bốn lời gọi song song, tất cả tới CHÍNH máy này — không có bước nào ra
     // mạng ngoài, nên rút mạng thì màn hình vẫn đủ.
-    const [o, f, h, c, sv] = await Promise.all([
+    const [o, f, h, c, sv, fl] = await Promise.all([
       api('/api/station/overview'),
       api('/api/station/failures?limit=4').catch(() => null),
       api('/api/station/health-metrics').catch(() => null),
       api('/api/station/crew').catch(() => null),
       api('/api/agent/service/status').catch(() => null),
+      // Bố trí sàn gần như không đổi — xin một lần rồi giữ.
+      state.floor ? Promise.resolve(state.floor)
+                  : api('/api/station/floor').catch(() => null),
     ]);
     state.over = o; state.ok = true;
     if (f) state.fails = f;
     if (h) state.hw = h;
     if (c) state.crew = c;
     // Trạng thái camera service là câu trả lời của agent, không phải mặc định.
+    if (fl) state.floor = fl;
     if (sv) state.cam = sv.running ?? sv.is_running ?? sv.camera_service_running ?? null;
     state.fetchedAt = Date.now();
     // Dấu thời gian cũng lấy giờ MÁY, cùng lý do với đồng hồ.
@@ -393,26 +512,224 @@ async function openHandover() {
 }
 
 /** Dựng bản bàn giao từ dữ liệu tool — KHÔNG qua mô hình, nên nó vẫn chạy khi
- *  trợ lý tắt hoặc hết credit. Bàn giao ca là việc bắt buộc lúc 22:00. */
+ *  trợ lý tắt hoặc hết credit. Bàn giao ca là việc bắt buộc lúc 22:00.
+ *
+ *  Bản đầu tôi dàn phẳng JSON ra thành một danh sách khoá — đúng dữ liệu nhưng
+ *  không ai đọc được lúc giao ca. Ở đây chia đúng các mục trưởng ca cần đọc,
+ *  theo thứ tự họ cần chúng.
+ */
 function renderHandover(d) {
-  if (!d || d.success === false) return `<div class="empty">${store.t.hoFail}</div>`;
-  const sec = (title, rows) => rows.length
-    ? `<div class="hsec"><h3>${esc(title)}</h3>${rows.map(([k, v]) =>
-        `<div class="hrow"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')}</div>`
-    : '';
+  const t = store.t;
+  if (!d || d.success === false) return `<div class="empty">${t.hoFail}</div>`;
+
+  const rows = list => list.filter(Boolean).map(([k, v, cls]) =>
+    `<div class="hrow"><span>${esc(k)}</span>
+      <b class="${cls || ''}">${esc(v)}</b></div>`).join('');
+  const sec = (title, inner) => inner
+    ? `<div class="hsec"><h3>${esc(title)}</h3>${inner}</div>` : '';
+  const n = v => v == null ? NA : fmt(v);
+  const pc = v => v == null ? NA : `${v}%`;
+
+  const prod = d.production || {}, tg = d.target || {};
+  const dt = d.downtime || {}, fc = d.fail_causes || {};
+
+  /* Ca chưa kết thúc thì phải nói ngay ở đầu. Trưởng ca đọc bản này để ký giao
+     — một con số dở dang mà trông như con số cuối cùng là ký vào cái sai. */
+  const banner = d.in_progress
+    ? `<div class="hnote">${t.hoInProgress(d.window || '')}</div>` : '';
+
+  const byRecipe = (prod.by_recipe || []).map(r =>
+    [r.recipe_name, `${n(r.total)} · ${pc(r.pass_rate)}`]);
+
+  const causes = (fc.causes || []).map(c =>
+    [causeLabel(c.cause, c.label), `${n(c.products)} ${t.hoProducts}`]);
+
+  const mism = (fc.mismatch_kinds || []).map(m => [m.label || m.kind, n(m.count)]);
+
+  const stops = (dt.stops || []).map(s =>
+    [s.from || s.time || '', `${n(s.minutes)} ${t.hoMinutes}`]);
+
+  const alerts = [...(d.equipment_alerts || []), ...(d.day_wide_alerts || [])]
+    .slice(0, 8)
+    .map(a => [a.message || a.type || String(a),
+               a.severity || a.latest_value != null ? String(a.severity || a.latest_value) : '']);
+
+  const people = (d.people || []).map(p =>
+    [`${p.full_name || p.username}${p.job_title ? ` · ${p.job_title}` : ''}`,
+     `${p.active_hours != null ? `${p.active_hours}h` : ''}${
+       p.actions != null ? ` · ${n(p.actions)} ${t.hoActions}` : ''}`]);
+
+  const changes = (d.recipe_changes || []).map(c =>
+    [`${String(c.time || '').slice(11, 16)} · ${c.username || ''}`,
+     c.description || c.action || '']);
+
+  return `
+    <div class="hmeta">${esc(d.shift || '')} · ${esc(d.date || '')} · ${esc(d.window || '')}</div>
+    ${banner}
+    ${sec(t.hoOutput, rows([
+      [t.hoTotal, n(prod.total)],
+      [t.hoPass, n(prod.pass), 'ok'],
+      [t.hoFail_, n(prod.fail), prod.fail ? 'bad' : ''],
+      [t.hoRate, pc(prod.pass_rate)],
+    ]) + (byRecipe.length ? rows(byRecipe) : ''))}
+    ${sec(t.hoTarget, rows([
+      [t.hoTargetDay, n(tg.target)],
+      [t.hoActualDay, n(tg.actual_day)],
+      [t.hoAchieved, pc(tg.achieved_percent)],
+      // Dự phóng là PHÉP TÍNH, không phải số đo — ghi rõ để không ai ký vào nó.
+      tg.projected_end_of_day != null
+        ? [t.hoProjected, n(tg.projected_end_of_day)] : null,
+    ]))}
+    ${sec(t.hoDowntime, rows([
+      [t.hoStops, n(dt.stop_count)],
+      [t.hoStopMin, `${n(dt.minutes)} ${t.hoMinutes}`],
+      [t.hoUptime, pc(dt.uptime_percent)],
+    ]) + (stops.length ? rows(stops) : ''))}
+    ${sec(t.hoCauses, causes.length
+      ? rows([[t.hoFailed, n(fc.total_failed)]]) + rows(causes)
+        + (mism.length ? rows(mism) : '')
+      : '')}
+    ${sec(t.hoAlerts, alerts.length ? rows(alerts) : '')}
+    ${sec(t.hoPeople, people.length ? rows(people) : '')}
+    ${sec(t.hoChanges, changes.length ? rows(changes) : '')}
+    <div class="hfoot">${esc(d.note || '')}</div>`;
+}
+
+/* ── Trợ lý ──────────────────────────────────────────────────────────────── */
+
+let chatBusy = false;
+const chatHistory = [];
+
+/** Gợi ý dựng TỪ SỐ LIỆU đang có trên màn hình, không do mô hình viết — cùng
+ *  nguyên tắc với Fleet Console, và ở đây còn dễ hơn vì đã có sẵn số. */
+function chatChips() {
+  const t = store.t, o = state.over || {}, hw = state.hw || {};
   const out = [];
-  for (const [key, val] of Object.entries(d)) {
-    if (key === 'success' || val == null) continue;
-    if (typeof val !== 'object') { out.push([key, String(val)]); continue; }
-    if (!Array.isArray(val)) {
-      const rows = Object.entries(val)
-        .filter(([, v]) => v != null && typeof v !== 'object')
-        .map(([k, v]) => [k, String(v)]);
-      if (rows.length) out.push(...rows.map(([k, v]) => [`${key}.${k}`, v]));
+  const rate = o.output?.pass_rate;
+  if (rate != null && rate < 92) out.push(t.chipWhyFail);
+  const worst = (o.hourly || []).filter(h => h.pass_rate != null)
+    .sort((a, b) => a.pass_rate - b.pass_rate)[0];
+  if (worst && worst.pass_rate < 95) out.push(t.chipWorstHour(worst.hour));
+  if ((hw.ram?.usage_percent ?? 0) >= 85) out.push(t.chipRam);
+  if ((hw.disk?.usage_percent ?? 0) >= 85) out.push(t.chipDisk);
+  if (state.fails?.images?.length) out.push(t.chipFailKind);
+  out.push(t.chipShift);
+  return out.slice(0, 5);
+}
+
+function paintChips() {
+  const el = $('#chat-chips');
+  el.innerHTML = chatChips().map(q =>
+    `<button type="button">${esc(q)}</button>`).join('');
+  el.querySelectorAll('button').forEach(b =>
+    b.onclick = () => { $('#chat-q').value = b.textContent; sendChat(); });
+}
+
+function bubble(cls, html) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls;
+  d.innerHTML = html;
+  $('#chat-log').append(d);
+  $('#chat-log').scrollTop = $('#chat-log').scrollHeight;
+  return d;
+}
+
+/* Markdown tối giản — đủ cho thứ agent trả về, không kéo cả thư viện vào một
+   màn hình xưởng. */
+function mini(md) {
+  return esc(md || '').split('\n')
+    .map(l => l.trim() ? `<div>${l}</div>` : '<div style="height:6px"></div>').join('')
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/`(.+?)`/g, '<code>$1</code>');
+}
+
+async function sendChat() {
+  if (chatBusy) return;
+  const t = store.t;
+  const raw = $('#chat-q').value.trim();
+  if (!raw) return;
+  $('#chat-q').value = '';
+  bubble('u', esc(raw));
+  const wait = bubble('a wait', t.chatThinking);
+  chatBusy = true;
+  $('#chat-send').disabled = true;
+
+  try {
+    /* Dùng SSE để nhãn chờ ghi ĐÚNG tool đang chạy. Một vòng xoay im lặng suốt
+       27 giây (đã đo) đọc như treo máy; "đang xem sản lượng…" thì người ta biết
+       nó còn sống. */
+    const res = await fetch('/api/agent/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json',
+                 Authorization: `Bearer ${store.token}` },
+      body: JSON.stringify({ message: raw, language: store.lang,
+                             agent_id: 'orchestrator' }),
+    });
+    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+    const rd = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '', done = null;
+    while (true) {
+      const { value, done: fin } = await rd.read();
+      if (fin) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop() || '';
+      for (const p of parts) {
+        const line = p.split('\n').find(x => x.startsWith('data:'));
+        if (!line) continue;
+        let ev; try { ev = JSON.parse(line.slice(5)); } catch { continue; }
+        if (ev.type === 'tool') wait.textContent = ev.text || t.chatThinking;
+        else if (ev.type === 'agent') wait.textContent = ev.text || t.chatThinking;
+        // Payload nằm trong `data`, không phải ở gốc event.
+        else if (ev.type === 'result') done = ev.data || ev;
+        else if (ev.type === 'error') throw new Error(ev.detail || 'error');
+      }
     }
+    if (!done) throw new Error('no result');
+
+    wait.className = 'msg a';
+    /* `tool_calls` là danh sách DICT, không phải chuỗi — join thẳng ra
+       "[object Object]". Lấy tên tool ra trước. */
+    const tools = (done.tool_calls || [])
+      .map(x => typeof x === 'string' ? x : (x.name || x.tool || ''))
+      .filter(Boolean);
+    wait.innerHTML = mini(done.response || '')
+      + (tools.length ? `<div class="meta">${esc(tools.join(', '))}</div>` : '');
+    chatHistory.push(raw);
+    /* Gợi ý do SERVER dựng từ số liệu được ưu tiên hơn gợi ý dựng ở client:
+       server thấy cả kết quả tool vừa chạy, client chỉ thấy màn hình. */
+    const srv = (done.suggestions || []).filter(Boolean);
+    if (srv.length) {
+      const el = $('#chat-chips');
+      el.innerHTML = srv.slice(0, 5).map(q =>
+        `<button type="button">${esc(q)}</button>`).join('');
+      el.querySelectorAll('button').forEach(b =>
+        b.onclick = () => { $('#chat-q').value = b.textContent; sendChat(); });
+    } else {
+      paintChips();
+    }
+  } catch (e) {
+    /* Trợ lý tắt hoặc hết credit KHÔNG được làm hỏng màn hình: mọi con số vẫn
+       đứng nguyên, và nút bàn giao ca vẫn dùng được vì nó đi qua
+       get_shift_handover, không qua LLM. */
+    wait.className = 'msg a err';
+    wait.textContent = t.chatOff;
   }
-  return sec(store.t.hoTitle(state.over?.shift?.name ?? ''), out)
-    || `<pre style="white-space:pre-wrap;font-size:13px">${esc(JSON.stringify(d, null, 2))}</pre>`;
+  chatBusy = false;
+  $('#chat-send').disabled = false;
+}
+
+function openChat() {
+  const t = store.t;
+  $('#chat').hidden = false;
+  $('#chat-title').textContent = t.assistant;
+  $('#chat-ctx').textContent = state.over?.machine?.name || '';
+  $('#chat-send').textContent = t.send;
+  $('#chat-q').placeholder = t.chatPlaceholder;
+  paintChips();
+  $('#chat-q').focus();
 }
 
 /* ── Khởi động ───────────────────────────────────────────────────────────── */
@@ -442,10 +759,18 @@ function boot() {
   $('#lang-vi').onclick = () => setLang('vi');
   $('#lang-en').onclick = () => setLang('en');
   $('#btn-handover').onclick = openHandover;
+  $('#btn-assistant').onclick = openChat;
+  $('#tab-prod').onclick = () => { state.tab = 'prod'; paintTabs(); };
+  $('#tab-floor').onclick = () => { state.tab = 'floor'; paintTabs(); };
+  $('#chat-close').onclick = () => { $('#chat').hidden = true; };
+  $('#chat-form').onsubmit = e => { e.preventDefault(); sendChat(); };
   $('#h-close').onclick = () => { $('#handover').hidden = true; };
   $('#h-print').onclick = () => window.print();
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') $('#handover').hidden = true;
+    if (e.key === 'Escape') {
+      $('#handover').hidden = true;
+      $('#chat').hidden = true;
+    }
   });
 
   if (!store.token) { $('#gate').hidden = false; return; }

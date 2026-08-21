@@ -182,6 +182,46 @@ async def overview(
     }
 
 
+# Bố trí mặt bằng. Line Station chỉ cần biết "mình ở đâu so với các máy khác",
+# nên giữ một bản mặc định ngay đây và cho phép ghi đè bằng file trên máy —
+# không đi hỏi fleet service, vì màn hình này phải chạy khi fleet tắt.
+_DEFAULT_FLOOR = [
+    {"name": "Auto2", "line": "Line 1", "floor": {"x": 0, "y": 0}},
+    {"name": "M1", "line": "Line 2", "floor": {"x": 1, "y": 0}},
+    {"name": "M2", "line": "Line 3", "floor": {"x": 2, "y": 0}},
+    {"name": "LineTine", "line": "Tine Line", "floor": {"x": 0.5, "y": 1.35}},
+    {"name": "PC-Auto-1", "line": "Auto Line", "floor": {"x": 1.5, "y": 1.35}},
+]
+
+
+@router.get("/floor", summary="Bố trí mặt bằng, và máy nào là máy này")
+async def floor(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Toạ độ các máy trên sàn. Đọc `config/station_floor.json` nếu có, không thì
+    dùng bản mặc định.
+
+    Đổi bố trí xưởng thì sửa một file trên máy, không phải sửa code — nhưng cũng
+    KHÔNG đi hỏi fleet service: sơ đồ định vị phải hiện được cả khi máy tổng tắt.
+    """
+    import json
+
+    from agent_app.core.config import settings
+
+    rows = _DEFAULT_FLOOR
+    override = settings.project_root / "agent_service" / "config" / "station_floor.json"
+    if override.is_file():
+        try:
+            rows = json.loads(override.read_text())
+        except Exception as e:                              # pragma: no cover
+            logger.warning("station_floor.json không đọc được: %s", e)
+
+    me = _station_identity()
+    return {"success": True, "self": me["name"], "machines": rows,
+            "source": "file" if override.is_file() else "default"}
+
+
 @router.get("/failures", summary="Ảnh sản phẩm lỗi gần nhất của chính máy này")
 async def failures(
     limit: int = Query(4, ge=1, le=12),

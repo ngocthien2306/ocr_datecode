@@ -16,7 +16,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -109,31 +109,41 @@ app.mount(REPORTS_URL_PREFIX, StaticFiles(directory=str(REPORTS_DIR)), name="rep
 
 # Trang Line Station. Mount trước route /station để file tĩnh đi trước.
 _STATION = Path(__file__).resolve().parent.parent / "static" / "station"
-if _STATION.is_dir():
-    app.mount("/station/assets", StaticFiles(directory=str(_STATION)), name="station_assets")
-
-
-@app.get("/station/station.css", include_in_schema=False)
-async def station_css():
-    return FileResponse(_STATION / "station.css", media_type="text/css",
-                        headers={"Cache-Control": "no-cache, must-revalidate"})
-
-
-@app.get("/station/station.js", include_in_schema=False)
-async def station_js():
-    return FileResponse(_STATION / "station.js", media_type="text/javascript",
-                        headers={"Cache-Control": "no-cache, must-revalidate"})
-
-
 @app.get("/station", include_in_schema=False)
 async def station_ui():
-    """
-    Màn hình cạnh dây chuyền (http://<máy>:8100/station).
-
-    no-cache vì đây là màn hình treo tường chạy liên tục nhiều ngày: sửa xong mà
-    tablet vẫn giữ bản cũ trong cache thì không ai biết là đã sửa.
-    """
+    """Màn hình cạnh dây chuyền (http://<máy>:8100/station)."""
     return FileResponse(_STATION / "index.html", media_type="text/html",
+                        headers={"Cache-Control": "no-cache, must-revalidate"})
+
+
+@app.get("/station/{asset:path}", include_in_schema=False)
+async def station_asset(asset: str):
+    """
+    File tĩnh của Line Station.
+
+    Một route chung thay vì một route mỗi file: bản trước khai riêng station.css
+    và station.js, nên thêm floor.js là 404 ngay — và một màn hình xưởng thiếu
+    một module thì trắng trơn, không báo gì.
+
+    Chặn đường dẫn thoát ra ngoài thư mục: `asset` do client đưa, nên phải
+    resolve rồi kiểm tra vẫn nằm trong _STATION.
+    """
+    # Đường rỗng hoặc trỏ vào thư mục thì trả trang — `/station/` là cách
+    # trình duyệt tự thêm dấu gạch, không phải một yêu cầu file.
+    if not asset or asset.endswith("/"):
+        asset = "index.html"
+    target = (_STATION / asset).resolve()
+    try:
+        target.relative_to(_STATION.resolve())
+    except ValueError:
+        raise HTTPException(404)
+    if not target.is_file():
+        raise HTTPException(404)
+    mime = {".js": "text/javascript", ".css": "text/css",
+            ".html": "text/html", ".svg": "image/svg+xml"}.get(target.suffix, None)
+    # no-cache: màn hình treo tường chạy nhiều ngày liền, sửa xong mà tablet giữ
+    # bản cũ thì không ai biết là đã sửa.
+    return FileResponse(target, media_type=mime,
                         headers={"Cache-Control": "no-cache, must-revalidate"})
 
 

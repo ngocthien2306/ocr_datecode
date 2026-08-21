@@ -43,7 +43,12 @@
     </div>
   </header>
 
-  <section class="grid">
+  <nav class="tabs" role="tablist">
+    <button id="tab-prod" role="tab" aria-selected="true"></button>
+    <button id="tab-floor" role="tab" aria-selected="false"></button>
+  </nav>
+
+  <section class="grid" id="pane-prod">
     <!-- Sản lượng ca này -->
     <article class="card big" id="c-output">
       <h2 id="t-output"></h2>
@@ -86,11 +91,35 @@
     </article>
   </section>
 
+  <section class="pane-floor" id="pane-floor" hidden>
+    <div class="card">
+      <h2 id="t-floor"></h2>
+      <div id="v-floor"></div>
+    </div>
+  </section>
+
   <footer class="bottom">
     <span id="f-refresh"></span>
     <span class="spacer"></span>
+    <button class="act ghost" id="btn-assistant"></button>
     <button class="act" id="btn-handover"></button>
   </footer>
+
+  <!-- Trợ lý: ngữ cảnh KHOÁ vào máy này, không đổi được -->
+  <aside class="chat" id="chat" hidden>
+    <div class="chat-head">
+      <b id="chat-title"></b>
+      <span class="ctx" id="chat-ctx"></span>
+      <span class="spacer"></span>
+      <button class="act ghost" id="chat-close">✕</button>
+    </div>
+    <div class="chat-log" id="chat-log"></div>
+    <div class="chips" id="chat-chips"></div>
+    <form class="chat-ask" id="chat-form">
+      <input id="chat-q" autocomplete="off">
+      <button class="act" type="submit" id="chat-send"></button>
+    </form>
+  </aside>
 
   <!-- Bàn giao ca: mở lớp phủ, in được -->
   <div class="sheet" id="handover" hidden>
