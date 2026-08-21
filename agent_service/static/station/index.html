@@ -40,6 +40,10 @@
         <button id="lang-vi" aria-pressed="true">VI</button>
         <button id="lang-en" aria-pressed="false">EN</button>
       </div>
+      <div class="seg theme">
+        <button id="theme-light" title="Light">☀</button>
+        <button id="theme-dark" title="Dark">☾</button>
+      </div>
     </div>
   </header>
 
@@ -92,10 +96,34 @@
   </section>
 
   <section class="pane-floor" id="pane-floor" hidden>
-    <div class="card">
-      <h2 id="t-floor"></h2>
+    <div class="card floor-card">
+      <div class="floor-head">
+        <h2 id="t-floor"></h2>
+        <span class="hint" id="floor-hint2"></span>
+      </div>
       <div id="v-floor"></div>
+      <p class="floor-note" id="floor-note"></p>
     </div>
+
+    <!-- Panel định vị. Line Station KHÔNG hiện số của line khác, nên cột này
+         chỉ trả lời "bạn đang ở đâu" và "cái xám kia là gì". -->
+    <aside class="floor-side">
+      <div class="side-card here">
+        <h3 id="s-here"></h3>
+        <div class="side-name" id="s-name">—</div>
+        <div class="side-pos" id="s-pos"></div>
+        <p class="side-why" id="s-why"></p>
+      </div>
+      <div class="side-card">
+        <h3 id="s-others"></h3>
+        <ul class="side-list" id="s-list"></ul>
+        <p class="side-why" id="s-others-why"></p>
+      </div>
+      <div class="side-card dashed">
+        <p id="s-nocompare"></p>
+      </div>
+      <p class="side-foot" id="s-fallback"></p>
+    </aside>
   </section>
 
   <footer class="bottom">
@@ -106,11 +134,12 @@
   </footer>
 
   <!-- Trợ lý: ngữ cảnh KHOÁ vào máy này, không đổi được -->
-  <aside class="chat" id="chat" hidden>
+  <aside class="chat wide" id="chat" hidden>
     <div class="chat-head">
       <b id="chat-title"></b>
       <span class="ctx" id="chat-ctx"></span>
       <span class="spacer"></span>
+      <button class="act ghost" id="chat-narrow" title="thu gọn"></button>
       <button class="act ghost" id="chat-close">✕</button>
     </div>
     <div class="chat-log" id="chat-log"></div>

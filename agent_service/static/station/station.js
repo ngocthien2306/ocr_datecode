@@ -16,7 +16,8 @@
    vẫn đầy đủ.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-import * as floorMap from '/station/floor.js';
+import * as flat3d from '/station/floor.js';        // bậc 1, SVG đẳng cự
+import * as full3d from '/station/factory-3d.js';   // bậc 2, three.js
 
 const $ = s => document.querySelector(s);
 const NA = '—';
@@ -57,11 +58,24 @@ const I18N = {
       : `Không gọi được máy · số liệu từ ${at} · sẽ thử lại`,
     handover: 'Bàn giao ca', print: 'In', running: 'đang chạy',
     assistant: 'Hỏi trợ lý', send: 'Gửi',
+    narrow: 'Thu gọn', widen: 'Mở rộng',
     tabProd: 'Sản xuất', tabFloor: 'Sơ đồ vị trí',
     floorTitle: 'Vị trí máy này trong xưởng',
     floorHint: 'Chỉ máy của bạn thao tác được. Các máy khác chỉ để định vị.',
     otherMachine: 'máy khác, chỉ để định vị',
     otherTap: n => `${n} là máy khác — màn hình này chỉ theo dõi máy của bạn.`,
+    floorHint3d: 'kéo để xoay · cuộn để zoom',
+    youAreHere: 'Bạn đang ở đây',
+    posWords: (row, i) => `Dãy ${row} · vị trí ${i} · cạnh lối đi chính`,
+    whyMarks: 'Cột sáng và vòng thép trên sàn đánh dấu máy của màn hình này.',
+    whyMarksFlat: 'Vòng thép và dấu chuẩn đánh dấu máy của màn hình này.',
+    otherMachines: 'Máy khác trong xưởng',
+    othersWhy: 'Hiện lên để <b>định vị</b>, không có đèn trạng thái và '
+      + '<b>không bấm được</b>. Chạm vào chỉ hiện một dòng nhắc.',
+    noCompare: 'Line Station <b>không hiển thị số của line khác</b>: mỗi line '
+      + 'chạy mặt hàng khác nhau, đặt cạnh nhau là mời người vận hành so sai.',
+    fallbackNote: 'Máy không có WebGL → tự rơi về sơ đồ đẳng cự bậc 1, cùng quy tắc bật/tắt.',
+    fallbackNow: 'Máy này không có WebGL — đang dùng sơ đồ đẳng cự bậc 1.',
     chatPlaceholder: 'vd: vì sao giờ vừa rồi tỉ lệ đạt tụt?',
     chatThinking: 'đang hỏi máy này…',
     chatOff: 'Trợ lý tạm không dùng được. Mọi số liệu trên màn hình vẫn đúng, '
@@ -125,11 +139,24 @@ const I18N = {
       : `Could not reach the machine · figures from ${at} · will retry`,
     handover: 'Shift handover', print: 'Print', running: 'running',
     assistant: 'Ask assistant', send: 'Send',
+    narrow: 'Narrow', widen: 'Widen',
     tabProd: 'Production', tabFloor: 'Floor position',
     floorTitle: 'Where this machine sits on the floor',
     floorHint: 'Only your machine is interactive. The others are for orientation.',
     otherMachine: 'another machine, for orientation only',
     otherTap: n => `${n} is another machine — this screen only follows yours.`,
+    floorHint3d: 'drag to orbit · scroll to zoom',
+    youAreHere: 'You are here',
+    posWords: (row, i) => `Row ${row} · position ${i} · beside the main aisle`,
+    whyMarks: "The light column and steel ring on the floor mark this screen's machine.",
+    whyMarksFlat: "The steel ring and corner marks mark this screen's machine.",
+    otherMachines: 'Other machines on the floor',
+    othersWhy: 'Shown for <b>orientation</b> only — no status lamp and '
+      + '<b>not clickable</b>. Tapping one only shows a note.',
+    noCompare: 'The Line Station <b>does not show other lines\' figures</b>: each '
+      + 'line runs a different product, and side by side invites a false comparison.',
+    fallbackNote: 'No WebGL on a machine → falls back to the tier-1 isometric map, same on/off rules.',
+    fallbackNow: 'This machine has no WebGL — using the tier-1 isometric map.',
     chatPlaceholder: 'e.g. why did the pass rate drop last hour?',
     chatThinking: 'asking this machine…',
     chatOff: 'The assistant is unavailable. Every figure on screen is still '
@@ -161,6 +188,10 @@ const I18N = {
    công nhân trong xưởng, còn Fleet Console là màn hình của quản lý. */
 const store = {
   lang: localStorage.getItem('station_lang') || 'vi',
+  // '' = theo hệ thống. Màn hình xưởng phải chọn tay được: chói dưới đèn cao áp
+  // thì cần tối, ban ngày cần sáng, mà người đứng máy không vào cài đặt hệ điều
+  // hành để đổi.
+  theme: localStorage.getItem('station_theme') || '',
   token: localStorage.getItem('station_token') || '',
   get t() { return I18N[this.lang]; },
 };
@@ -226,6 +257,12 @@ async function login(user, pass) {
 }
 
 /* ── Vẽ ──────────────────────────────────────────────────────────────────── */
+
+function paintTheme() {
+  // Bấm lại nút đang bật = trả về "theo hệ thống", nên cả hai nút cùng nhả.
+  $('#theme-light')?.setAttribute('aria-pressed', store.theme === 'light');
+  $('#theme-dark')?.setAttribute('aria-pressed', store.theme === 'dark');
+}
 
 function paintHeader() {
   const t = store.t, o = state.over;
@@ -419,28 +456,102 @@ function paintFooter() {
   $('#btn-assistant').textContent = t.assistant;
 }
 
+let use3d = true;      // hạ xuống bậc 1 khi WebGL hoặc three.js không dùng được
+
+function hasWebGL() {
+  try {
+    const c = document.createElement('canvas');
+    return !!(c.getContext('webgl2') || c.getContext('webgl'));
+  } catch { return false; }
+}
+
+function tapOther(name) {
+  const t = store.t, el = $('#floor-note');
+  if (!el) return;
+  el.textContent = t.otherTap(name);
+  el.classList.add('hit');
+  clearTimeout(tapOther._to);
+  tapOther._to = setTimeout(() => {
+    el.textContent = t.floorHint;
+    el.classList.remove('hit');
+  }, 4000);
+}
+
+/** Panel bên phải: chỉ trả lời "bạn đang ở đâu" và "cái xám kia là gì".
+ *  KHÔNG có số của line khác — mỗi line chạy mặt hàng khác nhau, đặt cạnh nhau
+ *  là mời người vận hành so sai. */
+function paintFloorSide() {
+  const t = store.t;
+  const fl = state.floor || {};
+  const self = fl.self;
+  const all = fl.machines || [];
+  const me = all.find(m => m.name === self);
+  const others = all.filter(m => m.name !== self);
+
+  $('#s-here').textContent = t.youAreHere;
+  $('#s-name').textContent = [me?.name || self || NA, me?.line]
+    .filter(Boolean).join(' · ');
+  // Vị trí diễn đạt bằng lời, không bằng toạ độ: "dãy A, vị trí 3" là thứ người
+  // ta dùng để chỉ đường cho nhau trong xưởng, còn "x=2, y=0" thì không.
+  $('#s-pos').textContent = me?.floor
+    ? t.posWords(me.floor.y < 1 ? 'A' : 'B',
+                 all.filter(m => (m.floor?.y ?? 0) === me.floor.y)
+                    .sort((a, b) => a.floor.x - b.floor.x)
+                    .findIndex(m => m.name === self) + 1)
+    : '';
+  $('#s-why').innerHTML = use3d ? t.whyMarks : t.whyMarksFlat;
+
+  $('#s-others').textContent = t.otherMachines;
+  $('#s-list').innerHTML = others.map(m =>
+    `<li><i></i>${esc([m.name, m.line].filter(Boolean).join(' · '))}</li>`).join('');
+  $('#s-others-why').innerHTML = t.othersWhy;
+  $('#s-nocompare').innerHTML = t.noCompare;
+  $('#s-fallback').textContent = use3d ? t.fallbackNote : t.fallbackNow;
+}
+
 function paintFloor() {
   const t = store.t;
   $('#t-floor').textContent = t.floorTitle;
+  $('#floor-hint2').textContent = use3d ? t.floorHint3d : '';
   if (!state.floor) return;
-  floorMap.render($('#v-floor'), {
-    machines: state.floor.machines || [],
-    self: state.floor.self,
-    t,
-    onOtherTap: name => {
-      // Chạm máy khác thì NÓI RA, không im lặng. Và không mở gì — trạng thái
-      // line khác không phải việc của người đứng ở đây.
-      const el = $('#floor-note');
-      if (!el) return;
-      el.textContent = t.otherTap(name);
-      el.classList.add('hit');
-      clearTimeout(paintFloor._to);
-      paintFloor._to = setTimeout(() => {
-        el.textContent = t.floorHint;
-        el.classList.remove('hit');
-      }, 4000);
-    },
-  });
+
+  /* Máy của chính station mang trạng thái THẬT; các máy khác không có đèn (module
+     3D bỏ đèn cho máy ngoài `enabledKeys`).
+
+     Bản đầu tôi gán 'unreachable' cho mọi máy — nên máy của chính mình đeo đèn
+     xám "không với tới được" trong khi ta đang đọc dữ liệu từ đúng nó. Trạng
+     thái phải suy từ thứ đã biết: camera service dừng thì cần chú ý, còn lại là
+     đang chạy. */
+  const selfState = state.cam === false ? 'warn' : 'ok';
+  const machines = (state.floor.machines || []).map(m => ({
+    ...m,
+    node_id: m.name,
+    state: m.name === state.floor.self ? selfState : 'unreachable',
+    model: m.model || '',
+  }));
+
+  const el = $('#v-floor');
+  if (use3d) {
+    try {
+      full3d.render(el, {
+        machines,
+        selected: null,
+        enabledKeys: [state.floor.self],
+        onSelect: () => {},          // không mở gì: đây là máy của chính mình
+        onDisabledTap: tapOther,
+      });
+    } catch (e) {
+      console.warn('[station] 3D lỗi, hạ về bậc 1:', e);
+      use3d = false;
+      el.innerHTML = '';
+    }
+  }
+  if (!use3d) {
+    flat3d.render(el, { machines, self: state.floor.self, t,
+                        onOtherTap: tapOther });
+  }
+  if (!$('#floor-note').textContent) $('#floor-note').textContent = t.floorHint;
+  paintFloorSide();
 }
 
 function paintTabs() {
@@ -643,6 +754,106 @@ function mini(md) {
     .replace(/`(.+?)`/g, '<code>$1</code>');
 }
 
+/* ── Vẽ phần "không phải chữ" của câu trả lời ─────────────────────────────
+   Server đã suy sẵn kpis/charts/images/tables từ kết quả tool, nên ở đây CHỈ
+   vẽ, không tính lại — con số trong hình luôn khớp con số trong câu trả lời.  */
+
+function elFrom(html) {
+  const d = document.createElement('div');
+  d.innerHTML = html;
+  return d.firstElementChild;
+}
+
+function drawKpis(list) {
+  const box = elFrom('<div class="c-kpis"></div>');
+  for (const k of list) {
+    const d = k.delta;
+    // Không vẽ mũi tên trơ: không có nền so sánh thì `delta` vắng hẳn, và một
+    // mũi tên xanh không kèm con số nào là nói mà không nói gì.
+    const arrow = !d ? '' : d.direction === 'flat' ? '→'
+      : d.direction === 'up' ? '▲' : '▼';
+    const dcls = !d || d.direction === 'flat' ? '' : (d.good ? 'g' : 'b');
+    box.append(elFrom(`<div class="c-kpi">
+      <div class="l">${esc(k.label)}</div>
+      <div class="v ${esc(k.accent || '')}">${esc(String(k.value))}</div>
+      ${d && d.text ? `<div class="d ${dcls}">${arrow} ${esc(d.text)}</div>` : ''}
+      ${k.sub ? `<div class="s">${esc(k.sub)}</div>` : ''}</div>`));
+  }
+  return box;
+}
+
+function drawChart(c) {
+  /* `c.max` là thang đo do server đặt (vd chỉ tiêu). Thiếu nó thì lấy cột lớn
+     nhất — nhưng khi đang so với một mốc thì cách đó làm cột cuối luôn đầy
+     track và mọi ngày đều trông như đã hoàn thành. */
+  const max = c.max || Math.max(...(c.series || []).map(x => x.value), 1);
+  const box = elFrom(`<div class="c-viz">${
+    c.title ? `<h4>${esc(c.title)}</h4>` : ''}</div>`);
+  for (const sr of c.series || []) {
+    const w = Math.max(1, Math.round((sr.value || 0) * 100 / max));
+    box.append(elFrom(`<div class="c-bar">
+      <span>${esc(sr.label)}</span>
+      <span class="track"><span class="fill ${esc(sr.accent || '')}"
+        style="width:${w}%"></span></span>
+      <b>${esc(String(sr.value))}</b></div>`));
+  }
+  return box;
+}
+
+function lightbox(im) {
+  const lb = elFrom(`<div class="lightbox"><div>
+      <img src="${esc(im.url)}" alt="">
+      ${im.caption ? `<p>${esc(im.caption)}</p>` : ''}</div></div>`);
+  lb.onclick = () => lb.remove();
+  document.body.append(lb);
+}
+
+/** Ảnh trong chat: ảnh sản phẩm lỗi, ảnh nhân viên, ảnh lịch sử — cùng một lối
+ *  vẽ, vì với người xem chúng là cùng một việc: nhìn cho rõ. */
+function drawImages(list) {
+  const g = elFrom('<div class="c-shots"></div>');
+  for (const im of list) {
+    const cap = esc(im.caption || '')
+      .replace(/đọc &#39;([^&]*)&#39;/, "đọc <span class='bad'>'$1'</span>");
+    const fig = elFrom(`<figure class="c-shot">
+      <img loading="lazy" src="${esc(im.url)}" alt=""
+        onerror="this.style.opacity=.25">
+      ${cap ? `<figcaption>${cap}</figcaption>` : ''}</figure>`);
+    fig.onclick = () => lightbox(im);
+    g.append(fig);
+  }
+  return g;
+}
+
+function drawTable(tb) {
+  const head = (tb.columns || []).map(c => `<th>${esc(c)}</th>`).join('');
+  const body = (tb.rows || []).map(r =>
+    `<tr>${r.map(c => `<td>${esc(String(c ?? ''))}</td>`).join('')}</tr>`).join('');
+  return elFrom(`<table class="c-tbl">${
+    tb.title ? `<caption style="text-align:left;font-weight:700;padding:4px 0">${esc(tb.title)}</caption>` : ''}
+    <thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`);
+}
+
+function drawFiles(list) {
+  const g = elFrom('<div class="c-files"></div>');
+  for (const f of list)
+    g.append(elFrom(`<a href="${esc(f.url)}" download>⬇ ${esc(f.name || f.url)}</a>`));
+  return g;
+}
+
+/** Gắn mọi phần phi-văn-bản sau bong bóng trả lời, đúng thứ tự của /test. */
+function drawExtras(after, d) {
+  const log = $('#chat-log');
+  const put = node => { if (node) log.insertBefore(node, after.nextSibling); };
+  // Chèn ngược để thứ tự cuối cùng là kpis → charts → images → tables → files.
+  if (d.files?.length) put(drawFiles(d.files));
+  if (d.tables?.length) d.tables.slice().reverse().forEach(t => put(drawTable(t)));
+  if (d.images?.length) put(drawImages(d.images));
+  if (d.charts?.length) d.charts.slice().reverse().forEach(c => put(drawChart(c)));
+  if (d.kpis?.length) put(drawKpis(d.kpis));
+  log.scrollTop = log.scrollHeight;
+}
+
 async function sendChat() {
   if (chatBusy) return;
   const t = store.t;
@@ -697,6 +908,7 @@ async function sendChat() {
       .filter(Boolean);
     wait.innerHTML = mini(done.response || '')
       + (tools.length ? `<div class="meta">${esc(tools.join(', '))}</div>` : '');
+    drawExtras(wait, done);
     chatHistory.push(raw);
     /* Gợi ý do SERVER dựng từ số liệu được ưu tiên hơn gợi ý dựng ở client:
        server thấy cả kết quả tool vừa chạy, client chỉ thấy màn hình. */
@@ -728,6 +940,8 @@ function openChat() {
   $('#chat-ctx').textContent = state.over?.machine?.name || '';
   $('#chat-send').textContent = t.send;
   $('#chat-q').placeholder = t.chatPlaceholder;
+  $('#chat-narrow').textContent = $('#chat').classList.contains('wide')
+    ? t.narrow : t.widen;
   paintChips();
   $('#chat-q').focus();
 }
@@ -742,6 +956,10 @@ function setLang(l) {
 }
 
 function boot() {
+  /* Không có WebGL thì rơi về sơ đồ đẳng cự bậc 1 ngay, giữ nguyên luật bật/tắt.
+     Tablet cũ ở xưởng là chuyện thường, và một sơ đồ định vị không được phép
+     làm trắng cả màn hình. */
+  use3d = hasWebGL();
   document.documentElement.lang = store.lang;
   const t = store.t;
   $('#gate-note').textContent = t.gateNote;
@@ -754,6 +972,24 @@ function boot() {
     if (!ok) { $('#gate-err').textContent = store.t.wrong; return; }
     $('#gate').hidden = true; $('#app').hidden = false;
     load();
+  };
+
+  const setTheme = v => {
+    store.theme = v;
+    localStorage.setItem('station_theme', v);
+    if (v) document.documentElement.setAttribute('data-theme', v);
+    else document.documentElement.removeAttribute('data-theme');
+    paintTheme();
+  };
+  $('#theme-light').onclick = () => setTheme(store.theme === 'light' ? '' : 'light');
+  $('#theme-dark').onclick = () => setTheme(store.theme === 'dark' ? '' : 'dark');
+  if (store.theme) document.documentElement.setAttribute('data-theme', store.theme);
+  paintTheme();
+
+  $('#chat-narrow').onclick = () => {
+    $('#chat').classList.toggle('wide');
+    $('#chat-narrow').textContent = $('#chat').classList.contains('wide')
+      ? store.t.narrow : store.t.widen;
   };
 
   $('#lang-vi').onclick = () => setLang('vi');

@@ -28,6 +28,14 @@
   --f-body: 'Barlow', system-ui, sans-serif;
   --r: 10px;
 }
+/* Ba trạng thái theme: chọn sáng, chọn tối, và để theo hệ thống. Màn hình xưởng
+   cần chọn tay được — sáng quá thì chói dưới đèn cao áp, tối quá thì mất chi
+   tiết ban ngày, và người đứng máy không vào cài đặt hệ điều hành để đổi. */
+:root[data-theme="dark"] {
+  --bg: #16181a; --surface: #1f2225; --surface-2: #272b2f;
+  --line: #34383d; --line-soft: #2a2e32; --fg: #eceef0;
+  --dim: #a8adb3; --faint: #7c8288; --accent-bg: #1d2b39;
+}
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #16181a; --surface: #1f2225; --surface-2: #272b2f;
@@ -288,7 +296,46 @@ button:active { transform: translateY(1px); }
 
 /* ── Sơ đồ vị trí ────────────────────────────────────────────────────────── */
 
-.pane-floor { padding: 16px 18px; }
+.pane-floor { padding: 16px 18px; display: grid; gap: 14px;
+              grid-template-columns: 1fr; }
+@media (min-width: 1000px) {
+  .pane-floor { grid-template-columns: minmax(0, 1fr) 320px; align-items: start; }
+}
+.floor-card { min-width: 0; }
+.floor-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.floor-head .hint { font-size: 12.5px; color: var(--faint); }
+/* Canvas 3D cần chiều cao THẬT — nó không có nội dung nội tại để đẩy khối cao
+   lên như SVG, không đặt thì co về 0 và sơ đồ biến mất. */
+#v-floor { margin-top: 10px; height: 56vh; min-height: 340px; position: relative; }
+#v-floor canvas { width: 100%; height: 100%; display: block; border-radius: var(--r); }
+#v-floor .map-loading { display: grid; place-items: center; height: 100%;
+                        color: var(--faint); font-size: 14px; }
+
+/* ── Panel định vị ───────────────────────────────────────────────────────── */
+
+.floor-side { display: grid; gap: 12px; }
+.side-card { background: var(--surface); border: 1px solid var(--line);
+             border-radius: var(--r); padding: 13px 15px; }
+/* Khối "bạn đang ở đây" viền accent: nó là câu trả lời chính của cả tab này. */
+.side-card.here { border-color: var(--accent); border-width: 2px; }
+.side-card.dashed { border-style: dashed; background: none; }
+.side-card h3 {
+  margin: 0 0 6px; font-family: var(--f-body); font-size: 11.5px; font-weight: 700;
+  letter-spacing: 1.1px; text-transform: uppercase; color: var(--dim);
+}
+.side-name { font-family: var(--f-head); font-size: 27px; font-weight: 700; }
+.side-pos { font-size: 13.5px; color: var(--dim); margin-top: 2px; }
+.side-why { margin: 9px 0 0; font-size: 13px; color: var(--dim); line-height: 1.45; }
+.side-why b { color: var(--fg); }
+.side-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.side-list li { display: flex; align-items: center; gap: 9px; font-size: 14px;
+                color: var(--dim); }
+/* Ô vuông xám, KHÔNG phải đèn tròn: đèn tròn là ký hiệu trạng thái, mà các máy
+   này cố ý không có trạng thái ở đây. */
+.side-list i { width: 11px; height: 11px; background: var(--line);
+               border: 1px solid var(--faint); flex: none; }
+.side-card.dashed p { margin: 0; font-size: 13px; color: var(--dim); line-height: 1.5; }
+.side-foot { margin: 0; font-size: 12px; color: var(--faint); line-height: 1.45; }
 .floor { width: 100%; height: auto; display: block; max-height: 62vh; }
 /* Máy khác KHÔNG đổi con trỏ thành pointer: nó không mở gì cả, và con trỏ hứa
    hẹn một hành động không tồn tại. */
@@ -297,3 +344,95 @@ button:active { transform: translateY(1px); }
 .fm.mine:hover polygon { filter: brightness(1.05); }
 .floor-note { margin: 10px 0 0; font-size: 14px; color: var(--dim); min-height: 22px; }
 .floor-note.hit { color: var(--warn); font-weight: 600; }
+
+/* ── Chat: mặc định RỘNG CẢ MÀN HÌNH ─────────────────────────────────────── */
+
+/* Rộng vì câu trả lời không chỉ là chữ: có ô KPI, biểu đồ, ảnh sản phẩm, ảnh
+   nhân viên, bảng. Nhồi những thứ đó vào một cột 460px thì mỗi ô KPI còn hai
+   con số một dòng và biểu đồ thành một vạch. */
+.chat.wide { width: 100%; left: 0; border-left: 0; }
+.chat.wide .chat-log { max-width: 1180px; margin: 0 auto; width: 100%; }
+.chat.wide .chips, .chat.wide .chat-ask { max-width: 1180px; margin-inline: auto;
+                                          width: 100%; }
+.chat:not(.wide) { width: min(460px, 100%); left: auto; }
+
+/* KPI trong chat — cùng ngôn ngữ với các khối ở tab Sản xuất, chỉ nhỏ hơn. */
+.c-kpis { display: grid; gap: 10px; margin: 4px 0;
+          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.c-kpi { border: 1px solid var(--line); border-radius: var(--r);
+         padding: 10px 12px; background: var(--surface); }
+.c-kpi .l { font-size: 11px; letter-spacing: .9px; text-transform: uppercase;
+            color: var(--dim); font-weight: 700; }
+.c-kpi .v { font-family: var(--f-head); font-size: 30px; font-weight: 700;
+            line-height: 1.1; }
+.c-kpi .v.g { color: var(--ok); } .c-kpi .v.b { color: var(--bad); }
+.c-kpi .d { font-size: 12px; font-weight: 600; margin-top: 2px; }
+.c-kpi .d.g { color: var(--ok); } .c-kpi .d.b { color: var(--bad); }
+.c-kpi .s { font-size: 11.5px; color: var(--faint); margin-top: 2px; }
+
+/* Biểu đồ cột ngang. Số liệu do server suy tất định từ kết quả tool, ở đây chỉ
+   vẽ — không tính lại, để con số trong hình luôn khớp con số trong câu trả lời. */
+.c-viz { border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px;
+         margin: 6px 0; background: var(--surface); }
+.c-viz h4 { margin: 0 0 8px; font-size: 13px; font-family: var(--f-body);
+            font-weight: 700; }
+.c-bar { display: grid; grid-template-columns: minmax(90px, 160px) 1fr auto;
+         gap: 10px; align-items: center; padding: 3px 0; font-size: 13px; }
+.c-bar .track { height: 16px; background: var(--surface-2); border-radius: 4px;
+                overflow: hidden; }
+.c-bar .fill { height: 100%; background: var(--accent); border-radius: 4px; }
+.c-bar .fill.bad { background: var(--bad); }
+.c-bar b { font-variant-numeric: tabular-nums; }
+
+/* Ảnh trong chat: ảnh sản phẩm, ảnh nhân viên, ảnh lịch sử — chạm để xem lớn. */
+.c-shots { display: grid; gap: 10px; margin: 6px 0;
+           grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.c-shot { margin: 0; border: 1px solid var(--line); border-radius: var(--r);
+          overflow: hidden; cursor: zoom-in; background: var(--surface); }
+.c-shot img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block;
+              background: var(--surface-2); }
+.c-shot figcaption { padding: 7px 9px; font-size: 12px; color: var(--dim); }
+.c-shot .bad { color: var(--bad); font-family: ui-monospace, monospace; }
+.lightbox { position: fixed; inset: 0; z-index: 30; background: rgba(12,14,16,.92);
+            display: grid; place-items: center; padding: 20px; cursor: zoom-out; }
+.lightbox img { max-width: 100%; max-height: 86vh; border-radius: var(--r); }
+.lightbox p { color: #e7e7ea; font-size: 14px; margin: 10px 0 0; text-align: center; }
+
+.c-tbl { width: 100%; border-collapse: collapse; font-size: 13px; margin: 6px 0; }
+.c-tbl th, .c-tbl td { padding: 6px 9px; border-bottom: 1px solid var(--line-soft);
+                       text-align: left; }
+.c-tbl th { font-size: 11px; letter-spacing: .7px; text-transform: uppercase;
+            color: var(--dim); }
+.c-files { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.c-files a { display: inline-flex; align-items: center; min-height: 40px;
+             padding: 0 14px; border: 1px solid var(--accent); border-radius: var(--r);
+             color: var(--accent-2); text-decoration: none; font-weight: 600;
+             font-size: 13px; }
+
+/* ── Chrome của module 3D ─────────────────────────────────────────────────── */
+/* Các lớp này do factory-3d.js tự sinh; style của chúng nằm trong app.css của
+   Fleet Console, nên bản copy ở đây thiếu hẳn — thanh nút rơi xuống dưới canvas
+   và đè lên chân trang. Khai lại đúng phần cần, không copy cả file CSS kia. */
+
+#v-floor .factory-3d-canvas { width: 100%; height: 100%; display: block;
+                              border-radius: var(--r); cursor: grab; }
+#v-floor .factory-3d-canvas.is-dragging { cursor: grabbing; }
+#v-floor .factory-zone-nav {
+  position: absolute; z-index: 3; left: 10px; bottom: 10px; display: flex; gap: 6px;
+  padding: 4px; border: 1px solid var(--line); border-radius: var(--r);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(6px);
+}
+#v-floor .factory-view-nav { left: auto; right: 10px; }
+#v-floor .factory-zone-nav button {
+  min-height: 40px; padding: 0 12px; font-size: 12.5px; border-color: transparent;
+  background: transparent; color: var(--dim);
+}
+#v-floor .factory-zone-nav button:hover,
+#v-floor .factory-zone-nav button[aria-pressed="true"] {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+#v-floor .factory-view-nav button[data-zoom] { width: 40px; padding: 0;
+                                               text-align: center; font-size: 15px; }
+/* Thẻ peek bị tắt ở bề mặt này (xem factory-3d.js) — ẩn cho chắc. */
+#v-floor .map-peek { display: none !important; }
