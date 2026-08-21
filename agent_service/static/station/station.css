@@ -281,8 +281,14 @@ button:active { transform: translateY(1px); }
              background: var(--accent-bg); color: var(--accent-2); font-weight: 600; }
 .chat-log { flex: 1; overflow: auto; padding: 14px; display: grid; gap: 10px;
             align-content: start; }
+/* Bề rộng bong bóng chữ có TRẦN. Ô chat mở full màn hình là để chứa ảnh, biểu
+   đồ và bảng; còn một dòng văn dài 1.100px thì mắt mất dấu khi xuống dòng. Trần
+   ~78 ký tự là khoảng đọc được của một cột chữ. Ảnh và biểu đồ nằm ngoài bong
+   bóng nên không bị trần này bó. */
 .msg { padding: 10px 12px; border-radius: var(--r); font-size: 15px;
-       line-height: 1.45; max-width: 92%; }
+       line-height: 1.45; max-width: min(92%, 78ch); }
+/* Bảng trong chat cần rộng hơn văn xuôi — cho riêng nó nới ra. */
+.msg:has(.c-tbl), .msg:has(.c-imgs), .msg:has(.c-cards) { max-width: 92%; }
 .msg.u { background: var(--accent); color: #fff; justify-self: end; }
 .msg.a { background: var(--surface-2); }
 .msg.a.err { color: var(--bad); }
@@ -438,11 +444,15 @@ button:active { transform: translateY(1px); }
 
 /* Tên tool kèm tham số — cùng cách hiện với /test, để đọc log của một lượt hỏi
    mà không phải mở JSON. */
-.c-tools { display: grid; gap: 4px; margin-top: 8px; }
+/* Vết tool: TÊN là chính, tham số vào tooltip.
+   Bản trước in cả JSON tham số trên nhiều dòng, và thường thì tham số chỉ là
+   nhắc lại đúng câu người dùng vừa hỏi — hai dòng code chiếm chỗ để nói một
+   điều người đọc vừa tự gõ. Vẫn giữ tham số trong `title` cho ai cần soi. */
+.c-tools { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
 .c-tools code {
-  font-family: ui-monospace, monospace; font-size: 11.5px; line-height: 1.4;
-  padding: 4px 8px; border-radius: 5px; overflow-x: auto; white-space: pre-wrap;
-  word-break: break-word; background: var(--accent-bg); color: var(--accent-2);
+  font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.5;
+  padding: 2px 7px; border-radius: 999px; white-space: nowrap;
+  background: var(--accent-bg); color: var(--accent-2);
 }
 
 /* ── Chrome của module 3D ─────────────────────────────────────────────────── */
@@ -553,17 +563,35 @@ button:active { transform: translateY(1px); }
 
 /* Hàng số: nhãn trái, số phải, có đường dẫn mắt ở giữa. Ba dòng như thế xếp
    thẳng nhau thì đọc được bằng một cái quét dọc. */
-.msg .c-stat {
-  display: flex; align-items: baseline; gap: 10px; padding: 4px 0;
-  border-bottom: 1px solid var(--line-soft);
+/* Các hàng "nhãn — giá trị" là MỘT lưới hai cột, không phải mỗi hàng một flex.
+   Bản trước để từng hàng tự dàn bằng `margin-left:auto`, nên trong ô chat rộng
+   full màn hình nhãn nằm sát lề trái còn số nằm sát lề phải — cách nhau ~800px,
+   và mắt phải quét ngang cả màn hình cho từng dòng. Đo trên ảnh người dùng gửi.
+
+   `max-content` cho cột nhãn: nó rộng đúng bằng nhãn dài nhất, nên các giá trị
+   thẳng cột với nhau mà vẫn nằm ngay cạnh nhãn. `max-width` để cả khối không
+   giãn theo panel — bề rộng panel là để chứa ảnh và biểu đồ, không phải để kéo
+   một con số ra xa cái tên của nó. */
+.msg .c-stats {
+  display: grid; grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0 18px; max-width: 640px; margin: 8px 0;
 }
-.msg .c-stat:last-of-type { border-bottom: 0; }
-.msg .c-stat span { color: var(--dim); }
-.msg .c-stat span::after {
-  content: ''; display: inline-block; width: 100%;
-}
-.msg .c-stat b { margin-left: auto; font-variant-numeric: tabular-nums;
-                 white-space: nowrap; }
+.msg .c-stats > .k { color: var(--dim); padding: 4px 0;
+                     border-bottom: 1px solid var(--line-soft); }
+.msg .c-stats > .v { font-weight: 700; padding: 4px 0;
+                     font-variant-numeric: tabular-nums;
+                     border-bottom: 1px solid var(--line-soft); }
+/* Hai ô cuối (nhãn + giá trị của hàng chót) bỏ gạch chân.
+   `nth-last-of-type` đếm theo LOẠI thẻ — cả .k và .v đều là <span>, nên
+   `.k:nth-last-of-type(1)` không bao giờ khớp và hàng chót còn nửa đường kẻ. */
+.msg .c-stats > *:nth-last-child(-n+2) { border-bottom: 0; }
+
+/* Tiêu đề mục có số thứ tự: "1. Character Verification" */
+.msg .c-h2 { margin: 12px 0 2px; font-family: var(--f-head); font-size: 14.5px;
+             font-weight: 700; display: flex; align-items: baseline; gap: 7px; }
+.msg .c-h2:first-child { margin-top: 0; }
+.msg .c-h2 i { font-style: normal; font-size: 11.5px; color: var(--faint);
+               min-width: 1.1em; }
 
 .msg .c-tbl td.num, .msg .c-tbl th.num {
   text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;

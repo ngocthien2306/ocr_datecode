@@ -785,6 +785,29 @@ function bubble(cls, html) {
 
 /* Markdown tối giản — đủ cho thứ agent trả về, không kéo cả thư viện vào một
    màn hình xưởng. */
+/* Đậm và code xử lý TỪNG ĐOẠN, không phải một lượt thay thế trên cả chuỗi HTML.
+   Đây là chỗ hỏng nặng nhất của bản trước. Agent viết dấu hai chấm NẰM TRONG cặp
+   sao: "- **15/08:** 98.82% (12.230 pass)". Regex hàng-số bắt nhãn "15/08" rồi
+   để lại "**" mở đầu giá trị; lượt thay `**…**` chạy sau trên cả chuỗi bèn ghép
+   dấu sao lạc đó với dấu sao của DÒNG KẾ TIẾP. Kết quả: chữ đậm tràn qua nhiều
+   dòng, hàng lệch nhau so le, và một cặp "**" trơ ra giữa câu trả lời.
+   Xử lý từng đoạn thì dấu sao lạc không thể với sang dòng khác — và cái còn lại
+   thì bỏ, vì in ra "**" là nói với người đọc rằng máy không hiểu chính nó. */
+function inline(s) {
+  return String(s)
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/`(.+?)`/g, '<code>$1</code>')
+    .replace(/\*\*/g, '');
+}
+
+/* Ba cách agent viết một dòng "nhãn — giá trị", theo đúng thứ tự ưu tiên.
+   Dạng 1 phải thử TRƯỚC dạng 2, không thì dấu hai chấm bị hút vào nhãn. */
+const STAT_PATTERNS = [
+  /^(?:[^\w(]+\s*)*\*\*(.+?)\s*[::]\*\*\s*(.+)$/,   // **Nhãn:** giá trị
+  /^(?:[^\w(]+\s*)*\*\*(.+?)\*\*\s*[::]\s*(.+)$/,   // **Nhãn**: giá trị
+  /^[^\w\s(]+\s*([^:：*]{1,24})\s*[::]\s*(.+)$/,      // 🔸 Nhãn: giá trị
+];
+
 function mini(md) {
   /* Markdown tối giản: heading, gạch đầu dòng, bảng, đậm, code. Đủ cho thứ agent
      trả về, không kéo cả thư viện markdown vào một màn hình xưởng.
@@ -793,14 +816,24 @@ function mini(md) {
      dấu thăng — agent dùng heading thật để chia mục, và để nguyên dấu thì mục
      nào cũng trông như nhau. */
   const lines = esc(md || '').split('\n');
-  let out = '', tbl = null, ul = null;
+  let out = '', tbl = null, ul = null, stats = null;
   const flushTbl = () => { if (tbl) { out += `<table class="c-tbl">${tbl}</table>`; tbl = null; } };
   const flushUl = () => { if (ul) { out += `<ul class="c-ul">${ul}</ul>`; ul = null; } };
+  /* Các hàng số liền nhau gom vào MỘT lưới, không phải mỗi hàng một flex riêng.
+     Bản trước để từng hàng tự dàn với `margin-left:auto`, nên trong ô chat rộng
+     full màn hình nhãn nằm sát lề trái còn số nằm sát lề phải — cách nhau 800px
+     và mắt phải quét ngang cả màn hình cho mỗi dòng. Lưới `max-content` thì cột
+     nhãn rộng bằng nhãn dài nhất, số nằm ngay cạnh, và cả khối có bề rộng tối
+     đa nên không giãn theo panel. */
+  const flushStats = () => {
+    if (stats) { out += `<div class="c-stats">${stats}</div>`; stats = null; }
+  };
+  const flushAll = () => { flushTbl(); flushUl(); flushStats(); };
 
   for (const raw of lines) {
     const ln = raw.trim();
     if (/^\|/.test(ln)) {                        // bảng markdown
-      flushUl();
+      flushUl(); flushStats();
       if (/^\|[\s|:-]+\|$/.test(ln)) continue;   // dòng phân cách
       const cells = ln.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
       const isHead = tbl === null;
@@ -811,46 +844,68 @@ function mini(md) {
         const num = /^[-+]?[\d.,\s]*\d([.,]\d+)?\s*%?$/.test(c) || /^[—–-]$/.test(c);
         const long = !num && c.length > 46;
         return `<${tag} class="${num ? 'num' : ''} ${long ? 'clamp' : ''}"${
-          long ? ` title="${c}"` : ''}>${c}</${tag}>`;
+          long ? ` title="${c}"` : ''}>${inline(c)}</${tag}>`;
       }).join('')}</tr>`;
       continue;
     }
     flushTbl();
+
     const h = /^(#{1,4})\s+(.*)$/.exec(ln);
-    if (h) { flushUl(); out += `<h4 class="c-h">${h[2]}</h4>`; continue; }
+    if (h) { flushUl(); flushStats(); out += `<h4 class="c-h">${inline(h[2])}</h4>`; continue; }
+
+    /* "1. **Character Verification**:" là TIÊU ĐỀ MỤC, không phải một dòng văn.
+       Để nguyên thì nó trông y như các dòng số ở dưới, và bốn nhóm nguyên nhân
+       dính thành một khối không đọc ra ranh giới. */
+    const nh = /^(\d+)\.\s+(?:\*\*)?(.{1,60}?)(?:\*\*)?\s*[::]?\s*$/.exec(ln);
+    if (nh) {
+      flushUl(); flushStats();
+      out += `<h5 class="c-h2"><i>${nh[1]}</i>${inline(nh[2])}</h5>`;
+      continue;
+    }
+
+    /* Dòng CHỈ gồm một nhãn in đậm — "📈 **Xu hướng 7 ngày qua:**",
+       "💡 **Nhận xét:**" — là TIÊU ĐỀ MỤC, agent dùng nó để chia câu trả lời.
+       Để nguyên thành dòng văn thì nó nằm cùng một tầng với các dòng số ở dưới
+       và người đọc không thấy ranh giới giữa các mục. */
+    const bh = /^(?:[^\w(]+\s*)*\*\*(.{1,60}?)[::]?\*\*\s*[::]?\s*$/.exec(ln);
+    if (bh) {
+      flushUl(); flushStats();
+      out += `<h5 class="c-h2">${inline(bh[1])}</h5>`;
+      continue;
+    }
+
     /* Dòng dạng "✅ **PASS**: 5.557 sản phẩm (98,21%)" đổi thành MỘT HÀNG có
        nhãn bên trái, số bên phải. Agent hay viết kiểu này; để nguyên thì ba
        dòng chữ chạy dài không thẳng nhau và mắt phải tự tìm con số giữa câu.
-       Không bỏ chữ nào — chỉ xếp lại. */
-    /* Bỏ dấu gạch đầu dòng TRƯỚC khi thử: agent hay viết "- ✅ **PASS**: 5.672".
+       Không bỏ chữ nào — chỉ xếp lại.
+
+       Bỏ dấu gạch đầu dòng TRƯỚC khi thử: agent hay viết "- ✅ **PASS**: 5.672".
        Bản trước thử hàng-số trước rồi mới thử danh sách, nhưng regex không vượt
        được dấu gạch nên mọi dòng như thế rơi vào danh sách và giữ nguyên dáng
-       chữ chạy dài. */
+       chữ chạy dài.
+
+       Dạng thứ ba chỉ nhận khi dòng MỞ ĐẦU bằng ký hiệu/emoji và nhãn ngắn
+       (≤24 ký tự, không chứa dấu sao) — nếu nhận mọi dòng có dấu hai chấm thì
+       một câu văn bình thường cũng bị xé thành nhãn/giá trị. */
     const bare = ln.replace(/^[-*•]\s+/, '');
-    // Bỏ emoji đầu nhãn: nó không thêm thông tin (nhãn đã ghi PASS/FAIL) mà lại
-    // làm cột nhãn lệch nhau vài pixel mỗi dòng.
-    /* Hai dạng, vì cách viết của agent không cố định:
-         "✅ **PASS**: 5.774 …"   nhãn in đậm
-         "✅ PASS: 5.774 …"       nhãn trơn
-       Dạng thứ hai chỉ nhận khi dòng MỞ ĐẦU bằng ký hiệu/emoji và nhãn ngắn
-       (≤24 ký tự) — nếu nhận mọi dòng có dấu hai chấm thì một câu văn bình
-       thường cũng bị xé thành nhãn/giá trị. */
-    const stat = /^(?:[^\w(]+\s*)*\*\*(.+?)\*\*\s*[::]\s*(.+)$/.exec(bare)
-      || /^[^\w\s(]+\s*([^:：]{1,24})\s*[::]\s*(.+)$/.exec(bare);
+    let stat = null;
+    for (const re of STAT_PATTERNS) { stat = re.exec(bare); if (stat) break; }
     if (stat) {
       flushUl();
-      out += `<div class="c-stat"><span>${stat[1]}</span><b>${stat[2]}</b></div>`;
+      stats = (stats || '')
+        + `<span class="k">${inline(stat[1])}</span>`
+        + `<span class="v">${inline(stat[2])}</span>`;
       continue;
     }
+    flushStats();
+
     const li = /^[-*•]\s+(.*)$/.exec(ln);
-    if (li) { ul = (ul || '') + `<li>${li[1]}</li>`; continue; }
+    if (li) { ul = (ul || '') + `<li>${inline(li[1])}</li>`; continue; }
     flushUl();
-    out += ln ? `<div>${ln}</div>` : '<div style="height:6px"></div>';
+    out += ln ? `<div>${inline(ln)}</div>` : '<div style="height:6px"></div>';
   }
-  flushTbl(); flushUl();
-  return out
-    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-    .replace(/`(.+?)`/g, '<code>$1</code>');
+  flushAll();
+  return out;
 }
 
 
@@ -892,9 +947,10 @@ function drawChart(c) {
     const one = series[0];
     const box = elFrom(`<div class="c-viz">${
       c.title ? `<h4>${esc(c.title)}</h4>` : ''}</div>`);
-    box.append(elFrom(`<div class="c-stat">
-      <span>${esc(one.label)}</span>
-      <b>${esc(String(one.value))}${c.unit ? ` ${esc(c.unit)}` : ''}</b></div>`));
+    box.append(elFrom(`<div class="c-stats">
+      <span class="k">${esc(one.label)}</span>
+      <span class="v">${esc(String(one.value))}${
+        c.unit ? ` ${esc(c.unit)}` : ''}</span></div>`));
     if (one.sub) box.append(elFrom(`<div class="c-sub">${esc(one.sub)}</div>`));
     return box;
   }
@@ -903,15 +959,45 @@ function drawChart(c) {
      nhất — nhưng khi đang so với một mốc thì cách đó làm cột cuối luôn đầy
      track và mọi ngày đều trông như đã hoàn thành. */
   const max = c.max || Math.max(...series.map(x => x.value), 1);
+
+  /* Thang đo có thể KHÔNG bắt đầu từ 0.
+     Bảy ngày pass rate 96,7–99,6% vẽ từ 0 thì bảy cột dài như nhau, và biểu đồ
+     nói đúng một điều: cả bảy đều gần 100. Cái người xem cần thấy là ngày nào
+     tụt. Nên khi các giá trị chen nhau trong một dải hẹp (chênh nhau <12% so
+     với giá trị lớn nhất) và có từ 3 cột trở lên, thang đo bắt đầu dưới giá trị
+     nhỏ nhất một chút.
+
+     Và PHẢI NÓI RA. Một cột dài gấp đôi cột khác trên thang không-từ-0 không
+     nghĩa là gấp đôi; im lặng thì biểu đồ nói dối về tỉ lệ. Dòng chú thích dưới
+     biểu đồ ghi rõ thang bắt đầu từ đâu. */
+  const vals = series.map(x => x.value || 0);
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const tight = c.max == null && series.length >= 3 && hi > 0
+                && (hi - lo) / hi < 0.12 && hi > lo;
+  const base = tight ? Math.max(0, lo - (hi - lo) * 0.6) : 0;
+  const span = (c.max || hi) - base;
+
   const box = elFrom(`<div class="c-viz">${
     c.title ? `<h4>${esc(c.title)}</h4>` : ''}</div>`);
   for (const sr of series) {
-    const w = Math.max(1, Math.round((sr.value || 0) * 100 / max));
+    const w = span > 0
+      ? Math.max(1, Math.round(((sr.value || 0) - base) * 100 / span))
+      : Math.max(1, Math.round((sr.value || 0) * 100 / max));
     box.append(elFrom(`<div class="c-bar">
       <span>${esc(sr.label)}</span>
       <span class="track"><span class="fill ${esc(sr.accent || '')}"
         style="width:${w}%"></span></span>
       <b>${esc(String(sr.value))}</b></div>`));
+  }
+  if (tight) {
+    // "94.9 %" có khoảng trắng là sai lối viết; "%" dán liền số, đơn vị khác
+    // thì cách một khoảng.
+    const u = !c.unit ? '' : (c.unit === '%' ? '%' : ` ${c.unit}`);
+    box.append(elFrom(`<div class="c-sub">${
+      esc(store.lang === 'vi'
+        ? `thang đo bắt đầu từ ${base.toFixed(1)}${u}, không từ 0 — để thấy chênh lệch`
+        : `scale starts at ${base.toFixed(1)}${u}, not 0 — so the gaps show`)
+    }</div>`));
   }
   return box;
 }
@@ -1119,20 +1205,25 @@ async function sendChat() {
     wait.className = 'msg a';
     /* `tool_calls` là danh sách DICT, không phải chuỗi — join thẳng ra
        "[object Object]". Lấy tên tool ra trước. */
-    /* Tên tool KÈM tham số. Chỉ hiện tên thì "generate_report" ba lần trông như
-       lặp vô nghĩa; kèm tham số mới thấy đó là ba định dạng khác nhau. */
+    /* TÊN hiện ra, THAM SỐ vào tooltip.
+       Bản trước in cả JSON tham số ra dòng, với lý do "ba lần generate_report
+       mà chỉ hiện tên thì trông như lặp vô nghĩa". Đúng cho trường hợp đó, sai
+       cho phần lớn còn lại: tham số thường chỉ nhắc lại đúng câu người dùng vừa
+       gõ — `ask_production_data({"question":"Xu hướng tỷ lệ pass 7 ngày qua"})`
+       chiếm hai dòng để nói lại câu hỏi. Tên đủ để biết agent đã làm gì, tham
+       số vẫn còn khi rê chuột. */
     const tools = (done.tool_calls || []).map(x => {
-      if (typeof x === 'string') return x;
+      if (typeof x === 'string') return { name: x, args: '' };
       const name = x.name || x.tool || '';
       const args = x.args || x.arguments;
-      if (!name) return '';
-      return args && Object.keys(args).length
-        ? `${name}(${JSON.stringify(args)})` : `${name}()`;
+      if (!name) return null;
+      return { name, args: args && Object.keys(args).length ? JSON.stringify(args) : '' };
     }).filter(Boolean);
     wait.innerHTML = mini(done.response || '');
     if (tools.length) {
       const box = elFrom('<div class="c-tools"></div>');
-      tools.forEach(tt => box.append(elFrom(`<code>${esc(tt)}</code>`)));
+      tools.forEach(tt => box.append(elFrom(
+        `<code${tt.args ? ` title="${esc(tt.args)}"` : ''}>${esc(tt.name)}</code>`)));
       wait.append(box);
     }
     drawExtras(wait, done);
