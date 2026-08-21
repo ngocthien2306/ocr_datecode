@@ -381,7 +381,9 @@ async def resolve_person(text: str) -> Dict[str, Any]:
     """
     staff = await fleet_staff()
     users = staff.get("users") or []
-    q = _norm(text)
+    # Bỏ "@" đầu chuỗi: giao diện in username dạng "@qc_tine" và câu hỏi thường
+    # copy y nguyên như thế, nên "@admin" phải tra ra đúng "admin".
+    q = _norm(str(text or "").lstrip("@"))
     if not q:
         return {"status": "not_found", "query": text, "candidates": []}
 
@@ -555,6 +557,7 @@ async def fleet_failure_images(days: int = 7, per_machine: int = 6,
 
 async def fleet_audit(days: int = 7, username: Optional[str] = None,
                       action_type: Optional[str] = None,
+                      machine: Optional[str] = None,
                       include_simulated: bool = False,
                       per_machine: int = 40) -> Dict[str, Any]:
     """
@@ -569,6 +572,11 @@ async def fleet_audit(days: int = 7, username: Optional[str] = None,
     nên bốn máy kia "không có" là chuyện bình thường, không phải bốn máy hỏng.
     """
     ms = [m for m in registry.all() if m.online]
+    # Hỏi về MỘT máy thì chỉ đi hỏi máy đó: gom cả năm máy rồi cắt bớt là cách
+    # chắc chắn để máy được hỏi bị cắt mất.
+    if machine:
+        want = str(machine).strip().lower()
+        ms = [m for m in ms if m.name.lower() == want or m.node_id == machine] or ms
 
     async def one(m: Machine) -> Dict[str, Any]:
         r = await client.audit(m.node_id, m.ip, days=days, username=username,
@@ -598,12 +606,24 @@ async def fleet_audit(days: int = 7, username: Optional[str] = None,
 
     entries.sort(key=lambda e: e.get("time") or "", reverse=True)
 
+    # Đếm theo MÁY trên toàn bộ bản ghi lấy được. Thiếu con số này thì tầng trên
+    # chỉ thấy danh sách đã cắt và kết luận "máy X không có thao tác nào" trong
+    # khi thực tế nó có, chỉ là bị cắt mất.
+    by_machine: Dict[str, Dict[str, Any]] = {}
+    for e in entries:
+        row = by_machine.setdefault(e["machine"], {"total": 0, "by_action": {}})
+        row["total"] += 1
+        act = e.get("action_type") or "—"
+        row["by_action"][act] = row["by_action"].get(act, 0) + 1
+
     return {
         "generated_at": time.time(),
         "coverage": coverage(results),
         "period_days": days,
         "total_in_period": totals,
         "by_action": dict(sorted(by_action.items(), key=lambda x: -x[1])),
+        "by_machine": by_machine,
+        "machine_filter": machine,
         "machines_without_user": no_user,
         "count": len(entries),
         "entries": entries,

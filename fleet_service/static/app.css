@@ -855,9 +855,14 @@ h3.chat-heading { padding-bottom: 5px; border-bottom: 1px solid var(--line-soft)
 }
 .fp-bar i {
   display: grid; place-items: center; font-style: normal; font-size: 10.5px;
-  font-weight: 600; color: #fff; min-width: 0; overflow: hidden;
+  font-weight: 600; min-width: 0; overflow: hidden;
   transition: filter .12s;
+  /* Đường ngăn mảnh: cùng một hue thì hai đoạn cạnh nhau chỉ khác một bậc độ
+     sáng, và khe hở này là thứ cho mắt biết đâu là mép. */
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, .55);
 }
+.fp-bar i:last-child { box-shadow: none; }
+/* Màu chữ do views.js gán cùng màu nền — xem causeInk(). */
 .fp-bar i:hover { filter: brightness(1.12); }
 .fp-n { font-size: 11px; color: var(--faint); text-align: right; }
 /* Mẫu mỏng thì tỉ trọng còn là nhiễu — làm nhạt đi để nó đừng trông chắc chắn

@@ -128,7 +128,7 @@ async def run(message: str, history: Optional[List[Dict[str, str]]] = None,
         "tool_calls": tools_used,
         "attachments": box,
         # Gợi ý dựng bằng CODE từ kết quả tool, không phải do mô hình viết.
-        "suggestions": suggestions.build(tools_used, results),
+        "suggestions": suggestions.build(tools_used, results, lang=lang),
         # Đường tải gắn ở đây chứ không đưa cho mô hình: nó từng bịa ra URL kiểu
         # example.com khi nhìn thấy trường đường dẫn.
         "file": ({"name": rep["file"], "url": f"/api/fleet/report/{rep['file']}"}

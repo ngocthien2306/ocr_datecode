@@ -488,10 +488,45 @@ class AuditArgs(BaseModel):
         description="Lọc theo loại thao tác: login, logout, create_user, "
                     "update_user, delete_user, reset_password, load_recipe, "
                     "stop_recipe, update_recipe.")
+    machine: Optional[str] = Field(
+        default=None,
+        description="Hỏi về MỘT máy thì BẮT BUỘC truyền tên máy vào đây "
+                    "(vd 'Auto2'). Không truyền thì kết quả gộp mọi máy và danh "
+                    "sách bị cắt còn 25 dòng mới nhất — rất dễ không còn dòng "
+                    "nào của máy bạn đang hỏi.")
+
+
+def _spread(entries: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+    """Lấy `limit` dòng nhưng RẢI ĐỀU qua các máy, giữ thứ tự thời gian.
+
+    Cắt 25 dòng mới nhất toàn cục thì máy nào vừa hoạt động sẽ chiếm sạch, và
+    các máy khác biến mất khỏi tầm nhìn của mô hình — im lặng, không báo lỗi.
+    """
+    if len(entries) <= limit:
+        return entries
+    buckets: Dict[str, List[Dict[str, Any]]] = {}
+    for e in entries:
+        buckets.setdefault(e.get("machine") or "—", []).append(e)
+    out: List[Dict[str, Any]] = []
+    i = 0
+    while len(out) < limit:
+        added = False
+        for rows in buckets.values():
+            if i < len(rows):
+                out.append(rows[i])
+                added = True
+                if len(out) >= limit:
+                    break
+        if not added:
+            break
+        i += 1
+    out.sort(key=lambda e: e.get("time") or "", reverse=True)
+    return out
 
 
 async def fleet_audit_log(days: int = 7, username: Optional[str] = None,
                           action_type: Optional[str] = None,
+                          machine: Optional[str] = None,
                           **_ignored: Any) -> Dict[str, Any]:
     """
     Ai làm gì, trên máy nào, lúc nào — gộp từ mọi máy.
@@ -518,21 +553,32 @@ async def fleet_audit_log(days: int = 7, username: Optional[str] = None,
                              "`candidates`.")}
 
     d = await queries.fleet_audit(days=days, username=username,
-                                  action_type=action_type)
+                                  action_type=action_type, machine=machine)
     out = {
         "user_lookup": lookup,
         "coverage": d["coverage"],
         "period_days": d["period_days"],
         "total_in_period": d["total_in_period"],
         "by_action": d["by_action"],
+        # Đếm theo máy trên TOÀN BỘ bản ghi, không phải trên phần đã cắt. Đây là
+        # con số duy nhất được dùng để nói "máy X có/không có thao tác".
+        "by_machine": d["by_machine"],
+        "machine_filter": d.get("machine_filter"),
         "machines_without_user": d["machines_without_user"],
         # Cắt còn 25 dòng cho mô hình: nó cần thấy hình dạng, không cần đọc hết.
         # Con số tổng đã nằm ở `by_action`, tính trên TOÀN BỘ kỳ chứ không phải
         # trên phần bị cắt.
-        "entries": d["entries"][:25],
+        # Cắt bớt phải RẢI ĐỀU qua các máy, không lấy 25 dòng mới nhất toàn cục.
+        # Đo được: hỏi về Auto2, 25 dòng mới nhất toàn là M2 và PC-Auto-1, không
+        # còn dòng nào của Auto2 — và câu trả lời thành "Auto2 không có thao tác
+        # nào" trong khi Auto2 có 16 thao tác recipe.
+        "entries": _spread(d["entries"], 25),
         "entries_shown": min(25, d["count"]),
         "entries_total_fetched": d["count"],
         "note": d["note"] + (
+            " `entries` CHỈ là mẫu rải đều để xem hình dạng — muốn biết một máy"
+            " có thao tác hay không thì đọc `by_machine`, KHÔNG đếm trong"
+            " `entries`. Hỏi về một máy cụ thể thì truyền tham số `machine`."
             " `machines_without_user` là các máy KHÔNG CÓ tài khoản này — đó là "
             "chuyện bình thường (tài khoản chỉ tồn tại trên một số máy), KHÔNG "
             "phải máy hỏng. Máy hỏng nằm ở coverage.machines_missing."),

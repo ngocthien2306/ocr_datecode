@@ -208,14 +208,22 @@ export const seriesColor = name =>
 
 /* Màu cố định theo NGUYÊN NHÂN, không theo thứ tự cột: mỗi máy thiếu một
    nguyên nhân khác nhau, gán màu theo thứ tự thì cùng một màu nghĩa khác nhau
-   ở hai hàng cạnh nhau. */
+   ở hai hàng cạnh nhau.
+
+   Lấy nguyên DẢI XANH THÉP của design system (accent-800 → accent-400), không
+   phải một bảng màu tự nghĩ. Bản đầu tôi dùng xanh/cam/lục/tím/hồng — nó nổi
+   bật thật, nhưng cả bộ giao diện này là đơn sắc xanh thép cộng neutral, nên
+   năm màu rực trên một dải ngang phá vỡ chính cái tông đã dựng ở mockup, và
+   biến một bảng số điềm tĩnh thành đồ thị quảng cáo. Cùng một hue, khác độ
+   sáng thì vẫn phân biệt được — nhờ chú giải, nhãn % trong đoạn, và đường
+   ngăn mảnh giữa hai đoạn. */
 const CAUSE_COLOR = {
-  char_verification:     '#5980a6',
-  no_detection:          '#b3671e',
-  text_verification:     '#2f7d4f',
-  template_verification: '#6b4fa0',
-  product_verification:  '#a3457d',
-  unknown:               '#8a9099',
+  char_verification:     '#2c455d',   // accent-800
+  no_detection:          '#416180',   // accent-700
+  text_verification:     '#597ea3',   // accent-600
+  template_verification: '#749dc4',   // accent-500
+  product_verification:  '#94bce3',   // accent-400
+  unknown:               '#98989b',   // neutral-500
 };
 const causeColor = c => CAUSE_COLOR[c] || '#8a9099';
 
@@ -244,7 +252,7 @@ export function fingerprintHTML(prod, view = 'chart') {
     return `<div class="fp-row ${thin ? 'thin' : ''}">
       <span class="fp-name">${esc(nm)}</span>
       <span class="fp-bar">${segs.map(x => `<i style="width:${x.v}%;
-        background:${causeColor(x.c)}"
+        background:${causeColor(x.c)};color:${causeInk(x.c)}"
         title="${esc(causeLabel(x.c, labels[x.c]))} ${num(x.v, 1)}%">${
           x.v >= 11 ? `${num(x.v, 0)}%` : ''}</i>`).join('')}</span>
       <span class="fp-n">${fmt(r.sample_products)} ${
@@ -267,7 +275,7 @@ export function fingerprintHTML(prod, view = 'chart') {
     <div class="fp-row fp-avg">
       <span class="fp-name">${t.fleetAvg}</span>
       <span class="fp-bar">${fp.causes.filter(c => avg[c] > 0).map(c =>
-        `<i style="width:${avg[c]}%;background:${causeColor(c)}"
+        `<i style="width:${avg[c]}%;background:${causeColor(c)};color:${causeInk(c)}"
           title="${esc(causeLabel(c, labels[c]))} ${num(avg[c], 1)}%">${
           avg[c] >= 11 ? `${num(avg[c], 0)}%` : ''}</i>`).join('')}</span>
       <span class="fp-n">${fmt(totW)} ${t.weighted}</span>
