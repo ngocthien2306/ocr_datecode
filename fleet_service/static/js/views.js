@@ -253,6 +253,47 @@ export function failureGridHTML(d) {
 
 const KEYS = { machine: 'machine', dept: 'department', shift: 'shift' };
 
+/* Ca làm dạng "Shift B (14:00–22:00)". Tách ra giờ để biết AI ĐANG TRONG CA —
+   đó là câu hỏi đầu tiên khi nhìn danh sách nhân sự lúc 2 giờ sáng, và không có
+   trường nào trong DB trả lời sẵn. Nhận cả gạch nối thường lẫn gạch ngang dài,
+   vì dữ liệu thật dùng "–". */
+const SHIFT_RE = /(\d{1,2}):(\d{2})\s*[–-]\s*(\d{1,2}):(\d{2})/;
+
+function shiftWindow(text) {
+  const m = SHIFT_RE.exec(String(text || ''));
+  if (!m) return null;
+  return { from: +m[1] * 60 + +m[2], to: +m[3] * 60 + +m[4],
+           label: `${m[1].padStart(2, '0')}:${m[2]}`, endLabel: `${m[3].padStart(2, '0')}:${m[4]}` };
+}
+
+function onShiftNow(text, now = new Date()) {
+  const w = shiftWindow(text);
+  if (!w) return null;                       // "Office hours" — không suy ra được
+  const cur = now.getHours() * 60 + now.getMinutes();
+  // Ca đêm vắt qua nửa đêm: 22:00–06:00 thì "trong ca" là >=22:00 HOẶC <06:00.
+  return w.from <= w.to ? (cur >= w.from && cur < w.to)
+                        : (cur >= w.from || cur < w.to);
+}
+
+const initials = name => String(name || '?')
+  .trim().split(/\s+/).slice(-2).map(w => w[0] || '').join('').toUpperCase() || '?';
+
+function staffStatus(u, t) {
+  const on = onShiftNow(u.shift);
+  const w = shiftWindow(u.shift);
+  const login = u.last_login ? String(u.last_login) : null;
+  const today = login && login.slice(0, 10) === new Date().toISOString().slice(0, 10);
+  const hhmm = login ? login.slice(11, 16) : null;
+
+  if (on === true)
+    return `<span class="st-on">${today && hhmm ? t.onShiftSince(hhmm) : t.onShift}</span>`;
+  if (on === false)
+    return `<span class="st-off">${today && hhmm ? t.offShiftActive(hhmm)
+      : w ? t.offShiftStarts(w.label) : t.offShift}</span>`;
+  // Không có giờ ca (hành chính) — chỉ nói lần đăng nhập gần nhất, không đoán.
+  return `<span class="st-off">${today && hhmm ? t.lastActive(hhmm) : (u.shift || '—')}</span>`;
+}
+
 export function staffHTML(d, opts) {
   const t = store.t;
   if (!d) return `<div class="coverage">${t.loading}</div>`;
@@ -260,10 +301,11 @@ export function staffHTML(d, opts) {
 
   const q = (opts.q || '').trim().toLowerCase();
   if (q) users = users.filter(u =>
-    [u.full_name, u.username, u.employee_code].some(v =>
+    [u.full_name, u.username, u.employee_code, u.job_title].some(v =>
       String(v || '').toLowerCase().includes(q)));
   for (const f of ['machine', 'department', 'shift', 'role'])
     if (opts[f]) users = users.filter(u => (u[f] || '') === opts[f]);
+  if (opts.onShiftOnly) users = users.filter(u => onShiftNow(u.shift) === true);
 
   const [g1, g2] = opts.group === 'dept' ? [KEYS.dept, KEYS.machine]
                  : opts.group === 'shift' ? [KEYS.shift, KEYS.machine]
@@ -275,30 +317,39 @@ export function staffHTML(d, opts) {
     ((tree[a] ??= {})[b] ??= []).push(u);
   }
 
-  /* Thẻ người là một NÚT: nhìn thấy tên trong danh sách rồi muốn biết người đó
-     vừa làm gì là phản xạ tự nhiên, mà gõ lại username vào ô chat thì vừa chậm
-     vừa dễ sai chính tả. */
-  const card = u => `<div class="person" role="button" tabindex="0"
-    data-name="${esc(u.full_name || u.username)}"
-    data-username="${esc(u.username)}" data-machine="${esc(u.machine || '')}"
-    title="${esc(t.askStaff(u.full_name || u.username, u.username, u.machine || ''))}">
-    ${u.avatar_url
+  /* Một DÒNG, không phải một thẻ. Danh sách này để quét dọc tìm người và tìm
+     ai đang trong ca; thẻ ảnh xếp lưới thì mỗi người chiếm chỗ gấp bốn và mắt
+     không còn cột nào để bám. */
+  const row = u => `<div class="prow">
+    <span class="prow-av">${u.avatar_url
       ? `<img loading="lazy" src="/api/fleet/avatar/${esc(u.machine)}?p=${encodeURIComponent(u.avatar_url)}" alt="">`
-      : `<div class="avatar-fallback">${esc((u.full_name || u.username || '?')[0])}</div>`}
-    <div style="min-width:0">
-      <div class="nm">${esc(u.full_name || u.username)}</div>
-      <div class="meta">${esc(u.employee_code || '—')} · @${esc(u.username)}</div>
-      <div class="meta">${esc(u.job_title || '—')}${u.shift ? ' · ' + esc(u.shift) : ''}</div>
-      <span class="access">${t.access}: ${esc(u.role || '—')}</span>
-    </div></div>`;
+      : esc(initials(u.full_name || u.username))}</span>
+    <span class="prow-id">
+      <b>${esc(u.full_name || u.username)}</b>
+      <i>${esc(u.employee_code || '—')} · @${esc(u.username)}</i>
+    </span>
+    <span class="prow-job">${esc(u.job_title || '—')}</span>
+    <span class="prow-shift">${u.shift ? `<em>${esc(u.shift)}</em>` : ''}</span>
+    <span class="prow-acc">${t.access}: ${esc(u.role || '—')}</span>
+    <span class="prow-st">${staffStatus(u, t)}</span>
+  </div>`;
 
+  const machines = opts.machines || [];
   return Object.entries(tree).sort().map(([a, subs]) => {
-    const n = Object.values(subs).reduce((s, v) => s + v.length, 0);
-    return `<details class="sgroup" open><summary>${esc(a)}
-      <span class="count">${n} ${t.people}</span></summary>
-      ${Object.entries(subs).sort().map(([b, list]) => `
-        <div class="eyebrow" style="padding:4px 16px">${esc(b)} · ${list.length}</div>
-        <div class="people">${list.map(card).join('')}</div>`).join('')}
+    const list = Object.values(subs).flat();
+    const on = list.filter(u => onShiftNow(u.shift) === true).length;
+    const meta = machines.find(m => m.name === a);
+    const sub = Object.entries(subs).sort()
+      .map(([b, l]) => `${b} ${l.length}`).join(' · ');
+    return `<details class="sgroup" open><summary>
+      <span class="sg-name">${esc(a)}${meta?.line ? ` · ${esc(meta.line)}` : ''}</span>
+      <span class="sg-model">${esc(meta?.model || sub)}</span>
+      <span class="spacer"></span>
+      <span class="sg-count"><b>${list.length}</b> ${t.people} ·
+        <b class="st-on">${on}</b> ${t.onShiftShort}</span></summary>
+      ${Object.entries(subs).sort().map(([b, l]) => `
+        <div class="eyebrow sg-dept">${esc(b)} — ${l.length}</div>
+        ${l.map(row).join('')}`).join('')}
     </details>`;
   }).join('') + coverageHTML(d.coverage);
 }

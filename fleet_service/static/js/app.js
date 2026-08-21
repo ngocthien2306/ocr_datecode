@@ -182,7 +182,8 @@ function paintTabs() {
     $('#fail-body').innerHTML = V.failureGridHTML(state.images);
   }
   if (state.tab === 'staff') {
-    $('#staff-body').innerHTML = V.staffHTML(state.staff, state.staffOpts);
+    $('#staff-body').innerHTML = V.staffHTML(state.staff,
+      { ...state.staffOpts, machines: state.status?.machines || [] });
     paintStaffFilters();
     $('#staff-body').querySelectorAll('.person').forEach(el => {
       const open = () => chat.setPerson({ name: el.dataset.name,
@@ -291,6 +292,15 @@ function paintStaffFilters() {
   sel('shift', 'shift', t.shift);
   sel('role', 'role', t.access);
   $('#f-q').placeholder = t.searchStaff;
+  const nMach = new Set(users.map(u => u.machine).filter(Boolean)).size;
+  $('#staff-count').textContent = t.staffCount(users.length, nMach);
+  $('#staff-readonly').textContent = t.staffReadOnly;
+  $('#staff-loadnote').textContent = t.staffLoadNote;
+  $('#staff-keynote').textContent = t.staffKeyNote;
+  $('#onshift-label').textContent = t.onShiftOnly;
+  const oc = $('#f-onshift');
+  oc.checked = !!state.staffOpts.onShiftOnly;
+  oc.onchange = () => { state.staffOpts.onShiftOnly = oc.checked; paintTabs(); };
   $('#f-q').oninput = () => { state.staffOpts.q = $('#f-q').value; paintTabs(); };
   $('#g-machine').textContent = t.byMachineDept;
   $('#g-dept').textContent = t.byDeptMachine;

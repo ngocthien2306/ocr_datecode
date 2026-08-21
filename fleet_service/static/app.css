@@ -406,7 +406,10 @@ td.name { font-weight: 600; }
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--r-md); padding: 5px 9px;
 }
-.filters input { min-width: 220px; }
+/* Chỉ ô TÌM KIẾM mới cần rộng. Quy tắc cũ trúng cả checkbox, nên ô tick "chỉ
+   người đang trong ca" rộng 220px và đẩy nhãn của nó ra tận giữa hàng. */
+.filters input[type="search"], .filters input[type="text"] { min-width: 220px; }
+.filters input[type="checkbox"] { min-width: 0; width: auto; margin: 0; }
 
 /* ── Nhân sự ─────────────────────────────────────────────────────────────── */
 
@@ -755,3 +758,63 @@ h3.chat-heading { padding-bottom: 5px; border-bottom: 1px solid var(--line-soft)
 .lf-box.lf-fail .lf-msg::after { content: attr(data-msg); }
 .shot.live .lf-box { border: 1px solid var(--line); }
 @media (prefers-reduced-motion: reduce) { .lf-box .lf { transition: none; } }
+
+/* ── Tab nhân sự: danh sách dòng ─────────────────────────────────────────── */
+
+.filters-2 { border-top: 0; padding-top: 0; }
+.staff-count { font-size: 12px; color: var(--dim); }
+.staff-note {
+  margin: 0 14px 10px; padding: 8px 12px; font-size: 12px; color: var(--dim);
+  border: 1px dashed var(--line); border-radius: var(--r-md);
+}
+.onshift-toggle {
+  display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim);
+}
+.sgroup > summary { display: flex; align-items: baseline; gap: 10px; }
+.sg-name { font-family: var(--f-head); font-weight: 600; }
+.sg-model { font-size: 11px; color: var(--faint); }
+.sg-count { font-size: 12px; color: var(--dim); }
+.sg-dept { padding: 8px 16px 4px; }
+
+/* Cột cố định để mắt quét dọc được: tên, chức vụ, ca, quyền, trạng thái. */
+.prow {
+  display: grid; align-items: center; gap: 12px;
+  grid-template-columns: 34px minmax(170px, 1.4fr) minmax(120px, 1fr)
+                         auto auto minmax(150px, auto);
+  padding: 7px 16px; border-top: 1px solid var(--line-soft); font-size: 12.5px;
+}
+.prow:hover { background: var(--surface-2); }
+.prow-av {
+  width: 34px; height: 34px; border-radius: 50%; overflow: hidden;
+  display: grid; place-items: center; background: var(--accent-bg);
+  color: var(--accent-2); font-family: var(--f-head); font-size: 11.5px;
+  font-weight: 600; border: 1px solid var(--line);
+}
+.prow-av img { width: 100%; height: 100%; object-fit: cover; }
+.prow-id { display: flex; flex-direction: column; min-width: 0; }
+.prow-id b { font-size: 13px; }
+.prow-id i {
+  font-style: normal; font-size: 11px; color: var(--faint);
+  font-family: var(--f-mono, ui-monospace, monospace);
+}
+.prow-job { color: var(--dim); }
+.prow-shift em {
+  font-style: normal; font-size: 11px; padding: 2px 8px;
+  border: 1px solid var(--accent); border-radius: 4px; color: var(--accent-2);
+  white-space: nowrap;
+}
+.prow-acc {
+  font-size: 11px; color: var(--dim); background: var(--surface-2);
+  border-radius: 4px; padding: 2px 8px; white-space: nowrap;
+}
+.prow-st { text-align: right; font-size: 11.5px; white-space: nowrap; }
+.st-on { color: var(--ok); font-weight: 600; }
+.st-on::before {
+  content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--ok); margin-right: 5px; vertical-align: middle;
+}
+.st-off { color: var(--faint); }
+@container (max-width: 720px) {
+  .prow { grid-template-columns: 34px 1fr auto; }
+  .prow-job, .prow-shift { display: none; }
+}
