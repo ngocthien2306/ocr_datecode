@@ -737,3 +737,21 @@ h3.chat-heading { padding-bottom: 5px; border-bottom: 1px solid var(--line-soft)
 .drawer-head .ask-btn { font-size: 12px; padding: 4px 10px; }
 .drawer-head .close-btn { font-size: 14px; line-height: 1; padding: 4px 9px; }
 .frame-panel { margin-top: 0; border-top: 0; border-radius: 0; }
+
+/* Ảnh trực tiếp: hai lớp chồng nhau, mờ chồng khi lớp mới tải xong. Không có
+   khoảnh khắc nào ô ảnh bị trống, nên không còn nháy. */
+.lf-box { position: relative; aspect-ratio: 16 / 10; background: var(--surface-2);
+          border-radius: var(--r-md); overflow: hidden; }
+.lf-box .lf {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+  opacity: 0; transition: opacity .28s ease;
+}
+.lf-box .lf.on { opacity: 1; }
+.lf-box .lf-msg { display: none; }
+.lf-box.lf-fail .lf-msg {
+  display: grid; position: absolute; inset: 0; place-items: center;
+  font-size: 12px; color: var(--faint); background: var(--surface-2);
+}
+.lf-box.lf-fail .lf-msg::after { content: attr(data-msg); }
+.shot.live .lf-box { border: 1px solid var(--line); }
+@media (prefers-reduced-motion: reduce) { .lf-box .lf { transition: none; } }

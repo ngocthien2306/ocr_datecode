@@ -17,6 +17,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { store, esc, api } from './core.js';
+import { swapLive, liveBox } from './frame-view.js';
 
 const $ = s => document.querySelector(s);
 
@@ -66,14 +67,19 @@ function tile(m) {
        f.recognized != null ? `${t.readAs} ${f.recognized || t.emptyRead}` : null,
       ].filter(Boolean).map(esc).join(' · ');
 
+  // Ở chế độ camera, ô dựng khung HAI LỚP một lần rồi chỉ đổi ảnh bên trong —
+  // vẽ lại thẻ <img> mỗi nhịp là mỗi nhịp một lần chớp trắng.
+  const media = mode === 'live'
+    ? (serial ? liveBox() : `<div class="shot-empty">${t.noCamera}</div>`)
+    : (src ? `<img loading="lazy" src="${esc(src)}" alt="${esc(name)}">`
+           : `<div class="shot-empty">—</div>`);
+
   return `<article class="wtile ${mode === 'live' ? 'is-live' : ''}"
-      data-machine="${esc(name)}" role="button" tabindex="0">
+      data-machine="${esc(name)}" ${serial ? `data-serial="${esc(serial)}"` : ''}
+      role="button" tabindex="0">
     <header>${esc(name)}
       <span class="wtile-rec">${esc(f.recipe_name || '')}</span></header>
-    ${src ? `<img loading="lazy" src="${esc(src)}" alt="${esc(name)}"
-        onerror="this.replaceWith(Object.assign(document.createElement('div'),
-          {className:'shot-empty', textContent:${JSON.stringify(t.camNoAnswer)}}))">`
-          : `<div class="shot-empty">${mode === 'live' ? t.noCamera : '—'}</div>`}
+    ${media}
     <footer>${foot}</footer>
   </article>`;
 }
@@ -113,17 +119,27 @@ async function load() {
 function setMode(next) {
   if (mode === next) return;
   mode = next;
-  restartTimer();
-  paint();
+  paint();          // dựng lại khung một lần cho đúng chế độ
+  restartTimer();   // rồi từ đó chỉ đổi ảnh
+}
+
+/** Nạp khung mới cho mọi ô, mỗi ô vào lớp ẩn của nó. Không vẽ lại lưới. */
+function tickLive() {
+  if (document.hidden) return;
+  document.querySelectorAll('#wall-body .wtile[data-serial]').forEach(c => {
+    swapLive(c.querySelector('.lf-box'),
+      `/api/fleet/live-frame/${encodeURIComponent(c.dataset.machine)}`
+      + `?serial=${encodeURIComponent(c.dataset.serial)}&w=460&_=${Date.now()}`);
+  });
 }
 
 function restartTimer() {
   stop();
+  if (mode === 'live') tickLive();
   timer = setInterval(() => {
     if (document.hidden) return;
-    // Chế độ camera chỉ cần vẽ lại (URL đổi theo mốc thời gian là ảnh tự tải
-    // mới); chế độ đã kiểm mới phải hỏi lại metadata.
-    if (mode === 'live') paint(); else load();
+    // Chế độ camera chỉ đổi ẢNH; chế độ đã kiểm mới phải hỏi lại metadata.
+    if (mode === 'live') tickLive(); else load();
   }, mode === 'live' ? LIVE_MS : INSPECT_MS);
 }
 

@@ -40,6 +40,38 @@ function ago(sec) {
   return t.hourAgo(Math.round(sec / 3600));
 }
 
+/* Đổi ảnh KHÔNG nháy: hai lớp <img> chồng lên nhau, tải vào lớp đang ẩn rồi
+   chỉ khi `onload` mới mờ chồng sang.
+
+   Vì sao không đơn giản gán lại `src`: gán lại là trình duyệt bỏ ảnh cũ ngay
+   lập tức và để trống cho tới khi ảnh mới về — trên đường tới Jetson chỗ trống
+   đó dài cả trăm mili giây, và cứ 3 giây một lần thì thành nháy. Cache cũng
+   không cứu được vì ảnh trực tiếp phải `no-store`.                            */
+export function swapLive(box, url) {
+  if (!box || !url) return;
+  const imgs = box.querySelectorAll('img.lf');
+  if (imgs.length < 2) return;
+  const shown = box.querySelector('img.lf.on') || imgs[0];
+  const hidden = shown === imgs[0] ? imgs[1] : imgs[0];
+  if (hidden.dataset.loading === url) return;   // đang tải đúng URL này rồi
+  hidden.dataset.loading = url;
+  hidden.onload = () => {
+    hidden.classList.add('on');
+    shown.classList.remove('on');
+    box.classList.remove('lf-fail');
+  };
+  hidden.onerror = () => box.classList.add('lf-fail');
+  hidden.src = url;
+}
+
+/** Khung hai lớp cho ảnh trực tiếp. */
+export function liveBox(cls = '') {
+  return `<div class="lf-box ${cls}" data-live>
+    <img class="lf on" alt=""><img class="lf" alt="">
+    <span class="lf-msg" data-msg="${store.t.camNoAnswer}"></span>
+  </div>`;
+}
+
 function shot(src, caption, badge, cls = '') {
   // Ảnh hỏng phải NÓI RA. Icon ảnh vỡ của trình duyệt trông như giao diện lỗi,
   // trong khi sự thật thường là camera của máy đó không trả frame — đo được
@@ -91,11 +123,15 @@ function body(machine, d, mode) {
     // Cache-buster theo giây: ảnh camera là no-store, nhưng vẫn phải đổi URL,
     // không thì trình duyệt dùng lại chính thẻ <img> cũ.
     const serial = (d.cameras && d.cameras[0]) || f.camera || null;
-    const src = serial
-      ? `/api/fleet/live-frame/${encodeURIComponent(machine)}`
-        + `?serial=${encodeURIComponent(serial)}&w=560&_=${Math.floor(Date.now() / 1000)}`
-      : null;
-    return `<div class="shots one">${shot(src, t.liveNow, t.liveBadge, 'live')}</div>
+    if (!serial)
+      return `<div class="shots one"><div class="shot-empty">${t.noCamera}</div></div>`;
+    return `<div class="shots one">
+        <figure class="shot live">
+          ${liveBox()}
+          <figcaption class="shot-badge">${t.liveBadge}</figcaption>
+          <figcaption class="shot-cap">${t.liveNow}</figcaption>
+        </figure>
+      </div>
       <div class="shot-note">${t.liveNote}</div>`;
   }
 
@@ -162,13 +198,29 @@ function setMode(mode) {
   if (!current || current.mode === mode) return;
   current.mode = mode;
   clearInterval(liveTimer); liveTimer = null;
+  paint();
   if (mode === 'live') {
     /* 3 giây một khung. Đây là máy đang chạy inference cho dây chuyền, nên xem
        trực tiếp cũng phải có chừng mực — 0,3 hình/giây đủ để chỉnh góc camera
-       mà không giành CPU với việc chính của máy. */
-    liveTimer = setInterval(paint, 3000);
+       mà không giành CPU với việc chính của máy.
+
+       Nhịp này gọi tickLive() chứ KHÔNG gọi paint(): vẽ lại cả panel mỗi 3 giây
+       là dựng lại thẻ <img> từ đầu, và đó chính là cái nháy. */
+    tickLive();
+    liveTimer = setInterval(tickLive, 3000);
   }
-  paint();
+}
+
+/** Nạp một khung ảnh trực tiếp mới vào lớp ẩn. Không đụng tới DOM còn lại. */
+function tickLive() {
+  if (!current || current.mode !== 'live' || document.hidden) return;
+  const d = current.data || {};
+  const f = d.frame || {};
+  const serial = (d.cameras && d.cameras[0]) || f.camera || null;
+  if (!serial) return;
+  const box = document.querySelector('#frame-panel .lf-box');
+  swapLive(box, `/api/fleet/live-frame/${encodeURIComponent(current.machine)}`
+    + `?serial=${encodeURIComponent(serial)}&w=560&_=${Date.now()}`);
 }
 
 function pickTemplate(name) {
