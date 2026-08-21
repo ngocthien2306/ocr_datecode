@@ -242,6 +242,11 @@ function paintActivity() {
       : V.logErrorsHTML(state.logerr, state.selectedLogProblem);
     $('#activity-body').querySelectorAll('[data-ask]').forEach(button =>
       button.onclick = () => chat.askNow(button.dataset.ask));
+    // Ảnh trước/sau một lần sửa recipe: mở ngay dưới chính dòng nhật ký đó, để
+    // hành động và hậu quả của nó nằm cạnh nhau chứ không phải hai màn hình.
+    $('#activity-body').querySelectorAll('button.seeframes').forEach(b =>
+      b.onclick = () => toggleFrames(b));
+    restoreFrames();
     $('#activity-body').querySelectorAll('[data-error-machine]').forEach(row => {
       const selectProblem = () => {
         state.selectedLogProblem = { machine: row.dataset.errorMachine, index: Number(row.dataset.errorIndex) };
@@ -273,6 +278,56 @@ function paintActivity() {
   $('#audit-action').onchange = event => update('action', event.target.value);
   $('#audit-range').onchange = event => update('range', event.target.value);
   $('#audit-query').oninput = event => update('query', event.target.value);
+}
+
+/* Hàng ảnh nào đang mở. Bảng nhật ký được vẽ lại mỗi nhịp làm mới trạng thái
+   (30 giây), và nếu không nhớ thì hàng ảnh vừa mở ra bị đóng sập ngay giữa lúc
+   người ta đang so hai tấm. */
+const openFrames = new Set();
+
+function restoreFrames() {
+  if (!openFrames.size) return;
+  document.querySelectorAll('#activity-body button.seeframes').forEach(b => {
+    if (openFrames.has(`${b.dataset.machine}|${b.dataset.ts}`)) toggleFrames(b, true);
+  });
+}
+
+async function toggleFrames(btn, restoring = false) {
+  const holder = btn.closest('tr')?.nextElementSibling;
+  if (!holder || !holder.classList.contains('frames-row')) return;
+  const cell = holder.firstElementChild;
+  const key = `${btn.dataset.machine}|${btn.dataset.ts}`;
+  if (!holder.hidden && !restoring) {
+    holder.hidden = true;
+    openFrames.delete(key);
+    return;
+  }
+  holder.hidden = false;
+  openFrames.add(key);
+  const t = store.t;
+  cell.innerHTML = `<div class="coverage">${t.loading}</div>`;
+
+  const m = btn.dataset.machine, ts = btn.dataset.ts;
+  const r = await api(`/api/fleet/frames-around/${encodeURIComponent(m)}`
+    + `?ts=${encodeURIComponent(ts)}`);
+  const d = r.data || {};
+  const shot = (f, label) => {
+    if (!f) return `<figure class="shot"><div class="shot-empty">—</div>
+      <figcaption class="shot-cap">${esc(label)}</figcaption></figure>`;
+    const src = `/api/fleet/failure-image/${encodeURIComponent(m)}`
+      + `/${encodeURIComponent(f.id)}?w=420`;
+    const said = (f.expected != null || f.recognized != null)
+      ? ` · ${t.expected} ${f.expected ?? '—'} → ${t.readAs} ${f.recognized || t.emptyRead}` : '';
+    return `<figure class="shot ${f.verdict === 'FAIL' ? 'bad' : ''}">
+      <img loading="lazy" src="${src}" alt="">
+      <figcaption class="shot-badge">${esc(f.verdict || '')}</figcaption>
+      <figcaption class="shot-cap">${esc(label)} · ${esc(String(f.timestamp || '').slice(11, 19))}${esc(said)}</figcaption>
+    </figure>`;
+  };
+  cell.innerHTML = (!d.before && !d.after)
+    ? `<div class="coverage">${t.framesAroundNone}</div>`
+    : `<div class="shots frames-around">${shot(d.before, t.beforeChange)}
+        ${shot(d.after, t.afterChange)}</div>`;
 }
 
 function paintStaffFilters() {

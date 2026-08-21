@@ -147,6 +147,16 @@ class FactoryFloorScene {
     });
     el.append(this.viewNav);
 
+    /* Thẻ ảnh nổi khi rê chuột lên một máy. Cái tủ soi OCR trong sơ đồ trở
+       thành một cửa sổ thật: chỉ tay vào máy là thấy nó vừa chụp được gì, khỏi
+       phải mở drawer rồi đóng lại chỉ để liếc một cái. */
+    this.peek = document.createElement('div');
+    this.peek.className = 'map-peek';
+    this.peek.hidden = true;
+    el.append(this.peek);
+    this.peekCache = new Map();   // máy → dữ liệu khung ảnh, tránh hỏi lại
+    this.peekFor = null;
+
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.shadowMap.enabled = true;
@@ -453,6 +463,55 @@ class FactoryFloorScene {
     this.flyTo({ target: g.position.clone(), distance: 22, elevation: 0.55 });
   }
 
+  hidePeek() {
+    if (this.peek) { this.peek.hidden = true; this.peekFor = null; }
+  }
+
+  /** Rê lên một máy → thẻ ảnh nhỏ bám theo con trỏ. */
+  async showPeek(hit, event) {
+    const name = hit?.machineName;
+    if (!name) { this.hidePeek(); return; }
+
+    // Đặt thẻ trong khung sơ đồ, kẹp lại để không tràn ra ngoài mép.
+    const box = this.el.getBoundingClientRect();
+    const x = Math.min(Math.max(event.clientX - box.left + 16, 8), box.width - 236);
+    const y = Math.min(Math.max(event.clientY - box.top + 16, 8), box.height - 190);
+    this.peek.style.left = `${x}px`;
+    this.peek.style.top = `${y}px`;
+    this.peek.hidden = false;
+
+    if (this.peekFor === name) return;      // vẫn cùng một máy, chỉ dời chỗ
+    this.peekFor = name;
+
+    const t = store.t;
+    const cached = this.peekCache.get(name);
+    this.peek.innerHTML = `<b>${name}</b><div class="muted">${
+      cached ? '' : t.loading}</div>`;
+
+    let d = cached;
+    if (!d) {
+      try {
+        const r = await fetch(`/api/fleet/frame/${encodeURIComponent(name)}`);
+        d = await r.json();
+        this.peekCache.set(name, d);
+      } catch { d = { success: false }; }
+      // Con trỏ có thể đã rời đi trong lúc chờ — đừng vẽ đè lên máy khác.
+      if (this.peekFor !== name) return;
+    }
+
+    const f = d?.frame;
+    if (!f) {
+      this.peek.innerHTML = `<b>${name}</b><div class="muted">${t.noFrameYet}</div>`;
+      return;
+    }
+    const said = (f.expected != null || f.recognized != null)
+      ? `${t.expected} ${f.expected ?? '—'} → ${t.readAs} ${f.recognized || t.emptyRead}`
+      : (f.recipe_name || '');
+    this.peek.innerHTML = `<b>${name}</b>
+      <img src="/api/fleet/failure-image/${encodeURIComponent(name)}/${encodeURIComponent(f.id)}?w=300" alt="">
+      <div class="muted">${String(f.timestamp || '').slice(11, 19)} · ${said}</div>`;
+  }
+
   focusZone(name) {
     const target = name === 'tin2'
       ? { point: new this.THREE.Vector3(55, 0, 0), distance: 30 }
@@ -710,6 +769,9 @@ class FactoryFloorScene {
     const group = new THREE.Group();
     if (machine.virtual) group.userData.focus = machine.building || 'main';
     else group.userData.nodeId = machine.node_id;
+    // Tên máy đi kèm để thẻ ảnh khi rê chuột hỏi đúng máy — API ảnh khoá theo
+    // TÊN, còn raycast thì chỉ biết node id.
+    group.userData.machineName = machine.name;
     group.position.set(x, selected ? 0.18 : 0, z);
 
     const metal = new THREE.MeshStandardMaterial({ color: dark ? 0x9ca9b1 : 0xc7d0d5, roughness: 0.42, metalness: 0.72 });
@@ -1031,7 +1093,9 @@ class FactoryFloorScene {
         this.drag.y = event.clientY;
         this.draw();
       } else {
-        this.canvas.style.cursor = this.targetAt(event) ? 'pointer' : 'grab';
+        const hit = this.targetAt(event);
+        this.canvas.style.cursor = hit ? 'pointer' : 'grab';
+        this.showPeek(hit, event);
       }
     });
     this.canvas.addEventListener('pointerup', event => {
@@ -1044,6 +1108,7 @@ class FactoryFloorScene {
         else if (target?.nodeId) this.onSelect?.(target.nodeId);
       }
     });
+    this.canvas.addEventListener('pointerleave', () => this.hidePeek());
     this.canvas.addEventListener('pointercancel', () => {
       this.drag = null;
       this.canvas.classList.remove('is-dragging');

@@ -805,3 +805,30 @@ h3.chat-heading { padding-bottom: 5px; border-bottom: 1px solid var(--line-soft)
   .prow { grid-template-columns: 34px 1fr auto; }
   .prow-job, .prow-shift { display: none; }
 }
+
+/* Ảnh trước/sau mở ngay dưới dòng nhật ký đã gây ra thay đổi. */
+.frames-row > td { padding: 10px 16px 14px; background: var(--surface-2); }
+/* Hai ô BẰNG NHAU, cố định bằng px: mắt so hai tấm bằng cách quét qua lại, mà
+   lệch kích thước thì mọi khác biệt đều trông như khác biệt thật. */
+.shots.frames-around { grid-template-columns: repeat(2, minmax(0, 340px));
+                       justify-content: start; }
+.audit-act { white-space: nowrap; display: flex; gap: 6px; justify-content: flex-end; }
+.audit-act .seeframes { border-color: var(--accent); color: var(--accent-2); }
+
+/* Thẻ ảnh nổi khi rê chuột trên sơ đồ 3D. */
+/* Khung sơ đồ phải là gốc toạ độ: thiếu `position: relative` thì thẻ ảnh nổi
+   bám vào tổ tiên khác và dạt hẳn ra mép trái. */
+#map { position: relative; }
+.map-peek {
+  position: absolute; z-index: 5; width: 220px; pointer-events: none;
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  box-shadow: 0 8px 22px rgba(24, 32, 38, .18); padding: 8px;
+  backdrop-filter: blur(6px);
+}
+.map-peek b { display: block; font-family: var(--f-head); font-size: 13px; }
+.map-peek img {
+  width: 100%; aspect-ratio: 16 / 10; object-fit: cover; display: block;
+  border-radius: 4px; margin: 6px 0 5px; background: var(--surface-2);
+}
+.map-peek .muted { font-size: 10.5px; line-height: 1.35; }

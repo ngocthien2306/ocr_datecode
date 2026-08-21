@@ -376,6 +376,10 @@ const actionTone = action => {
 };
 const activityTime = time => String(time || '').slice(0, 16).replace('T', ' ');
 
+/* Thao tác đổi cách máy chấm sản phẩm. Chỉ những dòng này mới đáng ghép ảnh
+   trước/sau: đăng nhập hay xoá camera thì không đổi gì trên tấm ảnh. */
+const RECIPE_ACTIONS = new Set(['update_recipe', 'load_recipe', 'stop_recipe']);
+
 export function auditHTML(d, opts = {}) {
   const t = store.t;
   // `null` = chưa tải xong, khác hẳn với đã tải mà rỗng. Gộp hai thứ vào một câu
@@ -403,9 +407,14 @@ export function auditHTML(d, opts = {}) {
     <td>${esc(e.username || '—')}</td>
     <td><span class="action-tag ${actionTone(e.action_type)}">${esc(e.action_type || '—')}</span></td>
     <td class="muted" style="text-align:left">${esc(e.description || e.resource_id || '')}</td>
-    <td><button class="ask" data-ask="${esc(t.askAudit(e.machine, e.username || '—',
+    <td class="audit-act">
+      ${RECIPE_ACTIONS.has(e.action_type) ? `<button class="ask seeframes"
+        data-machine="${esc(e.machine)}" data-ts="${esc(e.time || '')}"
+        title="${esc(t.framesAroundHint)}">${t.framesAround}</button>` : ''}
+      <button class="ask" data-ask="${esc(t.askAudit(e.machine, e.username || '—',
         e.action_type || '—', at))}">${t.askMore}</button></td>
-  </tr>`;
+  </tr>
+  <tr class="frames-row" hidden><td colspan="6"></td></tr>`;
   }).join('');
   return `<div class="tbl-wrap"><table>
     <thead><tr><th>${t.activityTime}</th><th>${t.machine}</th><th>${t.user}</th>
