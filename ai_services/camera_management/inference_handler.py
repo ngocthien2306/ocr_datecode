@@ -114,7 +114,12 @@ class InferenceHandler:
         """
         self.camera_matchers: Dict[str, Any] = {}  # Map serial_number -> matcher
         # self.engine_path = f"{home}/Source/ocr_datecode/weights/pipeline_fp16_dynamic_480_640.engine"
-        self.engine_path = f"{home}/Source/ocr_datecode/weights/sp_lg_pipeline_fp16_dynamic_300_300.engine"
+        # 300×300 leaves the laser date-code ~12px tall after resize (cap_crop is
+        # ~744² and glyphs are ~29px in the raw frame), too small for SuperPoint
+        # to key on the text — only the cap rim survives, and the rim looks the
+        # same either way up, so the 180° flip choice gets no signal. 480×640
+        # keeps glyphs at ~19px. Same checkpoint, only the input size differs.
+        self.engine_path = f"{home}/Source/ocr_datecode/weights/sp_lg_pipeline_fp16_dynamic_480_640.engine"
 
         # Initialize matcher factory (for future use)
         self._matcher_factory = MatcherFactory(

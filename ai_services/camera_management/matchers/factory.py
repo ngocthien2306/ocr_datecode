@@ -207,6 +207,68 @@ class MatcherFactory:
             return None
         return apply_cap_crop(template_img, cap_circle, margin_ratio=0.10)
 
+    def _narrow_template_to_text(
+        self, matcher, text_box, cap_crop_bbox, serial_number, template_idx,
+    ):
+        """
+        Shrink an already cap-cropped template down to just the date-code
+        window, shifting its annotations to match.
+
+        The point is what SuperPoint then sees. A full-cap template is mostly
+        rim, and a circle's keypoints match at any rotation, so they outvote the
+        text and leave the recovered rotation loose — the measured symptom was
+        regions tilted ~20° off the text, straddling two of the three lines.
+        Cropping both template and target to the same radius-derived window
+        leaves only text to match on, and the engine's fixed input then upscales
+        the glyphs instead of shrinking them.
+
+        Returns the window as (x1, y1, x2, y2) in cap-crop coords so preprocess
+        can build the target's window the same way, or None if it can't.
+        """
+        from ..preprocessing.obb_rotator import text_window
+
+        img = matcher.template_img
+        if img is None:
+            return None
+        h, w = img.shape[:2]
+        # apply_cap_crop centres a square on the cap with a 10% margin, so in
+        # crop coords the cap sits dead centre and r follows from the side.
+        cap = (w / 2.0, h / 2.0, (min(w, h) / 2.0) / 1.10)
+        win = text_window(cap, text_box, img.shape)
+        if win is None:
+            return None
+        x1, y1, x2, y2 = win
+        narrowed = img[y1:y2, x1:x2]
+        if narrowed.size == 0:
+            return None
+
+        def _shift(bb):
+            if not isinstance(bb, dict) or not bb.get('points'):
+                return bb
+            nb = dict(bb)
+            nb['points'] = [[p[0] - x1, p[1] - y1] for p in bb['points']]
+            return nb
+
+        tc = matcher.template_config
+        tc.template_img = narrowed
+        tc.template_gray = (
+            cv2.cvtColor(narrowed, cv2.COLOR_BGR2GRAY)
+            if narrowed.ndim == 3 else narrowed
+        )
+        tc.template_bbox = _shift(tc.template_bbox)
+        tc.other_bboxes = [_shift(b) for b in (tc.other_bboxes or [])]
+        tc.__post_init__()          # rebuild the cached point arrays
+        matcher.template_img = tc.template_img
+        matcher.template_gray = tc.template_gray
+        matcher.template_bbox = tc.template_bbox
+        matcher.other_bboxes = tc.other_bboxes
+        logger.info(
+            f"[{serial_number}] Template {template_idx}: narrowed to text "
+            f"window ({x2-x1}×{y2-y1}) at ({x1},{y1}) — was {w}×{h}; "
+            f"SuperPoint now matches on text, not the cap rim"
+        )
+        return win
+
     @staticmethod
     def _annotations_outside_crop(template_bbox, other_bboxes, crop_bbox):
         """Trả về danh sách annotation nằm (một phần) NGOÀI vùng cap-crop.
@@ -476,6 +538,38 @@ class MatcherFactory:
             matcher.cap_crop_method = cap_crop_method if cap_crop_bbox else 'none'
             if cap_crop_bbox:
                 matcher.template_cap_bbox = cap_crop_bbox
+
+            # OBB `text_box` on the FINAL (cap-cropped) template, in the same
+            # coordinate space as `matcher.other_bboxes`. The pipeline pairs it
+            # with the target's text_box to place text regions without leaning
+            # on the SuperPoint homography — the cap is nearly rotationally
+            # symmetric, so its rim yields ambiguous correspondences and the
+            # recovered rotation is the weakest part of that estimate. Stays
+            # None when the detector finds nothing, and the pipeline then falls
+            # back to the homography.
+            matcher.template_text_box = None
+            matcher.text_window = None
+            svc = self.obb_rotation_service
+            if svc is not None and getattr(svc, 'available', False):
+                try:
+                    # matcher.template_img — NOT the local `template_img`, which
+                    # can still be the uncropped original on the crop_area path.
+                    # This one is guaranteed to share `other_bboxes`' coords.
+                    tb = svc.detect_text_box(matcher.template_img)
+                    matcher.template_text_box = tb
+                    logger.info(
+                        f"[{serial_number}] Template {template_idx}: template "
+                        f"text_box = {tb}"
+                    )
+                    if tb is not None and cap_crop_bbox:
+                        matcher.text_window = self._narrow_template_to_text(
+                            matcher, tb, cap_crop_bbox, serial_number, template_idx,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"[{serial_number}] Template {template_idx}: "
+                        f"template text_box / narrowing failed: {e}"
+                    )
 
             # Save template crop + product bbox for analysis
             self._save_template_sample(

@@ -9,6 +9,7 @@ If rotation fails     → original frame is used as-is.
 """
 
 import logging
+import math
 import os
 import cv2
 import numpy as np
@@ -129,6 +130,121 @@ def rotate_cap_region_only(image: np.ndarray, cap_box: np.ndarray, angle_deg: fl
     sub = full_result[y1:y2, x1:x2]
     sub[mask > 0] = crop_rotated[mask > 0]
     return full_result
+
+
+def text_window(cap_circle, text_box, img_shape,
+                width_factor: float = 1.35, aspect: float = 640.0 / 480.0):
+    """
+    Axis-aligned crop window around the date-code block: centred on the OBB
+    `text_box`, sized from the CAP RADIUS.
+
+    Cropping to this instead of the whole cap is what makes SuperPoint reliable
+    here — the cap rim is the bulk of a full-cap crop and, being a circle, its
+    keypoints match at any rotation, so they swamp the text and leave the
+    recovered rotation under-determined. Cut the rim away and every keypoint
+    comes from the text itself. The window is also far smaller than the cap, so
+    the engine's fixed input UPSCALES the glyphs instead of shrinking them.
+
+    Size comes from the cap radius, not from `text_box`'s own width/height:
+    measured on the line, the detector's extent for the same physical 3-line
+    block varied 238px on the template vs 364px on the target (1.53x) while
+    height went the other way (0.94x). Radius is the stable reference (318..352
+    across frames), so building both the template and target window from it
+    gives the two crops the same physical extent — and therefore the same scale
+    and the same resize distortion. Fixed `aspect` matches the engine input so
+    that distortion is identical on both sides too.
+
+    Returns (x1, y1, x2, y2) clipped to the image, or None if inputs are unusable.
+    """
+    if cap_circle is None or text_box is None:
+        return None
+    H, W = img_shape[:2]
+    r = float(cap_circle[2])
+    if r < 1.0:
+        return None
+    cx, cy = float(text_box[0]), float(text_box[1])
+    half_w = 0.5 * width_factor * r
+    half_h = half_w / aspect
+    x1, y1 = int(round(cx - half_w)), int(round(cy - half_h))
+    x2, y2 = int(round(cx + half_w)), int(round(cy + half_h))
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(W, x2), min(H, y2)
+    if x2 - x1 < 20 or y2 - y1 < 20:
+        return None
+    return x1, y1, x2, y2
+
+
+def map_points_via_text_box(points, tpl_box, tgt_box):
+    """
+    Map annotation points from template coords to target coords using the two
+    frames' OBB-detected `text_box` as the common reference.
+
+    Both boxes are (cx, cy, w, h, angle_rad) oriented rectangles around the
+    SAME physical thing — the date-code block on the cap. So a point can be
+    expressed in the template box's local frame (origin at its centre, axes
+    along its own orientation, normalised by its side lengths) and read back
+    out in the target box's frame. Fully determined, no keypoints involved.
+
+    Preferred over the SuperPoint homography for cap OCR: the cap is nearly
+    rotationally symmetric, so its rim gives plenty of matchable-but-ambiguous
+    keypoints and the recovered rotation is unreliable. The OBB detector keys
+    on the text block itself, so its orientation is the thing we actually need.
+
+    Returns None when either box is missing or degenerate, so the caller can
+    fall back to the homography.
+    """
+    if tpl_box is None or tgt_box is None or not points:
+        return None
+    tcx, tcy, tw, th, ta = (float(v) for v in tpl_box[:5])
+    gcx, gcy, gw, gh, ga = (float(v) for v in tgt_box[:5])
+    if min(tw, th, gw, gh) < 1.0:
+        return None
+
+    cos_t, sin_t = math.cos(-ta), math.sin(-ta)   # world → template-box frame
+    cos_g, sin_g = math.cos(ga), math.sin(ga)     # target-box frame → world
+    sx, sy = gw / tw, gh / th
+
+    out = []
+    for p in points:
+        dx, dy = float(p[0]) - tcx, float(p[1]) - tcy
+        # into the template box's own axes
+        u = dx * cos_t - dy * sin_t
+        v = dx * sin_t + dy * cos_t
+        # rescale to the target box's proportions, then back out to world
+        u, v = u * sx, v * sy
+        out.append([gcx + u * cos_g - v * sin_g,
+                    gcy + u * sin_g + v * cos_g])
+    return out
+
+
+def mirror_bboxes_through_cap(bboxes: list, cap_circle) -> list:
+    """
+    Map bboxes from one dual-rotation candidate into the other's coordinates.
+
+    `rotate_cap_region_only` rotates the cap disc about the cap centre by
+    `angle` for the no-flip candidate and `angle + 180` for the flipped one,
+    leaving the background untouched. A point on the cap therefore maps
+    between the two candidates by a 180° rotation about that same centre:
+    (x, y) → (2·cx − x, 2·cy − y).
+
+    Used when SuperPoint matches only one candidate: without this the other
+    candidate has no regions to read, so the flip winner ends up decided by
+    SuperPoint confidence alone — which carries no orientation signal on
+    laser-etched caps.
+    """
+    if not bboxes or cap_circle is None:
+        return []
+    cx, cy = float(cap_circle[0]), float(cap_circle[1])
+    mirrored = []
+    for bbox in bboxes:
+        pts = bbox.get("points")
+        if not pts:
+            continue
+        nb = dict(bbox)
+        nb["points"] = [[2.0 * cx - float(p[0]), 2.0 * cy - float(p[1])]
+                        for p in pts]
+        mirrored.append(nb)
+    return mirrored
 
 
 def compute_need_flip(cap_box: np.ndarray, text_box: np.ndarray, angle_deg: float) -> bool:
@@ -280,6 +396,43 @@ class OBBRotationService:
     @property
     def available(self) -> bool:
         return self._model is not None
+
+    def detect_text_box(
+        self,
+        frame: np.ndarray,
+        crop_area: Optional[Dict[str, int]] = None,
+    ) -> Optional[Tuple[float, float, float, float, float]]:
+        """
+        Return the OBB `text_box` as (cx, cy, w, h, angle_rad) in FULL-frame
+        coords, or None if the detector doesn't find one.
+
+        Deliberately a separate pass rather than another return value on
+        rotate_frame/rotate_frame_dual: those are called from six places and
+        widening their tuples is a bigger blast radius than one extra ~2ms
+        inference. Used to anchor text regions without SuperPoint — see
+        `map_points_via_text_box`.
+        """
+        if self._model is None or frame is None or frame.size == 0:
+            return None
+        try:
+            ox, oy, sub = _slice_by_crop_area(frame, crop_area)
+            if sub is None:
+                return None
+            results, _ = self._model.predict(
+                [sub], conf_threshold=self.conf_threshold, return_timing=True
+            )
+            boxes, _scores, class_ids = results[0]
+            if len(boxes) == 0:
+                return None
+            idx = next((i for i, c in enumerate(class_ids)
+                        if self.CLASS_NAMES[int(c)] == 'text_box'), None)
+            if idx is None:
+                return None
+            cx, cy, w, h, ang = (float(v) for v in boxes[idx][:5])
+            return (cx + ox, cy + oy, w, h, ang)
+        except Exception as e:
+            logger.error(f"OBBRotationService.detect_text_box error: {e}")
+            return None
 
     def rotate_frame(
         self,

@@ -53,6 +53,17 @@ class TemplateConfig:
     scale: float = 1.0
     crop_area: Optional[Dict[str, int]] = None
 
+    # Geometric model RANSAC fits between template and target.
+    #   'homography' (8 DOF) — default. Correct for labels on a bottle's curved
+    #       wall seen off-axis, where real perspective distortion exists.
+    #   'similarity' (4 DOF: rotation + uniform scale + translation) — for a
+    #       FLAT face shot square-on, such as a bottle cap under an overhead
+    #       camera after the OBB step has already normalised its angle. There
+    #       the extra 4 DOF of a homography model nothing physical and instead
+    #       absorb noise from the cap rim's near-rotationally-symmetric
+    #       keypoints, warping mapped bboxes off the text they should frame.
+    transform_model: str = 'homography'
+
     # Original annotations for reference
     annotations: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -746,10 +757,20 @@ class SuperPointEngineTRT:
         # worst-case khi matches toàn nhiễu (FAIL frame). RANSAC trên noisy
         # matches iterate gần hết maxIters → tốn 20-30ms. Cap 500 giảm xuống
         # ~5-8ms mà vẫn đủ cho ca thật (good matches converge sau ~50-200 iter).
-        H, mask = cv2.findHomography(
-            m_kpts0, m_kpts1, cv2.RANSAC, ransac_threshold,
-            maxIters=500,
-        )
+        if getattr(template, 'transform_model', 'homography') == 'similarity':
+            # 4 DOF instead of 8. estimateAffinePartial2D returns a 2x3
+            # [[a,-b,tx],[b,a,ty]]; promote it to 3x3 so every downstream
+            # perspectiveTransform keeps working unchanged.
+            M, mask = cv2.estimateAffinePartial2D(
+                m_kpts0, m_kpts1, method=cv2.RANSAC,
+                ransacReprojThreshold=ransac_threshold, maxIters=500,
+            )
+            H = None if M is None else np.vstack([M, [0.0, 0.0, 1.0]])
+        else:
+            H, mask = cv2.findHomography(
+                m_kpts0, m_kpts1, cv2.RANSAC, ransac_threshold,
+                maxIters=500,
+            )
 
         if H is None:
             return {

@@ -133,6 +133,17 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             and _rotation_service is not None
             and getattr(_rotation_service, 'available', False)
         )
+        # `use_obb_rotation` already means: flat cap, shot square-on, angle
+        # normalised by the OBB step — so template→target is a similarity, and a
+        # full homography's extra 4 DOF only let noise from the rim's
+        # rotationally-ambiguous keypoints skew mapped bboxes off the date-code
+        # line. Curved-wall label cameras keep the homography.
+        for _m in matchers:
+            _tc = getattr(_m, 'template_config', None)
+            if _tc is not None:
+                _tc.transform_model = (
+                    'similarity' if use_obb_rotation else 'homography'
+                )
         # Dual rotation: emit BOTH no-flip + flip180 candidates per frame and let
         # SuperPoint match confidence pick the winner downstream. Bypasses the
         # shape-match `_need_flip` heuristic ("BEST" template). Mirrors
@@ -313,6 +324,18 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                             f"bbox=({_fx1},{_fy1},{_fx2},{_fy2}) "
                             f"clipped_to_user={user_crop_area is not None}"
                         )
+                        # Narrow to the date-code window, matching how the
+                        # factory narrowed this camera's template — a whole-cap
+                        # crop is mostly rim, and a circle's keypoints match at
+                        # any rotation, so they drown out the text.
+                        if getattr(matcher, 'text_window', None) is not None:
+                            _tw = self._narrow_target_to_text(
+                                context, f"{serial_number}/t{idx}", frame,
+                                _cached_cap_circle,
+                                (_fx1, _fy1, _fx2, _fy2),
+                            )
+                            if _tw is not None:
+                                frame_for_inference, crop_area = _tw
                     else:
                         logger.warning(
                             f"[{serial_number}] cap_crop FAIL in {_dt_cap:.1f}ms — "
@@ -379,6 +402,17 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                                 'x1': int(_ax1), 'y1': int(_ay1),
                                 'x2': int(_ax2), 'y2': int(_ay2),
                             }
+                            # Same narrowing as the primary — the candidates
+                            # have to be cropped alike or comparing their match
+                            # scores means nothing.
+                            if getattr(matcher, 'text_window', None) is not None:
+                                _atw = self._narrow_target_to_text(
+                                    context, f"{serial_number}/t{idx}/alt",
+                                    alt_frame_full, _cached_cap_circle,
+                                    (_ax1, _ay1, _ax2, _ay2),
+                                )
+                                if _atw is not None:
+                                    alt_frame_for_inference, alt_crop_area = _atw
                             logger.info(
                                 f"[{serial_number}] alt cap_crop (cached cap) in "
                                 f"{_dt_alt:.1f}ms — reused HoughCircles result"
@@ -435,6 +469,10 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             'is_alt_candidate': is_alt_candidate,
             'template_idx_per_entry': template_idx_per_entry,
             'alt_full_frame_by_idx': alt_full_frame_by_idx,
+            # Cap centre per template idx — the pivot both dual candidates were
+            # rotated about. run_inference maps regions between the candidates
+            # through it when SuperPoint matches only one side.
+            'cap_circles_from_rot': cap_circles_from_rot,
             'num_templates': num_templates,
             'is_multi_template': is_multi_template
         }
@@ -469,6 +507,7 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             'template_idx_per_entry', list(range(len(target_imgs)))
         )
         alt_full_frame_by_idx = preprocessed.get('alt_full_frame_by_idx', {})
+        cap_circles_from_rot = preprocessed.get('cap_circles_from_rot', [])
         num_templates = preprocessed.get('num_templates', len(template_matchers))
 
         # Map template_idx → primary batch index. Used by stub fast-path to
@@ -679,6 +718,42 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 # expected date code is the ground truth.
                 c_p = float(r_primary.get('confidence', 0.0) or 0.0)
                 c_a = float(r_alt.get('confidence', 0.0) or 0.0)
+                # The cap rim gives SuperPoint stable keypoints in EITHER flip,
+                # so it routinely matches one candidate — sometimes the wrongly
+                # flipped one — at high inlier ratio while missing the other
+                # outright. The missed side then has no regions, so OCR never
+                # reads it. Mirror the matched side's regions through the
+                # rotation pivot so BOTH candidates get read and the text, not
+                # the inlier ratio, settles the flip.
+                from ..preprocessing.obb_rotator import mirror_bboxes_through_cap
+                _cap_circle = (
+                    cap_circles_from_rot[t_idx]
+                    if t_idx < len(cap_circles_from_rot) else None
+                )
+                _bb_p = r_primary.get('transformed_bboxes') or []
+                _bb_a = r_alt.get('transformed_bboxes') or []
+                if _cap_circle is not None and bool(_bb_p) != bool(_bb_a):
+                    _from, _to = (r_primary, r_alt) if _bb_p else (r_alt, r_primary)
+                    _src = 'primary' if _bb_p else 'alt'
+                    _to['transformed_bboxes'] = mirror_bboxes_through_cap(
+                        _from.get('transformed_bboxes') or [], _cap_circle
+                    )
+                    # The mirrored candidate rests on the SAME homography as its
+                    # source, so it carries the source's match metrics too —
+                    # otherwise the post-OCR promote stamps the winner with
+                    # success=False and fails a frame that read correctly.
+                    for _k in ('success', 'confidence', 'inliers', 'total_matches'):
+                        if _k in _from:
+                            _to[_k] = _from[_k]
+                    # NB: c_p / c_a stay at their pre-mirror values on purpose.
+                    # They feed `_dual_sp_*`, the tiebreak used when both
+                    # candidates read the same number of matching texts —
+                    # copying confidence across would flatten that tie.
+                    logger.info(
+                        f"[{serial_number}] dual_rotation t{t_idx}: mirrored "
+                        f"{_src} regions into the other candidate (SuperPoint "
+                        f"matched only {_src}) — both now readable"
+                    )
                 combined = dict(r_primary)
                 # `success` is logically OR — if EITHER candidate matched,
                 # verification should proceed. Without this, primary.success
@@ -837,6 +912,29 @@ class SingleCameraPipeline(InferencePipelineTemplate):
             def _count_text(v: Dict[str, Any]) -> int:
                 return sum(1 for r in (v.get('text') or {}).get('results', [])
                             if r.get('match', False))
+
+            def _text_closeness(v: Dict[str, Any]) -> float:
+                """Mean similarity of each region's read to its expected text.
+
+                Breaks a tie in exact-match count far better than SuperPoint
+                confidence: the cap rim matches at a healthy inlier ratio in
+                EITHER flip, so sp_conf carries no orientation signal, while
+                the 180°-off candidate lands on a neighbouring line of the date
+                code and reads near-nothing of the expected text.
+                """
+                from ..verification.text_ocr_utils import calculate_text_similarity
+                sims = [
+                    calculate_text_similarity(str(r.get('recognized') or ''),
+                                               str(r.get('expected') or ''))
+                    for r in ((v.get('text') or {}).get('results', []) or [])
+                    if r.get('expected')
+                ]
+                return (sum(sims) / len(sims)) if sims else 0.0
+
+            # Trust closeness only when it actually discriminates — two garbage
+            # reads both score near zero, and choosing between them on noise is
+            # no better than the coin flip this replaces.
+            _CLOSENESS_MARGIN = 0.10
             for t_idx, (p_di, a_di) in dual_text_pairs.items():
                 v_p = batched_verifs[p_di] if p_di < len(batched_verifs) else {}
                 v_a = batched_verifs[a_di] if a_di < len(batched_verifs) else {}
@@ -848,13 +946,23 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 elif n_p > n_a:
                     alt_wins = False
                 else:
-                    # Tie — fall back to SuperPoint conf (the signal we'd
-                    # otherwise lose by always-defaulting-to-primary).
+                    # Tie on exact matches — prefer whichever candidate read
+                    # CLOSER to the expected text; only fall back to SuperPoint
+                    # conf when closeness can't discriminate either.
+                    cl_p = _text_closeness(v_p)
+                    cl_a = _text_closeness(v_a)
                     _r = transformed_results[t_idx]
-                    sp_p = float(_r.get('_dual_sp_primary', 0.0) or 0.0)
-                    sp_a = float(_r.get('_dual_sp_alt', 0.0) or 0.0)
-                    alt_wins = sp_a > sp_p
-                    tie_breaker = f" tiebreak by sp_conf (p={sp_p:.3f}, a={sp_a:.3f})"
+                    if abs(cl_a - cl_p) >= _CLOSENESS_MARGIN:
+                        alt_wins = cl_a > cl_p
+                        tie_breaker = (f" tiebreak by text closeness "
+                                        f"(p={cl_p:.3f}, a={cl_a:.3f})")
+                    else:
+                        sp_p = float(_r.get('_dual_sp_primary', 0.0) or 0.0)
+                        sp_a = float(_r.get('_dual_sp_alt', 0.0) or 0.0)
+                        alt_wins = sp_a > sp_p
+                        tie_breaker = (f" tiebreak by sp_conf (p={sp_p:.3f}, "
+                                        f"a={sp_a:.3f}; closeness tied at "
+                                        f"p={cl_p:.3f}, a={cl_a:.3f})")
 
                 if alt_wins:
                     # Promote alt's frame + bboxes + match metrics into both

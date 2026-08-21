@@ -254,6 +254,53 @@ class InferencePipelineTemplate(ABC):
         if context.emit_callback:
             context.emit_callback("inference_result", result)
 
+    def _narrow_target_to_text(
+        self, context, tag, frame, cap_circle, cap_bbox,
+    ):
+        """
+        Build the target's date-code window the same way the factory built the
+        template's, so SuperPoint compares like with like.
+
+        A whole-cap crop is mostly rim, and a circle's keypoints match at any
+        rotation, so they outvote the text and leave the recovered rotation
+        loose — the measured symptom was text regions tilted ~20° off the text,
+        straddling two of the three date-code lines. Cropping to just the text
+        removes the rim from the match entirely, and the window being smaller
+        than the engine input means the glyphs get upscaled rather than shrunk.
+
+        Returns (cropped_frame, crop_area_dict) — the dict carries the offset
+        that `_transform_func` adds back, so bboxes stay in full-frame coords —
+        or None to leave the caller's cap crop in place.
+        """
+        svc = getattr(context, 'obb_rotation_service', None)
+        if svc is None or not getattr(svc, 'available', False) or cap_circle is None:
+            return None
+        from ..preprocessing.obb_rotator import text_window
+        # Detect on the ROTATED frame: that's the one being matched, and its
+        # text is upright, so an axis-aligned window fits it tightly.
+        tb = svc.detect_text_box(frame)
+        if tb is None:
+            return None
+        win = text_window(cap_circle, tb, frame.shape)
+        if win is None:
+            return None
+        x1, y1, x2, y2 = win
+        # Stay inside the cap crop the caller already clipped to the user's
+        # product region — never widen the search back out.
+        cx1, cy1, cx2, cy2 = cap_bbox
+        x1, y1 = max(x1, int(cx1)), max(y1, int(cy1))
+        x2, y2 = min(x2, int(cx2)), min(y2, int(cy2))
+        if x2 - x1 < 20 or y2 - y1 < 20:
+            return None
+        sub = frame[y1:y2, x1:x2]
+        if sub.size == 0:
+            return None
+        logger.info(
+            f"[{tag}] text window ({x2-x1}×{y2-y1}) at ({x1},{y1}) "
+            f"— SuperPoint matches on text, rim excluded"
+        )
+        return sub, {'x1': int(x1), 'y1': int(y1), 'x2': int(x2), 'y2': int(y2)}
+
     def _build_error_result(
         self,
         context: PipelineContext,

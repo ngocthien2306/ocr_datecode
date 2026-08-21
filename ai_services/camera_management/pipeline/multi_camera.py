@@ -112,6 +112,10 @@ class MultiCameraPipeline(InferencePipelineTemplate):
         # context.results[sn]['frames'] with the winning rotation. Keyed by
         # serial_number → (frame_primary, frame_alt).
         dual_frames_by_serial: Dict[str, Any] = {}
+        # Cap centre used as the rotation pivot for both dual candidates.
+        # run_inference maps regions between the candidates through it when
+        # SuperPoint matches only one side. Keyed by serial_number → (cx,cy,r).
+        dual_cap_circle_by_serial: Dict[str, Any] = {}
 
         # Per-stage timing aggregates (ms)
         _ms_cap_rotation = 0.0
@@ -149,6 +153,14 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                 getattr(camera, 'function_type', '') == 'Check_Color'
                 and not _first_template_has_product
             )
+            # Same condition already tells us this is a flat cap shot square-on
+            # whose angle the OBB step normalises — so template→target is a
+            # similarity, and fitting a full homography just lets noise from the
+            # rim's rotationally-ambiguous keypoints skew the mapped bboxes off
+            # the date-code line. Curved-wall label cameras keep the homography.
+            _tc = getattr(matcher, 'template_config', None)
+            if _tc is not None:
+                _tc.transform_model = 'similarity' if _need_rotation else 'homography'
             # Alt frame (full-frame) for dual_rotation_check; None for normal cams
             frame_alt: Optional[np.ndarray] = None
             # cap_circle from rotation step — reuse cho cap_crop downstream
@@ -267,6 +279,18 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                             f"bbox=({_fx1},{_fy1},{_fx2},{_fy2}) "
                             f"clipped_to_user={user_crop_area is not None}"
                         )
+                        # Narrow further to the date-code window, matching how
+                        # the factory narrowed this camera's template. Only then
+                        # do the two crops cover the same thing; the whole-cap
+                        # crop is mostly rim, whose circular keypoints match at
+                        # any rotation and drown out the text.
+                        if getattr(matcher, 'text_window', None) is not None:
+                            _tw = self._narrow_target_to_text(
+                                context, serial_number, frame,
+                                _cached_cap_circle, (_fx1, _fy1, _fx2, _fy2),
+                            )
+                            if _tw is not None:
+                                frame_for_inference, crop_area = _tw
                     else:
                         logger.warning(
                             f"[{serial_number}] cap_crop FAIL in {_dt_cap:.1f}ms — "
@@ -334,6 +358,17 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                                 'x1': int(_ax1), 'y1': int(_ay1),
                                 'x2': int(_ax2), 'y2': int(_ay2),
                             }
+                            # Same narrowing as the primary — the two candidates
+                            # have to be cropped alike or comparing their match
+                            # scores means nothing.
+                            if getattr(matcher, 'text_window', None) is not None:
+                                _atw = self._narrow_target_to_text(
+                                    context, f"{serial_number}/alt", frame_alt,
+                                    _cached_cap_circle,
+                                    (_ax1, _ay1, _ax2, _ay2),
+                                )
+                                if _atw is not None:
+                                    alt_frame_for_inference, alt_crop_area = _atw
                             logger.info(
                                 f"[{serial_number}] alt cap_crop (cached cap) in "
                                 f"{_dt_alt:.1f}ms — reused HoughCircles result"
@@ -359,6 +394,15 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     crop_areas.append(alt_crop_area)
                     is_alt_candidate.append(True)
                     dual_frames_by_serial[serial_number] = (frame, frame_alt)
+                    # Prefer the rotation-derived circle — it IS the pivot the
+                    # two candidates were rotated about. `_cached_cap_circle`
+                    # only differs when rotation failed and cap_crop fell back
+                    # to its own HoughCircles pass.
+                    dual_cap_circle_by_serial[serial_number] = (
+                        _cap_circle_from_rot
+                        if _cap_circle_from_rot is not None
+                        else _cached_cap_circle
+                    )
 
         if not target_imgs:
             logger.error(f"[Job #{context.job_id}] No valid frames to process")
@@ -380,7 +424,92 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             'crop_areas': crop_areas,
             'is_alt_candidate': is_alt_candidate,
             'dual_frames_by_serial': dual_frames_by_serial,
+            'dual_cap_circle_by_serial': dual_cap_circle_by_serial,
         }
+
+    # Kept off: see the note in _anchor_bboxes_on_text_box. SuperPoint's
+    # homography remains the region source.
+    _USE_TEXT_BOX_ANCHOR = False
+
+    def _anchor_bboxes_on_text_box(
+        self, context, serial_number, matcher, result, frame,
+    ):
+        """
+        Re-place `result['transformed_bboxes']` using the OBB text_box pair
+        instead of the SuperPoint homography, when that's the better anchor.
+
+        Only for cap OCR (`transform_model == 'similarity'`, set in preprocess
+        for exactly those cameras). The cap is nearly rotationally symmetric, so
+        rim keypoints dominate the match and the homography's rotation is its
+        weakest component — measured: bboxes came out tilted ~20° off the text
+        and straddled two of the three date-code lines. The OBB detector keys on
+        the text block itself, so its orientation is the one we need.
+
+        Falls back to the homography result — returned unchanged — whenever the
+        text_box pair is missing or the remapped region fails a sanity check.
+        """
+        # DISABLED. Measured on the line: the OBB text_box is detected reliably
+        # (97%) but its EXTENT is not consistent between template and target —
+        # observed 238.1 wide on the template vs 364.4 on the target for the
+        # same 3-line block, a 1.53x width ratio against 0.94x in height. Using
+        # those as a scale reference stretches the region anisotropically and
+        # put PASS at 0/22. Rework needed before re-enabling: take only CENTRE
+        # and ANGLE from text_box and get scale from the cap radius, which is
+        # the consistent physical reference (measured r = 318..352).
+        if not self._USE_TEXT_BOX_ANCHOR:
+            return result
+
+        bboxes = result.get('transformed_bboxes') or []
+        if not bboxes:
+            return result
+        tc = getattr(matcher, 'template_config', None)
+        if tc is None or getattr(tc, 'transform_model', '') != 'similarity':
+            return result
+        tpl_box = getattr(matcher, 'template_text_box', None)
+        svc = getattr(context, 'obb_rotation_service', None)
+        if tpl_box is None or svc is None or not getattr(svc, 'available', False):
+            return result
+
+        from ..preprocessing.obb_rotator import map_points_via_text_box
+        tgt_box = svc.detect_text_box(frame)
+        if tgt_box is None:
+            return result
+
+        # `transformed_bboxes` is the template bbox (whole cap outline) followed
+        # by one entry per `other_bboxes`. Only the latter are text regions
+        # worth re-anchoring; the template entry frames the cap and stays as the
+        # homography placed it.
+        originals = matcher.other_bboxes or []
+        head = 1 if (bboxes and bboxes[0].get('type') == 'template') else 0
+        if len(originals) != len(bboxes) - head:
+            return result
+
+        H, W = frame.shape[:2]
+        remapped = list(bboxes[:head])
+        for orig, mapped in zip(originals, bboxes[head:]):
+            pts = orig.get('points') if isinstance(orig, dict) else getattr(orig, 'points', None)
+            new_pts = map_points_via_text_box(pts, tpl_box, tgt_box) if pts else None
+            if not new_pts:
+                return result
+            xs = [p[0] for p in new_pts]
+            ys = [p[1] for p in new_pts]
+            # Reject anything that lands (mostly) off-frame — a bad text_box
+            # would otherwise silently replace a usable homography region.
+            if min(xs) < -W * 0.1 or max(xs) > W * 1.1 or \
+               min(ys) < -H * 0.1 or max(ys) > H * 1.1:
+                return result
+            nb = dict(mapped)
+            nb['points'] = new_pts
+            remapped.append(nb)
+
+        result['transformed_bboxes'] = remapped
+        result['_region_anchor'] = 'obb_text_box'
+        logger.info(
+            f"[{serial_number}] text regions anchored on OBB text_box "
+            f"(tpl={tuple(round(v, 1) for v in tpl_box)} → "
+            f"tgt={tuple(round(v, 1) for v in tgt_box)})"
+        )
+        return result
 
     def run_inference(
         self,
@@ -407,6 +536,7 @@ class MultiCameraPipeline(InferencePipelineTemplate):
         crop_areas = preprocessed['crop_areas']
         is_alt_candidate = preprocessed.get('is_alt_candidate', [False] * len(serial_numbers))
         dual_frames_by_serial = preprocessed.get('dual_frames_by_serial', {})
+        dual_cap_circle_by_serial = preprocessed.get('dual_cap_circle_by_serial', {})
 
         # Color-check cameras (function_type=Check_Color + template has 'product')
         # don't need SuperPoint matching — image-proc in color_verifier handles
@@ -505,6 +635,22 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     crop_area = sub_crops[k]
                     if self._transform_func:
                         result = self._transform_func(result, crop_area)
+                    # Re-anchor text regions on the OBB text_box where that is
+                    # the sounder reference (cap OCR); no-op elsewhere, and it
+                    # returns the homography result untouched on any doubt.
+                    _pair = dual_frames_by_serial.get(sn)
+                    _frames_sn = context.results.get(sn, {}).get('frames', [])
+                    if sub_is_alt[k]:
+                        _frame_k = _pair[1] if _pair else None
+                    else:
+                        _frame_k = (
+                            _pair[0] if _pair
+                            else (_frames_sn[0] if _frames_sn else None)
+                        )
+                    if _frame_k is not None:
+                        result = self._anchor_bboxes_on_text_box(
+                            context, sn, sub_matchers[k], result, _frame_k,
+                        )
                     _stash[(sn, sub_is_alt[k])] = result
 
                 # Resolve: for each serial, if both (primary + alt) present,
@@ -532,6 +678,50 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                         # the expected text is the ground truth.
                         c_p = float(r_primary.get('confidence', 0.0) or 0.0)
                         c_a = float(r_alt.get('confidence', 0.0) or 0.0)
+                        # The cap rim gives SuperPoint plenty of stable
+                        # keypoints in EITHER flip, so it routinely matches one
+                        # candidate (sometimes the wrongly-flipped one) at high
+                        # inlier ratio while missing the other entirely. The
+                        # missed side then has no regions, so OCR never reads
+                        # it and the flip is settled by inlier ratio — which
+                        # carries no orientation signal. Mirror the matched
+                        # side's regions through the rotation pivot so BOTH
+                        # candidates get read and the text decides.
+                        # Lazy import — obb_rotator pulls TensorRT at module
+                        # level, same reason single_camera imports it in-function.
+                        from ..preprocessing.obb_rotator import (
+                            mirror_bboxes_through_cap,
+                        )
+                        _cap_circle = dual_cap_circle_by_serial.get(sn)
+                        _bb_p = r_primary.get('transformed_bboxes') or []
+                        _bb_a = r_alt.get('transformed_bboxes') or []
+                        if _cap_circle is not None and bool(_bb_p) != bool(_bb_a):
+                            _from, _to = (
+                                (r_primary, r_alt) if _bb_p else (r_alt, r_primary)
+                            )
+                            _src = 'primary' if _bb_p else 'alt'
+                            _to['transformed_bboxes'] = mirror_bboxes_through_cap(
+                                _from.get('transformed_bboxes') or [], _cap_circle
+                            )
+                            # The mirrored candidate rests on the SAME homography
+                            # as its source, so it carries the source's match
+                            # metrics too. Without this the post-OCR promote step
+                            # would stamp the winner with success=False and fail
+                            # a frame whose text actually read correctly.
+                            for _k in ('success', 'confidence', 'inliers',
+                                        'total_matches'):
+                                if _k in _from:
+                                    _to[_k] = _from[_k]
+                            # NB: c_p / c_a stay at their pre-mirror values on
+                            # purpose. They feed `_dual_sp_*`, which is the
+                            # tiebreak when both candidates read the same number
+                            # of matching texts — copying confidence across would
+                            # flatten that tie and hand it to primary by default.
+                            logger.info(
+                                f"[{sn}] dual_rotation: mirrored {_src} regions "
+                                f"into the other candidate (SuperPoint matched "
+                                f"only {_src}) — both now readable"
+                            )
                         combined = dict(r_primary)
                         # OR success so verify doesn't gate-out alt-only-
                         # successful frames (Bug 14 in the original draft).
@@ -848,6 +1038,29 @@ class MultiCameraPipeline(InferencePipelineTemplate):
         def _count_text(v: Dict[str, Any]) -> int:
             return sum(1 for r in (v.get('text') or {}).get('results', [])
                         if r.get('match', False))
+
+        def _text_closeness(v: Dict[str, Any]) -> float:
+            """Mean similarity of each region's read to its expected text.
+
+            Used only to break a tie in exact-match count, where it beats
+            SuperPoint confidence by a wide margin: the cap rim matches at a
+            healthy inlier ratio in EITHER flip, so sp_conf says nothing about
+            orientation, while the 180°-off candidate lands on a neighbouring
+            line of the date code and reads near-nothing of the expected text.
+            """
+            from ..verification.text_ocr_utils import calculate_text_similarity
+            sims = [
+                calculate_text_similarity(str(r.get('recognized') or ''),
+                                           str(r.get('expected') or ''))
+                for r in ((v.get('text') or {}).get('results', []) or [])
+                if r.get('expected')
+            ]
+            return (sum(sims) / len(sims)) if sims else 0.0
+
+        # Trust closeness only when it actually discriminates. Two garbage reads
+        # both score near zero, and picking between them on noise would be no
+        # better than the sp_conf coin-flip this replaces.
+        _CLOSENESS_MARGIN = 0.10
         for _sn, _alt_key in dual_alt_serial.items():
             _v_p = batch_ocr_results.get(_sn) or {}
             _v_a = batch_ocr_results.get(_alt_key) or {}
@@ -860,10 +1073,19 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             elif _n_p > _n_a:
                 alt_wins = False
             else:
-                sp_p = float(_r.get('_dual_sp_primary', 0.0) or 0.0)
-                sp_a = float(_r.get('_dual_sp_alt', 0.0) or 0.0)
-                alt_wins = sp_a > sp_p
-                tie_breaker = f" tiebreak by sp_conf (p={sp_p:.3f}, a={sp_a:.3f})"
+                cl_p = _text_closeness(_v_p)
+                cl_a = _text_closeness(_v_a)
+                if abs(cl_a - cl_p) >= _CLOSENESS_MARGIN:
+                    alt_wins = cl_a > cl_p
+                    tie_breaker = (f" tiebreak by text closeness "
+                                    f"(p={cl_p:.3f}, a={cl_a:.3f})")
+                else:
+                    sp_p = float(_r.get('_dual_sp_primary', 0.0) or 0.0)
+                    sp_a = float(_r.get('_dual_sp_alt', 0.0) or 0.0)
+                    alt_wins = sp_a > sp_p
+                    tie_breaker = (f" tiebreak by sp_conf (p={sp_p:.3f}, "
+                                    f"a={sp_a:.3f}; closeness tied at "
+                                    f"p={cl_p:.3f}, a={cl_a:.3f})")
 
             if alt_wins:
                 _alt_res   = _r.get('_dual_alt_result') or {}
