@@ -206,19 +206,78 @@ export const seriesColor = name =>
 
 /* ── Vân tay kiểu lỗi ────────────────────────────────────────────────────── */
 
-export function fingerprintHTML(prod) {
+/* Màu cố định theo NGUYÊN NHÂN, không theo thứ tự cột: mỗi máy thiếu một
+   nguyên nhân khác nhau, gán màu theo thứ tự thì cùng một màu nghĩa khác nhau
+   ở hai hàng cạnh nhau. */
+const CAUSE_COLOR = {
+  char_verification:     '#5980a6',
+  no_detection:          '#b3671e',
+  text_verification:     '#2f7d4f',
+  template_verification: '#6b4fa0',
+  product_verification:  '#a3457d',
+  unknown:               '#8a9099',
+};
+const causeColor = c => CAUSE_COLOR[c] || '#8a9099';
+
+/** Mẫu dưới ngưỡng này thì tỉ trọng còn là nhiễu — đừng để nó trông chắc chắn
+ *  như hàng có mẫu gấp bốn lần. */
+const THIN_SAMPLE = 80;
+
+export function fingerprintHTML(prod, view = 'chart') {
   const t = store.t;
   const fp = prod && prod.failure_fingerprint;
   if (!fp || !fp.causes || !fp.causes.length) return '';
   const labels = fp.cause_labels || {};
-  return `<div class="panel" style="margin-top:14px">
-    <div class="panel-head"><h2>${t.fingerprint}</h2>
-      <span class="hint">${t.fpNote}</span></div>
-    <div class="tbl-wrap"><table>
+  const rows = Object.entries(fp.by_machine);
+
+  const legend = `<div class="fp-legend">${fp.causes.map(c =>
+    `<span class="k"><i style="background:${causeColor(c)}"></i>${
+      esc(causeLabel(c, labels[c]))}</span>`).join('')}</div>`;
+
+  /* Thanh xếp chồng 100%. Câu hỏi ở đây là "các line có hỏng GIỐNG NHAU
+     không", tức là so THÀNH PHẦN — và thành phần thì đọc bằng một dải liền,
+     không phải bằng năm ô số rời rạc mà mắt phải tự cộng lại. */
+  const bar = (nm, r) => {
+    const thin = (r.sample_products || 0) < THIN_SAMPLE;
+    const segs = fp.causes.map(c => ({ c, v: r.by_cause[c] }))
+      .filter(x => has(x.v) && x.v > 0);
+    return `<div class="fp-row ${thin ? 'thin' : ''}">
+      <span class="fp-name">${esc(nm)}</span>
+      <span class="fp-bar">${segs.map(x => `<i style="width:${x.v}%;
+        background:${causeColor(x.c)}"
+        title="${esc(causeLabel(x.c, labels[x.c]))} ${num(x.v, 1)}%">${
+          x.v >= 11 ? `${num(x.v, 0)}%` : ''}</i>`).join('')}</span>
+      <span class="fp-n">${fmt(r.sample_products)} ${
+        r.sample_covers_all ? t.fullSample : t.partialSample}${
+        thin ? ` <b class="fp-thin">${t.thinSample}</b>` : ''}</span>
+    </div>`;
+  };
+
+  // Hàng trung bình đội hình: để biết một máy LỆCH so với mặt bằng chứ không
+  // chỉ biết nó gồm những gì. Trung bình lấy theo MẪU, không lấy trung bình
+  // của các tỉ lệ — máy mẫu 56 không được cân ngang máy mẫu 196.
+  const totW = rows.reduce((n, [, r]) => n + (r.sample_products || 0), 0) || 1;
+  const avg = {};
+  for (const c of fp.causes)
+    avg[c] = rows.reduce((n, [, r]) =>
+      n + (has(r.by_cause[c]) ? r.by_cause[c] * (r.sample_products || 0) : 0), 0) / totW;
+
+  const chart = `<div class="fp-chart">${legend}
+    ${rows.map(([nm, r]) => bar(nm, r)).join('')}
+    <div class="fp-row fp-avg">
+      <span class="fp-name">${t.fleetAvg}</span>
+      <span class="fp-bar">${fp.causes.filter(c => avg[c] > 0).map(c =>
+        `<i style="width:${avg[c]}%;background:${causeColor(c)}"
+          title="${esc(causeLabel(c, labels[c]))} ${num(avg[c], 1)}%">${
+          avg[c] >= 11 ? `${num(avg[c], 0)}%` : ''}</i>`).join('')}</span>
+      <span class="fp-n">${fmt(totW)} ${t.weighted}</span>
+    </div></div>`;
+
+  const table = `<div class="tbl-wrap"><table>
       <thead><tr><th>&nbsp;</th>
         ${fp.causes.map(c => `<th>${esc(causeLabel(c, labels[c]))}</th>`).join('')}
         <th>${t.sample}</th></tr></thead><tbody>
-      ${Object.entries(fp.by_machine).map(([nm, r]) => `<tr>
+      ${rows.map(([nm, r]) => `<tr>
         <td class="name">${esc(nm)}</td>
         ${fp.causes.map(c => {
           const v = r.by_cause[c];
@@ -228,8 +287,19 @@ export function fingerprintHTML(prod) {
         }).join('')}
         <td class="muted">${fmt(r.sample_products)} · ${r.sample_covers_all ? t.fullSample : t.partialSample}</td>
       </tr>`).join('')}
-    </tbody></table></div></div>`;
+    </tbody></table></div>`;
+
+  return `<div class="panel" style="margin-top:14px">
+    <div class="panel-head"><h2>${t.fingerprint}</h2>
+      <span class="hint">${t.fpNote}</span>
+      <span class="spacer"></span>
+      <div class="seg">
+        <button id="fp-chart" aria-pressed="${view === 'chart'}">▤</button>
+        <button id="fp-table" aria-pressed="${view === 'table'}">☰</button>
+      </div></div>
+    ${view === 'table' ? table : chart}</div>`;
 }
+
 
 /* ── Lưới ảnh sản phẩm lỗi ───────────────────────────────────────────────── */
 

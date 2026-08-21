@@ -832,3 +832,42 @@ h3.chat-heading { padding-bottom: 5px; border-bottom: 1px solid var(--line-soft)
   border-radius: 4px; margin: 6px 0 5px; background: var(--surface-2);
 }
 .map-peek .muted { font-size: 10.5px; line-height: 1.35; }
+
+/* ── Vân tay kiểu lỗi: thanh xếp chồng 100% ──────────────────────────────── */
+
+.fp-chart { padding: 12px 16px 16px; }
+.fp-legend {
+  display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 12px;
+  font-size: 11.5px; color: var(--dim);
+}
+.fp-legend .k { display: flex; align-items: center; gap: 6px; }
+.fp-legend i { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.fp-row {
+  display: grid; align-items: center; gap: 12px; padding: 5px 0;
+  grid-template-columns: 92px 1fr minmax(160px, auto);
+}
+.fp-name { font-family: var(--f-head); font-weight: 600; font-size: 13px; }
+/* Một dải liền, các đoạn dính nhau: có khe hở là mắt đọc thành các cột rời và
+   mất luôn cảm giác "cộng lại bằng một trăm". */
+.fp-bar {
+  display: flex; height: 22px; border-radius: 4px; overflow: hidden;
+  background: var(--surface-2);
+}
+.fp-bar i {
+  display: grid; place-items: center; font-style: normal; font-size: 10.5px;
+  font-weight: 600; color: #fff; min-width: 0; overflow: hidden;
+  transition: filter .12s;
+}
+.fp-bar i:hover { filter: brightness(1.12); }
+.fp-n { font-size: 11px; color: var(--faint); text-align: right; }
+/* Mẫu mỏng thì tỉ trọng còn là nhiễu — làm nhạt đi để nó đừng trông chắc chắn
+   ngang hàng có mẫu gấp bốn lần. */
+.fp-row.thin .fp-bar { opacity: .55; }
+.fp-thin { color: var(--warn); font-weight: 600; }
+.fp-avg { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 10px; }
+.fp-avg .fp-bar { height: 14px; opacity: .78; }
+.fp-avg .fp-name { color: var(--dim); font-size: 12px; }
+@container (max-width: 640px) {
+  .fp-row { grid-template-columns: 72px 1fr; }
+  .fp-n { grid-column: 2; text-align: left; }
+}

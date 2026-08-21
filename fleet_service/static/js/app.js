@@ -20,7 +20,7 @@ import * as wall from './frame-wall.js';
 const $ = s => document.querySelector(s);
 const state = { status: null, prod: null, staff: null, audit: null,
                 logerr: null, images: null,
-                selected: null, tab: 'overview', statsView: 'chart',
+                selected: null, tab: 'overview', statsView: 'chart', fpView: 'chart',
                 period: 7, staffOpts: { group: 'machine' }, simulated: false,
                 activityView: 'audit', auditOpts: { machine: '', action: '', range: 'today', query: '' },
                 selectedLogProblem: null,
@@ -178,7 +178,11 @@ function paintTabs() {
     $('#fail-title').textContent = t.failures;
     $('#btn-export').textContent = t.export;
     $('#stats-body').innerHTML = V.statsHTML(state.prod, state.statsView, state.status?.machines || []);
-    $('#fingerprint').innerHTML = V.fingerprintHTML(state.prod);
+    $('#fingerprint').innerHTML = V.fingerprintHTML(state.prod, state.fpView);
+    ['chart', 'table'].forEach(k => {
+      const b = $('#fp-' + k);
+      if (b) b.onclick = () => { state.fpView = k; paintTabs(); };
+    });
     $('#fail-body').innerHTML = V.failureGridHTML(state.images);
   }
   if (state.tab === 'staff') {
