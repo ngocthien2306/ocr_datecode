@@ -178,11 +178,11 @@ function paintTabs() {
     $('#fail-title').textContent = t.failures;
     $('#btn-export').textContent = t.export;
     $('#stats-body').innerHTML = V.statsHTML(state.prod, state.statsView, state.status?.machines || []);
-    $('#fingerprint').innerHTML = V.fingerprintHTML(state.prod, state.fpView);
-    ['chart', 'table'].forEach(k => {
-      const b = $('#fp-' + k);
-      if (b) b.onclick = () => { state.fpView = k; paintTabs(); };
-    });
+    /* Panel "Failure fingerprint" tạm ẩn theo yêu cầu — chưa đạt về mặt hình.
+       KHÔNG xoá `V.fingerprintHTML` cũng không xoá dữ liệu: vân tay lỗi vẫn là
+       thứ duy nhất so sánh được giữa các máy chạy sản phẩm khác nhau, và trợ lý
+       vẫn dùng đúng số liệu đó để trả lời cũng như để dựng gợi ý. Muốn bật lại
+       thì thêm <div id="fingerprint"> vào index.html và gỡ chú thích này. */
     $('#fail-body').innerHTML = V.failureGridHTML(state.images);
   }
   if (state.tab === 'staff') {
