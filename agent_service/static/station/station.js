@@ -197,7 +197,7 @@ const store = {
 };
 
 const state = { over: null, fails: null, hw: null, crew: null, cam: null,
-                floor: null, tab: 'prod',
+                floor: null,
                 fetchedAt: 0,
                 at: null, ok: true };
 
@@ -554,20 +554,9 @@ function paintFloor() {
   paintFloorSide();
 }
 
-function paintTabs() {
-  const t = store.t;
-  $('#tab-prod').textContent = t.tabProd;
-  $('#tab-floor').textContent = t.tabFloor;
-  $('#tab-prod').setAttribute('aria-selected', state.tab === 'prod');
-  $('#tab-floor').setAttribute('aria-selected', state.tab === 'floor');
-  $('#pane-prod').hidden = state.tab !== 'prod';
-  $('#pane-floor').hidden = state.tab !== 'floor';
-  if (state.tab === 'floor') paintFloor();
-}
-
 function paintAll() {
   paintHeader(); paintProduction(); paintHourly();
-  paintFails(); paintHardware(); paintCrew(); paintFooter(); paintTabs();
+  paintFails(); paintHardware(); paintCrew(); paintFooter(); paintFloor();
 }
 
 /* ── Nạp dữ liệu ─────────────────────────────────────────────────────────── */
@@ -748,11 +737,41 @@ function bubble(cls, html) {
 /* Markdown tối giản — đủ cho thứ agent trả về, không kéo cả thư viện vào một
    màn hình xưởng. */
 function mini(md) {
-  return esc(md || '').split('\n')
-    .map(l => l.trim() ? `<div>${l}</div>` : '<div style="height:6px"></div>').join('')
+  /* Markdown tối giản: heading, gạch đầu dòng, bảng, đậm, code. Đủ cho thứ agent
+     trả về, không kéo cả thư viện markdown vào một màn hình xưởng.
+
+     Bản đầu chỉ bọc mỗi dòng vào <div>, nên "### ONION POWDER" hiện nguyên ba
+     dấu thăng — agent dùng heading thật để chia mục, và để nguyên dấu thì mục
+     nào cũng trông như nhau. */
+  const lines = esc(md || '').split('\n');
+  let out = '', tbl = null, ul = null;
+  const flushTbl = () => { if (tbl) { out += `<table class="c-tbl">${tbl}</table>`; tbl = null; } };
+  const flushUl = () => { if (ul) { out += `<ul class="c-ul">${ul}</ul>`; ul = null; } };
+
+  for (const raw of lines) {
+    const ln = raw.trim();
+    if (/^\|/.test(ln)) {                        // bảng markdown
+      flushUl();
+      if (/^\|[\s|:-]+\|$/.test(ln)) continue;   // dòng phân cách
+      const cells = ln.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+      const tag = tbl === null ? 'th' : 'td';
+      tbl = (tbl || '') + `<tr>${cells.map(c => `<${tag}>${c}</${tag}>`).join('')}</tr>`;
+      continue;
+    }
+    flushTbl();
+    const h = /^(#{1,4})\s+(.*)$/.exec(ln);
+    if (h) { flushUl(); out += `<h4 class="c-h">${h[2]}</h4>`; continue; }
+    const li = /^[-*•]\s+(.*)$/.exec(ln);
+    if (li) { ul = (ul || '') + `<li>${li[1]}</li>`; continue; }
+    flushUl();
+    out += ln ? `<div>${ln}</div>` : '<div style="height:6px"></div>';
+  }
+  flushTbl(); flushUl();
+  return out
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/`(.+?)`/g, '<code>$1</code>');
 }
+
 
 /* ── Vẽ phần "không phải chữ" của câu trả lời ─────────────────────────────
    Server đã suy sẵn kpis/charts/images/tables từ kết quả tool, nên ở đây CHỈ
@@ -808,21 +827,110 @@ function lightbox(im) {
   document.body.append(lb);
 }
 
-/** Ảnh trong chat: ảnh sản phẩm lỗi, ảnh nhân viên, ảnh lịch sử — cùng một lối
- *  vẽ, vì với người xem chúng là cùng một việc: nhìn cho rõ. */
+/** Vùng ROI vẽ trên ảnh template — toạ độ chuẩn hoá 0..1 nên viewBox là 0 0 1 1. */
+function roiSvg(rois) {
+  const rects = (rois || []).filter(r =>
+    ['x', 'y', 'w', 'h'].every(k => typeof r[k] === 'number'))
+    .map(r => `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}"
+      class="${r.highlight ? 'roi-hl' : 'roi'}"/>`).join('');
+  return rects ? `<svg class="roi-l" viewBox="0 0 1 1" preserveAspectRatio="none">${rects}</svg>` : '';
+}
+
+/** Bảng "mong → đọc được". Hàng có `value` là một giá trị đơn, hàng có
+ *  `expected`/`actual` là một phép so — hai dạng khác nhau nên vẽ khác nhau. */
+function diffTable(rows) {
+  if (!rows?.length) return '';
+  const tr = rows.map(d => d.value !== undefined
+    ? `<tr><td>${esc(d.label)}</td><td>${esc(String(d.value))}</td></tr>`
+    : `<tr><td>${esc(d.label)}</td><td>
+        <span class="dv-exp">${esc(String(d.expected))}</span>
+        <span class="dv-arw">→</span>
+        <span class="dv-act ${d.bad ? 'bad' : ''}">${esc(String(d.actual))}</span></td></tr>`
+  ).join('');
+  return `<table class="pair-diff">${tr}</table>`;
+}
+
+/** Ảnh trong chat.
+ *
+ *  Có `template` thì vẽ CẶP: ảnh lỗi bên trái, template gốc bên phải, kèm bảng
+ *  "mong → đọc". Một tấm ảnh lỗi đứng riêng không nói được lỗi ở đâu — phải có
+ *  vế đối chiếu thì mắt mới so ra được là in mờ, lệch khung hay sai chuỗi.
+ *  Không có template thì giữ lưới ảnh gọn.
+ */
 function drawImages(list) {
-  const g = elFrom('<div class="c-shots"></div>');
+  const hasTpl = list.some(im => im.template);
+  const g = elFrom(`<div class="${hasTpl ? 'c-pairs' : 'c-shots'}"></div>`);
+  const capHtml = im => esc(im.caption || '')
+    .replace(/đọc &#39;([^&]*)&#39;/, "đọc <span class='bad'>'$1'</span>")
+    .replace(/reading &#39;([^&]*)&#39;/, "reading <span class='bad'>'$1'</span>");
+
   for (const im of list) {
-    const cap = esc(im.caption || '')
-      .replace(/đọc &#39;([^&]*)&#39;/, "đọc <span class='bad'>'$1'</span>");
-    const fig = elFrom(`<figure class="c-shot">
-      <img loading="lazy" src="${esc(im.url)}" alt=""
-        onerror="this.style.opacity=.25">
-      ${cap ? `<figcaption>${cap}</figcaption>` : ''}</figure>`);
-    fig.onclick = () => lightbox(im);
+    if (!hasTpl) {
+      const fig = elFrom(`<figure class="c-shot">
+        <img loading="lazy" src="${esc(im.url)}" alt="" onerror="this.style.opacity=.25">
+        ${im.caption ? `<figcaption>${capHtml(im)}</figcaption>` : ''}</figure>`);
+      fig.onclick = () => lightbox(im);
+      g.append(fig);
+      continue;
+    }
+
+    const t = im.template;
+    const fig = elFrom(`<figure class="c-pair">
+      <div class="pair-imgs">
+        <div class="pair-side">
+          <div class="pair-label">${esc(im.label_fail || store.t.failFrame)}</div>
+          <div class="pair-frame" data-side="fail">
+            <img loading="lazy" src="${esc(im.url)}" alt="" onerror="this.style.opacity=.25">
+          </div>
+        </div>
+        ${t ? `<div class="pair-side">
+          <div class="pair-label">${esc(im.label_template || store.t.template)} ·
+            <b>${esc(t.name || '')}</b></div>
+          <div class="pair-frame" data-side="tpl">
+            <img loading="lazy" src="${esc(t.url)}" alt="" onerror="this.style.opacity=.25">
+            ${roiSvg(t.rois)}
+          </div></div>` : ''}
+      </div>
+      <div class="pair-cap">${capHtml(im)}</div>
+      ${diffTable(im.diff)}</figure>`);
+    // Bấm bên nào mở đúng ảnh bên đó — không phải luôn mở ảnh lỗi.
+    fig.querySelector('[data-side="fail"]')?.addEventListener('click',
+      () => lightbox({ url: im.url, caption: im.caption }));
+    fig.querySelector('[data-side="tpl"]')?.addEventListener('click',
+      () => lightbox({ url: t.url,
+        caption: `${store.t.template} ${t.name || ''} · ${t.loaded_at || ''}` }));
     g.append(fig);
   }
   return g;
+}
+
+/** Thẻ người thao tác. Ảnh trỏ vào /api/uploads/... do agent service mount
+ *  thẳng backend/uploads, nên ảnh vẫn hiện khi backend :8000 đang restart. */
+function drawCards(cards) {
+  const wrap = elFrom('<div class="c-cards"></div>');
+  for (const c of cards) {
+    const av = c.avatar
+      ? `<img class="pc-av" loading="lazy" src="${esc(c.avatar)}" alt=""
+           onerror="this.replaceWith(Object.assign(document.createElement('div'),
+             {className:'pc-av ph',textContent:'?'}))">`
+      : `<div class="pc-av ph">${esc((c.title || '?').slice(0, 1).toUpperCase())}</div>`;
+    const rows = (c.rows || []).map(r =>
+      `<div class="pc-row"><span>${esc(r[0])}</span><b>${esc(String(r[1]))}</b></div>`).join('');
+    wrap.append(elFrom(`<div class="pc ${c.inactive ? 'off' : ''}">
+      <div class="pc-hd">${av}
+        <div class="pc-id">
+          <div class="pc-t">${esc(c.title || '')}</div>
+          ${c.role_line ? `<div class="pc-role">${esc(c.role_line)}</div>` : ''}
+          <div class="pc-s">${esc(c.subtitle || '')}</div>
+          ${c.badge ? `<span class="pc-b ${c.badge_role === 'admin' ? 'adm'
+            : c.badge_role === 'supervisor' ? 'sup' : ''}">${esc(c.badge)}</span>` : ''}
+        </div>
+        ${c.stat != null ? `<div class="pc-n"><b>${esc(String(c.stat))}</b>
+          <small>${esc(c.stat_label || '')}</small></div>` : ''}
+      </div>
+      ${rows ? `<div class="pc-bd">${rows}</div>` : ''}</div>`));
+  }
+  return wrap;
 }
 
 function drawTable(tb) {
@@ -834,10 +942,20 @@ function drawTable(tb) {
     <thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`);
 }
 
+/** Thẻ tải file báo cáo. Tên file và cỡ file đến TỪ SERVER — không tự dựng tên,
+ *  vì đã đo được: cho mô hình thấy tên file thì nó bịa ra đường dẫn và người
+ *  dùng bấm vào một link không tồn tại. */
 function drawFiles(list) {
   const g = elFrom('<div class="c-files"></div>');
-  for (const f of list)
-    g.append(elFrom(`<a href="${esc(f.url)}" download>⬇ ${esc(f.name || f.url)}</a>`));
+  for (const f of list) {
+    const meta = [f.format && String(f.format).toUpperCase(),
+                  f.size_kb != null ? `${f.size_kb} KB` : null,
+                  f.rows != null ? `${fmt(f.rows)} ${store.t.products}` : null]
+      .filter(Boolean).join(' · ');
+    g.append(elFrom(`<a class="c-file" href="${esc(f.url)}" download>
+      <b>⬇ ${esc(f.label || f.name || f.url)}</b>
+      ${meta ? `<span>${esc(meta)}</span>` : ''}</a>`));
+  }
   return g;
 }
 
@@ -849,6 +967,7 @@ function drawExtras(after, d) {
   if (d.files?.length) put(drawFiles(d.files));
   if (d.tables?.length) d.tables.slice().reverse().forEach(t => put(drawTable(t)));
   if (d.images?.length) put(drawImages(d.images));
+  if (d.cards?.length) put(drawCards(d.cards));
   if (d.charts?.length) d.charts.slice().reverse().forEach(c => put(drawChart(c)));
   if (d.kpis?.length) put(drawKpis(d.kpis));
   log.scrollTop = log.scrollHeight;
@@ -903,11 +1022,22 @@ async function sendChat() {
     wait.className = 'msg a';
     /* `tool_calls` là danh sách DICT, không phải chuỗi — join thẳng ra
        "[object Object]". Lấy tên tool ra trước. */
-    const tools = (done.tool_calls || [])
-      .map(x => typeof x === 'string' ? x : (x.name || x.tool || ''))
-      .filter(Boolean);
-    wait.innerHTML = mini(done.response || '')
-      + (tools.length ? `<div class="meta">${esc(tools.join(', '))}</div>` : '');
+    /* Tên tool KÈM tham số. Chỉ hiện tên thì "generate_report" ba lần trông như
+       lặp vô nghĩa; kèm tham số mới thấy đó là ba định dạng khác nhau. */
+    const tools = (done.tool_calls || []).map(x => {
+      if (typeof x === 'string') return x;
+      const name = x.name || x.tool || '';
+      const args = x.args || x.arguments;
+      if (!name) return '';
+      return args && Object.keys(args).length
+        ? `${name}(${JSON.stringify(args)})` : `${name}()`;
+    }).filter(Boolean);
+    wait.innerHTML = mini(done.response || '');
+    if (tools.length) {
+      const box = elFrom('<div class="c-tools"></div>');
+      tools.forEach(tt => box.append(elFrom(`<code>${esc(tt)}</code>`)));
+      wait.append(box);
+    }
     drawExtras(wait, done);
     chatHistory.push(raw);
     /* Gợi ý do SERVER dựng từ số liệu được ưu tiên hơn gợi ý dựng ở client:
@@ -996,8 +1126,6 @@ function boot() {
   $('#lang-en').onclick = () => setLang('en');
   $('#btn-handover').onclick = openHandover;
   $('#btn-assistant').onclick = openChat;
-  $('#tab-prod').onclick = () => { state.tab = 'prod'; paintTabs(); };
-  $('#tab-floor').onclick = () => { state.tab = 'floor'; paintTabs(); };
   $('#chat-close').onclick = () => { $('#chat').hidden = true; };
   $('#chat-form').onsubmit = e => { e.preventDefault(); sendChat(); };
   $('#h-close').onclick = () => { $('#handover').hidden = true; };
