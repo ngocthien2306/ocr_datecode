@@ -20,7 +20,7 @@ import unicodedata
 from typing import Any, Dict, List, Optional
 
 from fleet_app.core.config import settings
-from fleet_app.core.edge_client import client
+from fleet_app.core.edge_client import EdgeResult, client
 from fleet_app.core.fanout import coverage, fan_out
 from fleet_app.core.registry import Machine, registry
 
@@ -449,6 +449,12 @@ async def machine_frame(machine: str,
     async def fetch() -> Dict[str, Any]:
         r = await client.frame_pair(m.node_id, m.ip, template=template)
         if not r.ok:
+            # 404 ở đây có đúng MỘT nghĩa: agent trên máy đó là bản cũ, chưa có
+            # endpoint ảnh. Để nguyên "HTTP 404" thì người đọc đi tìm ảnh bị mất
+            # hoặc camera hỏng, trong khi việc cần làm là deploy lại agent.
+            if r.status == 404:
+                r = EdgeResult(False, error="agent bản cũ, chưa có endpoint ảnh "
+                                            "— cần deploy lại agent cho máy này")
             stale = _frame_cache.get(f"pair:{m.node_id}:{template or ''}")
             if stale:
                 return {**stale[1], "stale": True, "error": r.error}
