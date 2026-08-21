@@ -157,11 +157,39 @@ fi
 #   - Otherwise start uvicorn inline. This way the backend always comes up even
 #     if the systemd unit is missing/failed (a non-root `systemctl start` under
 #     systemd would be denied by polkit, which is what left the backend down).
+#
+# ĐỢI systemd bind TRƯỚC khi tự chạy inline. `After=ocr-backend.service` chỉ nói
+# systemd đã *khởi* unit đó, không nói uvicorn đã *bind*. Uvicorn mất vài giây để
+# import xong, nên `lsof :8000` ở đây chạy trong khoảng trống đó, thấy trống, rồi
+# dựng backend THỨ HAI.
+#
+# Hậu quả đo được trên LineTine (2026-08-21): tiến trình inline thắng cuộc bind,
+# unit systemd không bind được nên restart vô hạn. Mỗi vòng nó vẫn chạy lifespan
+# (uvicorn gọi lifespan startup TRƯỚC khi bind), giành lấy jtop, rồi tắt — log ra
+# "jtop initialized successfully" ngay trước "Monitoring loop cancelled", nhìn
+# như lỗi jtop trong khi thật ra là hai backend tranh cổng. Còn tiến trình
+# inline thắng thì lại khởi động quá sớm sau boot, jtop chưa kịp lên, vòng giám
+# sát chết một lần rồi KHÔNG thử lại → `/api/jetson-monitoring/metrics` trả 503
+# suốt, và Fleet Console hiện máy đó không có nhiệt độ/RAM.
+#
+# Ba máy còn lại tình cờ để systemd thắng, nên lỗi này ẩn 5 ngày.
 echo "📦 Starting Backend API (port 8000)..."
+if systemctl cat ocr-backend.service >/dev/null 2>&1 \
+   && [ "$(systemctl is-enabled ocr-backend.service 2>/dev/null)" = "enabled" ]; then
+    echo "   ocr-backend.service enabled — đợi nó bind :8000 (tối đa 45s)"
+    for _i in $(seq 1 45); do
+        lsof -Pi :8000 -sTCP:LISTEN -t >/dev/null 2>&1 && break
+        sleep 1
+    done
+fi
+
 if lsof -Pi :8000 -sTCP:LISTEN -t >/dev/null 2>&1; then
     BACKEND_PID=$(systemctl show -p MainPID ocr-backend 2>/dev/null | cut -d= -f2)
     echo "   Already listening on :8000 (systemd unit or prior run, PID: ${BACKEND_PID:-?})"
 else
+    # Unit không có, không enabled, hoặc 45s vẫn chưa bind → tự chạy, vì thà có
+    # một backend chạy ngoài systemd còn hơn không có backend nào.
+    echo "   ⚠️  systemd không bind được :8000 — chạy inline làm phương án cuối"
     cd "$BACKEND_DIR"
     nohup python3 -m uvicorn app.main:app --port 8000 --host 0.0.0.0 \
         >> "$LOG_DIR/backend.log" 2>&1 &
