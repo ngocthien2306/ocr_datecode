@@ -320,7 +320,14 @@ export function staffHTML(d, opts) {
   /* Một DÒNG, không phải một thẻ. Danh sách này để quét dọc tìm người và tìm
      ai đang trong ca; thẻ ảnh xếp lưới thì mỗi người chiếm chỗ gấp bốn và mắt
      không còn cột nào để bám. */
-  const row = u => `<div class="prow">
+  /* Mỗi dòng vẫn là một NÚT hỏi trợ lý về người đó — đọc thấy tên rồi muốn
+     biết họ vừa làm gì là phản xạ tự nhiên, gõ lại username thì vừa chậm vừa
+     dễ sai. Viết lại staffHTML theo mockup đã làm rơi mất mấy thuộc tính này
+     và cả tính năng biến mất theo. */
+  const row = u => `<div class="prow" role="button" tabindex="0"
+    data-name="${esc(u.full_name || u.username)}"
+    data-username="${esc(u.username)}" data-machine="${esc(u.machine || '')}"
+    title="${esc(t.askStaff(u.full_name || u.username, u.username, u.machine || ''))}">
     <span class="prow-av">${u.avatar_url
       ? `<img loading="lazy" src="/api/fleet/avatar/${esc(u.machine)}?p=${encodeURIComponent(u.avatar_url)}" alt="">`
       : esc(initials(u.full_name || u.username))}</span>

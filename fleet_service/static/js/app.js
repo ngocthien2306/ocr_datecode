@@ -185,7 +185,7 @@ function paintTabs() {
     $('#staff-body').innerHTML = V.staffHTML(state.staff,
       { ...state.staffOpts, machines: state.status?.machines || [] });
     paintStaffFilters();
-    $('#staff-body').querySelectorAll('.person').forEach(el => {
+    $('#staff-body').querySelectorAll('.prow').forEach(el => {
       const open = () => chat.setPerson({ name: el.dataset.name,
         username: el.dataset.username, machine: el.dataset.machine });
       el.onclick = open;
