@@ -754,13 +754,38 @@ function mini(md) {
       flushUl();
       if (/^\|[\s|:-]+\|$/.test(ln)) continue;   // dòng phân cách
       const cells = ln.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
-      const tag = tbl === null ? 'th' : 'td';
-      tbl = (tbl || '') + `<tr>${cells.map(c => `<${tag}>${c}</${tag}>`).join('')}</tr>`;
+      const isHead = tbl === null;
+      const tag = isHead ? 'th' : 'td';
+      // Số căn phải + chữ số đều bề rộng; ô chữ dài chặn 2 dòng, chữ đầy đủ giữ
+      // trong tooltip. Cùng luật với bảng ở Fleet Console.
+      tbl = (tbl || '') + `<tr>${cells.map(c => {
+        const num = /^[-+]?[\d.,\s]*\d([.,]\d+)?\s*%?$/.test(c) || /^[—–-]$/.test(c);
+        const long = !num && c.length > 46;
+        return `<${tag} class="${num ? 'num' : ''} ${long ? 'clamp' : ''}"${
+          long ? ` title="${c}"` : ''}>${c}</${tag}>`;
+      }).join('')}</tr>`;
       continue;
     }
     flushTbl();
     const h = /^(#{1,4})\s+(.*)$/.exec(ln);
     if (h) { flushUl(); out += `<h4 class="c-h">${h[2]}</h4>`; continue; }
+    /* Dòng dạng "✅ **PASS**: 5.557 sản phẩm (98,21%)" đổi thành MỘT HÀNG có
+       nhãn bên trái, số bên phải. Agent hay viết kiểu này; để nguyên thì ba
+       dòng chữ chạy dài không thẳng nhau và mắt phải tự tìm con số giữa câu.
+       Không bỏ chữ nào — chỉ xếp lại. */
+    /* Bỏ dấu gạch đầu dòng TRƯỚC khi thử: agent hay viết "- ✅ **PASS**: 5.672".
+       Bản trước thử hàng-số trước rồi mới thử danh sách, nhưng regex không vượt
+       được dấu gạch nên mọi dòng như thế rơi vào danh sách và giữ nguyên dáng
+       chữ chạy dài. */
+    const bare = ln.replace(/^[-*•]\s+/, '');
+    // Bỏ emoji đầu nhãn: nó không thêm thông tin (nhãn đã ghi PASS/FAIL) mà lại
+    // làm cột nhãn lệch nhau vài pixel mỗi dòng.
+    const stat = /^(?:[^\w(]+\s*)*\*\*(.+?)\*\*\s*[::]\s*(.+)$/.exec(bare);
+    if (stat) {
+      flushUl();
+      out += `<div class="c-stat"><span>${stat[1]}</span><b>${stat[2]}</b></div>`;
+      continue;
+    }
     const li = /^[-*•]\s+(.*)$/.exec(ln);
     if (li) { ul = (ul || '') + `<li>${li[1]}</li>`; continue; }
     flushUl();

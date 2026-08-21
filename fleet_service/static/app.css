@@ -885,3 +885,21 @@ h3.chat-heading { padding-bottom: 5px; border-bottom: 1px solid var(--line-soft)
   color: var(--accent-2); background: var(--surface);
 }
 .act-link:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ── Bảng trong câu trả lời của trợ lý ───────────────────────────────────── */
+
+/* Số căn PHẢI và dùng chữ số đều bề rộng: cột số chỉ so được khi hàng đơn vị
+   thẳng nhau. Căn trái thì 79.917 và 5.740 lệch nhau và phải đọc từng chữ số. */
+.chat-table td.num, .chat-table th.num {
+  text-align: right; font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Tiêu đề không gãy dòng khi còn chỗ — "TOTAL PRODUCTS" tách hai dòng làm hàng
+   tiêu đề cao gấp đôi mọi hàng dữ liệu. */
+.chat-table th { white-space: nowrap; vertical-align: bottom; }
+.chat-table td { vertical-align: top; }
+.chat-table td.clamp {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; max-width: 260px;
+}
+.chat-table tbody tr:nth-child(even) { background: var(--surface-2); }

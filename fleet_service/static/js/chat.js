@@ -96,15 +96,31 @@ function mini(md) {
   const tableCell = value => /^(critical|error|warning|info)$/i.test(value.trim())
     ? `<span class="chat-level ${value.trim().toLowerCase()}">${inline(value)}</span>`
     : inline(value);
+  /* Ô SỐ phải nhận ra ở lúc render, CSS không biết ô nào là số. Số căn phải và
+     dùng chữ số đều bề rộng thì mắt so được theo cột dọc; căn trái thì "79.917"
+     và "5.740" lệch hàng đơn vị và phải đọc từng chữ số một. */
+  const isNum = v => /^[-+]?[\d.,\s]*\d([.,]\d+)?\s*%?$/.test(String(v).trim())
+    || /^[—–-]$/.test(String(v).trim());
+  /* Ô chữ DÀI bị chặn 2 dòng. Một máy chạy 10 recipe làm hàng cao 300px và đẩy
+     mọi hàng khác ra khỏi màn hình; chữ đầy đủ vẫn còn trong tooltip. */
+  const LONG = 46;
   const lines = String(md || '').replace(/\r/g, '').split('\n');
   const out = [];
   let table = null, list = null;
   const flushTable = () => {
     if (!table?.length) { table = null; return; }
     const [head, ...body] = table;
-    out.push(`<div class="chat-table-wrap"><table class="chat-table"><thead><tr>${head.map(cell =>
-      `<th>${tableCell(cell)}</th>`).join('')}</tr></thead><tbody>${body.map(row =>
-      `<tr>${row.map(cell => `<td>${tableCell(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`);
+    // Kiểu cột suy từ THÂN bảng, không từ tiêu đề: "PASS RATE" là chữ, còn
+    // "98.43%" mới là số.
+    const numeric = (head || []).map((_, i) =>
+      body.length && body.every(r => r[i] == null || isNum(r[i])));
+    out.push(`<div class="chat-table-wrap"><table class="chat-table"><thead><tr>${head.map((cell, i) =>
+      `<th class="${numeric[i] ? 'num' : ''}">${tableCell(cell)}</th>`).join('')}</tr></thead><tbody>${body.map(row =>
+      `<tr>${row.map((cell, i) => {
+        const long = !numeric[i] && String(cell).length > LONG;
+        return `<td class="${numeric[i] ? 'num' : ''} ${long ? 'clamp' : ''}"${
+          long ? ` title="${esc(cell)}"` : ''}>${tableCell(cell)}</td>`;
+      }).join('')}</tr>`).join('')}</tbody></table></div>`);
     table = null;
   };
   const flushList = () => {
