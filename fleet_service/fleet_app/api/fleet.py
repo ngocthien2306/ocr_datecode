@@ -97,6 +97,18 @@ async def download_report(name: str):
     path = builder.OUT_DIR / safe
     if not path.is_file():
         raise HTTPException(404, f"Không có báo cáo {safe!r}")
+
+    # HTML và PDF mở NGAY trong trình duyệt; Excel/CSV thì tải về.
+    #
+    # `filename=` của FileResponse đặt luôn `Content-Disposition: attachment`,
+    # nên bấm vào báo cáo HTML là nó rơi vào thư mục Tải xuống thay vì mở ra —
+    # đúng thứ mà bản HTML tự chứa tồn tại để làm. Bản PDF cũng vậy: xem trước
+    # rồi mới quyết định có lưu hay không là cách người ta dùng một báo cáo.
+    inline = {".html": "text/html", ".pdf": "application/pdf"}
+    if path.suffix in inline:
+        return FileResponse(
+            str(path), media_type=inline[path.suffix],
+            headers={"Content-Disposition": f'inline; filename="{safe}"'})
     return FileResponse(str(path), filename=safe)
 
 

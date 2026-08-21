@@ -293,16 +293,24 @@ FLEET_TOOLS: List[StructuredTool] = [
 # ------------------------------------------------------------------ báo cáo ---
 
 class ReportArgs(BaseModel):
+    # Mỗi mô tả phải nói CẢ HAI nhánh. Bản trước chỉ nói nhánh "để trống", nên
+    # mô hình gọi rỗng kể cả khi user đã nói đủ ba thứ trong đúng câu đó — đo
+    # được thật: "Xuất báo cáo pdf cho tất cả máy, kỳ 7 ngày qua" vẫn ra ba
+    # tham số None và tool hỏi lại. Ba lượt hỏi, không ra file.
     machines: Optional[List[str]] = Field(
         default=None,
         description="Danh sách tên máy đưa vào báo cáo, ví dụ ['M1','M2']. "
-                    "ĐỂ TRỐNG nếu user chưa nói rõ chọn máy nào.")
+                    "TRUYỀN khi user đã nêu, kể cả ở lượt trước; “tất cả máy” "
+                    "→ ['Tất cả']. Để trống CHỈ khi user chưa nêu máy nào.")
     period: Optional[str] = Field(
         default=None,
-        description="Kỳ báo cáo. ĐỂ TRỐNG nếu user chưa chọn.")
+        description="Kỳ báo cáo, ví dụ '7 ngày qua', 'hôm nay', '30 ngày qua'. "
+                    "TRUYỀN khi user đã nêu, kể cả ở lượt trước. Để trống CHỈ "
+                    "khi user chưa nêu kỳ.")
     format: Optional[str] = Field(
         default=None,
-        description="Định dạng file. ĐỂ TRỐNG nếu user chưa chọn.")
+        description="Định dạng file: html/pdf/excel/csv. TRUYỀN khi user đã nêu, "
+                    "kể cả ở lượt trước. Để trống CHỈ khi user chưa nêu.")
 
 
 async def generate_fleet_report(machines: Optional[List[str]] = None,
@@ -341,12 +349,29 @@ async def generate_fleet_report(machines: Optional[List[str]] = None,
             "options": ["html", "pdf", "excel", "csv"],
         }
     if missing:
+        # Nói rõ hai việc, không chỉ một.
+        #
+        # Bản trước chỉ nói "hãy hỏi lại và ĐỪNG tự chọn thay họ", nên mô hình
+        # hỏi lại đúng — rồi lượt sau người dùng đáp "Tất cả", nó lại gọi tool
+        # với ba tham số rỗng và hỏi lại lần nữa. Vòng lặp đo được thật: hai
+        # lượt, cùng một câu hỏi, không ra file.
+        #
+        # Thiếu là câu thứ hai: khi người dùng ĐÃ đáp, phải gọi lại tool với
+        # ĐẦY ĐỦ ba tham số, gom cả những giá trị họ nêu ở các lượt trước.
+        have = {k: v for k, v in (("machines", machines), ("period", period),
+                                  ("format", format)) if v}
         return {
             "ok": False,
             "ask_user": missing,
-            "message": ("Chưa đủ thông tin để xuất báo cáo. Hãy HỎI LẠI người dùng "
-                        "đúng những mục còn thiếu, liệt kê các lựa chọn, và ĐỪNG tự "
-                        "chọn thay họ."),
+            "đã_có": have,
+            "message": (
+                "Chưa đủ thông tin để xuất báo cáo. Hỏi người dùng đúng những mục "
+                "còn thiếu và liệt kê các lựa chọn; ĐỪNG tự chọn thay họ. "
+                "NHƯNG khi họ đã trả lời — kể cả trả lời ngắn như “Tất cả” hay "
+                "“pdf” — hãy gọi lại tool NGAY với ĐẦY ĐỦ cả ba tham số "
+                "(machines, period, format), gom lại những giá trị họ đã nêu ở "
+                "các lượt trước (xem `đã_có`). Hỏi lại một mục mà họ vừa trả lời "
+                "là lỗi."),
         }
 
     # --- đã đủ tham số ---
@@ -412,9 +437,12 @@ async def generate_fleet_report(machines: Optional[List[str]] = None,
 
 FLEET_TOOLS.append(_tool(
     generate_fleet_report, "generate_fleet_report",
-    "Xuất báo cáo SO SÁNH nhiều máy ra file (html/pdf/excel/csv). Nếu user chưa nói "
-    "rõ chọn máy nào, kỳ nào, định dạng nào thì GỌI TOOL VỚI THAM SỐ TRỐNG — tool sẽ "
-    "trả về danh sách lựa chọn để bạn hỏi lại. TUYỆT ĐỐI không tự chọn thay user.",
+    "Xuất báo cáo SO SÁNH nhiều máy ra file (html/pdf/excel/csv). "
+    "TRUYỀN đúng những gì user ĐÃ nói — máy nào, kỳ nào, định dạng nào — kể cả khi "
+    "họ nói ở lượt trước; “tất cả máy” là machines=['Tất cả']. "
+    "Chỉ để TRỐNG những tham số user CHƯA nói: tool sẽ trả về danh sách lựa chọn "
+    "để bạn hỏi lại đúng mục đó. Không tự chọn thay user, nhưng cũng không hỏi lại "
+    "thứ họ vừa trả lời.",
     ReportArgs))
 
 

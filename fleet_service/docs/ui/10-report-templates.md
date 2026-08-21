@@ -44,12 +44,36 @@ chuỗi thời gian, freeze panes hàng đầu.
 Dữ liệu có sẵn (`data.py`): tổng pass/fail/rate · theo **recipe** · theo
 **camera** · chuỗi thời gian theo **giờ/ngày/tuần**.
 
-### Báo cáo TOÀN NHÀ MÁY (`fleet_service/fleet_app/reports/builder.py`)
+### Báo cáo TOÀN NHÀ MÁY (`fleet_service/fleet_app/reports/`, 3 module)
 
-Mới, đơn giản hơn: KPI 4 ô → biểu đồ sản lượng/ngày → bảng máy (+ hàng tổng) →
-vân tay kiểu lỗi (cột chồng ngang + bảng, ghi cỡ mẫu từng hàng) → footer. Có
-banner cảnh báo khi thiếu máy. **Chưa có theme** — đây là chỗ mẫu mới cần kéo nó
-về cùng ngôn ngữ với báo cáo một máy.
+**Đã dựng lại theo Prompt 2 ở mục B** (2026-08-21). Ba module tách việc:
+`aggregate.py` tính (stdlib thuần, gọi trực tiếp kiểm được từng con số),
+`charts.py` vẽ PNG, `builder.py` dựng trang.
+
+| Tờ | Nội dung |
+|---|---|
+| 1 | Header navy + chỗ logo · banner phạm vi dữ liệu (xanh đủ / cam thiếu) · 4 KPI (ô tỉ lệ đổi màu theo ngưỡng) · nhịp sản xuất theo ngày (cột chồng theo máy) · bảng máy 7 cột + hàng TỔNG + chú thích không xếp hạng |
+| 2 | Vân tay kiểu lỗi (cột chồng ngang 100% + bảng nhiệt có trung vị và ô lệch mạnh) · khung "đọc thế nào" · phát hiện chính dựng bằng code · **phụ lục theo máy chia theo TUẦN ISO** |
+
+Phụ lục: mỗi máy một thẻ — ba số, biểu đồ cột chồng đạt/không đạt + đường tỉ lệ,
+bảng theo tuần (sản lượng · đạt · không đạt · ngày có chạy · mỗi ngày có chạy ·
+tỉ lệ · delta điểm so tuần trước), recipe trong kỳ, nguyên nhân lớn nhất, ngày
+thấp nhất. Máy không có số vẫn có thẻ, nền xám, kèm lý do.
+
+Excel 3 sheet (Sản lượng · Theo tuần · Vân tay), CSV một file hai khối.
+
+Quy tắc mới phải giữ:
+
+| Quy tắc | Lỗi gốc |
+|---|---|
+| Màu máy gán qua `charts.configure()`, dò khi trùng | `M2` và `PC-Auto-1` băm về cùng ô → hai máy cùng màu xanh lá trong một báo cáo so sánh |
+| Dấu nghìn `.`, thập phân `,` — một hàm duy nhất dùng cho cả bảng lẫn câu văn | U+202F làm dấu nghìn: mất hẳn ở cỡ 17pt in đậm ("126587"); và bảng in "63,88%" còn phát hiện chính in "63.88%" |
+| Trung vị cột chỉ tính khi ≥3 máy có số | cột một máy cho "trung vị" đúng bằng chính nó |
+| Hai cột "mỗi ngày": cả kỳ và ngày có chạy | máy chạy 2/7 ngày trông như máy yếu |
+| Chú giải biểu đồ đặt TRÊN vùng vẽ | chú giải dưới cắt ngang nhãn trục x |
+| Chú giải kiểu cột phải trung tính màu | ô chú giải màu Auto2 đọc thành "vàng nghĩa là cả kỳ" |
+| Không máy nào đọc được → banner đỏ | `complete=True` với 0 máy in ra "Đủ cả 0/0 máy" |
+| Thẻ máy ≤ ~120mm để hai thẻ vừa một trang | thẻ 145mm → mỗi trang một thẻ, thừa 150mm trắng |
 
 ### Quy tắc nội dung đã trả giá mới có — mẫu mới KHÔNG được làm mất
 

@@ -164,6 +164,11 @@ async def fleet_production(days: int = 7, causes: bool = True,
             totals["fail"] += prod.get("fail") or 0
         rows.append({
             "node_id": m.node_id, "machine": m.name, "line": m.line,
+            # Model thiết bị là thuộc tính tĩnh của máy, không phải số liệu chạy —
+            # phụ lục theo máy trong báo cáo cần nó để nói "máy này là AGX Orin
+            # 16GB", tức để người đọc biết một con số chậm là do phần cứng hay
+            # do mặt hàng.
+            "model": m.model,
             "state": m.state(), "production": prod,
             "by_shift": d.get("by_shift"),
             "failure_modes": d.get("failure_modes"),
