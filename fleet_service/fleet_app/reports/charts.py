@@ -15,6 +15,10 @@ import base64
 import io
 from typing import Any, Dict, List, Optional
 
+# Chữ trên biểu đồ lấy từ CÙNG bảng với chữ trên trang — nhãn trục và nhãn cột
+# nằm cạnh nhau trên giấy, lệch ngôn ngữ là đọc ra ngay.
+from fleet_app.reports.aggregate import T, cause_label
+
 # Bảng màu cố định theo TÊN MÁY, không theo thứ tự trong danh sách. Gán theo thứ
 # tự thì bỏ một máy ra khỏi báo cáo là mọi máy còn lại đổi màu, và hai bản báo
 # cáo cạnh nhau không đọc chéo được nữa.
@@ -45,6 +49,14 @@ CAUSE_SHORT = {
     "template_verification": "Lệch template",
     "product_verification":  "Sai sản phẩm",
 }
+
+
+def cause_short(cause: str, fallback: str = "") -> str:
+    """Nhãn ngắn theo ngôn ngữ đang chọn."""
+    from fleet_app.reports import aggregate as _agg
+    if _agg.LANG == "en":
+        return _agg.CAUSE_SHORT_EN.get(cause) or fallback or cause
+    return CAUSE_SHORT.get(cause) or fallback or cause
 
 _ASSIGNED: dict = {}
 
@@ -133,14 +145,14 @@ def output_per_day(views: List[Dict[str, Any]]) -> Optional[str]:
     x = range(len(names))
     fig, ax = plt.subplots(figsize=(7.2, 2.35))
     ax.bar([i - .19 for i in x], a, width=.36,
-           color=[color_for(n) for n in names], label="chia cho cả kỳ")
+           color=[color_for(n) for n in names], label=T("c_period"))
     ax.bar([i + .19 for i in x], b, width=.36,
            color=[color_for(n) for n in names], alpha=.42,
            edgecolor=[color_for(n) for n in names], lw=1.1,
-           hatch="///", label="chia cho ngày có chạy")
+           hatch="///", label=T("c_active"))
     ax.set_xticks(list(x))
     ax.set_xticklabels(names)
-    ax.set_ylabel("sản phẩm / ngày")
+    ax.set_ylabel(T("c_perday"))
     for i, v in enumerate(b):
         if v:
             ax.text(i + .19, v, f"{v:,.0f}", ha="center", va="bottom", fontsize=7.5)
@@ -150,9 +162,9 @@ def output_per_day(views: List[Dict[str, Any]]) -> Optional[str]:
     # KIỂU cột: đặc hay gạch chéo.
     from matplotlib.patches import Patch
     ax.legend(handles=[
-        Patch(facecolor="#8a94a6", label="chia cho cả kỳ"),
+        Patch(facecolor="#8a94a6", label=T("c_period")),
         Patch(facecolor="#8a94a6", alpha=.42, edgecolor="#8a94a6", hatch="///",
-              label="chia cho ngày có chạy"),
+              label=T("c_active")),
     ], fontsize=7.5, frameon=False, ncol=2, loc="upper center",
         bbox_to_anchor=(.5, 1.2))
     _clean(ax)
@@ -179,7 +191,7 @@ def fleet_daily(views: List[Dict[str, Any]]) -> Optional[str]:
         ax.bar(keys, vals, bottom=bottom, width=.62,
                color=color_for(v["machine"]), label=v["machine"])
         bottom = [b + s for b, s in zip(bottom, vals)]
-    ax.set_ylabel("sản phẩm")
+    ax.set_ylabel(T("c_products"))
     ax.set_xticks(range(len(keys)))
     ax.set_xticklabels([k[8:10] + "/" + k[5:7] for k in keys], fontsize=8)
     ax.legend(fontsize=7.5, frameon=False, ncol=min(len(live), 5),
@@ -210,7 +222,7 @@ def fingerprint(fp: Dict[str, Any]) -> Optional[str]:
             cell = next((x for x in r["cells"] if x["cause"] == c), None)
             vals.append((cell or {}).get("value") or 0)
         ax.barh(names, vals, left=left, height=.6,
-                label=labels.get(c, c), color=cause_color(c, i))
+                label=cause_label(c, labels.get(c, c)), color=cause_color(c, i))
         for j, (l, v) in enumerate(zip(left, vals)):
             # Chỉ ghi số vào lát đủ rộng để chứa nó. Ghi hết thì các lát mỏng
             # đè chữ lên nhau và không đọc được lát nào.
@@ -219,7 +231,7 @@ def fingerprint(fp: Dict[str, Any]) -> Optional[str]:
                         fontsize=7.5, color="white", fontweight="bold")
         left = [l + v for l, v in zip(left, vals)]
     ax.set_xlim(0, 100)
-    ax.set_xlabel("tỉ trọng giữa các nguyên nhân, trên mẫu fail (%)")
+    ax.set_xlabel(T("c_share"))
     ax.invert_yaxis()
     ax.spines[["top", "right"]].set_visible(False)
     ax.grid(axis="x", color=GRID, lw=.8)
@@ -228,7 +240,7 @@ def fingerprint(fp: Dict[str, Any]) -> Optional[str]:
     # một hàng trống không có chữ đọc thành "máy này không lỗi bao giờ".
     for j, r in enumerate(rows):
         if not any((c.get("value") or 0) for c in r["cells"]):
-            ax.text(1.5, j, "không có mẫu trong kỳ", va="center", fontsize=7.5,
+            ax.text(1.5, j, T("c_nosample"), va="center", fontsize=7.5,
                     color="#98a1b3", style="italic")
     # Chú giải đặt TRÊN vùng vẽ. Đặt dưới thì nó phải chen với nhãn trục x và
     # dòng "tỉ trọng giữa các nguyên nhân (%)" — đã đo được lần chồng chữ thật:
@@ -270,15 +282,15 @@ def machine_trend(view: Dict[str, Any]) -> Optional[str]:
     # 2,2in mỗi thẻ cao 145mm, nên mỗi trang chỉ chứa một thẻ và phụ lục 5 máy
     # ngốn 5 trang — người đọc phải lật qua lật lại để so hai máy.
     fig, ax = plt.subplots(figsize=(7.0, 1.5))
-    ax.bar(xs, ps, width=.55, color=PASS, label="đạt")
-    ax.bar(xs, fs, width=.55, bottom=ps, color=FAIL, label="không đạt")
-    ax.set_ylabel("sản phẩm")
+    ax.bar(xs, ps, width=.55, color=PASS, label=T("c_pass"))
+    ax.bar(xs, fs, width=.55, bottom=ps, color=FAIL, label=T("c_fail"))
+    ax.set_ylabel(T("c_products"))
     _clean(ax)
 
     ax2 = ax.twinx()
     ax2.plot(xs, rates, color=LINE, lw=1.6, marker="o", ms=3.6,
-             label="tỉ lệ đạt")
-    ax2.set_ylabel("tỉ lệ đạt (%)")
+             label=T("c_rate"))
+    ax2.set_ylabel(T("c_rate_ax"))
     ax2.spines[["top"]].set_visible(False)
     # Trục phải KHÔNG cố định 0–100: dao động 96–99 mà kéo cả thang thì đường
     # tỉ lệ thành một vạch thẳng và không thấy gì. Nhưng cũng không để matplotlib

@@ -49,17 +49,23 @@ _collected: ContextVar[Optional[List[Dict[str, Any]]]] = ContextVar("_collected"
 # chẳng dính gì tới thứ vừa hiện trên màn hình.
 _results: ContextVar[Optional[Dict[str, Any]]] = ContextVar("_results", default=None)
 
+# Ngôn ngữ của lượt hỏi. File xuất ra (báo cáo) phải theo đúng ngôn ngữ người
+# dùng đang hỏi — hỏi tiếng Anh mà nhận về một PDF tiếng Việt là một sản phẩm
+# không dùng được, không phải một chi tiết nhỏ.
+_lang: ContextVar[str] = ContextVar("_lang", default="vi")
+
 # Văn xuôi của edge bị cắt trước khi vào mô hình. Hỏi 5 máy mà mỗi máy trả về một
 # bài dài thì lượt tổng hợp phình context, và phần thừa không thêm thông tin —
 # con số thật đã đi đường attachment rồi.
 _MAX_EDGE_PROSE = 800
 
 
-def start_collecting() -> tuple:
+def start_collecting(lang: str = "vi") -> tuple:
     box: List[Dict[str, Any]] = []
     res: Dict[str, Any] = {}
     _collected.set(box)
     _results.set(res)
+    _lang.set(lang or "vi")
     return box, res
 
 
@@ -406,8 +412,10 @@ async def generate_fleet_report(machines: Optional[List[str]] = None,
         return {"ok": False, "error": f"Kỳ '{period}' không hiểu được",
                 "options": [c["label"] for c in queries.PERIOD_CHOICES]}
 
-    data = await queries.report_data(chosen, p["days"], p["label"])
-    path = reports_builder.render(data, fmt)
+    lang = _lang.get()
+    data = await queries.report_data(chosen, p["days"], p["label"],
+                                     p.get("label_en"))
+    path = reports_builder.render(data, fmt, lang=lang)
     _remember("generate_fleet_report",
               {"file": path.name, "machines": chosen, "format": fmt})
     return {

@@ -227,12 +227,14 @@ async def fleet_production(days: int = 7, causes: bool = True,
 
 # --- báo cáo so sánh ---------------------------------------------------------
 
+# `label_en` để báo cáo bản tiếng Anh không phải in một nhãn kỳ tiếng Việt ngay
+# dưới tiêu đề tiếng Anh — đúng kiểu lệch nửa câu mà người đọc nhìn ra ngay.
 PERIOD_CHOICES = [
-    {"key": "today",      "label": "Hôm nay",          "days": 1,  "granularity": "day"},
-    {"key": "yesterday",  "label": "Hôm qua",          "days": 2,  "granularity": "day"},
-    {"key": "this_week",  "label": "7 ngày qua",       "days": 7,  "granularity": "day"},
-    {"key": "last_30d",   "label": "30 ngày qua",      "days": 30, "granularity": "week"},
-    {"key": "last_90d",   "label": "90 ngày qua",      "days": 90, "granularity": "week"},
+    {"key": "today",      "label": "Hôm nay",     "label_en": "Today",         "days": 1,  "granularity": "day"},
+    {"key": "yesterday",  "label": "Hôm qua",     "label_en": "Yesterday",     "days": 2,  "granularity": "day"},
+    {"key": "this_week",  "label": "7 ngày qua",  "label_en": "Last 7 days",   "days": 7,  "granularity": "day"},
+    {"key": "last_30d",   "label": "30 ngày qua", "label_en": "Last 30 days",  "days": 30, "granularity": "week"},
+    {"key": "last_90d",   "label": "90 ngày qua", "label_en": "Last 90 days",  "days": 90, "granularity": "week"},
 ]
 PERIOD_BY_KEY = {p["key"]: p for p in PERIOD_CHOICES}
 
@@ -281,7 +283,8 @@ def resolve_period(value: str) -> Optional[Dict[str, Any]]:
 
 
 async def report_data(machine_names: List[str], days: int,
-                      period_label: str) -> Dict[str, Any]:
+                      period_label: str,
+                      period_label_en: Optional[str] = None) -> Dict[str, Any]:
     """
     Dữ liệu cho báo cáo so sánh, CHỈ gồm các máy được chọn.
 
@@ -317,6 +320,7 @@ async def report_data(machine_names: List[str], days: int,
                for r in rows if r.get("error")]
     return {
         "period_days": days, "period_label": period_label,
+        "period_label_en": period_label_en or period_label,
         "fleet_total": totals,
         "failure_fingerprint": fp,
         "machines": rows,

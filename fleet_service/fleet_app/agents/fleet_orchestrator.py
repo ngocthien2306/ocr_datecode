@@ -102,7 +102,7 @@ async def run(message: str, history: Optional[List[Dict[str, str]]] = None,
     Attachment của edge KHÔNG đi qua mô hình — chúng được `fleet_tools` hút vào
     một hộp riêng rồi ghép thẳng vào phản hồi, kèm nhãn máy.
     """
-    box, results = fleet_tools.start_collecting()
+    box, results = fleet_tools.start_collecting(lang)
 
     msgs: List[Any] = []
     for h in (history or [])[-8:]:

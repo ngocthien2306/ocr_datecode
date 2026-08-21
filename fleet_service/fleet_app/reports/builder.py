@@ -64,8 +64,8 @@ def _img(b64: Optional[str], cls: str = "") -> str:
             if b64 else "")
 
 
-_RATE_WORD = {"good": "trong ngưỡng", "watch": "cần theo dõi",
-              "bad": "dưới ngưỡng", "none": "không có số"}
+_RATE_WORD = {"good": "rate_good", "watch": "rate_watch",
+              "bad": "rate_bad", "none": "rate_none"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -77,7 +77,7 @@ _CSS = """
   size: A4; margin: 13mm 12mm 15mm;
   @bottom-left  { content: "OCR Datecode · Fleet Service";
                   font-size: 8pt; color: #98a1b3; }
-  @bottom-right { content: "Trang " counter(page) " / " counter(pages);
+  @bottom-right { content: "__PAGE__ " counter(page) " / " counter(pages);
                   font-size: 8pt; color: #98a1b3; }
 }
 * { box-sizing: border-box; }
@@ -215,12 +215,19 @@ tr.off td { color: #98a1b3; background: #fafbfc; }
 # Các khối trang
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _period_label(data: Dict[str, Any]) -> str:
+    """Nhãn kỳ theo ngôn ngữ. `report_data` mang cả hai; máy cũ chỉ có tiếng Việt."""
+    if agg.LANG == "en":
+        return data.get("period_label_en") or data.get("period_label") or ""
+    return data.get("period_label") or ""
+
+
 def _header(title: str, sub: str, data: Dict[str, Any]) -> str:
     return f"""<div class="hd">
   <div><h1>{_esc(title)}</h1><div class="sub">{_esc(sub)}</div></div>
-  <div class="mid"><b>{_esc(data['period_label'])}</b>
-    Lập lúc {datetime.now().strftime('%d/%m/%Y %H:%M')}</div>
-  <div class="logo">logo</div>
+  <div class="mid"><b>{_esc(_period_label(data))}</b>
+    {agg.T('generated', at=datetime.now().strftime('%d/%m/%Y %H:%M'))}</div>
+  <div class="logo">{agg.T('logo')}</div>
 </div>"""
 
 
@@ -231,35 +238,32 @@ def _banner(cov: Dict[str, Any]) -> str:
         # Không có máy nào thì `complete` vẫn True và banner cũ in "Đủ cả 0/0
         # máy" — một báo cáo trắng trơn trông như một báo cáo bình thường của
         # một nhà máy không sản xuất gì. Đây là trạng thái phải hét lên.
-        return ('<div class="bn bad"><b>KHÔNG đọc được máy nào.</b> Báo cáo này '
-                'rỗng vì tầng fleet không thấy máy nào trong tailnet, KHÔNG phải '
-                'vì nhà máy không sản xuất. Kiểm tra Tailscale và tiến trình '
-                'fleet service rồi lập lại.</div>')
+        return (f'<div class="bn bad"><b>{agg.T("cov_none")}</b> '
+                f'{agg.T("cov_none_more")}</div>')
     if cov.get("complete"):
-        return (f'<div class="bn ok"><b>Đủ cả {ok}/{total} máy.</b> '
-                f'Mọi con số dưới đây đọc từ chính các máy tại thời điểm lập báo cáo.</div>')
+        return (f'<div class="bn ok"><b>{agg.T("cov_ok", ok=ok, total=total)}</b> '
+                f'{agg.T("cov_ok_more")}</div>')
     items = "".join(
-        f"<li><b>{_esc(m['machine'])}</b> — {_esc(m.get('reason') or 'không rõ lý do')}</li>"
+        f"<li><b>{_esc(m['machine'])}</b> — {_esc(m.get('reason') or agg.T('reason_unknown'))}</li>"
         for m in (cov.get("machines_missing") or []) + (cov.get("machines_degraded") or []))
-    return (f'<div class="bn bad"><b>KHÔNG đủ đội hình — chỉ có số của {ok}/{total} máy.</b>'
-            f' Các máy thiếu vẫn có mặt trong báo cáo kèm lý do; con số tổng ở dưới'
-            f' là tổng của {ok} máy, không phải của cả nhà máy.<ul>{items}</ul></div>')
+    return (f'<div class="bn bad"><b>{agg.T("cov_bad", ok=ok, total=total)}</b> '
+            f'{agg.T("cov_bad_more", ok=ok)}<ul>{items}</ul></div>')
 
 
 def _kpis(tot: Dict[str, Any], views: List[Dict[str, Any]]) -> str:
     lvl = agg.rate_level(tot.get("pass_rate"))
     per_day = sum(v["per_day"] or 0 for v in views) or None
     return f"""<div class="kpis">
-  <div class="kpi"><div class="k">Tổng sản lượng</div>
+  <div class="kpi"><div class="k">{agg.T('kpi_total')}</div>
     <div class="v">{_fmt(tot.get('products'))}</div>
-    <div class="x">{_fmt(per_day, 0)} sản phẩm/ngày toàn nhà máy</div></div>
-  <div class="kpi"><div class="k">Đạt</div>
+    <div class="x">{agg.T('kpi_perday', n=_fmt(per_day, 0))}</div></div>
+  <div class="kpi"><div class="k">{agg.T('kpi_pass')}</div>
     <div class="v">{_fmt(tot.get('pass'))}</div><div class="x">&nbsp;</div></div>
-  <div class="kpi"><div class="k">Không đạt</div>
+  <div class="kpi"><div class="k">{agg.T('kpi_fail')}</div>
     <div class="v">{_fmt(tot.get('fail'))}</div><div class="x">&nbsp;</div></div>
-  <div class="kpi {lvl}"><div class="k">Tỉ lệ đạt chung</div>
+  <div class="kpi {lvl}"><div class="k">{agg.T('kpi_rate')}</div>
     <div class="v">{_pct(tot.get('pass_rate'))}</div>
-    <div class="x">{_RATE_WORD[lvl]} (ngưỡng {_pct(agg.RATE_GOOD, 0)})</div></div>
+    <div class="x">{agg.T('kpi_thresh', word=agg.T(_RATE_WORD[lvl]), t=_pct(agg.RATE_GOOD, 0))}</div></div>
 </div>"""
 
 
@@ -271,8 +275,8 @@ def _machine_table(views: List[Dict[str, Any]], tot: Dict[str, Any]) -> str:
                 f'<span class="sub">{_esc(v["line"] or "")}</span></td>')
         if not v["has_data"]:
             body += (f'<tr class="off">{name}<td colspan="5" class="muted">'
-                     f'{_esc(v["error"] or "không có dữ liệu trong kỳ")}</td>'
-                     f'<td><span class="st none">không có số</span></td></tr>')
+                     f'{_esc(v["error"] or agg.T("no_data_period"))}</td>'
+                     f'<td><span class="st none">{agg.T("rate_none")}</span></td></tr>')
             continue
         lvl = agg.rate_level(v["rate"])
         rec = v["recipes"][0]["name"] if v["recipes"] else None
@@ -285,29 +289,27 @@ def _machine_table(views: List[Dict[str, Any]], tot: Dict[str, Any]) -> str:
                  f'<td class="muted">{_esc(rec or "—")}</td></tr>')
     per_day = sum(v["per_day"] or 0 for v in views) or None
     return f"""<table>
-<thead><tr><th>Máy</th><th>Sản lượng</th><th>Mỗi ngày<br>(cả kỳ)</th>
-  <th>Mỗi ngày<br>(có chạy)</th><th>Ngày<br>có chạy</th><th>Tỉ lệ đạt</th>
-  <th>Recipe chính</th></tr></thead>
+<thead><tr><th>{agg.T('th_machine')}</th><th>{agg.T('th_output')}</th>
+  <th>{agg.T('th_perday_period')}</th><th>{agg.T('th_perday_active')}</th>
+  <th>{agg.T('th_days')}</th><th>{agg.T('th_rate')}</th>
+  <th>{agg.T('th_recipe')}</th></tr></thead>
 <tbody>{body}
-<tr class="tot"><td>TỔNG</td><td>{_fmt(tot.get('products'))}</td>
+<tr class="tot"><td>{agg.T('th_total')}</td><td>{_fmt(tot.get('products'))}</td>
   <td>{_fmt(per_day, 0)}</td><td>—</td><td>—</td>
   <td>{_pct(tot.get('pass_rate'))}</td><td class="muted">—</td></tr></tbody></table>
-<p class="note">Không xếp hạng theo tỉ lệ đạt: các máy chạy recipe khác nhau, nên
-tỉ lệ đạt phản ánh độ khó của mặt hàng chứ không phản ánh máy. Hai cột “mỗi ngày”
-cố ý đặt cạnh nhau — máy chạy ít ngày trong kỳ thì cột đầu thấp hơn năng lực thật.</p>"""
+<p class="note">{agg.T('note_norank')}</p>"""
 
 
 def _fingerprint_block(fp: Dict[str, Any]) -> str:
     if not fp:
-        return ('<p class="lead">Không có mẫu fail nào trong kỳ để dựng vân tay '
-                'kiểu lỗi.</p>')
+        return f'<p class="lead">{agg.T("fp_none")}</p>'
     labels = fp["labels"]
     # Nhãn NGẮN ở tiêu đề. Nhãn đầy đủ dài 30–38 ký tự, năm cột như thế rộng hơn
     # khổ A4 và bảng bị đẩy tràn khỏi lề — đo được ở bản đầu. Nhãn đầy đủ vẫn ở
     # chú giải biểu đồ ngay phía trên, nối với bảng bằng đúng ô màu đó.
     head = "".join(
         f'<th><span class="dot" style="background:{charts.cause_color(c, i)}"></span>'
-        f'{_esc(charts.CAUSE_SHORT.get(c, labels.get(c, c)))}</th>'
+        f'{_esc(charts.cause_short(c, labels.get(c, c)))}</th>'
         for i, c in enumerate(fp["causes"]))
     body = ""
     for r in fp["rows"]:
@@ -319,35 +321,33 @@ def _fingerprint_block(fp: Dict[str, Any]) -> str:
         if not r["sample_products"]:
             note = ""
         else:
-            note = " · " + ("phủ hết kỳ" if r["covers_all"] else "lấy mẫu")
+            note = " · " + agg.T("sample_all" if r["covers_all"] else "sample_part")
         body += (f'<tr><td class="n">{_esc(r["machine"])}</td>{cells}'
                  f'<td class="muted">{_fmt(r["sample_products"])}{note}</td></tr>')
     med = "".join(f'<td class="muted">{_pct(fp["median"].get(c), 1)}</td>'
                   for c in fp["causes"])
     return f"""<div class="keep">{_img(charts.fingerprint(fp))}
-<table><thead><tr><th>Máy</th>{head}<th>Mẫu</th></tr></thead>
+<table><thead><tr><th>{agg.T('th_machine')}</th>{head}<th>{agg.T('th_sample')}</th></tr></thead>
 <tbody>{body}
-<tr class="tot"><td>Trung vị</td>{med}<td class="muted">—</td></tr></tbody></table>
-<p class="note">Tên cột viết ngắn; tên đầy đủ ở chú giải biểu đồ phía trên, nối
-bằng ô màu. Ô tô đỏ = cao hơn trung vị của cột từ 12 điểm trở lên. Trung vị chỉ
-tính khi có từ 3 máy trở lên cùng có số cho cột đó — ít hơn thì “trung vị” là
-chính con số duy nhất ấy, nên để “—”. Cột “Mẫu”
-ghi cỡ mẫu của từng máy: “lấy mẫu” nghĩa là các tỉ trọng trên hàng đó là tỉ trọng
-CỦA MẪU, không phải của toàn bộ số fail trong kỳ.</p></div>"""
+<tr class="tot"><td>{agg.T('th_median')}</td>{med}<td class="muted">—</td></tr></tbody></table>
+<p class="note">{agg.T('note_fp', n=agg.MEDIAN_MIN_N)}</p></div>"""
 
 
-_HOW_TO_READ = """<div class="box">
-  <h3>Đọc vân tay thế nào</h3>
-  <p><b>Detector không thấy vùng nào</b> cao → đi xem camera, trigger, ánh sáng.
-     Máy không nhìn thấy chỗ cần đọc, nên chưa tới bước đọc.</p>
-  <p><b>Ký tự dưới ngưỡng tin cậy</b> cao → máy THẤY vùng in nhưng không đủ tự tin
-     về ký tự: nét in, mực, tiêu cự.</p>
-  <p><b>OCR đọc sai chuỗi</b> cao → đọc rõ nhưng ra chuỗi khác chuỗi mong đợi:
-     xem lại chuỗi khai trong recipe.</p>
-  <p><b>Ảnh không khớp template</b> cao → template có thể đã cũ so với bao bì đang chạy.</p>
-  <p>Hai máy cùng “tỉ lệ đạt thấp” có thể đang hỏng hai thứ hoàn toàn khác nhau —
-     đó là lý do trang này tồn tại, và là thứ duy nhất so được giữa các máy chạy
-     khác mặt hàng.</p>
+def _how_to_read() -> str:
+    """Khối "đọc vân tay thế nào".
+
+    Phải là HÀM, không phải hằng số chuỗi: sau khi đưa chữ vào bảng ngôn ngữ,
+    một hằng số chuỗi thường (không f-string) chứa dấu ngoặc nhọn không bao giờ
+    được format, nên bản in ra hiện nguyên tên hàm tra chữ — đọc được ngay trên
+    giấy, và tôi chỉ thấy khi trích chữ từ PDF ra xem.
+    """
+    return f"""<div class="box">
+  <h3>{agg.T('h_howto')}</h3>
+  <p>{agg.T('howto_nodet')}</p>
+  <p>{agg.T('howto_char')}</p>
+  <p>{agg.T('howto_text')}</p>
+  <p>{agg.T('howto_tmpl')}</p>
+  <p>{agg.T('howto_close')}</p>
 </div>"""
 
 
@@ -356,24 +356,24 @@ def _findings_block(finds: List[Dict[str, Any]]) -> str:
         f'<div class="find {f["kind"]}"><div class="tag"></div><div>{_esc(f["text"])}'
         f'<span class="do">→ {_esc(f["action"])}</span></div></div>'
         for f in finds)
-    return f'<h2>Phát hiện chính</h2><div class="finds">{rows}</div>'
+    return f'<h2>{agg.T("h_findings")}</h2><div class="finds">{rows}</div>'
 
 
 def _week_table(v: Dict[str, Any]) -> str:
     """Bảng theo tuần của một máy. Tuần chưa đủ 7 ngày được ghi rõ là chưa đủ."""
     weeks = [w for w in v["weeks"] if w["total"]]
     if not weeks:
-        return '<p class="why">Không có ngày nào có sản lượng trong kỳ.</p>'
+        return f'<p class="why">{agg.T("week_none")}</p>'
     body = ""
     for w in weeks:
         d = w["delta_points"]
         delta = ("—" if d is None else
-                 f'{"▲" if d > 0 else "▼" if d < 0 else "▬"} {_fmt(abs(d), 2)} điểm')
+                 f'{"▲" if d > 0 else "▼" if d < 0 else "▬"} {_fmt(abs(d), 2)} {agg.T("pts")}')
         lvl = agg.rate_level(w["rate"])
         # Ghi NGÀY ĐỨNG MÁY, không ghi "chưa đủ tuần". Kỳ 7 ngày thì tuần nào
         # cũng bị kỳ cắt, nên dòng nào cũng mang chữ đó và nó hết mang tin;
         # còn "2 ngày không chạy" giữa khoảng đã có số thì là chuyện thật.
-        idle = f' · {w["idle_days"]} ngày không chạy' if w["idle_days"] else ''
+        idle = agg.T('idle_days', n=w["idle_days"]) if w["idle_days"] else ''
         body += (f'<tr><td class="n">{_esc(w["label"])}'
                  f'<span class="sub">{_esc(w["span"])}{idle}</span></td>'
                  f'<td>{_fmt(w["total"])}</td>'
@@ -383,26 +383,26 @@ def _week_table(v: Dict[str, Any]) -> str:
                  f'<td>{_fmt(w["per_active_day"], 0)}</td>'
                  f'<td>{_pct(w["rate"])}</td>'
                  f'<td class="muted">{delta}</td>'
-                 f'<td><span class="st {lvl}">{_RATE_WORD[lvl]}</span></td></tr>')
+                 f'<td><span class="st {lvl}">{agg.T(_RATE_WORD[lvl])}</span></td></tr>')
     return f"""<table>
-<thead><tr><th>Tuần</th><th>Sản lượng</th><th>Đạt</th><th>Không đạt</th>
-  <th>Ngày<br>có chạy</th><th>Mỗi ngày<br>có chạy</th><th>Tỉ lệ đạt</th>
-  <th>So tuần trước</th><th></th></tr></thead><tbody>{body}</tbody></table>"""
+<thead><tr><th>{agg.T('th_week')}</th><th>{agg.T('th_output')}</th>
+  <th>{agg.T('th_wpass')}</th><th>{agg.T('th_wfail')}</th>
+  <th>{agg.T('th_days')}</th><th>{agg.T('th_wperactive')}</th>
+  <th>{agg.T('th_rate')}</th><th>{agg.T('th_delta')}</th><th></th></tr></thead><tbody>{body}</tbody></table>"""
 
 
 def _machine_card(v: Dict[str, Any]) -> str:
     dot = f'<span class="dot" style="background:{charts.color_for(v["machine"])}"></span>'
     head = (f'<div class="mc-hd"><h3>{dot}{_esc(v["machine"])}</h3>'
             f'<span class="ln">{_esc(v["line"] or "")}</span>'
-            f'<span class="dev">{_esc(v["model"] or "thiết bị chưa khai")}</span></div>')
+            f'<span class="dev">{_esc(v["model"] or agg.T("no_device"))}</span></div>')
 
     if not v["has_data"]:
         # Máy thiếu số VẪN có thẻ. Bỏ nó ra là báo cáo trông đầy đủ trong khi
         # một dây chuyền của nhà máy không được nhắc tới ở đâu cả.
         return (f'<div class="mc off">{head}'
-                f'<p class="why"><b>Không có dữ liệu trong kỳ.</b> '
-                f'{_esc(v["error"] or "chưa rõ lý do")} — máy có thể vẫn đang sản '
-                f'xuất; thiếu ở đây là thiếu ĐƯỜNG ĐỌC SỐ, không phải thiếu sản lượng.</p>'
+                f'<p class="why"><b>{agg.T("card_nodata")}</b> '
+                f'{_esc(v["error"] or "—")} — {agg.T("card_nodata_more")}</p>'
                 f'</div>')
 
     lvl = agg.rate_level(v["rate"])
@@ -411,29 +411,29 @@ def _machine_card(v: Dict[str, Any]) -> str:
     top = v.get("top_cause") or {}
     why = []
     if top:
-        why.append(f'Nguyên nhân lớn nhất trên mẫu: <b>{_esc(top.get("label"))}</b> '
-                   f'({_fmt(top.get("share_of_causes_pct"), 0)}% của mẫu'
-                   f'{" · " + _esc(v["sampling"]) if v.get("sampling") else ""}).')
+        why.append(agg.T("top_cause_line",
+                          label=_esc(agg.cause_label(top.get("cause"), top.get("label") or "")),
+                          pct=_pct(top.get("share_of_causes_pct"), 0),
+                          sampling=(" · " + _esc(v["sampling"]) if v.get("sampling") else "")))
     if v.get("worst_day") and v["worst_day"]["rate"] is not None:
         wd = v["worst_day"]
-        why.append(f'Ngày thấp nhất: {wd["key"][8:10]}/{wd["key"][5:7]} — '
-                   f'{_pct(wd["rate"])} trên {_fmt(wd["total"])} sản phẩm.')
+        why.append(agg.T("worst_day", d=f'{wd["key"][8:10]}/{wd["key"][5:7]}',
+                          rate=_pct(wd["rate"]), n=_fmt(wd["total"])))
     if v["active_days"] and v["active_days"] < v["period_days"]:
-        why.append(f'Chỉ có sản lượng {v["active_days"]}/{v["period_days"]} ngày '
-                   f'của kỳ.')
+        why.append(agg.T("few_days", a=v["active_days"], b=v["period_days"]))
 
     return f"""<div class="mc">{head}
   <div class="trio">
-    <div><div class="k">Sản lượng</div><div class="v">{_fmt(v['total'])}</div>
-      <div class="x">{_fmt(v['per_active_day'], 0)}/ngày có chạy</div></div>
-    <div><div class="k">Tỉ lệ đạt</div><div class="v">{_pct(v['rate'])}</div>
-      <div class="x">{_RATE_WORD[lvl]}</div></div>
-    <div><div class="k">Không đạt</div><div class="v">{_fmt(v['fail'])}</div>
-      <div class="x">trên {_fmt(v['total'])} sản phẩm</div></div>
+    <div><div class="k">{agg.T('card_output')}</div><div class="v">{_fmt(v['total'])}</div>
+      <div class="x">{agg.T('card_peractive', n=_fmt(v['per_active_day'], 0))}</div></div>
+    <div><div class="k">{agg.T('card_rate')}</div><div class="v">{_pct(v['rate'])}</div>
+      <div class="x">{agg.T(_RATE_WORD[lvl])}</div></div>
+    <div><div class="k">{agg.T('card_fail')}</div><div class="v">{_fmt(v['fail'])}</div>
+      <div class="x">{agg.T('card_on', n=_fmt(v['total']))}</div></div>
   </div>
   {_img(charts.machine_trend(v))}
   {_week_table(v)}
-  <p class="why">Recipe trong kỳ: {recs}<br>{"<br>".join(why)}</p>
+  <p class="why">{agg.T('recipes_in', list=recs)}<br>{"<br>".join(why)}</p>
 </div>"""
 
 
@@ -454,50 +454,39 @@ def build_html(data: Dict[str, Any]) -> str:
     finds = agg.findings(views, fp, cov)
     live = [v for v in views if v["has_data"]]
 
-    sub = (f"{len(rows)} dây chuyền · {data['period_label']} · "
-           f"nhà máy đóng gói gia vị")
+    sub = agg.T("sub", n=len(rows), period=_period_label(data))
 
     page1 = f"""<div class="sheet">
-{_header('BÁO CÁO SO SÁNH DÂY CHUYỀN', sub, data)}
+{_header(agg.T('title_compare'), sub, data)}
 {_banner(cov)}
 {_kpis(tot, views)}
-<h2>Nhịp sản xuất theo ngày</h2>
-<p class="lead">Cột chồng theo máy, nên một ngày sản lượng tụt là đọc được ngay
-máy nào tụt — thứ mà bảng dưới không nói được.</p>
+<h2>{agg.T('h_rhythm')}</h2>
+<p class="lead">{agg.T('lead_rhythm')}</p>
 {_img(charts.fleet_daily(live))}
-<h2>Sản lượng theo máy</h2>
+<h2>{agg.T('h_bymachine')}</h2>
 {_machine_table(views, tot)}
 </div>"""
 
     page2 = f"""<div class="sheet">
-{_header('VÂN TAY KIỂU LỖI', sub, data)}
-<h2>Tỉ trọng nguyên nhân trên mẫu fail</h2>
-<p class="lead">Các ô của MỘT máy cộng lại bằng 100. Đây là cách so sánh có nghĩa
-giữa các máy, vì những nguyên nhân này thuộc pipeline OCR chứ không thuộc mặt
-hàng — khác với tỉ lệ đạt, thứ phản ánh độ khó của sản phẩm đang chạy.</p>
+{_header(agg.T('title_fp'), sub, data)}
+<h2>{agg.T('h_fp')}</h2>
+<p class="lead">{agg.T('lead_fp')}</p>
 {_fingerprint_block(fp)}
-{_HOW_TO_READ}
+{_how_to_read()}
 {_findings_block(finds)}"""
 
     cards = "".join(_machine_card(v) for v in views)
-    page3 = f"""<h2>Sản lượng chuẩn hoá theo máy</h2>
-<p class="lead">Mỗi máy hai cột: chia cho cả kỳ, và chia cho số ngày thực có
-chạy. Máy chạy 2 trong 7 ngày mà chỉ đọc cột thứ nhất thì trông như máy yếu —
-đọc cả hai mới ra “chạy nhanh nhưng chạy ít ngày”. Đây là câu trả lời cho “vì
-sao máy này thấp”, nên nó đứng ngay trước phần chi tiết từng máy.</p>
+    page3 = f"""<h2>{agg.T('h_norm')}</h2>
+<p class="lead">{agg.T('lead_norm')}</p>
 {_img(charts.output_per_day(live))}
-<h2>Phụ lục theo máy · chia theo tuần</h2>
-<p class="lead">Mỗi máy một thẻ, chia theo tuần ISO (thứ Hai đầu tuần) — không
-phải cửa sổ 7 ngày trượt, để hai báo cáo lập cách nhau một ngày vẫn so được với
-nhau. Ngày đứng máy trong tuần được ghi ngay dưới tên tuần. Kỳ chỉ có một tuần
-thì biểu đồ vẽ theo ngày, vì một cột đơn độc không so được với gì cả.</p>
+<h2>{agg.T('h_appendix')}</h2>
+<p class="lead">{agg.T('lead_appendix')}</p>
 {cards}
-<div class="foot">Sinh bởi Fleet Service · dữ liệu đọc trực tiếp từ từng máy tại
-thời điểm lập báo cáo · giá trị không đo được hiện “—”, không hiện 0.</div>"""
+<div class="foot">{agg.T('foot')}</div>"""
 
     return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8">
-<title>Báo cáo so sánh dây chuyền · {_esc(data['period_label'])}</title>
-<style>{_CSS}</style></head><body>
+<title>{agg.T('title_compare')} · {_esc(_period_label(data))}</title>
+<style>{_CSS.replace('__PAGE__', agg.T('page_of', p='', n='').split()[0])}</style></head><body>
 {page1}
 {page2}
 {page3}
@@ -529,10 +518,11 @@ def build_excel(data: Dict[str, Any], path: Path) -> None:
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "Sản lượng"
-    ws.append(["Máy", "Dây chuyền", "Thiết bị", "Sản lượng", "Mỗi ngày (cả kỳ)",
-               "Mỗi ngày (có chạy)", "Ngày có chạy", "Đạt", "Không đạt",
-               "Tỉ lệ đạt (%)", "Recipe chính", "Ghi chú"])
+    ws.title = agg.T("sh_output")
+    ws.append([agg.T("x_machine"), agg.T("x_line"), agg.T("x_device"),
+               agg.T("x_output"), agg.T("x_perday_period"), agg.T("x_perday_active"),
+               agg.T("x_days"), agg.T("x_pass"), agg.T("x_fail"),
+               agg.T("x_rate_pct"), agg.T("x_recipe"), agg.T("x_note")])
     for v in views:
         ws.append([v["machine"], v["line"], v["model"], v["total"], v["per_day"],
                    v["per_active_day"], v["active_days"], v["pass"], v["fail"],
@@ -540,13 +530,14 @@ def build_excel(data: Dict[str, Any], path: Path) -> None:
                    v["error"] or ""])
     t = data["fleet_total"]
     ws.append([])
-    ws.append(["TỔNG", "", "", t.get("products"), "", "", "", t.get("pass"),
+    ws.append([agg.T("th_total"), "", "", t.get("products"), "", "", "", t.get("pass"),
                t.get("fail"), t.get("pass_rate"), "", ""])
 
-    w2 = wb.create_sheet("Theo tuần")
-    w2.append(["Máy", "Tuần ISO", "Từ–đến", "Đủ 7 ngày", "Sản lượng", "Đạt",
-               "Không đạt", "Ngày có chạy", "Mỗi ngày có chạy", "Tỉ lệ đạt (%)",
-               "So tuần trước (điểm)"])
+    w2 = wb.create_sheet(agg.T("sh_weekly"))
+    w2.append([agg.T("x_machine"), agg.T("x_isoweek"), agg.T("x_span"),
+               agg.T("x_full7"), agg.T("x_output"), agg.T("x_pass"), agg.T("x_fail"),
+               agg.T("x_days"), agg.T("x_perday_active"), agg.T("x_rate_pct"),
+               agg.T("x_delta_pts")])
     for v in views:
         for w in v["weeks"]:
             if not w["total"]:
@@ -556,22 +547,22 @@ def build_excel(data: Dict[str, Any], path: Path) -> None:
                        w["days"], w["per_active_day"], w["rate"],
                        w["delta_points"]])
     if w2.max_row == 1:
-        w2.append(["Không có tuần nào có sản lượng trong kỳ."])
+        w2.append([agg.T("x_none_week")])
 
     fp = agg.fingerprint_view(data.get("failure_fingerprint") or {})
     if fp:
-        w3 = wb.create_sheet("Vân tay kiểu lỗi")
+        w3 = wb.create_sheet(agg.T("sh_fp"))
         labels = fp["labels"]
-        w3.append(["Máy"] + [labels.get(c, c) for c in fp["causes"]]
-                  + ["Cỡ mẫu", "Phủ hết kỳ"])
+        w3.append([agg.T("x_machine")]
+                  + [agg.cause_label(c, labels.get(c, c)) for c in fp["causes"]]
+                  + [agg.T("x_samplesize"), agg.T("x_coversall")])
         for r in fp["rows"]:
             w3.append([r["machine"]] + [c["value"] for c in r["cells"]]
                       + [r["sample_products"], r["covers_all"]])
-        w3.append(["Trung vị"] + [fp["median"].get(c) for c in fp["causes"]]
+        w3.append([agg.T("th_median")] + [fp["median"].get(c) for c in fp["causes"]]
                   + [None, None])
         w3.append([])
-        w3.append(["Các ô là TỈ TRỌNG giữa các nguyên nhân (một máy cộng lại = 100), "
-                   "không phải % sản phẩm trượt từng bước."])
+        w3.append([agg.T("x_fp_note")])
 
     head_font = Font(bold=True, color="FFFFFF")
     head_fill = PatternFill("solid", fgColor="1E2A3A")
@@ -600,10 +591,12 @@ def build_csv(data: Dict[str, Any], path: Path) -> None:
     views = [agg.machine_view(r, days) for r in data["machines"]]
     with path.open("w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)
-        w.writerow(["# Tổng hợp theo máy", data.get("period_label")])
-        w.writerow(["Máy", "Dây chuyền", "Thiết bị", "Sản lượng",
-                    "Mỗi ngày (cả kỳ)", "Mỗi ngày (có chạy)", "Ngày có chạy",
-                    "Đạt", "Không đạt", "Tỉ lệ đạt (%)", "Recipe chính", "Ghi chú"])
+        w.writerow([agg.T("x_block1"), _period_label(data)])
+        w.writerow([agg.T("x_machine"), agg.T("x_line"), agg.T("x_device"),
+                    agg.T("x_output"), agg.T("x_perday_period"),
+                    agg.T("x_perday_active"), agg.T("x_days"), agg.T("x_pass"),
+                    agg.T("x_fail"), agg.T("x_rate_pct"), agg.T("x_recipe"),
+                    agg.T("x_note")])
         for v in views:
             w.writerow([v["machine"], v["line"], v["model"], v["total"],
                         v["per_day"], v["per_active_day"], v["active_days"],
@@ -611,13 +604,14 @@ def build_csv(data: Dict[str, Any], path: Path) -> None:
                         (v["recipes"][0]["name"] if v["recipes"] else None),
                         v["error"] or ""])
         t = data["fleet_total"]
-        w.writerow(["TỔNG", "", "", t.get("products"), "", "", "", t.get("pass"),
+        w.writerow([agg.T("th_total"), "", "", t.get("products"), "", "", "", t.get("pass"),
                     t.get("fail"), t.get("pass_rate"), "", ""])
         w.writerow([])
-        w.writerow(["# Chi tiết theo tuần"])
-        w.writerow(["Máy", "Tuần ISO", "Từ–đến", "Đủ 7 ngày", "Sản lượng", "Đạt",
-                    "Không đạt", "Ngày có chạy", "Mỗi ngày có chạy",
-                    "Tỉ lệ đạt (%)", "So tuần trước (điểm)"])
+        w.writerow([agg.T("x_block2")])
+        w.writerow([agg.T("x_machine"), agg.T("x_isoweek"), agg.T("x_span"),
+                    agg.T("x_full7"), agg.T("x_output"), agg.T("x_pass"),
+                    agg.T("x_fail"), agg.T("x_days"), agg.T("x_perday_active"),
+                    agg.T("x_rate_pct"), agg.T("x_delta_pts")])
         for v in views:
             for wk in v["weeks"]:
                 if not wk["total"]:
@@ -631,7 +625,9 @@ def build_csv(data: Dict[str, Any], path: Path) -> None:
 _EXT = {"html": "html", "pdf": "pdf", "excel": "xlsx", "csv": "csv"}
 
 
-def render(data: Dict[str, Any], fmt: str) -> Path:
+def render(data: Dict[str, Any], fmt: str, lang: str = "vi") -> Path:
+    """`lang` đặt ngôn ngữ cho CẢ báo cáo — chữ, nhãn biểu đồ, và lối viết số."""
+    agg.set_lang(lang)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     names = "-".join(r["machine"] for r in data["machines"])[:60]
     path = OUT_DIR / f"fleet_{names}_{stamp}.{_EXT[fmt]}"
