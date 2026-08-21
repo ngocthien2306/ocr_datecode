@@ -88,6 +88,19 @@ class _NoCacheStatic(StaticFiles):
 
 app.mount("/static", _NoCacheStatic(directory=str(SERVICE_ROOT / "static")), name="static")
 
+# Code web DÙNG CHUNG với agent_service (sơ đồ nhà máy 3D + three.js vendor).
+# Đọc từ đĩa của chính máy này, nên hai service không phụ thuộc nhau lúc chạy —
+# điều kiện bắt buộc của Line Station, vốn phải sống được khi fleet service tắt.
+_SHARED_WEB = SERVICE_ROOT.parent / "shared" / "web"
+if _SHARED_WEB.is_dir():
+    app.mount("/shared", _NoCacheStatic(directory=str(_SHARED_WEB)), name="shared")
+else:
+    # Nói to. Thiếu thư mục này thì sơ đồ nhà máy không dựng được, và một lỗi
+    # import ES module chỉ hiện trong console của trình duyệt — không ai mở.
+    logger.error("Không thấy %s — sơ đồ nhà máy 3D sẽ không tải được. "
+                 "Deploy phải copy cả thư mục shared/, không chỉ fleet_service/.",
+                 _SHARED_WEB)
+
 
 @app.get("/health", include_in_schema=False)
 async def health():

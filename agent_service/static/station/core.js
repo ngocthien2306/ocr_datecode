@@ -1,13 +1,12 @@
-/* Shim cho `factory-3d.js` — bản copy nguyên vẹn từ Fleet Console.
+/* `store` cho sơ đồ nhà máy dùng chung (`/shared/factory-map-3d.js`).
  *
- * Module 3D chỉ cần đúng ba thứ từ `store`: theme, tiêu đề sơ đồ, và nhãn trạng
- * thái. Cấp qua shim thay vì sửa module, để lần sau đồng bộ với Fleet Console
- * chỉ là copy lại một file — sửa vào ruột nó là mỗi lần sync một lần merge tay.
+ * Module đó không import gì của service nào: nó nhận `store` qua render(). Ba
+ * thứ nó cần là theme, tiêu đề sơ đồ, và nhãn trạng thái — cấp ở đây, với nhãn
+ * tiếng Việt của Line Station.
  *
- * ĐÁNH ĐỔI đã biết: đây là 1.280 dòng NHÂN BẢN. Hai bản sẽ trôi khác nhau. Cách
- * đúng về lâu dài là tách thành package dùng chung cho cả fleet_service và
- * agent_service; ở đây chọn copy để Line Station không phải phụ thuộc vào fleet
- * service — thứ mà cả màn hình này được thiết kế để sống thiếu.
+ * Trước đây bề mặt này giữ MỘT BẢN COPY 1.282 dòng của module 3D, và shim này
+ * tồn tại để lần sau đồng bộ chỉ là copy lại một file. Hai bản đã trôi khác
+ * nhau 80 dòng sau một ngày, nên giờ chỉ còn một bản ở `shared/web/`.
  */
 
 const T = {

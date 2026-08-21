@@ -1,17 +1,64 @@
 /* ═══════════════════════════════════════════════════════════════════════════
+   DÙNG CHUNG giữa fleet_service và agent_service. Sửa ở đây, không copy.
+
+   Trước đây file này tồn tại hai bản 1.282 dòng — một cho Fleet Console, một
+   cho Line Station — và chúng đã bắt đầu trôi khác nhau (80 dòng) chỉ sau một
+   ngày. Bản của station là tập cha: nó thêm `enabledKeys`, và khi không truyền
+   thì hành vi giống hệt bản fleet.
+
+   Đặt ở `shared/web/` chứ không nhét vào một service: cả hai service đều đọc từ
+   ĐĨA CỦA CHÍNH MÁY mình, nên Line Station vẫn không phụ thuộc fleet service
+   lúc chạy — đó là điều kiện bắt buộc của bề mặt đó, và dùng chung code không
+   phá nó.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════════════════
    FactoryMap — sơ đồ nhà máy 3D tương tác.
 
-   Giữ nguyên public interface của `factory-map.js` để `app.js` vẫn chỉ biết
+   Giữ nguyên public interface của `factory-map.js` để bên gọi vẫn chỉ biết
    render({ machines, selected, onSelect }). Three.js tải lười: nếu tablet ở
    xưởng không ra Internet/CDN, sơ đồ SVG bậc 1 vẫn là phương án dự phòng.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-import { store } from './core.js';
+/* `store` được TRUYỀN VÀO qua render(), không import.
+ *
+ * Đây là điều kiện để một file dùng chung cho hai service: nếu nó import
+ * './core.js' thì mỗi bên phải đặt một core.js cạnh nó, và thế là lại có hai
+ * bản phải giữ đồng bộ — đúng cái vấn đề file này sinh ra để bỏ.
+ *
+ * Module chỉ cần ba thứ: `theme`, `t.floorTitle`, `t.state`. */
+let store = {
+  theme: 'light',
+  t: { floorTitle: 'Factory floor', state: {} },
+};
 
-const THREE_URL = 'https://unpkg.com/three@0.184.0/build/three.module.js';
+/* three.js đọc từ ĐĨA CỦA MÁY, không phải unpkg.com.
+ *
+ * Bản r184 đã được vendor vào `shared/web/vendor/three/` từ trước nhưng hằng số
+ * này vẫn trỏ ra CDN — nên cả hai bề mặt vẫn tải 2 MB qua Internet. Ở Fleet
+ * Console trên máy Mac thì không ai thấy; ở Line Station — màn hình cạnh dây
+ * chuyền, trên máy trong xưởng có thể không có đường ra ngoài — nó là chênh
+ * lệch giữa CÓ sơ đồ và KHÔNG.
+ *
+ * Đường dẫn tương đối so với chính file này, nên hai service không cần khai
+ * hằng số riêng: /shared/factory-map-3d.js → /shared/vendor/three/... */
+const THREE_URL = new URL('./vendor/three/three.module.js', import.meta.url).href;
 const pending = new WeakMap();
 const scenes = new WeakMap();
 let threePromise;
+
+/* Bảng màu RIÊNG cho máy bị tắt — không phải bảng màu rồi giảm opacity. Giảm
+   opacity làm mất chiều sâu của khối, và một khối bẹt thì không còn đọc ra là
+   máy. Ở Line Station, mọi máy trừ máy của chính station đều dùng bảng này. */
+const DISABLED = { beacon: null, body: '#c8ccd0', trim: '#e4e6e9' };
+
+/* Danh sách máy ĐƯỢC thao tác. `null` = tất cả (Fleet Console). Line Station
+   truyền đúng một tên: máy của chính nó. */
+let ENABLED = null;
+const isEnabled = name => !ENABLED || ENABLED.includes(name);
+
+/* Loader cho sơ đồ bậc 1, do bên gọi cấp qua `options.fallback`. */
+let fallbackLoader = null;
 
 const STATUS = {
   ok:          { beacon: '#2f8a58', body: '#86aaca', trim: '#d7e8f5' },
@@ -495,6 +542,11 @@ class FactoryFloorScene {
 
   /** Rê lên một máy → thẻ ảnh nhỏ bám theo con trỏ. */
   async showPeek(hit, event) {
+    /* Ở Line Station KHÔNG có thẻ peek. Hai lý do: nó gọi /api/fleet/frame của
+       fleet service (không tồn tại trên máy này, nên hiện "undefined"), và ảnh
+       của máy mình đã nằm ngay tab Sản xuất. Còn ảnh của máy khác thì cố ý
+       không hiện ở bề mặt này. */
+    if (ENABLED) { this.hidePeek(); return; }
     const name = hit?.machineName;
     if (!name) { this.hidePeek(); return; }
 
@@ -824,7 +876,9 @@ class FactoryFloorScene {
 
   addMachine(machine, x, z, selected) {
     const THREE = this.THREE;
-    const style = STATUS[machine.state] || STATUS.unreachable;
+    const live = isEnabled(machine.name);
+    // Máy bị tắt: bảng xám, và `beacon: null` để khối đèn không được dựng.
+    const style = live ? (STATUS[machine.state] || STATUS.unreachable) : DISABLED;
     const dark = store.theme === 'dark';
     const isBottleLine = machine.name === 'PC-Auto-1';
     const isStopped = ['unreachable', 'offline'].includes(machine.state);
@@ -841,10 +895,48 @@ class FactoryFloorScene {
     const productProfile = LINE_PRODUCTS[machine.name] || LINE_PRODUCTS.Auto2;
     const group = new THREE.Group();
     if (machine.virtual) group.userData.focus = machine.building || 'main';
-    else group.userData.nodeId = machine.node_id;
+    // Máy bị tắt KHÔNG mang nodeId, nên raycast không chọn được nó; thay vào đó
+    // mang `disabledName` để lớp trên còn nói được một dòng nhắc khi bị chạm.
+    else if (live) group.userData.nodeId = machine.node_id;
+    else group.userData.disabledName = machine.name;
     // Tên máy đi kèm để thẻ ảnh khi rê chuột hỏi đúng máy — API ảnh khoá theo
     // TÊN, còn raycast thì chỉ biết node id.
     group.userData.machineName = machine.name;
+
+    /* Máy của station được đánh dấu bằng BA thứ khác nhau — vòng thép trên sàn,
+       bốn dấu chuẩn ở góc, cột sáng dựng đứng. Ba dấu hiệu vì màn hình xưởng bị
+       chói và người xem có thể nhìn nghiêng; một dấu hiệu đơn lẻ rất dễ mất
+       trong điều kiện đó. Chỉ bật khi ENABLED có giới hạn, tức chỉ ở Line
+       Station — Fleet Console cho thao tác mọi máy nên không cần đánh dấu. */
+    if (live && ENABLED) {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(4.6, 5.0, 56),
+        new THREE.MeshBasicMaterial({ color: 0x5980a6, transparent: true,
+                                      opacity: 0.85, side: THREE.DoubleSide }));
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.03;
+      group.add(ring);
+
+      const beam = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.5, 0.16, 7.5, 14, 1, true),
+        new THREE.MeshBasicMaterial({ color: 0x5980a6, transparent: true,
+                                      opacity: 0.18, side: THREE.DoubleSide,
+                                      depthWrite: false }));
+      beam.position.set(0, 5.6, 0);
+      group.add(beam);
+
+      for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+        const mk = new THREE.Mesh(
+          new THREE.BoxGeometry(1.5, 0.05, 0.16),
+          new THREE.MeshBasicMaterial({ color: 0x5980a6 }));
+        mk.position.set(sx * 5.4, 0.04, sz * 3.4);
+        group.add(mk);
+        const mk2 = mk.clone();
+        mk2.geometry = new THREE.BoxGeometry(0.16, 0.05, 1.2);
+        mk2.position.set(sx * 5.4, 0.04, sz * 3.4);
+        group.add(mk2);
+      }
+    }
     group.position.set(x, selected ? 0.18 : 0, z);
 
     const metal = new THREE.MeshStandardMaterial({ color: dark ? 0x9ca9b1 : 0xc7d0d5, roughness: 0.42, metalness: 0.72 });
@@ -1015,8 +1107,13 @@ class FactoryFloorScene {
     add(new THREE.BoxGeometry(0.95, 2.05, 0.76), panel, -4.55, 1.03, 1.42);
     add(new THREE.BoxGeometry(0.62, 0.42, 0.06), display, -4.55, 1.4, 1.83);
     add(new THREE.CylinderGeometry(0.055, 0.055, 0.72, 10), metal, -4.55, 2.38, 1.42);
-    const beacon = add(new THREE.CylinderGeometry(0.17, 0.17, 0.36, 18), new THREE.MeshStandardMaterial({ color: style.beacon, emissive: style.beacon, emissiveIntensity: 1.1 }), -4.55, 2.92, 1.42);
-    beacon.castShadow = false;
+    /* Máy bị tắt KHÔNG có đèn trạng thái. Cố ý, không phải quên: trạng thái
+       line khác không phải việc của người đang đứng ở đây, và hiện lên là mời
+       so sánh sai — line này chạy quế, line kia chạy muối. */
+    if (style.beacon) {
+      const beacon = add(new THREE.CylinderGeometry(0.17, 0.17, 0.36, 18), new THREE.MeshStandardMaterial({ color: style.beacon, emissive: style.beacon, emissiveIntensity: 1.1 }), -4.55, 2.92, 1.42);
+      beacon.castShadow = false;
+    }
 
     // Cổng reject và thùng loại đặt ngay sau trạm OCR.
     add(new THREE.BoxGeometry(0.86, 0.1, 0.1), new THREE.MeshStandardMaterial({ color: 0xe5a32c, roughness: 0.45 }), 2.08, 1.18, 0.78);
@@ -1058,7 +1155,8 @@ class FactoryFloorScene {
     outline.visible = selected;
     group.add(outline);
     const subtitle = isBottleLine ? 'BOTTLE LINE · ROBOT + 4-CAMERA CHECK' : `CARTON · ${productProfile.label}`;
-    const label = textSprite(THREE, machine.name, subtitle, dark);
+    const label = textSprite(THREE, machine.name, live ? subtitle : '', dark);
+    if (!live) label.material.opacity = 0.62;   // nhãn máy khác mờ 62%
     label.position.set(0, 5.3, 0);
     group.add(label);
     this.machineRoot.add(group);
@@ -1167,7 +1265,9 @@ class FactoryFloorScene {
         this.draw();
       } else {
         const hit = this.targetAt(event);
-        this.canvas.style.cursor = hit ? 'pointer' : 'grab';
+        // Máy bị tắt KHÔNG đổi con trỏ thành pointer: con trỏ đó hứa một hành
+        // động không tồn tại.
+        this.canvas.style.cursor = (hit && !hit.disabledName) ? 'pointer' : 'grab';
         this.showPeek(hit, event);
       }
     });
@@ -1179,6 +1279,9 @@ class FactoryFloorScene {
         const target = this.targetAt(event);
         if (target?.focus) this.focusZone(target.focus);
         else if (target?.nodeId) this.onSelect?.(target.nodeId);
+        // Chạm máy bị tắt phải NÓI GÌ ĐÓ. Im lặng thì người dùng tưởng màn hình
+        // đơ rồi chạm tiếp.
+        else if (target?.disabledName) this.onDisabledTap?.(target.disabledName);
       }
     });
     this.canvas.addEventListener('pointerleave', () => this.hidePeek());
@@ -1246,14 +1349,28 @@ async function start(el) {
     scene.update(queued.options);
   } catch (error) {
     console.warn('3D factory map unavailable; using the SVG fallback.', error);
-    const fallback = await import('./factory-map.js');
+    /* Bậc 1 do BÊN GỌI cấp, vì hai bề mặt có luật khác nhau: Fleet Console vẽ
+       đèn cho mọi máy, Line Station chỉ vẽ máy của chính nó. Trước đây chỗ này
+       import cứng './factory-map.js' — file chỉ có ở fleet — nên ở Line Station
+       khi WebGL lỗi (tablet cũ, driver hỏng) sơ đồ trắng trơn, không báo gì.
+       Nhánh này là async, nên try/catch của bên gọi cũng không bắt được. */
     const latest = pending.get(el)?.options || queued.options;
     pending.delete(el);
+    if (!fallbackLoader) {
+      el.innerHTML = '<div class="map-loading">Không dựng được sơ đồ nhà máy.</div>';
+      console.error('factory-map-3d: thiếu options.fallback, không có sơ đồ bậc 1.');
+      return;
+    }
+    const fallback = await fallbackLoader();
     fallback.render(el, latest);
   }
 }
 
 export function render(el, options) {
+  // `enabledKeys`: chỉ những máy này thao tác được. Không truyền = tất cả.
+  ENABLED = options?.enabledKeys || null;
+  if (options?.store) store = options.store;
+  if (options?.fallback) fallbackLoader = options.fallback;
   const scene = scenes.get(el);
   if (scene) {
     scene.update(options);

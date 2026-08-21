@@ -17,7 +17,8 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import * as flat3d from '/station/floor.js';        // bậc 1, SVG đẳng cự
-import * as full3d from '/station/factory-3d.js';   // bậc 2, three.js
+import * as full3d from '/shared/factory-map-3d.js'; // bậc 2, dùng chung với fleet
+import { store as mapStore } from '/station/core.js'; // theme + nhãn cho bậc 2
 
 const $ = s => document.querySelector(s);
 const NA = '—';
@@ -420,15 +421,30 @@ function paintHardware() {
   // hành dùng để quyết định có gọi bảo trì hay không.
   const camTxt = h.camera_service_running === true ? t.camOn
     : h.camera_service_running === false ? t.camOff : NA;
+  /* RAM và đĩa là ĐẠI LƯỢNG CÓ TRẦN — 88% của 7,44 GB. Vòng tròn nói ngay còn
+     lại bao nhiêu; một con số 88% thì phải tự tính phần còn lại. Nhiệt độ thì
+     không có trần nên vẫn là con số. Cùng vòng tròn với Fleet Console để hai
+     màn hình của một nhà máy không có hai ngôn ngữ hình ảnh. */
+  const pie = (label, v, sub, lv) => v == null
+    ? row(label, NA, '', sub)
+    : `<div class="kv pie-row">
+        <span class="k">${esc(label)}</span>
+        <span class="donut ${lv || ''}" style="--pct:${Math.round(v)}"
+              role="img" aria-label="${esc(`${label}: ${Math.round(v)}%`)}">
+          <span>${Math.round(v)}<small>%</small></span></span>
+        ${sub ? `<span class="x">${esc(sub)}</span>` : ''}</div>`;
+
   $('#v-hw').innerHTML =
     row(t.cam, camTxt, h.camera_service_running === false ? 'warn' : '')
     + row(t.cpu, deg(h.cpu_temp), (h.cpu_temp ?? 0) >= 85 ? 'bad' : '',
           h.cpu_load == null ? '' : `load ${Math.round(h.cpu_load)}%`)
     + row(t.gpu, deg(h.gpu_temp), '', h.gpu_load == null ? '' : `load ${Math.round(h.gpu_load)}%`)
-    + row(t.ram, pct(h.ram_percent), (h.ram_percent ?? 0) >= 85 ? 'warn' : '',
-          h.ram_used_gb == null ? '' : `${h.ram_used_gb}/${h.ram_total_gb} GB`)
-    + row(t.disk, pct(h.disk_percent), (h.disk_percent ?? 0) >= 85 ? 'warn' : '',
-          h.disk_free_gb == null ? '' : `${h.disk_free_gb} GB ${store.lang === 'vi' ? 'trống' : 'free'}`)
+    + pie(t.ram, h.ram_percent,
+          h.ram_used_gb == null ? '' : `${h.ram_used_gb}/${h.ram_total_gb} GB`,
+          (h.ram_percent ?? 0) >= 85 ? 'warn' : '')
+    + pie(t.disk, h.disk_percent,
+          h.disk_free_gb == null ? '' : `${h.disk_free_gb} GB ${store.lang === 'vi' ? 'trống' : 'free'}`,
+          (h.disk_percent ?? 0) >= 85 ? 'warn' : '')
     + notes.map(n => `<div class="note">${esc(n)}</div>`).join('')
     + (h.measured_at ? `<div class="foot">${t.measuredAt(hhmm(h.measured_at))}${
         h.uptime ? ` · ${t.uptime} ${esc(h.uptime)}` : ''}</div>` : '');
@@ -539,6 +555,20 @@ function paintFloor() {
         enabledKeys: [state.floor.self],
         onSelect: () => {},          // không mở gì: đây là máy của chính mình
         onDisabledTap: tapOther,
+        /* KHÔNG truyền `store` của trang này: `store.theme` ở đây có thể là ''
+           (nghĩa là "theo hệ thống"), mà module dùng chung so thẳng với 'dark'
+           — nên nửa màn hình sáng, nửa sơ đồ tối. `mapStore` giải cái ''
+           thành sáng/tối thật, và cấp thêm nhãn trạng thái mà trang này không
+           có. Xem core.js. */
+        store: mapStore,
+        /* Bậc 1 ở đây là floor.js, KHÔNG phải factory-map.js của fleet: luật
+           khác (chỉ máy của mình có đèn) và tham số cũng khác, nên phải bọc.
+           Nhánh này chạy khi WebGL lỗi — trước đây nó 404 và màn hình trắng. */
+        fallback: async () => ({
+          render: (target) => flat3d.render(target, {
+            machines, self: state.floor.self, t, onOtherTap: tapOther,
+          }),
+        }),
       });
     } catch (e) {
       console.warn('[station] 3D lỗi, hạ về bậc 1:', e);
@@ -780,7 +810,14 @@ function mini(md) {
     const bare = ln.replace(/^[-*•]\s+/, '');
     // Bỏ emoji đầu nhãn: nó không thêm thông tin (nhãn đã ghi PASS/FAIL) mà lại
     // làm cột nhãn lệch nhau vài pixel mỗi dòng.
-    const stat = /^(?:[^\w(]+\s*)*\*\*(.+?)\*\*\s*[::]\s*(.+)$/.exec(bare);
+    /* Hai dạng, vì cách viết của agent không cố định:
+         "✅ **PASS**: 5.774 …"   nhãn in đậm
+         "✅ PASS: 5.774 …"       nhãn trơn
+       Dạng thứ hai chỉ nhận khi dòng MỞ ĐẦU bằng ký hiệu/emoji và nhãn ngắn
+       (≤24 ký tự) — nếu nhận mọi dòng có dấu hai chấm thì một câu văn bình
+       thường cũng bị xé thành nhãn/giá trị. */
+    const stat = /^(?:[^\w(]+\s*)*\*\*(.+?)\*\*\s*[::]\s*(.+)$/.exec(bare)
+      || /^[^\w\s(]+\s*([^:：]{1,24})\s*[::]\s*(.+)$/.exec(bare);
     if (stat) {
       flushUl();
       out += `<div class="c-stat"><span>${stat[1]}</span><b>${stat[2]}</b></div>`;
@@ -827,13 +864,29 @@ function drawKpis(list) {
 }
 
 function drawChart(c) {
+  const series = c.series || [];
+  /* MỘT chuỗi và không có `max` thì không vẽ cột. Thang đo lúc đó là chính nó,
+     nên cột luôn đầy 100% — đo được: "FAIL theo recipe" một recipe ra một cột
+     đỏ chiếm hết track, nói đúng một điều là 101 = 101. Trường hợp đó hiện
+     thành hàng số, đọc nhanh hơn và không hứa hẹn một phép so không tồn tại. */
+  if (series.length === 1 && c.max == null) {
+    const one = series[0];
+    const box = elFrom(`<div class="c-viz">${
+      c.title ? `<h4>${esc(c.title)}</h4>` : ''}</div>`);
+    box.append(elFrom(`<div class="c-stat">
+      <span>${esc(one.label)}</span>
+      <b>${esc(String(one.value))}${c.unit ? ` ${esc(c.unit)}` : ''}</b></div>`));
+    if (one.sub) box.append(elFrom(`<div class="c-sub">${esc(one.sub)}</div>`));
+    return box;
+  }
+
   /* `c.max` là thang đo do server đặt (vd chỉ tiêu). Thiếu nó thì lấy cột lớn
      nhất — nhưng khi đang so với một mốc thì cách đó làm cột cuối luôn đầy
      track và mọi ngày đều trông như đã hoàn thành. */
-  const max = c.max || Math.max(...(c.series || []).map(x => x.value), 1);
+  const max = c.max || Math.max(...series.map(x => x.value), 1);
   const box = elFrom(`<div class="c-viz">${
     c.title ? `<h4>${esc(c.title)}</h4>` : ''}</div>`);
-  for (const sr of c.series || []) {
+  for (const sr of series) {
     const w = Math.max(1, Math.round((sr.value || 0) * 100 / max));
     box.append(elFrom(`<div class="c-bar">
       <span>${esc(sr.label)}</span>

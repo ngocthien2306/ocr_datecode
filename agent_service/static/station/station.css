@@ -558,3 +558,29 @@ button:active { transform: translateY(1px); }
   overflow: hidden; max-width: 280px;
 }
 .msg .c-tbl tbody tr:nth-child(even) { background: var(--surface-2); }
+
+/* ── Vòng tròn RAM / đĩa ─────────────────────────────────────────────────── */
+/* conic-gradient, không thư viện: một vòng tròn tỉ lệ là hai dòng CSS. */
+.donut {
+  --pie: var(--accent);
+  position: relative; display: grid; width: 46px; height: 46px; flex: none;
+  place-items: center; border-radius: 50%;
+  background: conic-gradient(var(--pie) calc(var(--pct) * 1%), var(--line-soft) 0);
+}
+.donut::before { position: absolute; inset: 6px; content: ''; border-radius: 50%;
+                 background: var(--surface); }
+.donut > span { position: relative; z-index: 1; font-family: var(--f-head);
+                font-size: 14px; font-weight: 700; line-height: 1; }
+.donut small { font-size: 9px; }
+.donut.warn { --pie: var(--warn); }
+.donut.bad { --pie: var(--bad); }
+.pie-row { align-items: center; }
+
+/* KPI trong chat gọn lại: bốn ô cao 100px cho bốn con số là quá nhiều khoảng
+   trống, và nó đẩy biểu đồ xuống dưới màn hình. */
+.c-kpis { grid-template-columns: repeat(auto-fit, minmax(126px, 1fr)); gap: 8px; }
+.c-kpi { padding: 8px 11px; }
+.c-kpi .v { font-size: 25px; }
+.c-kpi .l { font-size: 10.5px; }
+.c-viz .c-stat { border-bottom: 0; padding: 2px 0; }
+.c-sub { font-size: 11.5px; color: var(--faint); }

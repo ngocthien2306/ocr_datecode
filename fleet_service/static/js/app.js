@@ -11,7 +11,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { store, I18N, api, esc, clock, coverageHTML } from './core.js';
-import * as map from './factory-map-3d.js';
+import * as map from '/shared/factory-map-3d.js';  // dùng chung với agent_service
 import * as V from './views.js';
 import * as chat from './chat.js';
 import * as frames from './frame-view.js';
@@ -112,6 +112,10 @@ function paintFold() {
   map.render($('#map'), {
     machines: ms, selected: state.selected,
     onSelect: id => openDrawer(id),
+    // Module dùng chung không import store/bậc-1 của riêng service nào — hai
+    // thứ đó do bên gọi cấp, nên cùng một file chạy được ở cả hai bề mặt.
+    store,
+    fallback: () => import('./factory-map.js'),
   });
   $('#grid').innerHTML = ms.map(V.machineCard).join('');
   $('#grid').querySelectorAll('.mcard').forEach(c =>
