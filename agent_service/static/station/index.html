@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="vi" translate="no">
+<head>
+<meta charset="utf-8">
+<!-- Màn hình này đứng cạnh dây chuyền, không zoom được bằng hai ngón khi đeo
+     găng — nên khoá scale và để cỡ chữ do CSS quyết định. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="google" content="notranslate">
+<title>Line Station</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/station/station.css">
+</head>
+<body>
+
+<!-- Đăng nhập: dùng đúng tài khoản của backend máy này, không có cơ chế riêng -->
+<div id="gate" class="gate" hidden>
+  <form id="gate-form" class="gate-card">
+    <h1>Line Station</h1>
+    <p id="gate-note"></p>
+    <label>Tên đăng nhập<input id="gate-user" autocomplete="username" required></label>
+    <label>Mật khẩu<input id="gate-pass" type="password" autocomplete="current-password" required></label>
+    <button type="submit" id="gate-btn"></button>
+    <p id="gate-err" class="gate-err"></p>
+  </form>
+</div>
+
+<main id="app" hidden>
+  <header class="top">
+    <div class="who">
+      <h1 id="m-name">—</h1>
+      <span class="chip" id="m-recipe"></span>
+      <span class="state" id="m-state"></span>
+    </div>
+    <div class="when">
+      <span id="m-shift"></span>
+      <b class="clock" id="m-clock">--:--</b>
+      <div class="seg lang">
+        <button id="lang-vi" aria-pressed="true">VI</button>
+        <button id="lang-en" aria-pressed="false">EN</button>
+      </div>
+    </div>
+  </header>
+
+  <section class="grid">
+    <!-- Sản lượng ca này -->
+    <article class="card big" id="c-output">
+      <h2 id="t-output"></h2>
+      <div class="huge" id="v-output">—</div>
+      <div class="sub" id="s-output"></div>
+    </article>
+
+    <!-- Tỉ lệ đạt -->
+    <article class="card big" id="c-rate">
+      <h2 id="t-rate"></h2>
+      <div class="huge" id="v-rate">—</div>
+      <div class="sub" id="s-delta"></div>
+      <div class="sub" id="s-split"></div>
+    </article>
+
+    <!-- Theo giờ trong ca -->
+    <article class="card wide" id="c-hourly">
+      <h2 id="t-hourly"></h2>
+      <div class="sub" id="s-hourly"></div>
+      <div class="hours" id="v-hourly"></div>
+      <div class="foot" id="f-hourly"></div>
+    </article>
+
+    <!-- Sản phẩm lỗi gần đây -->
+    <article class="card wide" id="c-fails">
+      <h2 id="t-fails"></h2>
+      <div class="fails" id="v-fails"></div>
+    </article>
+
+    <!-- Tình trạng máy -->
+    <article class="card" id="c-hw">
+      <h2 id="t-hw"></h2>
+      <div id="v-hw"></div>
+    </article>
+
+    <!-- Người trong ca -->
+    <article class="card" id="c-crew">
+      <h2 id="t-crew"></h2>
+      <div id="v-crew"></div>
+    </article>
+  </section>
+
+  <footer class="bottom">
+    <span id="f-refresh"></span>
+    <span class="spacer"></span>
+    <button class="act" id="btn-handover"></button>
+  </footer>
+
+  <!-- Bàn giao ca: mở lớp phủ, in được -->
+  <div class="sheet" id="handover" hidden>
+    <div class="sheet-card">
+      <div class="sheet-head">
+        <h2 id="h-title"></h2>
+        <span class="spacer"></span>
+        <button class="act ghost" id="h-print"></button>
+        <button class="act ghost" id="h-close">✕</button>
+      </div>
+      <div id="h-body"></div>
+    </div>
+  </div>
+</main>
+
+<script type="module" src="/station/station.js"></script>
+</body>
+</html>

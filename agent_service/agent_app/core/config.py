@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     # mốc ngày phải quy đổi trước khi query — xem tools/analytics_tools.py
     TIMEZONE: str = "Asia/Ho_Chi_Minh"
 
+    # ---- Line Station (màn hình cạnh dây chuyền) ----------------------------
+    # Máy này là máy nào. PHẢI khai tường minh: bốn trong năm máy đều có hostname
+    # `suntech-desktop`, nên không suy được từ hostname.
+    STATION_NAME: str = ""
+    STATION_LINE: str = ""
+    STATION_MODEL: str = ""
+
     # ---- Agent service riêng ------------------------------------------------
     APP_NAME: str = "OCR Datecode Agent Service"
     APP_VERSION: str = "1.0.0"

@@ -876,3 +876,12 @@ h3.chat-heading { padding-bottom: 5px; border-bottom: 1px solid var(--line-soft)
   .fp-row { grid-template-columns: 72px 1fr; }
   .fp-n { grid-column: 2; text-align: left; }
 }
+
+/* Đường vào Line Station của từng máy, đặt cạnh nút hỏi trợ lý trong drawer. */
+.act-link {
+  display: inline-flex; align-items: center; min-height: 30px; padding: 4px 11px;
+  font-size: 12px; font-weight: 600; text-decoration: none;
+  border: 1px solid var(--accent); border-radius: var(--r-md);
+  color: var(--accent-2); background: var(--surface);
+}
+.act-link:hover { background: var(--accent); border-color: var(--accent); color: #fff; }

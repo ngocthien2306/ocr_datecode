@@ -602,6 +602,12 @@ export function drawerHTML(m, prod, { headOnly = false, bodyOnly = false } = {})
         <span class="spacer"></span>
         <button class="ask-btn" onclick="window.__askAbout('${esc(m.name)}')">
           ${t.chatTitle} →</button>
+        <!-- Vào thẳng màn hình của máy đó. Mở tab mới và trỏ tới CHÍNH máy
+             (:8100/station), không proxy qua fleet: Line Station phải dùng được
+             kể cả khi fleet service tắt, nên đường vào cũng không nên đi qua nó. -->
+        <a class="act-link" target="_blank" rel="noopener"
+           href="http://${esc(m.ip)}:8100/station"
+           title="${esc(t.openStationHint)}">${t.openStation}</a>
         <button class="close-btn" onclick="window.__closeDrawer()"
           aria-label="${esc(t.close)}">✕</button>
       </div>

@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from agent_app.api import auth, chat, fleet
+from agent_app.api import auth, chat, fleet, station
 from agent_app.core.config import settings
 from agent_app.db.mongodb import (
     close_mongo_connection,
@@ -84,6 +84,9 @@ app.include_router(chat.router, prefix="/api")
 # Đường XÁC ĐỊNH cho tầng fleet: gọi thẳng tool, không qua LLM. Fleet poll 5 máy
 # mỗi phút, đi qua /agent/chat thì mỗi vòng là 5 lượt LLM.
 app.include_router(fleet.router, prefix="/api")
+# Line Station: màn hình đặt cạnh dây chuyền, chạy trên CHÍNH máy này. Chỉ đọc —
+# không endpoint nào start/stop recipe hay sửa cấu hình.
+app.include_router(station.router, prefix="/api")
 
 
 # Ảnh kết quả inference. Backend cũng serve thư mục này ở :8000, nhưng tunnel
@@ -102,6 +105,36 @@ from agent_app.tools.report_tools import REPORTS_DIR, REPORTS_URL_PREFIX  # noqa
 
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount(REPORTS_URL_PREFIX, StaticFiles(directory=str(REPORTS_DIR)), name="reports")
+
+
+# Trang Line Station. Mount trước route /station để file tĩnh đi trước.
+_STATION = Path(__file__).resolve().parent.parent / "static" / "station"
+if _STATION.is_dir():
+    app.mount("/station/assets", StaticFiles(directory=str(_STATION)), name="station_assets")
+
+
+@app.get("/station/station.css", include_in_schema=False)
+async def station_css():
+    return FileResponse(_STATION / "station.css", media_type="text/css",
+                        headers={"Cache-Control": "no-cache, must-revalidate"})
+
+
+@app.get("/station/station.js", include_in_schema=False)
+async def station_js():
+    return FileResponse(_STATION / "station.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache, must-revalidate"})
+
+
+@app.get("/station", include_in_schema=False)
+async def station_ui():
+    """
+    Màn hình cạnh dây chuyền (http://<máy>:8100/station).
+
+    no-cache vì đây là màn hình treo tường chạy liên tục nhiều ngày: sửa xong mà
+    tablet vẫn giữ bản cũ trong cache thì không ai biết là đã sửa.
+    """
+    return FileResponse(_STATION / "index.html", media_type="text/html",
+                        headers={"Cache-Control": "no-cache, must-revalidate"})
 
 
 @app.get("/test", include_in_schema=False)
