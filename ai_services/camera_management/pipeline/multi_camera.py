@@ -431,6 +431,172 @@ class MultiCameraPipeline(InferencePipelineTemplate):
     # homography remains the region source.
     _USE_TEXT_BOX_ANCHOR = False
 
+    # Probe angles for the rescue. A blind 45°-grid alone does NOT work —
+    # validated on five real failures: every grid candidate matched at
+    # conf=0.000 because the residual tilt (20-54°) exceeds what SuperPoint
+    # tolerates. But the OBB detector reads the text angle fine at any probe
+    # orientation, so: rotate to a probe angle, read the residual, rotate to
+    # the EXACT angle, and try both flips. Same five frames: the correct flip
+    # matched at conf 0.93-1.00, and the wrong flip at 0.000 — the pick is
+    # unambiguous.
+    _RESCUE_PROBE_ANGLES = (45.0, 90.0, 135.0)
+
+    @staticmethod
+    def _match_rotation_deg(r) -> float:
+        """Rotation the matcher had to apply, from the result's homography.
+        For cap OCR the candidates are supposed to be already upright, so a
+        large value here means the OBB normalisation failed on this frame and
+        the regions were laid out along tilted text — the measured symptom is
+        line-gap collapse (annotation boxes overlapping one another)."""
+        H = r.get('homography') if isinstance(r, dict) else None
+        if H is None:
+            return 0.0
+        import math as _m
+        H = np.asarray(H, dtype=np.float64)
+        return abs(_m.degrees(_m.atan2(float(H[1, 0]), float(H[0, 0]))))
+
+    def _rescue_rotation(self, context, sn, result, batch_ocr_results,
+                          min_matches: int = 0) -> bool:
+        """
+        Both dual candidates read zero expected text — retry the cap at
+        _RESCUE_ANGLES around the same pivot, match all in one batch, OCR the
+        candidates SuperPoint accepted, and promote the best reader.
+
+        Returns True when a candidate read at least one expected text; the
+        caller then skips its normal pick (already promoted here). On any
+        missing prerequisite it returns False and the frame keeps its normal
+        FAIL — this path must never turn a readable frame into a worse one.
+        """
+        frame = result.get('_dual_primary_frame')
+        cap = result.get('_dual_cap_circle')
+        matcher = context.camera_matchers.get(sn)
+        if isinstance(matcher, list):
+            matcher = matcher[0]
+        svc = getattr(context, 'obb_rotation_service', None)
+        camera = next(
+            (c for c in context.cameras_to_process if c.serial_number == sn), None,
+        )
+        if (frame is None or cap is None or matcher is None or camera is None
+                or svc is None or not getattr(svc, 'available', False)
+                or getattr(matcher, 'text_window', None) is None
+                or not context.text_verification_service):
+            return False
+        expected = camera.expected_texts.get(0, {})
+        if not expected:
+            return False
+
+        import math as _math
+        import time as _time
+        _t0 = _time.perf_counter()
+        from ..preprocessing.cv_rotator import _rotate_cap_region
+
+        def _residual_deg(tb):
+            """Text tilt left in a frame, from its OBB text_box."""
+            a = _math.degrees(tb[4])
+            if tb[3] > tb[2]:       # box taller than wide → detector swapped axes
+                a += 90.0
+            return a
+
+        # Stage 1 — probe: rotate to a fixed angle just so the OBB detector can
+        # re-read the text angle (the original estimate is what failed here).
+        refined = None
+        for probe in self._RESCUE_PROBE_ANGLES:
+            rot = _rotate_cap_region(frame, cap, probe, False)
+            tb = svc.detect_text_box(rot)
+            if tb is not None:
+                refined = probe + _residual_deg(tb)
+                break
+        if refined is None:
+            logger.info(f"[{sn}] rescue: no text_box at any probe — keeping FAIL")
+            return False
+
+        # Stage 2 — exact-angle candidates, both flips.
+        cands = []                      # (angle, full_frame, window_crop, crop_area)
+        for ang in (refined, refined + 180.0):
+            rot = _rotate_cap_region(frame, cap, ang, False)
+            tw = self._narrow_target_to_text(
+                context, f"{sn}/rescue{ang:.0f}", rot, cap,
+                (0, 0, rot.shape[1], rot.shape[0]),
+            )
+            if tw is None:
+                continue
+            cands.append((ang, rot, tw[0], tw[1]))
+        if not cands:
+            logger.info(
+                f"[{sn}] rescue: refined angle {refined:.0f}° gave no text "
+                f"window — keeping FAIL"
+            )
+            return False
+
+        batch = matcher.match_batch(
+            target_imgs=[c[2] for c in cands],
+            templates=[matcher] * len(cands),
+            score_threshold=0.3,
+            ransac_threshold=5.0,
+            min_confidence=float(getattr(camera, 'matching_conf', 0.20) or 0.20),
+        )
+        if not batch.get('success', False):
+            return False
+
+        # OCR every candidate SuperPoint accepted, in one batch.
+        tasks, meta = [], []
+        for (ang, rot, _crop, area), r in zip(cands, batch['results']):
+            if not r.get('success'):
+                continue
+            if self._transform_func:
+                r = self._transform_func(r, area)
+            tasks.append({
+                'serial_number': f"{sn}::rescue{ang:.0f}",
+                'frame_img': rot,
+                'transformed_bboxes': r.get('transformed_bboxes', []),
+                'expected_texts': expected,
+                'camera': camera,
+                'recognition_threshold': getattr(camera, 'recognition_threshold', 0.5),
+            })
+            meta.append((ang, rot, r))
+        if not tasks:
+            logger.info(
+                f"[{sn}] rescue: SuperPoint rejected all "
+                f"{len(cands)} angles — keeping FAIL"
+            )
+            return False
+        verifs = context.text_verification_service.batch_verify_multi_camera(tasks)
+
+        def _n_match(v):
+            return sum(1 for x in (v.get('text') or {}).get('results', [])
+                        if x.get('match', False))
+        best = max(
+            ((ang, rot, r, verifs.get(f"{sn}::rescue{ang:.0f}") or {})
+             for ang, rot, r in meta),
+            key=lambda t: (_n_match(t[3]), float(t[2].get('confidence', 0) or 0)),
+        )
+        ang, rot, r, verif = best
+        n = _n_match(verif)
+        _dt = (_time.perf_counter() - _t0) * 1000
+        if n <= min_matches:
+            logger.info(
+                f"[{sn}] rescue: tried {len(cands)} angles, best reads {n} "
+                f"expected text(s) vs current {min_matches} ({_dt:.0f}ms) — "
+                f"keeping current result"
+            )
+            return False
+
+        # Promote exactly like an alt win: frame, regions, metrics, OCR verdict.
+        _ctx_frames = context.results.get(sn, {}).get('frames', [])
+        if _ctx_frames:
+            _ctx_frames[0] = rot
+        result['transformed_bboxes'] = r.get('transformed_bboxes', [])
+        for k in ('confidence', 'inliers', 'total_matches', 'success'):
+            if k in r:
+                result[k] = r[k]
+        batch_ocr_results[sn] = verif
+        logger.info(
+            f"[{sn}] rescue: angle +{ang:.0f}° wins with {n} text match(es), "
+            f"conf={float(r.get('confidence', 0) or 0):.3f} "
+            f"({len(cands)} angles tried in {_dt:.0f}ms)"
+        )
+        return True
+
     def _anchor_bboxes_on_text_box(
         self, context, serial_number, matcher, result, frame,
     ):
@@ -733,6 +899,13 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                         combined['_dual_alt_frame']  = pair[1] if pair else None
                         combined['_dual_sp_primary'] = c_p
                         combined['_dual_sp_alt']     = c_a
+                        # For the multi-angle rescue in verify_results: the
+                        # primary full frame and the pivot both candidates were
+                        # rotated about. When both candidates read zero text,
+                        # the OBB angle was almost certainly wrong, and rescue
+                        # re-tries the cap at 45° steps around this pivot.
+                        combined['_dual_primary_frame'] = pair[0] if pair else None
+                        combined['_dual_cap_circle'] = dual_cap_circle_by_serial.get(sn)
                         transformed_results[sn] = combined
                         logger.info(
                             f"[{sn}] dual_rotation: deferring winner pick to OCR "
@@ -1117,6 +1290,58 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                 )
             # Drop alt entry so downstream sees a single verification per sn.
             batch_ocr_results.pop(_alt_key, None)
+
+            # ── Multi-angle rescue ──
+            # Both candidates reading ZERO expected text almost always means the
+            # OBB angle estimate was wrong (observed frames: the date code left
+            # diagonal/vertical, so the horizontal text window clipped it and
+            # SuperPoint had nothing to key on). The 0°/180° pair can't recover
+            # from that — only more angles can. Costs ~60-80ms and runs on the
+            # ~1% of jobs where both candidates struck out, inside a ~620ms
+            # trigger budget.
+            _best_n = max(_n_p, _n_a)
+            _n_expected = len(getattr(
+                next((c for c in context.cameras_to_process
+                       if c.serial_number == _sn), None) or object(),
+                'expected_texts', {0: {}}).get(0, {}) or {})
+            _rot_dev = max(
+                self._match_rotation_deg(_r),
+                self._match_rotation_deg(_r.get('_dual_alt_result') or {}),
+            )
+            # Rescue when nothing read at all, OR when some region failed AND
+            # the match itself reports large rotation — upright candidates
+            # should match at ~0°, so a big angle means this frame's rotation
+            # normalisation failed and region layout can't be trusted (seen
+            # live: 45° match, conf 0.925, annotation boxes collapsed onto the
+            # same text line). Promote only a strictly better reader.
+            if _best_n == 0 or (_best_n < _n_expected and _rot_dev > 15.0):
+                if _rot_dev > 15.0:
+                    logger.info(
+                        f"[{_sn}] match rotation {_rot_dev:.0f}° with "
+                        f"{_best_n}/{_n_expected} texts read — rescue"
+                    )
+                try:
+                    if self._rescue_rotation(context, _sn, _r, batch_ocr_results,
+                                              min_matches=_best_n):
+                        continue
+                except Exception as _resc_e:
+                    logger.warning(f"[{_sn}] rotation rescue error: {_resc_e}")
+
+        # The pick loop above only sees cameras that produced OCR tasks — which
+        # requires SuperPoint to have matched at least ONE candidate. The worst
+        # rotation failures match NEITHER (both sp=0.000, success=False), build
+        # no tasks, and never reach the loop at all. Catch those here.
+        for _cam in context.cameras_to_process:
+            _sn2 = _cam.serial_number
+            if _sn2 in dual_alt_serial:
+                continue                       # handled (and maybe rescued) above
+            _r2 = transformed_results.get(_sn2) or {}
+            if _r2.get('_dual_primary_frame') is None or _r2.get('success'):
+                continue
+            try:
+                self._rescue_rotation(context, _sn2, _r2, batch_ocr_results)
+            except Exception as _resc_e:
+                logger.warning(f"[{_sn2}] rotation rescue error: {_resc_e}")
 
         t_phases_ms = (time.perf_counter() - t_phases_start) * 1000
         t_ocr_ms = t_phases_ms  # approximation — actual concurrent

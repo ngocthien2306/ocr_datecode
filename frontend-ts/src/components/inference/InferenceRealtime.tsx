@@ -2220,8 +2220,17 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                   (s) => s.serial_number === cameraResult.serial_number
                 );
 
-                // Determine overall pass/fail status based on frames
-                const overallPassFail = cameraResult.frames.some(f => f.pass_fail.toLowerCase() === 'fail') ? 'fail' : 'pass';
+                // Determine overall pass/fail status based on frames.
+                // An empty `frames` array is NOT a pass: it means this camera
+                // delivered no image for the group at all (its trigger was
+                // skipped because the previous in-camera delayed capture was
+                // still in flight). Tinting that green reads as an inspection
+                // that passed, when in fact nothing was inspected — so it gets
+                // its own 'nodata' state instead.
+                const hasFrames = cameraResult.frames.length > 0;
+                const overallPassFail = !hasFrames
+                  ? 'nodata'
+                  : cameraResult.frames.some(f => f.pass_fail.toLowerCase() === 'fail') ? 'fail' : 'pass';
 
                 return (
                   <div key={cameraResult.serial_number} className={`camera-card-infer ${overallPassFail}`}>
@@ -2241,6 +2250,22 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                     </div> */}
 
                     <div className={`camera-frames ${overallPassFail}`}>
+                      {!hasFrames && (
+                        <div className="frame-container">
+                          <div className="frame-aspect-wrapper">
+                            <div className="frame-placeholder frame-placeholder--nodata">
+                              <span className="nodata-title">NO FRAME</span>
+                              <span className="nodata-camera">
+                                {getCameraInfo(cameraResult.serial_number)?.camera_id
+                                  || cameraResult.serial_number}
+                              </span>
+                              <span className="nodata-hint">
+                                trigger skipped — this bottle was not imaged by this camera
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                       {cameraResult.frames.map((frame) => {
                         const imageUrl = frame.image_base64
                           ? `data:image/jpeg;base64,${frame.image_base64}`

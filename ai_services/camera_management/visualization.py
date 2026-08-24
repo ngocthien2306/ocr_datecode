@@ -377,6 +377,33 @@ def draw_detected_obb_boxes(
         'wrinkled': (0, 165, 255)   # Orange (detected wrinkled)
     }
 
+    # Detected cap-wall lines (edge_regions mode). Drawn extended and labelled
+    # so an operator can see the physical anchor the product region was rebuilt
+    # from — the walls are straight and vertical, and the region must follow
+    # them, not the (shear-prone) SuperPoint polygon.
+    cap_edges = detected_boxes.get('cap_edges')
+    if cap_edges:
+        for key, col in (('left_line', (0, 0, 255)),      # Red
+                          ('right_line', (255, 0, 255))):  # Magenta
+            line = cap_edges.get(key)
+            if not line or len(line) < 2:
+                continue
+            a = np.asarray(line[0], dtype=np.float64)
+            b = np.asarray(line[1], dtype=np.float64)
+            d = b - a
+            n = float(np.linalg.norm(d))
+            d = d / n if n > 1e-3 else np.array([0.0, 1.0])
+            p1 = (a - d * height).astype(int)
+            p2 = (b + d * height).astype(int)
+            cv2.line(result_img, tuple(p1), tuple(p2), col, line_thickness)
+            ymid = int(max(24, min(height - 10, (a[1] + b[1]) / 2)))
+            cv2.putText(
+                result_img,
+                'EDGE L' if key == 'left_line' else 'EDGE R',
+                (int(a[0]) + 6, ymid), cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale, col, text_thickness,
+            )
+
     # Draw each detected box
     # NOTE: 'label' temporarily hidden — using template polygon (transformed via SuperPoint)
     # as the reference; no need to visualize the YOLO label box

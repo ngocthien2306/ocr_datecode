@@ -45,9 +45,21 @@ class Settings(BaseSettings):
     TIMEZONE: str = "Asia/Ho_Chi_Minh"
 
     OPENAI_API_KEY: str = ""
+
+    # --- Ghi đè phần HIỂN THỊ phần cứng (không phải phép đo) ------------------
+    # Để trống = hiện đúng phần cứng thật. Đặt giá trị thì UI hiện theo giá trị
+    # đó, và số RAM total/used/available bị quy đổi theo DISPLAY_RAM_TOTAL_GB —
+    # KHÔNG còn là dung lượng thật của máy. Tỉ lệ phần trăm vẫn là số đo thật.
+    DISPLAY_DEVICE_MODEL: str = ""
+    DISPLAY_RAM_TOTAL_GB: float = 0.0
+
     class Config:
         env_file = ".env"
         case_sensitive = True
+        # Ignore unknown keys in .env / environment instead of crashing.
+        # Prevents leftover vars (e.g. removed REDIS_* settings) from taking
+        # down the whole app with a pydantic ValidationError on startup.
+        extra = "ignore"
 
 
 settings = Settings()

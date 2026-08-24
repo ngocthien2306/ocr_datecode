@@ -8,7 +8,6 @@ import logging
 from typing import Optional, Any
 from datetime import datetime, timedelta, timezone
 from redis import Redis
-from redis.exceptions import RedisError
 
 from app.core.config import settings
 
@@ -38,7 +37,7 @@ def get_redis() -> Optional[Redis]:
             # Test connection
             redis_client.ping()
             logger.info("✅ Redis connected successfully")
-        except RedisError as e:
+        except Exception as e:
             logger.warning(f"⚠️ Redis connection failed: {e}. Cache will be disabled.")
             redis_client = None
 

@@ -237,13 +237,21 @@ class ColorVerificationService:
             }
             if localization_method == "edge_regions":
                 color_check["cap_axis"] = axis_info      # None when it fell back
+            detected_boxes: Dict[str, Any] = {"product": product_box}
+            # Ship the detected wall lines to the drawing layer: the region is
+            # anchored on them, and showing the anchor is what lets an operator
+            # judge WHY the region sits where it sits.
+            if axis_info and axis_info.get("left_line"):
+                detected_boxes["cap_edges"] = {
+                    "left_line": axis_info["left_line"],
+                    "right_line": axis_info["right_line"],
+                    "source": product_box.get("source", ""),
+                }
             return {
                 "match": bool(ok),
                 "skipped": False,
                 "color_check": color_check,
-                "detected_boxes": {
-                    "product": product_box,
-                },
+                "detected_boxes": detected_boxes,
             }
 
         annotations = template.get("annotations") or []
@@ -507,6 +515,32 @@ class ColorVerificationService:
         if axis is None or "exp_left_mid" not in axis:
             return product_box, None
 
+        # Preferred: rebuild the region upright from the detected wall lines.
+        # See _rebuild_product_from_walls — the slide-along-axis correction
+        # below survives only as its fallback, because it cannot remove the
+        # tilt/shear the homography bakes into the polygon.
+        if bool(color_config.get("wall_rebuild", True)):
+            try:
+                rebuilt = self._rebuild_product_from_walls(
+                    frame_img, axis, product_box, camera, template_idx, ref, serial,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[{serial}] wall rebuild error ({e}) — falling back to "
+                    f"axis slide"
+                )
+                rebuilt = None
+            if rebuilt is not None:
+                logger.info(
+                    f"[{serial}] product region rebuilt from walls "
+                    f"(scale={rebuilt[1]['scale']:.3f}, "
+                    f"shift={rebuilt[1]['shift_px']:+.1f}px)"
+                )
+                return rebuilt
+            logger.info(
+                f"[{serial}] wall rebuild unavailable — axis slide fallback"
+            )
+
         corrected = correct_polygon_along_axis(
             product_box.get("corners") or [],
             axis["left_mid"], axis["right_mid"],
@@ -530,6 +564,151 @@ class ColorVerificationService:
         info = dict(info)
         info.update({"col_L": axis["col_L"], "col_R": axis["col_R"]})
         return new_box, info
+
+    def _rebuild_product_from_walls(
+        self,
+        frame_img: np.ndarray,
+        axis: Dict[str, Any],
+        product_box: Dict[str, Any],
+        camera: Optional["Camera"],
+        template_idx: int,
+        ref: Dict[str, float],
+        serial: str,
+    ) -> Optional[Tuple[Dict[str, Any], Dict[str, float]]]:
+        """Rebuild the product region UPRIGHT from the two detected wall lines.
+
+        The SuperPoint homography (8 DOF) is free to shear, and on this line it
+        does: measured on a full day of colour FAILs, 73% carried a product
+        polygon tilted >3° (up to 24.5°) while the bottle itself stood straight
+        — the sheared quad sat on the glass neck instead of the label, so the
+        HSV count failed good bottles. `correct_polygon_along_axis` can't help:
+        it only slides/scales ALONG the axis, so tilt, shear and vertical error
+        all survive it.
+
+        The edge detector, meanwhile, has already found the PHYSICAL wall lines
+        — straight and vertical by construction of the bottle. So place the
+        region from them instead: express the template's product rectangle in
+        the template's own wall frame (x as a fraction of wall-to-wall width,
+        y as an offset from the axis height in the same unit), then map those
+        fractions onto the detected walls. Position, scale and uprightness all
+        come from physical structure; the homography contributes nothing.
+
+        Returns (box, info) or None — the caller then falls back to the
+        slide-along-axis correction, and failing that the raw SuperPoint ROI.
+        """
+        tmpl = self._get_template(camera, template_idx)
+        anns = (tmpl or {}).get("annotations") or []
+        if not anns:
+            logger.info(f"[{serial}] wall rebuild: template has no annotations")
+            return None
+        fh, fw = frame_img.shape[:2]
+
+        def _quad_px(kind: str) -> Optional[np.ndarray]:
+            for a in anns:
+                if a.get("type") != kind:
+                    continue
+                pts = a.get("points")
+                if pts and len(pts) >= 4:
+                    out = []
+                    for p in pts:
+                        if isinstance(p, dict):
+                            out.append([float(p.get("x", 0)) * fw,
+                                        float(p.get("y", 0)) * fh])
+                        elif isinstance(p, (list, tuple)) and len(p) >= 2:
+                            out.append([float(p[0]) * fw, float(p[1]) * fh])
+                    if len(out) >= 4:
+                        return np.asarray(out, np.float32)
+                # Rect fallback — the recipe stores hand-drawn edge regions as
+                # normalized x/y/width/height, not as a points list (same shape
+                # _extract_product_polygon already falls back to).
+                x, y = a.get("x"), a.get("y")
+                w, h = a.get("width"), a.get("height")
+                if x is not None and y is not None and w and h:
+                    x1, y1 = float(x) * fw, float(y) * fh
+                    x2, y2 = (float(x) + float(w)) * fw, (float(y) + float(h)) * fh
+                    return np.asarray(
+                        [[x1, y1], [x2, y1], [x2, y2], [x1, y2]], np.float32)
+            return None
+
+        qL = _quad_px("edge_left")
+        qR = _quad_px("edge_right")
+        prod = self._extract_product_polygon(anns, fw, fh)
+        if qL is None or qR is None or prod is None:
+            logger.info(
+                f"[{serial}] wall rebuild: missing quads "
+                f"(qL={qL is not None}, qR={qR is not None}, prod={prod is not None}; "
+                f"ann types={[a.get('type') for a in anns][:6]})"
+            )
+            return None
+
+        # Template-side wall x positions: frac_* is where the wall sits inside
+        # each hand-drawn edge region (measured at template build).
+        txL = float(qL[:, 0].min()) + float(ref.get("frac_L", 0.5)) * float(
+            qL[:, 0].max() - qL[:, 0].min())
+        txR = float(qR[:, 0].min()) + float(ref.get("frac_R", 0.5)) * float(
+            qR[:, 0].max() - qR[:, 0].min())
+        t_w = txR - txL
+        if t_w < 10.0:
+            logger.info(f"[{serial}] wall rebuild: template wall width {t_w:.1f} too small")
+            return None
+        t_yc = float(np.vstack([qL, qR])[:, 1].mean())
+
+        # Frame-side walls from the detector, forced to the physical model:
+        # walls are vertical, so each contributes one x; the axis height is the
+        # mean y of the detected line endpoints.
+        ll, rl = axis.get("left_line"), axis.get("right_line")
+        if ll is None or rl is None:
+            logger.info(f"[{serial}] wall rebuild: axis lines missing")
+            return None
+        lpts = np.vstack([np.asarray(p, np.float32).reshape(-1) [:2] for p in ll])
+        rpts = np.vstack([np.asarray(p, np.float32).reshape(-1)[:2] for p in rl])
+        dxL, dxR = float(lpts[:, 0].mean()), float(rpts[:, 0].mean())
+        d_w = dxR - dxL
+        d_yc = float(np.vstack([lpts, rpts])[:, 1].mean())
+
+        scale = d_w / t_w
+        if not (0.5 <= scale <= 2.0):
+            logger.warning(
+                f"[{serial}] wall rebuild rejected: scale {scale:.3f} out of "
+                f"bounds — falling back to axis slide"
+            )
+            return None
+
+        # Map every template product vertex through the wall frame. The
+        # template rectangle is axis-aligned, and this map is a uniform
+        # scale + translation, so the result is upright by construction.
+        fx = (prod[:, 0] - txL) / t_w
+        fy = (prod[:, 1] - t_yc) / t_w
+        pts = np.stack([dxL + fx * d_w, d_yc + fy * d_w], axis=1).astype(np.float32)
+
+        # Reject a rebuild that lands (mostly) outside the frame — a wild wall
+        # detection must not drag the ROI off the image.
+        if (pts[:, 0].min() < -fw * 0.05 or pts[:, 0].max() > fw * 1.05
+                or pts[:, 1].min() < -fh * 0.05 or pts[:, 1].max() > fh * 1.05):
+            logger.warning(
+                f"[{serial}] wall rebuild rejected: box out of frame — "
+                f"falling back to axis slide"
+            )
+            return None
+
+        old = np.asarray(product_box.get("corners") or [], np.float32)
+        shift = (float(pts[:, 0].mean() - old[:, 0].mean())
+                 if old.size else 0.0)
+        new_box = dict(product_box)
+        new_box["corners"] = pts.tolist()
+        x1, y1 = float(pts[:, 0].min()), float(pts[:, 1].min())
+        x2, y2 = float(pts[:, 0].max()), float(pts[:, 1].max())
+        new_box["box"] = [(x1 + x2) / 2.0, (y1 + y2) / 2.0, x2 - x1, y2 - y1, 0.0]
+        new_box["source"] = "wall_rebuild"
+        return new_box, {
+            "shift_px": shift, "scale": scale,
+            "width_expected": t_w, "width_detected": d_w,
+            "col_L": axis.get("col_L"), "col_R": axis.get("col_R"),
+            # Detected wall lines in frame coords — the UI overlay draws these
+            # so an operator can SEE what the region was anchored on.
+            "left_line": [np.asarray(p, float).tolist()[:2] for p in ll],
+            "right_line": [np.asarray(p, float).tolist()[:2] for p in rl],
+        }
 
     @staticmethod
     def _edge_region_pts(

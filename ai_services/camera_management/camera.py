@@ -1115,11 +1115,18 @@ class Camera:
         dụng", nên nó chỉ được ZERO HOÁ để không cộng thêm delay ẩn lên Timer1
         hoặc lên timer legacy.
 
-        Khi thành công (hw_trigger_delay_active=True), trigger_handler sẽ
-        fire_software_trigger() NGAY tại DI edge — loại threading.Timer khỏi
-        đường timing (hết trễ GIL).
+        MẶC ĐỊNH TẮT — cả 3 camera dùng threading.Timer (đường "legacy").
+        Timer1 nhốt delay_trigger VÀO TRONG camera, biến camera thành tài
+        nguyên độc quyền suốt delay+phơi sáng+truyền (~561ms trên cam GigE);
+        xung DI nào cách nhau ngắn hơn là camera đó mất lượt → chai thiếu góc
+        nhìn ("HW trigger skipped": 704+311 lần riêng 2026-08-24, kèm burst
+        "already a thread waiting" khi stop recipe giữa lúc retrieve đang chờ).
+        Python timer giữ camera bận chỉ ~80ms (chụp+truyền) và cho phép nhiều
+        chai chờ delay song song; nỗi lo trễ GIL đo thật là p99=1ms trên 37k
+        lượt của 24026290 — không đáng kể. Sau khi chuyển cả 3 camera sang
+        Python timer (2026-08-24 13:40): 0 skip, 0 thread-race, jitter ≤1ms.
 
-        Kill-switch: env OCR_HW_TRIGGER_DELAY=0 → luôn dùng timer cũ.
+        Bật lại (thí nghiệm): env OCR_HW_TRIGGER_DELAY=1.
         Multi-template: disarm (delay phần cứng áp lên MỌI trigger → frame 2+ lệch).
         Fallback: mọi lỗi → disarm về trạng thái legacy nguyên vẹn.
         """
@@ -1130,8 +1137,11 @@ class Camera:
 
         node = self._get_trigger_delay_node()
 
-        if os.environ.get("OCR_HW_TRIGGER_DELAY", "1") != "1":
-            logger.info(f"[{self.serial_number}] HW TriggerDelay disabled by env")
+        if os.environ.get("OCR_HW_TRIGGER_DELAY", "0") != "1":
+            logger.info(
+                f"[{self.serial_number}] In-camera TriggerDelay OFF (default) — "
+                f"dùng Python timer; đặt OCR_HW_TRIGGER_DELAY=1 để thí nghiệm Timer1"
+            )
             self._disarm_hw_delay(node)
             return False
 
