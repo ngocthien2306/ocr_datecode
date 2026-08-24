@@ -387,6 +387,10 @@ class MatcherFactory:
                 return None
 
             img_h, img_w = template_img.shape[:2]
+            # Hold on to the uncropped image: the cap_crop path below rebinds
+            # `template_img`, and the OBB text_box detector needs the full frame
+            # (see _narrow_template_to_text).
+            full_template_img = template_img
 
             # Parse annotations
             annotations = template_data.get("annotations", [])
@@ -552,16 +556,37 @@ class MatcherFactory:
             svc = self.obb_rotation_service
             if svc is not None and getattr(svc, 'available', False):
                 try:
-                    # matcher.template_img — NOT the local `template_img`, which
-                    # can still be the uncropped original on the crop_area path.
-                    # This one is guaranteed to share `other_bboxes`' coords.
-                    tb = svc.detect_text_box(matcher.template_img)
+                    # Detect on the FULL frame, then shift into the cap-crop
+                    # coords `other_bboxes` uses. Running the detector on the
+                    # ~750px cap crop instead puts it out of distribution —
+                    # measured on two live templates: the full frame found the
+                    # block both times (374.7 and 381.9 px wide), while the cap
+                    # crop missed one outright and returned 274.2 for the other,
+                    # a 1.4x extent error. The full frame is also how the target
+                    # side detects, so the two extents agree.
+                    tb = svc.detect_text_box(full_template_img)
+                    if tb is not None and cap_crop_bbox:
+                        _ox, _oy = cap_crop_bbox[0], cap_crop_bbox[1]
+                        tb = (tb[0] - _ox, tb[1] - _oy, tb[2], tb[3], tb[4])
                     matcher.template_text_box = tb
                     logger.info(
                         f"[{serial_number}] Template {template_idx}: template "
                         f"text_box = {tb}"
                     )
-                    if tb is not None and cap_crop_bbox:
+                    # Narrow only for cap OCR. Detecting on the full frame means
+                    # a label-reading Check_Color camera can now also return a
+                    # text_box (seen: 213px wide on a bottle wall), and those
+                    # must keep matching on the whole crop — their surface is
+                    # curved and seen off-axis, so a tight text window would
+                    # throw away the context the homography needs. A 'product'
+                    # annotation is what marks those cameras, same signal the
+                    # pipeline gates rotation on.
+                    _has_product = any(
+                        (bb.get('type') if isinstance(bb, dict)
+                         else getattr(bb, 'type', None)) == 'product'
+                        for bb in (other_bboxes or [])
+                    )
+                    if tb is not None and cap_crop_bbox and not _has_product:
                         matcher.text_window = self._narrow_template_to_text(
                             matcher, tb, cap_crop_bbox, serial_number, template_idx,
                         )
