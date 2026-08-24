@@ -1,0 +1,53 @@
+# OCR Training API (ocr_service) — port 8002
+#
+# Template kept for reference; the installed unit is written by
+# scripts/setup_systemd_services.sh, which substitutes the real user/paths.
+# Install with:  bash scripts/setup_systemd_services.sh
+#
+# Four choices here are load-bearing:
+#
+#  1. uvicorn is invoked directly, NOT `python -m app.main`. That entry point
+#     passes reload=settings.DEBUG, and .env ships DEBUG=True — a reload watcher
+#     under systemd would restart the process on any file touch, killing a
+#     training run that was minutes in.
+#
+#  2. No KillMode override (default control-group), unlike ocr-backend which
+#     needs `mixed`. Training spawns OpenOCR's train_rec.py with a plain
+#     subprocess.Popen, so the trainer sits in this unit's cgroup and stopping
+#     the unit takes it down too. That is wanted: an orphaned trainer would keep
+#     ~2.6 GB of VRAM and the GPU flock indefinitely.
+#
+#  3. PrivateTmp is left off. The cross-service GPU lock lives at
+#     /tmp/ocr_datecode_gpu.lock and has to be the SAME file anomaly_service and
+#     any manual run see. PrivateTmp=yes would give this unit a private /tmp and
+#     silently disable the mutual exclusion.
+#
+#  4. TimeoutStopSec is generous: on stop, systemd waits for the trainer
+#     subprocess and a TensorRT context to unwind.
+
+[Unit]
+Description=OCR Datecode OCR Training API (:8002)
+After=network.target mongod.service
+Wants=mongod.service
+
+[Service]
+Type=simple
+User=msi
+Group=msi
+WorkingDirectory=%h/Source/ocr_datecode/ocr_service
+ExecStart=/bin/bash -lc 'source %h/miniconda3/etc/profile.d/conda.sh && conda activate ocr_train && exec python -m uvicorn app.main:app --host 0.0.0.0 --port 8002'
+Restart=always
+RestartSec=5
+TimeoutStopSec=60
+# StartLimitIntervalSec/StartLimitBurst are deliberately absent. ocr-backend.service
+# carries them in [Service], where systemd ignores them ("Unknown key name" in
+# systemd-analyze verify) — so they have never limited anything. Moving them to
+# [Unit] would make them real and let this unit give up after 10 restarts, which
+# for an operator-facing API means the studio silently stays down. Restart=always
+# with no limit is the intended behaviour.
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=append:%h/Source/ocr_datecode/logs/ocr_service.log
+StandardError=append:%h/Source/ocr_datecode/logs/ocr_service.log
+
+[Install]
+WantedBy=multi-user.target
