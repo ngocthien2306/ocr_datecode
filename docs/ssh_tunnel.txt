@@ -53,10 +53,16 @@ cd ~/Source/ocr_datecode/ai_services
 conda activate vision
 python3 camera_management_service.py
 
-# anomaly_service
+# anomaly_service — chay tay
 cd ~/Source/ocr_datecode/anomaly_service
 conda activate anomaly_service
 python -m app.main
+
+# anomaly_service — systemd (khuyen dung)
+bash ~/Source/ocr_datecode/scripts/setup_anomaly_service.sh   # cai lan dau
+sudo systemctl restart ocr-anomaly
+sudo journalctl -u ocr-anomaly -f
+tail -f ~/Source/ocr_datecode/logs/anomaly_service.log
 
 # ocr_service — chay tay
 cd ~/Source/ocr_datecode/ocr_service
