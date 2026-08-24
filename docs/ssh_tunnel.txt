@@ -99,3 +99,44 @@ bash ~/Source/ocr_datecode/scripts/setup_ocr_training_service.sh --uninstall
 - Train OCR khong can tat ai_services: do thuc te 2.6 GB (batch 32) + 3.5 GB
   cua ai_services tren card 16 GB. Cai khong chay song song duoc la HAI run
   train cung luc — ocr_service tu xep hang bang flock.
+
+### Cach gon nhat: dat vao ~/.ssh/config TREN MAY MAC (lam 1 lan)
+
+Host ocr
+    HostName 100.116.14.127
+    User msi
+    # Tunnel tu dong len khi ket noi
+    LocalForward 5173 localhost:5173
+    LocalForward 8000 localhost:8000
+    LocalForward 8001 localhost:8001
+    LocalForward 8002 localhost:8002
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+    # Giu ket noi nen mo lai gan nhu tuc thi
+    ControlMaster auto
+    ControlPath ~/.ssh/cm-%r@%h:%p
+    ControlPersist 10m
+
+Sau do moi lan chi can:
+
+    ssh -N ocr          # chi mo tunnel, khong vao shell
+    ssh ocr             # vao shell VA co tunnel luon
+
+
+### Neu khong muon liet ke tung port: SOCKS proxy
+
+    ssh -N -D 1080 msi@100.116.14.127
+
+Mot lenh, mo duoc MOI port local cua workstation. Doi lai phai tro
+browser/he thong vao SOCKS5 127.0.0.1:1080 (Firefox: Settings > Network
+Settings; macOS: System Settings > Network > Proxies). Dung khi can cham
+vao port la (vd mongo 27017) ma khong muon sua lenh.
+
+
+### Tunnel hay bi ngat khi doi wifi / sleep
+
+    brew install autossh
+    autossh -M 0 -N ocr
+
+autossh tu dung lai khi ket noi chet; -M 0 dua viec do cho
+ServerAliveInterval o tren.
