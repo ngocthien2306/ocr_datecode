@@ -1,8 +1,14 @@
 # OCR Training API (ocr_service) — port 8002
 #
 # Template kept for reference; the installed unit is written by
-# scripts/setup_systemd_services.sh, which substitutes the real user/paths.
-# Install with:  bash scripts/setup_systemd_services.sh
+# scripts/setup_ocr_training_service.sh, which substitutes the real user/paths.
+#
+#   bash scripts/setup_ocr_training_service.sh              # install + start
+#   bash scripts/setup_ocr_training_service.sh --uninstall  # remove
+#
+# Deliberately NOT part of setup_systemd_services.sh (that one recreates
+# ocr-backend + ocr-all and restarts the whole stack) and NOT in
+# start_services.sh (a camera restart must not kill a training run).
 #
 # Four choices here are load-bearing:
 #
@@ -13,9 +19,16 @@
 #
 #  2. No KillMode override (default control-group), unlike ocr-backend which
 #     needs `mixed`. Training spawns OpenOCR's train_rec.py with a plain
-#     subprocess.Popen, so the trainer sits in this unit's cgroup and stopping
-#     the unit takes it down too. That is wanted: an orphaned trainer would keep
-#     ~2.6 GB of VRAM and the GPU flock indefinitely.
+#     subprocess.Popen. On Linux that child is not tied to its parent's
+#     lifetime, and its CUDA memory belongs to IT — VRAM is owned per process
+#     and released only when the process exits, and PyTorch's caching allocator
+#     holds its reserved pool even while idle. So killing only the main process
+#     leaves a trainer running with ~2.6 GB held.
+#     Verified: with the parent killed, the child survives and the GPU flock IS
+#     released (Popen defaults to close_fds=True, so the child never inherited
+#     the lock fd). That combination is the dangerous one — the next run sees a
+#     free lock and starts a SECOND trainer next to the orphan. The default
+#     control-group kill takes the trainer down with the unit.
 #
 #  3. PrivateTmp is left off. The cross-service GPU lock lives at
 #     /tmp/ocr_datecode_gpu.lock and has to be the SAME file anomaly_service and
@@ -24,6 +37,9 @@
 #
 #  4. TimeoutStopSec is generous: on stop, systemd waits for the trainer
 #     subprocess and a TensorRT context to unwind.
+#
+# WorkingDirectory matters more than it looks: the repo ROOT also contains an
+# app/main.py (an unrelated PyQt5 tool), so a wrong cwd imports the wrong app.
 
 [Unit]
 Description=OCR Datecode OCR Training API (:8002)

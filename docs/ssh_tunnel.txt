@@ -68,19 +68,16 @@ sudo systemctl start   ocr-training      # hoac restart / stop / status
 sudo journalctl -u ocr-training -f       # log
 tail -f ~/Source/ocr_datecode/logs/ocr_service.log
 
-# Cai unit lan dau — CHON MOT TRONG HAI:
-#
-# (a) chi cai rieng ocr-training, KHONG dung cac service dang chay:
-sudo cp ~/Source/ocr_datecode/scripts/services/ocr-training.service \
-        /etc/systemd/system/ocr-training.service
-sudo sed -i "s|%h|$HOME|g" /etc/systemd/system/ocr-training.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now ocr-training
-#
-# (b) chay lai installer day du — LUU Y: no xoa va tao lai ocr-backend +
-#     ocr-all roi RESTART ca stack (co ca buoc camera check), nen dung khi
-#     day chuyen dang nghi:
-bash ~/Source/ocr_datecode/scripts/setup_systemd_services.sh
+# Cai unit lan dau (script rieng, KHONG dung gi den cac service khac):
+bash ~/Source/ocr_datecode/scripts/setup_ocr_training_service.sh
+
+# Go bo:
+bash ~/Source/ocr_datecode/scripts/setup_ocr_training_service.sh --uninstall
+
+# LUU Y: ocr-training KHONG nam trong setup_systemd_services.sh va KHONG nam
+# trong start_services.sh. setup_systemd_services.sh xoa/tao lai ocr-backend +
+# ocr-all roi restart ca stack (co buoc camera check) — dung chay no chi de
+# them mot service.
 
 
 ### Luu y
