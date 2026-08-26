@@ -22,7 +22,11 @@ export const EmergencyRestartButton: React.FC = () => {
     <div className="erb-root">
       <button
         type="button"
-        className="erb-button"
+        /* Collapsed to a bare icon so it doesn't crowd the page chrome; the
+           label slides out on hover. Kept expanded while the confirmation card
+           is open, otherwise the launcher shrinks away under the operator's
+           own cursor as they move down to the buttons. */
+        className={`erb-button${confirming ? ' erb-button-open' : ''}`}
         onClick={() => setConfirming(v => !v)}
         title="Khởi động lại toàn bộ dịch vụ (khẩn cấp)"
         aria-label="Khởi động lại toàn bộ dịch vụ"
@@ -38,7 +42,7 @@ export const EmergencyRestartButton: React.FC = () => {
             strokeLinecap="round" strokeLinejoin="round"
           />
         </svg>
-        <span>Khẩn cấp</span>
+        <span className="erb-label">Khẩn cấp</span>
       </button>
 
       {confirming && (

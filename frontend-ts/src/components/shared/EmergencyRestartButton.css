@@ -12,11 +12,15 @@
   align-items: flex-end;
 }
 
+/* Resting state is a bare icon disc — 34px is still a comfortable touch target
+   while taking almost no room in the page chrome. The label is kept in the DOM
+   (screen readers, and so the width animates) but collapsed to zero. */
 .erb-button {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 14px;
+  justify-content: center;
+  height: 34px;
+  padding: 0 8px;
   font-size: 13px;
   font-weight: 600;
   color: #b91c1c;
@@ -25,16 +29,50 @@
   border-radius: 999px;
   cursor: pointer;
   box-shadow: 0 2px 10px rgba(15, 23, 42, 0.12);
-  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+  transition:
+    padding 0.18s ease,
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.15s ease;
 }
 
-.erb-button:hover {
+.erb-button svg { flex-shrink: 0; }
+
+.erb-label {
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  /* margin-left rather than a flex gap, so the collapsed button stays a
+     perfect circle instead of carrying an orphan 7px of padding. */
+  margin-left: 0;
+  transition: max-width 0.18s ease, opacity 0.14s ease, margin-left 0.18s ease;
+}
+
+.erb-button:hover,
+.erb-button:focus-visible,
+.erb-button-open {
+  padding: 0 14px;
   background: #fef2f2;
   border-color: rgba(220, 38, 38, 0.75);
-  transform: translateY(-1px);
 }
 
+.erb-button:hover .erb-label,
+.erb-button:focus-visible .erb-label,
+.erb-button-open .erb-label {
+  max-width: 110px;
+  opacity: 1;
+  margin-left: 7px;
+}
+
+.erb-button:hover { transform: translateY(-1px); }
 .erb-button:active { transform: translateY(0); }
+
+/* Respect users who ask for less motion: still expand, just without the slide. */
+@media (prefers-reduced-motion: reduce) {
+  .erb-button,
+  .erb-label { transition: none; }
+}
 
 .erb-popover {
   margin-top: 8px;
