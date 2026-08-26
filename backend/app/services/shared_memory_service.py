@@ -41,37 +41,108 @@ class SharedMemoryService:
     # handle elsewhere — it stays fully readable, frozen at its last content.
     # When the AI writer recreates its segment (reconnect/restart), our cached
     # handle in _connections keeps "successfully" reading the orphaned old one
-    # forever: frame_count stays >0, slots still parse, but frame_idx never
-    # advances. check_staleness() tracks frame_idx per camera so callers can
-    # detect this (frame present but stuck) and trigger recover_stale_shm() —
-    # a case handle_missing_frame() structurally can't catch since the read
-    # never returns None.
-    _STALE_FRAME_MAX_AGE = 5.0  # seconds
+    # forever: frame_count stays >0, slots still parse, but nothing advances.
+    #
+    # This USED to be detected by watching frame_idx, which was wrong: a camera
+    # in software_trigger mode writes no frame until a product passes, and a
+    # stopped recipe writes none at all, so a healthy idle camera looked
+    # identical to an orphaned segment. On M2 that false positive killed the
+    # camera service 22 times in one day, once mid-production (2026-08-21
+    # 00:39→00:55, 16 restarts spaced by the 60s debounce).
+    #
+    # The writer now publishes a heartbeat that ticks on every camera-loop
+    # iteration regardless of grabbing (RingBufferSharedMemory.beat), so we can
+    # separate the two cases properly:
+    #   heartbeat advancing              → writer alive; frozen frames are normal
+    #   heartbeat frozen ≥ _HEARTBEAT_MAX_AGE → orphaned segment / dead loop
+    # frame_idx is no longer used to judge staleness at all.
+    _HEALTH_MAGIC = 0x4F435231  # 'OCR1' — writer supports the liveness block
+    _OFF_HEALTH_MAGIC = 24
+    _OFF_GRAB_MODE = 28
+    _OFF_HEARTBEAT_CTR = 32
+    _OFF_HEARTBEAT_TS = 40
+    GRAB_MODE_NAMES = {0: "idle", 1: "continuous", 2: "software_trigger"}
+
+    # The camera loop beats at least every ~100ms, so anything beyond a couple of
+    # seconds already means trouble. Kept generously wide so a GC pause, a busy
+    # Jetson, or a slow frame conversion can never be mistaken for a dead writer.
+    _HEARTBEAT_MAX_AGE = 15.0  # seconds
 
     def __init__(self):
         self._lock = threading.Lock()
         self._connections: Dict[str, shared_memory.SharedMemory] = {}
-        self._last_frame_seen: Dict[str, Tuple[int, float]] = {}  # serial -> (frame_idx, first_seen_monotonic)
+        # serial -> (heartbeat_counter, first_seen_monotonic)
+        self._last_beat_seen: Dict[str, Tuple[int, float]] = {}
 
         logger.info("SharedMemoryService initialized")
 
-    def check_staleness(self, serial_number: str, frame_idx: int) -> bool:
+    def read_health(self, serial_number: str) -> Dict[str, Any]:
         """
-        Track frame_idx progression for a camera. Returns True once the same
-        frame_idx has been observed for >= _STALE_FRAME_MAX_AGE seconds — a
-        strong signal the cached shm handle points at an orphaned segment.
+        Read the writer's liveness block from the ring-buffer header.
 
-        Call this after every successful read_frame()/read_latest_frames()
-        with the newest frame's frame_idx; the caller decides what to do
-        (typically: still serve the frame, but fire recover_stale_shm()).
+        Returns a dict with:
+          supported   — False if the attached writer predates the heartbeat
+                        block (all-zero bytes); callers MUST treat this as
+                        "cannot judge" and never escalate to a restart.
+          alive       — heartbeat advanced since the previous call, or has been
+                        frozen for less than _HEARTBEAT_MAX_AGE.
+          grab_mode   — 'idle' | 'continuous' | 'software_trigger'
+          grabbing    — whether the camera is in a mode that produces frames at
+                        all. Used to decide whether an empty/frozen buffer is
+                        even worth reporting.
+          frozen_for  — seconds the heartbeat has been stuck (0.0 when advancing)
         """
-        now = time.monotonic()
+        unknown = {
+            "supported": False, "alive": True, "grab_mode": "unknown",
+            "grabbing": False, "frozen_for": 0.0,
+        }
         with self._lock:
-            prev = self._last_frame_seen.get(serial_number)
-            if prev is None or prev[0] != frame_idx:
-                self._last_frame_seen[serial_number] = (frame_idx, now)
-                return False
-            return (now - prev[1]) >= self._STALE_FRAME_MAX_AGE
+            shm = self._get_shm(serial_number)
+            if not shm:
+                return unknown
+            try:
+                magic = struct.unpack_from("<I", shm.buf, self._OFF_HEALTH_MAGIC)[0]
+                if magic != self._HEALTH_MAGIC:
+                    # Older AI service — stay conservative rather than guessing.
+                    return unknown
+
+                beat = struct.unpack_from("<Q", shm.buf, self._OFF_HEARTBEAT_CTR)[0]
+                mode_code = struct.unpack_from("<I", shm.buf, self._OFF_GRAB_MODE)[0]
+            except Exception as e:
+                logger.debug(f"read_health failed for {serial_number}: {e}")
+                return unknown
+
+            now = time.monotonic()
+            prev = self._last_beat_seen.get(serial_number)
+            if prev is None or prev[0] != beat:
+                self._last_beat_seen[serial_number] = (beat, now)
+                frozen_for = 0.0
+            else:
+                frozen_for = now - prev[1]
+
+            grab_mode = self.GRAB_MODE_NAMES.get(mode_code, "unknown")
+            return {
+                "supported": True,
+                "alive": frozen_for < self._HEARTBEAT_MAX_AGE,
+                "grab_mode": grab_mode,
+                "grabbing": grab_mode in ("continuous", "software_trigger"),
+                "frozen_for": frozen_for,
+            }
+
+    def check_staleness(self, serial_number: str, frame_idx: int = 0) -> bool:
+        """
+        True only when the writer's heartbeat has been frozen long enough to
+        mean the attached segment is orphaned (or its camera loop is dead).
+
+        `frame_idx` is accepted for call-site compatibility and deliberately
+        ignored: a frozen frame_idx is normal for an idle or trigger-mode
+        camera, and treating it as a fault is what caused the false-positive
+        restarts this method was rewritten to stop.
+        """
+        health = self.read_health(serial_number)
+        if not health["supported"]:
+            return False
+        return not health["alive"]
 
     def _get_shm(self, serial_number: str) -> Optional[shared_memory.SharedMemory]:
         """
@@ -415,10 +486,10 @@ class SharedMemoryService:
                         logger.info(f"Closed shared memory connection: {shm_name}")
                     except Exception as e:
                         logger.error(f"Error closing shared memory {shm_name}: {e}")
-                # Drop staleness tracking too, so the next read after a fresh
+                # Drop liveness tracking too, so the next read after a fresh
                 # reattach starts clean instead of comparing against a
-                # frame_idx from the orphaned segment we just dropped.
-                self._last_frame_seen.pop(serial_number, None)
+                # heartbeat from the orphaned segment we just dropped.
+                self._last_beat_seen.pop(serial_number, None)
 
             else:
                 # Cleanup all connections
@@ -430,7 +501,7 @@ class SharedMemoryService:
                         logger.error(f"Error closing shared memory {shm_name}: {e}")
 
                 self._connections.clear()
-                self._last_frame_seen.clear()
+                self._last_beat_seen.clear()
 
 
 # Singleton instance

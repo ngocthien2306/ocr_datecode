@@ -34,6 +34,7 @@ from app.api.websocket.camera_ws import (
     camera_ws_manager
 )
 from app.services.camera_service_supervisor import require_camera_service, handle_missing_frame, recover_stale_shm
+from app.services.frame_guidance import frame_unavailable_detail
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
@@ -461,27 +462,31 @@ async def get_camera_frame(
             detail=f"Camera with serial number '{serial_number}' not found"
         )
 
+    health = shared_memory_service.read_health(serial_number)
+
     # Đọc frame từ shared memory (new architecture)
     result = shared_memory_service.read_frame(serial_number)
 
     if result is None:
-        # Camera live in DB but no frame in shm → stale-shm bug → restart both.
-        await handle_missing_frame(serial_number, camera.get('is_connected', False))
+        # Only a camera that should be grabbing makes an empty buffer a fault.
+        if health.get("grabbing", True):
+            await handle_missing_frame(serial_number, camera.get('is_connected', False))
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Camera '{serial_number}' is not streaming. Please ensure camera is connected."
+            detail=frame_unavailable_detail(serial_number, health),
         )
 
     frame_array, metadata = result
 
-    # frame_idx hasn't advanced for a while despite a "successful" read →
-    # cached handle is very likely pointing at an orphaned (unlink()ed) shm
+    # The writer's heartbeat has stopped ticking despite a "successful" read →
+    # this handle is very likely pointing at an orphaned (unlink()ed) shm
     # segment. Still serve this frame (better than a hard error), but kick
     # off recovery in the background so subsequent calls get fresh frames.
-    if shared_memory_service.check_staleness(serial_number, metadata.get('frame_idx', 0)):
+    if health.get("supported") and not health.get("alive"):
         await recover_stale_shm(
             serial_number,
-            f"Camera {serial_number} frame_idx stuck at {metadata.get('frame_idx', 0)} (stale shm)"
+            f"Camera {serial_number} heartbeat frozen for "
+            f"{health.get('frozen_for', 0):.0f}s (stale shm)"
         )
 
     # Save to disk if requested
@@ -545,18 +550,21 @@ async def get_camera_frame_metadata(
     # Đọc frame từ shared memory (new architecture)
     result = shared_memory_service.read_frame(serial_number)
 
+    health = shared_memory_service.read_health(serial_number)
+
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Camera '{serial_number}' is not streaming. Please ensure camera is connected."
+            detail=frame_unavailable_detail(serial_number, health),
         )
 
     _, metadata = result
 
-    if shared_memory_service.check_staleness(serial_number, metadata.get('frame_idx', 0)):
+    if health.get("supported") and not health.get("alive"):
         await recover_stale_shm(
             serial_number,
-            f"Camera {serial_number} frame_idx stuck at {metadata.get('frame_idx', 0)} (stale shm)"
+            f"Camera {serial_number} heartbeat frozen for "
+            f"{health.get('frozen_for', 0):.0f}s (stale shm)"
         )
 
     return metadata
@@ -596,23 +604,33 @@ async def get_latest_frames(
             detail=f"Camera with serial number '{serial_number}' not found"
         )
 
+    # Liveness first: it decides both whether an empty buffer is worth recovering
+    # from and what we tell the operator to do about it.
+    health = shared_memory_service.read_health(serial_number)
+
     # Đọc N frames từ ring buffer
     frames_data = shared_memory_service.read_latest_frames(serial_number, count)
 
     if not frames_data:
-        # Camera live in DB but no frame in shm → stale-shm bug → restart both.
-        await handle_missing_frame(serial_number, camera.get('is_connected', False))
+        # Only escalate when the camera SHOULD have been producing frames. An
+        # idle camera with an empty buffer is a stopped recipe, not a fault, and
+        # restarting the service for it is what caused the repeated mid-shift
+        # camera restarts on M2.
+        if health.get("grabbing", True):
+            await handle_missing_frame(serial_number, camera.get('is_connected', False))
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No frames available for camera '{serial_number}'. Please ensure camera is connected and streaming."
+            detail=frame_unavailable_detail(serial_number, health),
         )
 
-    # frames_data is ordered newest → oldest; check the newest frame_idx.
-    newest_frame_idx = frames_data[0][1].get('frame_idx', 0)
-    if shared_memory_service.check_staleness(serial_number, newest_frame_idx):
+    # A frozen frame_idx is normal (idle / trigger mode waiting for a product),
+    # so liveness comes from the writer's heartbeat instead. `supported` is False
+    # against an older AI service — stay put rather than guess.
+    if health.get("supported") and not health.get("alive"):
         await recover_stale_shm(
             serial_number,
-            f"Camera {serial_number} frame_idx stuck at {newest_frame_idx} (stale shm)"
+            f"Camera {serial_number} heartbeat frozen for "
+            f"{health.get('frozen_for', 0):.0f}s (stale shm)"
         )
 
     # Encode frames to JPEG base64

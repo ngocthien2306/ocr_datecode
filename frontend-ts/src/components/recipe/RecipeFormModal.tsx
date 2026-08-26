@@ -4,6 +4,10 @@ import erosionAfterImg from '@/assets/demo/erosion_after.jpg';
 import TemplateEditor from './TemplateEditorRefactored';
 import AnnotationsPanel from '@/components/shared/AnnotationsPanel';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import {
+  FrameUnavailableDialog, parseFrameUnavailable, LOCAL_FRAME_REMEDIES,
+  type FrameUnavailableDetail,
+} from '@/components/shared/FrameUnavailableDialog';
 import { camerasAPI } from '@/services/api';
 import recipesAPI from '@/services/recipes';
 import { mlTrainingAPI, MLProject, MLModel } from '@/services/mlTraining';
@@ -228,6 +232,9 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   const [selectedTemplateIndex, setSelectedTemplateIndex] = useState<number>(0); // Index of selected template for current camera
   const [selectedAnnotation, setSelectedAnnotation] = useState<number | null>(null);
   const [isGettingFrame, setIsGettingFrame] = useState(false);
+  // Structured "no frame" guidance from the backend, rendered as a dialog with
+  // the three recovery steps instead of a toast the operator can't act on.
+  const [frameIssue, setFrameIssue] = useState<FrameUnavailableDetail | null>(null);
   const [frameCount, setFrameCount] = useState<number>(2);
   const [autoRotate, setAutoRotate] = useState(false);
   const [rotatingTemplateIdx, setRotatingTemplateIdx] = useState<number | null>(null);
@@ -840,7 +847,14 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       const statusResponse = await camerasAPI.getCameraStatus(serialNumber);
 
       if (!statusResponse.is_connected) {
-        toast.error('Camera is not connected. Please go to Camera Management to connect the camera first.');
+        setFrameIssue({
+          code: 'FRAME_UNAVAILABLE',
+          title: 'Camera chưa được kết nối',
+          reason:
+            `Camera ${serialNumber} đang ở trạng thái ngắt kết nối nên không thể chụp hình.`,
+          serial_number: serialNumber,
+          remedies: LOCAL_FRAME_REMEDIES(serialNumber),
+        });
         return;
       }
 
@@ -848,7 +862,15 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       const framesResponse = await camerasAPI.getLatestFrames(serialNumber, frameCount, 95);
 
       if (!framesResponse || !framesResponse.frames || framesResponse.frames.length === 0) {
-        toast.error('No frames available. Camera may not be streaming.');
+        // A 200 with an empty list carries no guidance payload, so build the
+        // same three-step dialog locally rather than dropping to a toast.
+        setFrameIssue({
+          code: 'FRAME_UNAVAILABLE',
+          title: 'Không lấy được hình từ camera',
+          reason: 'Camera đang kết nối nhưng bộ đệm hình trống — chưa có hình nào được chụp.',
+          serial_number: serialNumber,
+          remedies: LOCAL_FRAME_REMEDIES(serialNumber),
+        });
         return;
       }
 
@@ -1030,7 +1052,27 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
 
     } catch (error: any) {
       console.error('Get frames error:', error);
-      toast.error(error.message || 'Failed to get frames from camera');
+
+      // The backend ships the three recovery steps with the error; show them.
+      const guidance = parseFrameUnavailable(error);
+      if (guidance) {
+        setFrameIssue(guidance);
+      } else if (error?.response?.status === 404 || !error?.response) {
+        // Older backend, or the request never landed (network / tunnel drop) —
+        // the operator still needs something actionable.
+        setFrameIssue({
+          code: 'FRAME_UNAVAILABLE',
+          title: 'Không lấy được hình từ camera',
+          reason:
+            typeof error?.response?.data?.detail === 'string'
+              ? error.response.data.detail
+              : 'Không kết nối được tới máy chủ hoặc camera không phản hồi.',
+          serial_number: serialNumber,
+          remedies: LOCAL_FRAME_REMEDIES(serialNumber),
+        });
+      } else {
+        toast.error(error.message || 'Failed to get frames from camera');
+      }
     } finally {
       setIsGettingFrame(false);
     }
@@ -2781,6 +2823,13 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         type={confirmDialog.type}
         confirmText={confirmDialog.onConfirm ? 'Confirm' : 'OK'}
         cancelText={confirmDialog.onConfirm ? 'Cancel' : ''}
+      />
+
+      {/* Hướng dẫn xử lý khi không lấy được hình từ camera */}
+      <FrameUnavailableDialog
+        detail={frameIssue}
+        onClose={() => setFrameIssue(null)}
+        onRetry={() => { setFrameIssue(null); handleGetMultipleFrames(); }}
       />
     </div>
   );

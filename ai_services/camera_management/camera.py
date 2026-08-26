@@ -43,6 +43,32 @@ class RingBufferSharedMemory:
     BUFFER_SIZE = 5  # Number of frames to store
     HEADER_SIZE = 64  # Bytes for buffer header
 
+    # ── Liveness fields (header offsets 24..47, formerly reserved) ────────────
+    # A frozen frame_idx does NOT mean the segment is stale: in software_trigger
+    # mode the camera legitimately writes nothing until a product passes, and a
+    # stopped recipe writes nothing at all. Readers that treated "frame_idx not
+    # advancing" as a dead segment were killing perfectly healthy camera
+    # services (see logs 2026-08-21/26). So the writer publishes a heartbeat
+    # that ticks on EVERY camera-loop iteration regardless of grabbing, plus the
+    # current grab mode. That splits the two cases a reader actually cares about:
+    #   heartbeat advancing            → writer alive; frozen frames are normal
+    #   heartbeat frozen for a long time → orphaned segment / dead loop
+    # HEALTH_MAGIC gates the whole block so a backend paired with an older AI
+    # service (which leaves these bytes zeroed) can tell "unsupported" apart from
+    # "frozen" and stay conservative.
+    HEALTH_MAGIC = 0x4F435231  # 'OCR1'
+    _OFF_HEALTH_MAGIC = 24     # I
+    _OFF_GRAB_MODE = 28        # I  — 0=idle, 1=continuous, 2=software_trigger
+    _OFF_HEARTBEAT_CTR = 32    # Q
+    _OFF_HEARTBEAT_TS = 40     # Q  — time.time_ns() of the last beat
+    # 48..63 still reserved
+
+    GRAB_MODE_CODES = {
+        "idle": 0,
+        "continuous": 1,
+        "software_trigger": 2,
+    }
+
     def __init__(self, serial_number: str, max_frame_size: int):
         """
         Initialize ring buffer shared memory
@@ -113,8 +139,34 @@ class RingBufferSharedMemory:
         struct.pack_into("<I", self.shm.buf, offset, self.slot_size)
         offset += 4
 
-        # reserved (40 bytes) - For future use
+        # Liveness block — see HEALTH_MAGIC above. Written last so a reader that
+        # sees the magic can trust the two fields behind it are initialised.
+        struct.pack_into("<I", self.shm.buf, self._OFF_GRAB_MODE, 0)
+        struct.pack_into("<Q", self.shm.buf, self._OFF_HEARTBEAT_CTR, 0)
+        struct.pack_into("<Q", self.shm.buf, self._OFF_HEARTBEAT_TS, time.time_ns())
+        struct.pack_into("<I", self.shm.buf, self._OFF_HEALTH_MAGIC, self.HEALTH_MAGIC)
+
+        # reserved (16 bytes) - For future use
         # Total header: 64 bytes
+
+    def beat(self, mode: str = "idle"):
+        """
+        Publish one liveness tick. Called from the camera loop on every
+        iteration — including idle and software_trigger iterations that write no
+        frame — so readers can tell "writer alive but not grabbing" apart from
+        "segment orphaned". Deliberately cheap and exception-swallowing: a
+        heartbeat failure must never take the camera loop down.
+        """
+        try:
+            ctr = struct.unpack_from("<Q", self.shm.buf, self._OFF_HEARTBEAT_CTR)[0]
+            struct.pack_into("<Q", self.shm.buf, self._OFF_HEARTBEAT_CTR, ctr + 1)
+            struct.pack_into("<Q", self.shm.buf, self._OFF_HEARTBEAT_TS, time.time_ns())
+            struct.pack_into(
+                "<I", self.shm.buf, self._OFF_GRAB_MODE,
+                self.GRAB_MODE_CODES.get(mode, 0)
+            )
+        except Exception:
+            pass
 
     def write_frame(self, img_array: np.ndarray, metadata: Dict[str, Any]):
         """
@@ -1427,6 +1479,14 @@ class Camera:
                 self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
 
             while self._running:
+                # Liveness tick BEFORE the mode branch, so idle and
+                # software_trigger iterations — which write no frame for minutes
+                # at a time — still prove to readers that this loop is alive and
+                # that its shm segment is the live one.
+                rb = getattr(self, 'ring_buffer', None)
+                if rb:
+                    rb.beat(self.mode.value)
+
                 if self.mode == CameraMode.IDLE:
                     # Idle mode: just sleep
                     time.sleep(0.1)

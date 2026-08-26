@@ -1,0 +1,221 @@
+/* FrameUnavailableDialog — theme-aware (light-first, dark overrides at bottom) */
+
+.fud-overlay {
+  position: fixed;
+  inset: 0;
+  /* Above the recipe form modal (9999) that triggers it, below the
+     service-down (100000) and restart-countdown (100001) overlays. */
+  z-index: 99990;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(3px);
+}
+
+.fud-card {
+  width: 100%;
+  max-width: 560px;
+  max-height: 88vh;
+  overflow-y: auto;
+  background: #ffffff;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 14px;
+  padding: 26px 28px;
+  box-shadow: 0 12px 44px rgba(15, 23, 42, 0.22);
+}
+
+.fud-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  margin-bottom: 16px;
+}
+
+.fud-icon {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #d97706;
+  background: rgba(245, 158, 11, 0.13);
+}
+
+.fud-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.fud-subtitle {
+  margin-top: 2px;
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.fud-reason {
+  padding: 13px 15px;
+  font-size: 14px;
+  line-height: 1.65;
+  color: #78350f;
+  background: rgba(245, 158, 11, 0.1);
+  border-left: 3px solid #f59e0b;
+  border-radius: 7px;
+}
+
+.fud-steps-label {
+  margin: 20px 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.fud-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.fud-step {
+  display: flex;
+  gap: 12px;
+  padding: 13px 15px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+}
+
+.fud-step-danger {
+  background: rgba(220, 38, 38, 0.05);
+  border-color: rgba(220, 38, 38, 0.25);
+}
+
+.fud-step-badge {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #3b82f6;
+}
+
+.fud-step-danger .fud-step-badge { background: #dc2626; }
+
+.fud-step-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e293b;
+  margin-bottom: 4px;
+}
+
+.fud-step-detail {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #64748b;
+}
+
+.fud-restart-btn {
+  margin-top: 11px;
+  padding: 7px 15px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+  background: #dc2626;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.fud-restart-btn:hover { background: #b91c1c; }
+
+.fud-actions {
+  margin-top: 22px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.fud-close,
+.fud-retry {
+  padding: 9px 19px;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.fud-close {
+  color: #334155;
+  background: #e2e8f0;
+}
+
+.fud-close:hover { background: #cbd5e1; }
+
+.fud-retry {
+  color: #ffffff;
+  background: #3b82f6;
+}
+
+.fud-retry:hover { background: #2563eb; }
+
+/* ============ DARK MODE ============ */
+body.dark-mode .fud-overlay {
+  background: rgba(2, 6, 18, 0.6);
+}
+
+body.dark-mode .fud-card {
+  background: #0f1629;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  box-shadow: 0 12px 44px rgba(0, 0, 0, 0.55);
+}
+
+body.dark-mode .fud-icon {
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.15);
+}
+
+body.dark-mode .fud-title { color: #e2e8f0; }
+body.dark-mode .fud-subtitle { color: #64748b; }
+
+body.dark-mode .fud-reason {
+  color: #fde68a;
+  background: rgba(245, 158, 11, 0.1);
+  border-left-color: #f59e0b;
+}
+
+body.dark-mode .fud-steps-label { color: #94a3b8; }
+
+body.dark-mode .fud-step {
+  background: #1a2040;
+  border-color: #2d3555;
+}
+
+body.dark-mode .fud-step-danger {
+  background: rgba(220, 38, 38, 0.1);
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
+body.dark-mode .fud-step-label { color: #e2e8f0; }
+body.dark-mode .fud-step-detail { color: #94a3b8; }
+
+body.dark-mode .fud-close {
+  color: #e2e8f0;
+  background: #334155;
+}
+
+body.dark-mode .fud-close:hover { background: #475569; }

@@ -4,6 +4,8 @@ import Login from './components/login/Login';
 import { ToastProvider } from './contexts/ToastContext';
 import { UserProvider } from './contexts/UserContext';
 import { ServiceDownOverlay } from './components/shared/ServiceDownOverlay';
+import { EmergencyRestartProvider } from './contexts/EmergencyRestartContext';
+import { EmergencyRestartButton } from './components/shared/EmergencyRestartButton';
 import './styles/App.css';
 
 export default function SuntechAutomation() {
@@ -46,8 +48,13 @@ export default function SuntechAutomation() {
     return (
       <ToastProvider>
         <UserProvider>
-          <Dashboard onLogout={handleLogout} />
-          <ServiceDownOverlay />
+          {/* Wraps the dashboard so any tab can arm the restart countdown —
+              the "no frame" dialog reaches it from inside the recipe modal. */}
+          <EmergencyRestartProvider>
+            <Dashboard onLogout={handleLogout} />
+            <EmergencyRestartButton />
+            <ServiceDownOverlay />
+          </EmergencyRestartProvider>
         </UserProvider>
       </ToastProvider>
     );

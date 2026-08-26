@@ -29,15 +29,42 @@ class CameraStreamService:
 
     Same unsynchronized-writer caveats as SharedMemoryService (see its class
     docstring): reads use a seqlock retry to avoid feeding torn bytes into
-    pickle.loads(), and _stream_loop tracks frame_idx progression to detect
+    pickle.loads(), and _stream_loop watches the writer's heartbeat to detect
     an orphaned (unlink()ed + recreated) segment, since unlike SharedMemoryService
     this class holds its own shm handle for the lifetime of the subscription
     rather than re-fetching it from a shared cache.
+
+    This loop used to judge staleness by watching frame_idx, which killed the
+    camera service whenever someone opened the live view on an idle
+    software_trigger line — no product passing means no new frame, entirely
+    normal (M2, 2026-08-26 12:48: live view opened at 12:48:23, camera killed
+    5s later at 12:48:28 while a recipe was running). Liveness now comes from
+    the writer's heartbeat, which ticks whether or not a frame is grabbed.
     """
 
     _MAX_TORN_READ_RETRIES = 3
     _TORN_READ_RETRY_DELAY = 0.002  # seconds
-    _STALE_FRAME_MAX_AGE = 5.0  # seconds
+
+    # Liveness block written by RingBufferSharedMemory (ai_services). Offsets
+    # and magic must stay in sync with that class.
+    _HEALTH_MAGIC = 0x4F435231  # 'OCR1'
+    _OFF_HEALTH_MAGIC = 24
+    _OFF_HEARTBEAT_CTR = 32
+    _HEARTBEAT_MAX_AGE = 15.0  # seconds
+
+    def _read_heartbeat(self, shm: shared_memory.SharedMemory) -> Optional[int]:
+        """
+        Current heartbeat counter, or None when the writer doesn't publish one
+        (older AI service) or the header can't be read. None means "cannot
+        judge liveness" — callers must not escalate on it.
+        """
+        try:
+            magic = struct.unpack_from("<I", shm.buf, self._OFF_HEALTH_MAGIC)[0]
+            if magic != self._HEALTH_MAGIC:
+                return None
+            return struct.unpack_from("<Q", shm.buf, self._OFF_HEARTBEAT_CTR)[0]
+        except Exception:
+            return None
 
     def __init__(self):
         """Initialize stream service"""
@@ -126,8 +153,8 @@ class CameraStreamService:
         interval = 1.0 / frame_rate
 
         shm = None
-        last_frame_idx: Optional[int] = None
-        last_advance_ts = time.monotonic()
+        last_beat: Optional[int] = None
+        last_beat_ts = time.monotonic()
 
         try:
             # Open shared memory
@@ -145,40 +172,50 @@ class CameraStreamService:
                     try:
                         shm = shared_memory.SharedMemory(name=shm_name)
                         logger.info(f"Re-opened shared memory: {shm_name}")
-                        last_frame_idx = None
-                        last_advance_ts = time.monotonic()
+                        last_beat = None
+                        last_beat_ts = time.monotonic()
                     except FileNotFoundError:
                         await asyncio.sleep(interval)
                         continue
 
                 try:
+                    # Liveness is judged by the writer's heartbeat, never by
+                    # frame_idx: an idle or software_trigger camera correctly
+                    # writes no frames for minutes at a time.
+                    beat = self._read_heartbeat(shm)
+                    now = time.monotonic()
+
+                    if beat is None:
+                        # Writer predates the heartbeat block — we cannot tell a
+                        # healthy idle camera from an orphaned segment, so we
+                        # never escalate. Stream whatever the buffer holds.
+                        last_beat, last_beat_ts = None, now
+                    elif beat != last_beat:
+                        last_beat = beat
+                        last_beat_ts = now
+                    elif (now - last_beat_ts) >= self._HEARTBEAT_MAX_AGE:
+                        # The camera loop itself has stopped ticking: either it
+                        # died, or this handle points at an orphaned
+                        # (unlink()ed + recreated elsewhere) segment.
+                        logger.warning(
+                            f"Stream {serial_number} heartbeat frozen for "
+                            f"{now - last_beat_ts:.0f}s — recovering stale shm"
+                        )
+                        await self._recover_stale_stream(serial_number)
+                        try:
+                            shm.close()
+                        except Exception:
+                            pass
+                        shm = None
+                        last_beat = None
+                        await asyncio.sleep(interval)
+                        continue
+
                     # Read frame from shared memory
                     frame_data = self._read_frame_from_shm(shm)
 
                     if frame_data is not None:
                         frame_idx = frame_data['metadata'].get('frame_idx', 0)
-                        now = time.monotonic()
-
-                        if frame_idx != last_frame_idx:
-                            last_frame_idx = frame_idx
-                            last_advance_ts = now
-                        elif (now - last_advance_ts) >= self._STALE_FRAME_MAX_AGE:
-                            # frame_idx hasn't moved despite successful reads —
-                            # this handle is very likely reading an orphaned
-                            # (unlink()ed + recreated elsewhere) segment.
-                            logger.warning(
-                                f"Stream {serial_number} stuck at frame_idx={frame_idx} for "
-                                f"{now - last_advance_ts:.0f}s — recovering stale shm"
-                            )
-                            await self._recover_stale_stream(serial_number)
-                            try:
-                                shm.close()
-                            except Exception:
-                                pass
-                            shm = None
-                            last_frame_idx = None
-                            await asyncio.sleep(interval)
-                            continue
 
                         # Save to disk if enabled
                         if self.save_enabled.get(serial_number, False):
@@ -240,7 +277,7 @@ class CameraStreamService:
             from app.services.camera_service_supervisor import recover_stale_shm
             await recover_stale_shm(
                 serial_number,
-                f"Camera {serial_number} live stream frame_idx stuck (stale shm)"
+                f"Camera {serial_number} live stream heartbeat frozen (stale shm)"
             )
         except Exception as e:
             logger.error(f"Failed to trigger stale-shm recovery for stream {serial_number}: {e}")
