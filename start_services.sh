@@ -21,6 +21,21 @@ mkdir -p "$LOGS_ROOT"
 rm -rf "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 
+# Đặt cả bốn chân DO về mức 1 trước khi dịch vụ lên.
+#
+# Quét cả 0..3 chứ không nhắm một chân: chân loại phôi là thiết lập theo RECIPE
+# (`do_reject_number`, 0..3 — xem backend/app/models/recipe.py), không cố định
+# theo máy, nên lúc này chưa biết recipe sắp nạp dùng chân nào.
+#
+# `|| true` và `2>/dev/null` giữ nguyên như bản chạy trên M2 từ 30/06/2026:
+# dio_out hỏng thì script vẫn đi tiếp. Đổi lại là bước này im lặng tuyệt đối,
+# hỏng cũng không có dòng log nào — nếu sau này thấy van không về trạng thái
+# nghỉ, đây là chỗ đầu tiên đáng ngờ.
+for _pin in 0 1 2 3; do
+    sudo dio_out "$_pin" 1 2>/dev/null || true
+    sleep 0.2
+done
+
 # === STEP 0: Camera Check ===
 if [ "$USER_HOME" = "/home/suntech" ] || [ "$USER_HOME" = "/home/demo" ]; then
     SCRIPT_DIR="${USER_HOME}/Source/ocr_datecode"
