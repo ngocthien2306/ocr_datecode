@@ -504,9 +504,19 @@ class Camera:
             if self.mode != CameraMode.IDLE:
                 logger.info(f"[{self.serial_number}] Restarting grabbing after reconnect...")
                 try:
-                    # MaxNumBuffer is already configured during connect() in _configure_gige_buffer_settings()
+                    # Close()/Open() wipes the volatile GenICam settings, so the
+                    # camera comes back with TriggerMode=Off. Starting to grab
+                    # without re-arming leaves it free-running: every frame it
+                    # produces on its own queues up ahead of the frame we asked
+                    # for, and each capture then pops one out of the past.
+                    # configure_software_trigger() re-arms AND starts grabbing.
                     if self.mode == CameraMode.SOFTWARE_TRIGGER:
-                        self.camera.StartGrabbing(pylon.GrabStrategy_OneByOne)
+                        if not self.configure_software_trigger():
+                            logger.error(
+                                f"[{self.serial_number}] Reconnected but could not "
+                                f"re-arm the software trigger"
+                            )
+                            return False
                     else:
                         self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
 
@@ -846,8 +856,13 @@ class Camera:
                 # Apply new pixel format
                 self._apply_settings(apply_pixel_format=True)
 
-                # Restart grabbing if was in continuous mode
-                if old_mode == CameraMode.CONTINUOUS:
+                # Restart grabbing in whatever mode we were in. Leaving a
+                # software-trigger camera stopped here means the next capture
+                # finds it not grabbing and falls into a reconnect.
+                if old_mode == CameraMode.SOFTWARE_TRIGGER:
+                    self.configure_software_trigger()
+                    logger.info(f"[{self.serial_number}] Re-armed software trigger after pixel format change")
+                elif old_mode == CameraMode.CONTINUOUS:
                     self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
                     logger.info(f"[{self.serial_number}] Restarted grabbing after pixel format change")
             else:
@@ -923,6 +938,93 @@ class Camera:
             import traceback
             traceback.print_exc()
             return False
+
+    def _flush_grab_queue(self, reason: str = "") -> int:
+        """
+        Throw away every frame already sitting in the pylon output queue.
+
+        GrabStrategy_OneByOne is FIFO and keeps everything it is handed, so a
+        single orphaned frame makes every later capture return the *previous*
+        trigger's image — permanently, and with nothing in the log to show it.
+        An orphan appears whenever RetrieveResult times out and the frame lands
+        a moment later, or when a multi-frame capture returns early. Draining
+        right before we trigger keeps the grab aligned with the trigger that
+        asked for it.
+
+        Returns the number of stale frames discarded.
+        """
+        if not self.camera or not self.camera.IsGrabbing():
+            return 0
+
+        dropped = 0
+        try:
+            # The 64 is a stop, so a camera that is somehow streaming flat out
+            # can never hold the capture thread in here.
+            while dropped < 64:
+                grab_result = self.camera.RetrieveResult(
+                    0, pylon.TimeoutHandling_Return
+                )
+                if grab_result is None:
+                    break
+
+                try:
+                    has_frame = bool(grab_result.IsValid())
+                except Exception:
+                    has_frame = bool(grab_result)
+
+                try:
+                    grab_result.Release()
+                except Exception:
+                    pass
+
+                if not has_frame:
+                    break
+                dropped += 1
+        except Exception as e:
+            # A failed flush must never stop a capture from being attempted.
+            logger.warning(f"[{self.serial_number}] Error flushing grab queue: {e}")
+
+        if dropped:
+            suffix = f" ({reason})" if reason else ""
+            logger.warning(
+                f"[{self.serial_number}] Flushed {dropped} stale frame(s) from the "
+                f"grab queue{suffix} — results would have lagged by that many frames"
+            )
+        return dropped
+
+    def _ensure_trigger_armed(self) -> bool:
+        """
+        Check the camera still has the software trigger armed, re-arm if not.
+
+        TriggerMode lives in volatile camera memory: any Close()/Open() brings
+        it back as "Off", and from then on the camera free-runs while every
+        ExecuteSoftwareTrigger() call quietly does nothing. One GenICam read is
+        cheap enough to spend once per capture.
+
+        Read only — we deliberately do not touch TriggerSelector here, since
+        writing camera nodes mid-capture is a risk we do not need. Reading the
+        wrong selector can only cost one extra re-arm, and re-arming is
+        idempotent.
+        """
+        if self.mode != CameraMode.SOFTWARE_TRIGGER:
+            return True
+
+        if not self.camera or not self.camera.IsOpen():
+            return False
+
+        try:
+            if self.camera.TriggerMode.GetValue() == "On":
+                return True
+        except Exception as e:
+            # Never block a capture over what is only a sanity read.
+            logger.warning(f"[{self.serial_number}] Could not read TriggerMode: {e}")
+            return True
+
+        logger.warning(
+            f"[{self.serial_number}] TriggerMode is Off — the camera has been "
+            f"free-running and queueing frames. Re-arming software trigger."
+        )
+        return self.configure_software_trigger()
 
     def execute_software_trigger(self) -> Dict[str, Any]:
         """
@@ -1088,6 +1190,12 @@ class Camera:
 
         if not self.templates:
             return {'success': False, 'error': 'No templates loaded'}
+
+        # Keep "we triggered" and "this is the frame" in step: re-arm the
+        # trigger if the camera lost it, then drop anything already queued from
+        # before this trigger.
+        self._ensure_trigger_armed()
+        self._flush_grab_queue(reason="before capture")
 
         self.captured_frames = []
         num_templates = len(self.templates)
