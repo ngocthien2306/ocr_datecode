@@ -390,17 +390,19 @@ def draw_detected_obb_boxes(
                 continue
             a = np.asarray(line[0], dtype=np.float64)
             b = np.asarray(line[1], dtype=np.float64)
-            d = b - a
-            n = float(np.linalg.norm(d))
-            d = d / n if n > 1e-3 else np.array([0.0, 1.0])
-            p1 = (a - d * height).astype(int)
-            p2 = (b + d * height).astype(int)
-            cv2.line(result_img, tuple(p1), tuple(p2), col, line_thickness)
-            ymid = int(max(24, min(height - 10, (a[1] + b[1]) / 2)))
+            # The detector returns the wall's x correctly but borrows the
+            # segment's DIRECTION from the (homography-sheared) edge search
+            # quad, so extending along it draws a tilted line over a straight
+            # wall. The bottle is upright: draw vertical at the wall's x, from
+            # the top of the detected segment (≈ cap top) to the frame bottom.
+            x = int(round((a[0] + b[0]) / 2.0))
+            y_top = int(max(0, min(a[1], b[1])))
+            cv2.line(result_img, (x, y_top), (x, height - 1), col, line_thickness)
+            ymid = int(max(24, min(height - 10, y_top + 40)))
             cv2.putText(
                 result_img,
                 'EDGE L' if key == 'left_line' else 'EDGE R',
-                (int(a[0]) + 6, ymid), cv2.FONT_HERSHEY_SIMPLEX,
+                (x + 6, ymid), cv2.FONT_HERSHEY_SIMPLEX,
                 font_scale, col, text_thickness,
             )
 

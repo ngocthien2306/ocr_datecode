@@ -597,6 +597,149 @@ class MultiCameraPipeline(InferencePipelineTemplate):
         )
         return True
 
+    def _anchor_bboxes_on_walls(self, context, sn, result, frame):
+        """
+        Check_Color (edge_regions) cameras only: rebuild every non-edge region
+        from the detected bottle walls instead of trusting the SuperPoint
+        homography's shape. See verification/wall_anchor.py for the why; in
+        short, the cap is nearly rotationally symmetric, so the homography
+        shears, and everything mapped through it comes out tilted — measured
+        up to 24.5° on upright bottles. Runs once here so the overlay, the
+        colour verifier and the product verifier all see the same upright
+        regions. Falls back to de-skewed polygons when the walls can't be
+        found; never returns something worse than what came in.
+        """
+        camera = next(
+            (c for c in context.cameras_to_process if c.serial_number == sn), None,
+        )
+        if camera is None or getattr(camera, 'function_type', '') != 'Check_Color':
+            return result
+        tmpl = (getattr(camera, 'templates', None) or [None])[0]
+        if not tmpl:
+            return result
+        anns = tmpl.get('annotations') or []
+        if not any(a.get('type') == 'product' for a in anns):
+            return result            # cap-OCR sub-mode, not colour check
+        from .frame_data import get_color_localization_method
+        if get_color_localization_method(tmpl) != 'edge_regions':
+            return result
+        bboxes = result.get('transformed_bboxes') or []
+        if not bboxes:
+            # SuperPoint mất match hoàn toàn (success=False, không có region nào)
+            # → trước đây camera bị loại khỏi color verify và rớt FAIL-safe mà
+            # CHƯA HỀ ĐO MÀU. Trigger đều + chai dừng giữa khung nên toạ độ vẽ
+            # trên template sát vị trí thật: dựng region theo đúng toạ độ đó rồi
+            # để chuỗi anchor phía dưới tự tinh chỉnh từ walls/bottle-box.
+            # Màu luôn được ĐO thật: đúng màu → PASS, băng trống/sai màu →
+            # ratio thấp → FAIL. (FAIL-safe vẫn giữ làm lưới đỡ cuối.)
+            from ..verification.wall_anchor import annotation_polygon_px
+            fh0, fw0 = frame.shape[:2]
+            tb = []
+            for ann_idx, ann in enumerate(anns):
+                poly = annotation_polygon_px(ann, fw0, fh0)
+                if poly is None:
+                    continue
+                nb = dict(ann)
+                nb['annotation_index'] = ann_idx
+                nb['points'] = poly.tolist()
+                nb['anchor'] = 'template_no_match'
+                tb.append(nb)
+            if not tb:
+                return result
+            result['transformed_bboxes'] = tb
+            # Cho các gate verify phía sau (attach product_verification,
+            # _batch_verify_products) nhận camera này dù match fail.
+            result['success'] = True
+            result.setdefault('timings', {})['method'] = 'color_check_no_match'
+            result['_wall_anchor'] = {'fallback': 'template_no_match'}
+            logger.info(
+                f"[{sn}] no SuperPoint match — copied {len(tb)} template regions "
+                f"at drawn coordinates for colour check (no refinement)"
+            )
+            # Copy thẳng, KHÔNG chạy tiếp chuỗi anchor walls/bottle-box —
+            # frame mất match thì mọi tinh chỉnh từ nó đều không đáng tin.
+            return result
+        from ..verification.wall_anchor import (
+            anchor_regions_on_walls, anchor_regions_on_bottle_box,
+            template_identity_bboxes, DEFAULT_SIZE_TOL,
+        )
+        size_tol = float((tmpl.get('color_config') or {}).get(
+            'wall_size_tolerance', DEFAULT_SIZE_TOL) or DEFAULT_SIZE_TOL)
+        try:
+            new_bboxes, info = anchor_regions_on_walls(
+                frame, bboxes, tmpl, sn, size_tol=size_tol)
+        except Exception as e:
+            logger.warning(f"[{sn}] wall anchor error: {e}")
+            return result
+        if new_bboxes is not None:
+            result['transformed_bboxes'] = new_bboxes
+            result['_wall_anchor'] = info
+            logger.info(
+                f"[{sn}] regions anchored on walls: xL={info['xL']:.0f} "
+                f"xR={info['xR']:.0f} scale={info['scale']:.3f} "
+                f"rebuilt={info['n_rebuilt']} kept={info['n_kept']}"
+            )
+            return result
+
+        # Walls not readable from the SuperPoint-placed edge regions. When the
+        # match itself is garbage (bottle turned to its back label, weak
+        # texture) those regions sit off the bottle, so de-skewing the polygons
+        # only fixes their shape, not where they are. The sharpness-based
+        # bottle detector doesn't depend on the match at all — its bbox sides
+        # ARE the walls — so try that first, de-skew only as the last resort.
+        reason = info.get('reason')
+        try:
+            from ..verification.color_verifier import ColorVerificationService as _CVS
+            H, W = frame.shape[:2]
+            prod_poly = _CVS._extract_product_polygon(anns, W, H)
+            # FULL frame, not the recipe crop_area: on these cameras crop_area
+            # is the cap strip drawn for SuperPoint (~1000x290 at the top) and
+            # contains no bottle body — the detector wants the tall in-focus
+            # bottle and cannot see one in a 290px-high strip.
+            # Looser than the detector's defaults on purpose: on these label
+            # cameras (glass body, dark background) sharp_threshold=0.30 finds
+            # nothing, 0.20 finds the bottle at score ~0.42 (measured offline
+            # 2026-08-25). This only runs on frames SuperPoint already lost, so
+            # a wrong box costs nothing that isn't already lost.
+            bottle = (
+                _CVS._detect_bottle(frame, prod_poly, (0, 0), sharp_threshold=0.20)
+                if prod_poly is not None else None
+            )
+            # The detector hands back the crop area itself (score 0.3) when it
+            # finds no bottle — that is not a detection.
+            if bottle and 'fallback' not in str(bottle.get('source', '')) \
+                    and float(bottle.get('score', 0) or 0) >= 0.35:
+                nb, info2 = anchor_regions_on_bottle_box(
+                    frame, bboxes, tmpl, sn, bottle, size_tol=size_tol)
+                if nb is not None:
+                    result['transformed_bboxes'] = nb
+                    result['_wall_anchor'] = {'fallback': 'bottle_box', **info2}
+                    logger.info(
+                        f"[{sn}] wall anchor unavailable ({reason}) — regions "
+                        f"anchored on image-proc bottle box instead: "
+                        f"xL={info2['xL']:.0f} xR={info2['xR']:.0f} "
+                        f"scale={info2['scale']:.3f}"
+                    )
+                    return result
+                reason = f"{reason}; bottle box: {info2.get('reason')}"
+            else:
+                reason = f"{reason}; image-proc found no bottle"
+        except Exception as e:
+            reason = f"{reason}; image-proc error: {e}"
+
+        # Both detectors failed the physical size check (or found nothing):
+        # copy the template's drawn coordinates straight onto the frame.
+        # Triggering is regular and the bottle stops centred, so the drawn
+        # positions are usually within a few px — and they cannot be skewed.
+        H, W = frame.shape[:2]
+        result['transformed_bboxes'] = template_identity_bboxes(bboxes, anns, W, H)
+        result['_wall_anchor'] = {'fallback': 'template', 'reason': reason}
+        logger.info(
+            f"[{sn}] wall anchor unavailable ({reason}) — using template "
+            f"coordinates as-is"
+        )
+        return result
+
     def _anchor_bboxes_on_text_box(
         self, context, serial_number, matcher, result, frame,
     ):
@@ -816,6 +959,10 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                     if _frame_k is not None:
                         result = self._anchor_bboxes_on_text_box(
                             context, sn, sub_matchers[k], result, _frame_k,
+                        )
+                        # Check_Color label cameras: regions follow the walls.
+                        result = self._anchor_bboxes_on_walls(
+                            context, sn, result, _frame_k,
                         )
                     _stash[(sn, sub_is_alt[k])] = result
 
@@ -1477,7 +1624,20 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                 # Color cameras don't rely on SuperPoint match — image-proc bottle
                 # detection handles localization. Only product_ok (the color check
                 # result) determines this camera's pass/fail.
-                individual_ok = product_ok
+                # Fail-safe: KHÔNG có kết quả color check nào (edge_regions mất
+                # SuperPoint match → camera bị loại khỏi verify ở _batch_verify_products)
+                # thì coi là FAIL, không mặc định PASS — tránh băng trống / chai lệch
+                # hẳn được cho qua khi CẢ HAI camera màu cùng mất match. Nhóm màu
+                # vẫn OR: một camera pass thật vẫn kéo nhóm pass.
+                has_color_result = camera_result['product_verification'] is not None
+                if not has_color_result and context.product_verification_service:
+                    logger.info(
+                        f"[{serial_number}] color check missing (no match → verify "
+                        f"skipped) → FAIL-safe"
+                    )
+                individual_ok = product_ok and (
+                    has_color_result or not context.product_verification_service
+                )
             else:
                 individual_ok = (
                     text_ok and char_ok and template_ok and product_ok

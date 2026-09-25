@@ -36,6 +36,7 @@ When the AI service (re)connects, ``camera_ws_manager.connect()`` emits
 
 import asyncio
 import logging
+import os
 import subprocess
 import time
 from typing import Optional
@@ -64,6 +65,34 @@ def _import_emit():
     """Lazy import to avoid circular import at module load time."""
     from app.services.socketio_service import emit_camera_service_status
     return emit_camera_service_status
+
+
+_API_PORT = 8000
+
+
+def _owns_api_port() -> bool:
+    """True if THIS process holds the LISTEN socket on the API port.
+
+    The WebSocket from the camera service lives in exactly one backend process.
+    If a second instance of app.main ever runs (it did on 2026-08-25: systemd's
+    ocr-backend and start_services.sh raced at boot), the one without the
+    socket never sees a connection, judges the camera service "down" forever,
+    and kills it every ~65s. A watchdog that cannot own the connection has no
+    business restarting anything — so it stays passive. Fail-open (True) if
+    psutil is unavailable or the check errors, to keep single-instance
+    behaviour unchanged.
+    """
+    try:
+        import psutil
+        me = psutil.Process(os.getpid())
+        conns = me.net_connections(kind="inet") if hasattr(me, "net_connections") \
+            else me.connections(kind="inet")
+        return any(
+            c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port == _API_PORT
+            for c in conns
+        )
+    except Exception:
+        return True
 
 
 def _is_connected() -> bool:
@@ -212,6 +241,13 @@ async def _recover():
             )
             return
 
+        if not _owns_api_port():
+            logger.warning(
+                "Camera service looks down but this backend process does not own "
+                ":%d — another app.main instance is probably serving the WebSocket. "
+                "Refusing to restart the camera service from here.", _API_PORT,
+            )
+            return
         logger.warning("Camera service still down — forcing restart of %s", _AI_UNIT)
         _last_restart_ts = now
         ok = await asyncio.to_thread(_do_restart_blocking)

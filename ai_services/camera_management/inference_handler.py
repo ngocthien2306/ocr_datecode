@@ -422,25 +422,21 @@ class InferenceHandler:
         # Recipe.defect_model picks which service to use at runtime.
         # `embedding_classifier_service` keeps the legacy attr pointing at the
         # default (arcface) for backward compat with paths that still read it.
-        _embedding_weights_map = {
-            'arcface': f"{home}/Source/ocr_datecode/weights/arcface_128_b3_20260428-190614",
-            'supcon':  f"{home}/Source/ocr_datecode/weights/supcon_128_efficientnet_b2_20260429-073504",
-        }
+        # CV-based mode: service KHÔNG load model nào (so template↔target bằng
+        # xử lý ảnh — char_quality v4/v7). onnx/config chỉ còn trong signature
+        # cho tương thích → init vô điều kiện, không check weights trên disk.
+        # (Trước đây check model.onnx/config.yaml tồn tại; thiếu file → service
+        # không init → recipe có vùng char bị fail 100% trong im lặng.)
         self.embedding_classifier_services: Dict[str, EmbeddingClassifierService] = {}
-        for name, weights_dir in _embedding_weights_map.items():
-            onnx_p = Path(weights_dir) / "model.onnx"
-            cfg_p  = Path(weights_dir) / "config.yaml"
-            if not (onnx_p.exists() and cfg_p.exists()):
-                logger.warning(f"Embedding model '{name}' not found at {weights_dir}, skipping")
-                continue
+        for name in ('arcface', 'supcon'):
             try:
                 self.embedding_classifier_services[name] = EmbeddingClassifierService(
-                    onnx_path=str(onnx_p),
-                    config_path=str(cfg_p),
+                    onnx_path="",
+                    config_path="",
                     save_debug_images=save_debug,
                     debug_path=f"{home}/Source/ocr_datecode/ai_services/test_result",
                 )
-                logger.info(f"EmbeddingClassifierService '{name}' initialized: {Path(weights_dir).name}")
+                logger.info(f"EmbeddingClassifierService '{name}' initialized (CV-based, no model)")
             except Exception as e:
                 logger.warning(f"EmbeddingClassifierService '{name}' failed to init: {e}")
 

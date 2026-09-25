@@ -1130,7 +1130,18 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                 and any(a.get('type') == 'product' for a in template_annotations)
             )
             if is_color_frame:
-                frame_result['result'] = 'PASS' if product_ok else 'FAIL'
+                # Fail-safe: không có kết quả color check nào (mất match → verify
+                # bị skip) → FAIL, không mặc định PASS. Xem multi_camera cùng logic.
+                has_color_result = frame_result['product_verification'] is not None
+                if not has_color_result and context.product_verification_service:
+                    logger.info(
+                        f"[{camera.serial_number}] color check missing (no match → "
+                        f"verify skipped) → FAIL-safe"
+                    )
+                frame_result['result'] = 'PASS' if (
+                    product_ok
+                    and (has_color_result or not context.product_verification_service)
+                ) else 'FAIL'
             elif not (text_ok and char_ok and template_ok and product_ok):
                 frame_result['result'] = 'FAIL'
 

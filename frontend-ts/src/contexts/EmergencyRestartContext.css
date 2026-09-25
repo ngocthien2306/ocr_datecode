@@ -1,0 +1,124 @@
+/* EmergencyRestart countdown — theme-aware (light-first, dark overrides at bottom) */
+
+.emr-overlay {
+  position: fixed;
+  inset: 0;
+  /* Above ServiceDownOverlay (100000): once a restart is armed, nothing may
+     cover the cancel button. */
+  z-index: 100001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(248, 250, 252, 0.92);
+  backdrop-filter: blur(6px);
+}
+
+.emr-card {
+  background: linear-gradient(135deg, #ffffff 0%, #fef2f2 100%);
+  border: 1px solid rgba(220, 38, 38, 0.3);
+  border-radius: 16px;
+  padding: 36px 48px;
+  text-align: center;
+  max-width: 440px;
+  box-shadow: 0 10px 40px rgba(15, 23, 42, 0.18);
+}
+
+.emr-ring {
+  width: 96px;
+  height: 96px;
+  margin: 0 auto 20px;
+  border-radius: 50%;
+  border: 4px solid rgba(220, 38, 38, 0.25);
+  border-top-color: #dc2626;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: emr-spin 1s linear infinite;
+}
+
+.emr-count {
+  font-size: 34px;
+  font-weight: 700;
+  color: #dc2626;
+  /* Counter-rotate so the number stays upright inside the spinning ring. */
+  animation: emr-spin-back 1s linear infinite;
+}
+
+.emr-spinner {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 24px;
+  border: 3px solid rgba(220, 38, 38, 0.2);
+  border-top-color: #dc2626;
+  border-radius: 50%;
+  animation: emr-spin 1s linear infinite;
+}
+
+.emr-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #991b1b;
+  margin-bottom: 10px;
+}
+
+.emr-message {
+  font-size: 14px;
+  color: #64748b;
+  line-height: 1.6;
+}
+
+.emr-cancel {
+  margin-top: 24px;
+  padding: 11px 26px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #ffffff;
+  background: #475569;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.emr-cancel:hover { background: #334155; }
+
+@keyframes emr-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes emr-spin-back {
+  to { transform: rotate(-360deg); }
+}
+
+/* ============ DARK MODE ============ */
+body.dark-mode .emr-overlay {
+  background: rgba(10, 14, 26, 0.92);
+}
+
+body.dark-mode .emr-card {
+  background: linear-gradient(135deg, #1a1116 0%, #2a1420 100%);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  box-shadow: 0 0 60px rgba(220, 38, 38, 0.18);
+}
+
+body.dark-mode .emr-ring {
+  border: 4px solid rgba(248, 113, 113, 0.25);
+  border-top-color: #f87171;
+}
+
+body.dark-mode .emr-count { color: #f87171; }
+
+body.dark-mode .emr-spinner {
+  border: 3px solid rgba(248, 113, 113, 0.2);
+  border-top-color: #f87171;
+}
+
+body.dark-mode .emr-title { color: #fca5a5; }
+body.dark-mode .emr-message { color: #94a3b8; }
+
+body.dark-mode .emr-cancel {
+  background: #334155;
+  color: #e2e8f0;
+}
+
+body.dark-mode .emr-cancel:hover { background: #475569; }

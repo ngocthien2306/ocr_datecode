@@ -41,7 +41,17 @@ fi
 
 # Kill by port (fallback)
 echo "📦 Stopping Backend API (port 8000)..."
-fuser -k 8000/tcp 2>/dev/null || echo "   No process on port 8000"
+# The backend normally runs as its own systemd unit (ocr-backend.service,
+# Restart=always). Killing its port here only makes systemd restart it —
+# ~40s of API outage and a dropped camera WebSocket on every `restart ocr-all`
+# (2026-08-25 11:13: "Main process exited, code=killed, status=9/KILL").
+# Leave a systemd-managed backend alone; only kill a stray inline instance.
+if systemctl list-unit-files ocr-backend.service --no-legend 2>/dev/null | grep -qE "enabled|static|disabled" \
+   && systemctl is-active --quiet ocr-backend 2>/dev/null; then
+    echo "   ocr-backend.service is systemd-managed and active — leaving it running"
+else
+    fuser -k 8000/tcp 2>/dev/null || echo "   No process on port 8000"
+fi
 
 echo "🎨 Stopping Frontend (port 5173)..."
 fuser -k 5173/tcp 2>/dev/null || echo "   No process on port 5173"

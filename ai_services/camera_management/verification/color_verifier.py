@@ -492,6 +492,37 @@ class ColorVerificationService:
         bboxes = data.get("transformed_bboxes") or []
         q_left = self._edge_region_pts(bboxes, "left")
         q_right = self._edge_region_pts(bboxes, "right")
+
+        # Region already placed upstream by run_inference's wall anchoring
+        # (walls → image-proc bottle → template coords, each checked against
+        # the drawn product size). Do NOT move it again here: re-running the
+        # wall rebuild without that size check let the very walls the size
+        # check had rejected (0.69x) shrink the region back and fail good
+        # bottles (measured 2026-08-25 13:0x). Only detect the walls for the
+        # overlay lines; the box itself is final.
+        if product_box.get("anchor") in ("walls", "bottle_box", "template"):
+            info: Optional[Dict[str, Any]] = None
+            if q_left is not None and q_right is not None:
+                ref0 = self._load_cap_edge_ref(serial, template_idx)
+                try:
+                    params0 = EdgeParams.from_config(color_config.get("edge_config") or {})
+                    axis0 = detect_cap_axis_from_regions(
+                        frame_img, q_left, q_right, ref_frac=ref0 or None,
+                        params=params0, serial_number=serial,
+                    )
+                except Exception:
+                    axis0 = None
+                if axis0 and "left_line" in axis0:
+                    ll, rl = axis0["left_line"], axis0["right_line"]
+                    info = {
+                        "shift_px": 0.0, "scale": 1.0,
+                        "col_L": axis0.get("col_L"), "col_R": axis0.get("col_R"),
+                        "left_line": [np.asarray(p, float).tolist()[:2] for p in ll],
+                        "right_line": [np.asarray(p, float).tolist()[:2] for p in rl],
+                        "anchor": product_box.get("anchor"),
+                    }
+            return product_box, info
+
         if q_left is None or q_right is None:
             logger.warning(
                 f"[{serial}] localization_method='edge_regions' but the template has "
@@ -681,15 +712,32 @@ class ColorVerificationService:
         fy = (prod[:, 1] - t_yc) / t_w
         pts = np.stack([dxL + fx * d_w, d_yc + fy * d_w], axis=1).astype(np.float32)
 
-        # Reject a rebuild that lands (mostly) outside the frame — a wild wall
-        # detection must not drag the ROI off the image.
-        if (pts[:, 0].min() < -fw * 0.05 or pts[:, 0].max() > fw * 1.05
-                or pts[:, 1].min() < -fh * 0.05 or pts[:, 1].max() > fh * 1.05):
+        # The bottle body routinely runs off the BOTTOM of the frame on the
+        # label cameras — the template's product box reaches the bottle's
+        # base, and a bottle standing a little lower than the template's puts
+        # that base below the last row. Rejecting the rebuild for that hands
+        # the frame back to the sheared SuperPoint polygon (measured 2026-08-25
+        # 11:06-11:12: 13/50 frames on 40733814 went that way and came out
+        # skewed again). So CLIP to the frame instead — the HSV count only ever
+        # sees visible pixels anyway — and reject only when what's left inside
+        # is too small to mean anything, which is the wild-detection case.
+        full_area = float(max(1.0, (pts[:, 0].max() - pts[:, 0].min())
+                                    * (pts[:, 1].max() - pts[:, 1].min())))
+        pts[:, 0] = np.clip(pts[:, 0], 0.0, fw - 1.0)
+        pts[:, 1] = np.clip(pts[:, 1], 0.0, fh - 1.0)
+        vis_area = float((pts[:, 0].max() - pts[:, 0].min())
+                         * (pts[:, 1].max() - pts[:, 1].min()))
+        if vis_area < 0.30 * full_area:
             logger.warning(
-                f"[{serial}] wall rebuild rejected: box out of frame — "
-                f"falling back to axis slide"
+                f"[{serial}] wall rebuild rejected: only {100*vis_area/full_area:.0f}% "
+                f"of the box is inside the frame — falling back to axis slide"
             )
             return None
+        if vis_area < 0.98 * full_area:
+            logger.info(
+                f"[{serial}] wall rebuild: box clipped to frame "
+                f"({100*vis_area/full_area:.0f}% visible)"
+            )
 
         old = np.asarray(product_box.get("corners") or [], np.float32)
         shift = (float(pts[:, 0].mean() - old[:, 0].mean())
@@ -747,6 +795,7 @@ class ColorVerificationService:
                 "score": float(bbox.get("confidence", 1.0) or 1.0),
                 "class": "product",
                 "corners": arr.tolist(),
+                "anchor": bbox.get("anchor"),
                 "source": "superpoint_transformed_product",
             }
         return None

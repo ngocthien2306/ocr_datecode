@@ -2095,7 +2095,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
           </button>
 
           {/* Toggle Header Collapse */}
-          <button
+          {/* <button
             className="btn-toggle-header"
             onClick={() => setIsHeaderCollapsed(!isHeaderCollapsed)}
             title={isHeaderCollapsed ? 'Expand header' : 'Collapse header'}
@@ -2107,7 +2107,7 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                 <path d="M5 15l7-7 7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               )}
             </svg>
-          </button>
+          </button> */}
         </div>
       </div>
 

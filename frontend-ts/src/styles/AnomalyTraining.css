@@ -20,6 +20,9 @@
   align-items: center;
   justify-content: space-between;
   padding: 12px 20px;
+  /* Reserve the top-right corner for the fixed EmergencyRestartButton
+     (top:12 right:16, ~115px wide) so the Close button never sits under it. */
+  padding-right: 150px;
   background: #ffffff;
   border-bottom: 1px solid #e2e8f0;
   flex-shrink: 0;

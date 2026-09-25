@@ -171,9 +171,35 @@ fi
 #     if the systemd unit is missing/failed (a non-root `systemctl start` under
 #     systemd would be denied by polkit, which is what left the backend down).
 echo "📦 Starting Backend API (port 8000)..."
+# At boot, systemd starts ocr-backend.service and ocr-all (this script) in
+# parallel. The backend needs ~40-60s of model loading before it binds :8000,
+# so an instant `lsof` check here sees a free port and starts a SECOND backend.
+# That happened on 2026-08-25: two uvicorn instances of app.main, the camera
+# service's WebSocket landed in one, and the other's watchdog — blind, never
+# seeing a connection — killed the camera service every ~65s for half an hour.
+# So: if the systemd unit exists and is active/activating, WAIT for it to bind
+# rather than racing it. Only fall back to an inline start when the unit is
+# genuinely absent or failed.
+_backend_wait=0
+if _systemd_managed ocr-backend.service; then
+    while [ $_backend_wait -lt 120 ]; do
+        if lsof -Pi :8000 -sTCP:LISTEN -t >/dev/null 2>&1; then break; fi
+        # `is-active` exits non-zero for anything but "active" (3 while the unit
+        # is still activating) — under `set -e` a bare substitution here aborts
+        # the whole script (that is exactly what failed ocr-all on 2026-08-25
+        # 11:06:32, status=3). Always succeed; the case below reads the word.
+        st=$(systemctl is-active ocr-backend 2>/dev/null || true)
+        case "$st" in
+            active|activating|reloading) ;;
+            *) break ;;   # failed / inactive → nothing to wait for
+        esac
+        [ $_backend_wait -eq 0 ] && echo "   ocr-backend.service is ${st}; waiting for it to bind :8000..."
+        sleep 2; _backend_wait=$((_backend_wait+2))
+    done
+fi
 if lsof -Pi :8000 -sTCP:LISTEN -t >/dev/null 2>&1; then
     BACKEND_PID=$(systemctl show -p MainPID ocr-backend 2>/dev/null | cut -d= -f2)
-    echo "   Already listening on :8000 (systemd unit or prior run, PID: ${BACKEND_PID:-?})"
+    echo "   Already listening on :8000 (systemd unit or prior run, PID: ${BACKEND_PID:-?}, waited ${_backend_wait}s)"
 else
     cd "$BACKEND_DIR"
     nohup bash -lc "source '${CONDA_SH}' && conda activate vision && exec python3 -m uvicorn app.main:app --port 8000 --host 0.0.0.0" \
@@ -204,7 +230,13 @@ cd "$AI_SERVICES_DIR"
 # Extra cores don't help: the contention is the interpreter lock, not the CPU.
 # Set MEM_DIAG=1 to re-enable when actually chasing the leak, ideally off-shift.
 export MEM_DIAG=0
-nohup python camera_management_service.py >> "$LOG_DIR/ai_camera.log" 2>&1 &
+# Under systemd there is no conda in PATH, so a bare `python` does not exist
+# and this nohup dies instantly (ai_camera.log: "failed to run command
+# 'python'"). The service then only came up because the backend watchdog saw
+# it "down" and respawned it ~15-75s later. Launch it the way the backend is
+# launched above: through conda's activate hook, with an explicit python3.
+nohup bash -lc "source '${CONDA_SH}' && conda activate vision && exec python3 camera_management_service.py" \
+    >> "$LOG_DIR/ai_camera.log" 2>&1 &
 AI_PID=$!
 echo "   PID: $AI_PID"
 sleep 2

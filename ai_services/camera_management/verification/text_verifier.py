@@ -133,8 +133,8 @@ class TextVerificationService:
     # KHÔNG dùng counter — bypass này áp dụng vĩnh viễn cho mọi chai cùng pattern.
     # Rủi ro: nếu line có biến thể sản phẩm khác V ở ký tự cuối (vd ...-U thật)
     # → 100% pass nhầm. Cần đảm bảo line chỉ chạy 1 product type tại 1 thời điểm.
-    V_SUFFIX_BYPASS_ENABLED                         = True
-    V_SUFFIX_BYPASS_LAST_CHARS: Tuple[str, ...]     = ('V',)    # mở rộng nếu sau có chữ khác (vd 'W')
+    V_SUFFIX_BYPASS_ENABLED                         = False
+    V_SUFFIX_BYPASS_LAST_CHARS: Tuple[str, ...]     = ()    # mở rộng nếu sau có chữ khác (vd 'W')
     V_SUFFIX_BYPASS_MIN_EXPECTED_LEN                = 3         # chống case pathological expected='V' hay 'XV'
     V_SUFFIX_BYPASS_FUNCTION_TYPES: Tuple[str, ...] = ("Check_Color", "Check_Type_Product")
 
@@ -148,7 +148,7 @@ class TextVerificationService:
     #   (expected '6' đọc '8') KHÔNG tha trừ khi thêm entry '6': {'8'}.
     # Rủi ro QC: tha số sai → có thể pass mã sai thật. Chỉ bật cho function_type
     # đã kiểm soát 1 product type tại 1 thời điểm (giống V-suffix bypass).
-    CONFUSABLE_BYPASS_ENABLED                          = True
+    CONFUSABLE_BYPASS_ENABLED                          = False
     CONFUSABLE_BYPASS_FUNCTION_TYPES: Tuple[str, ...]  = ("Check_Color", "Check_Type_Product", "OCR")
     CONFUSABLE_BYPASS_MAX_SUBS                         = 2
     CONFUSABLE_PAIRS: Dict[str, frozenset]             = {
