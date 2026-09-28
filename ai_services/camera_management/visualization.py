@@ -460,6 +460,27 @@ def draw_detected_obb_boxes(
                         [[x_b, y_b], [x_b + bw_b, y_b], [x_b + bw_b, y_b + bh_b], [x_b, y_b + bh_b]],
                         dtype=np.int32,
                     )
+            elif single_box.get('circle_effective') or single_box.get('circle'):
+                # cap_disc: the measured region is a CIRCLE. Drawing it as an
+                # OBB was actively misleading — the loop below walks only the
+                # first 4 corners, so a polygon approximating the circle came
+                # out as a thin sliver. Amber = the cap found, dashed-looking
+                # inner ring = what the margin actually leaves to be counted.
+                cap_c = single_box.get('circle')
+                cap_e = single_box.get('circle_effective') or cap_c
+                if cap_c and len(cap_c) >= 3:
+                    cv2.circle(result_img, (int(cap_c[0]), int(cap_c[1])),
+                               int(cap_c[2]), (0, 165, 255), line_thickness, cv2.LINE_AA)
+                if cap_e and len(cap_e) >= 3:
+                    cv2.circle(result_img, (int(cap_e[0]), int(cap_e[1])),
+                               int(cap_e[2]), color, line_thickness + 1, cv2.LINE_AA)
+                if corners is None and cap_e:
+                    ce_x, ce_y, ce_r = int(cap_e[0]), int(cap_e[1]), int(cap_e[2])
+                    corners = np.array(
+                        [[ce_x - ce_r, ce_y - ce_r], [ce_x + ce_r, ce_y - ce_r],
+                         [ce_x + ce_r, ce_y + ce_r], [ce_x - ce_r, ce_y + ce_r]],
+                        dtype=np.int32,
+                    )
             else:
                 # Fallback: vẽ OBB corners (product, label, hoặc wrinkled cũ)
                 if corners is None:
@@ -479,9 +500,12 @@ def draw_detected_obb_boxes(
                 # Bỏ chữ "WRINKLED", chỉ hiển thị #1, #2,... (kèm score nếu show_details)
                 label_parts = [f"#{idx+1}"]
             else:
-                label_parts = [f"{box_type.upper()}"]
+                # cap_disc rides in the 'product' slot for schema compatibility,
+                # but calling it PRODUCT on screen names the wrong thing.
+                _cls = str(single_box.get('class') or box_type)
+                label_parts = [_cls.upper() if _cls == 'cap_disc' else box_type.upper()]
                 if isinstance(box_data, list) and len(boxes_to_draw) > 1:
-                    label_parts[0] = f"{box_type.upper()}#{idx+1}"
+                    label_parts[0] = f"{label_parts[0]}#{idx+1}"
 
             if show_details:
                 label_parts.append(f"{score:.2f}")
@@ -575,6 +599,41 @@ def draw_color_match_overlay(
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, (int(h_lo), int(s_lo), int(v_lo)),
                                 (int(h_hi), int(s_hi), int(v_hi)))
+
+        # cap_disc counts inside a CIRCLE, but the block above only has the
+        # corners' bounding box — painting the whole box would show yellow on
+        # pixels that were never counted, and the operator tunes the margin by
+        # looking at exactly this overlay. Clip back to the circle when the
+        # verifier tells us there was one.
+        cap_eff = color_check.get('cap_circle_effective') or color_check.get('cap_circle')
+        if cap_eff and len(cap_eff) >= 3:
+            circle_mask = np.zeros(mask.shape, dtype=np.uint8)
+            cv2.circle(
+                circle_mask,
+                (int(round(float(cap_eff[0]) - x1)), int(round(float(cap_eff[1]) - y1))),
+                int(round(float(cap_eff[2]))), 255, -1,
+            )
+            mask = cv2.bitwise_and(mask, circle_mask)
+
+            # count_mode='text_blobs' discards the moulding seams and rim glint
+            # from the total, so painting them yellow would show the operator
+            # pixels that were NOT counted — and the margin is tuned by eye off
+            # exactly this overlay. Apply the same glyph filter the verifier used.
+            if str(color_check.get('count_mode', '')).strip().lower() == 'text_blobs':
+                cap_full = color_check.get('cap_circle') or cap_eff
+                rr = float(cap_full[2]) / 273.0 if cap_full and len(cap_full) >= 3 else 1.0
+                max_area, max_len = 900.0 * rr * rr, 55.0 * rr
+                n, lab, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+                keep = np.zeros(n, dtype=bool)
+                for i in range(1, n):
+                    a = int(stats[i, cv2.CC_STAT_AREA])
+                    bw_ = int(stats[i, cv2.CC_STAT_WIDTH])
+                    bh_ = int(stats[i, cv2.CC_STAT_HEIGHT])
+                    lng = max(bw_, bh_)
+                    srt = max(1, min(bw_, bh_))
+                    keep[i] = a <= max_area and lng <= max_len and (lng / srt) <= 6.0
+                mask = np.where(keep[lab], 255, 0).astype(np.uint8)
+
         if not np.any(mask):
             return img
 

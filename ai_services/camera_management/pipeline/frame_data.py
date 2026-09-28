@@ -43,6 +43,22 @@ def get_color_localization_method(template: Optional[Dict[str, Any]]) -> str:
     return str(method).strip().lower()
 
 
+def color_verdict_is_independent(template: Optional[Dict[str, Any]]) -> bool:
+    """True when this colour camera must NOT be OR-ed with the other colour
+    cameras — it inspects a different physical feature, so a PASS elsewhere
+    says nothing about it.
+
+    Defaults False so every existing recipe keeps the original OR semantics;
+    only a template that opts in (color_config.independent_verdict) splits off.
+    'cap_disc' localisation implies it: a date code on the cap is never an
+    interchangeable view of a label colour.
+    """
+    color_cfg = (template or {}).get('color_config') or {}
+    if bool(color_cfg.get('independent_verdict', False)):
+        return True
+    return get_color_localization_method(template) == 'cap_disc'
+
+
 def bbox_to_dict(bbox: Any) -> Optional[Dict[str, Any]]:
     """Normalize a matcher bbox (dict, object with .to_dict(), or None) to a
     plain dict — matchers return different shapes depending on backend."""

@@ -47,6 +47,30 @@ _MAX_SLOTS_PER_ENGINE = 2
 # wait is the length of one inference (~30 ms), far under this.
 _SLOT_WAIT_TIMEOUT_S = 2.0
 
+# Padding (px) added around the label bbox when cropping for THIS check. It must
+# equal the padding the training crops were cut with, which is
+# anomaly_service/app/services/inspection_crop.py::crop_from_polygon(padding=4)
+# — the value import_dataset.py and candidates.py both hardcode. It is
+# deliberately NOT WrinkledSegmenterTRT.CROP_PADDING (15): that one matches what
+# the wrinkle YOLO-seg engine was trained on and must stay where it is.
+#
+# Why this matters more than 11 px sounds like: PatchCore/Padim match patch
+# features by grid position, so the extra ring of bottle-edge and background
+# pixels a wider crop drags in has no counterpart anywhere in the memory bank
+# and lights up as anomaly. Measured on the exported model of project
+# 6a9fc7e1 (BLACK PEPPER 92061) over recent PASS frames of both cameras:
+#
+#              pred_score   border heat   inner heat
+#   pad 15        0.63          0.41         0.31
+#   pad  4        0.37          0.28         0.28
+#
+# and with that recipe's own pixel_threshold=0.52 / max_region_area=6000, pad 15
+# produced a 13774 px region hugging the crop's left edge on a good bottle (a
+# false NG, 1 in 6 frames sampled) while pad 4 left zero pixels over threshold.
+# Overridable per template via anomaly_config['crop_padding'] so a project
+# imported with a different padding can say so without a code change.
+ANOMALY_CROP_PADDING = 4
+
 # A recipe change that swaps the anomaly model requires restarting ai_services
 # to take effect — same as a newly trained char-classifier model today (see
 # backend's _trigger_restart_all) — so in practice each of these holds at
@@ -331,12 +355,20 @@ def _get_onnx_session(onnx_path: str):
     return sess
 
 
-def crop_label(frame: np.ndarray, cx: float, cy: float, w: float, h: float, angle: float) -> Tuple[np.ndarray, Tuple[int, int]]:
-    """Same OBB crop WrinkledSegmenterTRT.predict_batch's caller uses —
-    calling the shared @staticmethod directly so the two checks are always
-    pixel-identical on the same product_box, whichever one is active."""
+def crop_label(
+    frame: np.ndarray, cx: float, cy: float, w: float, h: float, angle: float,
+    padding: int = ANOMALY_CROP_PADDING,
+) -> Tuple[np.ndarray, Tuple[int, int]]:
+    """The OBB crop this check feeds its model, via the same shared
+    @staticmethod WrinkledSegmenterTRT.predict_batch's caller uses.
+
+    NOT pixel-identical to the wrinkle check on the same product_box any
+    more, and deliberately so: the padding defaults to ANOMALY_CROP_PADDING
+    (the training-import value) instead of the segmenter's CROP_PADDING,
+    because each model has to be fed the geometry its own training data was
+    cut with. See ANOMALY_CROP_PADDING for the measurements."""
     from .wrinkle_segmenter import WrinkledSegmenterTRT
-    return WrinkledSegmenterTRT.crop_from_obb(frame, cx, cy, w, h, angle)
+    return WrinkledSegmenterTRT.crop_from_obb(frame, cx, cy, w, h, angle, padding=padding)
 
 
 def _preprocess(crop_bgr: np.ndarray, image_size: int) -> np.ndarray:

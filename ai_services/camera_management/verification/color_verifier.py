@@ -254,6 +254,17 @@ class ColorVerificationService:
                 "detected_boxes": detected_boxes,
             }
 
+        if localization_method == "cap_disc":
+            return self._verify_cap_disc(
+                frame_img=frame_img,
+                color_config=color_config,
+                serial=serial,
+                threshold=threshold,
+                pixel_max=pixel_max,
+                ok_fn=_ok,
+                why_fn=_why,
+            )
+
         annotations = template.get("annotations") or []
         # Annotations are stored in normalized [0, 1] coords. Denormalize to
         # FRAME pixel coords (assumes template was captured from the same
@@ -1026,6 +1037,256 @@ class ColorVerificationService:
             "corners": corners.tolist(),
             "source": "image_proc_color",
             "shape_match": float(best_shape),
+        }
+
+    @staticmethod
+    def _detect_cap_disc(
+        gray: np.ndarray,
+        radius_ref: float = 0.0,
+        mean_ref: float = -1.0,
+        center_ref: Optional[Tuple[float, float]] = None,
+        radius_tol: float = 0.25,
+    ) -> Optional[Tuple[float, float, float]]:
+        """Find the bottle cap, anchored on what the template measured at setup.
+
+        Deliberately NOT cv_rotator._detect_cap. That one scores candidates by
+        `|inner_mean - 127|` ("most extreme contrast, either polarity"), which
+        on a BLACK cap over a BRIGHT conveyor is systematically wrong: the cap
+        scores |47-127| = 80 while any spurious bright circle on the conveyor
+        scores |250-127| = 123 and wins. Measured over 53 frames of the round-jar
+        camera on 2026-09-21: it picked a conveyor circle 17 times (66% correct).
+
+        Here the reference is the cap the operator actually framed — radius AND
+        interior brightness — so "looks like OUR cap" replaces "looks extreme".
+        Same 53 frames: 100%. Radius alone only reaches 49%; the brightness
+        reference is what carries it, so keep both.
+        """
+        h, w = gray.shape[:2]
+        blur = cv2.medianBlur(gray, 9)
+        if radius_ref and radius_ref > 1.0:
+            lo = int(radius_ref * (1.0 - radius_tol))
+            hi = int(radius_ref * (1.0 + radius_tol))
+        else:
+            # No reference captured (legacy config) — fall back to the wide
+            # generic band. Detection quality degrades to the old behaviour.
+            lo, hi = int(min(h, w) * 0.12), int(min(h, w) * 0.35)
+        circles = cv2.HoughCircles(
+            blur, cv2.HOUGH_GRADIENT, dp=1.5,
+            minDist=int(min(h, w) * 0.4), param1=80, param2=50,
+            minRadius=max(1, lo), maxRadius=max(2, hi),
+        )
+        if circles is None:
+            return None
+        best, best_score = None, -1e9
+        for x, y, r in circles[0, :]:
+            xi, yi, ri = int(x), int(y), int(r)
+            if not (0 <= xi < w and 0 <= yi < h):
+                continue
+            sub = gray[max(0, yi - ri // 3): yi + ri // 3,
+                       max(0, xi - ri // 3): xi + ri // 3]
+            if sub.size == 0:
+                continue
+            m = float(sub.mean())
+            if mean_ref >= 0.0:
+                score = -abs(m - mean_ref) / 255.0
+            else:
+                if abs(m - 127.0) < 50.0:
+                    continue
+                score = abs(m - 127.0) / 255.0
+            if radius_ref and radius_ref > 1.0:
+                score -= 0.8 * abs(ri - radius_ref) / radius_ref
+            if center_ref is not None:
+                # Setup-time only. Blind detection cannot bootstrap the
+                # reference — on a real frame it returned a conveyor circle at
+                # (190,604) r=389 instead of the cap at (860,796) r=272 — so
+                # ColorSetupModal hands us the circle the operator dragged onto
+                # the cap and this term keeps the search near it.
+                d = float(np.hypot(x - center_ref[0], y - center_ref[1]))
+                score -= 1.5 * d / max(1.0, float(max(h, w)))
+            if score > best_score:
+                best_score, best = score, (float(x), float(y), float(r))
+        return best
+
+    @staticmethod
+    def _count_cap_disc(
+        frame_img: np.ndarray,
+        circle: Tuple[float, float, float],
+        color_config: Dict[str, Any],
+    ) -> Tuple[int, int, Dict[str, Any]]:
+        """Count in-range pixels inside the (margin-shrunk) cap disc.
+
+        `count_mode`:
+          - 'raw_pixels' (default, legacy semantics): every in-range pixel.
+          - 'text_blobs': only pixels belonging to glyph-shaped components.
+            The cap carries two moulding seams straight across its face, and
+            they fall inside the same brightness band as the laser text.
+            Measured over 48 frames: seam+glint pixels reached 8,497 while the
+            TEXT itself sat at a median of 6,318 — so raw counting cannot tell
+            a printed cap from a blank one. Shrinking the radius does not help
+            (the seams cross the centre); discarding long/large components does.
+        """
+        H, W = frame_img.shape[:2]
+        cx, cy, r = float(circle[0]), float(circle[1]), float(circle[2])
+        margin_pct = float(color_config.get("cap_margin_pct", 10.0) or 0.0)
+        margin_pct = min(max(margin_pct, 0.0), 90.0)
+        r_eff = max(1.0, r * (1.0 - margin_pct / 100.0))
+
+        mask = np.zeros((H, W), dtype=np.uint8)
+        cv2.circle(mask, (int(round(cx)), int(round(cy))), int(round(r_eff)), 255, -1)
+        disc_px = int(np.count_nonzero(mask))
+        if disc_px == 0:
+            return 0, 0, {}
+
+        hsv = cv2.cvtColor(frame_img, cv2.COLOR_BGR2HSV)
+        in_range = cv2.inRange(
+            hsv,
+            (int(color_config.get("h_min", 0)), int(color_config.get("s_min", 0)),
+             int(color_config.get("v_min", 0))),
+            (int(color_config.get("h_max", 180)), int(color_config.get("s_max", 255)),
+             int(color_config.get("v_max", 255))),
+        )
+        matched = cv2.bitwise_and(in_range, mask)
+
+        mode = str(color_config.get("count_mode", "raw_pixels") or "raw_pixels").strip().lower()
+        detail: Dict[str, Any] = {"count_mode": mode, "cap_margin_pct": margin_pct}
+        if mode != "text_blobs":
+            return int(np.count_nonzero(matched)), disc_px, detail
+
+        # Glyph filter. Limits scale with the cap so a closer/further jar keeps
+        # the same physical thresholds; r=273 is the reference the numbers above
+        # were measured at.
+        rr = r / 273.0
+        max_area = 900.0 * rr * rr
+        max_len = 55.0 * rr
+        n, _lab, stats, _cent = cv2.connectedComponentsWithStats(matched, 8)
+        text_px = 0
+        blobs = 0
+        struct_px = 0
+        for i in range(1, n):
+            a = int(stats[i, cv2.CC_STAT_AREA])
+            bw = int(stats[i, cv2.CC_STAT_WIDTH])
+            bh = int(stats[i, cv2.CC_STAT_HEIGHT])
+            longest = max(bw, bh)
+            shortest = max(1, min(bw, bh))
+            if a <= max_area and longest <= max_len and (longest / shortest) <= 6.0:
+                text_px += a
+                blobs += 1
+            else:
+                struct_px += a
+        detail["text_blobs"] = blobs
+        # Kept for tuning: how much the seams/glints contributed. This is the
+        # number that a BLANK cap would still produce.
+        detail["structural_pixels"] = struct_px
+        return text_px, disc_px, detail
+
+    def _verify_cap_disc(
+        self,
+        frame_img: np.ndarray,
+        color_config: Dict[str, Any],
+        serial: str,
+        threshold: int,
+        pixel_max: int,
+        ok_fn: Any,
+        why_fn: Any,
+    ) -> Dict[str, Any]:
+        """Colour check whose ROI is the cap disc itself — no SuperPoint.
+
+        The product-polygon ROI came from the homography, and on this camera the
+        homography's area swung 24x between frames (44,909 -> 1,086,202 px over
+        45 frames), which moves the pixel count far more than the thing being
+        measured does. The cap disc is a fixed physical object: same 48 frames,
+        its area varied 1.23x. That is what makes an absolute pixel_threshold
+        mean anything here.
+        """
+        gray = (cv2.cvtColor(frame_img, cv2.COLOR_BGR2GRAY)
+                if frame_img.ndim == 3 else frame_img)
+        radius_ref = float(color_config.get("cap_radius_ref", 0.0) or 0.0)
+        mean_ref = float(color_config.get("cap_mean_ref", -1.0))
+        circle = self._detect_cap_disc(gray, radius_ref, mean_ref)
+
+        base_check = {
+            "pixel_threshold": threshold,
+            "pixel_max": pixel_max,
+            "localization_method": "cap_disc",
+            "h_range": [int(color_config.get("h_min", 0)), int(color_config.get("h_max", 180))],
+            "s_range": [int(color_config.get("s_min", 0)), int(color_config.get("s_max", 255))],
+            "v_range": [int(color_config.get("v_min", 0)), int(color_config.get("v_max", 255))],
+        }
+
+        if circle is None:
+            # Explicit FAIL, not a skip. A cap we cannot find is a cap we cannot
+            # vouch for, and this camera is outside the colour OR group so the
+            # FAIL actually reaches the product verdict.
+            logger.warning(
+                f"[{serial}] color(cap_disc): cap not found "
+                f"(radius_ref={radius_ref:.0f}, mean_ref={mean_ref:.0f}) → FAIL"
+            )
+            return {
+                "match": False,
+                "skipped": False,
+                "reason": "cap_not_found",
+                "color_check": {
+                    **base_check,
+                    "matching_pixels": 0,
+                    "bottle_pixels": 0,
+                    "detected": False,
+                },
+            }
+
+        matching, disc_px, detail = self._count_cap_disc(frame_img, circle, color_config)
+        ok = ok_fn(matching)
+        cx, cy, r = circle
+        r_eff = r * (1.0 - float(detail.get("cap_margin_pct", 0.0)) / 100.0)
+        _blob_tag = (
+            f", blobs={detail['text_blobs']}, struct_px={detail['structural_pixels']}"
+            if "text_blobs" in detail else ""
+        )
+
+        logger.info(
+            f"[{serial}] color(cap_disc): matching={matching} / min={threshold}"
+            f"{f' max={pixel_max}' if pixel_max > 0 else ''} "
+            f"(disc_px={disc_px}, ratio={matching / max(1, disc_px) * 100:.1f}%, "
+            f"mode={detail.get('count_mode')}{_blob_tag}) "
+            f"→ {'PASS' if ok else 'FAIL'}{why_fn(matching)} "
+            f"[cap=({cx:.0f},{cy:.0f}) r={r:.0f} → r_eff={r_eff:.0f}]"
+        )
+
+        # EXACTLY four corners — the square bounding the counted disc.
+        # draw_detected_boxes walks `for i in range(4)`, so anything with more
+        # points is drawn as a thin sliver across the first 45 degrees of arc
+        # (which is what "PRODUCT 1.00" looked like before). The renderer reads
+        # `circle_effective` and draws a real circle instead; these corners are
+        # the fallback and the anchor for the text label.
+        corners = [
+            [cx - r_eff, cy - r_eff], [cx + r_eff, cy - r_eff],
+            [cx + r_eff, cy + r_eff], [cx - r_eff, cy + r_eff],
+        ]
+
+        return {
+            "match": bool(ok),
+            "skipped": False,
+            "color_check": {
+                **base_check,
+                "matching_pixels": int(matching),
+                "bottle_pixels": int(disc_px),
+                "detected": True,
+                "cap_circle": [float(cx), float(cy), float(r)],
+                "cap_circle_effective": [float(cx), float(cy), float(r_eff)],
+                **detail,
+            },
+            "detected_boxes": {
+                "product": {
+                    "box": [cx, cy, 2 * r_eff, 2 * r_eff, 0.0],
+                    "score": 1.0,
+                    "class": "cap_disc",
+                    "corners": corners,
+                    "source": "cap_disc",
+                    # Consumed by draw_detected_boxes to draw the real shape:
+                    # the cap found, and the smaller circle actually counted.
+                    "circle": [float(cx), float(cy), float(r)],
+                    "circle_effective": [float(cx), float(cy), float(r_eff)],
+                },
+            },
         }
 
     @staticmethod

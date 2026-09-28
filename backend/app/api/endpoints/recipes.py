@@ -890,6 +890,129 @@ async def detect_bottle_preview(body: dict):
     }
 
 
+@router.post("/templates/detect-cap-preview")
+async def detect_cap_preview(body: dict):
+    """
+    Run the cap-disc detector on a template image (or a recorded frame) and
+    report what the colour check would count inside it.
+
+    Serves two jobs in ColorSetupModal:
+      1. BOOTSTRAP — called with no reference, it measures the cap and returns
+         `radius_ref`/`mean_ref` for the modal to persist into color_config.
+         Those two are what make detection reliable at inference: on the
+         round-jar camera, scoring candidates the old way (|mean-127|) picked a
+         conveyor circle 17 times in 53 frames; anchored on the template's own
+         radius AND interior brightness it was right 53/53. Radius alone: 49%.
+      2. TUNING — called back with the reference plus a margin, it returns the
+         effective circle and BOTH pixel counts so the operator can set
+         pixel_threshold against real numbers instead of guessing.
+
+    Body:
+        image_url:    str
+        color_config: dict   (h/s/v ranges + cap_margin_pct + count_mode)
+        cap_radius_ref: float (optional — omit to bootstrap)
+        cap_mean_ref:   float (optional — omit to bootstrap)
+
+    Returns:
+        { detected, circle:{cx,cy,r}, circle_effective:{cx,cy,r},
+          radius_ref, mean_ref, disc_pixels,
+          counts:{raw_pixels, text_blobs, structural_pixels}, reason }
+    """
+    import numpy as np
+    import cv2
+
+    image_url = body.get("image_url", "")
+    color_config = dict(body.get("color_config") or {})
+    if not image_url:
+        raise HTTPException(400, "image_url is required")
+
+    image_path = _resolve_preview_image_path(image_url)
+    if image_path is None or not image_path.exists():
+        raise HTTPException(404, f"Image not found: {image_url}")
+
+    try:
+        ColorVerificationService = load_color_verifier().ColorVerificationService
+    except Exception as e:
+        raise HTTPException(503, f"color_verifier load failed: {e}")
+
+    img = cv2.imread(str(image_path))
+    if img is None:
+        raise HTTPException(500, "Failed to read image")
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    radius_ref = float(body.get("cap_radius_ref", 0.0) or 0.0)
+    mean_ref = float(body.get("cap_mean_ref", -1.0))
+    center_ref = None
+    radius_tol = 0.25
+
+    hint = body.get("cap_hint") or None
+    if hint and not radius_ref:
+        # BOOTSTRAP. Blind HoughCircles cannot find the cap on its own — on a
+        # real frame it returned a conveyor circle (r=389) rather than the cap
+        # (r=272) — so the modal sends the ROI circle as a seed.
+        #
+        # Only its CENTRE is usable. That circle is ColorSetupModal's HSV
+        # sampler, not a cap outline: recipes carry it at radius 5, and seeding
+        # the radius from it produced a 2..7 px search band and a "no cap
+        # found". So the radius band stays generic here and centre + brightness
+        # do the disambiguating; the radius we RETURN is what inference anchors
+        # to.
+        hx, hy = float(hint.get("cx", 0.0)), float(hint.get("cy", 0.0))
+        # Sample brightness over a patch wide enough to average across a glyph
+        # stroke or a moulding seam the sampler may happen to sit on.
+        pr = max(15, int(float(hint.get("r", 0.0)) or 0.0))
+        hsub = gray[max(0, int(hy) - pr): int(hy) + pr,
+                    max(0, int(hx) - pr): int(hx) + pr]
+        radius_ref = 0.0
+        mean_ref = float(hsub.mean()) if hsub.size else -1.0
+        center_ref = (hx, hy)
+
+    circle = ColorVerificationService._detect_cap_disc(
+        gray, radius_ref, mean_ref, center_ref=center_ref, radius_tol=radius_tol
+    )
+    if circle is None:
+        return {
+            "detected": False, "circle": None, "circle_effective": None,
+            "radius_ref": None, "mean_ref": None, "disc_pixels": 0, "counts": None,
+            "reason": "No cap circle found. Check the image shows the cap, or widen the frame.",
+        }
+
+    cx, cy, r = (float(v) for v in circle)
+    ri = int(r)
+    sub = gray[max(0, int(cy) - ri // 3): int(cy) + ri // 3,
+               max(0, int(cx) - ri // 3): int(cx) + ri // 3]
+    measured_mean = float(sub.mean()) if sub.size else -1.0
+
+    # Report both counting modes regardless of what's configured — the operator
+    # is choosing between them here, so showing only the active one hides the
+    # comparison they need.
+    counts = {}
+    for mode in ("raw_pixels", "text_blobs"):
+        cfg = dict(color_config, count_mode=mode)
+        matching, disc_px, detail = ColorVerificationService._count_cap_disc(img, circle, cfg)
+        counts[mode] = int(matching)
+        if mode == "text_blobs":
+            counts["structural_pixels"] = int(detail.get("structural_pixels", 0))
+            counts["text_blobs_count"] = int(detail.get("text_blobs", 0))
+            disc_pixels = int(disc_px)
+
+    margin_pct = float(color_config.get("cap_margin_pct", 10.0) or 0.0)
+    r_eff = r * (1.0 - min(max(margin_pct, 0.0), 90.0) / 100.0)
+
+    return {
+        "detected": True,
+        "circle": {"cx": cx, "cy": cy, "r": r},
+        "circle_effective": {"cx": cx, "cy": cy, "r": r_eff},
+        # Echoed back for the modal to persist. Re-measuring at setup is the
+        # point: these are the anchor inference will be held to.
+        "radius_ref": r,
+        "mean_ref": measured_mean,
+        "disc_pixels": disc_pixels,
+        "counts": counts,
+        "reason": None,
+    }
+
+
 def _resolve_preview_image_path(image_url: str) -> Optional[Path]:
     """Resolve a FE-supplied image_url to an on-disk path for edge preview.
 

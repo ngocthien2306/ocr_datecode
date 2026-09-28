@@ -46,11 +46,26 @@ class PLCController:
     TCP_KEEPINTVL_S = 5         # probe interval
     TCP_KEEPCNT = 3             # dead after N missed probes
 
+    # Dedicated read-client reconnect backoff — the DI polling thread calls
+    # read_discrete_input at 100Hz; without a backoff, a dead PLC would make
+    # every poll block on a fresh TCP connect attempt.
+    READ_RECONNECT_BACKOFF_S = 1.0
+
     def __init__(self):
         """Initialize PLC Controller"""
         self._client: Optional[ModbusTcpClient] = None
         self._connected = False
         self._lock = threading.RLock()
+
+        # Dedicated read-only connection for DI polling (read_discrete_input).
+        # The write client's _lock is held for the FULL reject pulse duration
+        # (write 1 → sleep(pulse_ms) → write 0), which used to block the 100Hz
+        # DI polling thread for ~150ms per reject — edges detected late,
+        # captures fired at the wrong bottle position. A second Modbus TCP
+        # connection with its own lock keeps polling immune to writes.
+        self._read_client: Optional[ModbusTcpClient] = None
+        self._read_lock = threading.Lock()
+        self._read_next_connect_t = 0.0  # earliest time of next connect attempt
 
         # Heartbeat thread
         self._heartbeat_stop = threading.Event()
@@ -239,6 +254,14 @@ class PLCController:
             self._client = None
             self._connected = False
 
+        with self._read_lock:
+            if self._read_client is not None:
+                try:
+                    self._read_client.close()
+                except Exception:
+                    pass
+                self._read_client = None
+
     def is_connected(self) -> bool:
         """Check if connected to PLC"""
         with self._lock:
@@ -348,11 +371,47 @@ class PLCController:
                 self._connected = False
                 return None
 
+    def _ensure_read_client(self) -> Optional[ModbusTcpClient]:
+        """
+        Lazily (re)connect the dedicated read-only client. Caller must hold
+        self._read_lock. Returns the connected client, or None if the PLC is
+        unreachable (retried at most every READ_RECONNECT_BACKOFF_S).
+        """
+        if self._read_client is not None and self._read_client.connected:
+            return self._read_client
+
+        now = time.time()
+        if now < self._read_next_connect_t:
+            return None
+        self._read_next_connect_t = now + self.READ_RECONNECT_BACKOFF_S
+
+        try:
+            if self._read_client is None:
+                self._read_client = ModbusTcpClient(
+                    host=self.PLC_IP,
+                    port=self.PLC_PORT,
+                    timeout=self.PLC_TIMEOUT
+                )
+            if self._read_client.connect():
+                logger.info(
+                    f"✅ PLC read client connected (dedicated DI-polling "
+                    f"connection to {self.PLC_IP}:{self.PLC_PORT})"
+                )
+                return self._read_client
+            logger.warning("PLC read client: connect failed")
+        except Exception as e:
+            logger.warning(f"PLC read client: connect error ({e})")
+        return None
+
     def read_discrete_input(self, address: int) -> Optional[bool]:
         """
         Read single discrete input (X, physical read-only point) from PLC.
         Used for DI polling when the trigger sensor is wired directly into
         the PLC (e.g. X0) instead of the local DIO card.
+
+        Uses a DEDICATED Modbus TCP connection (self._read_client) with its
+        own lock, so reject/alarm writes — which hold the main _lock for the
+        whole pulse duration — can never block DI polling.
 
         X points are read-only over Modbus — function code 02
         (read_discrete_inputs). FC01 (read_coils) returns ILLEGAL DATA
@@ -367,19 +426,23 @@ class PLCController:
             caller should hold the last known value rather than treat None
             as 0, to avoid a false edge from a transient Modbus error.
         """
-        with self._lock:
-            if not self.is_connected():
+        with self._read_lock:
+            client = self._ensure_read_client()
+            if client is None:
                 return None
             try:
-                result = self._client.read_discrete_inputs(address, count=1)
+                result = client.read_discrete_inputs(address, count=1)
                 if result.isError():
                     logger.debug(f"PLC read_discrete_input error: X@{address} | {result}")
                     return None
-                self._last_activity = time.time()
                 return bool(result.bits[0])
             except Exception as e:
                 logger.debug(f"Exception reading PLC discrete input: {e}")
-                self._connected = False
+                # Drop the connection so the next poll reconnects (with backoff)
+                try:
+                    client.close()
+                except Exception:
+                    pass
                 return None
 
     def write_pulse(self, register_address: int, pulse_ms: float) -> Tuple[bool, float]:

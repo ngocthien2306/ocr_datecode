@@ -29,7 +29,8 @@ Detect a wrong-color product entering the line by checking HSV-matching pixels i
 
 ## Cross-camera aggregation (multi_camera.py)
 
-- **Color group** (any cam where function_type=Check_Color + product): **OR** — at least 1 PASS → group OK.
+- **Color group** (`_in_color_or_group`): **OR** — at least 1 PASS → group OK. Membership is
+  `is_color_camera AND NOT color_verdict_is_independent(template)` — see "Independent verdict" below.
 - **Other group**: **AND** — every cam must PASS.
 - **Overall = color_group_ok AND non_color_group_ok**.
 - No color cameras in recipe → color group is vacuously OK; fallback to pure AND.
@@ -41,6 +42,78 @@ When `color_group_ok` is True (i.e. at least one color cam passed) we **retroact
 We also strip `verification_status='fail'` from the product polygon bboxes on promoted cameras so the on-frame overlay isn't drawn red. Look for the log line `Color group OR-PASS: promoted N individually-failing color camera(s) to PASS`.
 
 Single-camera pipeline doesn't have this promotion because OR-with-one-element is just that camera's own result.
+
+### Independent verdict — two flags, not one (2026-09-21)
+
+`_is_color_camera` used to decide BOTH "use the colour pass-rule" and "join the OR
+group". Those are different questions and a cap camera answers them differently, so
+they are now separate keys on `camera_result`:
+
+| flag | means |
+|---|---|
+| `_is_color_camera` | pass/fail comes from the colour check alone — skips text/char/template AND the SuperPoint `success` gate |
+| `_in_color_or_group` | this camera is an interchangeable view of the SAME feature, so OR it with the others |
+
+OR is only sound when the cameras look at the same thing from different sides. A date
+code on a jar cap is not another view of a label colour, so OR-ing it means a good
+label absolves a blank cap. **Measured on the round-jar recipe 2026-09-21**: over the
+67 frames where the cap camera sat inside the OR group, `group=FAIL` occurred **0
+times**, while the cap camera itself failed 25 of them (3 below threshold + 22
+"colour check missing → FAIL-safe"). Every one was OR-promoted away, and because
+`save_pass_images=False` no frame was written either — the camera was invisible.
+
+Opt out via `color_config.independent_verdict`, implied by
+`localization_method='cap_disc'`. Default `False`, so existing recipes keep the old
+OR semantics unchanged.
+
+## localization_method='cap_disc' (date-code presence on a round jar cap)
+
+ROI = the detected cap disc. No SuperPoint, no bottle detector, no cap rotation —
+presence does not require reading, and rotation was the step that kept failing
+(SuperPoint returned 0.000 inliers on BOTH flips in 60 of 122 frames).
+
+Three measurements drove the design:
+
+1. **ROI stability.** The SuperPoint product polygon's area swung **24.19x** across 45
+   frames (44,909 → 1,086,202 px — the latter is over half the frame). The cap disc
+   swung **1.13x**. An absolute `pixel_threshold` is meaningless against the former.
+2. **Cap detection.** `cv_rotator._detect_cap` scores candidates by `|inner_mean-127|`
+   ("most extreme contrast"). On a BLACK cap over a BRIGHT conveyor the cap scores 80
+   and a spurious conveyor circle scores 123 — the conveyor wins by construction. It
+   picked a conveyor circle in 17 of 53 frames (66% correct). `_detect_cap_disc`
+   instead scores *resemblance to the cap measured on the template*
+   (`cap_radius_ref` + `cap_mean_ref`): **53/53**. Radius alone only reaches 49% — the
+   brightness reference is what carries it.
+3. **Counting.** The cap's two moulding seams sit in the same brightness band as the
+   laser text. Seam+glint reached **8,497 px** against a text median of **6,318** — so
+   `count_mode='raw_pixels'` cannot tell a printed cap from a blank one. Shrinking the
+   radius does not help (seams cross the centre): 0→10% margin removes ~2,400 px of rim
+   glint, past 10% it plateaus while text keeps being lost. `count_mode='text_blobs'`
+   keeps only glyph-shaped components (area ≤ 900·(r/273)², longest side ≤ 55·(r/273),
+   aspect ≤ 6:1) and discards the seams by construction.
+
+A cap that cannot be found is an explicit **FAIL** (`reason='cap_not_found'`), not a
+skip — and since the camera is outside the OR group, that FAIL reaches the verdict.
+
+**Still open**: the pass threshold needs blank-cap samples. Printed caps measured
+min 2,845 / p5 3,797 / p50 6,397 text-blob px over 48 frames; what a BLANK cap yields
+has not been measured, and that is the number that sets `pixel_threshold`.
+
+### Setup flow (ColorSetupModal → "🧢 Cap Disc")
+
+Blind detection cannot bootstrap the reference — on a real frame it returned a
+conveyor circle (r=389) instead of the cap (r=272). So the operator drags the cyan ROI
+circle roughly over the cap and presses **Measure cap**; `POST
+/api/recipes/templates/detect-cap-preview` with `cap_hint` seeds radius+brightness from
+that circle and snaps to the true edge. Tested against hints off by 60px in centre and
+26% in radius — all converged to the same cap. The response echoes `radius_ref` /
+`mean_ref` for the modal to persist, plus BOTH pixel counts so the threshold is set
+against real numbers.
+
+Canvas: amber circle = detected cap, dashed cyan = area actually counted after margin.
+`draw_color_match_overlay` clips the yellow overlay to `color_check.cap_circle_effective`
+so what the operator sees is what was counted — without that it paints the corners'
+bounding box, which is not the counted region.
 
 ## Annotation coordinate convention (CRITICAL gotcha)
 

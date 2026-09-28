@@ -16,6 +16,7 @@ from .base import InferencePipelineTemplate, PipelineContext
 from .frame_data import (
     build_frame_verification_data,
     color_localization_needs_match,
+    color_verdict_is_independent,
     get_color_localization_method,
     is_color_check_frame,
 )
@@ -1166,6 +1167,20 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                 annotations = []
                 if cam and getattr(cam, 'templates', None):
                     annotations = cam.templates[0].get('annotations') or []
+                    # cap_disc measures inside the DETECTED cap circle, so the
+                    # drawn 'template' and 'product' rectangles have nothing to
+                    # do with the verdict — showing them puts a green box and a
+                    # red (failed) box on the frame next to a cap that was
+                    # judged on neither. 'product' here is only the flag that
+                    # marks this as a colour camera; nothing downstream reads it
+                    # back from transformed_bboxes in this mode
+                    # (_extract_transformed_product_box is superpoint /
+                    # edge_regions only). crop_area stays — it is real context.
+                    if get_color_localization_method(cam.templates[0]) == 'cap_disc':
+                        annotations = [
+                            a for a in annotations
+                            if a.get('type') not in ('template', 'product')
+                        ]
                 # Denormalize template annotations → frame pixel coords. Convert
                 # rectangles to 4-corner polygons so downstream visualizer
                 # (`draw_inference_bboxes`) which expects `points` always has a
@@ -1609,6 +1624,27 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             )
             camera_result['_is_color_camera'] = is_color_camera
 
+            # Two SEPARATE questions, deliberately split (they used to be one
+            # flag, which is how the cap camera lost its verdict):
+            #   _is_color_camera   → "decide pass/fail from the colour check
+            #                         alone" — skips the text/char/template
+            #                         gates AND the SuperPoint success gate.
+            #   _in_color_or_group → "this camera is one of N interchangeable
+            #                         views of the SAME colour feature, so OR
+            #                         them together."
+            # A cap-disc camera wants the first and NOT the second: it checks a
+            # different physical thing (date code on the cap) from the label
+            # cameras, so OR-ing it with them means a good label silently
+            # absolves a blank cap. Measured on 2026-09-21: 67 frames with the
+            # cap camera inside the OR group produced group=FAIL exactly 0
+            # times while the cap itself failed 25 of them.
+            camera_result['_in_color_or_group'] = (
+                is_color_camera
+                and not color_verdict_is_independent(
+                    camera.templates[0] if getattr(camera, 'templates', None) else None
+                )
+            )
+
             # Determine pass/fail
             text_ok = (camera_result['text_verification'] is None or
                       camera_result['text_verification'].get('all_match', True))
@@ -1654,8 +1690,12 @@ class MultiCameraPipeline(InferencePipelineTemplate):
         # ── Cross-camera aggregation ─────────────────────────────────────────
         # Color cameras: OR — at least 1 PASS → color group OK
         # Other cameras: AND — every camera must PASS
-        color_results = [r for r in verified_results.values() if r.get('_is_color_camera')]
-        non_color_results = [r for r in verified_results.values() if not r.get('_is_color_camera')]
+        # Membership is _in_color_or_group, NOT _is_color_camera: a camera can
+        # use the colour pass-rule without being interchangeable with the other
+        # colour cameras. An independent one falls through to the AND group, so
+        # its FAIL reaches the product verdict instead of being absolved.
+        color_results = [r for r in verified_results.values() if r.get('_in_color_or_group')]
+        non_color_results = [r for r in verified_results.values() if not r.get('_in_color_or_group')]
 
         color_group_ok = (
             not color_results  # no color cameras → vacuous PASS
@@ -1695,9 +1735,10 @@ class MultiCameraPipeline(InferencePipelineTemplate):
                         f"color camera(s) to PASS (color_check sub-dict preserves original ratio)"
                     )
 
-        # Drop the internal tag — we don't want it on the wire.
+        # Drop the internal tags — we don't want them on the wire.
         for r in verified_results.values():
             r.pop('_is_color_camera', None)
+            r.pop('_in_color_or_group', None)
 
         return {
             'camera_results': verified_results,

@@ -82,6 +82,20 @@ class ProductVerificationService:
         self.crop_sample_max = 100     # tối đa 100 ảnh / camera
         self._crop_sample_counts: dict = {}  # {serial_number: count}
 
+        # Rolling store: 100 ảnh crop label MỚI NHẤT / camera (ghi ở thread
+        # riêng, không chặn inference) — đúng crop đưa vào wrinkle/anomaly.
+        self.save_label_crops = True
+        self.label_crop_saver = None
+        if self.save_label_crops:
+            try:
+                from .label_crop_saver import LabelCropSaver
+                self.label_crop_saver = LabelCropSaver(
+                    base_dir=f"{home}/Source/ocr_datecode/label_crops",
+                    max_per_camera=100,
+                )
+            except Exception as e:
+                logger.warning(f"LabelCropSaver init failed, disabled: {e}")
+
         # Validate save_debug_images option
         if self.save_debug_images not in ["never", "on_fail", "always"]:
             logger.warning(
@@ -1174,8 +1188,11 @@ class ProductVerificationService:
     ) -> Dict[int, Dict[str, Any]]:
         """Crop product region from each frame, build wrinkled_check.
         Templates with anomaly_config enabled route to anomaly_inference.py
-        instead of wrinkle_seg (same crop, same result shape — see
-        anomaly_inference.build_anomaly_check). Returns {orig_idx: wrinkled_check}."""
+        instead of wrinkle_seg (same result shape — see
+        anomaly_inference.build_anomaly_check). Same label bbox for both, but
+        NOT the same crop: the padding around it is per-check, because each
+        model has to be fed the geometry its own training crops were cut with
+        (see the crop_padding block below). Returns {orig_idx: wrinkled_check}."""
         wrinkled_checks: Dict[int, Dict[str, Any]] = {}
         wrinkle_crops_info = []
         anomaly_crops_info = []
@@ -1189,9 +1206,32 @@ class ProductVerificationService:
                 continue
 
             cx, cy, w, h, angle = product_box['box']
+
+            # Which check owns this frame decides the crop padding, so it has to
+            # be resolved BEFORE cropping. The two models were trained on crops
+            # cut with different padding and each must be fed its own geometry:
+            # the wrinkle YOLO-seg engine on CROP_PADDING (15), the anomaly model
+            # on ANOMALY_CROP_PADDING (4, matching anomaly_service's import).
+            # Feeding the anomaly model the 15 px crop drags in a ring of
+            # bottle-edge pixels the memory bank has never seen and it reads as a
+            # defect — see ANOMALY_CROP_PADDING for the measured false-NG.
+            anomaly_config = data.get('anomaly_config') or {}
+            is_anomaly = bool(
+                anomaly_config.get('enabled')
+                and (anomaly_config.get('engine_path') or anomaly_config.get('onnx_path'))
+            )
+            if is_anomaly:
+                # Imported here, not at module scope, for the same reason
+                # _run_anomaly_checks does it: anomaly_inference pulls in torch
+                # and pycuda, which a wrinkle-only deployment shouldn't pay for.
+                from .anomaly_inference import ANOMALY_CROP_PADDING
+                crop_padding = int(anomaly_config.get('crop_padding', ANOMALY_CROP_PADDING))
+            else:
+                crop_padding = self.wrinkle_seg.CROP_PADDING
+
             try:
                 crop, crop_offset = self.wrinkle_seg.crop_from_obb(
-                    data['frame_img'], cx, cy, w, h, angle
+                    data['frame_img'], cx, cy, w, h, angle, padding=crop_padding
                 )
             except Exception as e:
                 logger.warning(f"crop_from_obb failed for frame {orig_idx}: {e}")
@@ -1200,6 +1240,13 @@ class ProductVerificationService:
             if crop.size == 0:
                 continue
 
+            # Lưu crop label vào rolling store (100 ảnh mới nhất / camera).
+            # Đặt trước nhánh rẽ anomaly/wrinkle để cả hai đường đều được lưu.
+            if self.label_crop_saver is not None:
+                cam = data.get('camera')
+                serial = getattr(cam, 'serial_number', None) or 'unknown'
+                self.label_crop_saver.submit(serial, crop)
+
             mask_overlap_threshold = data.get('mask_overlap_threshold', 0.6)
             mask_polygons = [
                 np.array(b['points'], dtype=np.float32)
@@ -1207,8 +1254,7 @@ class ProductVerificationService:
                 if b.get('type') == 'mask' and b.get('points')
             ]
 
-            anomaly_config = data.get('anomaly_config') or {}
-            if anomaly_config.get('enabled') and (anomaly_config.get('engine_path') or anomaly_config.get('onnx_path')):
+            if is_anomaly:
                 anomaly_crops_info.append((
                     orig_idx, crop, anomaly_config,
                     cx, cy, angle, crop_offset, data['frame_img'].shape,

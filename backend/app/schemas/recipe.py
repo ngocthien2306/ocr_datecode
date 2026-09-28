@@ -42,7 +42,7 @@ class ColorConfig(BaseModel):
     # edge_regions mode scaled) per frame, so re-tune if the bottle's distance to
     # the camera changes materially — color_check.bottle_pixels reports ROI area.
     pixel_max: int = Field(default=0, ge=0, description="Maximum matching HSV pixels allowed; above this the label is considered missing (bare product showing). 0 = disabled")
-    localization_method: Optional[str] = Field(default="image_proc", description="Color ROI localization: 'image_proc' (legacy bottle detect) | 'superpoint' (use SuperPoint-transformed product polygon) | 'edge_regions' (superpoint + regress the cap axis from the drawn edge_left/edge_right regions — for round bottles matched on the cap)")
+    localization_method: Optional[str] = Field(default="image_proc", description="Color ROI localization: 'image_proc' (legacy bottle detect) | 'superpoint' (use SuperPoint-transformed product polygon) | 'edge_regions' (superpoint + regress the cap axis from the drawn edge_left/edge_right regions — for round bottles matched on the cap) | 'cap_disc' (ROI = the detected cap disc itself, no SuperPoint — for date-code presence on a round jar cap)")
     # Free-form dict rather than the EdgeConfig model: that class is declared
     # further down this file, and ai_services rebuilds it via
     # EdgeParams.from_config() which ignores unknown keys anyway.
@@ -52,6 +52,17 @@ class ColorConfig(BaseModel):
     bottle_sharp_threshold: Optional[float] = Field(default=0.30, ge=0.05, le=0.95, description="Sharpness mask threshold (fraction of max). Higher → stricter mask, fewer false positives but may miss low-contrast bottles.")
     bottle_min_height_ratio: Optional[float] = Field(default=0.20, ge=0.05, le=0.95, description="Bottle height ≥ this fraction of crop height to be considered valid")
     bottle_min_aspect: Optional[float] = Field(default=1.2, ge=0.5, le=5.0, description="Minimum h/w aspect ratio (bottles are taller than wide)")
+    # ── cap_disc localisation (round jar, date code printed on the cap) ──
+    # The ROI is the cap itself rather than a warped product polygon. On the
+    # round-jar camera the polygon's area swung 24x between frames (44,909 ->
+    # 1,086,202 px over 45 frames) because it came from the SuperPoint
+    # homography; the cap disc varied 1.13x. An absolute pixel_threshold only
+    # means something against a ROI that holds still.
+    cap_radius_ref: Optional[float] = Field(default=0.0, ge=0.0, description="Cap radius in px measured on the TEMPLATE image at setup. Anchors HoughCircles at inference (+/-25%). 0 = no reference, falls back to a wide generic band and detection quality drops.")
+    cap_mean_ref: Optional[float] = Field(default=-1.0, ge=-1.0, le=255.0, description="Cap interior mean brightness (0-255) measured on the TEMPLATE at setup. Candidates are scored by resemblance to this instead of |mean-127|, which on a black cap over a bright conveyor always preferred the conveyor. Radius alone gets 49% correct; with this reference, 100%. -1 = not captured.")
+    cap_margin_pct: Optional[float] = Field(default=10.0, ge=0.0, le=90.0, description="Shrink the cap radius by this % before counting, to keep the bright rim out. Measured: 0->10% removes ~2,400 px of rim glint; past 10% it plateaus (the moulding seams cross the centre and no margin reaches them) while text keeps being lost.")
+    count_mode: Optional[str] = Field(default="raw_pixels", description="'raw_pixels' = every in-range pixel (legacy). 'text_blobs' = only glyph-shaped components. The cap's two moulding seams sit in the same brightness band as the laser text and reached 8,497 px against a text median of 6,318 — raw counting cannot separate a printed cap from a blank one, discarding long/large components can.")
+    independent_verdict: Optional[bool] = Field(default=False, description="Exclude this camera from the colour OR-group so its FAIL is NOT absolved by another colour camera passing. Use when it inspects a DIFFERENT physical feature (date code on a cap vs a label colour). Implied by localization_method='cap_disc'. Default False keeps every existing recipe's OR semantics.")
 
 
 class EdgeWalls(BaseModel):

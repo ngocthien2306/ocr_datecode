@@ -4,7 +4,9 @@ Optimized for real-time inference in production environment
 Compatible with TensorRT 8.x, 9.x, and 10.x+
 """
 import cv2
+import functools
 import numpy as np
+import threading
 from pathlib import Path
 import logging
 
@@ -20,6 +22,87 @@ except ImportError:
     logger.warning("TensorRT/PyCUDA not available. Text recognition will be disabled.")
 
 
+_primary_ctx = None
+_primary_ctx_lock = threading.Lock()
+
+
+def _get_primary_context():
+    """One retained handle to device 0's primary context, shared by every thread.
+
+    ``pycuda.autoinit`` calls ``dev.make_context()``, which pushes a context on
+    the *importing* thread only. This backend is built on InferenceWorker_0 —
+    which pushes ``retain_primary_context()`` in
+    ``inference_handler._initialize_cuda_context_for_thread`` — but its OCR
+    calls are dispatched from the ``verify_phase`` pool, whose threads hold no
+    context at all. Every per-call ``pagelocked_empty``/``mem_alloc`` in
+    ``_allocate_buffers`` then died with "explicit_context_dependent failed:
+    invalid device context", the whole batch returned empty, and only the
+    rescue pass (which does run on InferenceWorker_0) ever read any text.
+
+    Handing back a single shared handle, rather than calling
+    retain_primary_context() per thread, is deliberate: pycuda records the
+    building thread on each Context object and frees allocations against it, so
+    per-thread handles leak buffers allocated on pool workers that later exit.
+    Same reasoning as anomaly_inference._get_primary_context.
+    """
+    global _primary_ctx
+    if _primary_ctx is None:
+        with _primary_ctx_lock:
+            if _primary_ctx is None:
+                cuda.init()  # idempotent
+                _primary_ctx = cuda.Device(0).retain_primary_context()
+    return _primary_ctx
+
+
+def _bind_cuda_context(fn):
+    """Remember, on the instance, which CUDA context the engine is built under.
+
+    It must be *that* context the inference calls push later, not simply the
+    primary one: ``pycuda.autoinit`` calls ``dev.make_context()``, which is a
+    different context from ``retain_primary_context()`` (verified — different
+    handles), and a TensorRT execution context plus its device buffers are only
+    valid in the context they were created in. In production this object is
+    built on InferenceWorker_0, which holds the primary context; a bare script
+    that just imports the module builds it under autoinit's. Binding covers
+    both instead of guessing.
+    """
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        ctx = cuda.Context.get_current()
+        pushed = False
+        if ctx is None:
+            # Built on a thread with no context of its own — adopt the shared
+            # primary one and hold it only for the duration of __init__.
+            ctx = _get_primary_context()
+            ctx.push()
+            pushed = True
+        self._cuda_ctx = ctx
+        try:
+            return fn(self, *args, **kwargs)
+        finally:
+            if pushed:
+                ctx.pop()
+    return wrapper
+
+
+def _with_cuda_context(fn):
+    """Push the engine's own context for the call and pop it again — never
+    "push and leave", even on a persistent pool thread: a thread dying with a
+    pushed but unpopped context makes pycuda hard-abort the process on pool
+    shutdown. Nesting is legal, so on threads that already hold the context
+    this costs a pair of no-op stack operations.
+    """
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        ctx = getattr(self, "_cuda_ctx", None) or _get_primary_context()
+        ctx.push()
+        try:
+            return fn(self, *args, **kwargs)
+        finally:
+            ctx.pop()
+    return wrapper
+
+
 class TextRecognizerTRT:
     """
     TensorRT-based text recognizer for production use
@@ -33,6 +116,7 @@ class TextRecognizerTRT:
     - Auto-padding for character dictionary
     """
 
+    @_bind_cuda_context
     def __init__(self, engine_path: str, dict_path: str, min_width: int = 50, max_width: int = 2000):
         """
         Initialize TensorRT text recognizer
@@ -118,6 +202,14 @@ class TextRecognizerTRT:
         # CUDA stream for async operations
         self.stream = cuda.Stream()
 
+        # The execution context and the buffers below are shared instance
+        # state now that they are allocated once, so only one forward pass may
+        # be in flight at a time. Batches interleave safely: _infer() copies
+        # its output out before releasing, so it is atomic per image.
+        self._lock = threading.RLock()
+
+        self._alloc_max_buffers()
+
         logger.info(f"✅ TextRecognizerTRT initialized")
         logger.info(f"   TensorRT API: {'10.x+' if self.use_new_api else '8.x/9.x'}")
         logger.info(f"   Engine: {Path(engine_path).name}")
@@ -126,7 +218,7 @@ class TextRecognizerTRT:
         logger.info(f"   Model output classes: {expected_classes}")
         logger.info(f"   Input: {self.input_name} {self.input_shape}")
         logger.info(f"   Output: {self.output_name} {self.output_shape}")
-        logger.info(f"   Width range: {min_width} - {max_width}px")
+        logger.info(f"   Width range: {self.min_width} - {self.max_width}px")
 
     def _load_dict(self, dict_path: str) -> list:
         """Load character dictionary from file"""
@@ -134,71 +226,99 @@ class TextRecognizerTRT:
             chars = [line.strip() for line in f.readlines()]
         return chars
 
-    def _allocate_buffers(self, input_shape: tuple):
+    def _alloc_max_buffers(self):
+        """Allocate host/device buffers once, sized for the engine's largest
+        profile shape, and bind them to the execution context for good.
+
+        This used to be a per-call ``_allocate_buffers(input_shape)``: one
+        ``pagelocked_empty`` + ``mem_alloc`` pair for *every* text region, i.e.
+        thousands of cudaHostAllocs an hour on the line, each freed only
+        whenever the GC happened to reach it. Pinned-memory churn at that rate
+        is what fragments the host allocator, and the allocation is also the
+        only part of inference that needs a live CUDA context — plain
+        ``memcpy_*_async``/``synchronize`` do not (measured). Every sibling
+        backend already pre-allocates (svtrv2_trt.py:86, openocr_trt.py:164);
+        this brings PaddleV5 in line with them.
+
+        Sizing comes from the engine's own optimization profile rather than the
+        constructor's ``max_width``, so a mismatched config can no longer ask
+        for a shape the engine cannot build.
         """
-        Allocate input/output buffers for specific input shape
-
-        Args:
-            input_shape: Input tensor shape [1, 3, H, W]
-
-        Returns:
-            (inputs, outputs, bindings) tuple
-        """
-        from ..ocr_utils import HostDeviceMem
-
-        inputs = []
-        outputs = []
-        bindings = []
-
         if self.use_new_api:
-            # TensorRT 10.x+ API
-            # Set dynamic input shape
-            self.context.set_input_shape(self.input_name, input_shape)
-            
-            # Allocate input buffer
-            input_dtype = trt.nptype(self.engine.get_tensor_dtype(self.input_name))
-            input_size = trt.volume(input_shape)
-            input_host = cuda.pagelocked_empty(input_size, input_dtype)
-            input_device = cuda.mem_alloc(input_host.nbytes)
-            inputs.append(HostDeviceMem(input_host, input_device))
-            self.context.set_tensor_address(self.input_name, int(input_device))
-            
-            # Allocate output buffer
-            output_shape = self.context.get_tensor_shape(self.output_name)
-            output_dtype = trt.nptype(self.engine.get_tensor_dtype(self.output_name))
-            output_size = trt.volume(output_shape)
-            output_host = cuda.pagelocked_empty(output_size, output_dtype)
-            output_device = cuda.mem_alloc(output_host.nbytes)
-            outputs.append(HostDeviceMem(output_host, output_device))
-            self.context.set_tensor_address(self.output_name, int(output_device))
-            
+            prof = self.engine.get_tensor_profile_shape(self.input_name, 0)
+            min_in, max_in = tuple(prof[0]), tuple(prof[-1])
+            # preprocess() pads/resizes into [min_width, max_width], so keeping
+            # those inside the profile keeps every set_input_shape() valid.
+            self.min_width = max(self.min_width, int(min_in[-1]))
+            self.max_width = min(self.max_width, int(max_in[-1]))
+
+            self.context.set_input_shape(self.input_name, max_in)
+            max_out = tuple(self.context.get_tensor_shape(self.output_name))
+
+            in_dtype = trt.nptype(self.engine.get_tensor_dtype(self.input_name))
+            out_dtype = trt.nptype(self.engine.get_tensor_dtype(self.output_name))
+            self._h_input = cuda.pagelocked_empty(trt.volume(max_in), in_dtype)
+            self._d_input = cuda.mem_alloc(self._h_input.nbytes)
+            self._h_output = cuda.pagelocked_empty(trt.volume(max_out), out_dtype)
+            self._d_output = cuda.mem_alloc(self._h_output.nbytes)
+
+            # Addresses are fixed for the engine's lifetime; only the shape
+            # changes per call, which set_input_shape() handles on its own.
+            self.context.set_tensor_address(self.input_name, int(self._d_input))
+            self.context.set_tensor_address(self.output_name, int(self._d_output))
+            self._bindings = None
         else:
-            # TensorRT 8.x/9.x API (legacy)
-            # Set dynamic input shape
-            self.context.set_binding_shape(0, input_shape)
+            # TensorRT 8.x/9.x: no profile query, so trust max_width.
+            max_in = (1, 3, 48, self.max_width)
+            self.context.set_binding_shape(self.input_idx, max_in)
+            max_out = tuple(self.context.get_binding_shape(self.output_idx))
 
-            for i in range(self.engine.num_bindings):
-                # Get binding shape (use execution context for dynamic shapes)
-                if self.engine.binding_is_input(i):
-                    shape = input_shape
-                else:
-                    shape = self.context.get_binding_shape(i)
+            in_dtype = trt.nptype(self.engine.get_binding_dtype(self.input_idx))
+            out_dtype = trt.nptype(self.engine.get_binding_dtype(self.output_idx))
+            self._h_input = cuda.pagelocked_empty(trt.volume(max_in), in_dtype)
+            self._d_input = cuda.mem_alloc(self._h_input.nbytes)
+            self._h_output = cuda.pagelocked_empty(trt.volume(max_out), out_dtype)
+            self._d_output = cuda.mem_alloc(self._h_output.nbytes)
 
-                dtype = trt.nptype(self.engine.get_binding_dtype(i))
-                size = trt.volume(shape)
+            self._bindings = [0] * self.engine.num_bindings
+            self._bindings[self.input_idx] = int(self._d_input)
+            self._bindings[self.output_idx] = int(self._d_output)
 
-                # Allocate host and device buffers
-                host_mem = cuda.pagelocked_empty(size, dtype)
-                device_mem = cuda.mem_alloc(host_mem.nbytes)
+        logger.info(
+            f"   Buffers: pre-allocated for {tuple(max_in)} -> {tuple(max_out)} "
+            f"({(self._h_input.nbytes + self._h_output.nbytes) / 1024:.0f} KB pinned)"
+        )
 
-                bindings.append(int(device_mem))
+    def _infer(self, tensor: np.ndarray) -> np.ndarray:
+        """Run one forward pass into the pre-allocated buffers.
 
-                if self.engine.binding_is_input(i):
-                    inputs.append(HostDeviceMem(host_mem, device_mem))
-                else:
-                    outputs.append(HostDeviceMem(host_mem, device_mem))
+        Returns a *copy* of the output, shaped for this input: the host buffer
+        is reused by the next call, so handing out a view would let a later
+        inference rewrite predictions the caller is still decoding.
+        """
+        with self._lock:
+            if self.use_new_api:
+                self.context.set_input_shape(self.input_name, tensor.shape)
+                out_shape = tuple(self.context.get_tensor_shape(self.output_name))
+            else:
+                self.context.set_binding_shape(self.input_idx, tensor.shape)
+                out_shape = tuple(self.context.get_binding_shape(self.output_idx))
 
-        return inputs, outputs, bindings
+            n_in = int(tensor.size)
+            n_out = int(np.prod(out_shape))
+            self._h_input[:n_in] = tensor.ravel()
+
+            cuda.memcpy_htod_async(self._d_input, self._h_input[:n_in], self.stream)
+            if self.use_new_api:
+                self.context.execute_async_v3(stream_handle=self.stream.handle)
+            else:
+                self.context.execute_async_v2(
+                    bindings=self._bindings, stream_handle=self.stream.handle
+                )
+            cuda.memcpy_dtoh_async(self._h_output[:n_out], self._d_output, self.stream)
+            self.stream.synchronize()
+
+            return self._h_output[:n_out].reshape(out_shape).copy()
 
     def preprocess(self, image: np.ndarray, target_height: int = 48) -> np.ndarray:
         """
@@ -293,6 +413,7 @@ class TextRecognizerTRT:
 
         return text, float(avg_confidence)
 
+    @_with_cuda_context
     def recognize_with_char_conf(self, image: np.ndarray) -> tuple:
         """
         Recognize text và trả về per-character confidence (chỉ alnum).
@@ -302,28 +423,7 @@ class TextRecognizerTRT:
             char_confs: list of (char, conf) — chỉ chữ/số, bỏ ký tự đặc biệt
         """
         tensor = self.preprocess(image)
-        input_shape = tensor.shape
-
-        inputs, outputs, bindings = self._allocate_buffers(input_shape)
-        np.copyto(inputs[0].host, tensor.ravel())
-        cuda.memcpy_htod_async(inputs[0].device, inputs[0].host, self.stream)
-
-        if self.use_new_api:
-            self.context.execute_async_v3(stream_handle=self.stream.handle)
-        else:
-            self.context.execute_async_v2(bindings=bindings, stream_handle=self.stream.handle)
-
-        cuda.memcpy_dtoh_async(outputs[0].host, outputs[0].device, self.stream)
-        self.stream.synchronize()
-
-        if self.use_new_api:
-            output_shape = self.context.get_tensor_shape(self.output_name)
-        else:
-            output_shape = self.context.get_binding_shape(1)
-        if isinstance(output_shape, tuple):
-            output_shape = list(output_shape)
-
-        preds = outputs[0].host.reshape(output_shape)
+        preds = self._infer(tensor)
         pred  = preds[0]  # (T, C)
 
         best_path = np.argmax(pred, axis=-1)
@@ -344,6 +444,7 @@ class TextRecognizerTRT:
         avg_conf = float(np.mean(best_prob)) if len(best_prob) > 0 else 0.0
         return text, avg_conf, char_confs
 
+    @_with_cuda_context
     def recognize(self, image: np.ndarray, return_confidence: bool = True):
         """
         Recognize text from cropped image using TensorRT
@@ -358,47 +459,9 @@ class TextRecognizerTRT:
         """
         # Preprocess
         tensor = self.preprocess(image)
-        input_shape = tensor.shape  # [1, 3, 48, W]
 
-        # Allocate buffers for this specific input shape
-        inputs, outputs, bindings = self._allocate_buffers(input_shape)
-
-        # Copy input data to host buffer
-        np.copyto(inputs[0].host, tensor.ravel())
-
-        # Transfer input data to device
-        cuda.memcpy_htod_async(inputs[0].device, inputs[0].host, self.stream)
-
-        if self.use_new_api:
-            # TensorRT 10.x+ API
-            self.context.execute_async_v3(stream_handle=self.stream.handle)
-        else:
-            # TensorRT 8.x/9.x API (legacy)
-            self.context.execute_async_v2(bindings=bindings, stream_handle=self.stream.handle)
-
-        # Transfer predictions back from device
-        cuda.memcpy_dtoh_async(outputs[0].host, outputs[0].device, self.stream)
-
-        # Synchronize stream
-        self.stream.synchronize()
-
-        # Reshape output
-        if self.use_new_api:
-            output_shape = self.context.get_tensor_shape(self.output_name)
-        else:
-            output_shape = self.context.get_binding_shape(1)
-
-        # Handle tuple output shape
-        if isinstance(output_shape, tuple):
-            output_shape = list(output_shape)
-
-        # Reshape and decode
-        try:
-            preds = outputs[0].host.reshape(output_shape)
-        except Exception as e:
-            logger.error(f"Error reshaping output: {e}")
-            logger.error(f"Output shape: {output_shape}, Host buffer size: {outputs[0].host.shape}")
-            raise
+        # Forward pass into the pre-allocated buffers
+        preds = self._infer(tensor)
 
         # Decode with or without confidence
         if return_confidence:
@@ -408,6 +471,7 @@ class TextRecognizerTRT:
             text = self.decode_ctc(preds)
             return text
 
+    @_with_cuda_context
     def recognize_batch(self, images: list) -> list:
         """
         Recognize text from multiple cropped images

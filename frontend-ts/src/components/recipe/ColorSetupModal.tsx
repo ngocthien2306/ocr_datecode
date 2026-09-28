@@ -59,8 +59,20 @@ export interface ColorConfig {
   // matches even MORE of the range than a printed label does, so a lower bound
   // alone can't see it. 0 = disabled.
   pixel_max: number;
-  localization_method?: 'image_proc' | 'superpoint' | 'edge_regions';
+  localization_method?: 'image_proc' | 'superpoint' | 'edge_regions' | 'cap_disc';
   roi_circle: { center: [number, number]; radius: number };
+  // cap_disc only. The ROI is the cap itself, so an absolute pixel_threshold
+  // finally holds still: the SuperPoint product polygon's area swung 24x
+  // between frames on the round-jar camera, the cap disc 1.13x.
+  // radius/mean are measured on THIS template at setup and are what anchors
+  // detection at inference — without the brightness reference, a black cap over
+  // a bright conveyor loses to any spurious conveyor circle (measured: 66%
+  // correct; anchored: 100%).
+  cap_radius_ref?: number;
+  cap_mean_ref?: number;
+  cap_margin_pct?: number;
+  count_mode?: 'raw_pixels' | 'text_blobs';
+  independent_verdict?: boolean;
   // edge_regions only: EdgeParams-shaped tuning for the cap-edge detector, and a
   // guard rejecting corrections that would drag the ROI more than N px.
   edge_config?: CapEdgeConfig | null;
@@ -134,6 +146,11 @@ const DEFAULT_CONFIG: ColorConfig = {
   bottle_sharp_threshold: 0.30,
   bottle_min_height_ratio: 0.20,
   bottle_min_aspect: 1.2,
+  cap_radius_ref: 0,
+  cap_mean_ref: -1,
+  cap_margin_pct: 10,
+  count_mode: 'raw_pixels',
+  independent_verdict: false,
 };
 
 const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
@@ -189,11 +206,20 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
   // Canvas is painted imperatively → must repaint when the theme toggles.
   const darkMode = useDarkMode();
 
+  // cap_disc: ROI = the detected cap disc. No SuperPoint, no bottle detector.
+  const [capDisc, setCapDisc] = useState<{
+    cx: number; cy: number; r: number; rEff: number;
+    discPixels: number; raw: number; blobs: number; blobCount: number; structural: number;
+  } | null>(null);
+  const [capDiscDetecting, setCapDiscDetecting] = useState(false);
+  const [capDiscError, setCapDiscError] = useState<string | null>(null);
+
   const method = config.localization_method || 'image_proc';
   const isRegionMode = method === 'edge_regions';
-  // The image-proc bottle detector only runs on the legacy path; both SuperPoint
-  // modes localise from the match instead.
-  const isSuperPointLocalization = method === 'superpoint' || isRegionMode;
+  const isCapDiscMode = method === 'cap_disc';
+  // The image-proc bottle detector only runs on the legacy path; the SuperPoint
+  // modes localise from the match, cap_disc from the cap circle.
+  const isSuperPointLocalization = method === 'superpoint' || isRegionMode || isCapDiscMode;
   const capRegionsMissing = isRegionMode && (!edgeLeftPolygon || !edgeRightPolygon);
   const capCfg: CapEdgeConfig = { ...DEFAULT_CAP_EDGE_CONFIG, ...(config.edge_config || {}) };
   const setCap = (k: keyof CapEdgeConfig) => (v: number | string) =>
@@ -448,6 +474,35 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
       ctx.fillText(`bottle ${(detectedBottle.score * 100).toFixed(0)}%`, bx + 4, Math.max(14, by - 4));
     }
 
+    // cap_disc: the detected cap (amber, solid) and the area actually counted
+    // after the margin (cyan, dashed). Tuning the margin means watching the
+    // bright rim fall OUTSIDE the cyan ring — so both have to be visible.
+    if (isCapDiscMode && capDisc) {
+      ctx.save();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#f59e0b';
+      ctx.beginPath();
+      ctx.arc(capDisc.cx * displayScale, capDisc.cy * displayScale,
+              capDisc.r * displayScale, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([6, 4]);
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = '#22d3ee';
+      ctx.beginPath();
+      ctx.arc(capDisc.cx * displayScale, capDisc.cy * displayScale,
+              capDisc.rEff * displayScale, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = '13px sans-serif';
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillText(
+        `cap r=${capDisc.r.toFixed(0)} → counted r=${capDisc.rEff.toFixed(0)}`,
+        (capDisc.cx - capDisc.r) * displayScale + 4,
+        Math.max(14, (capDisc.cy - capDisc.r) * displayScale - 6),
+      );
+      ctx.restore();
+    }
+
     // Cap-edge regions (dashed) + the edge detected inside each (solid).
     // The dashed box is what you drew; the solid line is what the detector found.
     // If the solid line isn't on the cap edge, tune below — that is exactly the
@@ -505,7 +560,8 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
     ctx.lineTo(ccx, ccy + 5);
     ctx.stroke();
   }, [config, displayScale, imageWidth, imageHeight, productPolygons, detectedBottle,
-      isRegionMode, edgeLeftPolygon, edgeRightPolygon, capResult]);
+      isRegionMode, edgeLeftPolygon, edgeRightPolygon, capResult,
+      isCapDiscMode, capDisc]);
 
   // Composite an overlay ImageData on top of current canvas content
   // (we already drew the image, then need to alpha-blend overlay on top).
@@ -666,6 +722,118 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
     }
   }, [templateImageUrl, productPolygons, cropArea, config.bottle_sharp_threshold,
       config.bottle_min_height_ratio, config.bottle_min_aspect, isSuperPointLocalization]);
+
+  // Repoint the match mask at the cap disc. Everything downstream — the pixel
+  // count, the yellow overlay, the pass/fail readout — already works off
+  // polyMaskRef, so swapping the mask is enough to make the whole panel show
+  // the area inference will actually count.
+  const applyDiscMask = useCallback((cx: number, cy: number, rEff: number) => {
+    const w = imageWidth, h = imageHeight;
+    const mask = new Uint8Array(w * h);
+    let count = 0;
+    const r2 = rEff * rEff;
+    const y0 = Math.max(0, Math.floor(cy - rEff)), y1 = Math.min(h - 1, Math.ceil(cy + rEff));
+    const x0 = Math.max(0, Math.floor(cx - rEff)), x1 = Math.min(w - 1, Math.ceil(cx + rEff));
+    for (let y = y0; y <= y1; y++) {
+      const dy = y - cy;
+      for (let x = x0; x <= x1; x++) {
+        const dx = x - cx;
+        if (dx * dx + dy * dy <= r2) { mask[y * w + x] = 1; count++; }
+      }
+    }
+    polyMaskRef.current = mask;
+    polyPixelCountRef.current = count;
+    recomputeMatch();
+  }, [imageWidth, imageHeight, recomputeMatch]);
+
+  // BE /templates/detect-cap-preview. With no reference stored yet this
+  // BOOTSTRAPS: blind HoughCircles cannot find the cap on its own (on a real
+  // frame it returned a conveyor circle r=389 instead of the cap r=272), so we
+  // send the ROI circle the operator dragged as the seed. Tested against hints
+  // off by 60px in centre and 26% in radius — all four snapped to the same cap.
+  const runDetectCap = useCallback(async (bootstrap: boolean) => {
+    if (!templateImageUrl) {
+      setCapDiscError('Need a server-side image_url (save the template first)');
+      return;
+    }
+    setCapDiscDetecting(true);
+    setCapDiscError(null);
+    try {
+      const body: any = {
+        image_url: templateImageUrl,
+        color_config: {
+          h_min: config.h_min, h_max: config.h_max,
+          s_min: config.s_min, s_max: config.s_max,
+          v_min: config.v_min, v_max: config.v_max,
+          cap_margin_pct: config.cap_margin_pct ?? 10,
+        },
+      };
+      if (bootstrap) {
+        body.cap_hint = {
+          cx: config.roi_circle.center[0],
+          cy: config.roi_circle.center[1],
+          r: config.roi_circle.radius,
+        };
+      } else {
+        body.cap_radius_ref = config.cap_radius_ref ?? 0;
+        body.cap_mean_ref = config.cap_mean_ref ?? -1;
+      }
+      const token = localStorage.getItem('access_token');
+      const res = await fetch(`${API_BASE_URL}/api/recipes/templates/detect-cap-preview`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Bypass-Tunnel-Reminder': 'true',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      const data = await res.json();
+      if (!data.detected || !data.circle) {
+        setCapDisc(null);
+        setCapDiscError(data.reason || 'No cap detected');
+        return;
+      }
+      const { cx, cy, r } = data.circle;
+      const rEff = data.circle_effective?.r ?? r;
+      setCapDisc({
+        cx, cy, r, rEff,
+        discPixels: data.disc_pixels ?? 0,
+        raw: data.counts?.raw_pixels ?? 0,
+        blobs: data.counts?.text_blobs ?? 0,
+        blobCount: data.counts?.text_blobs_count ?? 0,
+        structural: data.counts?.structural_pixels ?? 0,
+      });
+      if (bootstrap) {
+        // Persist what was measured — this is the anchor inference is held to.
+        setConfig((prev) => ({
+          ...prev,
+          cap_radius_ref: data.radius_ref ?? r,
+          cap_mean_ref: data.mean_ref ?? -1,
+        }));
+      }
+      applyDiscMask(cx, cy, rEff);
+      setCapDiscError(null);
+    } catch (e: any) {
+      setCapDiscError(String(e?.message || e));
+      setCapDisc(null);
+    } finally {
+      setCapDiscDetecting(false);
+    }
+  }, [templateImageUrl, config.h_min, config.h_max, config.s_min, config.s_max,
+      config.v_min, config.v_max, config.cap_margin_pct, config.roi_circle,
+      config.cap_radius_ref, config.cap_mean_ref, applyDiscMask]);
+
+  // Margin is tuned by eye, so rebuild the mask locally instead of round-tripping
+  // to the server on every slider step.
+  useEffect(() => {
+    if (!isCapDiscMode || !capDisc) return;
+    const rEff = capDisc.r * (1 - Math.min(Math.max(config.cap_margin_pct ?? 10, 0), 90) / 100);
+    setCapDisc((p) => (p && p.rEff !== rEff ? { ...p, rEff } : p));
+    applyDiscMask(capDisc.cx, capDisc.cy, rEff);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.cap_margin_pct, isCapDiscMode, capDisc?.cx, capDisc?.cy, capDisc?.r]);
 
   // Run BE /templates/detect-cap-edges-preview with the current tuning. This is
   // the SAME measurement MatcherFactory runs at recipe-build time, so a success
@@ -832,6 +1000,7 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
                   <option value="image_proc">Image processing</option>
                   <option value="superpoint">SuperPoint product region</option>
                   <option value="edge_regions">SuperPoint + cap edges (round bottle)</option>
+                  <option value="cap_disc">Cap disc (no SuperPoint — date code on cap)</option>
                 </select>
               </div>
               {isRegionMode && (
@@ -886,6 +1055,85 @@ const ColorSetupModal: React.FC<ColorSetupModalProps> = ({
               </button>
             </div>
 
+            {/* Cap disc (localization_method='cap_disc') */}
+            {isCapDiscMode && (
+              <div className="cs-section">
+                <div className="cs-section-title">🧢 Cap Disc</div>
+                <button
+                  type="button"
+                  className="btn btn-secondary cs-auto-btn"
+                  onClick={() => runDetectCap(true)}
+                  disabled={!isReady || capDiscDetecting || !templateImageUrl}
+                  title="Put the cyan ROI circle on the cap first — its centre seeds the search."
+                >
+                  {capDiscDetecting ? 'Measuring…' : 'Measure cap from ROI circle'}
+                </button>
+                {(config.cap_radius_ref ?? 0) > 0 && (
+                  <div className="cs-row cs-stats">
+                    <span>
+                      Ref: r=<b>{(config.cap_radius_ref ?? 0).toFixed(0)}</b>px ·
+                      brightness=<b>{(config.cap_mean_ref ?? -1).toFixed(0)}</b>
+                    </span>
+                  </div>
+                )}
+                <SliderRow
+                  label="Margin (%)"
+                  min={0}
+                  max={40}
+                  value={config.cap_margin_pct ?? 10}
+                  onChange={(v) => setConfig((p) => ({ ...p, cap_margin_pct: v }))}
+                />
+                <div className="cs-row">
+                  <label>Count:</label>
+                  <select
+                    className="cs-num-input"
+                    value={config.count_mode || 'raw_pixels'}
+                    onChange={(e) =>
+                      setConfig((p) => ({
+                        ...p,
+                        count_mode: e.target.value as ColorConfig['count_mode'],
+                      }))
+                    }
+                  >
+                    <option value="raw_pixels">Raw pixels</option>
+                    <option value="text_blobs">Text blobs</option>
+                  </select>
+                </div>
+                {capDisc && (
+                  <div className="cs-row cs-stats">
+                    <span>
+                      disc={capDisc.discPixels.toLocaleString()} · raw=
+                      <b>{capDisc.raw.toLocaleString()}</b> · blobs=
+                      <b>{capDisc.blobs.toLocaleString()}</b> ({capDisc.blobCount}) ·
+                      seams={capDisc.structural.toLocaleString()}
+                    </span>
+                  </div>
+                )}
+                {capDisc && capDisc.structural >= capDisc.blobs && (config.count_mode || 'raw_pixels') === 'raw_pixels' && (
+                  <div className="cs-row cs-stats cs-roi-warn">
+                    <span>
+                      Seams ({capDisc.structural.toLocaleString()}) ≥ text
+                      ({capDisc.blobs.toLocaleString()}) — a blank cap can pass on
+                      seams alone. Use <b>Text blobs</b>.
+                    </span>
+                  </div>
+                )}
+                {capDiscError && (
+                  <div className="cs-row cs-stats cs-roi-warn"><span>{capDiscError}</span></div>
+                )}
+                <label className="cs-row" style={{ gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={config.independent_verdict ?? true}
+                    onChange={(e) =>
+                      setConfig((p) => ({ ...p, independent_verdict: e.target.checked }))
+                    }
+                    title="Off = a PASS on another colour camera absolves this one."
+                  />
+                  <span>Independent verdict (not OR-ed with other colour cameras)</span>
+                </label>
+              </div>
+            )}
             {/* Cap-edge detection tuning (localization_method='edge_regions') */}
             {isRegionMode && (
               <div className="cs-section">
