@@ -261,6 +261,8 @@ _EN: Dict[str, str] = {
     "Ký tự dưới ngưỡng tin cậy": "Character below confidence threshold",
     "Ảnh không khớp template": "Image does not match the template",
     "Không nhận ra sản phẩm": "Product not recognised",
+    "Nhãn/màng bị nhăn": "Label/film is wrinkled",
+    "Nhãn dán lệch tâm": "Label applied off-centre",
     "Detector không thấy vùng nào trong khung": "Detector found no region in frame",
     "Chưa xác định": "Unclassified",
 

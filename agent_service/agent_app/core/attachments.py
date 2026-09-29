@@ -1022,6 +1022,8 @@ def charts_from_tool_result(tool_name: str, args: Dict[str, Any], result: Any) -
             "text_verification": "OCR đọc sai chuỗi",
             "char_verification": "Ký tự dưới ngưỡng",
             "template_verification": "Không khớp template",
+            "product_wrinkled": "Nhãn/màng bị nhăn",
+            "product_misaligned": "Nhãn dán lệch tâm",
             "product_verification": "Không nhận ra sản phẩm",
             "no_detection": "Không thấy nhãn trong khung",
             "unknown": "Chưa xác định",

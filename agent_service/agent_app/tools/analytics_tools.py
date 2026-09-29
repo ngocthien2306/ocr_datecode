@@ -746,6 +746,18 @@ _CAUSE_LABELS = {
     "text_verification": "OCR đọc sai chuỗi",
     "char_verification": "Ký tự dưới ngưỡng tin cậy",
     "template_verification": "Ảnh không khớp template",
+    # Hai loại lỗi SẢN PHẨM thật, tách ra từ `product_verification`.
+    #
+    # `product_verification` là một bước gồm 5 check con, và trước đây cả năm
+    # dồn vào một nhãn "Không nhận ra sản phẩm". Đo trên PC-Auto-1 ngày
+    # 2026-08-28: trong số fail của bước này có 1.711 frame nhăn và 1.701 frame
+    # lệch nhãn — hai lỗi khác hẳn nhau, khác hẳn "không nhận ra sản phẩm", và
+    # cần hai hành động sửa khác nhau ở xưởng. Dữ liệu vẫn nằm sẵn trong
+    # document từ trước; thiếu mỗi tầng đọc.
+    "product_wrinkled": "Nhãn/màng bị nhăn",
+    "product_misaligned": "Nhãn dán lệch tâm",
+    # Còn lại của bước product_verification: trượt nhưng không check con nào
+    # chỉ ra được vì sao (thường do detector không thấy vùng product/label).
     "product_verification": "Không nhận ra sản phẩm",
     "no_detection": "Detector không thấy vùng nào trong khung",
     "unknown": "Chưa xác định",
@@ -777,6 +789,11 @@ _CAUSE_PRIORITY = (
     "text_verification",
     "char_verification",
     "template_verification",
+    # Trên product_verification: ảnh nhăn và ảnh lệch nhãn TỰ NÓI ĐƯỢC lỗi —
+    # visualize đã vẽ sẵn contour vùng nhăn và vạch tâm lệch. Ảnh của nhãn gộp
+    # cũ thì không cho biết gì ngoài "trượt bước này".
+    "product_wrinkled",
+    "product_misaligned",
     "product_verification",
     "no_detection",
     "unknown",
@@ -856,7 +873,16 @@ def explain_failures(
       - text_verification     : OCR đọc ra chuỗi khác chuỗi mong đợi
       - char_verification     : ký tự riêng lẻ dưới ngưỡng tin cậy
       - template_verification : ảnh không khớp template (similarity < threshold)
-      - product_verification  : không nhận ra sản phẩm/nhãn
+      - product_verification  : bước kiểm tra sản phẩm, gồm nhiều check con —
+        được tách tiếp thành:
+          · product_wrinkled    : màng/nhãn bị nhăn (`wrinkled_check`)
+          · product_misaligned  : nhãn dán lệch tâm (`center_alignment_check`)
+          · product_verification: trượt nhưng không check con nào chỉ ra vì sao
+
+    Hai loại lỗi SẢN PHẨM (nhăn, lệch nhãn) khác hẳn ba loại trên: ba loại trên là
+    lỗi ĐỌC, hai loại này là lỗi HÀNG. Trộn chung thì báo cáo nói "không nhận ra
+    sản phẩm 98%" trong khi thực tế là hàng nhăn và dán lệch — hai việc phải sửa ở
+    máy dán chứ không phải ở camera. Chi tiết từng loại nằm trong `defect_details`.
 
     Args:
         recipe_id: Lọc theo recipe (tên hoặc ObjectId)
@@ -920,6 +946,8 @@ def explain_failures(
             "text_verification",
             "char_verification",
             "template_verification",
+            "product_wrinkled",
+            "product_misaligned",
             "product_verification",
             "no_detection",
             "unknown",
@@ -930,6 +958,14 @@ def explain_failures(
         mismatches: Dict[tuple, int] = {}
         mismatch_kinds: Dict[str, int] = {}
         sims: List[float] = []
+        # Chi tiết hai lỗi sản phẩm. Đếm suông "1.711 frame nhăn" thì người ở
+        # xưởng vẫn phải tự đi tra từng ảnh; biết lệch chủ yếu về BÊN NÀO và lệch
+        # bao nhiêu px so với ngưỡng thì chỉnh được ngay tại máy dán.
+        wrinkle_scores: List[float] = []
+        wrinkle_areas: List[float] = []
+        misalign_offsets: List[float] = []
+        misalign_dirs: Dict[str, int] = {}
+        misalign_thresholds: List[float] = []
         samples: List[Dict[str, Any]] = []
         sample_times: List[datetime] = []
         examined_docs = 0
@@ -988,8 +1024,49 @@ def explain_failures(
 
                     pv = frame.get("product_verification") or {}
                     if pv.get("match") is False and not pv.get("skipped"):
-                        _mark("product_verification")
                         hit = True
+                        # `product_verification` là MỘT BƯỚC gồm nhiều check con.
+                        # Đọc từng check thay vì chỉ nhìn `match`: cùng một chữ
+                        # FAIL ở đây có thể là màng nhăn, có thể là nhãn dán
+                        # lệch, và hai thứ đó sửa ở hai chỗ khác nhau trong
+                        # xưởng. Check nào `skipped` thì bỏ qua — ba check
+                        # rotation/misalignment/label_boundary đang tắt cứng
+                        # trong `product_verifier.py`, đọc chúng chỉ tổ dựng lên
+                        # một nguyên nhân không tồn tại.
+                        named = False
+
+                        wr = pv.get("wrinkled_check") or {}
+                        if wr.get("ok") is False and not wr.get("skipped"):
+                            _mark("product_wrinkled")
+                            named = True
+                            if isinstance(wr.get("anomaly_score"), (int, float)):
+                                wrinkle_scores.append(wr["anomaly_score"])
+                            if isinstance(wr.get("total_area"), (int, float)):
+                                wrinkle_areas.append(wr["total_area"])
+
+                        ca = pv.get("center_alignment_check") or {}
+                        if ca.get("ok") is False and not ca.get("skipped"):
+                            _mark("product_misaligned")
+                            named = True
+                            off = ca.get("abs_offset_x")
+                            if not isinstance(off, (int, float)):
+                                off = abs(ca["offset_x"]) if isinstance(
+                                    ca.get("offset_x"), (int, float)) else None
+                            if off is not None:
+                                misalign_offsets.append(off)
+                            d = ca.get("direction")
+                            if d:
+                                misalign_dirs[str(d)] = misalign_dirs.get(str(d), 0) + 1
+                            thr = ca.get("threshold_used_px")
+                            if isinstance(thr, (int, float)):
+                                misalign_thresholds.append(thr)
+
+                        # Trượt bước này nhưng không check con nào nhận: giữ nhãn
+                        # gộp cũ. Đây mới đúng nghĩa "không nhận ra sản phẩm" —
+                        # detector không thấy vùng product/label nên các check
+                        # không có gì để chạy.
+                        if not named:
+                            _mark("product_verification")
 
                     if not hit:
                         # Frame FAIL mà không bước kiểm tra nào báo sai: detector
@@ -1079,6 +1156,70 @@ def explain_failures(
             for k, n in sorted(mismatch_kinds.items(), key=lambda x: -x[1])
         ]
 
+        def _spread(vals: List[float], nd: int = 1) -> Optional[Dict[str, float]]:
+            """min / trung vị / max. Trung vị chứ không trung bình: một frame
+            nhăn toàn bộ nhãn (diện tích gấp trăm lần) kéo trung bình đi rất xa
+            và làm cả kỳ trông tệ hơn thực tế."""
+            if not vals:
+                return None
+            v = sorted(vals)
+            return {"min": round(v[0], nd),
+                    "median": round(v[len(v) // 2], nd),
+                    "max": round(v[-1], nd)}
+
+        # Chi tiết đủ để HÀNH ĐỘNG, không chỉ để đếm. Chỉ dựng khi thật sự có
+        # lỗi loại đó — trả về một khối toàn null làm mô hình tưởng đã đo mà
+        # không ra gì, khác hẳn với "loại lỗi này không xảy ra".
+        defect_details: Dict[str, Any] = {}
+        # Mỗi khối tự mô tả bằng `_what` và `_unit`.
+        #
+        # Không thừa: đo được trên máy thật, mô hình đọc `anomaly_score` của khối
+        # nhăn rồi gọi nó là "độ lệch trung bình 0.773" — trộn thẳng với chỉ số
+        # lệch nhãn của khối bên cạnh. Tên trường trần không đủ để phân biệt hai
+        # con số cùng là "một số thập phân"; nói rõ nó ĐO CÁI GÌ thì mới đủ.
+        _scope = ("cả kỳ" if total_fail <= sample_limit
+                  else f"MẪU {examined_docs}/{total_fail} sản phẩm fail")
+        if wrinkle_scores or wrinkle_areas:
+            defect_details["wrinkled"] = {
+                "_what": "Màng/nhãn bị nhăn, phát hiện bằng model segmentation",
+                "_scope": _scope,
+                "frames": causes["product_wrinkled"],
+                "products": len(causes_products["product_wrinkled"]),
+                "wrinkle_score": {
+                    "_what": "điểm tin cậy của model nhăn, 0–1, vượt ngưỡng 0.6 "
+                             "thì tính là nhăn. KHÔNG phải độ lệch, không có đơn "
+                             "vị px",
+                    **( _spread(wrinkle_scores, 3) or {}),
+                },
+                "wrinkled_area": {
+                    "_what": "tổng diện tích vùng nhăn trên ảnh",
+                    "_unit": "pixel vuông",
+                    **(_spread(wrinkle_areas, 0) or {}),
+                },
+            }
+        if misalign_offsets or misalign_dirs:
+            defect_details["misaligned"] = {
+                "_what": "Nhãn dán lệch tâm so với thân sản phẩm",
+                "_scope": _scope,
+                "frames": causes["product_misaligned"],
+                "products": len(causes_products["product_misaligned"]),
+                # Hướng lệch là thứ chỉ thẳng vào việc phải chỉnh: lệch một bên
+                # áp đảo nghĩa là máy dán bị lệch cữ, lệch đều hai bên nghĩa là
+                # sản phẩm vào không ổn định.
+                "by_direction": dict(sorted(misalign_dirs.items(),
+                                            key=lambda x: -x[1])),
+                "offset": {
+                    "_what": "khoảng lệch tâm thực đo của nhãn",
+                    "_unit": "pixel",
+                    **(_spread(misalign_offsets, 1) or {}),
+                },
+                "threshold": {
+                    "_what": "ngưỡng cho phép lúc chạy; vượt ngưỡng mới bị loại",
+                    "_unit": "pixel",
+                    **(_spread(misalign_thresholds, 1) or {}),
+                },
+            }
+
         return {
             "success": True,
             "period": {"start": _to_local_str(start_dt), "end": _to_local_str(end_dt)},
@@ -1114,6 +1255,9 @@ def explain_failures(
             "top_text_mismatches": top_mismatch,
             "text_mismatch_kinds": mismatch_summary,
             "template_similarity_avg": round(sum(sims) / len(sims), 4) if sims else None,
+            # Rỗng nghĩa là kỳ này không có frame nào nhăn/lệch, không phải là
+            # chưa đo.
+            "defect_details": defect_details,
             "samples": samples,
             "note": (
                 f"Mổ {examined_docs} sản phẩm fail trên tổng {total_fail} "
@@ -1128,6 +1272,20 @@ def explain_failures(
                 f"thường: một sản phẩm trượt được nhiều bước cùng lúc. "
                 f"`no_detection` = detector không tìm thấy vùng nào trong frame "
                 f"(thùng lệch/che khuất/trigger sai), khác với `unknown`. "
+                f"`product_wrinkled` (màng/nhãn nhăn) và `product_misaligned` (nhãn "
+                f"dán lệch tâm) là LỖI HÀNG, không phải lỗi đọc — khi trả lời hãy gọi "
+                f"đúng tên chúng, đừng gộp vào 'không nhận ra sản phẩm'. Số liệu "
+                f"chi tiết của hai loại này nằm trong `defect_details`: hướng lệch "
+                f"(`by_direction`) và độ lệch so với ngưỡng là thứ người ở xưởng cần "
+                f"để chỉnh máy dán, nên hãy nêu ra khi có. Trong `defect_details`, mỗi "
+                f"khối có `_what` và `_unit` nói rõ con số đó ĐO CÁI GÌ — đọc chúng "
+                f"trước khi gọi tên: `wrinkle_score` là điểm tin cậy 0–1 của model "
+                f"nhăn, KHÔNG phải độ lệch, và không có đơn vị px. `_scope` cho biết "
+                f"số đếm trong khối là của cả kỳ hay chỉ của mẫu — nếu là mẫu thì "
+                f"BẮT BUỘC nói rõ khi nêu con số tuyệt đối. Trong các khối đó, "
+                f"`median` là TRUNG VỊ (p50) — đừng gọi nó là 'trung bình'; dùng "
+                f"trung vị vì một frame nhăn nguyên tấm nhãn kéo trung bình lệch "
+                f"hẳn và làm cả kỳ trông tệ hơn thực tế. "
                 f"Xem `text_mismatch_kinds` để biết lỗi OCR là do nhìn thiếu nhãn "
                 f"hay do nhận dạng sai thật."
             ),
@@ -1196,7 +1354,8 @@ explain_failures_tool = BaseTool.create_tool(
         description=(
             "Phân tích NGUYÊN NHÂN sản phẩm bị fail — dùng khi user hỏi 'tại sao', "
             "'vì sao fail', 'lỗi gì', 'nguyên nhân'. Trả về số fail theo từng bước "
-            "kiểm tra (OCR đọc sai chuỗi / ký tự dưới ngưỡng / ảnh không khớp "
+            "kiểm tra (OCR đọc sai chuỗi / ký tự dưới ngưỡng / nhãn nhăn / "
+            "nhãn dán lệch tâm / ảnh không khớp "
             "template / không nhận ra sản phẩm / không thấy nhãn trong khung), "
             "kèm các cặp expected-recognized sai nhiều nhất. "
             "QUAN TRỌNG khi diễn giải: mỗi hàng trong `causes` có `products` "

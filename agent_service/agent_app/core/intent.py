@@ -43,6 +43,13 @@ INTENT_PHRASES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("historical_analytics", (
         "sản phẩm lỗi", "sản phẩm fail", "sản phẩm không đạt", "hàng lỗi",
         "nguyên nhân fail", "vì sao fail", "tại sao fail",
+        # Lỗi HÀNG. Không có mấy cụm này thì "nhãn bị lệch" rơi sang
+        # equipment_health — đã đo được: nó gọi check_reject_timing /
+        # check_sensor_pulse rồi trả "Chưa lấy được dữ liệu", vì nó tưởng
+        # "lệch" là chuyện cơ cấu đẩy chứ không phải chuyện con hàng.
+        "lệch nhãn", "nhãn lệch", "nhãn bị lệch", "dán lệch", "lệch tâm",
+        "bị nhăn", "nhãn nhăn", "màng nhăn", "nhăn nhãn",
+        "misaligned label", "label misaligned", "off-centre label", "wrinkled",
         "pass rate", "sản lượng", "bao nhiêu sản phẩm",
         "bản giao ca", "giao ca", "đạt chỉ tiêu", "còn thiếu bao nhiêu",
         "xuất báo cáo", "tạo báo cáo", "xuất excel", "xuất pdf",

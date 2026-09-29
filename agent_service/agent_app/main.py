@@ -16,12 +16,12 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from agent_app.api import auth, chat, fleet
+from agent_app.api import auth, chat, fleet, station
 from agent_app.core.config import settings
 from agent_app.db.mongodb import (
     close_mongo_connection,
@@ -84,6 +84,9 @@ app.include_router(chat.router, prefix="/api")
 # Đường XÁC ĐỊNH cho tầng fleet: gọi thẳng tool, không qua LLM. Fleet poll 5 máy
 # mỗi phút, đi qua /agent/chat thì mỗi vòng là 5 lượt LLM.
 app.include_router(fleet.router, prefix="/api")
+# Line Station: màn hình đặt cạnh dây chuyền, chạy trên CHÍNH máy này. Chỉ đọc —
+# không endpoint nào start/stop recipe hay sửa cấu hình.
+app.include_router(station.router, prefix="/api")
 
 
 # Ảnh kết quả inference. Backend cũng serve thư mục này ở :8000, nhưng tunnel
@@ -102,6 +105,74 @@ from agent_app.tools.report_tools import REPORTS_DIR, REPORTS_URL_PREFIX  # noqa
 
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount(REPORTS_URL_PREFIX, StaticFiles(directory=str(REPORTS_DIR)), name="reports")
+
+
+# Trang Line Station. Mount trước route /station để file tĩnh đi trước.
+_STATION = Path(__file__).resolve().parent.parent / "static" / "station"
+
+# Code web DÙNG CHUNG với fleet_service: sơ đồ nhà máy 3D (1.282 dòng từng tồn
+# tại hai bản và đã bắt đầu trôi khác nhau) cùng bản vendor three.js r184.
+#
+# Phục vụ từ ĐĨA CỦA MÁY NÀY. Line Station không được phụ thuộc fleet service
+# lúc chạy — đó là toàn bộ lý do bề mặt này tồn tại — nên dùng chung ở đây là
+# dùng chung MÃ NGUỒN trong repo, không phải gọi qua HTTP sang :8200.
+_SHARED_WEB = Path(__file__).resolve().parent.parent.parent / "shared" / "web"
+
+
+def _static_file(root: Path, asset: str, default: str = "index.html") -> FileResponse:
+    """Trả một file tĩnh nằm trong `root`, chặn đường dẫn thoát ra ngoài.
+
+    `asset` do client đưa, nên phải resolve rồi kiểm tra vẫn nằm trong `root`.
+    """
+    # Đường dẫn rỗng hoặc trỏ vào thư mục thì trả trang — `/station/` là cách
+    # trình duyệt tự thêm dấu gạch, không phải một yêu cầu file.
+    if not asset or asset.endswith("/"):
+        asset = default
+    target = (root / asset).resolve()
+    try:
+        target.relative_to(root.resolve())
+    except ValueError:
+        raise HTTPException(404)
+    if not target.is_file():
+        raise HTTPException(404)
+    mime = {".js": "text/javascript", ".css": "text/css",
+            ".html": "text/html", ".svg": "image/svg+xml"}.get(target.suffix, None)
+    # no-cache: màn hình treo tường chạy nhiều ngày liền, sửa xong mà tablet giữ
+    # bản cũ thì không ai biết là đã sửa.
+    return FileResponse(target, media_type=mime,
+                        headers={"Cache-Control": "no-cache, must-revalidate"})
+
+
+@app.get("/shared/{asset:path}", include_in_schema=False)
+async def shared_asset(asset: str):
+    """File web dùng chung với fleet_service (xem _SHARED_WEB)."""
+    if not _SHARED_WEB.is_dir():
+        # Nói to trong log, không chỉ trả 404: thiếu thư mục này thì sơ đồ nhà
+        # máy không dựng được, mà lỗi import ES module chỉ hiện trong console
+        # của trình duyệt — không ai đứng cạnh dây chuyền mở console.
+        logger.error("Không thấy %s — sơ đồ nhà máy 3D sẽ không tải được. "
+                     "Deploy phải copy cả thư mục shared/, không chỉ agent_service/.",
+                     _SHARED_WEB)
+        raise HTTPException(404)
+    return _static_file(_SHARED_WEB, asset)
+
+@app.get("/station", include_in_schema=False)
+async def station_ui():
+    """Màn hình cạnh dây chuyền (http://<máy>:8100/station)."""
+    return FileResponse(_STATION / "index.html", media_type="text/html",
+                        headers={"Cache-Control": "no-cache, must-revalidate"})
+
+
+@app.get("/station/{asset:path}", include_in_schema=False)
+async def station_asset(asset: str):
+    """
+    File tĩnh của Line Station.
+
+    Một route chung thay vì một route mỗi file: bản trước khai riêng station.css
+    và station.js, nên thêm floor.js là 404 ngay — và một màn hình xưởng thiếu
+    một module thì trắng trơn, không báo gì.
+    """
+    return _static_file(_STATION, asset)
 
 
 @app.get("/test", include_in_schema=False)

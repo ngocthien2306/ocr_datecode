@@ -27,7 +27,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from agent_app.base.base_agent import AgentState
-from agent_app.core import collector, progress
+from agent_app.core import collector, progress, timeframe
 from agent_app.core.registry import AgentRegistry
 from agent_app.tools.base_tool import BaseTool, ToolMetadata
 
@@ -61,6 +61,15 @@ def _run(agent_id: str, question: str) -> str:
     không giải được, dù `question` đã được viết lại.
     """
     history = _sub_history.get() or []
+
+    # Giải mốc thời gian TRƯỚC khi giao cho agent con.
+    #
+    # Đặt trong `_run` chứ không ở orchestrator: mọi đường vào agent con đều đi
+    # qua hàm này — cả đường tắt `dispatch()` lẫn đường mô hình gọi `ask_*`.
+    # Vá một đường thì đường kia vẫn hỏng, đúng kiểu lệch mà `core/intent.py`
+    # đã phải gom về một bảng duy nhất để tránh.
+    question = timeframe.resolve(question, history)
+
     progress.agent_started(agent_id)
     try:
         agent = AgentRegistry.get_agent(agent_id)
@@ -203,7 +212,10 @@ ask_production_data_tool = BaseTool.create_tool(
             "nguyên nhân fail kèm ảnh sản phẩm lỗi, so sánh hai kỳ, dừng máy/uptime, "
             "chỉ tiêu, bản giao ca, lịch sử load recipe, xuất báo cáo. "
             "Dùng cho MỌI câu về SẢN PHẨM fail — sản phẩm lỗi nằm trong database, "
-            "không nằm trong file log."
+            "không nằm trong file log. "
+            "Bao gồm cả LỖI HÀNG cụ thể: nhãn/màng bị NHĂN (wrinkle) và nhãn dán "
+            "LỆCH TÂM (misaligned) — đây là thuộc tính của con hàng, KHÔNG phải "
+            "sự cố cảm biến hay cơ cấu đẩy, nên không dùng `ask_equipment` cho chúng."
         ),
         category="agent",
     ),
@@ -233,7 +245,10 @@ ask_equipment_tool = BaseTool.create_tool(
         description=(
             "Sức khoẻ thiết bị đo từ log có cấu trúc: xung reject và cơ cấu đẩy phôi, "
             "trigger có bỏ sót sản phẩm không, nhịp cảm biến/băng tải, module nào lỗi "
-            "hoặc không khởi tạo được."
+            "hoặc không khởi tạo được. "
+            "KHÔNG dùng cho lỗi của bản thân con hàng (nhãn lệch, màng nhăn, OCR đọc "
+            "sai) — những thứ đó là `ask_production_data`. Chữ 'lệch' ở đây chỉ nói "
+            "về cơ cấu máy, không nói về nhãn dán lệch."
         ),
         category="agent",
     ),
