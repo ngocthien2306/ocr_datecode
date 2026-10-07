@@ -196,7 +196,11 @@ def calculate_text_similarity(text1: str, text2: str) -> float:
         Similarity ratio (0.0 - 1.0)
     """
     # Normalize: strip whitespace, remove internal spaces, and convert to lowercase
-    special_chars_to_space = ['_', '-', '－', '—', '–', ',', '.', ':', ';', '--']
+    # '~' giữ đồng bộ với compare_texts (ocr_utils.py): dot-matrix in '-' thành
+    # chấm chéo, OCR đọc ra '~'. Không chuẩn hoá ở đây thì similarity bị tính
+    # thấp giả tạo, kéo kết quả xuống dưới cổng 70% và augment retry bị bỏ qua
+    # đúng lúc nó có ích nhất.
+    special_chars_to_space = ['_', '-', '－', '—', '–', '~', ',', '.', ':', ';', '--']
     for char in special_chars_to_space:
         text1 = text1.replace(char, " ")
         text2 = text2.replace(char, " ")

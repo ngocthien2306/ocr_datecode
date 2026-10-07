@@ -216,7 +216,11 @@ def compare_texts(text1: str, text2: str, case_sensitive: bool = False, strip: b
 
     # Normalize special characters to space before removing spaces
     # OCR often confuses space with underscore, dash, punctuation, etc.
-    special_chars_to_space = ['_', '-', '－', '—', '–', ',', '.', ':', ';', '--', "'"]  # underscore, hyphen, dashes, punctuation
+    # '~' vì máy in CIJ dot-matrix vẽ dấu '-' bằng 3-4 chấm hơi chéo, nên OCR
+    # đọc ra '~' — 12 lần trong 38 phút chạy ngày 2026-09-28. Không nằm trong
+    # danh sách này thì nó sống sót qua bước xoá space, độ dài lệch 1 và so
+    # sánh fail dù mọi ký tự alnum đều khớp ('06271-13704~V' vs '06271-13704-V').
+    special_chars_to_space = ['_', '-', '－', '—', '–', '~', ',', '.', ':', ';', '--', "'"]  # underscore, hyphen, dashes, tilde, punctuation
     for char in special_chars_to_space:
         text1 = text1.replace(char, ' ')
         text2 = text2.replace(char, ' ')
