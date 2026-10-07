@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 
 from app.api.endpoints import auth, users, recipes, cameras, upload, action_logs, inference_results, trigger_simulator, agent, jetson_monitoring, storage, ml_training, system_logs, system
+from app.api.endpoints import live_template
 from app.api.websocket import camera_ws
 from app.services.socketio_service import socket_app
 from app.utils.logging_config import setup_category_logger
@@ -209,6 +210,7 @@ app.include_router(storage.router, prefix="/api", tags=["Storage Management"])
 app.include_router(ml_training.router, prefix="/api", tags=["ML Training"])
 app.include_router(system_logs.router, prefix="/api/system-logs", tags=["System Logs"])
 app.include_router(system.router, prefix="/api", tags=["System"])
+app.include_router(live_template.router, prefix="/api", tags=["Live Template"])
 
 # WebSocket endpoints
 app.include_router(camera_ws.router, tags=["WebSocket"])

@@ -97,6 +97,60 @@ export const camerasAPI = {
     const response = await api.post('/cameras/frames/rotate', { frames, quality });
     return response.data;
   },
+
+  /**
+   * Re-derive a template's regions on a freshly captured frame, server-side
+   * (backend, CPU): cap rotation → cap crop → text window → SuperPoint, the
+   * same steps the AI service runs. Returns the rotated frame(s) with
+   * `detected_regions` computed on them, so image and regions always belong
+   * to the same frame. See backend/app/api/endpoints/live_template.py.
+   */
+  realignLiveFrame: async (body: {
+    recipe_id: string;
+    serial_number: string;
+    frame_base64: string;
+    template_name?: string;
+    template_index?: number;
+    quality?: number;
+  }): Promise<LiveRealignResult> => {
+    const response = await api.post<LiveRealignResult>('/live-template/realign', body, {
+      // ~1-2 s of CPU per call; leave headroom for a queued second request.
+      timeout: 30000,
+    });
+    return response.data;
+  },
 };
+
+export interface LiveRealignCandidate {
+  label: 'no_flip' | 'flip180';
+  is_alt: boolean;
+  chosen: boolean;
+  success: boolean;
+  error: string | null;
+  confidence: number;
+  inliers: number;
+  total_matches: number;
+  /** Rotation of the template→frame transform; the upright candidate is ≈ 0°. */
+  rotation_deg: number | null;
+  /** Regions copied from the other candidate through the cap centre (it did not match on its own). */
+  mirrored: boolean;
+  /** Same shape as an inference frame's detected_regions, in THIS candidate's frame. */
+  detected_regions: any[];
+  frame_base64: string;
+  width: number;
+  height: number;
+}
+
+export interface LiveRealignResult {
+  mode: 'cap_rotation' | 'plain' | 'not_applicable';
+  reason?: string;
+  rotation_mode?: string;
+  transform_model?: string;
+  candidates: LiveRealignCandidate[];
+  /** Index into candidates, or null when nothing matched. */
+  chosen: number | null;
+  notes: string[];
+  elapsed_ms: number;
+}
 
 export default camerasAPI;

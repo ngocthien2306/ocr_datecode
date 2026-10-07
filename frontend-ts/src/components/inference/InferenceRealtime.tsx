@@ -3,7 +3,7 @@ import '@/styles/InferenceRealtime.css';
 import { socketService } from '@/services/socketio';
 import api from '@/services/api';
 import { receiptsAPI } from '@/services/recipes';
-import { camerasAPI } from '@/services/cameras';
+import { camerasAPI, type LiveRealignResult } from '@/services/cameras';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import InferenceRealtimeSettingsModal from './InferenceRealtimeSettingsModal';
 import TemplateTextEditDialog, { type TextEditItem } from './TemplateTextEditDialog';
@@ -304,6 +304,11 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
   // to the frame the user actually previewed, even if a new inference arrives in
   // between Get-Live and Set-As-Template clicks.
   const [liveInferenceSnapshot, setLiveInferenceSnapshot] = useState<any>(null);
+  // Backend realignment per captured frame (sn → per-frame result). null =
+  // realign not applicable / failed → that frame fell back to the old pairing.
+  const [liveRealign, setLiveRealign] = useState<{[sn: string]: (LiveRealignResult | null)[]}>({});
+  // Which realign candidate (no_flip / flip180) each frame is showing — "sn_frameIdx" → index.
+  const [liveCandidateSel, setLiveCandidateSel] = useState<{[key: string]: number}>({});
 
   interface PendingTemplateData {
     sn: string;
@@ -620,17 +625,44 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
     return dbPayload;
   };
 
+  // Copy `snapshot` with one frame's detected_regions replaced — only the path
+  // being changed is copied, the rest (incl. image_base64 strings) is shared.
+  const withFrameRegions = (snapshot: any, sn: string, frameIdx: number, regions: any[]) => ({
+    ...snapshot,
+    camera_results: (snapshot?.camera_results ?? []).map((cr: any) =>
+      cr.serial_number !== sn ? cr : {
+        ...cr,
+        frames: (cr.frames ?? []).map((f: any, i: number) =>
+          i !== frameIdx ? f : { ...f, detected_regions: regions }),
+      }),
+  });
+
+  // Get Live Template.
+  //
+  // Previously this paired a frame grabbed NOW with `detected_regions` from the
+  // last inference result. Those regions were computed on an EARLIER frame
+  // (bottle moved since) and, on cap cameras, in the ROTATED frame the AI
+  // matched on — while shared memory hands out the raw, unrotated frame. So
+  // the preview (and the template saved from it) drifted.
+  //
+  // Now each grabbed frame is sent to the backend, which re-runs the AI's own
+  // alignment on it (cap rotation → cap crop → text window → SuperPoint, CPU)
+  // and returns the rotated frame together with regions computed ON it. The
+  // realigned regions are written into the snapshot, so Set-As-Template /
+  // buildNewAnnotations / the text & canvas dialogs keep working unchanged.
+  // If realign doesn't apply to a camera (colour-check path) or the call
+  // fails, that frame falls back to the old pairing with a warning.
   const handleGetLiveTemplates = async () => {
     if (!latestResults?.camera_results?.length) return;
     setIsGettingLiveTemplate(true);
-    // Snapshot the inference result NOW so Set-As-Template uses the same
-    // annotation context the user is previewing (incoming inferences won't shift it).
-    const inferenceSnapshot = latestResults;
-    setLiveInferenceSnapshot(inferenceSnapshot);
+    let inferenceSnapshot: any = latestResults;
     try {
       const updates: {[sn: string]: string[]} = {};
       const rawUpdates: {[sn: string]: string[]} = {};
-      for (const cameraResult of inferenceSnapshot.camera_results) {
+      const realignUpdates: {[sn: string]: (LiveRealignResult | null)[]} = {};
+      const selUpdates: {[key: string]: number} = {};
+      const unaligned: string[] = [];
+      for (const cameraResult of latestResults.camera_results) {
         const sn = cameraResult.serial_number;
         const count = cameraResult.frames.length || 1;
         try {
@@ -643,26 +675,78 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
           if (framesResponse?.frames?.length) {
             const annotatedFrames: string[] = [];
             const rawFrames: string[] = [];
+            const realigns: (LiveRealignResult | null)[] = [];
             for (let i = 0; i < framesResponse.frames.length; i++) {
-              const rawSrc = `data:image/jpeg;base64,${framesResponse.frames[i].frame_base64}`;
-              rawFrames.push(rawSrc);
               const correspondingFrame = cameraResult.frames[i];
-              const detectedRegions = correspondingFrame?.detected_regions ?? [];
-              const cropArea = getCropAreaForFrame(sn, correspondingFrame?.template_name);
-              const annotated = await drawDetectedRegionsOnImage(rawSrc, detectedRegions, cropArea);
-              annotatedFrames.push(annotated);
+              const templateName = correspondingFrame?.template_name;
+              const cropArea = getCropAreaForFrame(sn, templateName);
+              const grabbedB64 = framesResponse.frames[i].frame_base64;
+
+              let realign: LiveRealignResult | null = null;
+              if (runningRecipeId) {
+                try {
+                  realign = await camerasAPI.realignLiveFrame({
+                    recipe_id: runningRecipeId,
+                    serial_number: sn,
+                    frame_base64: grabbedB64,
+                    template_name: templateName,
+                    template_index: i,
+                    quality: 95,
+                  });
+                } catch (err: any) {
+                  console.error(`Realign failed for ${sn} frame ${i}:`, err);
+                  unaligned.push(`${sn}#${i + 1}: ${err?.response?.data?.detail || err?.message || 'realign error'}`);
+                }
+              }
+
+              const candIdx = realign?.chosen ?? 0;
+              const cand = realign && realign.mode !== 'not_applicable'
+                ? realign.candidates[candIdx] : undefined;
+              if (realign && cand) {
+                // No successful candidate → show the (rotated) frame WITHOUT
+                // regions; Set-As-Template is disabled for it in the UI.
+                const src = `data:image/jpeg;base64,${cand.frame_base64}`;
+                const regions = realign.chosen !== null ? cand.detected_regions : [];
+                rawFrames.push(src);
+                annotatedFrames.push(await drawDetectedRegionsOnImage(src, regions, cropArea));
+                inferenceSnapshot = withFrameRegions(inferenceSnapshot, sn, i, regions);
+                selUpdates[`${sn}_${i}`] = candIdx;
+                if (realign.chosen === null) {
+                  unaligned.push(`${sn}#${i + 1}: ${cand.error || realign.notes.join('; ') || 'no match'}`);
+                }
+              } else {
+                // Fallback: old pairing (fresh frame + last inference's regions).
+                if (realign?.mode === 'not_applicable' && realign.reason) {
+                  console.info(`Realign n/a for ${sn} frame ${i}: ${realign.reason}`);
+                }
+                const rawSrc = `data:image/jpeg;base64,${grabbedB64}`;
+                rawFrames.push(rawSrc);
+                annotatedFrames.push(await drawDetectedRegionsOnImage(
+                  rawSrc, correspondingFrame?.detected_regions ?? [], cropArea));
+              }
+              realigns.push(realign);
             }
             updates[sn] = annotatedFrames;
             rawUpdates[sn] = rawFrames;
+            realignUpdates[sn] = realigns;
           }
         } catch (err) {
           console.error(`Failed to get frames for camera ${sn}:`, err);
         }
       }
+      // Snapshot the (realigned) inference result so Set-As-Template uses the
+      // regions the user is previewing, not whatever inference arrives next.
+      setLiveInferenceSnapshot(inferenceSnapshot);
       if (Object.keys(updates).length > 0) {
         setLiveTemplateFrames(updates);
         setLiveRawFrames(rawUpdates);
-        toast.success('Captured live frames as template');
+        setLiveRealign(realignUpdates);
+        setLiveCandidateSel(selUpdates);
+        if (unaligned.length > 0) {
+          toast.warning(`Không căn được vùng: ${unaligned.join(' | ')}`);
+        } else {
+          toast.success('Captured live frames as template');
+        }
       } else {
         toast.error('Failed to get frames from any camera');
       }
@@ -673,10 +757,30 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
     }
   };
 
+  // Switch a frame between its realign candidates (no_flip ↔ flip180). The
+  // backend picks the one whose recovered rotation is closest to 0°, but the
+  // AI itself leaves that call to OCR on caps, so the operator gets the last word.
+  const handleSelectLiveCandidate = async (sn: string, frameIdx: number, candIdx: number) => {
+    const realign = liveRealign[sn]?.[frameIdx];
+    const cand = realign?.candidates?.[candIdx];
+    if (!realign || !cand) return;
+    const src = `data:image/jpeg;base64,${cand.frame_base64}`;
+    const regions = cand.success ? cand.detected_regions : [];
+    const templateName = liveInferenceSnapshot?.camera_results
+      ?.find((c: any) => c.serial_number === sn)?.frames?.[frameIdx]?.template_name;
+    const annotated = await drawDetectedRegionsOnImage(src, regions, getCropAreaForFrame(sn, templateName));
+    setLiveRawFrames(prev => ({ ...prev, [sn]: (prev[sn] ?? []).map((f, i) => (i === frameIdx ? src : f)) }));
+    setLiveTemplateFrames(prev => ({ ...prev, [sn]: (prev[sn] ?? []).map((f, i) => (i === frameIdx ? annotated : f)) }));
+    setLiveInferenceSnapshot((prev: any) => withFrameRegions(prev, sn, frameIdx, regions));
+    setLiveCandidateSel(prev => ({ ...prev, [`${sn}_${frameIdx}`]: candIdx }));
+  };
+
   const handleReturnOriginalTemplates = () => {
     setLiveTemplateFrames({});
     setLiveRawFrames({});
     setLiveInferenceSnapshot(null);
+    setLiveRealign({});
+    setLiveCandidateSel({});
   };
 
   // Build new annotations by merging recipe shape info + detected_regions coords + text_verification text
@@ -2393,6 +2497,14 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                             const key = `${cameraResult.serial_number}_${frameIdx}`;
                             const isSetting = settingTemplateKey === key;
                             const templateName = cameraResult.frames[frameIdx]?.template_name;
+                            const realign = liveRealign[cameraResult.serial_number]?.[frameIdx] ?? null;
+                            const realigned = !!realign && realign.mode !== 'not_applicable' && realign.candidates.length > 0;
+                            const candIdx = liveCandidateSel[key] ?? realign?.chosen ?? 0;
+                            const cand = realigned ? realign!.candidates[candIdx] : null;
+                            // Realigned but this candidate has no regions → saving it would keep the
+                            // OLD annotations on a frame where the bottle has moved. Block it.
+                            const cannotSet = realigned && !cand?.success;
+                            const otherCandIdx = realigned && realign!.candidates.length === 2 ? 1 - candIdx : null;
                             return (
                               <div key={frameIdx} className="template-preview-item">
                                 <div className="template-image-wrapper">
@@ -2408,12 +2520,37 @@ export default function InferenceRealtime({ runningRecipeId, onClose, embedded =
                                     </svg>
                                     <span className="template-label">Live {templateName ?? frameIdx + 1}</span>
                                   </div>
+                                  {/* Realign status: which candidate, match quality, recovered rotation */}
+                                  {realigned && (
+                                    <div
+                                      className={`live-realign-status ${cand?.success ? 'ok' : 'fail'}`}
+                                      title={realign!.notes.length ? realign!.notes.join('\n') : undefined}
+                                    >
+                                      {cand?.success
+                                        ? `${cand.label === 'flip180' ? 'Lật 180°' : 'Không lật'} · conf ${cand.confidence.toFixed(2)}`
+                                          + (cand.rotation_deg !== null ? ` · xoay ${cand.rotation_deg.toFixed(1)}°` : '')
+                                          + (cand.mirrored ? ' · vùng mirror' : '')
+                                        : `Không căn được: ${cand?.error || 'no match'}`}
+                                    </div>
+                                  )}
+                                  {otherCandIdx !== null && (
+                                    <button
+                                      className="btn-live-flip"
+                                      onClick={() => handleSelectLiveCandidate(cameraResult.serial_number, frameIdx, otherCandIdx)}
+                                      disabled={isSetting || !!settingTemplateKey}
+                                      title="Chữ bị ngược? Chuyển sang ứng viên xoay 180°"
+                                    >
+                                      ⟲ Lật 180°
+                                    </button>
+                                  )}
                                   {/* Set as Template button */}
                                   <button
                                     className={`btn-set-as-template ${isSetting ? 'loading' : ''}`}
                                     onClick={() => handleSetAsTemplate(cameraResult.serial_number, frameIdx)}
-                                    disabled={isSetting || !!settingTemplateKey}
-                                    title="Upload this frame as new template with updated annotations"
+                                    disabled={isSetting || !!settingTemplateKey || cannotSet}
+                                    title={cannotSet
+                                      ? 'Không căn được vùng trên frame này — bấm lấy Live Template lại'
+                                      : 'Upload this frame as new template with updated annotations'}
                                   >
                                     {isSetting ? (
                                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" style={{animation: 'spin 1s linear infinite'}}>
