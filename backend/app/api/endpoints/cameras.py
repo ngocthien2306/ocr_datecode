@@ -750,7 +750,9 @@ async def get_ring_buffer_status(
 
     try:
         shm_name = f"camera_{serial_number}"
-        shm = shared_memory.SharedMemory(name=shm_name, create=False)
+        # attach without taking ownership — see attach_existing_shm
+        from app.services.shared_memory_service import attach_existing_shm
+        shm = attach_existing_shm(shm_name)
 
         # Read header
         write_idx = struct.unpack_from("<I", shm.buf, 0)[0]

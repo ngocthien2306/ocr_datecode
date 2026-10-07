@@ -34,7 +34,9 @@ class CameraFrameService:
             # Kết nối hoặc tái sử dụng kết nối shared memory
             if shm_name not in self._shm_connections:
                 logger.info(f"[READ] Creating new connection to shared memory '{shm_name}'")
-                self._shm_connections[shm_name] = shared_memory.SharedMemory(name=shm_name)
+                # attach without taking ownership — see attach_existing_shm
+                from app.services.shared_memory_service import attach_existing_shm
+                self._shm_connections[shm_name] = attach_existing_shm(shm_name)
             else:
                 logger.debug(f"[READ] Reusing existing connection to shared memory '{shm_name}'")
 

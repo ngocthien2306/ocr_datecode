@@ -15,6 +15,35 @@ import threading
 logger = logging.getLogger(__name__)
 
 
+def attach_existing_shm(name: str) -> shared_memory.SharedMemory:
+    """Attach to a camera's EXISTING segment as a pure reader — without taking
+    ownership of it.
+
+    `SharedMemory(name, create=False)` on Python 3.8-3.12 still registers the
+    segment with `multiprocessing.resource_tracker` (stdlib
+    shared_memory.py:120 in the `vision` env, outside the `if create:` branch).
+    When this process exits, the tracker then `shm_unlink`s every registered
+    NAME. The backend is only ever a reader — the camera service creates and
+    owns `camera_<serial>` — so each backend restart was deleting the names of
+    every camera segment it had opened. And because unlink goes by name, after
+    a camera-service restart it deletes the camera's NEW segment, not the old
+    one this process had mapped. Observed 2026-09-28: `/dev/shm/camera_24026290`
+    vanished after a reader process exited; the line kept running only because
+    long-lived processes still held the mapping.
+
+    Unregistering right after attach is the standard fix: the tracker forgets
+    the segment, and close() on our side still releases our mapping normally.
+    Raises FileNotFoundError like SharedMemory does when the segment is absent.
+    """
+    shm = shared_memory.SharedMemory(name=name, create=False)
+    try:
+        from multiprocessing import resource_tracker
+        resource_tracker.unregister(shm._name, "shared_memory")  # type: ignore[attr-defined]
+    except Exception as e:  # never fail a read over tracker bookkeeping
+        logger.warning(f"resource_tracker.unregister({name}) failed: {e}")
+    return shm
+
+
 class SharedMemoryService:
     """
     Service to read frames from shared memory
@@ -50,7 +79,7 @@ class SharedMemoryService:
 
         # Try to connect
         try:
-            shm = shared_memory.SharedMemory(name=shm_name, create=False)
+            shm = attach_existing_shm(shm_name)
             self._connections[shm_name] = shm
             logger.info(f"Connected to shared memory: {shm_name}")
             return shm
