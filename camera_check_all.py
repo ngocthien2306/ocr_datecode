@@ -17,8 +17,8 @@ GRAB_TIMEOUT_MS = 5000
 
 # Interface → subnet prefix mapping
 IFACE_SUBNETS = {
-    "enp5s0": "192.168.90",
-    "enp6s0": "192.168.100",
+    "enp6s0": "192.168.4",
+    "enp7s0": "192.168.5",
 }
 EXPECTED_COUNT = 2
 
