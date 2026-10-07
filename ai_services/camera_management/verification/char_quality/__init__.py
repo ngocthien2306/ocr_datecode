@@ -49,6 +49,12 @@ def _v7(tmpl_gray, tgt_gray):
     return compute_char_quality_v7(tmpl_gray, tgt_gray)
 
 
+def _pixel(tmpl_gray, tgt_gray):
+    # Plain ink pixel count on the SuperPoint char crops — see pixel.py.
+    from .pixel import compute_char_quality_pixel
+    return compute_char_quality_pixel(tmpl_gray, tgt_gray)
+
+
 # cv_method (as stored on the recipe) -> metric function.
 # Replaces the if/elif chain that used to live in embedding_classifier; adding
 # a method is now one entry here instead of another near-identical branch.
@@ -60,6 +66,7 @@ METRIC_METHODS: Dict[str, Callable] = {
     'v5': _v5,
     'v7': _v7,
     'shape_v7': _v7,   # alias kept — recipes in the field use both spellings
+    'pixel': _pixel,   # template-guided ink pixel count (missing stroke) — see pixel.py
 }
 
 

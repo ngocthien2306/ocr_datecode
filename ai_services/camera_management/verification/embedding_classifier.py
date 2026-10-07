@@ -1062,6 +1062,16 @@ class EmbeddingClassifierService:
                     'error': None,
                     'mask_diff_b64': mask_b64,
                 }
+                # Defect diagnostics travel with the result (text_verifier
+                # copies whichever are present into the stored char result).
+                if metrics.get('defect_type'):
+                    results[i]['defect_type'] = metrics['defect_type']
+                if 'ink_ratio' in metrics:
+                    results[i].update({
+                        'ink_ratio': round(float(metrics['ink_ratio']), 4),
+                        'ink_missing': round(float(metrics['ink_missing']), 4),
+                        'ink_extra': round(float(metrics['ink_extra']), 4),
+                    })
                 # Stash bank context for post-batch try_add (only set when bank was used)
                 if bank_enabled and recipe_id and ann_idx >= 0 and best_template is not None:
                     results[i]['_bank_try_add'] = {
@@ -1099,6 +1109,16 @@ class EmbeddingClassifierService:
                         f"ncc={metrics.get('ncc', 0):.3f} "
                         f"over={metrics.get('over_ink_score', 0):.3f} "
                         f"under={metrics.get('under_ink_score', 0):.3f} "
+                        f"defect={metrics.get('defect_type')} {label} thr={conf_thr}"
+                    )
+                elif cv_method == 'pixel':
+                    logger.debug(
+                        f"[{item.get('serial_number', '')}] cv ann "
+                        f"{item.get('annotation_idx', -1)}: pixel conf={p_ok:.4f} "
+                        f"ratio={metrics.get('ink_ratio', 0):.3f} "
+                        f"missing={metrics.get('ink_missing', 0):.3f} "
+                        f"extra={metrics.get('ink_extra', 0):.3f} "
+                        f"px={metrics.get('px_tgt', 0)}/{metrics.get('px_tmpl', 0)} "
                         f"defect={metrics.get('defect_type')} {label} thr={conf_thr}"
                     )
                 elif cv_method == 'v7':

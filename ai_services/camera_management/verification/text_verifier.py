@@ -53,7 +53,19 @@ DEFAULT_CHAR_CLASSIFIER_BACKEND: str = "embedding"
 _NUMERIC_CHAR_FIELDS = (
     'confidence', 'tm_conf', 'blur_tm', 'iou', 'pixel_conf',
     'px_tmpl', 'px_tgt', 'sharp_ratio', 'cc_tmpl', 'cc_tgt', 'idx',
+    'ink_ratio', 'ink_missing', 'ink_extra',
 )
+
+
+_CHAR_DEFECT_KEYS = ('defect_type', 'ink_ratio', 'ink_missing', 'ink_extra')
+
+
+def _char_defect_fields(r: Dict[str, Any]) -> Dict[str, Any]:
+    """Defect diagnostics a CV method reported for one char (pixel method:
+    ink ratio / missing / extra). Only keys that are present are
+    copied, so other methods' results keep their old shape. Stored with the
+    char result so thresholds can be tuned from real line data."""
+    return {k: r[k] for k in _CHAR_DEFECT_KEYS if r.get(k) is not None}
 
 
 def _sanitize_char_results(char_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -886,6 +898,7 @@ class TextVerificationService:
                 'threshold':      float(m['conf_threshold']),
                 'error':          r.get('error'),
                 'mask_diff_b64':  r.get('mask_diff_b64'),
+                **_char_defect_fields(r),
             }
 
         elapsed = (time.perf_counter() - t0) * 1000
@@ -1009,6 +1022,7 @@ class TextVerificationService:
                     'threshold':      float(m['conf_threshold']),
                     'error':          r.get('error'),
                     'mask_diff_b64':  r.get('mask_diff_b64'),
+                    **_char_defect_fields(r),
                 }
             per_frame.append(out)
             prev = end_idx
@@ -1219,6 +1233,14 @@ class TextVerificationService:
         ml_project_id = getattr(camera, 'ml_project_id', None)
         ml_model_id = getattr(camera, 'ml_model_id', None)
         camera_backend = (getattr(camera, 'classifier_backend', None) or DEFAULT_CHAR_CLASSIFIER_BACKEND).lower()
+        # cv_method='pixel' takes the SuperPoint char region as-is: plain
+        # crop_text_region, and no remove_fragments_local_bg (it assumes dark
+        # ink and on light-on-dark caps paints over real strokes, which the
+        # pixel count would then report as missing) — see char_quality/pixel.py.
+        use_pixel_method = (
+            camera_backend == "embedding"
+            and str(getattr(camera, 'cv_method', '') or '').lower() == 'pixel'
+        )
         # Embedding path: only needs an embedding service (no ml_project/model required).
         # ML path: requires both service AND recipe.ml_project_id / ml_model_id.
         char_bboxes_count = sum(1 for b in transformed_bboxes if b.get('type') == 'char')
@@ -1395,17 +1417,18 @@ class TextVerificationService:
                 try:
                     _t = time.perf_counter()
                     cropped = crop_text_region(frame_img, points)
-                    # Loại fragment kí tự lân cận lọt vào crop — bbox project
-                    # qua SuperPoint đôi lúc lấn sang neighbor (vd crop '8' dính
-                    # rìa '4'). Giữ chữ chính + defect bên trong, fill local-bg.
-                    try:
-                        cropped, _frag_mask = remove_fragments_local_bg(cropped)
-                        logger.info(f"[{serial_number}] fragment-clean succeeded ann {ann_idx}")
-                    except Exception as e_clean:
-                        logger.info(
-                            f"[{serial_number}] fragment-clean failed ann {ann_idx}: "
-                            f"{e_clean} — using raw crop"
-                        )
+                    if not use_pixel_method:
+                        # Loại fragment kí tự lân cận lọt vào crop — bbox project
+                        # qua SuperPoint đôi lúc lấn sang neighbor (vd crop '8' dính
+                        # rìa '4'). Giữ chữ chính + defect bên trong, fill local-bg.
+                        try:
+                            cropped, _frag_mask = remove_fragments_local_bg(cropped)
+                            logger.info(f"[{serial_number}] fragment-clean succeeded ann {ann_idx}")
+                        except Exception as e_clean:
+                            logger.info(
+                                f"[{serial_number}] fragment-clean failed ann {ann_idx}: "
+                                f"{e_clean} — using raw crop"
+                            )
                     crop_char_total_ms += (time.perf_counter() - _t) * 1000
                 except Exception as e:
                     invalid_map[(serial_number, ann_idx)] = {
@@ -1424,13 +1447,14 @@ class TextVerificationService:
                         try:
                             _t = time.perf_counter()
                             template_crop = crop_text_region(template_img, orig_points)
-                            try:
-                                template_crop, _frag_mask_tpl = remove_fragments_local_bg(template_crop)
-                            except Exception as e_clean:
-                                logger.info(
-                                    f"[{serial_number}] fragment-clean template failed ann {ann_idx}: "
-                                    f"{e_clean} — using raw template crop"
-                                )
+                            if not use_pixel_method:
+                                try:
+                                    template_crop, _frag_mask_tpl = remove_fragments_local_bg(template_crop)
+                                except Exception as e_clean:
+                                    logger.info(
+                                        f"[{serial_number}] fragment-clean template failed ann {ann_idx}: "
+                                        f"{e_clean} — using raw template crop"
+                                    )
                             crop_template_total_ms += (time.perf_counter() - _t) * 1000
                         except Exception as e:
                             logger.warning(

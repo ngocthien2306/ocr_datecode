@@ -2370,6 +2370,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         <option value="v4">Ink Defect Detector (Scale-Tolerant)</option>
                         <option value="v5">Local Defect Detector (Tile-wise + Scale)</option>
                         <option value="shape_v7">Shape Outline Match</option>
+                        <option value="pixel">Pixel Count (Template-Guided)</option>
                       </select>
                       {/* <small className="field-description">
                         <b>Pattern Match</b>: template similarity (blur TM + ECC-aligned IoU + pixel coverage).&nbsp;
