@@ -29,7 +29,12 @@ from .ocr.factory import OCRModelType, OCRConfig
 # OCRModelType.SVTRV2_CTC      → SVTRv2 CTC (6625 classes, width=320)
 # OCRModelType.OPENOCR_REPSVTR → OpenOCR RepSVTR
 # OCRModelType.PADDLEV5        → PaddleV5 (legacy)
+# OCRModelType.PADDLEV6        → PP-OCRv6 small
 DEFAULT_OCR_MODEL_TYPE = OCRModelType.OPENOCR_REPSVTR
+
+# Model types whose weights + dict come from the recipe payload
+# (ocr_custom_engine_path / ocr_custom_dict_path) instead of built-in paths.
+_CUSTOM_OCR_TYPES = (OCRModelType.CUSTOM, OCRModelType.CUSTOM_PADDLE)
 
 # Map recipe string → enum (used by set_ocr_model)
 _OCR_MODEL_MAP: Dict[str, OCRModelType] = {
@@ -37,10 +42,14 @@ _OCR_MODEL_MAP: Dict[str, OCRModelType] = {
     # payload carries ocr_custom_engine_path + ocr_custom_dict_path alongside it
     # (resolved backend-side in recipes.py::_resolve_custom_ocr_paths).
     'CUSTOM': OCRModelType.CUSTOM,
+    # 'CUSTOM_PADDLE': a PP-OCRv5/v6 model trained in ocr_paddle_service —
+    # same payload fields, resolved from paddle_ocr_models.
+    'CUSTOM_PADDLE': OCRModelType.CUSTOM_PADDLE,
     'SMTR': OCRModelType.SMTR,
     'SVTRV2_CTC': OCRModelType.SVTRV2_CTC,
     'OPENOCR_REPSVTR': OCRModelType.OPENOCR_REPSVTR,
     'PADDLEV5': OCRModelType.PADDLEV5,
+    'PADDLEV6': OCRModelType.PADDLEV6,
 }
 
 # OCRBackendType.AUTO      → tự chọn TRT nếu có engine, fallback ONNX
@@ -208,7 +217,7 @@ class InferenceHandler:
 
         new_type = _OCR_MODEL_MAP.get(model_type_str, DEFAULT_OCR_MODEL_TYPE)
 
-        if new_type == OCRModelType.CUSTOM and not custom_engine_path:
+        if new_type in _CUSTOM_OCR_TYPES and not custom_engine_path:
             # Backend resolves the path and leaves it empty when the model is
             # gone from disk. Fall back rather than fail the recipe load — but
             # loudly, because the recipe asked for a specific model.
@@ -221,17 +230,17 @@ class InferenceHandler:
 
         changed = (
             new_type != self._ocr_model_type
-            or (new_type == OCRModelType.CUSTOM
+            or (new_type in _CUSTOM_OCR_TYPES
                 and (custom_engine_path != self._ocr_custom_engine_path
                      or custom_dict_path != self._ocr_custom_dict_path))
         )
         if not changed:
             return False
 
-        if new_type == OCRModelType.CUSTOM:
+        if new_type in _CUSTOM_OCR_TYPES:
             # Every trained model exports to the same filename, so the basename
             # alone identifies nothing — the parent directory is the model id.
-            logger.info(f"🔄 OCR model changed: {self._ocr_model_type.name} → CUSTOM "
+            logger.info(f"🔄 OCR model changed: {self._ocr_model_type.name} → {new_type.name} "
                         f"({_custom_model_label(custom_engine_path)})")
         else:
             logger.info(f"🔄 OCR model type changed: {self._ocr_model_type.name} → {new_type.name}")
@@ -276,14 +285,14 @@ class InferenceHandler:
             # Note: TensorRT OpenOCR now uses pre-allocated buffers (like YOLO OBB) - NO CONFLICT!
             config = None
             backend_type = OCR_BACKEND_TYPE
-            if self._ocr_model_type == OCRModelType.CUSTOM:
+            if self._ocr_model_type in _CUSTOM_OCR_TYPES:
                 # AUTO cannot help here: check_availability() only knows the
                 # built-in paths. The factory picks TRT vs ONNX from the
                 # extension instead.
                 config = OCRConfig(
                     model_path=self._ocr_custom_engine_path or '',
                     dict_path=self._ocr_custom_dict_path or '',
-                    model_type=OCRModelType.CUSTOM,
+                    model_type=self._ocr_model_type,
                 )
 
             self._ocr_backend_instance = OCRBackendFactory.create(
@@ -292,7 +301,7 @@ class InferenceHandler:
                 model_type=self._ocr_model_type,
             )
 
-            if self._ocr_backend_instance is None and self._ocr_model_type == OCRModelType.CUSTOM:
+            if self._ocr_backend_instance is None and self._ocr_model_type in _CUSTOM_OCR_TYPES:
                 # A recipe's trained model failing to load must not leave the
                 # line with no OCR at all — retry on the default backbone.
                 logger.error(

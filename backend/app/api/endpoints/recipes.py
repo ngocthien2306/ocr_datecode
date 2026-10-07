@@ -188,6 +188,13 @@ async def get_receipt_load_repository(db=Depends(get_database)) -> ReceiptLoadRe
 
 
 
+# ocr_model_type -> collection holding that family's trained-model records.
+_CUSTOM_OCR_COLLECTIONS = {
+    'CUSTOM': 'ocr_models',
+    'CUSTOM_PADDLE': 'paddle_ocr_models',
+}
+
+
 async def _resolve_custom_ocr_paths(recipe) -> Dict[str, Optional[str]]:
     """Turn ocr_model_id into the engine/dict PATHS ai_services needs.
 
@@ -196,18 +203,23 @@ async def _resolve_custom_ocr_paths(recipe) -> Dict[str, Optional[str]]:
     boundary intact instead of teaching the camera service about ocr_service's
     collections.
 
-    Reads `ocr_models`, owned by ocr_service (:8002) in the same database. On
-    anything missing (no CUSTOM selection, model deleted, files gone) it returns
-    empty paths and logs; ai_services then falls back to its default OCR model.
-    A recipe load must not fail because a trained model was cleaned up.
+    Two families, same recipe fields, different owner:
+      CUSTOM         SMTR model from ocr_service (:8002)          -> `ocr_models`
+      CUSTOM_PADDLE  PP-OCRv5/v6 from ocr_paddle_service (:8003)  -> `paddle_ocr_models`
+    Both live in the same database. On anything missing (model deleted, files
+    gone) it returns empty paths and logs; ai_services then falls back to its
+    default OCR model. A recipe load must not fail because a trained model was
+    cleaned up.
     """
     empty = {'ocr_custom_engine_path': None, 'ocr_custom_dict_path': None}
-    if getattr(recipe, 'ocr_model_type', None) != 'CUSTOM':
+    model_type = getattr(recipe, 'ocr_model_type', None)
+    collection = _CUSTOM_OCR_COLLECTIONS.get(model_type)
+    if collection is None:
         return empty
 
     model_id = getattr(recipe, 'ocr_model_id', None)
     if not model_id:
-        logger.warning("[recipe] ocr_model_type='CUSTOM' but ocr_model_id is empty — "
+        logger.warning(f"[recipe] ocr_model_type={model_type!r} but ocr_model_id is empty — "
                        "ai_services will use its default OCR model")
         return empty
 
@@ -219,9 +231,9 @@ async def _resolve_custom_ocr_paths(recipe) -> Dict[str, Optional[str]]:
                        f"falling back to the default OCR model")
         return empty
     try:
-        doc = await get_database().get_collection('ocr_models').find_one({'_id': ObjectId(model_id)})
+        doc = await get_database().get_collection(collection).find_one({'_id': ObjectId(model_id)})
     except Exception:
-        logger.exception(f"[recipe] failed to look up ocr_models/{model_id}")
+        logger.exception(f"[recipe] failed to look up {collection}/{model_id}")
         return empty
 
     if not doc:
@@ -230,6 +242,14 @@ async def _resolve_custom_ocr_paths(recipe) -> Dict[str, Optional[str]]:
 
     engine_path = doc.get('engine_path')
     dict_path = doc.get('dict_path')
+    if (model_type == 'CUSTOM_PADDLE'
+            and not (engine_path and os.path.isfile(engine_path))
+            and doc.get('onnx_path') and os.path.isfile(doc['onnx_path'])):
+        # A Paddle model whose engine build failed still runs through
+        # ai_services' ONNX adapter (the factory picks it by extension) —
+        # slower, but the operator chose this model, so use it.
+        logger.warning(f"[recipe] paddle ocr model {model_id} has no engine — using its ONNX")
+        engine_path = doc['onnx_path']
     if not engine_path or not os.path.isfile(engine_path):
         logger.warning(f"[recipe] ocr model {model_id} has no engine on disk "
                        f"({engine_path!r}) — falling back to the default OCR model")

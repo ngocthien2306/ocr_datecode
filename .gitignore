@@ -250,3 +250,11 @@ ocr_service/**/*.pth
 ocr_service/OpenOCR/
 # Sample dataset (the extracted data_ocr_merged/ dir is already ignored above).
 ocr_service/data_ocr_merged.zip
+# ── ocr_paddle_service — PP-OCRv5/v6 rec training (paddle_train env) ───────
+ocr_paddle_service/output/
+ocr_paddle_service/weights/
+ocr_paddle_service/**/*.pdparams
+# Upstream PaddleOCR is a plain --depth 1 clone; keep its .git out of this repo.
+ocr_paddle_service/PaddleOCR/
+label_crops/
+ocr_fail_crops/

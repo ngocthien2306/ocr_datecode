@@ -1,0 +1,21 @@
+# conda env: paddle_train (python 3.10). Paddle GPU wheels are NOT on PyPI —
+# the cu130 index is needed for Blackwell (sm_120); PyPI stays as extra index
+# for the cuda-toolkit==13.0.2 dependency:
+#   pip install paddlepaddle-gpu==3.4.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu130/ --extra-index-url https://pypi.org/simple
+#   pip install -r requirements.txt -r PaddleOCR/requirements.txt "opencv-python<5" "opencv-contrib-python<5" "opencv-python-headless<5"
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-jose[cryptography]==3.3.0
+python-multipart==0.0.6
+pydantic>=2.5.0,<3.0.0
+pydantic-settings==2.1.0
+motor>=3.3.0
+pymongo>=4.5.0
+pyyaml
+tqdm
+rapidfuzz
+lmdb
+pyclipper
+paddle2onnx==2.1.0
+onnx==1.17.0
+onnxruntime

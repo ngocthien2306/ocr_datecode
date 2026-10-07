@@ -11,6 +11,7 @@
 - See [color-check-feature.md](color-check-feature.md) — Check_Color (HSV color verification): FE Setup Color modal, AI service color_verifier, OR-aggregation across color cameras, normalized annotation coords gotcha
 - See [anomaly-training.md](anomaly-training.md) — new standalone `anomaly_service` (anomalib PatchCore/Padim) + runtime integration replacing `wrinkle_segmenter.py`; anomalib gotchas (val_split_mode, ONNX normalization, TensorRT SDK), template-level vs recipe-level field checklist distinction
 - See [ocr-training.md](ocr-training.md) — `ocr_service` on :8002 (fine-tune SVTRv2+SMTR on recipe text/datecode crops → ONNX → TensorRT), its studio UI, and recipe binding via `ocr_project_id`/`ocr_model_id` + `OCRModelType.CUSTOM`. Built and verified end-to-end. Read it for the traps: `main_indicator: acc` silently saves a model with a broken SMTR head, an over-long label makes OpenOCR substitute a *different* image, and pycuda's context is per-thread
+- See [paddle-ocr-training.md](paddle-ocr-training.md) — `ocr_paddle_service` on :8003 (PP-OCRv5/v6 fine-tune, env `paddle_train`) sharing the studio's labels; recipe type `CUSTOM_PADDLE`. Traps: paddle2onnx 2.1.0 mangles LayerNorm epsilon from Paddle 3.4 (ONNX 'succeeds' but is wrong), and training/eval must keep crop aspect + grayscale to match ai_services' preprocessing
 - See [python_env.md](python_env.md) — Python venv path `/Users/ngocthien.ai/envs/event/`
 
 ## Common Pitfalls (IMPORTANT)

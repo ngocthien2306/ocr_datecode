@@ -10,6 +10,22 @@ import EvalTab from './EvalTab';
 import ExportTab from './ExportTab';
 import TestTab from './TestTab';
 import ImportFromRecipeModal from './ImportFromRecipeModal';
+import PaddleTrainPanel from './PaddleTrainPanel';
+import { PaddleEvalTab, PaddleExportTab, PaddleTestTab } from './PaddleStudioTabs';
+import { paddleOcrAPI, PaddleModel } from '@/services/paddleOcrTraining';
+
+/** Which trainer the Train/Eval/Export/Test tabs talk to. Dataset + Label are
+ *  shared: ocr_paddle_service reads this studio's projects and labels. */
+type ModelFamily = 'smtr' | 'paddle';
+const FAMILY_KEY = 'ocrTraining.modelFamily';
+
+function readFamily(): ModelFamily {
+  try {
+    return localStorage.getItem(FAMILY_KEY) === 'paddle' ? 'paddle' : 'smtr';
+  } catch {
+    return 'smtr';
+  }
+}
 
 interface Props {
   onClose: () => void;
@@ -41,6 +57,16 @@ export default function OCRTrainingPage({ onClose }: Props) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [models, setModels] = useState<OCRModel[]>([]);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+
+  const [family, setFamily] = useState<ModelFamily>(readFamily);
+  const [paddleModels, setPaddleModels] = useState<PaddleModel[]>([]);
+  const [paddleSelectedId, setPaddleSelectedId] = useState<string | null>(null);
+  const [paddleError, setPaddleError] = useState<string | null>(null);
+
+  const chooseFamily = (f: ModelFamily) => {
+    setFamily(f);
+    try { localStorage.setItem(FAMILY_KEY, f); } catch { /* per-viewer convenience only */ }
+  };
 
   const loadProjects = useCallback(async () => {
     setLoadingProjects(true);
@@ -91,7 +117,28 @@ export default function OCRTrainingPage({ onClose }: Props) {
     }
   }, [activeProject]);
 
-  useEffect(() => { refreshStats(); loadModels(); }, [activeProject?.id]);
+  const loadPaddleModels = useCallback(async () => {
+    if (!activeProject) { setPaddleModels([]); return; }
+    try {
+      const list = await paddleOcrAPI.listModels(activeProject.id);
+      setPaddleModels(list);
+      setPaddleError(null);
+      setPaddleSelectedId((cur) => (cur && list.some((m) => m.id === cur)) ? cur : (list[0]?.id ?? null));
+    } catch (e: any) {
+      setPaddleError(e?.response
+        ? (e.response.data?.detail || 'Failed to load PaddleOCR runs')
+        : 'Cannot reach ocr_paddle_service on :8003 — sudo systemctl start ocr-paddle-training '
+          + '(installed by scripts/setup_ocr_paddle_service.sh).');
+    }
+  }, [activeProject]);
+
+  useEffect(() => { refreshStats(); loadModels(); loadPaddleModels(); }, [activeProject?.id]);
+
+  useEffect(() => {
+    if (!paddleModels.some((m) => m.status === 'training' || m.status === 'pending')) return;
+    const t = setInterval(loadPaddleModels, 4000);
+    return () => clearInterval(t);
+  }, [paddleModels, loadPaddleModels]);
 
   // A live run's status/metrics change without any user action, so the run list
   // has to keep up while the Train tab streams its log.
@@ -142,6 +189,11 @@ export default function OCRTrainingPage({ onClose }: Props) {
   const needReview = stats?.need_review_count ?? activeProject?.need_review_count ?? 0;
   const total = stats?.total_count ?? activeProject?.total_count ?? 0;
   const selectedModel = models.find((m) => m.id === selectedModelId) ?? null;
+  const selectedPaddle = paddleModels.find((m) => m.id === paddleSelectedId) ?? null;
+  const familyModelCount = family === 'paddle' ? paddleModels.length : models.length;
+  const familyRunning = (family === 'paddle' ? paddleModels : models)
+    .some((m) => m.status === 'training' || m.status === 'pending');
+  const showFamilyPicker = tab === 'train' || tab === 'eval' || tab === 'export' || tab === 'test';
 
   return (
     <div className="at-overlay">
@@ -165,7 +217,7 @@ export default function OCRTrainingPage({ onClose }: Props) {
           {TAB_IDS.map((id) => {
             // Train needs verified labels; the three after it need a run to exist.
             const needsData = id === 'train' && verified === 0;
-            const needsModel = (id === 'eval' || id === 'export' || id === 'test') && models.length === 0;
+            const needsModel = (id === 'eval' || id === 'export' || id === 'test') && familyModelCount === 0;
             const disabled = needsData || needsModel;
             return (
               <button key={id} className={`at-tab-btn ${tab === id ? 'active' : ''}`}
@@ -177,7 +229,7 @@ export default function OCRTrainingPage({ onClose }: Props) {
                 {id === 'label' && needReview > 0 && (
                   <span className="at-chip" style={{ marginLeft: 6 }}>{needReview}</span>
                 )}
-                {id === 'train' && models.some((m) => m.status === 'training' || m.status === 'pending') && (
+                {id === 'train' && familyRunning && (
                   <span className="at-chip" style={{ marginLeft: 6 }}>running</span>
                 )}
               </button>
@@ -272,7 +324,65 @@ export default function OCRTrainingPage({ onClose }: Props) {
                 </div>
               )}
 
-              {tab === 'dataset' ? (
+              {showFamilyPicker && (
+                <div className="at-form-row" style={{ gap: 12, marginBottom: 10, alignItems: 'flex-end' }}>
+                  <label className="at-label" style={{ minWidth: 320 }}>
+                    Model
+                    <select className="at-form-input" value={family}
+                            onChange={(e) => chooseFamily(e.target.value as ModelFamily)}>
+                      <option value="smtr">SVTRv2 · SMTR ({models.length} runs)</option>
+                      <option value="paddle">PaddleOCR · PP-OCRv5 / v6 ({paddleModels.length} runs)</option>
+                    </select>
+                  </label>
+                  {tab !== 'train' && family === 'paddle' && paddleModels.length > 0 && (
+                    <label className="at-label" style={{ minWidth: 320 }}>
+                      Run
+                      <select className="at-form-input" value={paddleSelectedId ?? ''}
+                              onChange={(e) => setPaddleSelectedId(e.target.value || null)}>
+                        {paddleModels.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.id.slice(-8)} · {m.arch.replace('_rec', '')} · {m.status}
+                            {m.metrics.acc_trt != null ? ` · engine ${(m.metrics.acc_trt * 100).toFixed(1)}%` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {tab !== 'train' && family === 'smtr' && models.length > 0 && (
+                    <label className="at-label" style={{ minWidth: 320 }}>
+                      Run
+                      <select className="at-form-input" value={selectedModelId ?? ''}
+                              onChange={(e) => setSelectedModelId(e.target.value || null)}>
+                        {models.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.id.slice(-8)} · {m.status}
+                            {m.metrics.acc_trt != null ? ` · engine ${(m.metrics.acc_trt * 100).toFixed(1)}%` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                </div>
+              )}
+
+              {showFamilyPicker && family === 'paddle' && paddleError && (
+                <div className="at-alert-error">{paddleError}</div>
+              )}
+
+              {family === 'paddle' && showFamilyPicker ? (
+                tab === 'train' ? (
+                  <PaddleTrainPanel projectId={activeProject.id} models={paddleModels}
+                                    onModelsChange={loadPaddleModels}
+                                    selectedId={paddleSelectedId} onSelect={setPaddleSelectedId} />
+                ) : tab === 'eval' ? (
+                  <PaddleEvalTab projectId={activeProject.id} model={selectedPaddle} />
+                ) : tab === 'export' ? (
+                  <PaddleExportTab projectId={activeProject.id} model={selectedPaddle}
+                                   onModelChange={loadPaddleModels} />
+                ) : (
+                  <PaddleTestTab projectId={activeProject.id} model={selectedPaddle} />
+                )
+              ) : tab === 'dataset' ? (
                 <DatasetTab projectId={activeProject.id} refreshKey={refreshKey}
                             onCountsChanged={() => { refreshStats(); }}
                             onOpenImport={() => setShowImportModal(true)} />

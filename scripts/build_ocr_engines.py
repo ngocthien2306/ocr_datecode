@@ -55,6 +55,15 @@ MODEL_SPECS = {
         min=(1, 3, 48, 50), opt=(1, 3, 48, 320), max=(1, 3, 48, 2000),
         fp16=True,
     ),
+    # PP-OCRv6_small_rec, official ONNX from huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx.
+    # Same CTC / H=48 contract as "legacy", so it runs through TextRecognizerTRT too.
+    "paddlev6": dict(
+        onnx="ppocrv6_small_rec.onnx",
+        engine="ppocrv6_small_rec_fp16.engine",
+        input_name="x",
+        min=(1, 3, 48, 50), opt=(1, 3, 48, 320), max=(1, 3, 48, 2000),
+        fp16=True,
+    ),
     "smtr": dict(
         onnx="rec_smtr_fp16.onnx",
         engine="rec_smtr_fp16.engine",

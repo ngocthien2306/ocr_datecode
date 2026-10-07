@@ -29,6 +29,7 @@ class OCRBackendType(Enum):
 class OCRModelType(Enum):
     """Available OCR model architectures"""
     PADDLEV5 = "paddlev5"           # Legacy model (old)
+    PADDLEV6 = "paddlev6"           # PP-OCRv6_small_rec (same CTC/H=48 contract as PADDLEV5)
     OPENOCR_REPSVTR = "openocr"     # OpenOCR RepSVTR
     SVTRV2_CTC = "svtrv2"           # SVTRv2 CTC (6625 classes, width=320)
     SMTR = "smtr"                   # SMTR dual-head (GTC + CTC, dynamic width)
@@ -37,6 +38,11 @@ class OCRModelType(Enum):
     # come from somewhere else, so there are no default paths for it: the recipe
     # supplies engine_path + dict_path and create() REQUIRES a config.
     CUSTOM = "custom"
+    # A PP-OCRv5/v6 recogniser fine-tuned in ocr_paddle_service. Same CTC/H=48
+    # contract as PADDLEV5/PADDLEV6, so it runs on their adapters
+    # (TensorRTOCRBackend / ONNXOCRBackend) with the recipe's own engine + dict.
+    # Like CUSTOM there are no default paths and create() REQUIRES a config.
+    CUSTOM_PADDLE = "custom_paddle"
 
 
 @dataclass
@@ -586,6 +592,11 @@ class OCRBackendFactory:
     LEGACY_ONNX_MODEL = f"{home}/Source/ocr_datecode/languages/english/rec.onnx"
     LEGACY_DICT_PATH = f"{home}/Source/ocr_datecode/languages/english/dict.txt"
 
+    # PP-OCRv6 small paths (engine: scripts/build_ocr_engines.py --model paddlev6)
+    PADDLEV6_TRT_ENGINE = f"{home}/Source/ocr_datecode/languages/english/ppocrv6_small_rec_fp16.engine"
+    PADDLEV6_ONNX_MODEL = f"{home}/Source/ocr_datecode/languages/english/ppocrv6_small_rec.onnx"
+    PADDLEV6_DICT_PATH  = f"{home}/Source/ocr_datecode/languages/english/ppocrv6_dict.txt"
+
     # SVTRv2 CTC paths
     SVTRV2_TRT_ENGINE = f"{home}/Source/ocr_datecode/languages/english/rec_model_fp16.engine"
     SVTRV2_ONNX_MODEL = f"{home}/Source/ocr_datecode/languages/english/rec_model.onnx"
@@ -613,12 +624,18 @@ class OCRBackendFactory:
                 # they are never the ones actually loaded.
                 (OCRModelType.CUSTOM,          OCRBackendType.TENSORRT): (SMTRTRTBackend,    cls.SMTR_TRT_ENGINE,    cls.SMTR_DICT_PATH,    {}),
                 (OCRModelType.CUSTOM,          OCRBackendType.ONNX):     (SMTRONNXBackend,   cls.SMTR_ONNX_MODEL,    cls.SMTR_DICT_PATH,    {"device": "cuda"}),
+                # CUSTOM_PADDLE reuses the PaddleV6 adapters; placeholder paths
+                # as for CUSTOM — create() rejects it without a config.
+                (OCRModelType.CUSTOM_PADDLE,   OCRBackendType.TENSORRT): (TensorRTOCRBackend, cls.PADDLEV6_TRT_ENGINE, cls.PADDLEV6_DICT_PATH, {}),
+                (OCRModelType.CUSTOM_PADDLE,   OCRBackendType.ONNX):     (ONNXOCRBackend,     cls.PADDLEV6_ONNX_MODEL, cls.PADDLEV6_DICT_PATH, {}),
                 (OCRModelType.SVTRV2_CTC,      OCRBackendType.TENSORRT): (SVTRv2TRTBackend,  cls.SVTRV2_TRT_ENGINE,  cls.SVTRV2_DICT_PATH,  {}),
                 (OCRModelType.SVTRV2_CTC,      OCRBackendType.ONNX):     (SVTRv2ONNXBackend, cls.SVTRV2_ONNX_MODEL,  cls.SVTRV2_DICT_PATH,  {"device": "cuda"}),
                 (OCRModelType.OPENOCR_REPSVTR, OCRBackendType.TENSORRT): (TensorRTOpenOCRBackend, cls.DEFAULT_TRT_ENGINE, cls.DEFAULT_DICT_PATH, {}),
                 (OCRModelType.OPENOCR_REPSVTR, OCRBackendType.ONNX):     (ONNXOpenOCRBackend,     cls.DEFAULT_ONNX_MODEL, cls.DEFAULT_DICT_PATH, {}),
                 (OCRModelType.PADDLEV5,        OCRBackendType.TENSORRT): (TensorRTOCRBackend, cls.LEGACY_TRT_ENGINE,  cls.LEGACY_DICT_PATH,  {}),
                 (OCRModelType.PADDLEV5,        OCRBackendType.ONNX):     (ONNXOCRBackend,     cls.LEGACY_ONNX_MODEL,  cls.LEGACY_DICT_PATH,  {}),
+                (OCRModelType.PADDLEV6,        OCRBackendType.TENSORRT): (TensorRTOCRBackend, cls.PADDLEV6_TRT_ENGINE, cls.PADDLEV6_DICT_PATH, {}),
+                (OCRModelType.PADDLEV6,        OCRBackendType.ONNX):     (ONNXOCRBackend,     cls.PADDLEV6_ONNX_MODEL, cls.PADDLEV6_DICT_PATH, {}),
             }
         return cls._REGISTRY
 
@@ -635,6 +652,8 @@ class OCRBackendFactory:
             'onnx_openocr':      False,
             'tensorrt_paddlev5': False,
             'onnx_paddlev5':     False,
+            'tensorrt_paddlev6': False,
+            'onnx_paddlev6':     False,
             'tensorrt_svtrv2':   False,
             'onnx_svtrv2':       False,
             'tensorrt_smtr':     False,
@@ -657,6 +676,8 @@ class OCRBackendFactory:
         result['onnx_openocr']      = onnx_ok and os.path.exists(cls.DEFAULT_ONNX_MODEL) and os.path.exists(cls.DEFAULT_DICT_PATH)
         result['tensorrt_paddlev5'] = trt_ok  and os.path.exists(cls.LEGACY_TRT_ENGINE)  and os.path.exists(cls.LEGACY_DICT_PATH)
         result['onnx_paddlev5']     = onnx_ok and os.path.exists(cls.LEGACY_ONNX_MODEL)  and os.path.exists(cls.LEGACY_DICT_PATH)
+        result['tensorrt_paddlev6'] = trt_ok  and os.path.exists(cls.PADDLEV6_TRT_ENGINE) and os.path.exists(cls.PADDLEV6_DICT_PATH)
+        result['onnx_paddlev6']     = onnx_ok and os.path.exists(cls.PADDLEV6_ONNX_MODEL) and os.path.exists(cls.PADDLEV6_DICT_PATH)
         result['tensorrt_svtrv2']   = trt_ok  and os.path.exists(cls.SVTRV2_TRT_ENGINE)  and os.path.exists(cls.SVTRV2_DICT_PATH)
         result['onnx_svtrv2']       = onnx_ok and os.path.exists(cls.SVTRV2_ONNX_MODEL)  and os.path.exists(cls.SVTRV2_DICT_PATH)
         result['tensorrt_smtr']     = trt_ok  and os.path.exists(cls.SMTR_TRT_ENGINE)    and os.path.exists(cls.SMTR_DICT_PATH)
@@ -698,12 +719,12 @@ class OCRBackendFactory:
         # It also bypasses AUTO: check_availability() only knows the built-in
         # paths, so it cannot tell whether a per-recipe engine exists. The
         # extension decides the backend instead, which is unambiguous.
-        if model_type == OCRModelType.CUSTOM:
+        if model_type in (OCRModelType.CUSTOM, OCRModelType.CUSTOM_PADDLE):
             if config is None or not config.model_path:
                 logger.error(
-                    "OCRModelType.CUSTOM requires an OCRConfig with model_path "
+                    f"{model_type} requires an OCRConfig with model_path "
                     "(the recipe's engine/onnx) — refusing to fall back to the "
-                    "built-in SMTR weights, which would silently read with the "
+                    "built-in weights, which would silently read with the "
                     "wrong model"
                 )
                 return None
@@ -717,7 +738,7 @@ class OCRBackendFactory:
                 return None
             resolved = (OCRBackendType.ONNX if config.model_path.endswith(".onnx")
                         else OCRBackendType.TENSORRT)
-            AdapterCls = registry[(OCRModelType.CUSTOM, resolved)][0]
+            AdapterCls = registry[(model_type, resolved)][0]
             backend = AdapterCls(config)
             if backend.is_available:
                 logger.info(f"✅ OCR backend (custom): {backend.backend_name} "
@@ -754,10 +775,11 @@ class OCRBackendFactory:
         # Priority order per model type
         _auto_priority = {
             OCRModelType.SMTR:            [OCRBackendType.TENSORRT, OCRBackendType.ONNX],
-            # CUSTOM never reaches here — it returns above, before AUTO.
+            # CUSTOM / CUSTOM_PADDLE never reach here — they return above, before AUTO.
             OCRModelType.SVTRV2_CTC:      [OCRBackendType.TENSORRT, OCRBackendType.ONNX],
             OCRModelType.OPENOCR_REPSVTR: [OCRBackendType.TENSORRT, OCRBackendType.ONNX],
             OCRModelType.PADDLEV5:        [OCRBackendType.TENSORRT, OCRBackendType.ONNX],
+            OCRModelType.PADDLEV6:        [OCRBackendType.TENSORRT, OCRBackendType.ONNX],
         }
         _avail_key = {
             (OCRModelType.SMTR,            OCRBackendType.TENSORRT): 'tensorrt_smtr',
@@ -768,6 +790,8 @@ class OCRBackendFactory:
             (OCRModelType.OPENOCR_REPSVTR, OCRBackendType.ONNX):     'onnx_openocr',
             (OCRModelType.PADDLEV5,        OCRBackendType.TENSORRT): 'tensorrt_paddlev5',
             (OCRModelType.PADDLEV5,        OCRBackendType.ONNX):     'onnx_paddlev5',
+            (OCRModelType.PADDLEV6,        OCRBackendType.TENSORRT): 'tensorrt_paddlev6',
+            (OCRModelType.PADDLEV6,        OCRBackendType.ONNX):     'onnx_paddlev6',
         }
 
         for bt in _auto_priority.get(model_type, []):

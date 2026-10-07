@@ -11,6 +11,7 @@ import { camerasAPI } from '@/services/api';
 import recipesAPI from '@/services/recipes';
 import { mlTrainingAPI, MLProject, MLModel } from '@/services/mlTraining';
 import { ocrTrainingModelAPI, OCRBaseCheckpoints } from '@/services/ocrTraining';
+import { paddleOcrAPI, PaddleTrainedModels } from '@/services/paddleOcrTraining';
 import { useToast } from '@/contexts/ToastContext';
 import { useUser } from '@/contexts/UserContext';
 import { API_BASE_URL } from '@/config/api';
@@ -270,6 +271,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   // by design: if that service is down the dropdown still offers the four
   // built-in backbones, which is what every existing recipe already uses.
   const [ocrTrained, setOcrTrained] = useState<OCRBaseCheckpoints | null>(null);
+  const [paddleTrained, setPaddleTrained] = useState<PaddleTrainedModels | null>(null);
   const [mlProjects, setMlProjects] = useState<MLProject[]>([]);
   const [mlModels, setMlModels] = useState<MLModel[]>([]);
   const [loadingMlProjects, setLoadingMlProjects] = useState(false);
@@ -556,22 +558,31 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
   // The dropdown carries one value; a CUSTOM pick has to fan out into the three
   // recipe fields. Encoded as CUSTOM:{project_id}:{model_id} so the <option>
   // stays a plain string.
-  const ocrIsCustom = formData.ocr_model_type === 'CUSTOM';
+  // CUSTOM_PADDLE (PP-OCRv5/v6 from ocr_paddle_service) uses the same three
+  // fields and the same encoding, with its own prefix.
+  const ocrIsSmtrCustom = formData.ocr_model_type === 'CUSTOM';
+  const ocrIsPaddleCustom = formData.ocr_model_type === 'CUSTOM_PADDLE';
+  const ocrIsCustom = ocrIsSmtrCustom || ocrIsPaddleCustom;
   const ocrSelectValue = ocrIsCustom
-    ? `CUSTOM:${formData.ocr_project_id}:${formData.ocr_model_id}`
+    ? `${formData.ocr_model_type}:${formData.ocr_project_id}:${formData.ocr_model_id}`
     : formData.ocr_model_type;
-  const ocrSelectedTrained = ocrIsCustom
+  const ocrSelectedTrained = ocrIsSmtrCustom
     ? (ocrTrained?.projects ?? [])
+        .flatMap(g => g.models)
+        .find(m => m.model_id === formData.ocr_model_id) ?? null
+    : null;
+  const ocrSelectedPaddle = ocrIsPaddleCustom
+    ? (paddleTrained?.projects ?? [])
         .flatMap(g => g.models)
         .find(m => m.model_id === formData.ocr_model_id) ?? null
     : null;
 
   const handleOcrModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const v = e.target.value;
-    if (v.startsWith('CUSTOM:')) {
-      const [, projectId, modelId] = v.split(':');
+    if (v.startsWith('CUSTOM:') || v.startsWith('CUSTOM_PADDLE:')) {
+      const [type, projectId, modelId] = v.split(':');
       setFormData(prev => ({
-        ...prev, ocr_model_type: 'CUSTOM',
+        ...prev, ocr_model_type: type || 'CUSTOM',
         ocr_project_id: projectId || '', ocr_model_id: modelId || '',
       }));
     } else {
@@ -587,6 +598,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       loadAvailableCameras();
       loadMlProjects();
       loadOcrTrainedModels();
+      loadPaddleTrainedModels();
     }
   }, [isOpen]);
 
@@ -678,6 +690,17 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
       console.warn('[RecipeFormModal] OCR training service unreachable, '
                  + 'showing built-in OCR models only', error);
       setOcrTrained(null);
+    }
+  };
+
+  const loadPaddleTrainedModels = async () => {
+    try {
+      // Server-side filtered: only completed models with an engine/ONNX + dict.
+      setPaddleTrained(await paddleOcrAPI.listTrainedModels());
+    } catch (error) {
+      // Same as above — an unreachable Paddle service just hides its group.
+      console.warn('[RecipeFormModal] PaddleOCR training service unreachable', error);
+      setPaddleTrained(null);
     }
   };
 
@@ -2307,6 +2330,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         <option value="SVTRV2_CTC">SVTRV2_CTC (large)</option>
                         <option value="OPENOCR_REPSVTR">OPENOCR_REPSVTR (medium)</option>
                         <option value="PADDLEV5">PADDLEV5 (small)</option>
+                        <option value="PADDLEV6">PADDLEV6 (small)</option>
                         {/* Trained models come after the built-ins, grouped per
                             OCR project. Absent entirely when nothing has been
                             trained or the OCR service is unreachable, so the
@@ -2320,8 +2344,17 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                             ))}
                           </optgroup>
                         ))}
+                        {(paddleTrained?.projects ?? []).map(g => (
+                          <optgroup key={`paddle-${g.project_id}`} label={`Paddle · ${g.project_name}`}>
+                            {g.models.map(m => (
+                              <option key={m.model_id} value={`CUSTOM_PADDLE:${g.project_id}:${m.model_id}`}>
+                                {m.label}{m.runtime === 'onnx' ? ' · ONNX only' : ''}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
                       </select>
-                      {ocrIsCustom && !ocrSelectedTrained && (
+                      {ocrIsCustom && !ocrSelectedTrained && !ocrSelectedPaddle && (
                         <small className="field-description" style={{ color: 'var(--color-warning, #f59e0b)' }}>
                           ⚠️ This recipe points at a trained OCR model that is no longer
                           available (deleted, or its engine is missing). Inference falls back
@@ -2334,6 +2367,15 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                           {ocrSelectedTrained.use_space_char ? ' (reads spaces)' : ' (no space class)'}
                           {ocrSelectedTrained.min_acc != null
                             && ` · min_acc ${(ocrSelectedTrained.min_acc * 100).toFixed(1)}%`}
+                          . Changing this takes effect on the next recipe load — the OCR
+                          backend is swapped per recipe, no ai_services restart needed.
+                        </small>
+                      )}
+                      {ocrSelectedPaddle && (
+                        <small className="field-description">
+                          PaddleOCR {ocrSelectedPaddle.arch.replace('_rec', '')} · {ocrSelectedPaddle.runtime}
+                          {ocrSelectedPaddle.acc_trt != null
+                            && ` · engine acc ${(ocrSelectedPaddle.acc_trt * 100).toFixed(1)}%`}
                           . Changing this takes effect on the next recipe load — the OCR
                           backend is swapped per recipe, no ai_services restart needed.
                         </small>

@@ -15,7 +15,7 @@ originSessionId: 62c49580-c229-497d-a0d0-965d7d677231
 `ocr_model_type, ml_project_id, ml_model_id, defect_model, classifier_backend`
 
 ### Field meanings
-- **`ocr_model_type`** `'SMTR' | 'SVTRV2_CTC' | 'OPENOCR_REPSVTR' | 'PADDLEV5'` — OCR backbone for text/datecode reading
+- **`ocr_model_type`** `'SMTR' | 'SVTRV2_CTC' | 'OPENOCR_REPSVTR' | 'PADDLEV5' | 'PADDLEV6' | 'CUSTOM' | 'CUSTOM_PADDLE'` — OCR backbone for text/datecode reading. The two CUSTOM types use `ocr_project_id`/`ocr_model_id` (see ocr-training.md, paddle-ocr-training.md)
 - **`classifier_backend`** `'embedding' | 'ml'` (default `'embedding'`) — **Active Method** for char OK/NG verify
   - `'embedding'` → cosine sim between `template_crop` and `target_crop` via SupCon/ArcFace ONNX
   - `'ml'`        → trained sklearn/centroid bundle from ML Training Studio
