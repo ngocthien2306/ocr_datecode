@@ -29,10 +29,17 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # List of services to install
+# DO NOT re-add ocr-ai-services.service. It hardcodes `User=demo`, so on any
+# other machine systemd fails at step USER (217/USER) before python starts, and
+# Restart=always turns that into a fork-and-die loop every 5s (35k+ restarts
+# observed) that floods the journal and rate-limits away real crash logs. It
+# never ran the camera service anyway — start_services.sh launches that as a
+# plain background process. setup_systemd_services.sh actively removes this
+# unit; installing it here would just resurrect it.
+# See docs/DEBUG_SERVICE_CRASH_RUNBOOK.md §5.
 SERVICES=(
     "ocr-backend.service"
     "ocr-frontend.service"
-    "ocr-ai-services.service"
     "ocr-ngrok.service"
 )
 
@@ -67,12 +74,14 @@ echo ""
 echo "Available services:"
 echo "  - ocr-backend      (API server on port 8000)"
 echo "  - ocr-frontend     (Web UI on port 5000)"
-echo "  - ocr-ai-services  (Camera management)"
 echo "  - ocr-ngrok        (Ngrok tunnels)"
 echo ""
+echo "Camera management is NOT a systemd unit — start_services.sh runs it as a"
+echo "plain background process, and the backend supervisor respawns it if it dies."
+echo ""
 echo "Commands:"
-echo "  Start all:    sudo systemctl start ocr-backend ocr-frontend ocr-ai-services"
-echo "  Stop all:     sudo systemctl stop ocr-backend ocr-frontend ocr-ai-services ocr-ngrok"
+echo "  Start all:    sudo systemctl start ocr-backend ocr-frontend"
+echo "  Stop all:     sudo systemctl stop ocr-backend ocr-frontend ocr-ngrok"
 echo "  Status:       sudo systemctl status ocr-backend"
 echo "  Logs:         journalctl -u ocr-backend -f"
 echo ""
@@ -82,6 +91,5 @@ echo ""
 echo "To start now:"
 echo "  sudo systemctl start ocr-backend"
 echo "  sudo systemctl start ocr-frontend"
-echo "  sudo systemctl start ocr-ai-services"
 echo "  sudo systemctl start ocr-ngrok  (optional, for external access)"
 echo ""
