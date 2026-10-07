@@ -3,6 +3,7 @@ import {
   ocrTrainingAPI, ocrTrainingModelAPI, OCRBaseCheckpoints, OCRModel,
   OCRPrepareReport, OCRTrainLogEntry,
 } from '@/services/ocrTraining';
+import { fmtServiceTime } from './time';
 
 interface Props {
   projectId: string;
@@ -362,7 +363,7 @@ export default function TrainTab({
               {!m.engine_path && m.status === 'completed' && (
                 <span className="ot-chip-sm ot-fail">no engine — export it in the Export tab</span>
               )}
-              <span>{new Date(m.created_at).toLocaleString()}</span>
+              <span>{fmtServiceTime(m.created_at)}</span>
             </div>
           </div>
           <div className="ot-row-actions">

@@ -9,7 +9,8 @@ endpoint with a `since` cursor.
 import asyncio
 import logging
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -91,10 +92,21 @@ async def list_base_checkpoints(
     return {"builtin": builtin, "projects": list(grouped.values())}
 
 
+# created_at is stored as naive UTC (datetime.utcnow()); labels are read by
+# operators in Vietnam, so show factory local time.
+_LOCAL_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+
+
+def _local_time(dt: datetime) -> str:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_LOCAL_TZ).strftime('%d/%m %H:%M')
+
+
 def _model_label(m) -> str:
     acc = m.metrics.min_acc
     acc_s = f"{acc * 100:.1f}%" if acc is not None else "n/a"
-    return f"min_acc {acc_s} · {m.created_at.strftime('%d/%m %H:%M')}"
+    return f"min_acc {acc_s} · {_local_time(m.created_at)}"
 
 
 @router.post("/projects/{project_id}/train")
