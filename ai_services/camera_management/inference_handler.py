@@ -250,6 +250,7 @@ class InferenceHandler:
         if hasattr(self, 'text_verification_service') and self.text_verification_service and self.text_recognizer:
             self.text_verification_service.text_recognizer = self.text_recognizer
             self.text_verification_service.ocr_backend = self.ocr_backend or "unknown"
+            self.text_verification_service.ocr_model_name = self._ocr_model_type.name
             logger.info(f"✅ TextVerificationService updated with new OCR backend: {self.ocr_backend}")
         del old  # free VRAM
 
@@ -463,6 +464,7 @@ class InferenceHandler:
             )
             # Re-apply trạng thái bypass hiện tại (service mới tạo mặc định TẮT).
             self.text_verification_service.set_bypass_enabled(self.text_bypass_enabled)
+            self.text_verification_service.ocr_model_name = self._ocr_model_type.name
             logger.info(f"TextVerificationService initialized with {self.ocr_backend} backend (debug={save_debug})")
         else:
             self.text_verification_service = None

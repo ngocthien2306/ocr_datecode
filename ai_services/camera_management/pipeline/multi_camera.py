@@ -1505,6 +1505,13 @@ class MultiCameraPipeline(InferencePipelineTemplate):
             except Exception as _resc_e:
                 logger.warning(f"[{_sn2}] rotation rescue error: {_resc_e}")
 
+        # Orientation is settled (dual pick + rescue) — save fail crops of the
+        # winning candidate only.
+        for _cam in context.cameras_to_process:
+            _v_final = batch_ocr_results.get(_cam.serial_number)
+            if _v_final:
+                context.text_verification_service.commit_ocr_fails(_cam.serial_number, [_v_final])
+
         t_phases_ms = (time.perf_counter() - t_phases_start) * 1000
         t_ocr_ms = t_phases_ms  # approximation — actual concurrent
         logger.info(

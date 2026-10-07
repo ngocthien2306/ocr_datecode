@@ -11,6 +11,7 @@ Helpers live in sibling modules:
 """
 
 import logging
+import threading
 import time
 import os
 import cv2
@@ -177,6 +178,11 @@ class TextVerificationService:
     # Phụ thuộc save_debug_images flag (đã có sẵn). Đặt False nếu sợ đầy đĩa.
     SAVE_AUGMENT_FAIL_DEBUG = False
 
+    # Lưu crop gốc (ảnh đưa vào OCR) của mọi vùng text FAIL ở kết quả cuối ra
+    # ocr_fail_crops/{YYYY-MM-DD}/{serial}/ + fails.csv. Độc lập với
+    # save_debug_images; giữ 14 ngày, tối đa 3000 ảnh/ngày.
+    SAVE_OCR_FAIL_CROPS = True
+
     # Camera Check_Color in dot-matrix (CIJ) lên nắp chai → cần augment khác hẳn:
     # gộp các chấm thành nét liền thay vì sharpen (vốn làm khoảng cách chấm rõ hơn).
     # Các function_type khác giữ nguyên augment cũ (chữ in liền, laser-engrave).
@@ -225,10 +231,68 @@ class TextVerificationService:
         self.bypass_enabled = False
         self._sim_crop_cache = {}  # Cache for template crops (key: (serial, points_tuple))
 
+        # Lưu crop các vùng OCR FAIL (kết quả cuối, sau augment/bypass/sim) để
+        # debug model trên line. Ghi ở thread riêng — xem ocr_fail_saver.py.
+        # ocr_model_name do InferenceHandler set (PADDLEV6, SMTR, ...) để biết
+        # ảnh fail là của model nào khi đổi model qua recipe.
+        self.ocr_model_name = "unknown"
+        self.ocr_fail_saver = None
+        # Crop fail chỉ được GIỮ TẠM ở đây: với dual_rotation_check / rotation
+        # rescue, OCR chạy cho cả chiều đúng lẫn chiều ngược và pipeline mới là
+        # nơi chọn chiều thắng. Region mang '_fail_id'; pipeline gọi
+        # commit_ocr_fails() với verification CUỐI CÙNG → chỉ crop của chiều
+        # thắng được lưu, crop của chiều thua hết hạn trong _pending_fail_crops.
+        self._pending_fail_crops: Dict[int, Tuple[float, np.ndarray]] = {}
+        self._pending_fail_lock = threading.Lock()
+        self._next_fail_id = 0
+        if self.SAVE_OCR_FAIL_CROPS:
+            try:
+                from .ocr_fail_saver import get_ocr_fail_saver
+                self.ocr_fail_saver = get_ocr_fail_saver(
+                    f"{home}/Source/ocr_datecode/ocr_fail_crops"
+                )
+            except Exception as e:
+                logger.warning(f"OcrFailSaver init failed, disabled: {e}")
+
     @property
     def is_available(self) -> bool:
         """Check if OCR is available"""
         return self.text_recognizer is not None
+
+    # ── OCR fail crop saving (stage → commit) ──
+
+    _PENDING_FAIL_TTL_S = 30.0
+
+    def _stage_ocr_fail(self, region: Dict[str, Any], cropped: np.ndarray) -> None:
+        if self.ocr_fail_saver is None or cropped is None:
+            return
+        now = time.time()
+        with self._pending_fail_lock:
+            self._next_fail_id += 1
+            fid = self._next_fail_id
+            self._pending_fail_crops[fid] = (now, cropped)
+            # losers of a dual/rescue pick are never committed — expire them
+            for k in [k for k, (ts, _) in self._pending_fail_crops.items()
+                      if now - ts > self._PENDING_FAIL_TTL_S]:
+                del self._pending_fail_crops[k]
+        region['_fail_id'] = fid
+
+    def commit_ocr_fails(self, serial_number: str, verifications: List[Dict[str, Any]]) -> None:
+        """Lưu crop của các vùng text FAIL trong verification cuối cùng của camera.
+
+        Gọi SAU khi pipeline đã chọn chiều thắng (dual_rotation / rescue), để
+        không lưu crop của chiều ngược. Region PASS (kể cả bị lật PASS sau
+        khi stage) không lưu.
+        """
+        for v in verifications:
+            for r in ((v or {}).get('text') or {}).get('results', []) or []:
+                fid = r.pop('_fail_id', None)
+                if fid is None:
+                    continue
+                with self._pending_fail_lock:
+                    staged = self._pending_fail_crops.pop(fid, None)
+                if staged is not None and not r.get('match', False) and self.ocr_fail_saver is not None:
+                    self.ocr_fail_saver.submit(str(serial_number), staged[1], r, self.ocr_model_name)
 
     def set_bypass_enabled(self, enabled: bool) -> None:
         """Bật/tắt master switch bypass (confusable + V-suffix) lúc runtime."""
@@ -799,6 +863,9 @@ class TextVerificationService:
                     region['match_sim'] = None
                     region['similarity'] = None
                     region['char_results'] = []
+
+            if not region['match']:
+                self._stage_ocr_fail(region, cropped)
 
             region_map[key] = region
 
@@ -1622,10 +1689,13 @@ class TextVerificationService:
             f"char={t_char_ms:.1f}ms (n={len(char_items)}), total={t_v_total:.1f}ms"
         )
 
-        return {
+        result = {
             'text': {'all_match': text_all_match, 'results': text_results},
             'char': {'all_match': char_all_match, 'results': char_results},
         }
+        # Single frame, no alternate orientation to pick from → final already.
+        self.commit_ocr_fails(serial_number, [result])
+        return result
 
     # ── Public API: single camera, multiple frames (one batched char ML call) ──
 

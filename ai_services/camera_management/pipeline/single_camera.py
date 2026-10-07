@@ -1003,6 +1003,12 @@ class SingleCameraPipeline(InferencePipelineTemplate):
                         f"primary wins ({n_p} text matches vs alt {n_a}{tie_breaker})"
                     )
 
+            # Dual pick done — save fail crops of the winning candidates only.
+            context.text_verification_service.commit_ocr_fails(
+                serial_number,
+                [v for di, v in enumerate(batched_verifs) if di not in skip_data_idx],
+            )
+
             # ── Phase 2b: distribute verifications back (skip losers) ──
             for data_idx, (idx, verification) in enumerate(zip(text_verify_indices, batched_verifs)):
                 if data_idx in skip_data_idx:
