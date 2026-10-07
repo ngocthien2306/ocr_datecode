@@ -36,9 +36,17 @@ class YOLOOBBInference:
     """YOLO OBB ONNX Inference — model output format: [cx, cy, w, h, conf, class_id, angle]"""
 
     def __init__(self, model_path: str, class_names: List[str] = None):
+        # CPU only, deliberately. This runs inside the BACKEND process, which
+        # must never hold a CUDA context: the `vision` env ships onnxruntime-gpu,
+        # so listing CUDAExecutionProvider here really did load CUDA into
+        # uvicorn the first time /cameras/frames/rotate was hit — the exact
+        # hazard docs/DEBUG_SERVICE_CRASH_RUNBOOK.md §6 rule 2 forbids
+        # (CUDA + short-lived threadpool threads = SIGABRT, see the 2026-08-05
+        # case study). The model is a 320x320 YOLO-m OBB: ~38 ms on CPU,
+        # measured on this machine, which is plenty for a user-clicked action.
         self.session = ort.InferenceSession(
             model_path,
-            providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
+            providers=["CPUExecutionProvider"]
         )
         self.input_name = self.session.get_inputs()[0].name
         self.input_shape = self.session.get_inputs()[0].shape
