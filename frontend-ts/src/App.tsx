@@ -6,6 +6,7 @@ import { UserProvider } from './contexts/UserContext';
 import { ServiceDownOverlay } from './components/shared/ServiceDownOverlay';
 import { EmergencyRestartProvider } from './contexts/EmergencyRestartContext';
 import { EmergencyRestartButton } from './components/shared/EmergencyRestartButton';
+import { AlarmToggleButton } from './components/shared/AlarmToggleButton';
 import './styles/App.css';
 
 export default function SuntechAutomation() {
@@ -53,6 +54,7 @@ export default function SuntechAutomation() {
           <EmergencyRestartProvider>
             <Dashboard onLogout={handleLogout} />
             <EmergencyRestartButton />
+            <AlarmToggleButton />
             <ServiceDownOverlay />
           </EmergencyRestartProvider>
         </UserProvider>

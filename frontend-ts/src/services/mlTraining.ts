@@ -461,6 +461,9 @@ export const mlTrainingAPI = {
   restartAll: () =>
     api.post<{ triggered: boolean }>(`/system/restart-all`, {}).then(r => r.data),
 
+  alarmToggle: () =>
+    api.post<{ alarm_on: boolean }>(`/system/alarm/toggle`, {}).then(r => r.data),
+
   fontsDiscover: (previewChars?: string) =>
     api.get<FontInfo[]>(`/ml/fonts/discover`, {
       params: { preview_chars: previewChars ?? '' },

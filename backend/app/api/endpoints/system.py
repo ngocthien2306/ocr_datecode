@@ -275,3 +275,90 @@ async def restart_all(current_user: UserInDB = Depends(get_current_user)):
     """
     _trigger_restart_all()
     return {"triggered": True, "note": "Backend will restart in ~1s"}
+
+
+# ─────────────────────────────────────────────── Alarm (buzzer) toggle
+
+# Còi nối cứng vào DO3 trên line này (không có cơ cấu gạt). Chân active-low:
+# 0 = còi kêu, 1 = im. Thư viện GPIO bên AI service đôi khi để chân kẹt ở 0
+# sau một xung báo động, nên nút trên FE cho người vận hành tự lật lại.
+ALARM_DO_PIN = 3
+
+# Hai cú bấm sát nhau không được cùng đọc một trạng thái rồi cùng ghi một giá trị.
+_alarm_lock = asyncio.Lock()
+
+
+def _read_do_once(pin: int) -> Optional[int]:
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", "dio_out", str(pin)],
+            capture_output=True, text=True, timeout=2,
+        )
+    except Exception as e:
+        logger.warning(f"[alarm] read DO{pin} failed: {e}")
+        return None
+    if result.returncode != 0:
+        logger.warning(f"[alarm] read DO{pin} rc={result.returncode}: {result.stderr.strip()}")
+        return None
+    for line in result.stdout.splitlines():
+        if "status" in line and "=" in line:
+            try:
+                return int(line.split("=")[-1].strip())
+            except ValueError:
+                break
+    logger.warning(f"[alarm] read DO{pin}: unexpected output {result.stdout!r}")
+    return None
+
+
+def _read_do_strict(pin: int, attempts: int = 8) -> Optional[int]:
+    """Đọc DO, trả None khi đọc lỗi. `io_utils.read_do_pin` trả 0 khi lỗi, mà
+    0 ở đây nghĩa là "còi đang kêu" — không thể để lỗi đọc giả làm trạng thái.
+
+    Phải thử lại nhiều lần: AI service đọc DI liên tục qua cùng EC, nên
+    `dio_out` trả rc=255 khoảng một nửa số lần gọi (đo trên Auto2 ngày 12/10)."""
+    for i in range(attempts):
+        value = _read_do_once(pin)
+        if value is not None:
+            return value
+        if i < attempts - 1:
+            time.sleep(0.05 + 0.05 * i)
+    logger.error(f"[alarm] read DO{pin} failed {attempts}x")
+    return None
+
+
+def _set_do_confirmed(pin: int, value: int, attempts: int = 8) -> bool:
+    """Ghi DO rồi đọc lại tới khi thấy đúng giá trị. Không tin mã trả về của
+    lệnh ghi: chính lỗi "kẹt ở 0" là lúc ghi báo xong mà chân không đổi, và
+    lệnh ghi cũng dính rc=255 như lệnh đọc."""
+    for i in range(attempts):
+        try:
+            subprocess.run(
+                ["sudo", "-n", "dio_out", str(pin), str(value)],
+                capture_output=True, text=True, timeout=2,
+            )
+        except Exception as e:
+            logger.warning(f"[alarm] write DO{pin}={value} failed: {e}")
+        time.sleep(0.05)
+        if _read_do_strict(pin, attempts=3) == value:
+            return True
+        time.sleep(0.05 + 0.05 * i)
+    return False
+
+
+def _toggle_alarm_pin() -> Dict[str, Any]:
+    before = _read_do_strict(ALARM_DO_PIN)
+    if before is None:
+        raise HTTPException(status_code=503, detail="Không đọc được trạng thái còi")
+    target = 0 if before == 1 else 1
+    if not _set_do_confirmed(ALARM_DO_PIN, target):
+        logger.error(f"[alarm] DO{ALARM_DO_PIN} {before}->{target} not applied")
+        raise HTTPException(status_code=500, detail="Không đổi được trạng thái còi")
+    logger.info(f"[alarm] DO{ALARM_DO_PIN} {before} -> {target}")
+    return {"alarm_on": target == 0}
+
+
+@router.post("/system/alarm/toggle", tags=["System"])
+async def toggle_alarm(current_user: UserInDB = Depends(get_current_user)):
+    """Lật còi báo động (DO3): đang kêu thì tắt, đang im thì bật."""
+    async with _alarm_lock:
+        return await asyncio.to_thread(_toggle_alarm_pin)
