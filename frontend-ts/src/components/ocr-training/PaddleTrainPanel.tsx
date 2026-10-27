@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
+import { friendlyArch, friendlyBase } from './modelNames';
 import {
   paddleOcrAPI, PaddleArch, PaddleLogEntry, PaddleModel, PaddleTrainRequest,
 } from '@/services/paddleOcrTraining';
+import { ocrTrainingAPI } from '@/services/ocrTraining';
 import SyntheticDefectsPanel from './SyntheticDefectsPanel';
+import TrainLogPanel from './TrainLogPanel';
 import { fmtServiceTime } from './time';
 
 interface Props {
@@ -19,11 +22,17 @@ interface Props {
 // the upstream PP-OCRv6 value (5e-4) with a warmup scaled to the epoch count.
 const DEFAULTS = {
   epoch_num: 15,
-  batch_size: 32,
+  batch_size: 16,
   test_split: 0.2,
   max_train_width: 768,
   max_text_length: 25,
 };
+
+/** Floor the service enforces regardless of batch size. */
+const MIN_TRAIN_IMAGES = 8;
+
+// Batch size and test split stay at DEFAULTS (16 / 0.2) and are not shown.
+const SHOW_BATCH_SPLIT = false;
 
 function fmtPct(v: number | null | undefined): string {
   return v == null ? 'n/a' : `${(v * 100).toFixed(1)}%`;
@@ -51,9 +60,23 @@ export default function PaddleTrainPanel({
   const [live, setLive] = useState<{ phase: string | null; progress: number; status: string } | null>(null);
   const sinceRef = useRef(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const logBoxRef = useRef<HTMLDivElement | null>(null);
 
   const loadModels = onModelsChange;
+
+  // Train-image count for the warning below. The studio's dry-run prepare
+  // shares this project's labels; this service's own validation (dict chars,
+  // max length 25) can drop a few more, so it is an estimate — the start
+  // request is still refused by the service if the real count is too low.
+  const [nTrain, setNTrain] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    ocrTrainingAPI.prepare(projectId, { dryRun: true, testSplit: params.test_split, maxTextLength: 25 })
+      .then((r) => { if (!cancelled) setNTrain(r.n_train); })
+      .catch(() => { if (!cancelled) setNTrain(null); });
+    return () => { cancelled = true; };
+  }, [projectId, params.test_split, models.length]);
+  const minTrain = Math.max(MIN_TRAIN_IMAGES, params.batch_size);
+  const minTrainShort = nTrain != null && nTrain < minTrain;
 
   // Re-read archs whenever the run list changes: a finished run becomes a
   // selectable base for its architecture.
@@ -99,10 +122,6 @@ export default function PaddleTrainPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, pollTargetId]);
 
-  useEffect(() => {
-    if (logBoxRef.current) logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight;
-  }, [logs.length]);
-
   const start = async () => {
     setStarting(true); setError(null); setInfo(null);
     try {
@@ -138,118 +157,101 @@ export default function PaddleTrainPanel({
     }
   };
 
-  const canStart = !starting && !running && (baseValue !== 'pretrained' || !!archInfo?.pretrained_available);
+  const canStart = !starting && !running && !minTrainShort
+    && (baseValue !== 'pretrained' || !!archInfo?.pretrained_available);
 
   return (
     <>
       {error && <div className="at-alert-error">{error}</div>}
       {info && <div className="at-alert-ok">{info}</div>}
 
-      <div className="at-form-row" style={{ flexWrap: 'wrap', gap: 12 }}>
-        <label className="at-label" style={{ minWidth: 220 }}>
-          Architecture
-          <select className="at-form-input" value={arch} onChange={(e) => setArch(e.target.value)}>
-            {archs.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.label}{a.recommended ? ' (recommended)' : ''}
-                {!a.pretrained_available && !a.trained_bases.length ? ' — no weights' : ''}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="at-label" style={{ minWidth: 300, flex: '1 1 300px' }}>
-          Start from
-          <select className="at-form-input" value={baseValue} onChange={(e) => setBaseValue(e.target.value)}>
-            <option value="pretrained" disabled={!archInfo?.pretrained_available}>
-              Official pretrained{archInfo?.pretrained_available ? '' : ' — file missing'}
-            </option>
-            {(archInfo?.trained_bases ?? []).map((b) => (
-              <option key={b.model_id} value={`model:${b.model_id}`}>
-                Trained · {b.project_name} · {b.label}
-              </option>
-            ))}
-          </select>
-          <small className="at-hint">
-            Trained models of the same architecture are listed so a run can continue
-            from last week's model after new images are labelled.
-          </small>
-        </label>
-
-        <label className="at-label">
-          Epochs
-          <input className="at-form-input" type="number" min={1} max={500} style={{ width: 90 }}
-                 value={params.epoch_num}
-                 onChange={(e) => setParams((p) => ({ ...p, epoch_num: Math.max(1, +e.target.value || 1) }))} />
-        </label>
-
-        <label className="at-label">
-          Batch size
-          <select className="at-form-input" style={{ width: 100 }} value={params.batch_size}
-                  onChange={(e) => setParams((p) => ({ ...p, batch_size: +e.target.value }))}>
-            {[16, 32, 64].map((b) => <option key={b} value={b}>{b}</option>)}
-          </select>
-        </label>
-
-        <label className="at-label">
-          Test split
-          <input className="at-form-input" type="number" step={0.05} min={0.05} max={0.9} style={{ width: 90 }}
-                 value={params.test_split}
-                 onChange={(e) => setParams((p) => ({ ...p, test_split: Math.min(0.9, Math.max(0.05, +e.target.value || 0.2)) }))} />
-        </label>
-      </div>
-
-      <div className="at-hint" style={{ marginBottom: 8 }}>
-        Trained at height 48 on grayscale crops, keeping each crop's aspect ratio —
-        the same input ai_services feeds the recogniser. After training the model is
-        exported to ONNX and TensorRT and scored on the test split with ai_services'
-        own recogniser; that <b>engine</b> number is what the line will see.
-      </div>
-
-      <SyntheticDefectsPanel projectId={projectId} testSplit={params.test_split}
-                             useSynthetic={useSynthetic} onUseSyntheticChange={setUseSynthetic} />
-
-      <div className="ot-toolbar">
-        <button className="at-btn at-btn-primary" onClick={start} disabled={!canStart}>
-          {starting ? 'Starting…' : running ? 'A run is already active' : 'Start training'}
-        </button>
-        {running && (
-          <button className="at-btn at-btn-secondary"
-                  onClick={() => act('Cancel', () => paddleOcrAPI.cancelTraining(projectId, running.id),
-                    'Cancel this run? The partially trained checkpoint is discarded.')}>
-            Cancel run
-          </button>
-        )}
-        <span className="ot-spacer" />
-        {live && (
-          <span className="at-hint">
-            {live.status} · {live.phase ?? '—'} · {Math.round(live.progress)}%
-            {live.phase === 'waiting_for_gpu' && ' (queued behind another GPU job)'}
-          </span>
-        )}
-      </div>
-
-      {live && (live.status === 'training' || live.status === 'pending') && (
-        <div style={{ height: 6, background: '#e2e8f0', borderRadius: 3, overflow: 'hidden', marginBottom: 10 }}>
-          <div style={{ height: '100%', width: `${live.progress}%`, background: '#3b82f6', transition: 'width .4s' }} />
+      {minTrainShort && (
+        <div className="at-alert-error">
+          Cần ít nhất <b>{minTrain}</b> ảnh train (batch size {params.batch_size}) — hiện chỉ có
+          {' '}<b>{nTrain}</b> (ước tính). Ít ảnh hơn một batch thì run không train được gì và sẽ lỗi.
+          Verify thêm nhãn ở tab Label, giảm test split, hoặc chọn batch size nhỏ hơn.
         </div>
       )}
 
-      {logs.length > 0 && (
-        <div ref={logBoxRef}
-             style={{ maxHeight: 220, overflowY: 'auto', background: '#0f172a', color: '#cbd5e1',
-                      fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11, padding: 10,
-                      borderRadius: 6, marginBottom: 12 }}>
-          {logs.filter((l) => !l.msg.includes('epoch: [')).map((l) => (
-            <div key={l.idx} className={l.level === 'ERROR' ? 'at-log-error'
-                                       : l.level === 'WARNING' ? 'at-log-warning' : undefined}>
-              {l.msg}
-            </div>
-          ))}
-        </div>
-      )}
+      <div className="ot-train-layout">
+        <section className="ot-card ot-train-settings">
+          <div className="ot-card-title">Training settings</div>
+          <div className="ot-settings-grid">
+            <label className="at-label">
+              Architecture
+              <select className="at-form-input" value={arch} onChange={(e) => setArch(e.target.value)}>
+                {archs.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {friendlyArch(a.label)}{a.recommended ? ' (recommended)' : ''}
+                    {!a.pretrained_available && !a.trained_bases.length ? ' — no weights' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-      <h3 style={{ margin: '4px 0 8px' }}>PaddleOCR runs</h3>
+            <label className="at-label ot-span-2">
+              Start from
+              <select className="at-form-input" value={baseValue} onChange={(e) => setBaseValue(e.target.value)}>
+                <option value="pretrained" disabled={!archInfo?.pretrained_available}>
+                  Starter model{archInfo?.pretrained_available ? '' : ' — file missing'}
+                </option>
+                {(archInfo?.trained_bases ?? []).map((b) => (
+                  <option key={b.model_id} value={`model:${b.model_id}`}>
+                    Trained · {b.project_name} · {friendlyArch(b.label)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="at-label">
+              Epochs
+              <input className="at-form-input" type="number" min={1} max={500}
+                     value={params.epoch_num}
+                     onChange={(e) => setParams((p) => ({ ...p, epoch_num: Math.max(1, +e.target.value || 1) }))} />
+            </label>
+
+            {SHOW_BATCH_SPLIT && (
+              <label className="at-label">
+                Batch size
+                <select className="at-form-input" value={params.batch_size}
+                        onChange={(e) => setParams((p) => ({ ...p, batch_size: +e.target.value }))}>
+                  {[16, 32, 64].map((b) => <option key={b} value={b}>{b}</option>)}
+                </select>
+              </label>
+            )}
+
+            {SHOW_BATCH_SPLIT && (
+              <label className="at-label">
+                Test split
+                <input className="at-form-input" type="number" step={0.05} min={0.05} max={0.9}
+                       value={params.test_split}
+                       onChange={(e) => setParams((p) => ({ ...p, test_split: Math.min(0.9, Math.max(0.05, +e.target.value || 0.2)) }))} />
+              </label>
+            )}
+          </div>
+
+
+          <SyntheticDefectsPanel projectId={projectId} testSplit={params.test_split}
+                                 useSynthetic={useSynthetic} onUseSyntheticChange={setUseSynthetic} />
+
+          <div className="ot-toolbar">
+            <button className="at-btn at-btn-primary" onClick={start} disabled={!canStart}>
+              {starting ? 'Starting…' : running ? 'A run is already active' : 'Start training'}
+            </button>
+            {running && (
+              <button className="at-btn at-btn-secondary"
+                      onClick={() => act('Cancel', () => paddleOcrAPI.cancelTraining(projectId, running.id),
+                        'Cancel this run? The partially trained checkpoint is discarded.')}>
+                Cancel run
+              </button>
+            )}
+          </div>
+        </section>
+
+        <TrainLogPanel live={live} logs={logs.filter((l) => !l.msg.includes('epoch: ['))} />
+      </div>
+
+      <div className="ot-card-title ot-runs-title">Runs <span className="ot-count">{models.length}</span></div>
       {models.length === 0 && <div className="at-empty-state" style={{ padding: 24 }}>No runs yet</div>}
 
       {models.map((m) => {
@@ -261,10 +263,10 @@ export default function PaddleTrainPanel({
             <div className="ot-label-fields">
               <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
                 <b style={{ fontFamily: 'monospace' }}>{m.id.slice(-8)}</b>
-                <span className="ot-chip-sm">{m.arch.replace('_rec', '')}</span>
+                <span className="ot-chip-sm">{friendlyArch(m.arch)}</span>
                 <span className="ot-chip-sm">{m.status}</span>
                 {m.phase && live_ && <span className="ot-chip-sm">{m.phase}</span>}
-                <span className="ot-chip-sm">{m.base_label}</span>
+                <span className="ot-chip-sm">{friendlyBase(m.base_label)}</span>
               </div>
               <div className="ot-hint-row">
                 <span>engine <b>{fmtPct(m.metrics.acc_trt)}</b></span>
@@ -332,7 +334,7 @@ export default function PaddleTrainPanel({
                             await paddleOcrAPI.deleteModel(projectId, m.id);
                             if (selectedId === m.id) onSelect(null);
                           },
-                            'Delete this model and every file the run wrote? Recipes using it fall back to the default OCR.')}>
+                            'Delete this model and every file the run wrote?')}>
                     Delete
                   </button>
                 </>

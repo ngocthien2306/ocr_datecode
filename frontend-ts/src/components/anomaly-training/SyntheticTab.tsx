@@ -114,22 +114,9 @@ export default function SyntheticTab({ projectId, onGenerated }: Props) {
 
   return (
     <div className="at-syn">
-      <div className="at-syn-note">
-        <b>What this changes.</b> Synthetic NG samples are added as <i>abnormal test</i>
-        {' '}images. They never train the model — PatchCore fits on normal images only.
-        What they do is give the decision threshold a population to separate instead of
-        a single defect, and make AUROC/F1 measurable. After generating, retrain: every
-        score is re-normalised, so recipe thresholds need re-checking.
-      </div>
-
       <div className="at-syn-cols">
         <div className="at-syn-col">
           <h4>1. Clean base images</h4>
-          <div className="at-hint">
-            Normal images only — drawing a defect on an already-defective label would
-            make the sample uninterpretable. Marks are auto-placed on blank label
-            surface, avoiding printed text.
-          </div>
           <div className="at-syn-actions-inline">
             <button className="at-btn at-btn-secondary at-btn-sm"
                     onClick={() => setSelected(new Set(images.map((i) => i.id)))}>Select all</button>
@@ -251,15 +238,6 @@ export default function SyntheticTab({ projectId, onGenerated }: Props) {
               <input type="text" value={defectType} onChange={(e) => setDefectType(e.target.value)} />
             </div>
           </div>
-
-          <span className="at-hint">
-            Marks per image is drawn at random in that range — real labels rarely carry
-            exactly one defect, and a fixed count is another regularity the model could
-            key on. Amount is a multiple of the {selected.size} base image(s) selected;
-            each output re-rolls its base, its mark count and every mark's parameters.
-            The same seed reproduces the same batch. The folder name becomes a defect
-            class under <code>test/</code> as soon as the first file lands.
-          </span>
 
           <div className="at-syn-footer">
             <div className="at-syn-estimate">

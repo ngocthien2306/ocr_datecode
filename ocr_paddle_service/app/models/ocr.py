@@ -119,6 +119,7 @@ class OCRSyntheticRequest(BaseModel):
     types: List[str] = ["stroke_break", "dot_dropout", "overprint", "blot", "char_missing"]
     test_split: float = 0.2             # must match the run's, so test crops stay out of training
     seed: int = 0
+    max_chars: int = 1                  # each variant damages a random 1..max_chars characters
 
 
 class OCRModelMetrics(BaseModel):

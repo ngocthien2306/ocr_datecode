@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { friendlyBase } from './modelNames';
+import TrainLogPanel from './TrainLogPanel';
 import {
   ocrTrainingAPI, ocrTrainingModelAPI, OCRBaseCheckpoints, OCRModel,
   OCRPrepareReport, OCRTrainLogEntry,
@@ -17,7 +19,7 @@ interface Props {
  *  docs/ocr_training_plan.md §2. */
 const DEFAULTS = {
   epoch_num: 50,
-  batch_size: 32,
+  batch_size: 16,
   lr: 0.0001,
   test_split: 0.2,
   use_space_char: true,
@@ -25,7 +27,13 @@ const DEFAULTS = {
 
 // batch 32 measured at ~2.6 GB against ai_services' 3.5 GB on a 16 GB card.
 // The numbers are the measured training peak, not an estimate.
+/** Floor the service enforces regardless of batch size. */
+const MIN_TRAIN_IMAGES = 8;
+
 const VRAM_BY_BATCH: Record<number, number> = { 16: 1664, 32: 2592, 64: 4614, 128: 8946 };
+
+// Batch size and test split stay at DEFAULTS (16 / 0.2) and are not shown.
+const SHOW_BATCH_SPLIT = false;
 
 function fmtPct(v: number | null | undefined): string {
   return v == null ? 'n/a' : `${(v * 100).toFixed(1)}%`;
@@ -46,7 +54,6 @@ export default function TrainTab({
   const [live, setLive] = useState<{ phase: string | null; progress: number; status: string } | null>(null);
   const sinceRef = useRef(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const logBoxRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     ocrTrainingModelAPI.listBaseCheckpoints()
@@ -98,10 +105,6 @@ export default function TrainTab({
     pollRef.current = setInterval(poll, 2000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [projectId, pollTargetId]);
-
-  useEffect(() => {
-    if (logBoxRef.current) logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight;
-  }, [logs.length]);
 
   const selectedBaseInfo = (() => {
     if (!bases) return null;
@@ -168,6 +171,11 @@ export default function TrainTab({
   };
 
   const estVram = VRAM_BY_BATCH[params.batch_size];
+  // The train loader drops an incomplete batch, so fewer images than one batch
+  // trains nothing; the service refuses it too (blocking_reason).
+  const minTrain = Math.max(MIN_TRAIN_IMAGES, params.batch_size);
+  const nTrain = report?.n_train ?? null;
+  const minTrainShort = nTrain != null && nTrain < minTrain;
   const lowEpochsWithSpace = params.use_space_char && params.epoch_num < 20;
 
   return (
@@ -175,163 +183,154 @@ export default function TrainTab({
       {error && <div className="at-alert-error">{error}</div>}
       {info && <div className="at-alert-ok">{info}</div>}
 
-      <div className="ot-prepare-grid">
-        <div className="ot-stat-box">
-          <div className="ot-stat-num">{report?.n_train ?? '—'}</div>
-          <div className="ot-stat-label">train images</div>
-        </div>
-        <div className="ot-stat-box">
-          <div className="ot-stat-num">{report?.n_test ?? '—'}</div>
-          <div className="ot-stat-label">test ({report?.split_source ?? '—'})</div>
-        </div>
-        <div className={`ot-stat-box ${report?.dropped_count ? 'ot-bad' : ''}`}>
-          <div className="ot-stat-num">{report?.dropped_count ?? 0}</div>
-          <div className="ot-stat-label">dropped labels</div>
-        </div>
-        <div className="ot-stat-box">
-          <div className="ot-stat-num">{estVram ? `${(estVram / 1024).toFixed(1)}G` : '—'}</div>
-          <div className="ot-stat-label">measured VRAM @ batch {params.batch_size}</div>
-        </div>
-      </div>
-
-      {report?.blocking_reason && <div className="at-alert-error">{report.blocking_reason}</div>}
-
-      <div className="at-form-row" style={{ flexWrap: 'wrap', gap: 12 }}>
-        <label className="at-label" style={{ minWidth: 320, flex: '1 1 320px' }}>
-          Base checkpoint
-          <select className="at-form-input" value={baseValue}
-                  onChange={(e) => setBaseValue(e.target.value)}>
-            <optgroup label="Built-in">
-              {(bases?.builtin ?? []).map((b) => (
-                <option key={b.id} value={`builtin:${b.id}`} disabled={!b.available}>
-                  {b.id}{b.recommended ? ' (recommended)' : ''}{b.available ? '' : ' — file missing'}
-                </option>
-              ))}
-            </optgroup>
-            {(bases?.projects ?? []).map((g) => (
-              <optgroup key={g.project_id} label={`Trained · ${g.project_name}`}>
-                {g.models.map((m) => (
-                  <option key={m.model_id} value={`model:${m.model_id}`}>
-                    {m.label}{m.use_space_char ? ' · space' : ''}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-          <small className="at-hint">
-            Always a fine-tune — a few thousand crops cannot train SVTRv2 from scratch.
-            Models from other projects are listed on purpose: continuing from last week's
-            model after adding images is the common case.
-          </small>
-        </label>
-
-        <label className="at-label">
-          Epochs
-          <input className="at-form-input" type="number" min={1} max={500} style={{ width: 90 }}
-                 value={params.epoch_num}
-                 onChange={(e) => setParams((p) => ({ ...p, epoch_num: Math.max(1, +e.target.value || 1) }))} />
-        </label>
-
-        <label className="at-label">
-          Batch size
-          <select className="at-form-input" style={{ width: 100 }} value={params.batch_size}
-                  onChange={(e) => setParams((p) => ({ ...p, batch_size: +e.target.value }))}>
-            {[16, 32, 64, 128].map((b) => <option key={b} value={b}>{b}</option>)}
-          </select>
-        </label>
-
-        <label className="at-label">
-          Learning rate
-          <input className="at-form-input" type="number" step={0.00001} min={0.000001} style={{ width: 110 }}
-                 value={params.lr}
-                 onChange={(e) => setParams((p) => ({ ...p, lr: +e.target.value || DEFAULTS.lr }))} />
-        </label>
-
-        <label className="at-label">
-          Test split
-          <input className="at-form-input" type="number" step={0.05} min={0} max={0.9} style={{ width: 90 }}
-                 value={params.test_split}
-                 onChange={(e) => setParams((p) => ({ ...p, test_split: Math.min(0.9, Math.max(0, +e.target.value || 0)) }))} />
-        </label>
-
-        <label className="at-label" style={{ alignSelf: 'flex-end' }}>
-          <input type="checkbox" checked={params.use_space_char}
-                 onChange={(e) => setParams((p) => ({ ...p, use_space_char: e.target.checked }))} />
-          {' '}Train with spaces
-        </label>
-      </div>
-
-      <div className="at-hint" style={{ marginBottom: 8 }}>
-        <b>Train with spaces</b> lets the model reproduce spaces in the label:
-        exact-match went 0.43 → 0.93 with no measurable cost in character accuracy.
-        A base that lacks the space class is widened automatically — 1,154 new
-        parameters out of 21M, not a retrain from scratch.
-      </div>
-
-      {params.batch_size >= 128 && (
-        <div className="at-hint">
-          Batch 128 measured at 8.9 GB. With ai_services live (3.5 GB) that is 76% of a
-          16 GB card and leaves no room for anything else on the GPU.
-        </div>
-      )}
-
-      {lowEpochsWithSpace && (
-        <div className="at-hint">
-          With spaces on, the best epoch landed around 18 in testing — the autoregressive
-          head needs a few epochs to learn <i>where</i> spaces go. Below ~20 epochs the run
-          may stop before it recovers.
-        </div>
-      )}
-
-      {vocabConflict && (
-        <div className="at-alert-error">
-          The selected base was trained with spaces. Training from it with spaces off would
-          drop the space class it learned, so the service refuses it — re-enable “Train with
-          spaces”, or pick a different base.
-        </div>
-      )}
-
-      <div className="ot-toolbar">
-        <button className="at-btn at-btn-primary" onClick={start}
-                disabled={starting || !!running || !!report?.blocking_reason || vocabConflict}>
-          {starting ? 'Starting…' : running ? 'A run is already active' : 'Start training'}
-        </button>
-        {running && (
-          <button className="at-btn at-btn-secondary" onClick={() => cancel(running.id)}>
-            Cancel run
-          </button>
-        )}
-        <span className="ot-spacer" />
-        {live && (
-          <span className="at-hint">
-            {live.status} · {live.phase ?? '—'} · {Math.round(live.progress)}%
-            {live.phase === 'waiting_for_gpu' && ' (queued behind another GPU job)'}
-          </span>
-        )}
-      </div>
-
-      {live && (live.status === 'training' || live.status === 'pending') && (
-        <div style={{ height: 6, background: '#e2e8f0', borderRadius: 3, overflow: 'hidden', marginBottom: 10 }}>
-          <div style={{ height: '100%', width: `${live.progress}%`, background: '#3b82f6',
-                        transition: 'width .4s' }} />
-        </div>
-      )}
-
-      {logs.length > 0 && (
-        <div ref={logBoxRef}
-             style={{ maxHeight: 220, overflowY: 'auto', background: '#0f172a', color: '#cbd5e1',
-                      fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11, padding: 10,
-                      borderRadius: 6, marginBottom: 12 }}>
-          {logs.map((l) => (
-            <div key={l.idx} className={l.level === 'ERROR' ? 'at-log-error'
-                                       : l.level === 'WARNING' ? 'at-log-warning' : undefined}>
-              {l.msg}
+      <div className="ot-train-layout">
+        <section className="ot-card ot-train-settings">
+          <div className="ot-card-title">Training settings</div>
+          <div className="ot-prepare-grid">
+            <div className="ot-stat-box">
+              <div className="ot-stat-num">{report?.n_train ?? '—'}</div>
+              <div className="ot-stat-label">train images</div>
             </div>
-          ))}
+            <div className="ot-stat-box">
+              <div className="ot-stat-num">{report?.n_test ?? '—'}</div>
+              <div className="ot-stat-label">test ({report?.split_source ?? '—'})</div>
+            </div>
+            <div className={`ot-stat-box ${report?.dropped_count ? 'ot-bad' : ''}`}>
+              <div className="ot-stat-num">{report?.dropped_count ?? 0}</div>
+              <div className="ot-stat-label">dropped labels</div>
+            </div>
+            <div className="ot-stat-box">
+              <div className="ot-stat-num">{estVram ? `${(estVram / 1024).toFixed(1)}G` : '—'}</div>
+              <div className="ot-stat-label">measured VRAM @ batch {params.batch_size}</div>
+            </div>
+          </div>
+
+          {report?.blocking_reason && <div className="at-alert-error">{report.blocking_reason}</div>}
+
+      {minTrainShort && (
+        <div className="at-alert-error">
+          Cần ít nhất <b>{minTrain}</b> ảnh train (batch size {params.batch_size}) — hiện chỉ có
+          {' '}<b>{nTrain}</b>. Ít ảnh hơn một batch thì run không train được gì và sẽ lỗi.
+          Verify thêm nhãn ở tab Label, giảm test split, hoặc chọn batch size nhỏ hơn.
         </div>
       )}
 
-      <h3 style={{ margin: '4px 0 8px' }}>Runs</h3>
+          <div className="ot-settings-grid">
+            <label className="at-label ot-span-all">
+              Base checkpoint
+              <select className="at-form-input" value={baseValue}
+                      onChange={(e) => setBaseValue(e.target.value)}>
+                <optgroup label="Built-in">
+                  {(bases?.builtin ?? []).map((b) => (
+                    <option key={b.id} value={`builtin:${b.id}`} disabled={!b.available}>
+                      {friendlyBase(`builtin:${b.id}`)}{b.recommended ? ' (recommended)' : ''}{b.available ? '' : ' — file missing'}
+                    </option>
+                  ))}
+                </optgroup>
+                {(bases?.projects ?? []).map((g) => (
+                  <optgroup key={g.project_id} label={`Trained · ${g.project_name}`}>
+                    {g.models.map((m) => (
+                      <option key={m.model_id} value={`model:${m.model_id}`}>
+                        {m.label}{m.use_space_char ? ' · space' : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+              <small className="at-hint">
+                Always a fine-tune — a few thousand crops cannot train a model from scratch.
+                Models from other projects are listed on purpose: continuing from last week's
+                model after adding images is the common case.
+              </small>
+            </label>
+
+            <label className="at-label">
+              Epochs
+              <input className="at-form-input" type="number" min={1} max={500}
+                     value={params.epoch_num}
+                     onChange={(e) => setParams((p) => ({ ...p, epoch_num: Math.max(1, +e.target.value || 1) }))} />
+            </label>
+
+            {SHOW_BATCH_SPLIT && (
+              <label className="at-label">
+                Batch size
+                <select className="at-form-input" value={params.batch_size}
+                        onChange={(e) => setParams((p) => ({ ...p, batch_size: +e.target.value }))}>
+                  {[16, 32, 64, 128].map((b) => <option key={b} value={b}>{b}</option>)}
+                </select>
+              </label>
+            )}
+
+            <label className="at-label">
+              Learning rate
+              <input className="at-form-input" type="number" step={0.00001} min={0.000001}
+                     value={params.lr}
+                     onChange={(e) => setParams((p) => ({ ...p, lr: +e.target.value || DEFAULTS.lr }))} />
+            </label>
+
+            {SHOW_BATCH_SPLIT && (
+              <label className="at-label">
+                Test split
+                <input className="at-form-input" type="number" step={0.05} min={0} max={0.9}
+                       value={params.test_split}
+                       onChange={(e) => setParams((p) => ({ ...p, test_split: Math.min(0.9, Math.max(0, +e.target.value || 0)) }))} />
+              </label>
+            )}
+
+            <label className="at-label ot-check">
+              <input type="checkbox" checked={params.use_space_char}
+                     onChange={(e) => setParams((p) => ({ ...p, use_space_char: e.target.checked }))} />
+              {' '}Train with spaces
+            </label>
+          </div>
+
+          <div className="at-hint" style={{ marginBottom: 8 }}>
+            <b>Train with spaces</b> lets the model reproduce spaces in the label:
+            exact-match went 0.43 → 0.93 with no measurable cost in character accuracy.
+            A base that lacks the space class is widened automatically — 1,154 new
+            parameters out of 21M, not a retrain from scratch.
+          </div>
+
+          {params.batch_size >= 128 && (
+            <div className="at-hint">
+              Batch 128 measured at 8.9 GB. With ai_services live (3.5 GB) that is 76% of a
+              16 GB card and leaves no room for anything else on the GPU.
+            </div>
+          )}
+
+          {lowEpochsWithSpace && (
+            <div className="at-hint">
+              With spaces on, the best epoch landed around 18 in testing — the autoregressive
+              head needs a few epochs to learn <i>where</i> spaces go. Below ~20 epochs the run
+              may stop before it recovers.
+            </div>
+          )}
+
+          {vocabConflict && (
+            <div className="at-alert-error">
+              The selected base was trained with spaces. Training from it with spaces off would
+              drop the space class it learned, so the service refuses it — re-enable “Train with
+              spaces”, or pick a different base.
+            </div>
+          )}
+
+          <div className="ot-toolbar">
+            <button className="at-btn at-btn-primary" onClick={start}
+                    disabled={starting || !!running || !!report?.blocking_reason || vocabConflict || minTrainShort}>
+              {starting ? 'Starting…' : running ? 'A run is already active' : 'Start training'}
+            </button>
+            {running && (
+              <button className="at-btn at-btn-secondary" onClick={() => cancel(running.id)}>
+                Cancel run
+              </button>
+            )}
+          </div>
+        </section>
+
+        <TrainLogPanel live={live} logs={logs} />
+      </div>
+
+      <div className="ot-card-title ot-runs-title">Runs <span className="ot-count">{models.length}</span></div>
       {models.length === 0 && <div className="at-empty-state" style={{ padding: 24 }}>No runs yet</div>}
 
       {models.map((m) => (
@@ -345,7 +344,7 @@ export default function TrainTab({
               {m.phase && m.status === 'training' && <span className="ot-chip-sm">{m.phase}</span>}
               {m.use_space_char && <span className="ot-chip-sm ot-pass">space</span>}
               <span className="ot-chip-sm">vocab {m.vocab_size}</span>
-              <span className="ot-chip-sm">{m.base_label}</span>
+              <span className="ot-chip-sm">{friendlyBase(m.base_label)}</span>
             </div>
             <div className="ot-hint-row">
               <span>min_acc <b>{fmtPct(m.metrics.min_acc)}</b></span>

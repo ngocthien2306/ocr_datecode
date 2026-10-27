@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { friendlyArch, friendlyBase } from './modelNames';
 import {
   paddleOcrAPI, PaddleArtifact, PaddleEngine, PaddleEvalResult, PaddleModel, PaddlePredictResult,
 } from '@/services/paddleOcrTraining';
@@ -18,7 +19,7 @@ function pct(v: number | null | undefined): string {
 
 function NoModel() {
   return <div className="at-empty-state" style={{ padding: 40 }}>
-    Select a PaddleOCR run in the Train tab first.
+    Select a run in the Train tab first.
   </div>;
 }
 
@@ -26,7 +27,7 @@ function ModelHeader({ model }: { model: PaddleModel }) {
   return (
     <div className="at-hint" style={{ marginBottom: 8 }}>
       Run <b style={{ fontFamily: 'monospace' }}>{model.id.slice(-8)}</b> ·{' '}
-      {model.arch.replace('_rec', '')} · {model.status} · from {model.base_label}
+      {friendlyArch(model.arch)} · {model.status} · from {friendlyBase(model.base_label)}
     </div>
   );
 }
@@ -222,7 +223,7 @@ export function PaddleExportTab({
       <div className="ot-toolbar">
         <button className="at-btn at-btn-secondary" disabled={!completed || !!busy}
                 onClick={() => act('Export ONNX', () => paddleOcrAPI.exportOnnx(projectId, model.id),
-                  (r) => `ONNX exported — ${r.size_mb} MB, ${r.num_classes} classes (checked against Paddle)`)}>
+                  (r) => `ONNX exported — ${r.size_mb} MB, ${r.num_classes} classes (checked against the trained model)`)}>
           {busy === 'Export ONNX' ? 'Exporting…' : 'Re-export ONNX'}
         </button>
         <button className="at-btn at-btn-secondary" disabled={!completed || !model.onnx_path || !!busy}
@@ -263,8 +264,9 @@ export function PaddleExportTab({
       </table>
 
       <div className="at-hint" style={{ marginTop: 10 }}>
-        On a recipe, pick it under <b>Paddle · project</b> in OCR Model. The recipe
-        load hands ai_services the engine + dict paths; no restart needed.
+        On a recipe, open <b>OCR Model Type → Choose…</b> and pick this project's
+        <b> Custom · Small</b> model. The recipe load hands ai_services the engine +
+        dict paths; no restart needed.
       </div>
     </>
   );

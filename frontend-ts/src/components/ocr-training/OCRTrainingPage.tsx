@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import EditableProjectName from '@/components/shared/EditableProjectName';
+import { FAMILY_LABEL, friendlyArch, type ModelFamily } from './modelNames';
 import '@/styles/OCRTraining.css';
 import {
   ocrTrainingAPI, ocrTrainingModelAPI, OCRDatasetStats, OCRImportResult, OCRModel, OCRProject,
@@ -16,7 +18,6 @@ import { paddleOcrAPI, PaddleModel } from '@/services/paddleOcrTraining';
 
 /** Which trainer the Train/Eval/Export/Test tabs talk to. Dataset + Label are
  *  shared: ocr_paddle_service reads this studio's projects and labels. */
-type ModelFamily = 'smtr' | 'paddle';
 const FAMILY_KEY = 'ocrTraining.modelFamily';
 
 function readFamily(): ModelFamily {
@@ -33,7 +34,8 @@ interface Props {
 
 type TabId = 'dataset' | 'label' | 'train' | 'eval' | 'export' | 'test';
 
-const TAB_IDS: TabId[] = ['dataset', 'label', 'train', 'eval', 'export', 'test'];
+// Eval is hidden: Train already scores every run on the test split.
+const TAB_IDS: TabId[] = ['dataset', 'label', 'train', 'export', 'test'];
 const TAB_LABELS: Record<TabId, string> = {
   dataset: 'Dataset', label: 'Label', train: 'Train',
   eval: 'Eval', export: 'Export', test: 'Test',
@@ -126,7 +128,7 @@ export default function OCRTrainingPage({ onClose }: Props) {
       setPaddleSelectedId((cur) => (cur && list.some((m) => m.id === cur)) ? cur : (list[0]?.id ?? null));
     } catch (e: any) {
       setPaddleError(e?.response
-        ? (e.response.data?.detail || 'Failed to load PaddleOCR runs')
+        ? (e.response.data?.detail || `Failed to load ${FAMILY_LABEL.paddle} runs`)
         : 'Cannot reach ocr_paddle_service on :8003 — sudo systemctl start ocr-paddle-training '
           + '(installed by scripts/setup_ocr_paddle_service.sh).');
     }
@@ -179,6 +181,14 @@ export default function OCRTrainingPage({ onClose }: Props) {
     }
   };
 
+  // Throws on failure so the inline editor stays open and shows the reason
+  // (e.g. a duplicate name).
+  const handleRenameProject = async (id: string, name: string) => {
+    const updated = await ocrTrainingAPI.updateProject(id, { name });
+    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, name: updated.name } : p)));
+    setActiveProject((cur) => (cur?.id === id ? { ...cur, name: updated.name } : cur));
+  };
+
   const handleImported = (result: OCRImportResult) => {
     setLastImportResult(result);
     refreshStats();
@@ -196,7 +206,7 @@ export default function OCRTrainingPage({ onClose }: Props) {
   const showFamilyPicker = tab === 'train' || tab === 'eval' || tab === 'export' || tab === 'test';
 
   return (
-    <div className="at-overlay">
+    <div className="at-overlay ocr-studio">
       <div className="at-header">
         <div className="at-header-left">
           <h1 className="at-title">OCR Training Studio</h1>
@@ -276,7 +286,7 @@ export default function OCRTrainingPage({ onClose }: Props) {
               <div key={p.id} className={`at-project-item ${activeProject?.id === p.id ? 'active' : ''}`}
                    onClick={() => { setActiveProject(p); setTab('dataset'); }}>
                 <div className="at-project-item-info">
-                  <div className="at-project-item-name">{p.name}</div>
+                  <EditableProjectName name={p.name} onSave={(name) => handleRenameProject(p.id, name)} />
                   <div className="at-project-item-meta">
                     {p.verified_count} verified
                     {p.need_review_count > 0 && ` · ${p.need_review_count} to review`}
@@ -327,11 +337,11 @@ export default function OCRTrainingPage({ onClose }: Props) {
               {showFamilyPicker && (
                 <div className="at-form-row" style={{ gap: 12, marginBottom: 10, alignItems: 'flex-end' }}>
                   <label className="at-label" style={{ minWidth: 320 }}>
-                    Model
+                    Model type
                     <select className="at-form-input" value={family}
                             onChange={(e) => chooseFamily(e.target.value as ModelFamily)}>
-                      <option value="smtr">SVTRv2 · SMTR ({models.length} runs)</option>
-                      <option value="paddle">PaddleOCR · PP-OCRv5 / v6 ({paddleModels.length} runs)</option>
+                      <option value="smtr">{FAMILY_LABEL.smtr} — {models.length} runs</option>
+                      <option value="paddle">{FAMILY_LABEL.paddle} — {paddleModels.length} runs</option>
                     </select>
                   </label>
                   {tab !== 'train' && family === 'paddle' && paddleModels.length > 0 && (
@@ -341,7 +351,7 @@ export default function OCRTrainingPage({ onClose }: Props) {
                               onChange={(e) => setPaddleSelectedId(e.target.value || null)}>
                         {paddleModels.map((m) => (
                           <option key={m.id} value={m.id}>
-                            {m.id.slice(-8)} · {m.arch.replace('_rec', '')} · {m.status}
+                            {m.id.slice(-8)} · {friendlyArch(m.arch)} · {m.status}
                             {m.metrics.acc_trt != null ? ` · engine ${(m.metrics.acc_trt * 100).toFixed(1)}%` : ''}
                           </option>
                         ))}

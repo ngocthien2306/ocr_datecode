@@ -28,6 +28,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Per-project progress of a running generation, read by the progress endpoint.
+# In-process only: one uvicorn worker serves this studio.
+_progress: Dict[str, Dict] = {}
+
 # Fallback localiser when the project has no trained Paddle model yet: the
 # official PP-OCRv6 small that ai_services ships. It misreads more crops, and a
 # misread crop is skipped (positions can't be trusted), so fewer get defects.
@@ -100,6 +104,18 @@ async def get_synthetic(
     return {"exists": True, **sd.summary(manifest), "samples": pics, "types_available": list(sd.DEFECT_TYPES)}
 
 
+@router.get("/projects/{project_id}/synthetic/progress")
+async def synthetic_progress(
+    project_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    p = _progress.get(project_id)
+    if not p:
+        return {"running": False, "phase": None, "done": 0, "total": 0, "percent": 0}
+    pct = round(100 * p["done"] / p["total"]) if p["total"] else 0
+    return {"running": True, **p, "percent": pct}
+
+
 @router.post("/projects/{project_id}/synthetic")
 async def generate_synthetic(
     project_id: str,
@@ -109,8 +125,12 @@ async def generate_synthetic(
 ):
     if not await repo.get_project(project_id):
         raise HTTPException(404, "Project not found")
+    if project_id in _progress:
+        raise HTTPException(409, "Defect data is already being generated for this project")
     if not 1 <= request.per_image <= 5:
         raise HTTPException(400, "per_image must be 1..5")
+    if not 1 <= request.max_chars <= 5:
+        raise HTTPException(400, "max_chars must be 1..5")
     bad = [t for t in request.types if t not in sd.DEFECT_TYPES]
     if bad or not request.types:
         raise HTTPException(400, f"types must be a non-empty subset of {list(sd.DEFECT_TYPES)}")
@@ -128,18 +148,26 @@ async def generate_synthetic(
         raise HTTPException(400, "No verified items to build from.")
 
     loop = asyncio.get_event_loop()
+    _progress[project_id] = {"phase": "loading", "done": 0, "total": len(pool)}
+
+    def _on_progress(done: int, total: int):
+        _progress[project_id] = {"phase": "generating", "done": done, "total": total}
 
     def _run():
         loc = sd.Localiser(onnx_path, dict_path)
         return sd.generate(project_id, pool, split_of, loc, per_image=request.per_image,
-                           types=request.types, seed=request.seed, localiser_label=loc_label)
+                           types=request.types, seed=request.seed, localiser_label=loc_label,
+                           max_chars=request.max_chars, on_progress=_on_progress)
 
     try:
         manifest = await loop.run_in_executor(None, _run)
+        _progress[project_id] = {"phase": "previews", "done": len(pool), "total": len(pool)}
+        pics = await loop.run_in_executor(None, lambda: _samples(project_id, manifest, 12))
     except Exception as e:
         logger.exception(f"[synth] generation failed for {project_id}")
         raise HTTPException(500, f"Synthetic generation failed: {e}")
-    pics = await loop.run_in_executor(None, lambda: _samples(project_id, manifest, 12))
+    finally:
+        _progress.pop(project_id, None)
     return {"exists": True, **sd.summary(manifest), "samples": pics}
 
 

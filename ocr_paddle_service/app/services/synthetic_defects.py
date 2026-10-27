@@ -5,8 +5,8 @@ badly printed character instead of guessing it.
 Why this exists: a well-trained OCR model is trained to be robust — RecAug adds
 blur, noise and distortion so it reads through bad images — which means it also
 reads through broken strokes, missing dots and overprinted characters and the
-line PASSes a bad print. Here, verified crops get one character damaged on
-purpose, and the label says what a strict inspector would accept:
+line PASSes a bad print. Here, verified crops get 1..max_chars characters
+damaged on purpose, and the label says what a strict inspector would accept:
 
     stroke_break  a band through the strokes is erased        -> char becomes REJECT_CHAR
     dot_dropout   most CIJ dots of the char are erased        -> char becomes REJECT_CHAR
@@ -36,7 +36,7 @@ import random
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import cv2 as cv
 import numpy as np
@@ -220,12 +220,12 @@ def _char_missing(gray, mask, b, rng):
     return _erase(gray, ink), 1.0
 
 
-def _overprint(gray, mask, b, rng, boxes, bright):
+def _overprint(gray, mask, b, rng, boxes, bright, src=None):
     others = [o for o in boxes if o is not b and o.char.isalnum() and o.char != b.char]
     if not others:
         return gray, 0.0
     o = rng.choice(others)
-    patch = gray[o.y0:o.y1, o.x0:o.x1]
+    patch = (gray if src is None else src)[o.y0:o.y1, o.x0:o.x1]
     ph, pw = patch.shape
     dx = int(rng.uniform(-0.3, 0.3) * pw)
     dy = int(rng.uniform(-0.2, 0.2) * ph)
@@ -260,43 +260,69 @@ def _blot(gray, mask, b, rng, bright):
     return out, region.sum() / box_area * 1.6   # area fraction, scaled ~ to ink terms
 
 
+def _damage(img: np.ndarray, src: np.ndarray, mask: np.ndarray, bright: bool,
+            b: CharBox, boxes: List[CharBox], dtype: str,
+            rng: random.Random) -> Tuple[np.ndarray, float]:
+    """Apply one defect to char `b` of `img`. `src` is the undamaged crop, so an
+    overprint never stamps a char that an earlier pass already damaged."""
+    if dtype == "stroke_break":
+        return _stroke_break(img, mask, b, rng)
+    if dtype == "dot_dropout":
+        return _dot_dropout(img, mask, b, rng)
+    if dtype == "char_missing":
+        return _char_missing(img, mask, b, rng)
+    if dtype == "overprint":
+        return _overprint(img, mask, b, rng, boxes, bright, src=src)
+    if dtype == "blot":
+        return _blot(img, mask, b, rng, bright)
+    raise ValueError(dtype)
+
+
 def make_defect(gray: np.ndarray, label: str, boxes: List[CharBox], dtype: str,
-                rng: random.Random) -> Optional[Tuple[np.ndarray, str, str, float, str]]:
-    """Damage one random alnum char. Returns (image, new_label, char, severity,
-    final_type) or None when the damage came out too light to call a defect."""
+                rng: random.Random, max_chars: int = 1,
+                ) -> Optional[Tuple[np.ndarray, str, str, float, str]]:
+    """Damage a random 1..max_chars distinct alnum chars with the same defect
+    type. Returns (image, new_label, chars, severity, final_type), or None when
+    every draw came out too light to call a defect.
+
+    A char whose damage is too light is put back as it was (never labelled
+    either way — a half-damaged char is exactly the ambiguous case), so only
+    chars that clear MIN_INK_REMOVED change the label."""
     cands = [b for b in boxes if b.char.isalnum() and (b.x1 - b.x0) >= 4]
     if not cands:
         return None
-    b = rng.choice(cands)
     mask, bright = _ink_mask(gray)
-    if not _box_ink(mask, b).any():
+    cands = [b for b in cands if _box_ink(mask, b).any()]
+    if not cands:
+        return None
+    k = rng.randint(1, max(1, min(max_chars, len(cands))))
+    targets = rng.sample(cands, k)
+
+    img = gray
+    hits: List[Tuple[CharBox, str, float]] = []
+    for b in targets:
+        out, sev = _damage(img, gray, mask, bright, b, boxes, dtype, rng)
+        if sev < MIN_INK_REMOVED:
+            continue
+        # A char whose ink is (almost) all erased IS a missing char, whatever
+        # generator got it there (dot_dropout on a solid-stroke font erases
+        # whole glyphs). Labelling it □ would teach two answers for one picture.
+        t = "char_missing" if dtype in ("stroke_break", "dot_dropout") and sev >= 0.9 else dtype
+        img = out
+        hits.append((b, t, float(min(sev, 1.0))))
+    if not hits:
         return None
 
-    if dtype == "stroke_break":
-        img, sev = _stroke_break(gray, mask, b, rng)
-    elif dtype == "dot_dropout":
-        img, sev = _dot_dropout(gray, mask, b, rng)
-    elif dtype == "char_missing":
-        img, sev = _char_missing(gray, mask, b, rng)
-    elif dtype == "overprint":
-        img, sev = _overprint(gray, mask, b, rng, boxes, bright)
-    elif dtype == "blot":
-        img, sev = _blot(gray, mask, b, rng, bright)
-    else:
-        raise ValueError(dtype)
-
-    if sev < MIN_INK_REMOVED:
-        return None
-    # A char whose ink is (almost) all erased IS a missing char, whatever
-    # generator got it there (dot_dropout on a solid-stroke font erases whole
-    # glyphs). Labelling it □ would teach two answers for one picture.
-    if dtype in ("stroke_break", "dot_dropout") and sev >= 0.9:
-        dtype = "char_missing"
-    if dtype == "char_missing":
-        new_label = label[:b.idx] + label[b.idx + 1:]
-    else:
-        new_label = label[:b.idx] + REJECT_CHAR + label[b.idx + 1:]
-    return img, new_label, b.char, float(min(sev, 1.0)), dtype
+    chars = list(label)
+    for b, t, _ in sorted(hits, key=lambda h: h[0].idx, reverse=True):
+        if t == "char_missing":
+            del chars[b.idx]
+        else:
+            chars[b.idx] = REJECT_CHAR
+    final_type = "char_missing" if all(t == "char_missing" for _, t, _ in hits) else dtype
+    hit_chars = "".join(b.char for b, _, _ in sorted(hits, key=lambda h: h[0].idx))
+    severity = sum(sev for _, _, sev in hits) / len(hits)
+    return img, "".join(chars), hit_chars, severity, final_type
 
 
 # ── dataset generation ───────────────────────────────────────────────────────
@@ -304,7 +330,9 @@ def make_defect(gray: np.ndarray, label: str, boxes: List[CharBox], dtype: str,
 
 def generate(project_id: str, items: Sequence, split_of: Dict[str, str], loc: Localiser,
              per_image: int = 1, types: Sequence[str] = DEFECT_TYPES, seed: int = 0,
-             localiser_label: str = "", max_text_length: int = 25) -> Dict:
+             localiser_label: str = "", max_text_length: int = 25,
+             max_chars: int = 1,
+             on_progress: Optional[Callable[[int, int], None]] = None) -> Dict:
     """Write synthetic defect images for every item the localiser can place.
 
     Every variant records its source item and that item's split. Training only
@@ -319,7 +347,9 @@ def generate(project_id: str, items: Sequence, split_of: Dict[str, str], loc: Lo
 
     entries, n_localised, n_unreadable = [], 0, 0
     by_type = {t: 0 for t in types}
-    for item in items:
+    for n_done, item in enumerate(items):
+        if on_progress:
+            on_progress(n_done, len(items))
         src = dataset_fs.image_abs_path(project_id, item.image_path)
         gray = cv.imread(str(src), cv.IMREAD_GRAYSCALE)
         if gray is None or gray.shape[0] < 8:
@@ -332,7 +362,7 @@ def generate(project_id: str, items: Sequence, split_of: Dict[str, str], loc: Lo
         for k in range(per_image):
             for _ in range(4):   # a draw can come out too light; retry a few times
                 dtype = rng.choice(types)
-                got = make_defect(gray, item.gt_text, boxes, dtype, rng)
+                got = make_defect(gray, item.gt_text, boxes, dtype, rng, max_chars=max_chars)
                 if got is None:
                     continue
                 img, new_label, ch, sev, dtype = got
@@ -349,6 +379,7 @@ def generate(project_id: str, items: Sequence, split_of: Dict[str, str], loc: Lo
                     "split": split_of.get(item.id, "train"),
                     "type": dtype,
                     "char": ch,
+                    "n_chars": len(ch),
                     "severity": round(sev, 3),
                     "w": int(img.shape[1]),
                     "h": int(img.shape[0]),
@@ -359,6 +390,7 @@ def generate(project_id: str, items: Sequence, split_of: Dict[str, str], loc: Lo
     manifest = {
         "reject_char": REJECT_CHAR,
         "per_image": per_image,
+        "max_chars": max_chars,
         "types": list(types),
         "seed": seed,
         "localiser": localiser_label,

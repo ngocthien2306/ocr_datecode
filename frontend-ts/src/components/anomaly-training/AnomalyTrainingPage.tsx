@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import EditableProjectName from '@/components/shared/EditableProjectName';
 import '@/styles/AnomalyTraining.css';
 import {
   anomalyTrainingAPI, AnomalyProject, DatasetStats, AnomalyImportResult, AnomalyModel,
@@ -127,13 +128,21 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
   // as 0.0 / not-yet-meaningful when there's no abnormal test data).
   const hasDataset = (stats?.normal_count ?? activeProject?.normal_count ?? 0) > 0;
 
+  // Throws on failure so the inline editor stays open and shows the reason
+  // (e.g. a duplicate name).
+  const handleRenameProject = async (id: string, name: string) => {
+    const updated = await anomalyTrainingAPI.updateProject(id, { name });
+    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, name: updated.name } : p)));
+    setActiveProject((cur) => (cur?.id === id ? { ...cur, name: updated.name } : cur));
+  };
+
   const TAB_LABELS: Record<TabId, string> = {
     dataset: 'Dataset', synthetic: 'Synthetic NG', train: 'Train', eval: 'Eval',
     export: 'Export', test: 'Test', studio: 'Studio',
   };
 
   return (
-    <div className="at-overlay">
+    <div className="at-overlay anomaly-studio">
       <div className="at-header">
         <div className="at-header-left">
           <h1 className="at-title">Anomaly Training Studio</h1>
@@ -149,7 +158,8 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
 
       {activeProject && (
         <div className="at-tabs">
-          {(['dataset', 'synthetic', 'train', 'eval', 'export', 'test', 'studio'] as TabId[]).map((id) => (
+          {/* Eval is hidden: Train already reports AUROC/F1 for every model. */}
+          {(['dataset', 'synthetic', 'train', 'export', 'test', 'studio'] as TabId[]).map((id) => (
             <button
               key={id}
               className={`at-tab-btn ${tab === id ? 'active' : ''}`}
@@ -198,7 +208,7 @@ export default function AnomalyTrainingPage({ onClose }: Props) {
               <div key={p.id} className={`at-project-item ${activeProject?.id === p.id ? 'active' : ''}`}
                    onClick={() => { setActiveProject(p); setTab('dataset'); }}>
                 <div className="at-project-item-info">
-                  <div className="at-project-item-name">{p.name}</div>
+                  <EditableProjectName name={p.name} onSave={(name) => handleRenameProject(p.id, name)} />
                   <div className="at-project-item-meta">{p.normal_count} normal · {p.abnormal_count} abnormal</div>
                 </div>
                 <button className="at-project-delete-btn" onClick={(e) => handleDeleteProject(p.id, e)} title="Delete project">✕</button>

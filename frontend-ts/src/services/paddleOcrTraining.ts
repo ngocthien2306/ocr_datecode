@@ -65,6 +65,7 @@ export interface SyntheticInfo {
   exists: boolean;
   reject_char: string;
   per_image?: number;
+  max_chars?: number;
   types?: SyntheticDefectType[];
   localiser?: string;
   n_items?: number;
@@ -73,6 +74,14 @@ export interface SyntheticInfo {
   n_test?: number;
   by_type?: Record<string, number>;
   samples?: SyntheticSample[];
+}
+
+export interface SyntheticProgress {
+  running: boolean;
+  phase: 'loading' | 'generating' | 'previews' | null;
+  done: number;
+  total: number;
+  percent: number;
 }
 
 export interface PaddleModelMetrics {
@@ -182,8 +191,13 @@ export const paddleOcrAPI = {
 
   generateSynthetic: async (projectId: string, req: {
     per_image: number; types: SyntheticDefectType[]; test_split: number; seed?: number;
+    /** Each variant damages a random 1..max_chars characters. */
+    max_chars?: number;
   }): Promise<SyntheticInfo> =>
     (await paddleApi.post(`/projects/${projectId}/synthetic`, req)).data,
+
+  getSyntheticProgress: async (projectId: string): Promise<SyntheticProgress> =>
+    (await paddleApi.get(`/projects/${projectId}/synthetic/progress`)).data,
 
   deleteSynthetic: async (projectId: string) =>
     (await paddleApi.delete(`/projects/${projectId}/synthetic`)).data,

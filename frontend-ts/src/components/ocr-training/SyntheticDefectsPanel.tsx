@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  paddleOcrAPI, SyntheticDefectType, SyntheticInfo,
+  paddleOcrAPI, SyntheticDefectType, SyntheticInfo, SyntheticProgress,
 } from '@/services/paddleOcrTraining';
 
 interface Props {
@@ -16,11 +16,13 @@ const TYPES: Array<{ id: SyntheticDefectType; label: string; hint: string }> = [
   { id: 'stroke_break', label: 'Đứt nét', hint: 'xoá 1–2 dải cắt ngang/dọc qua nét chữ → nhãn □' },
   { id: 'dot_dropout', label: 'Mất chấm', hint: 'xoá phần lớn các chấm CIJ của ký tự → nhãn □' },
   { id: 'overprint', label: 'Chồng chữ', hint: 'đè một ký tự khác (lệch vị trí) lên ký tự → nhãn □' },
-  { id: 'blot', label: 'Lem mực', hint: 'vệt mực che một phần ký tự → nhãn □' },
+  // 'blot' (lem mực) is not offered: the line prints with a laser, which
+  // cannot smear ink.
   { id: 'char_missing', label: 'Mất chữ', hint: 'xoá hẳn ký tự → nhãn bỏ luôn ký tự đó' },
 ];
 
-const TYPE_LABEL: Record<string, string> = Object.fromEntries(TYPES.map((t) => [t.id, t.label]));
+// 'blot' kept for naming crops generated before it was hidden.
+const TYPE_LABEL: Record<string, string> = { blot: 'Lem mực', ...Object.fromEntries(TYPES.map((t) => [t.id, t.label])) };
 
 /** "Làm giàu dữ liệu" — synthetic print defects so the model learns to answer
  *  □ for a badly printed char instead of reading through it. */
@@ -29,14 +31,32 @@ export default function SyntheticDefectsPanel({
 }: Props) {
   const [info, setInfo] = useState<SyntheticInfo | null>(null);
   const [perImage, setPerImage] = useState(1);
+  const [maxChars, setMaxChars] = useState(1);
   const [types, setTypes] = useState<SyntheticDefectType[]>(TYPES.map((t) => t.id));
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<SyntheticProgress | null>(null);
+
+  // The generate request only returns when it is done; poll its progress meanwhile.
+  useEffect(() => {
+    if (busy !== 'generate') { setProgress(null); return; }
+    const t = setInterval(() => {
+      paddleOcrAPI.getSyntheticProgress(projectId)
+        .then((p) => { if (p.running) setProgress(p); })
+        .catch(() => { /* progress is cosmetic; the request itself reports errors */ });
+    }, 800);
+    return () => clearInterval(t);
+  }, [busy, projectId]);
 
   useEffect(() => {
     setInfo(null);
     paddleOcrAPI.getSynthetic(projectId)
-      .then((d) => { setInfo(d); if (!d.exists) onUseSyntheticChange(false); })
+      .then((d) => {
+        setInfo(d);
+        if (!d.exists) onUseSyntheticChange(false);
+        // Start from the settings the current data was made with.
+        if (d.exists) { setMaxChars(d.max_chars ?? 1); setPerImage(d.per_image ?? 1); }
+      })
       .catch((e) => console.error('[PaddleOCR] synthetic info', e));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
@@ -44,7 +64,7 @@ export default function SyntheticDefectsPanel({
   const generate = async () => {
     setBusy('generate'); setError(null);
     try {
-      const d = await paddleOcrAPI.generateSynthetic(projectId, { per_image: perImage, types, test_split: testSplit });
+      const d = await paddleOcrAPI.generateSynthetic(projectId, { per_image: perImage, types, test_split: testSplit, max_chars: maxChars });
       setInfo(d);
       onUseSyntheticChange(true);
     } catch (e: any) {
@@ -75,25 +95,46 @@ export default function SyntheticDefectsPanel({
     <div style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: 12, marginBottom: 12 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
         <h4 style={{ margin: 0 }}>Làm giàu dữ liệu lỗi</h4>
-        <span className="at-hint">
-          tạo ảnh bị đứt nét / mất chữ / chồng chữ từ ảnh đã verify, để model trả “□” thay vì
-          cố đọc chữ in xấu → dây chuyền FAIL chai đó
-        </span>
       </div>
 
       {error && <div className="at-alert-error">{error}</div>}
 
-      <div className="at-form-row" style={{ flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
+      {busy === 'generate' && (
+        <div className="ot-synth-progress">
+          <div className="ot-progress-meta">
+            <span>
+              {!progress || progress.phase === 'loading' ? 'Đang chuẩn bị…'
+                : progress.phase === 'previews' ? 'Đang tạo ảnh xem trước…'
+                : `Đang tạo mẫu lỗi: ${progress.done} / ${progress.total} ảnh`}
+            </span>
+            <b>{progress?.percent ?? 0}%</b>
+          </div>
+          <div className="ot-progress-bar">
+            <div style={{ width: `${progress?.percent ?? 0}%` }} />
+          </div>
+        </div>
+      )}
+
+      <div className="ot-inline-row">
         {TYPES.map((t) => (
-          <label key={t.id} className="at-label" title={t.hint}
-                 style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <label key={t.id} className="at-label ot-check" title={t.hint}>
             <input type="checkbox" checked={types.includes(t.id)} onChange={() => toggle(t.id)} />
             {t.label}
           </label>
         ))}
-        <label className="at-label">
+        <label className="at-label ot-check"
+               title="Mỗi ảnh lỗi làm hỏng ngẫu nhiên từ 1 đến số ký tự này (cùng một kiểu lỗi)">
+          Số ký tự lỗi
+          <select className="at-form-input" style={{ width: 90 }} value={maxChars}
+                  onChange={(e) => setMaxChars(+e.target.value)}>
+            {[1, 2, 3, 4, 5].map((n) => (
+              <option key={n} value={n}>{n === 1 ? '1' : `1 – ${n}`}</option>
+            ))}
+          </select>
+        </label>
+        <label className="at-label ot-check">
           Mẫu lỗi / ảnh
-          <select className="at-form-input" style={{ width: 80 }} value={perImage}
+          <select className="at-form-input" style={{ width: 70 }} value={perImage}
                   onChange={(e) => setPerImage(+e.target.value)}>
             {[1, 2, 3].map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
@@ -110,22 +151,10 @@ export default function SyntheticDefectsPanel({
 
       {info?.exists && (
         <>
-          <div className="ot-hint-row" style={{ marginTop: 8 }}>
-            <span><b>{info.n_train}</b> train + <b>{info.n_test}</b> test (chỉ để đo)</span>
-            <span>định vị được {info.n_localised}/{info.n_items} ảnh</span>
-            {Object.entries(info.by_type ?? {}).filter(([, n]) => n > 0).map(([t, n]) => (
-              <span key={t} className="ot-chip-sm">{TYPE_LABEL[t] ?? t} {n}</span>
-            ))}
-            <span className="at-hint">vị trí ký tự lấy từ {info.localiser}</span>
-          </div>
-
           <label className="at-label" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
             <input type="checkbox" checked={useSynthetic}
                    onChange={(e) => onUseSyntheticChange(e.target.checked)} />
             <b>Dùng dữ liệu lỗi khi train</b>
-            <span className="at-hint">
-              — sau khi train, run được chấm thêm “bắt lỗi”: % ảnh lỗi (từ tập test) mà dây chuyền sẽ FAIL
-            </span>
           </label>
 
           {(info.samples ?? []).length > 0 && (

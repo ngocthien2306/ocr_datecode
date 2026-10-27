@@ -131,7 +131,7 @@ export default function ExportTab({ projectId, model, onModelChange }: Props) {
           <h3 style={{ margin: '14px 0 6px' }}>Engine bindings</h3>
           {!info.runtime_compatible && (
             <div className="at-alert-error">
-              This engine exposes {info.outputs.length} outputs. ai_services' SMTR backend
+              This engine exposes {info.outputs.length} outputs. The line's OCR backend
               asserts exactly two (gtc_logits, ctc_logits), so it would fail at load time on
               the line. Rebuild from the two-output ONNX.
             </div>

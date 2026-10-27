@@ -4,6 +4,8 @@ Mirrors the shape of backend's /api/ml/projects endpoints.
 """
 import logging
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
@@ -20,6 +22,21 @@ router = APIRouter()
 def get_repo(db=Depends(get_database)) -> AnomalyRepository:
     return AnomalyRepository(db)
 
+async def _clean_unique_name(repo, name: str, exclude_id: Optional[str] = None) -> str:
+    """Trimmed, non-empty name no other project uses (case-insensitive).
+
+    Names are display-only — dirs, models and recipes all key on the project
+    id — but two projects with one name are indistinguishable in the recipe's
+    model picker, so a clash is refused.
+    """
+    cleaned = (name or "").strip()
+    if not cleaned:
+        raise HTTPException(400, "Project name cannot be empty")
+    for p in await repo.list_projects():
+        if p.id != exclude_id and p.name.strip().lower() == cleaned.lower():
+            raise HTTPException(409, f"A project named '{p.name}' already exists")
+    return cleaned
+
 
 @router.post("/projects", tags=["Anomaly Projects"])
 async def create_project(
@@ -27,6 +44,7 @@ async def create_project(
     repo: AnomalyRepository = Depends(get_repo),
     current_user: CurrentUser = Depends(get_current_user),
 ):
+    data.name = await _clean_unique_name(repo, data.name)
     project = await repo.create_project(data, current_user.username)
     dataset_fs.ensure_project_dirs(project.id)
     return project.model_dump(by_alias=False)
@@ -60,6 +78,8 @@ async def update_project(
     repo: AnomalyRepository = Depends(get_repo),
     current_user: CurrentUser = Depends(get_current_user),
 ):
+    if data.name is not None:
+        data.name = await _clean_unique_name(repo, data.name, exclude_id=project_id)
     project = await repo.update_project(project_id, data)
     if not project:
         raise HTTPException(404, "Project not found")

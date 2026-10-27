@@ -25,6 +25,7 @@ from app.repositories.ocr_repository import OCRRepository
 from app.services import dataset_fs, gpu_lock, ocr_training, paddle_export, synthetic_defects
 from app.services.dataset_builder import blocking_reason, build_dataset
 from app.services.train_logs import attach_handler, detach_handler, get_buffer
+from app.services.recipe_usage import in_use_message, recipes_using
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +170,7 @@ async def start_training(
         test_split=request.test_split, max_text_length=request.max_text_length,
         exclude_item_ids=request.exclude_item_ids, dry_run=True, synth_entries=synth,
     )
-    reason = blocking_reason(report)
+    reason = blocking_reason(report, batch_size=request.batch_size)
     if reason:
         raise HTTPException(400, reason)
     if report["n_test"] == 0:
@@ -516,6 +517,7 @@ async def delete_model(
     project_id: str,
     model_id: str,
     repo: OCRRepository = Depends(get_repo),
+    db=Depends(get_database),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     model = await repo.get_model(model_id)
@@ -523,6 +525,9 @@ async def delete_model(
         raise HTTPException(404, "Model not found")
     if model.status in ("training", "pending"):
         raise HTTPException(409, "Cancel this run before deleting it")
+    used_by = await recipes_using(db, model_id=model_id)
+    if used_by:
+        raise HTTPException(409, in_use_message("OCR model", used_by))
 
     models_dir = dataset_fs.models_dir(project_id)
     for p in (models_dir / f"{model_id}.pdparams", models_dir / f"{model_id}_config.yml"):

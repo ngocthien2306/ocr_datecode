@@ -160,3 +160,175 @@
 .ot-stat-box .ot-stat-label { font-size: 11px; color: #64748b; text-transform: uppercase; }
 .ot-stat-box.ot-warn { border-color: #f59e0b; background: #fffbeb; }
 .ot-stat-box.ot-bad { border-color: #ef4444; background: #fef2f2; }
+
+/* ── OCR studio layout (scoped: .at-* is shared with the Anomaly studio) ── */
+.ocr-studio .at-sidebar { width: 300px; }
+.ocr-studio .at-project-item { align-items: flex-start; }
+.ocr-studio .at-project-item-name {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+/* ── Train tab: settings (left) + progress/log (right), runs below ── */
+.ot-train-layout {
+  display: grid;
+  grid-template-columns: minmax(380px, 1fr) minmax(420px, 1.2fr);
+  gap: 16px;
+  align-items: stretch;
+  margin-bottom: 20px;
+}
+
+@media (max-width: 1200px) {
+  .ot-train-layout { grid-template-columns: 1fr; }
+}
+
+.ot-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 16px;
+  min-width: 0;
+}
+
+.ot-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.ot-runs-title { margin: 4px 0 10px; }
+
+.ot-count {
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.ot-train-settings .ot-prepare-grid { margin-top: 0; }
+.ot-train-settings .ot-toolbar { padding-bottom: 0; margin-top: 4px; }
+
+.ot-train-progress {
+  display: flex;
+  flex-direction: column;
+}
+
+.ot-status {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+  background: #f1f5f9;
+  color: #475569;
+}
+.ot-status--training, .ot-status--pending { background: #dbeafe; color: #1d4ed8; }
+.ot-status--completed { background: #dcfce7; color: #15803d; }
+.ot-status--failed, .ot-status--cancelled { background: #fee2e2; color: #b91c1c; }
+
+.ot-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.ot-progress-bar {
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.ot-progress-bar > div { height: 100%; background: #3b82f6; transition: width .4s; }
+
+.ot-log-box {
+  flex: 1;
+  min-height: 420px;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: #fff;
+  color: #0f172a;
+  border: 1px solid #e2e8f0;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ot-log-empty {
+  color: #64748b;
+  font-family: inherit;
+  padding: 8px 0;
+}
+
+body.dark-mode .ot-card { background: #1e293b; border-color: #334155; }
+body.dark-mode .ot-card-title { color: #e2e8f0; }
+body.dark-mode .ot-count, body.dark-mode .ot-status { background: #334155; color: #cbd5e1; }
+body.dark-mode .ot-status--training, body.dark-mode .ot-status--pending { background: #1e3a8a; color: #bfdbfe; }
+body.dark-mode .ot-status--completed { background: #14532d; color: #86efac; }
+body.dark-mode .ot-status--failed, body.dark-mode .ot-status--cancelled { background: #7f1d1d; color: #fecaca; }
+body.dark-mode .ot-progress-bar { background: #334155; }
+body.dark-mode .ot-log-box { background: #0f172a; color: #cbd5e1; border-color: #334155; }
+
+/* Train settings: fields on a grid instead of the shared column-only .at-form-row */
+.ot-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 14px;
+  align-items: start;
+  margin-bottom: 10px;
+}
+.ot-settings-grid .at-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+}
+.ot-settings-grid .ot-span-2 { grid-column: span 2; }
+.ot-settings-grid .ot-span-all { grid-column: 1 / -1; }
+.ot-settings-grid .at-label.ot-check { align-self: end; padding-bottom: 8px; }
+
+/* Checkbox / small-control label laid out on one line */
+.at-label.ot-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.ot-inline-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+@media (max-width: 700px) {
+  .ot-settings-grid { grid-template-columns: 1fr 1fr; }
+}
+
+.ot-synth-progress { margin: 4px 0 10px; }
+
+/* Log colours readable on the light log background */
+.ot-log-box .at-log-error { color: #b91c1c; }
+.ot-log-box .at-log-warning { color: #b45309; }
+body.dark-mode .ot-log-box .at-log-error { color: #fca5a5; }
+body.dark-mode .ot-log-box .at-log-warning { color: #fcd34d; }

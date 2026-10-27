@@ -4,6 +4,8 @@ Mirrors anomaly_service/app/api/endpoints/projects.py.
 """
 import logging
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.dependencies.auth import CurrentUser, get_current_user
@@ -11,6 +13,7 @@ from app.db.mongodb import get_database
 from app.models.ocr import OCRProjectCreate, OCRProjectUpdate
 from app.repositories.ocr_repository import OCRRepository
 from app.services import dataset_fs
+from app.services.recipe_usage import in_use_message, recipes_using
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +23,21 @@ router = APIRouter()
 def get_repo(db=Depends(get_database)) -> OCRRepository:
     return OCRRepository(db)
 
+async def _clean_unique_name(repo, name: str, exclude_id: Optional[str] = None) -> str:
+    """Trimmed, non-empty name no other project uses (case-insensitive).
+
+    Names are display-only — dirs, models and recipes all key on the project
+    id — but two projects with one name are indistinguishable in the recipe's
+    model picker, so a clash is refused.
+    """
+    cleaned = (name or "").strip()
+    if not cleaned:
+        raise HTTPException(400, "Project name cannot be empty")
+    for p in await repo.list_projects():
+        if p.id != exclude_id and p.name.strip().lower() == cleaned.lower():
+            raise HTTPException(409, f"A project named '{p.name}' already exists")
+    return cleaned
+
 
 @router.post("/projects")
 async def create_project(
@@ -27,6 +45,7 @@ async def create_project(
     repo: OCRRepository = Depends(get_repo),
     current_user: CurrentUser = Depends(get_current_user),
 ):
+    data.name = await _clean_unique_name(repo, data.name)
     project = await repo.create_project(data, current_user.username)
     dataset_fs.ensure_project_dirs(project.id)
     return project.model_dump(by_alias=False)
@@ -60,6 +79,8 @@ async def update_project(
     repo: OCRRepository = Depends(get_repo),
     current_user: CurrentUser = Depends(get_current_user),
 ):
+    if data.name is not None:
+        data.name = await _clean_unique_name(repo, data.name, exclude_id=project_id)
     project = await repo.update_project(project_id, data)
     if not project:
         raise HTTPException(404, "Project not found")
@@ -70,8 +91,14 @@ async def update_project(
 async def delete_project(
     project_id: str,
     repo: OCRRepository = Depends(get_repo),
+    db=Depends(get_database),
     current_user: CurrentUser = Depends(get_current_user),
 ):
+    # A recipe still pointing here would silently fall back to the default OCR
+    # model on the line; make the user re-point it first.
+    used_by = await recipes_using(db, project_id=project_id)
+    if used_by:
+        raise HTTPException(409, in_use_message("OCR project", used_by))
     # Filesystem first: if the Mongo delete fails the dataset is gone but the
     # project row survives, which is recoverable by hand. The reverse leaves
     # orphaned gigabytes with nothing pointing at them.

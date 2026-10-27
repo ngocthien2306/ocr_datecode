@@ -626,3 +626,30 @@ body.dark-mode .at-syn-na { color: #475569; }
 .at-studio-sub { color: #94a3b8; font-size: 10px; }
 body.dark-mode .at-studio-regions td { color: #e2e8f0; border-color: #1e293b; }
 body.dark-mode .at-studio-regions th { border-color: #334155; }
+
+/* Anomaly studio: wider project sidebar, long names wrap instead of truncating */
+.anomaly-studio .at-sidebar { width: 300px; }
+.anomaly-studio .at-project-item { align-items: flex-start; }
+.anomaly-studio .at-project-item-name {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+/* ── Project rename (shared by the OCR and Anomaly studios) ── */
+.at-project-item-info { min-width: 0; flex: 1; }
+.at-project-name-row { display: flex; align-items: flex-start; gap: 4px; }
+.at-project-name-row .at-project-item-name { flex: 1; min-width: 0; }
+.at-project-rename-btn {
+  opacity: 0; flex-shrink: 0; background: transparent; border: none; color: #64748b;
+  font-size: 13px; line-height: 1; cursor: pointer; padding: 2px 4px; border-radius: 3px;
+  transition: opacity .12s, background .12s;
+}
+.at-project-item:hover .at-project-rename-btn { opacity: 1; }
+.at-project-rename-btn:hover { background: #e2e8f0; color: #1e293b; }
+.at-project-rename { display: flex; flex-direction: column; gap: 6px; cursor: default; }
+.at-project-rename-actions { display: flex; gap: 6px; }
+.at-project-rename-error { font-size: 11px; color: #dc2626; line-height: 1.3; }
+body.dark-mode .at-project-rename-btn:hover { background: #334155; color: #e2e8f0; }
+body.dark-mode .at-project-rename-error { color: #f87171; }

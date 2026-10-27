@@ -46,6 +46,9 @@ const BACKBONE_PRESETS: Record<AnomalyAlgorithm, { backbone: string; layers: str
   padim: { backbone: BACKBONE_OPTIONS.padim[0]!.value, layers: BACKBONE_OPTIONS.padim[0]!.layers },
 };
 
+// Training options are not exposed; every run uses the defaults.
+const SHOW_TRAIN_OPTIONS = false;
+
 const STATUS_COLORS: Record<string, string> = {
   pending: '#94a3b8', training: '#b45309', completed: '#15803d', failed: '#b91c1c', cancelled: '#64748b',
 };
@@ -226,46 +229,52 @@ export default function TrainTab({ projectId, models, onModelsChange, selectedMo
     <div style={{ display: 'flex', gap: 24, flex: 1, minHeight: 0 }}>
       {/* Left: config form + model list */}
       <div style={{ width: 320, display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto' }}>
-        <div>
-          <label className="at-label">Algorithm</label>
-          <select className="at-form-select" value={algorithm}
-                  onChange={(e) => handleAlgorithmChange(e.target.value as AnomalyAlgorithm)}
-                  disabled={!!trainingModel}>
-            <option value="patchcore">PatchCore</option>
-            <option value="padim">Padim</option>
-          </select>
-        </div>
-        <div>
-          <label className="at-label">Backbone</label>
-          <select className="at-form-select" value={backbone}
-                  onChange={(e) => handleBackboneChange(e.target.value)}
-                  disabled={!!trainingModel}>
-            {BACKBONE_OPTIONS[algorithm].map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-        </div>
-        {algorithm === 'patchcore' && (
+        {/* Algorithm, backbone, coreset ratio, image size and test split are fixed
+            to the defaults above (PatchCore · Wide ResNet50-2 · 0.1 · 256 · 0.2). */}
+        {SHOW_TRAIN_OPTIONS && (
+          <>
           <div>
-            <label className="at-label">Coreset sampling ratio</label>
-            <input className="at-form-input" type="number" min={0.01} max={1} step={0.01}
-                   value={coresetRatio} onChange={(e) => setCoresetRatio(Number(e.target.value))} disabled={!!trainingModel} />
+            <label className="at-label">Algorithm</label>
+            <select className="at-form-select" value={algorithm}
+                    onChange={(e) => handleAlgorithmChange(e.target.value as AnomalyAlgorithm)}
+                    disabled={!!trainingModel}>
+              <option value="patchcore">PatchCore</option>
+              <option value="padim">Padim</option>
+            </select>
           </div>
+          <div>
+            <label className="at-label">Backbone</label>
+            <select className="at-form-select" value={backbone}
+                    onChange={(e) => handleBackboneChange(e.target.value)}
+                    disabled={!!trainingModel}>
+              {BACKBONE_OPTIONS[algorithm].map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+          {algorithm === 'patchcore' && (
+            <div>
+              <label className="at-label">Coreset sampling ratio</label>
+              <input className="at-form-input" type="number" min={0.01} max={1} step={0.01}
+                     value={coresetRatio} onChange={(e) => setCoresetRatio(Number(e.target.value))} disabled={!!trainingModel} />
+            </div>
+          )}
+          <div>
+            <label className="at-label">Image size (px)</label>
+            <select className="at-form-select" value={imageSize}
+                    onChange={(e) => setImageSize(Number(e.target.value))} disabled={!!trainingModel}>
+              {IMAGE_SIZE_OPTIONS.map((s) => (
+                <option key={s} value={s}>{s} × {s}{s === 256 ? ' (default)' : ''}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="at-label">Test split (held-out normal fraction)</label>
+            <input className="at-form-input" type="number" min={0.05} max={0.5} step={0.05}
+                   value={testSplit} onChange={(e) => setTestSplit(Number(e.target.value))} disabled={!!trainingModel} />
+          </div>
+          </>
         )}
-        <div>
-          <label className="at-label">Image size (px)</label>
-          <select className="at-form-select" value={imageSize}
-                  onChange={(e) => setImageSize(Number(e.target.value))} disabled={!!trainingModel}>
-            {IMAGE_SIZE_OPTIONS.map((s) => (
-              <option key={s} value={s}>{s} × {s}{s === 256 ? ' (default)' : ''}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="at-label">Test split (held-out normal fraction)</label>
-          <input className="at-form-input" type="number" min={0.05} max={0.5} step={0.05}
-                 value={testSplit} onChange={(e) => setTestSplit(Number(e.target.value))} disabled={!!trainingModel} />
-        </div>
 
         {projection && (
           <div className="at-train-projection">
@@ -317,7 +326,7 @@ export default function TrainTab({ projectId, models, onModelsChange, selectedMo
         <div>
           <label className="at-label">Models</label>
           <div className="at-hint" style={{ marginBottom: 4 }}>
-            Click a version to view/export it in the Eval and Export tabs.
+            Click a version to view/export it in the Export and Test tabs.
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 2 }}>
             {models.length === 0 && <div className="at-hint">No models trained yet.</div>}
@@ -356,7 +365,7 @@ export default function TrainTab({ projectId, models, onModelsChange, selectedMo
                   {m.status === 'completed' && (
                     <div className="at-hint">AUROC {fmtMetric(m.metrics.image_auroc)} · F1 {fmtMetric(m.metrics.image_f1)}</div>
                   )}
-                  {selected && <div className="at-hint" style={{ color: '#2563eb', fontWeight: 600 }}>selected for Eval/Export</div>}
+                  {selected && <div className="at-hint" style={{ color: '#2563eb', fontWeight: 600 }}>selected for Export/Test</div>}
                 </div>
               );
             })}

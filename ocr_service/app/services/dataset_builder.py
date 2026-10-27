@@ -186,14 +186,20 @@ def build_dataset(
     }
 
 
-def blocking_reason(report: Dict, min_train: int = 8) -> Optional[str]:
+def blocking_reason(report: Dict, min_train: int = 8,
+                    batch_size: Optional[int] = None) -> Optional[str]:
     """Why this dataset cannot be trained on, or None.
 
     min_train is a floor, not a recommendation — under a handful of images the
     run completes and reports a meaningless accuracy, which is worse than a
-    refusal.
+    refusal. The train loader drops an incomplete last batch (drop_last), so
+    fewer train images than one batch means zero steps and a crashed run.
     """
     if report["n_train"] < min_train:
         return (f"Only {report['n_train']} trainable image(s) after validation "
                 f"(need at least {min_train}). Verify more labels in the Label tab.")
+    if batch_size and report["n_train"] < batch_size:
+        return (f"Only {report['n_train']} train image(s), fewer than the batch size "
+                f"({batch_size}) — the run would train on nothing and fail. Verify more "
+                f"labels, lower the test split, or pick a smaller batch size.")
     return None
