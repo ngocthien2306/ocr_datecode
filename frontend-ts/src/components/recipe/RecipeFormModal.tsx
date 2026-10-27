@@ -16,6 +16,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useUser } from '@/contexts/UserContext';
 import { API_BASE_URL } from '@/config/api';
 import '@/styles/RecipeFormModal.css';
+import OcrModelPicker from './OcrModelPicker';
 import { Camera, Recipe, Annotation, RecipeCamera } from '@/types';
 import {
   validateRecipeForm, hasValidationErrors, parseApiErrors,
@@ -155,6 +156,20 @@ function applyErosionToImageData(src: ImageData, kw: number, kh: number): ImageD
   return out;
 }
 
+// The line runs Time-based + PLC with no late reject; these fields stay hidden
+// and the defaults (reject_mode 'time_based', reject_method 'PLC',
+// allow_late_reject false, normal_pulse_ms 0) are saved unchanged.
+const SHOW_REJECT_OPTIONS = false;
+
+// Model-tab tuning (defect model, CV method, active method, ML project/model, matching
+// confidence, erosion, wrinkle confidence / show-when-pass, bottle edge / cap methods,
+// dual rotation check) is hidden; saved recipe values are kept.
+const SHOW_MODEL_TUNING = false;
+
+// Bottle edge / cap detection options (Model tab) are hidden; recipes use
+// yolo_segment · outer · yolo_obb · yolo_obb · superpoint · dual check on.
+const SHOW_EDGE_DETECTION = false;
+
 export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = null, mode = 'create' }: RecipeFormModalProps) {
   const [activeTab, setActiveTab] = useState<string>('basic');
   const toast = useToast();
@@ -193,7 +208,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     description: '',
     delay_reject: 100.0,
     reject_pulse: 50.0,
-    reject_method: 'DIO_OUT',
+    reject_method: 'PLC',
     do_reject_number: 2,
     do_alarm_number: 0,
     allow_late_reject: false,
@@ -235,12 +250,12 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
     defect_model: 'arcface',
     classifier_backend: 'embedding',
     cv_method: 'v4',
-    product_detection_method: 'yolo_obb',
+    product_detection_method: 'yolo_segment',
     save_pass_images: true,
     cap_rotation_method: 'yolo_obb',
-    cap_crop_method: 'none',
+    cap_crop_method: 'yolo_obb',
     crop_match_method: 'superpoint',
-    dual_rotation_check: false,
+    dual_rotation_check: true,
     product_box_wall_type: 'outer',
     template_bank_enabled: false,
     template_bank_size: 10,
@@ -402,7 +417,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         description: recipeAny.description || '',
         delay_reject: recipeAny.delay_reject || 100.0,
         reject_pulse: recipeAny.reject_pulse || 50.0,
-        reject_method: recipeAny.reject_method || 'DIO_OUT',
+        reject_method: recipeAny.reject_method || 'PLC',
         do_reject_number: recipeAny.do_reject_number !== undefined ? recipeAny.do_reject_number : 0,
         do_alarm_number: recipeAny.do_alarm_number !== undefined ? recipeAny.do_alarm_number : 0,
         allow_late_reject: recipeAny.allow_late_reject === true,
@@ -442,12 +457,12 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         defect_model: recipeAny.defect_model || 'arcface',
         classifier_backend: recipeAny.classifier_backend || 'embedding',
         cv_method: recipeAny.cv_method || 'v4',
-        product_detection_method: recipeAny.product_detection_method || 'yolo_obb',
+        product_detection_method: recipeAny.product_detection_method || 'yolo_segment',
         save_pass_images: recipeAny.save_pass_images ?? true,
         cap_rotation_method: recipeAny.cap_rotation_method || 'yolo_obb',
-        cap_crop_method: recipeAny.cap_crop_method || 'none',
+        cap_crop_method: recipeAny.cap_crop_method || 'yolo_obb',
         crop_match_method: recipeAny.crop_match_method || 'superpoint',
-        dual_rotation_check: !!recipeAny.dual_rotation_check,
+        dual_rotation_check: recipeAny.dual_rotation_check ?? true,
         product_box_wall_type: recipeAny.product_box_wall_type || 'outer',
         template_bank_enabled: recipeAny.template_bank_enabled ?? false,
         template_bank_size: recipeAny.template_bank_size ?? 10,
@@ -486,7 +501,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         description: '',
         delay_reject: 100.0,
         reject_pulse: 50.0,
-        reject_method: 'DIO_OUT',
+        reject_method: 'PLC',
         do_reject_number: 2,
         do_alarm_number: 0,
         allow_late_reject: false,
@@ -531,13 +546,13 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         template_bank_enabled: false,
         template_bank_size: 10,
         char_denoise_enabled: false,
-        product_detection_method: 'yolo_obb',
+        product_detection_method: 'yolo_segment',
         product_box_wall_type: 'outer',
         save_pass_images: true,
         cap_rotation_method: 'yolo_obb',
-        cap_crop_method: 'none',
+        cap_crop_method: 'yolo_obb',
         crop_match_method: 'superpoint',
-        dual_rotation_check: false,
+        dual_rotation_check: true,
         wrinkle_conf: 0.25,
         wrinkle_show_when_pass: true,
         matching_conf: 0.20,
@@ -577,8 +592,7 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         .find(m => m.model_id === formData.ocr_model_id) ?? null
     : null;
 
-  const handleOcrModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const v = e.target.value;
+  const handleOcrModelChange = (v: string) => {
     if (v.startsWith('CUSTOM:') || v.startsWith('CUSTOM_PADDLE:')) {
       const [type, projectId, modelId] = v.split(':');
       setFormData(prev => ({
@@ -960,10 +974,10 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         defect_model:  formData.defect_model  || 'arcface',
         classifier_backend: formData.classifier_backend || 'embedding',
         cv_method: formData.cv_method || 'v4',
-        product_detection_method: formData.product_detection_method || 'yolo_obb',
+        product_detection_method: formData.product_detection_method || 'yolo_segment',
         save_pass_images: formData.save_pass_images ?? true,
         cap_rotation_method: formData.cap_rotation_method || 'yolo_obb',
-        cap_crop_method: formData.cap_crop_method || 'none',
+        cap_crop_method: formData.cap_crop_method || 'yolo_obb',
         crop_match_method: formData.crop_match_method || 'superpoint',
         dual_rotation_check: !!formData.dual_rotation_check,
         product_box_wall_type: formData.product_box_wall_type || 'outer',
@@ -1007,6 +1021,11 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
         // Generic server/network error → toast
         const msg = typeof detail === 'string' ? detail : 'Failed to save recipe';
         toast.error(msg);
+        // Duplicate product code → also flag the field so the user sees where to fix it
+        if (status === 400 && typeof detail === 'string' && detail.includes('product code')) {
+          setErrors(prev => ({ ...prev, product_code: 'This product code is already used by another recipe' }));
+          setActiveTab('basic');
+        }
       }
     } finally {
       setLoading(false);
@@ -1790,28 +1809,27 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                              className={errors.description ? 'error' : ''} />
                     {errors.description && <span className="error-message">{errors.description}</span>}
                   </div>
-                  <div className="form-group">
-                    <label>Reject Mode</label>
-                    <select
-                      name="reject_mode"
-                      value={formData.reject_mode}
-                      onChange={handleInputChange}
-                    >
-                      <option value="time_based">Time-based (AI timer)</option>
-                      <option value="sensor_based">Sensor-based (PLC controls)</option>
-                    </select>
-                    <small className="form-hint">
-                      Time-based: AI schedules the reject pulse after capture. Sensor-based: PLC fires the pulse via a dedicated sensor in front of the rejector; AI only sends a 0/1 verdict plus handshake (no timing involved).
-                    </small>
-                  </div>
+                  {SHOW_REJECT_OPTIONS && (
+                    <div className="form-group">
+                      <label>Reject Mode</label>
+                      <select
+                        name="reject_mode"
+                        value={formData.reject_mode}
+                        onChange={handleInputChange}
+                      >
+                        <option value="time_based">Time-based (AI timer)</option>
+                        <option value="sensor_based">Sensor-based (PLC controls)</option>
+                      </select>
+                      <small className="form-hint">
+                        Time-based: AI schedules the reject pulse after capture. Sensor-based: PLC fires the pulse via a dedicated sensor in front of the rejector; AI only sends a 0/1 verdict plus handshake (no timing involved).
+                      </small>
+                    </div>
+                  )}
                   <div className="form-group">
                     <label>Reject Pulse (ms)</label>
                     <input type="number" name="reject_pulse" value={formData.reject_pulse}
                            onChange={handleInputChange} step="0.1" min="0"
                            placeholder="Reject pulse duration in milliseconds" />
-                    <small className="form-hint">
-                      Pulse width. Time-based: AI controls the pulse. Sensor-based: written once into the pulse-width register at recipe load for the PLC to use.
-                    </small>
                   </div>
                   <div className="form-group">
                     <label>Alarm DO Number</label>
@@ -1844,18 +1862,20 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                                placeholder="Delay reject time in milliseconds" />
                         <small className="form-hint">Time from camera capture to product arriving at the rejector (ms).</small>
                       </div>
-                      <div className="form-group">
-                        <label>Reject Output Method</label>
-                        <select
-                          name="reject_method"
-                          value={formData.reject_method}
-                          onChange={handleInputChange}
-                        >
-                          <option value="DIO">DIO_OUT</option>
-                          <option value="PLC">PLC</option>
-                        </select>
-                        <small className="form-hint">Output method for reject signal</small>
-                      </div>
+                      {SHOW_REJECT_OPTIONS && (
+                        <div className="form-group">
+                          <label>Reject Output Method</label>
+                          <select
+                            name="reject_method"
+                            value={formData.reject_method}
+                            onChange={handleInputChange}
+                          >
+                            <option value="DIO">DIO_OUT</option>
+                            <option value="PLC">PLC</option>
+                          </select>
+                          <small className="form-hint">Output method for reject signal</small>
+                        </div>
+                      )}
                       <div className="form-group">
                         <label>Reject DO Number</label>
                         <select
@@ -1870,34 +1890,38 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                         </select>
                         <small className="form-hint">Digital Output port for reject control (0-3)</small>
                       </div>
-                      <div className="form-group">
-                        <label>Allow Late Reject</label>
-                        <input
-                          type="checkbox"
-                          name="allow_late_reject"
-                          checked={formData.allow_late_reject}
-                          onChange={handleInputChange}
-                          style={{width: 'auto', alignSelf: 'flex-start', marginRight: 'auto'}}
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label>Normal Pulse Width (ms)</label>
-                        <input
-                          type="number"
-                          name="normal_pulse_ms"
-                          value={formData.normal_pulse_ms}
-                          onChange={handleInputChange}
-                          step="10"
-                          min="0"
-                          max="999999"
-                          placeholder="Expected pulse width per bottle (ms)"
-                          className={errors.normal_pulse_ms ? 'error' : ''}
-                        />
-                        {errors.normal_pulse_ms && <span className="error-message">{errors.normal_pulse_ms}</span>}
-                        <small className="form-hint">
-                          Expected DI pulse width per bottle (ms). Stuck detected when pulse &gt; 2.0×
-                        </small>
-                      </div>
+                      {SHOW_REJECT_OPTIONS && (
+                        <div className="form-group">
+                          <label>Allow Late Reject</label>
+                          <input
+                            type="checkbox"
+                            name="allow_late_reject"
+                            checked={formData.allow_late_reject}
+                            onChange={handleInputChange}
+                            style={{width: 'auto', alignSelf: 'flex-start', marginRight: 'auto'}}
+                          />
+                        </div>
+                      )}
+                      {SHOW_REJECT_OPTIONS && (
+                        <div className="form-group">
+                          <label>Normal Pulse Width (ms)</label>
+                          <input
+                            type="number"
+                            name="normal_pulse_ms"
+                            value={formData.normal_pulse_ms}
+                            onChange={handleInputChange}
+                            step="10"
+                            min="0"
+                            max="999999"
+                            placeholder="Expected pulse width per bottle (ms)"
+                            className={errors.normal_pulse_ms ? 'error' : ''}
+                          />
+                          {errors.normal_pulse_ms && <span className="error-message">{errors.normal_pulse_ms}</span>}
+                          <small className="form-hint">
+                            Expected DI pulse width per bottle (ms). Stuck detected when pulse &gt; 2.0×
+                          </small>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -2320,40 +2344,13 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                     <h3>OCR Model</h3>
                     <div className="form-group">
                       <label>OCR Model Type</label>
-                      <select
-                        name="ocr_model_type"
+                      <OcrModelPicker
                         value={ocrSelectValue}
                         onChange={handleOcrModelChange}
-                      >
-                        <option value="">-- Default --</option>
-                        <option value="SMTR">SMTR (large-x)</option>
-                        <option value="SVTRV2_CTC">SVTRV2_CTC (large)</option>
-                        <option value="OPENOCR_REPSVTR">OPENOCR_REPSVTR (medium)</option>
-                        <option value="PADDLEV5">PADDLEV5 (small)</option>
-                        <option value="PADDLEV6">PADDLEV6 (small)</option>
-                        {/* Trained models come after the built-ins, grouped per
-                            OCR project. Absent entirely when nothing has been
-                            trained or the OCR service is unreachable, so the
-                            dropdown degrades to exactly what it was before. */}
-                        {(ocrTrained?.projects ?? []).map(g => (
-                          <optgroup key={g.project_id} label={`Trained · ${g.project_name}`}>
-                            {g.models.map(m => (
-                              <option key={m.model_id} value={`CUSTOM:${g.project_id}:${m.model_id}`}>
-                                {m.label}{m.use_space_char ? ' · space' : ''}
-                              </option>
-                            ))}
-                          </optgroup>
-                        ))}
-                        {(paddleTrained?.projects ?? []).map(g => (
-                          <optgroup key={`paddle-${g.project_id}`} label={`Paddle · ${g.project_name}`}>
-                            {g.models.map(m => (
-                              <option key={m.model_id} value={`CUSTOM_PADDLE:${g.project_id}:${m.model_id}`}>
-                                {m.label}{m.runtime === 'onnx' ? ' · ONNX only' : ''}
-                              </option>
-                            ))}
-                          </optgroup>
-                        ))}
-                      </select>
+                        smtrModels={ocrTrained}
+                        paddleModels={paddleTrained}
+                        currentRecipeId={recipe?.id ?? null}
+                      />
                       {ocrIsCustom && !ocrSelectedTrained && !ocrSelectedPaddle && (
                         <small className="field-description" style={{ color: 'var(--color-warning, #f59e0b)' }}>
                           ⚠️ This recipe points at a trained OCR model that is no longer
@@ -2382,47 +2379,63 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       )}
                       {/* <small className="field-description">OCR recognition backbone used for text reading</small> */}
                     </div>
-                    <div className="form-group">
-                      <label>Defect Model</label>
-                      <select
-                        name="defect_model"
-                        value={formData.defect_model}
-                        onChange={(e) => setFormData(prev => ({ ...prev, defect_model: e.target.value }))}
-                      >
-                        <option value="arcface">ArcChar (class-anchored)</option>
-                        <option value="supcon">SupCon (contrastive embedding)</option>
-                      </select>
-                      <small className="field-description">Template model used for per-character OK/NG classification</small>
+                    <div className="bottle-edge-checkbox">
+                      <label className="bottle-edge-checkbox__label">
+                        <input
+                          type="checkbox"
+                          checked={formData.save_pass_images}
+                          onChange={(e) =>
+                            setFormData(prev => ({ ...prev, save_pass_images: e.target.checked }))
+                          }
+                        />
+                        <span>Save PASS images (keep 200 most-recent per camera)</span>
+                      </label>
                     </div>
+                    {SHOW_MODEL_TUNING && (
+                      <div className="form-group">
+                        <label>Defect Model</label>
+                        <select
+                          name="defect_model"
+                          value={formData.defect_model}
+                          onChange={(e) => setFormData(prev => ({ ...prev, defect_model: e.target.value }))}
+                        >
+                          <option value="arcface">ArcChar (class-anchored)</option>
+                          <option value="supcon">SupCon (contrastive embedding)</option>
+                        </select>
+                        <small className="field-description">Template model used for per-character OK/NG classification</small>
+                      </div>
+                    )}
 
                     {/* CV Method — chỉ áp dụng khi classifier_backend='embedding' */}
-                    <div
-                      className="form-group"
-                      style={{ opacity: formData.classifier_backend === 'embedding' ? 1 : 0.55 }}
-                    >
-                      <label>CV Method</label>
-                      <select
-                        name="cv_method"
-                        value={formData.cv_method}
-                        disabled={formData.classifier_backend !== 'embedding'}
-                        onChange={(e) => setFormData(prev => ({ ...prev, cv_method: e.target.value }))}
+                    {SHOW_MODEL_TUNING && (
+                      <div
+                        className="form-group"
+                        style={{ opacity: formData.classifier_backend === 'embedding' ? 1 : 0.55 }}
                       >
-                        <option value="legacy">Pattern Match (Classic)</option>
-                        <option value="v3">Ink Defect Detector</option>
-                        <option value="v4">Ink Defect Detector (Scale-Tolerant)</option>
-                        <option value="v5">Local Defect Detector (Tile-wise + Scale)</option>
-                        <option value="shape_v7">Shape Outline Match</option>
-                        <option value="pixel">Pixel Count (Template-Guided)</option>
-                      </select>
-                      {/* <small className="field-description">
-                        <b>Pattern Match</b>: template similarity (blur TM + ECC-aligned IoU + pixel coverage).&nbsp;
-                        <b>Ink Defect Detector</b>: detects over-ink (smudge) and under-ink (broken stroke) via directional pixel diff.&nbsp;
-                        <b>Scale-Tolerant</b> variant: same but handles size variation via AFFINE alignment.&nbsp;
-                        <b>Local Defect Detector</b>: splits char into 3×3 tiles + Scale-Tolerant — surfaces localized defects (small ink smudge, broken stroke piece) that get diluted in global metric.&nbsp;
-                        <b>Shape Outline Match</b>: compares gradient orientation (LineMOD/Halcon style) — lighting-robust, shape-focused.
-                      </small> */}
+                        <label>CV Method</label>
+                        <select
+                          name="cv_method"
+                          value={formData.cv_method}
+                          disabled={formData.classifier_backend !== 'embedding'}
+                          onChange={(e) => setFormData(prev => ({ ...prev, cv_method: e.target.value }))}
+                        >
+                          <option value="legacy">Pattern Match (Classic)</option>
+                          <option value="v3">Ink Defect Detector</option>
+                          <option value="v4">Ink Defect Detector (Scale-Tolerant)</option>
+                          <option value="v5">Local Defect Detector (Tile-wise + Scale)</option>
+                          <option value="shape_v7">Shape Outline Match</option>
+                          <option value="pixel">Pixel Count (Template-Guided)</option>
+                        </select>
+                        {/* <small className="field-description">
+                          <b>Pattern Match</b>: template similarity (blur TM + ECC-aligned IoU + pixel coverage).&nbsp;
+                          <b>Ink Defect Detector</b>: detects over-ink (smudge) and under-ink (broken stroke) via directional pixel diff.&nbsp;
+                          <b>Scale-Tolerant</b> variant: same but handles size variation via AFFINE alignment.&nbsp;
+                          <b>Local Defect Detector</b>: splits char into 3×3 tiles + Scale-Tolerant — surfaces localized defects (small ink smudge, broken stroke piece) that get diluted in global metric.&nbsp;
+                          <b>Shape Outline Match</b>: compares gradient orientation (LineMOD/Halcon style) — lighting-robust, shape-focused.
+                        </small> */}
 
-                    </div>
+                      </div>
+                    )}
 
                     {/* ── Char Denoise — largest-CC filter (embedding mode only) ── */}
                     {/* <div className={`template-bank-card ${formData.classifier_backend !== 'embedding' ? 'disabled' : ''}`}>
@@ -2476,232 +2489,231 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                       </div>
                     </div> */}
                   </div>
-                  <div className="model-column">
-                    <h3>ML Quality Inspection</h3>
-                    {/* Active method toggle — embedding vs ML trained model */}
-                    <div className="form-group">
-                      <label>Active Method</label>
-                      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 4 }}>
-                        {([
-                          { value: 'embedding', label: 'Embedding (defect_model cosine)', hint: 'Pure template matching, no training' },
-                          { value: 'ml',        label: 'ML Trained Model',                 hint: 'Use the trained classifier below' },
-                        ] as const).map(opt => (
-                          <label key={opt.value}
-                            style={{ display: 'flex', alignItems: 'flex-start', gap: 6, cursor: 'pointer', flex: '1 1 220px' }}>
-                            <input type="radio" name="classifier_backend"
-                              value={opt.value}
-                              checked={formData.classifier_backend === opt.value}
-                              onChange={() => setFormData(prev => ({ ...prev, classifier_backend: opt.value }))} />
-                            <div style={{ display: 'flex', flexDirection: 'column' }}>
-                              <span style={{ fontSize: 13, fontWeight: formData.classifier_backend === opt.value ? 600 : 400 }}>
-                                {opt.label}
-                              </span>
-                              <span style={{ fontSize: 10, opacity: 0.65 }}>{opt.hint}</span>
-                            </div>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="form-group" style={{ opacity: formData.classifier_backend === 'ml' ? 1 : 0.55 }}>
-                      <label>AI Training Project {formData.classifier_backend === 'ml' && <span className="required">*</span>}</label>
-                      <select
-                        value={formData.ml_project_id}
-                        onChange={(e) => setFormData(prev => ({ ...prev, ml_project_id: e.target.value, ml_model_id: '' }))}
-                        disabled={loadingMlProjects || formData.classifier_backend !== 'ml'}
-                      >
-                        <option value="">-- None --</option>
-                        {mlProjects.map(p => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                      </select>
-                      {loadingMlProjects && <small className="field-description">Loading projects…</small>}
-                    </div>
-                    <div className="form-group" style={{ opacity: formData.classifier_backend === 'ml' ? 1 : 0.55 }}>
-                      <label>Trained Model {formData.classifier_backend === 'ml' && <span className="required">*</span>}</label>
-                      <select
-                        value={formData.ml_model_id}
-                        onChange={(e) => setFormData(prev => ({ ...prev, ml_model_id: e.target.value }))}
-                        disabled={!formData.ml_project_id || loadingMlModels || formData.classifier_backend !== 'ml'}
-                      >
-                        <option value="">-- None --</option>
-                        {mlModels.map(m => (
-                          <option key={m.id} value={m.id}>
-                            {m.algorithm.toUpperCase()} · acc {(m.metrics.accuracy_test * 100).toFixed(1)}% · {new Date(m.created_at).toLocaleDateString()}
-                          </option>
-                        ))}
-                      </select>
-                      {loadingMlModels && <small className="field-description">Loading models…</small>}
-                      {formData.ml_project_id && !loadingMlModels && mlModels.length === 0 && (
-                        <small className="field-description" style={{ color: 'var(--color-warning, #f59e0b)' }}>No completed models in this project yet</small>
-                      )}
-                      {/* ── Char coverage warning ─────────────────────────── */}
-                      {formData.ml_model_id && recipeChars.length > 0 && (
-                        <div style={{ marginTop: 8, padding: 8, borderRadius: 4,
-                          background: mlCoverage && mlCoverage.missing.length === 0
-                            ? 'rgba(34,197,94,.12)'
-                            : 'rgba(245,158,11,.12)',
-                          border: `1px solid ${
-                            mlCoverage && mlCoverage.missing.length === 0
-                              ? 'rgba(34,197,94,.35)' : 'rgba(245,158,11,.35)'
-                          }`,
-                          fontSize: 12,
-                        }}>
-                          {loadingMlCoverage ? (
-                            <span>Checking char coverage…</span>
-                          ) : mlCoverage ? (
-                            <>
-                              <div>
-                                <strong>Coverage: {mlCoverage.pct.toFixed(0)}%</strong>
-                                <span style={{ marginLeft: 8, color: '#9ca3af' }}>
-                                  ({mlCoverage.covered.length}/{recipeChars.length} chars)
-                                </span>
-                              </div>
-                              {mlCoverage.missing.length > 0 && (
-                                <div style={{ marginTop: 4 }}>
-                                  <span style={{ color: 'var(--color-warning, #f59e0b)' }}>
-                                    ⚠️ Missing: {mlCoverage.missing.map(c => `"${c}"`).join(', ')}
+                  {(SHOW_MODEL_TUNING || SHOW_EDGE_DETECTION) && (
+                    <div className="model-column">
+                      {SHOW_MODEL_TUNING && <h3>ML Quality Inspection</h3>}
+                      {/* Active method toggle — embedding vs ML trained model */}
+                      {SHOW_MODEL_TUNING && (
+                        <div className="form-group">
+                          <label>Active Method</label>
+                          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 4 }}>
+                            {([
+                              { value: 'embedding', label: 'Embedding (defect_model cosine)', hint: 'Pure template matching, no training' },
+                              { value: 'ml',        label: 'ML Trained Model',                 hint: 'Use the trained classifier below' },
+                            ] as const).map(opt => (
+                              <label key={opt.value}
+                                style={{ display: 'flex', alignItems: 'flex-start', gap: 6, cursor: 'pointer', flex: '1 1 220px' }}>
+                                <input type="radio" name="classifier_backend"
+                                  value={opt.value}
+                                  checked={formData.classifier_backend === opt.value}
+                                  onChange={() => setFormData(prev => ({ ...prev, classifier_backend: opt.value }))} />
+                                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                  <span style={{ fontSize: 13, fontWeight: formData.classifier_backend === opt.value ? 600 : 400 }}>
+                                    {opt.label}
                                   </span>
-                                  <br />
-                                  {/* <small style={{ color: '#9ca3af' }}>
-                                    ML check sẽ bị SKIP cho các bbox có chars này. Label & retrain project nếu cần full coverage.
-                                  </small> */}
+                                  <span style={{ fontSize: 10, opacity: 0.65 }}>{opt.hint}</span>
                                 </div>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {SHOW_MODEL_TUNING && (
+                        <div className="form-group" style={{ opacity: formData.classifier_backend === 'ml' ? 1 : 0.55 }}>
+                          <label>AI Training Project {formData.classifier_backend === 'ml' && <span className="required">*</span>}</label>
+                          <select
+                            value={formData.ml_project_id}
+                            onChange={(e) => setFormData(prev => ({ ...prev, ml_project_id: e.target.value, ml_model_id: '' }))}
+                            disabled={loadingMlProjects || formData.classifier_backend !== 'ml'}
+                          >
+                            <option value="">-- None --</option>
+                            {mlProjects.map(p => (
+                              <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                          </select>
+                          {loadingMlProjects && <small className="field-description">Loading projects…</small>}
+                        </div>
+                      )}
+                      {SHOW_MODEL_TUNING && (
+                        <div className="form-group" style={{ opacity: formData.classifier_backend === 'ml' ? 1 : 0.55 }}>
+                          <label>Trained Model {formData.classifier_backend === 'ml' && <span className="required">*</span>}</label>
+                          <select
+                            value={formData.ml_model_id}
+                            onChange={(e) => setFormData(prev => ({ ...prev, ml_model_id: e.target.value }))}
+                            disabled={!formData.ml_project_id || loadingMlModels || formData.classifier_backend !== 'ml'}
+                          >
+                            <option value="">-- None --</option>
+                            {mlModels.map(m => (
+                              <option key={m.id} value={m.id}>
+                                {m.algorithm.toUpperCase()} · acc {(m.metrics.accuracy_test * 100).toFixed(1)}% · {new Date(m.created_at).toLocaleDateString()}
+                              </option>
+                            ))}
+                          </select>
+                          {loadingMlModels && <small className="field-description">Loading models…</small>}
+                          {formData.ml_project_id && !loadingMlModels && mlModels.length === 0 && (
+                            <small className="field-description" style={{ color: 'var(--color-warning, #f59e0b)' }}>No completed models in this project yet</small>
+                          )}
+                          {/* ── Char coverage warning ─────────────────────────── */}
+                          {formData.ml_model_id && recipeChars.length > 0 && (
+                            <div style={{ marginTop: 8, padding: 8, borderRadius: 4,
+                              background: mlCoverage && mlCoverage.missing.length === 0
+                                ? 'rgba(34,197,94,.12)'
+                                : 'rgba(245,158,11,.12)',
+                              border: `1px solid ${
+                                mlCoverage && mlCoverage.missing.length === 0
+                                  ? 'rgba(34,197,94,.35)' : 'rgba(245,158,11,.35)'
+                              }`,
+                              fontSize: 12,
+                            }}>
+                              {loadingMlCoverage ? (
+                                <span>Checking char coverage…</span>
+                              ) : mlCoverage ? (
+                                <>
+                                  <div>
+                                    <strong>Coverage: {mlCoverage.pct.toFixed(0)}%</strong>
+                                    <span style={{ marginLeft: 8, color: '#9ca3af' }}>
+                                      ({mlCoverage.covered.length}/{recipeChars.length} chars)
+                                    </span>
+                                  </div>
+                                  {mlCoverage.missing.length > 0 && (
+                                    <div style={{ marginTop: 4 }}>
+                                      <span style={{ color: 'var(--color-warning, #f59e0b)' }}>
+                                        ⚠️ Missing: {mlCoverage.missing.map(c => `"${c}"`).join(', ')}
+                                      </span>
+                                      <br />
+                                      {/* <small style={{ color: '#9ca3af' }}>
+                                        ML check sẽ bị SKIP cho các bbox có chars này. Label & retrain project nếu cần full coverage.
+                                      </small> */}
+                                    </div>
+                                  )}
+                                  {mlCoverage.missing.length === 0 && (
+                                    <div style={{ color: 'var(--color-success, #22c55e)', marginTop: 2 }}>
+                                      ✓ All recipe chars covered by this model
+                                    </div>
+                                  )}
+                                </>
+                              ) : (
+                                <small>Coverage check unavailable</small>
                               )}
-                              {mlCoverage.missing.length === 0 && (
-                                <div style={{ color: 'var(--color-success, #22c55e)', marginTop: 2 }}>
-                                  ✓ All recipe chars covered by this model
-                                </div>
-                              )}
-                            </>
-                          ) : (
-                            <small>Coverage check unavailable</small>
+                            </div>
                           )}
                         </div>
                       )}
-                    </div>
 
-                    {/* ─── Bottle Edge Detection group ────────────────────── */}
-                    <div className="bottle-edge-card">
-                      <div className="bottle-edge-card__title">
-                        Bottle Edge Detection
-                      </div>
-
-                      {/* Row 1: Method + Product Box Wall Type */}
-                      <div className="bottle-edge-row bottle-edge-row--2col">
-                        <div className="form-group">
-                          <label>Method</label>
-                          <select
-                            name="product_detection_method"
-                            value={formData.product_detection_method}
-                            onChange={(e) =>
-                              setFormData(prev => ({ ...prev, product_detection_method: e.target.value }))
-                            }
-                          >
-                            <option value="yolo_obb">YOLO OBB (trained model)</option>
-                            <option value="yolo_segment">YOLO Segment (trained model)</option>
-                          </select>
+                      {/* ─── Bottle Edge Detection group ────────────────────── */}
+                      <div className="bottle-edge-card">
+                        <div className="bottle-edge-card__title">
+                          Bottle Edge Detection
                         </div>
 
-                        <div
-                          className={
-                            'form-group' +
-                            (formData.product_detection_method === 'yolo_segment'
-                              ? ''
-                              : ' bottle-edge-disabled')
-                          }
-                        >
-                          <label>Product Box Wall Type</label>
-                          <select
-                            name="product_box_wall_type"
-                            value={formData.product_box_wall_type}
-                            onChange={(e) =>
-                              setFormData(prev => ({ ...prev, product_box_wall_type: e.target.value }))
-                            }
-                          >
-                            <option value="outer">Outer wall</option>
-                            <option value="inner">Inner wall</option>
-                          </select>
-                        </div>
-                      </div>
+                        {SHOW_EDGE_DETECTION && (
+                          <>
+                            {/* Row 1: Method + Product Box Wall Type */}
+                            <div className="bottle-edge-row bottle-edge-row--2col">
+                              <div className="form-group">
+                                <label>Method</label>
+                                <select
+                                  name="product_detection_method"
+                                  value={formData.product_detection_method}
+                                  onChange={(e) =>
+                                    setFormData(prev => ({ ...prev, product_detection_method: e.target.value }))
+                                  }
+                                >
+                                  <option value="yolo_obb">YOLO OBB (trained model)</option>
+                                  <option value="yolo_segment">YOLO Segment (trained model)</option>
+                                </select>
+                              </div>
 
-                      {/* Row 2: Cap Rotation Method + Cap Crop Method */}
-                      <div className="bottle-edge-row bottle-edge-row--2col">
-                        <div className="form-group">
-                          <label>Cap Rotation Method</label>
-                          <select
-                            name="cap_rotation_method"
-                            value={formData.cap_rotation_method}
-                            onChange={(e) =>
-                              setFormData(prev => ({ ...prev, cap_rotation_method: e.target.value }))
-                            }
-                          >
-                            <option value="yolo_obb">YOLO OBB</option>
-                            <option value="yolo_segment">YOLO Segment</option>
-                          </select>
-                        </div>
+                              <div
+                                className={
+                                  'form-group' +
+                                  (formData.product_detection_method === 'yolo_segment'
+                                    ? ''
+                                    : ' bottle-edge-disabled')
+                                }
+                              >
+                                <label>Product Box Wall Type</label>
+                                <select
+                                  name="product_box_wall_type"
+                                  value={formData.product_box_wall_type}
+                                  onChange={(e) =>
+                                    setFormData(prev => ({ ...prev, product_box_wall_type: e.target.value }))
+                                  }
+                                >
+                                  <option value="outer">Outer wall</option>
+                                  <option value="inner">Inner wall</option>
+                                </select>
+                              </div>
+                            </div>
 
-                        <div className="form-group">
-                          <label>Cap Crop Method</label>
-                          <select
-                            name="cap_crop_method"
-                            value={formData.cap_crop_method}
-                            onChange={(e) =>
-                              setFormData(prev => ({ ...prev, cap_crop_method: e.target.value }))
-                            }
-                          >
-                            <option value="none">None (use crop_area)</option>
-                            <option value="yolo_obb">YOLO OBB</option>
-                            <option value="yolo_segment">YOLO Segment</option>
-                          </select>
-                        </div>
-                      </div>
+                            {/* Row 2: Cap Rotation Method + Cap Crop Method */}
+                            <div className="bottle-edge-row bottle-edge-row--2col">
+                              <div className="form-group">
+                                <label>Cap Rotation Method</label>
+                                <select
+                                  name="cap_rotation_method"
+                                  value={formData.cap_rotation_method}
+                                  onChange={(e) =>
+                                    setFormData(prev => ({ ...prev, cap_rotation_method: e.target.value }))
+                                  }
+                                >
+                                  <option value="yolo_obb">YOLO OBB</option>
+                                  <option value="yolo_segment">YOLO Segment</option>
+                                </select>
+                              </div>
 
-                      {/* Row 3: Crop Match Method (full row) */}
-                      <div className="bottle-edge-row bottle-edge-row--1col">
-                        <div className="form-group">
-                          <label>Crop Match Method</label>
-                          <select
-                            name="crop_match_method"
-                            value={formData.crop_match_method}
-                            onChange={(e) =>
-                              setFormData(prev => ({ ...prev, crop_match_method: e.target.value }))
-                            }
-                          >
-                            <option value="superpoint">SuperPoint</option>
-                            <option value="shape_outline">Shape Outline</option>
-                          </select>
-                        </div>
-                      </div>
+                              <div className="form-group">
+                                <label>Cap Crop Method</label>
+                                <select
+                                  name="cap_crop_method"
+                                  value={formData.cap_crop_method}
+                                  onChange={(e) =>
+                                    setFormData(prev => ({ ...prev, cap_crop_method: e.target.value }))
+                                  }
+                                >
+                                  <option value="none">None (use crop_area)</option>
+                                  <option value="yolo_obb">YOLO OBB</option>
+                                  <option value="yolo_segment">YOLO Segment</option>
+                                </select>
+                              </div>
+                            </div>
 
-                      {/* Row 4: Dual Rotation Check (checkbox, full row) */}
-                      <div className="bottle-edge-checkbox">
-                        <label className="bottle-edge-checkbox__label">
-                          <input
-                            type="checkbox"
-                            checked={formData.dual_rotation_check}
-                            onChange={(e) =>
-                              setFormData(prev => ({ ...prev, dual_rotation_check: e.target.checked }))
-                            }
-                          />
-                          <span>Dual Rotation Check (Check_Color only — try both rotations, pick higher match)</span>
-                        </label>
-                      </div>
+                            {/* Row 3: Crop Match Method (full row) */}
+                            <div className="bottle-edge-row bottle-edge-row--1col">
+                              <div className="form-group">
+                                <label>Crop Match Method</label>
+                                <select
+                                  name="crop_match_method"
+                                  value={formData.crop_match_method}
+                                  onChange={(e) =>
+                                    setFormData(prev => ({ ...prev, crop_match_method: e.target.value }))
+                                  }
+                                >
+                                  <option value="superpoint">SuperPoint</option>
+                                  <option value="shape_outline">Shape Outline</option>
+                                </select>
+                              </div>
+                            </div>
 
-                      {/* Row 5: Save PASS images (checkbox, full row) */}
-                      <div className="bottle-edge-checkbox">
-                        <label className="bottle-edge-checkbox__label">
-                          <input
-                            type="checkbox"
-                            checked={formData.save_pass_images}
-                            onChange={(e) =>
-                              setFormData(prev => ({ ...prev, save_pass_images: e.target.checked }))
-                            }
-                          />
-                          <span>Save PASS images (keep 200 most-recent per camera — used to re-test missed defects in Edge Setup)</span>
-                        </label>
+                            {/* Row 4: Dual Rotation Check (checkbox, full row) */}
+                            <div className="bottle-edge-checkbox">
+                              <label className="bottle-edge-checkbox__label">
+                                <input
+                                  type="checkbox"
+                                  checked={formData.dual_rotation_check}
+                                  onChange={(e) =>
+                                    setFormData(prev => ({ ...prev, dual_rotation_check: e.target.checked }))
+                                  }
+                                />
+                                <span>Dual Rotation Check (Check_Color only — try both rotations, pick higher match)</span>
+                              </label>
+                            </div>
+                          </>
+                        )}
+
                       </div>
                     </div>
-                  </div>
+                  )}
                 </div>
 
                 {/* ── Model Thresholds ── HIDDEN: not wired to AI service yet (dead config) ── */}
@@ -2762,204 +2774,218 @@ export default function RecipeFormModal({ isOpen, onClose, onSubmit, recipe = nu
                 )}
 
                 {/* ── Matching Confidence + Wrinkle Detection (50/50 row) ── */}
-                <div className="model-columns">
-                  <div className="model-column">
-                    <h3>Matching Confidence</h3>
-                    <div className="form-group">
-                      <label>
-                        Threshold
-                        <span style={{ marginLeft: 12, fontWeight: 600, fontFamily: 'monospace' }}>
-                          {((formData.matching_conf ?? 0.20) * 100).toFixed(0)}%
-                        </span>
-                      </label>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <input
-                          type="range"
-                          min={0}
-                          max={1}
-                          step={0.01}
-                          value={formData.matching_conf ?? 0.20}
-                          onChange={(e) => setFormData(prev => ({ ...prev, matching_conf: parseFloat(e.target.value) }))}
-                          style={{ flex: 1 }}
-                        />
-                        <input
-                          type="number"
-                          min={0}
-                          max={1}
-                          step={0.01}
-                          value={formData.matching_conf ?? 0.20}
-                          onChange={(e) => {
-                            const v = Math.max(0, Math.min(1, parseFloat(e.target.value) || 0));
-                            setFormData(prev => ({ ...prev, matching_conf: v }));
-                          }}
-                          style={{ width: 80 }}
-                        />
+                {SHOW_MODEL_TUNING && (
+                  <div className="model-columns">
+                    {SHOW_MODEL_TUNING && (
+                      <div className="model-column">
+                        {SHOW_MODEL_TUNING && (
+                          <>
+                          <h3>Matching Confidence</h3>
+                          <div className="form-group">
+                            <label>
+                              Threshold
+                              <span style={{ marginLeft: 12, fontWeight: 600, fontFamily: 'monospace' }}>
+                                {((formData.matching_conf ?? 0.20) * 100).toFixed(0)}%
+                              </span>
+                            </label>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                              <input
+                                type="range"
+                                min={0}
+                                max={1}
+                                step={0.01}
+                                value={formData.matching_conf ?? 0.20}
+                                onChange={(e) => setFormData(prev => ({ ...prev, matching_conf: parseFloat(e.target.value) }))}
+                                style={{ flex: 1 }}
+                              />
+                              <input
+                                type="number"
+                                min={0}
+                                max={1}
+                                step={0.01}
+                                value={formData.matching_conf ?? 0.20}
+                                onChange={(e) => {
+                                  const v = Math.max(0, Math.min(1, parseFloat(e.target.value) || 0));
+                                  setFormData(prev => ({ ...prev, matching_conf: v }));
+                                }}
+                                style={{ width: 80 }}
+                              />
+                            </div>
+                            <small className="field-description">
+                              Skip OCR/verify when SuperPoint inlier ratio falls below this threshold. Higher = stricter (fewer false PASS, more FAIL).
+                            </small>
+                          </div>
+                          </>
+                        )}
+                        {SHOW_MODEL_TUNING && (
+                          <div className="form-group" style={{ marginTop: 8 }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                              <input
+                                type="checkbox"
+                                checked={formData.match_erosion_enabled ?? false}
+                                onChange={(e) => setFormData(prev => ({ ...prev, match_erosion_enabled: e.target.checked }))}
+                              />
+                              <span>Horizontal Erosion Pre-processing</span>
+                            </label>
+                            <small className="field-description">
+                              Apply morphological erosion horizontally before SuperPoint matching to suppress variable date code text.
+                            </small>
+                          </div>
+                        )}
+                        {(formData.match_erosion_enabled ?? false) && (
+                          <>
+                            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                              <div className="form-group" style={{ flex: 1, minWidth: 100 }}>
+                                <label>Kernel Width (px)</label>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={300}
+                                  value={formData.match_erosion_kernel_w ?? 80}
+                                  onChange={(e) => setFormData(prev => ({ ...prev, match_erosion_kernel_w: Math.max(1, Math.min(300, parseInt(e.target.value) || 1)) }))}
+                                />
+                              </div>
+                              <div className="form-group" style={{ flex: 1, minWidth: 100 }}>
+                                <label>Kernel Height (px)</label>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={50}
+                                  value={formData.match_erosion_kernel_h ?? 1}
+                                  onChange={(e) => setFormData(prev => ({ ...prev, match_erosion_kernel_h: Math.max(1, Math.min(50, parseInt(e.target.value) || 1)) }))}
+                                />
+                              </div>
+                              <div className="form-group" style={{ flex: 1, minWidth: 100 }}>
+                                <label>Iterations</label>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={5}
+                                  value={formData.match_erosion_iterations ?? 1}
+                                  onChange={(e) => setFormData(prev => ({ ...prev, match_erosion_iterations: Math.max(1, Math.min(5, parseInt(e.target.value) || 1)) }))}
+                                />
+                              </div>
+                            </div>
+                            <div style={{ marginTop: 10, borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.25)' }}>
+                              <div style={{ padding: '6px 10px 6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                                <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#475569' }}>Effect Preview</span>
+                                <button
+                                  type="button"
+                                  onClick={computeErosionPreview}
+                                  disabled={isComputingPreview}
+                                  style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, border: '1px solid rgba(59,130,246,0.5)', background: 'rgba(59,130,246,0.15)', color: '#60a5fa', cursor: 'pointer', fontWeight: 600, opacity: isComputingPreview ? 0.6 : 1 }}
+                                >
+                                  {isComputingPreview ? 'Computing…' : 'Preview'}
+                                </button>
+                              </div>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, background: 'rgba(255,255,255,0.05)' }}>
+                                <div style={{ padding: '8px 10px', background: 'rgba(0,0,0,0.2)' }}>
+                                  <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6, fontWeight: 600 }}>Original</div>
+                                  <img src={erosionBeforeImg} alt="Before erosion" style={{ width: '100%', borderRadius: 4, display: 'block' }} />
+                                </div>
+                                <div style={{ padding: '8px 10px', background: 'rgba(0,0,0,0.2)' }}>
+                                  <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6, fontWeight: 600 }}>After Erosion</div>
+                                  <img src={erosionPreviewUrl} alt="After erosion" style={{ width: '100%', borderRadius: 4, display: 'block', opacity: isComputingPreview ? 0.4 : 1, transition: 'opacity 0.2s' }} />
+                                </div>
+                              </div>
+                              <div style={{ padding: '6px 10px', fontSize: 11, color: '#475569', fontStyle: 'italic' }}>
+                                Date code numbers merge into uniform dark bands — structural layout preserved for SuperPoint matching.
+                              </div>
+                            </div>
+                          </>
+                        )}
                       </div>
-                      <small className="field-description">
-                        Skip OCR/verify when SuperPoint inlier ratio falls below this threshold. Higher = stricter (fewer false PASS, more FAIL).
-                      </small>
-                    </div>
-                    <div className="form-group" style={{ marginTop: 8 }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={formData.match_erosion_enabled ?? false}
-                          onChange={(e) => setFormData(prev => ({ ...prev, match_erosion_enabled: e.target.checked }))}
-                        />
-                        <span>Horizontal Erosion Pre-processing</span>
-                      </label>
-                      <small className="field-description">
-                        Apply morphological erosion horizontally before SuperPoint matching to suppress variable date code text.
-                      </small>
-                    </div>
-                    {(formData.match_erosion_enabled ?? false) && (
-                      <>
-                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                          <div className="form-group" style={{ flex: 1, minWidth: 100 }}>
-                            <label>Kernel Width (px)</label>
-                            <input
-                              type="number"
-                              min={1}
-                              max={300}
-                              value={formData.match_erosion_kernel_w ?? 80}
-                              onChange={(e) => setFormData(prev => ({ ...prev, match_erosion_kernel_w: Math.max(1, Math.min(300, parseInt(e.target.value) || 1)) }))}
-                            />
-                          </div>
-                          <div className="form-group" style={{ flex: 1, minWidth: 100 }}>
-                            <label>Kernel Height (px)</label>
-                            <input
-                              type="number"
-                              min={1}
-                              max={50}
-                              value={formData.match_erosion_kernel_h ?? 1}
-                              onChange={(e) => setFormData(prev => ({ ...prev, match_erosion_kernel_h: Math.max(1, Math.min(50, parseInt(e.target.value) || 1)) }))}
-                            />
-                          </div>
-                          <div className="form-group" style={{ flex: 1, minWidth: 100 }}>
-                            <label>Iterations</label>
-                            <input
-                              type="number"
-                              min={1}
-                              max={5}
-                              value={formData.match_erosion_iterations ?? 1}
-                              onChange={(e) => setFormData(prev => ({ ...prev, match_erosion_iterations: Math.max(1, Math.min(5, parseInt(e.target.value) || 1)) }))}
-                            />
-                          </div>
-                        </div>
-                        <div style={{ marginTop: 10, borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.25)' }}>
-                          <div style={{ padding: '6px 10px 6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                            <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#475569' }}>Effect Preview</span>
-                            <button
-                              type="button"
-                              onClick={computeErosionPreview}
-                              disabled={isComputingPreview}
-                              style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, border: '1px solid rgba(59,130,246,0.5)', background: 'rgba(59,130,246,0.15)', color: '#60a5fa', cursor: 'pointer', fontWeight: 600, opacity: isComputingPreview ? 0.6 : 1 }}
-                            >
-                              {isComputingPreview ? 'Computing…' : 'Preview'}
-                            </button>
-                          </div>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, background: 'rgba(255,255,255,0.05)' }}>
-                            <div style={{ padding: '8px 10px', background: 'rgba(0,0,0,0.2)' }}>
-                              <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6, fontWeight: 600 }}>Original</div>
-                              <img src={erosionBeforeImg} alt="Before erosion" style={{ width: '100%', borderRadius: 4, display: 'block' }} />
-                            </div>
-                            <div style={{ padding: '8px 10px', background: 'rgba(0,0,0,0.2)' }}>
-                              <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6, fontWeight: 600 }}>After Erosion</div>
-                              <img src={erosionPreviewUrl} alt="After erosion" style={{ width: '100%', borderRadius: 4, display: 'block', opacity: isComputingPreview ? 0.4 : 1, transition: 'opacity 0.2s' }} />
-                            </div>
-                          </div>
-                          <div style={{ padding: '6px 10px', fontSize: 11, color: '#475569', fontStyle: 'italic' }}>
-                            Date code numbers merge into uniform dark bands — structural layout preserved for SuperPoint matching.
-                          </div>
-                        </div>
-                      </>
                     )}
-                  </div>
-                  <div className="model-column">
-                    <h3>Wrinkle Detection</h3>
-                    <div className="form-group">
-                      <label>
-                        Confidence Threshold
-                        <span style={{ marginLeft: 12, fontWeight: 600, fontFamily: 'monospace' }}>
-                          {(formData.wrinkle_conf ?? 0.25).toFixed(2)}
-                        </span>
-                      </label>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <input
-                          type="range"
-                          min={0}
-                          max={1}
-                          step={0.01}
-                          value={formData.wrinkle_conf ?? 0.25}
-                          onChange={(e) => setFormData(prev => ({ ...prev, wrinkle_conf: parseFloat(e.target.value) }))}
-                          style={{ flex: 1 }}
-                        />
-                        <input
-                          type="number"
-                          min={0}
-                          max={1}
-                          step={0.01}
-                          value={formData.wrinkle_conf ?? 0.25}
-                          onChange={(e) => {
-                            const v = Math.max(0, Math.min(1, parseFloat(e.target.value) || 0));
-                            setFormData(prev => ({ ...prev, wrinkle_conf: v }));
-                          }}
-                          style={{ width: 80 }}
-                        />
+                    <div className="model-column">
+                      <h3>Wrinkle Detection</h3>
+                      {SHOW_MODEL_TUNING && (
+                        <div className="form-group">
+                          <label>
+                            Confidence Threshold
+                            <span style={{ marginLeft: 12, fontWeight: 600, fontFamily: 'monospace' }}>
+                              {(formData.wrinkle_conf ?? 0.25).toFixed(2)}
+                            </span>
+                          </label>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                            <input
+                              type="range"
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              value={formData.wrinkle_conf ?? 0.25}
+                              onChange={(e) => setFormData(prev => ({ ...prev, wrinkle_conf: parseFloat(e.target.value) }))}
+                              style={{ flex: 1 }}
+                            />
+                            <input
+                              type="number"
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              value={formData.wrinkle_conf ?? 0.25}
+                              onChange={(e) => {
+                                const v = Math.max(0, Math.min(1, parseFloat(e.target.value) || 0));
+                                setFormData(prev => ({ ...prev, wrinkle_conf: v }));
+                              }}
+                              style={{ width: 80 }}
+                            />
+                          </div>
+                          <small className="field-description">
+                            Detection score threshold for the wrinkle segmentation model. Lower = more sensitive (more regions kept), higher = stricter.
+                          </small>
+                        </div>
+                      )}
+                      {SHOW_MODEL_TUNING && (
+                        <div className="form-group" style={{ marginTop: 8 }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={formData.wrinkle_show_when_pass ?? true}
+                              onChange={(e) => setFormData(prev => ({ ...prev, wrinkle_show_when_pass: e.target.checked }))}
+                            />
+                            <span>Show wrinkle regions even when frame passes</span>
+                          </label>
+                          <small className="field-description">
+                            On → draws wrinkle contour on the result image even when the bottle PASSes (debug/monitoring). Off → draws only on FAIL.
+                          </small>
+                        </div>
+                      )}
+                      <div className="form-group" style={{ marginTop: 8 }}>
+                        <label>
+                          Mask Overlap Threshold
+                          <span style={{ marginLeft: 12, fontWeight: 600, fontFamily: 'monospace' }}>
+                            {((formData.mask_overlap_threshold ?? 0.6) * 100).toFixed(0)}%
+                          </span>
+                        </label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                          <input
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            value={formData.mask_overlap_threshold ?? 0.6}
+                            onChange={(e) => setFormData(prev => ({ ...prev, mask_overlap_threshold: parseFloat(e.target.value) }))}
+                            style={{ flex: 1 }}
+                          />
+                          <input
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            value={formData.mask_overlap_threshold ?? 0.6}
+                            onChange={(e) => {
+                              const v = Math.max(0, Math.min(1, parseFloat(e.target.value) || 0));
+                              setFormData(prev => ({ ...prev, mask_overlap_threshold: v }));
+                            }}
+                            style={{ width: 80 }}
+                          />
+                        </div>
+                        <small className="field-description">
+                          Wrinkle regions with this fraction (or more) of pixels inside a "mask" annotation are excluded from the wrinkle check.
+                        </small>
                       </div>
-                      <small className="field-description">
-                        Detection score threshold for the wrinkle segmentation model. Lower = more sensitive (more regions kept), higher = stricter.
-                      </small>
-                    </div>
-                    <div className="form-group" style={{ marginTop: 8 }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={formData.wrinkle_show_when_pass ?? true}
-                          onChange={(e) => setFormData(prev => ({ ...prev, wrinkle_show_when_pass: e.target.checked }))}
-                        />
-                        <span>Show wrinkle regions even when frame passes</span>
-                      </label>
-                      <small className="field-description">
-                        On → draws wrinkle contour on the result image even when the bottle PASSes (debug/monitoring). Off → draws only on FAIL.
-                      </small>
-                    </div>
-                    <div className="form-group" style={{ marginTop: 8 }}>
-                      <label>
-                        Mask Overlap Threshold
-                        <span style={{ marginLeft: 12, fontWeight: 600, fontFamily: 'monospace' }}>
-                          {((formData.mask_overlap_threshold ?? 0.6) * 100).toFixed(0)}%
-                        </span>
-                      </label>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <input
-                          type="range"
-                          min={0}
-                          max={1}
-                          step={0.05}
-                          value={formData.mask_overlap_threshold ?? 0.6}
-                          onChange={(e) => setFormData(prev => ({ ...prev, mask_overlap_threshold: parseFloat(e.target.value) }))}
-                          style={{ flex: 1 }}
-                        />
-                        <input
-                          type="number"
-                          min={0}
-                          max={1}
-                          step={0.05}
-                          value={formData.mask_overlap_threshold ?? 0.6}
-                          onChange={(e) => {
-                            const v = Math.max(0, Math.min(1, parseFloat(e.target.value) || 0));
-                            setFormData(prev => ({ ...prev, mask_overlap_threshold: v }));
-                          }}
-                          style={{ width: 80 }}
-                        />
-                      </div>
-                      <small className="field-description">
-                        Wrinkle regions with this fraction (or more) of pixels inside a "mask" annotation are excluded from the wrinkle check.
-                      </small>
                     </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
 

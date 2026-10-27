@@ -226,7 +226,7 @@ class RecipeBase(BaseModel):
     description: Optional[str] = Field(None, max_length=500)
     delay_reject: Optional[float] = Field(default=100.0, description="Delay reject time in milliseconds")
     reject_pulse: Optional[float] = Field(default=50.0, description="Reject pulse duration in milliseconds")
-    reject_method: Optional[str] = Field(default='DIO_OUT', description="Reject output method: PLC or DIO_OUT")
+    reject_method: Optional[str] = Field(default='PLC', description="Reject output method: PLC or DIO_OUT")
     do_reject_number: Optional[int] = Field(default=2, ge=0, le=3, description="Digital Output number for reject (0-3)")
     do_alarm_number: Optional[int] = Field(default=0, ge=0, le=4, description="Digital Output number for alarm (0-4)")
     allow_late_reject: Optional[bool] = Field(default=False, description="Allow reject to fire immediately when inference_time > delay_reject (use for carton/alarm-only systems where late reject is harmless)")
@@ -278,7 +278,7 @@ class RecipeBase(BaseModel):
     # Product (bottle) edge detection method for center alignment check
     # "yolo_obb"     = YOLO OBB model (default)
     # "yolo_segment" = Image processing (Sobel + outer-anchored). Name kept for UI consistency, NOT actually YOLO.
-    product_detection_method: Optional[str] = Field(default="yolo_obb", description="Method to detect bottle edges: 'yolo_obb' (YOLO OBB model) | 'yolo_segment' (image processing — Sobel/edge detection)")
+    product_detection_method: Optional[str] = Field(default="yolo_segment", description="Method to detect bottle edges: 'yolo_obb' (YOLO OBB model) | 'yolo_segment' (image processing — Sobel/edge detection)")
     # Which wall positions to use as product_box corners when method='yolo_segment'
     # "outer" = bottle silhouette (wider, matches YOLO OBB convention) | "inner" = sát label (tighter)
     product_box_wall_type: Optional[str] = Field(default="outer", description="When product_detection_method='yolo_segment', which wall to use for product box corners: 'outer' (bottle silhouette) | 'inner' (closer to label)")
@@ -296,7 +296,7 @@ class RecipeBase(BaseModel):
     # that to SuperPoint instead of the full crop_area. Helps when background
     # clutter overwhelms the cap region in the camera frame. Applies only to
     # cameras in the OCR-on-cap sub-mode (Check_Color + no 'product' annotation).
-    cap_crop_method: Optional[str] = Field(default="none", description="Detect+crop bottle cap for matching: 'none' (use user-drawn crop_area) | 'yolo_obb' (trained YOLO OBB model) | 'yolo_segment' (HoughCircles)")
+    cap_crop_method: Optional[str] = Field(default="yolo_obb", description="Detect+crop bottle cap for matching: 'none' (use user-drawn crop_area) | 'yolo_obb' (trained YOLO OBB model) | 'yolo_segment' (HoughCircles)")
     # Alternative to SuperPoint for transforming annotation bboxes from
     # template-coords to target-coords. ECC affine on Sobel gradient — fast
     # (~30ms) and robust under lighting changes; only works well when template
@@ -306,7 +306,7 @@ class RecipeBase(BaseModel):
     # When True, AI service generates BOTH rotation candidates (angle, angle+180)
     # for Check_Color cap-OCR cameras and picks the one with higher match
     # confidence. Only applies to Check_Color function_type.
-    dual_rotation_check: Optional[bool] = Field(default=False, description="Try BOTH cap rotation candidates and pick higher match confidence. Only Check_Color cap-OCR cameras. SuperPoint batches them together so cost overhead is minimal.")
+    dual_rotation_check: Optional[bool] = Field(default=True, description="Try BOTH cap rotation candidates and pick higher match confidence. Only Check_Color cap-OCR cameras. SuperPoint batches them together so cost overhead is minimal.")
 
     # Wrinkle segmentation model confidence threshold (recipe-level, applies to all cameras)
     wrinkle_conf: Optional[float] = Field(default=0.25, ge=0.0, le=1.0, description="Confidence threshold for wrinkle segmentation model (0.0 - 1.0)")

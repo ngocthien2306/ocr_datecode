@@ -1,6 +1,8 @@
 import api from './http';
 import type { Recipe, RecipeCreate, RecipeUpdate, CountResponse, Statistics } from '@/types';
 
+export type OcrModelUsage = Record<string, Array<{ id: string; name: string }>>;
+
 export type RecipeSortBy = 'created_desc' | 'created_asc' | 'updated_desc' | 'updated_asc';
 
 export const recipesAPI = {
@@ -29,6 +31,12 @@ export const recipesAPI = {
 
   getRecipeById: async (recipeId: string): Promise<Recipe> => {
     const response = await api.get<Recipe>(`/recipes/${recipeId}`);
+    return response.data;
+  },
+
+  // Recipes using each trained OCR model, keyed by model id.
+  getOcrModelUsage: async (): Promise<OcrModelUsage> => {
+    const response = await api.get<OcrModelUsage>('/recipes/stats/ocr-usage');
     return response.data;
   },
 
@@ -125,18 +133,21 @@ export const receiptsAPI = {
     return recipesAPI.cloneRecipe(receiptId);
   },
 
-  getStatistics: async (): Promise<Statistics & { recipes: Recipe[] }> => {
+  getStatistics: async (): Promise<Statistics> => {
     try {
-      const [recipes, count] = await Promise.all([
-        recipesAPI.getAllRecipes(0, 100, true),
+      const [total, active, latest] = await Promise.all([
+        recipesAPI.getRecipeCount(null),
         recipesAPI.getRecipeCount(true),
+        recipesAPI.getAllRecipes(0, 1, null, 'updated_desc'),
       ]);
+      const last = latest[0];
 
       return {
-        totalReceipts: count.count || recipes.length,
-        totalProducts: recipes.length,
-        successRate: 98.2, // placeholder
-        recipes: recipes,
+        totalRecipes: total.count,
+        activeRecipes: active.count,
+        lastUpdated: last
+          ? { name: last.name, product_code: last.product_code, updated_at: last.updated_at }
+          : null,
       };
     } catch (error) {
       console.error('Error fetching statistics:', error);

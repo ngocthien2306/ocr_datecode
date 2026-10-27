@@ -407,9 +407,9 @@ export interface PaginatedResponse<T> {
 }
 
 export interface Statistics {
-  totalReceipts: number;
-  totalProducts: number;
-  successRate: number;
+  totalRecipes: number;
+  activeRecipes: number;
+  lastUpdated: { name: string; product_code: string; updated_at?: string } | null;
 }
 
 export interface CountResponse {

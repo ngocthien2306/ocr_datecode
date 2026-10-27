@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
@@ -218,7 +218,7 @@ class RecipeBase(BaseModel):
     description: Optional[str] = Field(None, max_length=500)
     delay_reject: Optional[float] = Field(default=100.0, description="Delay reject time in milliseconds")
     reject_pulse: Optional[float] = Field(default=50.0, description="Reject pulse duration in milliseconds")
-    reject_method: Optional[str] = Field(default='DIO_OUT', description="Reject output method: PLC or DIO_OUT")
+    reject_method: Optional[str] = Field(default='PLC', description="Reject output method: PLC or DIO_OUT")
     do_reject_number: Optional[int] = Field(default=2, ge=0, le=3, description="Digital Output number for reject (0-3)")
     do_alarm_number: Optional[int] = Field(default=0, ge=0, le=4, description="Digital Output number for alarm (0-4)")
     allow_late_reject: Optional[bool] = Field(default=False, description="Allow reject to fire immediately when inference_time > delay_reject (use for carton/alarm-only systems where late reject is harmless)")
@@ -271,11 +271,11 @@ class RecipeBase(BaseModel):
     template_bank_enabled: Optional[bool] = Field(default=False, description="Enable adaptive template bank for embedding-mode char verification")
     template_bank_size: Optional[int] = Field(default=10, ge=1, le=50, description="Max dynamic templates per (camera, annotation)")
     char_denoise_enabled: Optional[bool] = Field(default=False, description="Largest-CC noise filter before centroid alignment in char verification")
-    product_detection_method: Optional[str] = Field(default="yolo_obb", description="Method to detect bottle edges: 'yolo_obb' (YOLO OBB model) | 'yolo_segment' (image processing — Sobel/edge detection)")
+    product_detection_method: Optional[str] = Field(default="yolo_segment", description="Method to detect bottle edges: 'yolo_obb' (YOLO OBB model) | 'yolo_segment' (image processing — Sobel/edge detection)")
     cap_rotation_method: Optional[str] = Field(default="yolo_obb", description="Method to rotate caps so date-code text faces upright: 'yolo_obb' (trained YOLO OBB model) | 'yolo_segment' (pure CV — HoughCircles + projection profile + shape match)")
-    cap_crop_method: Optional[str] = Field(default="none", description="Detect+crop bottle cap for matching: 'none' (use user-drawn crop_area) | 'yolo_obb' (trained YOLO OBB model) | 'yolo_segment' (HoughCircles)")
+    cap_crop_method: Optional[str] = Field(default="yolo_obb", description="Detect+crop bottle cap for matching: 'none' (use user-drawn crop_area) | 'yolo_obb' (trained YOLO OBB model) | 'yolo_segment' (HoughCircles)")
     crop_match_method: Optional[str] = Field(default="superpoint", description="Method for matching template ↔ target crop: 'superpoint' (TRT deep model, ~95ms) | 'shape_outline' (ECC on Sobel gradient magnitude, ~30ms — best for cap-OCR with cap_rotation+cap_crop active)")
-    dual_rotation_check: Optional[bool] = Field(default=False, description="Try BOTH cap rotation candidates (angle + flipped180) and pick the one with higher match confidence. Only applies to Check_Color cap-OCR cameras. Doubles match cost but fixes ambiguous flip detection.")
+    dual_rotation_check: Optional[bool] = Field(default=True, description="Try BOTH cap rotation candidates (angle + flipped180) and pick the one with higher match confidence. Only applies to Check_Color cap-OCR cameras. Doubles match cost but fixes ambiguous flip detection.")
     product_box_wall_type: Optional[str] = Field(default="outer", description="When product_detection_method='yolo_segment', which wall to use for product box corners: 'outer' (bottle silhouette) | 'inner' (closer to label)")
 
     save_pass_images: Optional[bool] = Field(default=True, description="Save PASS-frame images to disk (ring buffer of 200 most-recent per camera). Used to re-test missed defects.")
@@ -297,13 +297,23 @@ class RecipeBase(BaseModel):
 
 class RecipeCreate(RecipeBase):
     """Schema for creating a new recipe"""
-    pass
+
+    @field_validator('product_code', mode='before')
+    @classmethod
+    def strip_product_code(cls, v):
+        # "SAT " and "SAT" must count as the same code for the uniqueness check
+        return v.strip() if isinstance(v, str) else v
 
 
 class RecipeUpdate(BaseModel):
     """Schema for updating a recipe"""
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     product_code: Optional[str] = Field(None, min_length=1, max_length=50)
+
+    @field_validator('product_code', mode='before')
+    @classmethod
+    def strip_product_code(cls, v):
+        return v.strip() if isinstance(v, str) else v
     description: Optional[str] = Field(None, max_length=500)
     delay_reject: Optional[float] = None
     reject_pulse: Optional[float] = None

@@ -162,6 +162,19 @@
   line-height: 1;
 }
 
+/* Text values (recipe names) in summary cards: smaller, single line */
+.card-value.card-value-text {
+  font-size: 18px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-info {
+  min-width: 0;
+}
+
 .card-status {
   font-size: 13px;
   font-weight: 500;

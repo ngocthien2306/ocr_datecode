@@ -7,7 +7,7 @@ import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import RecipeLoadingTemplates from '@/components/shared/RecipeLoadingTemplates';
 import { useToast } from '@/contexts/ToastContext';
 import { useUser } from '@/contexts/UserContext';
-import type { Receipt } from '@/types';
+import type { Receipt, Statistics } from '@/types';
 import '@/styles/HistoryView.css';
 import '@/styles/RecipeLoadingAnimations.css';
 import { API_BASE_URL } from '@/config/api';
@@ -20,11 +20,8 @@ interface ConfirmDialogState {
   onConfirm: (() => void) | null;
 }
 
-interface Statistics {
-  totalReceipts: number;
-  totalProducts: number;
-  successRate: number;
-}
+// Global load history is not exposed in the toolbar for now
+const SHOW_HISTORY_BUTTON = false;
 
 type ViewMode = 'list' | 'create' | 'edit' | 'view' | 'history';
 
@@ -35,9 +32,9 @@ export default function Receipts() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statistics, setStatistics] = useState<Statistics>({
-    totalReceipts: 0,
-    totalProducts: 0,
-    successRate: 0
+    totalRecipes: 0,
+    activeRecipes: 0,
+    lastUpdated: null,
   });
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -83,6 +80,7 @@ export default function Receipts() {
 
   // Running recipe state
   const [runningRecipeId, setRunningRecipeId] = useState<string | null>(null);
+  const [runningRecipe, setRunningRecipe] = useState<{ name: string; productCode: string } | null>(null);
   
 
   // Load receipts from API — re-runs when page, sort, or committed search changes
@@ -95,6 +93,20 @@ export default function Receipts() {
     loadStatistics();
     checkRunningRecipe();
   }, []);
+
+  // Resolve the running recipe's name/code for the summary card. Fetched by id
+  // because the running recipe may be outside the current page or search.
+  useEffect(() => {
+    if (!runningRecipeId) {
+      setRunningRecipe(null);
+      return;
+    }
+    let cancelled = false;
+    receiptsAPI.getReceiptById(runningRecipeId)
+      .then(r => { if (!cancelled) setRunningRecipe({ name: r.name, productCode: r.product_code }); })
+      .catch(() => { if (!cancelled) setRunningRecipe(null); });
+    return () => { cancelled = true; };
+  }, [runningRecipeId]);
 
   // Listen for stop events fired from other views (e.g. InferenceRealtime).
   // Tab navigation does not remount Receipts, so without this the Stop button
@@ -300,9 +312,7 @@ export default function Receipts() {
     } catch (error: any) {
       console.error('Error saving recipe:', error);
       console.error('Error details:', error.response?.data);
-      const errorMsg = error.response?.data?.detail || 'Failed to save recipe. Please try again.';
-      toast.error(errorMsg);
-      throw error; // Let the modal handle the error display
+      throw error; // RecipeFormModal shows the error; toasting here too doubles it
     }
   };
 
@@ -326,6 +336,7 @@ export default function Receipts() {
     try {
       const clonedRecipe = await receiptsAPI.cloneReceipt(receipt.id);
       toast.success(`Recipe "${receipt.name}" cloned successfully as "${clonedRecipe.name}"!`);
+      toast.warning(`Temporary product code "${clonedRecipe.product_code}" was assigned. Please update it to the real product code.`);
 
       // Reload receipts to show the new cloned recipe
       await loadReceipts();
@@ -824,14 +835,17 @@ export default function Receipts() {
               Create Recipe
             </button>
           )}
-          <button className="dashboard-btn" onClick={openGlobalHistory} title="Show global load history">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ marginRight: 6 }}>
-              <path d="M21 10H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M21 6H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M21 14H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            History
-          </button>
+          {/* Global load history button hidden; the history view is kept for later use */}
+          {SHOW_HISTORY_BUTTON && (
+            <button className="dashboard-btn" onClick={openGlobalHistory} title="Show global load history">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ marginRight: 6 }}>
+                <path d="M21 10H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M21 6H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M21 14H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              History
+            </button>
+          )}
         </div>
       </div>
 
@@ -857,36 +871,53 @@ export default function Receipts() {
             </svg>
           </div>
           <div className="card-info">
-            <h3>Total Receipts</h3>
-            <div className="card-value">{statistics.totalReceipts}</div>
-            <span className="card-status normal">Active recipes</span>
+            <h3>Total Recipes</h3>
+            <div className="card-value">{statistics.totalRecipes}</div>
+            <span className="card-status normal">
+              {statistics.activeRecipes} active · {statistics.totalRecipes - statistics.activeRecipes} inactive
+            </span>
           </div>
         </div>
 
         <div className="summary-card">
           <div className="card-icon products">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <polyline points="20,6 9,17 4,12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <polygon points="6,4 20,12 6,20" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
             </svg>
           </div>
           <div className="card-info">
-            <h3>Total Products</h3>
-            <div className="card-value">{statistics.totalProducts}</div>
-            <span className="card-status increase">All products</span>
+            <h3>Running Recipe</h3>
+            <div className="card-value card-value-text" title={runningRecipe?.name}>
+              {runningRecipeId ? (runningRecipe?.name ?? 'Unknown recipe') : 'None'}
+            </div>
+            <span className={`card-status ${runningRecipeId ? 'increase' : 'normal'}`}>
+              {runningRecipeId
+                ? (runningRecipe ? `Code: ${runningRecipe.productCode}` : 'Loading...')
+                : 'No recipe loaded'}
+            </span>
           </div>
         </div>
 
         <div className="summary-card">
           <div className="card-icon success">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <path d="M22 11.08V12C21.9988 14.1564 21.3005 16.2547 20.0093 17.9818C18.7182 19.7088 16.9033 20.9725 14.8354 21.5839C12.7674 22.1953 10.5573 22.1219 8.53447 21.3746C6.51168 20.6273 4.78465 19.2461 3.61096 17.4371C2.43727 15.628 1.87979 13.4881 2.02168 11.3363C2.16356 9.18455 2.99721 7.13631 4.39828 5.49706C5.79935 3.85781 7.69279 2.71537 9.79619 2.24013C11.8996 1.7649 14.1003 1.98232 16.07 2.85999" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <polyline points="22,4 12,14.01 9,11.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+              <polyline points="12,6 12,12 16,14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
           <div className="card-info">
-            <h3>Detection Threshold</h3>
-            <div className="card-value">{statistics.successRate}%</div>
-            <span className="card-status success">Average</span>
+            <h3>Last Updated</h3>
+            <div className="card-value card-value-text" title={statistics.lastUpdated?.name}>
+              {statistics.lastUpdated?.name ?? '—'}
+            </div>
+            <span className="card-status normal">
+              {statistics.lastUpdated
+                ? `Code: ${statistics.lastUpdated.product_code}`
+                  + (statistics.lastUpdated.updated_at
+                    ? ` · ${new Date(statistics.lastUpdated.updated_at).toLocaleString()}`
+                    : '')
+                : 'No recipes yet'}
+            </span>
           </div>
         </div>
       </div>
@@ -972,7 +1003,6 @@ export default function Receipts() {
                 <th>Product Code</th>
                 <th>Date</th>
                 <th>Camera Settings</th>
-                <th>Recognition Threshold</th>
                 <th>Operator</th>
                 <th>Status</th>
                 <th>Actions</th>
@@ -981,7 +1011,7 @@ export default function Receipts() {
             <tbody>
               {filteredReceipts.length === 0 ? (
                 <tr>
-                  <td colSpan={10} style={{ textAlign: 'center', padding: '40px' }}>
+                  <td colSpan={9} style={{ textAlign: 'center', padding: '40px' }}>
                     No receipts found. {searchTerm && 'Try adjusting your search.'}
                   </td>
                 </tr>
@@ -1006,13 +1036,6 @@ export default function Receipts() {
                           <div>Exp: {receipt.cameras[0]?.exposure_time || "N/A"}ms</div>
                           <div>Delay: {receipt.cameras[0]?.delay_trigger || "N/A"}ms</div>
                         </div>
-                      )}
-                    </td>
-                    <td>
-                      {receipt.modelThresholds && receipt.modelThresholds.recognition_threshold && (
-                        <span className="text-success">
-                          {(receipt.modelThresholds.recognition_threshold * 100).toFixed(0)}%
-                        </span>
                       )}
                     </td>
                     <td>{receipt.operator}</td>

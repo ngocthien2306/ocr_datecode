@@ -125,8 +125,8 @@ async def realign_live_frame(
     opts = RealignOptions(
         function_type=ct.get("function_type", "") or "",
         cap_rotation_method=recipe.get("cap_rotation_method") or "yolo_obb",
-        cap_crop_method=recipe.get("cap_crop_method") or "none",
-        dual_rotation_check=bool(recipe.get("dual_rotation_check")),
+        cap_crop_method=recipe.get("cap_crop_method") or "yolo_obb",
+        dual_rotation_check=bool(recipe.get("dual_rotation_check", True)),
         matching_conf=float(recipe.get("matching_conf") or 0.20),
         match_erosion_enabled=bool(recipe.get("match_erosion_enabled")),
         match_erosion_kernel_w=int(recipe.get("match_erosion_kernel_w") or 80),

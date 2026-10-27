@@ -1,5 +1,6 @@
 import asyncio
 import traceback
+from pymongo.errors import DuplicateKeyError
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Request
 from fastapi.responses import FileResponse, Response
 from typing import Any, Dict, List, Optional
@@ -338,11 +339,11 @@ def recipe_to_response(recipe: RecipeInDB, user_names_map: dict = None) -> Recip
         template_bank_enabled=getattr(recipe, 'template_bank_enabled', False),
         template_bank_size=getattr(recipe, 'template_bank_size', 10),
         char_denoise_enabled=getattr(recipe, 'char_denoise_enabled', False),
-        product_detection_method=getattr(recipe, 'product_detection_method', 'yolo_obb'),
+        product_detection_method=getattr(recipe, 'product_detection_method', 'yolo_segment'),
         cap_rotation_method=getattr(recipe, 'cap_rotation_method', 'yolo_obb'),
-        cap_crop_method=getattr(recipe, 'cap_crop_method', 'none'),
+        cap_crop_method=getattr(recipe, 'cap_crop_method', 'yolo_obb'),
         crop_match_method=getattr(recipe, 'crop_match_method', 'superpoint'),
-        dual_rotation_check=getattr(recipe, 'dual_rotation_check', False),
+        dual_rotation_check=getattr(recipe, 'dual_rotation_check', True),
         product_box_wall_type=getattr(recipe, 'product_box_wall_type', 'outer'),
         save_pass_images=getattr(recipe, 'save_pass_images', True),
         wrinkle_conf=getattr(recipe, 'wrinkle_conf', None),
@@ -488,7 +489,13 @@ async def create_recipe(
             detail=f"Recipe with product code '{recipe.product_code}' already exists"
         )
     
-    created_recipe = await recipe_repo.create(recipe, current_user.id)
+    try:
+        created_recipe = await recipe_repo.create(recipe, current_user.id)
+    except DuplicateKeyError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Recipe with product code '{recipe.product_code}' already exists"
+        )
 
     # Log the action
     client_ip = request.client.host if request.client else None
@@ -1617,6 +1624,15 @@ async def clone_recipe(
         counter += 1
         final_name = f"{original_recipe.name} (Copy {counter})"
 
+    # The clone gets its own product code (CODE-2, CODE-3, ...); the user is
+    # expected to replace it with the real code of the new product.
+    base_code = original_recipe.product_code
+    counter = 2
+    final_code = f"{base_code[:50 - len(str(counter)) - 1]}-{counter}"
+    while await recipe_repo.get_by_product_code(final_code):
+        counter += 1
+        final_code = f"{base_code[:50 - len(str(counter)) - 1]}-{counter}"
+
     # Convert Pydantic models to dict for RecipeCreate
     # Helper function to convert model or list of models to dict
     def to_dict(obj):
@@ -1631,13 +1647,13 @@ async def clone_recipe(
     # Create new recipe data from original
     recipe_data = RecipeCreate(
         name=final_name,
-        product_code=original_recipe.product_code,
+        product_code=final_code,
         description=original_recipe.description,
         cameras=to_dict(original_recipe.cameras) or [],
         camera_templates=to_dict(original_recipe.camera_templates) or [],
         delay_reject=getattr(original_recipe, 'delay_reject', 100.0),
         reject_pulse=getattr(original_recipe, 'reject_pulse', 50.0),
-        reject_method=getattr(original_recipe, 'reject_method', 'DIO_OUT'),
+        reject_method=getattr(original_recipe, 'reject_method', 'PLC'),
         do_reject_number=getattr(original_recipe, 'do_reject_number', 0),
         do_alarm_number=getattr(original_recipe, 'do_alarm_number', 0),
         allow_late_reject=getattr(original_recipe, 'allow_late_reject', False),
@@ -1668,11 +1684,11 @@ async def clone_recipe(
         template_bank_enabled=getattr(original_recipe, 'template_bank_enabled', False),
         template_bank_size=getattr(original_recipe, 'template_bank_size', 10),
         char_denoise_enabled=getattr(original_recipe, 'char_denoise_enabled', False),
-        product_detection_method=getattr(original_recipe, 'product_detection_method', 'yolo_obb'),
+        product_detection_method=getattr(original_recipe, 'product_detection_method', 'yolo_segment'),
         cap_rotation_method=getattr(original_recipe, 'cap_rotation_method', 'yolo_obb'),
-        cap_crop_method=getattr(original_recipe, 'cap_crop_method', 'none'),
+        cap_crop_method=getattr(original_recipe, 'cap_crop_method', 'yolo_obb'),
         crop_match_method=getattr(original_recipe, 'crop_match_method', 'superpoint'),
-        dual_rotation_check=getattr(original_recipe, 'dual_rotation_check', False),
+        dual_rotation_check=getattr(original_recipe, 'dual_rotation_check', True),
         product_box_wall_type=getattr(original_recipe, 'product_box_wall_type', 'outer'),
         save_pass_images=getattr(original_recipe, 'save_pass_images', True),
         wrinkle_conf=getattr(original_recipe, 'wrinkle_conf', None),
@@ -1686,7 +1702,13 @@ async def clone_recipe(
     )
 
     # Create the cloned recipe
-    cloned_recipe = await recipe_repo.create(recipe_data, current_user.id)
+    try:
+        cloned_recipe = await recipe_repo.create(recipe_data, current_user.id)
+    except DuplicateKeyError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Recipe with product code '{final_code}' already exists"
+        )
 
     # Log the action
     client_ip = request.client.host if request.client else None
@@ -1810,7 +1832,7 @@ async def load_recipe(
         'name': recipe.name,
         'delay_reject': recipe.delay_reject,
         'reject_pulse': recipe.reject_pulse if hasattr(recipe, 'reject_pulse') else 50.0,
-        'reject_method': getattr(recipe, 'reject_method', 'DIO_OUT'),
+        'reject_method': getattr(recipe, 'reject_method', 'PLC'),
         'do_reject_number': recipe.do_reject_number,
         'do_alarm_number': getattr(recipe, 'do_alarm_number', 0),
         'allow_late_reject': getattr(recipe, 'allow_late_reject', False),
@@ -1841,11 +1863,11 @@ async def load_recipe(
         'template_bank_enabled': getattr(recipe, 'template_bank_enabled', False),
         'template_bank_size': getattr(recipe, 'template_bank_size', 10),
         'char_denoise_enabled': getattr(recipe, 'char_denoise_enabled', False),
-        'product_detection_method': getattr(recipe, 'product_detection_method', None) or 'yolo_obb',
+        'product_detection_method': getattr(recipe, 'product_detection_method', None) or 'yolo_segment',
         'cap_rotation_method': getattr(recipe, 'cap_rotation_method', None) or 'yolo_obb',
-        'cap_crop_method': getattr(recipe, 'cap_crop_method', None) or 'none',
+        'cap_crop_method': getattr(recipe, 'cap_crop_method', None) or 'yolo_obb',
         'crop_match_method': getattr(recipe, 'crop_match_method', None) or 'superpoint',
-        'dual_rotation_check': bool(getattr(recipe, 'dual_rotation_check', False)),
+        'dual_rotation_check': bool(getattr(recipe, 'dual_rotation_check', True)),
         'product_box_wall_type': getattr(recipe, 'product_box_wall_type', None) or 'outer',
         'save_pass_images': bool(getattr(recipe, 'save_pass_images', True)),
         'wrinkle_conf': getattr(recipe, 'wrinkle_conf', None),
@@ -1867,7 +1889,7 @@ async def load_recipe(
         'product_code': recipe.product_code,
         'delay_reject': recipe.delay_reject,
         'reject_pulse': recipe.reject_pulse if hasattr(recipe, 'reject_pulse') else 50.0,
-        'reject_method': getattr(recipe, 'reject_method', 'DIO_OUT'),
+        'reject_method': getattr(recipe, 'reject_method', 'PLC'),
         'do_reject_number': recipe.do_reject_number,
         'do_alarm_number': getattr(recipe, 'do_alarm_number', 0),
         'allow_late_reject': getattr(recipe, 'allow_late_reject', False),
@@ -1900,11 +1922,11 @@ async def load_recipe(
         'template_bank_enabled': getattr(recipe, 'template_bank_enabled', False),
         'template_bank_size': getattr(recipe, 'template_bank_size', 10),
         'char_denoise_enabled': getattr(recipe, 'char_denoise_enabled', False),
-        'product_detection_method': getattr(recipe, 'product_detection_method', None) or 'yolo_obb',
+        'product_detection_method': getattr(recipe, 'product_detection_method', None) or 'yolo_segment',
         'cap_rotation_method': getattr(recipe, 'cap_rotation_method', None) or 'yolo_obb',
-        'cap_crop_method': getattr(recipe, 'cap_crop_method', None) or 'none',
+        'cap_crop_method': getattr(recipe, 'cap_crop_method', None) or 'yolo_obb',
         'crop_match_method': getattr(recipe, 'crop_match_method', None) or 'superpoint',
-        'dual_rotation_check': bool(getattr(recipe, 'dual_rotation_check', False)),
+        'dual_rotation_check': bool(getattr(recipe, 'dual_rotation_check', True)),
         'product_box_wall_type': getattr(recipe, 'product_box_wall_type', None) or 'outer',
         'save_pass_images': bool(getattr(recipe, 'save_pass_images', True)),
         'wrinkle_conf': getattr(recipe, 'wrinkle_conf', None),
@@ -2198,7 +2220,7 @@ async def update_recipe_realtime(
         'product_code': recipe.product_code,
         'delay_reject': recipe.delay_reject,
         'reject_pulse': recipe.reject_pulse if hasattr(recipe, 'reject_pulse') else 50.0,
-        'reject_method': getattr(recipe, 'reject_method', 'DIO_OUT'),
+        'reject_method': getattr(recipe, 'reject_method', 'PLC'),
         'do_reject_number': recipe.do_reject_number,
         'do_alarm_number': getattr(recipe, 'do_alarm_number', 0),
         'allow_late_reject': getattr(recipe, 'allow_late_reject', False),
@@ -2231,11 +2253,11 @@ async def update_recipe_realtime(
         'template_bank_enabled': getattr(recipe, 'template_bank_enabled', False),
         'template_bank_size': getattr(recipe, 'template_bank_size', 10),
         'char_denoise_enabled': getattr(recipe, 'char_denoise_enabled', False),
-        'product_detection_method': getattr(recipe, 'product_detection_method', None) or 'yolo_obb',
+        'product_detection_method': getattr(recipe, 'product_detection_method', None) or 'yolo_segment',
         'cap_rotation_method': getattr(recipe, 'cap_rotation_method', None) or 'yolo_obb',
-        'cap_crop_method': getattr(recipe, 'cap_crop_method', None) or 'none',
+        'cap_crop_method': getattr(recipe, 'cap_crop_method', None) or 'yolo_obb',
         'crop_match_method': getattr(recipe, 'crop_match_method', None) or 'superpoint',
-        'dual_rotation_check': bool(getattr(recipe, 'dual_rotation_check', False)),
+        'dual_rotation_check': bool(getattr(recipe, 'dual_rotation_check', True)),
         'product_box_wall_type': getattr(recipe, 'product_box_wall_type', None) or 'outer',
         'save_pass_images': bool(getattr(recipe, 'save_pass_images', True)),
         'wrinkle_conf': getattr(recipe, 'wrinkle_conf', None),
@@ -2488,7 +2510,13 @@ async def update_recipe(
                 detail=f"Recipe with product code '{recipe_update.product_code}' already exists"
             )
     
-    updated_recipe = await recipe_repo.update(recipe_id, recipe_update, current_user.id)
+    try:
+        updated_recipe = await recipe_repo.update(recipe_id, recipe_update, current_user.id)
+    except DuplicateKeyError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Recipe with product code '{recipe_update.product_code}' already exists"
+        )
     if not updated_recipe:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -2591,6 +2619,28 @@ async def delete_recipe(
     await action_log_repo.create_action_log(action_log)
 
     return None
+
+
+@router.get("/stats/ocr-usage")
+async def get_ocr_model_usage(
+    current_user: UserInDB = Depends(get_current_user),
+    recipe_repo: RecipeRepository = Depends(get_recipe_repository)
+):
+    """
+    Which recipes use each trained OCR model, keyed by model id:
+    {"<model_id>": [{"id": ..., "name": ...}, ...]}. Only CUSTOM / CUSTOM_PADDLE
+    recipes count; ids left on a built-in type are stale and ignored.
+
+    **Permission**: All authenticated users
+    """
+    usage: dict = {}
+    cursor = recipe_repo.collection.find(
+        {"ocr_model_type": {"$in": ["CUSTOM", "CUSTOM_PADDLE"]}, "ocr_model_id": {"$nin": [None, ""]}},
+        {"name": 1, "ocr_model_id": 1},
+    )
+    async for doc in cursor:
+        usage.setdefault(doc["ocr_model_id"], []).append({"id": str(doc["_id"]), "name": doc.get("name", "")})
+    return usage
 
 
 @router.get("/stats/count")

@@ -2,6 +2,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from typing import Optional, List, Any
 from datetime import datetime
 from bson import ObjectId
+from pymongo.errors import DuplicateKeyError, OperationFailure
 
 from app.models.recipe import RecipeInDB, RecipeCreate, RecipeUpdate
 
@@ -21,8 +22,6 @@ class RecipeRepository:
         # Individual indexes
         if "name_1" not in existing_indexes:
             indexes_to_create.append(("name", 1))
-        if "product_code_1" not in existing_indexes:
-            indexes_to_create.append(("product_code", 1))
         if "created_by_1" not in existing_indexes:
             indexes_to_create.append(("created_by", 1))
         
@@ -30,10 +29,30 @@ class RecipeRepository:
         for field, direction in indexes_to_create:
             await self.collection.create_index([(field, direction)])
         
+        await self._ensure_unique_product_code(existing_indexes)
+
         # Create unique compound index if not exists
         if "name_1_product_code_1" not in existing_indexes:
             await self.collection.create_index([("name", 1), ("product_code", 1)], unique=True)
     
+    async def _ensure_unique_product_code(self, existing_indexes: dict):
+        """Make product_code unique at the DB level (backstop for the API checks).
+
+        Older databases have a plain product_code_1 index; it is swapped for a
+        unique one. If duplicate codes still exist the unique build fails, so the
+        plain index is restored and startup continues with API-level checks only.
+        """
+        current = existing_indexes.get("product_code_1")
+        if current and current.get("unique"):
+            return
+        if current:
+            await self.collection.drop_index("product_code_1")
+        try:
+            await self.collection.create_index([("product_code", 1)], unique=True, name="product_code_1")
+        except (DuplicateKeyError, OperationFailure) as e:
+            print(f"[WARN] recipes: duplicate product_code values exist, unique index not created: {e}")
+            await self.collection.create_index([("product_code", 1)], name="product_code_1")
+
     async def create(self, recipe: RecipeCreate, user_id: str) -> RecipeInDB:
         """Create a new recipe"""
         # IMPORTANT: Use mode='json' and exclude_defaults=False to include all fields
@@ -196,6 +215,8 @@ class RecipeRepository:
                 if "reject_pulse" not in result:
                     result["reject_pulse"] = 50.0
                 return RecipeInDB(**result)
+        except DuplicateKeyError:
+            raise
         except Exception as e:
             print(f"Error updating recipe: {e}")
             import traceback
