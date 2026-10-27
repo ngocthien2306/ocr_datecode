@@ -51,6 +51,11 @@ class PLCController:
     # every poll block on a fresh TCP connect attempt.
     READ_RECONNECT_BACKOFF_S = 1.0
 
+    # Inference ONLINE/OFFLINE status for the ladder: D2 = 1 ONLINE, 0 OFFLINE.
+    # Reserved — reject/alarm/verdict writes to this register are refused, so a
+    # recipe pointing a pulse at D2 can't flip the status the PLC reads.
+    ONLINE_STATUS_REGISTER = 2
+
     def __init__(self):
         """Initialize PLC Controller"""
         self._client: Optional[ModbusTcpClient] = None
@@ -83,6 +88,10 @@ class PLCController:
             'min_write_time_ms': float('inf')
         }
         self._stats_lock = threading.Lock()
+
+        # Last requested ONLINE/OFFLINE value (None = never set). Re-asserted on
+        # every (re)connect so a PLC restart doesn't leave D2 stale.
+        self._online_status: Optional[int] = None
 
         logger.info("PLCController initialized")
 
@@ -225,6 +234,8 @@ class PLCController:
                     self._apply_socket_keepalive()
                     self._start_heartbeat()
                     logger.info(f"✅ Connected to PLC at {self.PLC_IP}:{self.PLC_PORT}")
+                    if self._online_status is not None:
+                        self._write_register_raw(self.ONLINE_STATUS_REGISTER, self._online_status)
                     return True
                 else:
                     logger.error(f"❌ Failed to connect to PLC at {self.PLC_IP}:{self.PLC_PORT}")
@@ -267,9 +278,34 @@ class PLCController:
         with self._lock:
             return self._connected and self._client and self._client.connected
 
+    def _is_reserved(self, address: int) -> bool:
+        if address == self.ONLINE_STATUS_REGISTER:
+            logger.error(
+                f"❌ D{address} is reserved for ONLINE/OFFLINE status — write refused "
+                f"(check recipe reject/alarm/verdict addresses)"
+            )
+            return True
+        return False
+
+    def set_online_status(self, online: bool) -> bool:
+        """
+        Write inference ONLINE/OFFLINE status to D2 (1=ONLINE, 0=OFFLINE).
+        Connects on demand. The requested value is stored before taking the
+        lock, so concurrent callers always converge on the latest request.
+
+        Returns:
+            True if the PLC register was written.
+        """
+        self._online_status = 1 if online else 0
+        with self._lock:
+            if not self.is_connected() and not self.connect():
+                return False
+            ok, _ = self._write_register_raw(self.ONLINE_STATUS_REGISTER, self._online_status)
+            return ok
+
     def write_register(self, address: int, value: int) -> Tuple[bool, float]:
         """
-        Write single register to PLC
+        Write single register to PLC (refuses the reserved status register)
 
         Args:
             address: Register address (D0=0, D1=1, etc.)
@@ -278,6 +314,12 @@ class PLCController:
         Returns:
             Tuple of (success: bool, write_time_ms: float)
         """
+        if self._is_reserved(address):
+            return False, 0.0
+        return self._write_register_raw(address, value)
+
+    def _write_register_raw(self, address: int, value: int) -> Tuple[bool, float]:
+        """Write single register with no reserved-address check."""
         with self._lock:
             if not self.is_connected():
                 logger.warning("PLC not connected, cannot write register")
@@ -458,6 +500,8 @@ class PLCController:
         Returns:
             Tuple of (success: bool, total_duration_ms: float)
         """
+        if self._is_reserved(register_address):
+            return False, 0.0
         with self._lock:
             if not self.is_connected():
                 logger.warning(f"PLC not connected, cannot write pulse to D{register_address}")
@@ -528,6 +572,17 @@ class PLCController:
         Returns:
             Tuple of (success: bool, total_duration_ms: float)
         """
+        # One side on the reserved register: still pulse the other one so the
+        # reject isn't lost because of a misconfigured alarm (or vice versa).
+        # Must be checked here — the consecutive path below uses
+        # write_registers() and would bypass write_register's guard.
+        if self.ONLINE_STATUS_REGISTER in (address1, address2):
+            other = address2 if address1 == self.ONLINE_STATUS_REGISTER else address1
+            logger.error(
+                f"❌ D{self.ONLINE_STATUS_REGISTER} is reserved for ONLINE/OFFLINE status — "
+                f"dual pulse D{address1},D{address2} reduced to D{other}"
+            )
+            return self.write_pulse(other, pulse_ms)  # refuses if other is reserved too
         with self._lock:
             if not self.is_connected():
                 logger.warning(f"PLC not connected, cannot write dual pulse to D{address1},D{address2}")

@@ -343,7 +343,7 @@ class CameraManager:
 
                 # Update reject configuration from recipe
                 reject_pulse = recipe_data.get("reject_pulse", 50.0)
-                reject_method = recipe_data.get("reject_method", "DIO").upper()
+                reject_method = recipe_data.get("reject_method", "PLC").upper()
                 reject_mode = recipe_data.get("reject_mode", "time_based")
 
                 logger.info(
@@ -390,6 +390,26 @@ class CameraManager:
                         else:
                             logger.warning("⚠️ PLC connection failed, will fallback to DIO")
                     self.reject_scheduler.set_reject_config(reject_pulse, reject_method)
+
+                # D2 carries ONLINE/OFFLINE status; PLCController refuses
+                # reject/alarm/verdict writes to it, so flag the recipe now.
+                if self.plc_controller and (reject_method == "PLC" or reject_mode == "sensor_based"):
+                    status_reg = self.plc_controller.ONLINE_STATUS_REGISTER
+                    # Same defaults the runtime uses (camera.py / plc_sensor_cfg above)
+                    addr_defaults = (
+                        {"plc_verdict_register": 0, "plc_pulse_register": 10}
+                        if reject_mode == "sensor_based"
+                        else {"do_reject_number": 2, "do_alarm_number": -1}
+                    )
+                    for key, default in addr_defaults.items():
+                        value = recipe_data.get(key)
+                        if (default if value is None else value) == status_reg:
+                            logger.error(
+                                f"⚠️ Recipe '{recipe_name}': {key}=D{status_reg} is reserved for "
+                                f"ONLINE/OFFLINE status — writes to it will be refused"
+                            )
+                if self.plc_controller and self.plc_controller.is_connected():
+                    self.plc_controller.set_online_status(self.inference_enabled)
 
                 # Start reject scheduler (if not already running). For
                 # sensor_based mode the scheduler thread still runs but the
@@ -520,8 +540,10 @@ class CameraManager:
                     self.trigger_handler.stop_polling()
                     logger.info("No more Software Trigger cameras, polling stopped")
 
-                # Disconnect PLC if connected
+                # Disconnect PLC if connected — drop D2 to OFFLINE first, no
+                # recipe is inspecting anymore.
                 if self.plc_controller and self.plc_controller.is_connected():
+                    self.plc_controller.set_online_status(False)
                     logger.info("Disconnecting from PLC...")
                     self.plc_controller.disconnect()
                     logger.info("PLC disconnected")
@@ -925,7 +947,7 @@ class CameraManager:
     def set_inference_mode(self, enabled: bool) -> Dict[str, Any]:
         """
         Set inference mode (ONLINE/OFFLINE)
-        Also sets DO2 output: ONLINE=1, OFFLINE=0
+        Also writes PLC D2: ONLINE=1, OFFLINE=0
 
         Args:
             enabled: True for ONLINE, False for OFFLINE
@@ -935,26 +957,28 @@ class CameraManager:
         """
         with self._lock:
             self.inference_enabled = enabled
-            mode_name = "ONLINE" if enabled else "OFFLINE"
+        mode_name = "ONLINE" if enabled else "OFFLINE"
 
-            # Set DO2: ONLINE=1, OFFLINE=0
-            from .utils import write_do_value
-            do_value = 0 if enabled else 1
-            do_success = write_do_value(2, do_value)  # DO2
+        # PLC write happens outside self._lock — connect() can block up to
+        # PLC_TIMEOUT when the PLC is unreachable.
+        plc_value = 1 if enabled else 0
+        plc_success = False
+        if self.plc_controller:
+            plc_success = self.plc_controller.set_online_status(enabled)
 
-            if do_success:
-                logger.info(f"🔄 [INFERENCE MODE] Set to {mode_name}, DO2={do_value}")
-            else:
-                logger.warning(f"🔄 [INFERENCE MODE] Set to {mode_name}, but failed to set DO2={do_value}")
+        if plc_success:
+            logger.info(f"🔄 [INFERENCE MODE] Set to {mode_name}, PLC D2={plc_value}")
+        else:
+            logger.warning(f"🔄 [INFERENCE MODE] Set to {mode_name}, but failed to set PLC D2={plc_value}")
 
-            return {
-                "success": True,
-                "enabled": enabled,
-                "mode": mode_name,
-                "do2_value": do_value,
-                "do2_success": do_success,
-                "message": f"Inference mode set to {mode_name}"
-            }
+        return {
+            "success": True,
+            "enabled": enabled,
+            "mode": mode_name,
+            "plc_d2_value": plc_value,
+            "plc_d2_success": plc_success,
+            "message": f"Inference mode set to {mode_name}"
+        }
 
     def toggle_bypass_mode(self) -> Dict[str, Any]:
         """
@@ -1018,6 +1042,7 @@ class CameraManager:
 
             # Disconnect PLC if connected
             if self.plc_controller and self.plc_controller.is_connected():
+                self.plc_controller.set_online_status(False)
                 logger.info("Disconnecting from PLC during shutdown...")
                 self.plc_controller.disconnect()
 

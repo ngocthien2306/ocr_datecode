@@ -243,7 +243,8 @@ class CameraManagementService:
                 recipe_id = data.get("recipe_id")
                 enabled = data.get("enabled", True)
 
-                result = self.camera_manager.set_inference_mode(enabled)
+                # Off the event loop — the PLC D2 write can block on reconnect
+                result = await asyncio.to_thread(self.camera_manager.set_inference_mode, enabled)
 
                 await self.ws_client.send_message({
                     "event": "set_inference_mode_response",
