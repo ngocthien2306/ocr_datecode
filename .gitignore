@@ -258,3 +258,19 @@ ocr_paddle_service/**/*.pdparams
 ocr_paddle_service/PaddleOCR/
 label_crops/
 ocr_fail_crops/
+# ── Models ─────────────────────────────────────────────────────────────────
+# Listing models one by one above let every new export show up as untracked.
+# TensorRT engines are built per GPU (x86 vs Jetson) and ONNX exports run
+# 10–80 MB, so neither belongs in git. Models already tracked stay tracked;
+# commit a new one on purpose with `git add -f`.
+weights/*.engine
+weights/*.onnx
+weights/*.bak
+languages/english/*.engine
+languages/english/*.onnx
+# Recipe dumps taken before a DB migration (recipes_full_backup_<date>.json, ...)
+backend/recipes_*backup*.json
+# ── Carried over from release_v1 ───────────────────────────────────────────
+outputs/
+# Test account list — plaintext passwords, never commit
+TEST_ACCOUNTS.txt
